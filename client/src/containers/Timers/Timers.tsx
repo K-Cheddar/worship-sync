@@ -20,6 +20,7 @@ const Timers = () => {
   const upcomingService = useDisplayedUpcomingService(
     services,
     NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
+    { keepRecentlyElapsedDuringGrace: true },
   );
 
   const pinnedTopContent = useMemo(() => {

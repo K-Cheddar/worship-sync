@@ -1,4 +1,38 @@
-import { MonthWeekOrdinal, MultiWeeklyDay, ServiceTime, Weekday } from "../types";
+import {
+  MonthWeekOrdinal,
+  MultiWeeklyDay,
+  ServiceTime,
+  Weekday,
+} from "../types";
+
+export type DisplayedUpcomingServiceOptions = {
+  /**
+   * When true, keep the most recently elapsed service during the grace window
+   * even if another future service exists. This preserves the "pending at zero"
+   * stream-info behavior before switching to the next service.
+   */
+  keepRecentlyElapsedDuringGrace?: boolean;
+};
+
+const getMostRecentServiceWithinGrace = (
+  services: ServiceTime[],
+  now: Date,
+  graceMs: number,
+): { service: ServiceTime; nextAt: Date } | null => {
+  if (graceMs <= 0) return null;
+
+  let bestRecent: { service: ServiceTime; nextAt: Date } | null = null;
+  for (const service of services) {
+    const target = getMostRecentTargetTime(service, now);
+    if (!target) continue;
+    const ageMs = now.getTime() - target.getTime();
+    if (ageMs < 0 || ageMs > graceMs) continue;
+    if (!bestRecent || target > bestRecent.nextAt) {
+      bestRecent = { service, nextAt: target };
+    }
+  }
+  return bestRecent;
+};
 
 function parseTimeToDate(base: Date, hhmm: string): Date | null {
   const [hh, mm] = hhmm.split(":").map((x) => parseInt(x, 10));
@@ -11,7 +45,7 @@ function parseTimeToDate(base: Date, hhmm: string): Date | null {
 function getNextWeekly(
   now: Date,
   dayOfWeek: Weekday,
-  time: string
+  time: string,
 ): Date | null {
   const currentDow = now.getDay();
   const daysUntil = (dayOfWeek - currentDow + 7) % 7;
@@ -30,7 +64,7 @@ function getNthWeekdayOfMonth(
   year: number,
   monthIndex0: number,
   ordinal: MonthWeekOrdinal,
-  weekday: Weekday
+  weekday: Weekday,
 ): Date | null {
   // Find first occurrence of weekday in the month
   const firstOfMonth = new Date(year, monthIndex0, 1);
@@ -47,7 +81,7 @@ function getNthWeekdayOfMonth(
     const lastWeekday = new Date(
       lastDayPrevMonth.getFullYear(),
       lastDayPrevMonth.getMonth(),
-      lastDayPrevMonth.getDate() - diff
+      lastDayPrevMonth.getDate() - diff,
     );
     return lastWeekday;
   }
@@ -63,7 +97,7 @@ function getNextMonthly(
   now: Date,
   ordinal: MonthWeekOrdinal,
   weekday: Weekday,
-  time: string
+  time: string,
 ): Date | null {
   const tryMonth = (y: number, m: number): Date | null => {
     const day = getNthWeekdayOfMonth(y, m, ordinal, weekday);
@@ -80,7 +114,7 @@ function getNextMonthly(
 
 // Parse a date-only string ("YYYY-MM-DD") as local end-of-day.
 // new Date("YYYY-MM-DD") is UTC midnight and breaks in non-UTC timezones.
-function parseEndOfDay(dateStr: string): Date | null {
+const parseEndOfDay = (dateStr: string): Date | null => {
   const parts = dateStr.split("-");
   if (parts.length < 3) return null;
   const y = parseInt(parts[0], 10);
@@ -88,13 +122,13 @@ function parseEndOfDay(dateStr: string): Date | null {
   const d = parseInt(parts[2], 10);
   if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
   return new Date(y, m, d, 23, 59, 59, 999);
-}
+};
 
-function getNextMultiWeekly(
+const getNextMultiWeekly = (
   now: Date,
   daysOfWeek: MultiWeeklyDay[],
   endDateISO?: string,
-): Date | null {
+): Date | null => {
   if (daysOfWeek.length === 0) return null;
   const endDate = endDateISO ? parseEndOfDay(endDateISO) : null;
 
@@ -114,12 +148,12 @@ function getNextMultiWeekly(
     if (!best || atTime < best) best = atTime;
   }
   return best;
-}
+};
 
-function getPreviousMultiWeekly(
+const getPreviousMultiWeekly = (
   now: Date,
   daysOfWeek: MultiWeeklyDay[],
-): Date | null {
+): Date | null => {
   if (daysOfWeek.length === 0) return null;
   const currentDow = now.getDay();
   let best: Date | null = null;
@@ -136,13 +170,13 @@ function getPreviousMultiWeekly(
     if (!best || atTime > best) best = atTime;
   }
   return best;
-}
+};
 
-function getPreviousWeekly(
+const getPreviousWeekly = (
   now: Date,
   dayOfWeek: Weekday,
   time: string,
-): Date | null {
+): Date | null => {
   const currentDow = now.getDay();
   const daysSince = (currentDow - dayOfWeek + 7) % 7;
   const candidate = new Date(now);
@@ -153,14 +187,14 @@ function getPreviousWeekly(
     atTime.setDate(atTime.getDate() - 7);
   }
   return atTime;
-}
+};
 
-function getPreviousMonthly(
+const getPreviousMonthly = (
   now: Date,
   ordinal: MonthWeekOrdinal,
   weekday: Weekday,
   time: string,
-): Date | null {
+): Date | null => {
   const tryMonth = (y: number, m: number): Date | null => {
     const day = getNthWeekdayOfMonth(y, m, ordinal, weekday);
     if (!day) return null;
@@ -171,11 +205,11 @@ function getPreviousMonthly(
   if (candidateThis && candidateThis <= now) return candidateThis;
 
   return tryMonth(now.getFullYear(), now.getMonth() - 1);
-}
+};
 
 export function getNextOccurrenceForService(
   service: ServiceTime,
-  now = new Date()
+  now = new Date(),
 ): Date | null {
   if (service.reccurence === "one_time") {
     if (!service.dateTimeISO) return null;
@@ -200,7 +234,7 @@ export function getNextOccurrenceForService(
 
 export function getClosestUpcomingService(
   services: ServiceTime[],
-  now = new Date()
+  now = new Date(),
 ): { service: ServiceTime; nextAt: Date } | null {
   let best: { service: ServiceTime; nextAt: Date } | null = null;
   for (const s of services) {
@@ -222,7 +256,7 @@ export function getClosestUpcomingService(
  */
 export function getEffectiveTargetTime(
   service: ServiceTime,
-  now = new Date()
+  now = new Date(),
 ): Date | null {
   // If there's an override, use it (if it's in the future)
   if (service.overrideDateTimeISO) {
@@ -259,7 +293,12 @@ export function getMostRecentTargetTime(
   if (service.reccurence === "monthly") {
     if (service.ordinal == null || service.weekday == null || !service.time)
       return null;
-    return getPreviousMonthly(now, service.ordinal, service.weekday, service.time);
+    return getPreviousMonthly(
+      now,
+      service.ordinal,
+      service.weekday,
+      service.time,
+    );
   }
   if (service.reccurence === "multi_weekly") {
     if (!service.daysOfWeek?.length) return null;
@@ -272,21 +311,24 @@ export function getDisplayedUpcomingService(
   services: ServiceTime[],
   now = new Date(),
   graceMs = 0,
+  options: DisplayedUpcomingServiceOptions = {},
 ): { service: ServiceTime; nextAt: Date } | null {
+  const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs);
   const futureUpcoming = getClosestUpcomingService(services, now);
-  if (futureUpcoming) return futureUpcoming;
-  if (graceMs <= 0) return null;
 
-  let bestRecent: { service: ServiceTime; nextAt: Date } | null = null;
-  for (const service of services) {
-    const target = getMostRecentTargetTime(service, now);
-    if (!target) continue;
-    const ageMs = now.getTime() - target.getTime();
-    if (ageMs < 0 || ageMs > graceMs) continue;
-    if (!bestRecent || target > bestRecent.nextAt) {
-      bestRecent = { service, nextAt: target };
+  if (options.keepRecentlyElapsedDuringGrace && bestRecent) {
+    if (!futureUpcoming) {
+      return bestRecent;
+    }
+
+    const msUntilFuture = futureUpcoming.nextAt.getTime() - now.getTime();
+    if (msUntilFuture > graceMs) {
+      return bestRecent;
     }
   }
+
+  if (futureUpcoming) return futureUpcoming;
+
   return bestRecent;
 }
 
@@ -294,9 +336,41 @@ export function getUpcomingServiceRefreshDelay(
   services: ServiceTime[],
   now = new Date(),
   graceMs = 0,
+  options: DisplayedUpcomingServiceOptions = {},
 ): number | null {
-  const displayedService = getDisplayedUpcomingService(services, now, graceMs);
+  const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs);
+  const futureUpcoming = getClosestUpcomingService(services, now);
+  const displayedService = getDisplayedUpcomingService(
+    services,
+    now,
+    graceMs,
+    options,
+  );
   if (!displayedService) return null;
+
+  const isShowingRecent =
+    bestRecent?.service.id === displayedService.service.id &&
+    bestRecent.nextAt.getTime() === displayedService.nextAt.getTime();
+
+  if (isShowingRecent) {
+    const recentAgeMs = now.getTime() - displayedService.nextAt.getTime();
+    const remainingGraceMs = graceMs - recentAgeMs;
+    let nextDelayMs = remainingGraceMs > 0 ? remainingGraceMs + 1 : 1;
+
+    if (
+      options.keepRecentlyElapsedDuringGrace &&
+      futureUpcoming &&
+      graceMs > 0
+    ) {
+      const msUntilFuture = futureUpcoming.nextAt.getTime() - now.getTime();
+      const thresholdCrossDelayMs = msUntilFuture - graceMs;
+      if (thresholdCrossDelayMs > 0) {
+        nextDelayMs = Math.min(nextDelayMs, thresholdCrossDelayMs + 1);
+      }
+    }
+
+    return nextDelayMs;
+  }
 
   const msUntilTarget = displayedService.nextAt.getTime() - now.getTime();
   if (msUntilTarget > 0) {

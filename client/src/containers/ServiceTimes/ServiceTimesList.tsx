@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { ServiceTime } from "../../types";
 import ServiceItem from "./ServiceItem";
 import TimeAdjuster from "./TimeAdjuster";
 import NextServiceLiveCountdown from "./NextServiceLiveCountdown";
+import { getEffectiveTargetTime } from "../../utils/serviceTimes";
 
 type Props = {
   services: ServiceTime[];
@@ -18,9 +20,19 @@ const ServiceTimesList = ({
   upcomingService,
   upcomingServiceTimeText,
 }: Props) => {
-  const otherServices = services.filter(
-    (s) => s.id !== upcomingService?.service.id,
-  );
+  const otherServices = useMemo(() => {
+    const now = new Date();
+    return services
+      .filter((s) => s.id !== upcomingService?.service.id)
+      .sort((a, b) => {
+        const aNext = getEffectiveTargetTime(a, now);
+        const bNext = getEffectiveTargetTime(b, now);
+        if (aNext && bNext) return aNext.getTime() - bNext.getTime();
+        if (aNext) return -1;
+        if (bNext) return 1;
+        return 0;
+      });
+  }, [services, upcomingService]);
 
   return (
     <section className="flex w-full shrink-0 flex-col gap-2 rounded-md border border-white/12 bg-black/30 p-4">

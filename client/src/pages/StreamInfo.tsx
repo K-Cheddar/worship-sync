@@ -1,39 +1,25 @@
 import {
-  useContext,
   useEffect,
   useMemo,
-  useState,
 } from "react";
 import StreamInfoComponent from "../components/StreamInfo/StreamInfo";
-import { GlobalInfoContext } from "../context/globalInfo";
-import { ServiceTime } from "../types";
-import { onValue, ref } from "firebase/database";
-import { useDispatch } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
+import { RootState } from "../store/store";
 import useNextServiceCountdownText from "../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../hooks/useDisplayedUpcomingService";
 import { updateService } from "../store/serviceTimesSlice";
-import { getChurchDataPath } from "../utils/firebasePaths";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../constants/nextServiceTimer";
 
 const StreamInfo = () => {
-  const { churchId, firebaseDb, loginState } =
-    useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
-  const [services, setServices] = useState<ServiceTime[]>([]);
-
-  useEffect(() => {
-    if (!firebaseDb || loginState === "guest" || !churchId) return;
-
-    const getServicesRef = ref(firebaseDb, getChurchDataPath(churchId, "services"));
-    onValue(getServicesRef, (snapshot) => {
-      const data = snapshot.val() as ServiceTime[] | null;
-      setServices(data ?? []);
-    });
-  }, [churchId, firebaseDb, loginState]);
+  const services = useSelector(
+    (state: RootState) => state.undoable.present.serviceTimes.list,
+  );
 
   const upcomingService = useDisplayedUpcomingService(
     services,
     NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
+    { keepRecentlyElapsedDuringGrace: true },
   );
 
   const targetIso = useMemo(() => {

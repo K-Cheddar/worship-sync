@@ -1741,6 +1741,7 @@ describe("store module", () => {
       }),
     ]);
     expect(store.getState().undoable.present.serviceTimes.isInitialized).toBe(true);
+    expect(localStorage.getItem("serviceTimes")).toContain("Remote Service");
   });
 
   it("applies remote bible info when local bible slot is still empty at the same timestamp", async () => {

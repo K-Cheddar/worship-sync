@@ -5,12 +5,21 @@ import {
   getUpcomingServiceRefreshDelay,
 } from "../utils/serviceTimes";
 
+type UseDisplayedUpcomingServiceOptions = {
+  keepRecentlyElapsedDuringGrace?: boolean;
+};
+
 export const useDisplayedUpcomingService = (
   services: ServiceTime[],
   graceMs = 0,
+  options: UseDisplayedUpcomingServiceOptions = {},
 ) => {
+  const keepRecentlyElapsedDuringGrace =
+    options.keepRecentlyElapsedDuringGrace ?? false;
   const [upcomingService, setUpcomingService] = useState(() =>
-    getDisplayedUpcomingService(services, new Date(), graceMs),
+    getDisplayedUpcomingService(services, new Date(), graceMs, {
+      keepRecentlyElapsedDuringGrace,
+    }),
   );
 
   useEffect(() => {
@@ -18,8 +27,17 @@ export const useDisplayedUpcomingService = (
 
     const syncUpcomingService = () => {
       const now = new Date();
-      setUpcomingService(getDisplayedUpcomingService(services, now, graceMs));
-      const delayMs = getUpcomingServiceRefreshDelay(services, now, graceMs);
+      setUpcomingService(
+        getDisplayedUpcomingService(services, now, graceMs, {
+          keepRecentlyElapsedDuringGrace,
+        }),
+      );
+      const delayMs = getUpcomingServiceRefreshDelay(
+        services,
+        now,
+        graceMs,
+        { keepRecentlyElapsedDuringGrace },
+      );
       if (delayMs != null) {
         timeoutId = window.setTimeout(syncUpcomingService, delayMs);
       }
@@ -32,7 +50,7 @@ export const useDisplayedUpcomingService = (
         window.clearTimeout(timeoutId);
       }
     };
-  }, [services, graceMs]);
+  }, [services, graceMs, keepRecentlyElapsedDuringGrace]);
 
   return upcomingService;
 };

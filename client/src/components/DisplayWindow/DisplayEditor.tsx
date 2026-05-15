@@ -137,8 +137,8 @@ const DisplayEditorComponent = ({
       const nextCursorPosition = typeof options?.cursorPosition === "number"
         ? Math.min(options.cursorPosition, nextWords.length)
         : options?.preserveCursor
-        ? resolveFormattedCursorPosition(previousValue, nextWords, previousSelection)
-        : Math.min(previousSelection, nextWords.length);
+          ? resolveFormattedCursorPosition(previousValue, nextWords, previousSelection)
+          : Math.min(previousSelection, nextWords.length);
 
       if (textAreaRef.current.value !== nextWords) {
         textAreaRef.current.value = nextWords;
@@ -236,12 +236,12 @@ const DisplayEditorComponent = ({
         textAreaRef.current.blur();
       }
 
-      const message =
-        kind === "service-time"
-          ? "This countdown updates automatically from your service times."
-          : isMobile
-            ? "To edit the timer use the controls in the panel above"
-            : "To edit the timer use the controls in the panel to the left";
+      let message = "To edit the timer use the controls in the panel to the left";
+      if (kind === "service-time") {
+        message = "This countdown updates automatically from your service times.";
+      } else if (isMobile) {
+        message = "To edit the timer use the controls in the panel above";
+      }
 
       showToast(message, "info");
     },
@@ -464,7 +464,7 @@ const DisplayEditorComponent = ({
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
         (!isBoxLocked || isSelected) &&
-          "outline-1 outline-gray-300 -outline-offset-2",
+        "outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}

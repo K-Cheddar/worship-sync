@@ -291,6 +291,62 @@ describe("serviceTimes", () => {
       );
     });
 
+    it("can keep the just-started service during grace even when another future service exists", () => {
+      const now = new Date("2026-01-10T09:00:01.000Z");
+      const services: ServiceTime[] = [
+        createService({
+          id: "current",
+          reccurence: "one_time",
+          dateTimeISO: new Date("2026-01-10T09:00:00.000Z").toISOString(),
+        }),
+        createService({
+          id: "next",
+          reccurence: "one_time",
+          dateTimeISO: new Date("2026-01-10T10:00:00.000Z").toISOString(),
+        }),
+      ];
+
+      const result = getDisplayedUpcomingService(
+        services,
+        now,
+        15 * 60 * 1000,
+        { keepRecentlyElapsedDuringGrace: true },
+      );
+
+      expect(result?.service.id).toBe("current");
+      expect(result?.nextAt.toISOString()).toBe(
+        "2026-01-10T09:00:00.000Z",
+      );
+    });
+
+    it("shows the next service instead of pending when it starts within the grace window", () => {
+      const now = new Date("2026-01-10T09:00:01.000Z");
+      const services: ServiceTime[] = [
+        createService({
+          id: "current",
+          reccurence: "one_time",
+          dateTimeISO: new Date("2026-01-10T09:00:00.000Z").toISOString(),
+        }),
+        createService({
+          id: "next-soon",
+          reccurence: "one_time",
+          dateTimeISO: new Date("2026-01-10T09:10:00.000Z").toISOString(),
+        }),
+      ];
+
+      const result = getDisplayedUpcomingService(
+        services,
+        now,
+        15 * 60 * 1000,
+        { keepRecentlyElapsedDuringGrace: true },
+      );
+
+      expect(result?.service.id).toBe("next-soon");
+      expect(result?.nextAt.toISOString()).toBe(
+        "2026-01-10T09:10:00.000Z",
+      );
+    });
+
     it("keeps a just-started service during the grace window when there is no future service", () => {
       const now = new Date("2026-01-10T09:05:00.000Z");
       const service = createService({
@@ -344,6 +400,31 @@ describe("serviceTimes", () => {
       );
 
       expect(delayMs).toBe(30 * 60 * 1000 + 1);
+    });
+
+    it("refreshes when a future service becomes close enough to replace a pending service", () => {
+      const now = new Date("2026-01-10T09:00:00.000Z");
+      const services: ServiceTime[] = [
+        createService({
+          id: "current",
+          reccurence: "one_time",
+          dateTimeISO: new Date("2026-01-10T08:59:00.000Z").toISOString(),
+        }),
+        createService({
+          id: "next-later",
+          reccurence: "one_time",
+          dateTimeISO: new Date("2026-01-10T09:16:00.000Z").toISOString(),
+        }),
+      ];
+
+      const delayMs = getUpcomingServiceRefreshDelay(
+        services,
+        now,
+        15 * 60 * 1000,
+        { keepRecentlyElapsedDuringGrace: true },
+      );
+
+      expect(delayMs).toBe(60 * 1000 + 1);
     });
   });
 });

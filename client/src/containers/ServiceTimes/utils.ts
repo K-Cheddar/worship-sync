@@ -47,6 +47,21 @@ export const to12Hour = (hhmm?: string) => {
   return `${h}:${mm} ${ampm}`;
 };
 
+export const parseDateOnlyAsLocalDate = (dateStr?: string) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr
+    .split("-")
+    .map((part) => parseInt(part, 10));
+  if (
+    Number.isNaN(year) ||
+    Number.isNaN(month) ||
+    Number.isNaN(day)
+  ) {
+    return null;
+  }
+  return new Date(year, month - 1, day);
+};
+
 export const formatWeekly = (dow?: Weekday, hhmm?: string) => {
   const day = weekdays.find((w) => w.value === dow)?.label || "";
   return `${day}${day ? "s" : ""} @ ${to12Hour(hhmm)}`;
@@ -72,8 +87,9 @@ export const formatMultiWeekly = (
   // Sort groups by the earliest day each contains
   const groups = [...byTime.entries()].sort(([, a], [, b]) => a[0] - b[0]);
 
-  const endStr = endDateISO
-    ? ` until ${new Date(endDateISO).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`
+  const endDate = parseDateOnlyAsLocalDate(endDateISO);
+  const endStr = endDate
+    ? ` until ${endDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`
     : "";
 
   return (
