@@ -1,3 +1,10 @@
+# [2.9.0](https://github.com/K-Cheddar/worship-sync/compare/v2.8.0...v2.9.0) (2026-05-15)
+
+
+### Features
+
+* Reference upcoming service countdown timer ([8e4d14a](https://github.com/K-Cheddar/worship-sync/commit/8e4d14a2f3e7fe336acde142786c82a88530b4bd))
+
 # [2.8.0](https://github.com/K-Cheddar/worship-sync/compare/v2.7.0...v2.8.0) (2026-05-13)
 
 
