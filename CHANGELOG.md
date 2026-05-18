@@ -1,3 +1,11 @@
+## [2.9.1](https://github.com/K-Cheddar/worship-sync/compare/v2.9.0...v2.9.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* Multiple bug fixes ([809d1a7](https://github.com/K-Cheddar/worship-sync/commit/809d1a777b2fc77ed73849be52e6dc1e31bd8173))
+* PWA updating ([24d32de](https://github.com/K-Cheddar/worship-sync/commit/24d32de6325f6c7d1cb3ee6069b26acdbc1e2a4d))
+
 # [2.9.0](https://github.com/K-Cheddar/worship-sync/compare/v2.8.0...v2.9.0) (2026-05-15)
 
 
