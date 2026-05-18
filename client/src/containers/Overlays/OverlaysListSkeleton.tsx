@@ -1,7 +1,10 @@
 import { forwardRef } from "react";
 
 import { cn } from "../../utils/cnHelper";
-import { overlayRowUnselectedClass } from "./overlayRowStyles";
+import {
+  overlayListRowLayoutClass,
+  overlayRowUnselectedClass,
+} from "./overlayRowStyles";
 
 const ROW_COUNT = 5;
 
@@ -35,7 +38,7 @@ const OverlaysListSkeleton = forwardRef<
           <li
             key={i}
             className={cn(
-              "flex w-full items-center overflow-clip rounded-md leading-3 border-l-4 transition-colors",
+              overlayListRowLayoutClass,
               overlayRowUnselectedClass,
               "border-l-gray-500",
             )}

@@ -14,6 +14,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../../utils/itemUtil";
 import { applyPouchAudit } from "../../utils/pouchAudit";
+import { getFormattedSections } from "../../utils/overflow";
 
 const Item = () => {
   const { itemId, listId } = useParams();
@@ -52,7 +53,12 @@ const Item = () => {
         dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await db?.get(decodedItemId);
         if (!response) return setStatus("error");
-        dispatch(setActiveItem({ ...response, listId: decodedListId }));
+        const itemWithSections: DBItem =
+          response.type === "free" &&
+          (!response.formattedSections || response.formattedSections.length === 0)
+            ? { ...response, formattedSections: getFormattedSections(response.slides ?? [], 1) }
+            : response;
+        dispatch(setActiveItem({ ...itemWithSections, listId: decodedListId }));
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
       } catch (e: unknown) {

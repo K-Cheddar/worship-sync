@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   MonitorSmartphone,
+  Pencil,
 } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
@@ -70,6 +71,7 @@ const UserSection = () => {
   const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [displaysExpanded, setDisplaysExpanded] = useState(false);
   const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
@@ -117,7 +119,6 @@ const UserSection = () => {
     }
   }, [activeInstances?.length]);
 
-  const activeCount = activeInstances?.length || 0;
   const { operatorRows, displayRows } = useMemo(() => {
     const instances = activeInstances || [];
     const sortedInstances = [...instances]
@@ -164,6 +165,7 @@ const UserSection = () => {
       })),
     [operatorRows]
   );
+  const activeCount = activeInstanceRows.length;
 
   const accountAriaLabel = (() => {
     let label = "";
@@ -254,9 +256,75 @@ const UserSection = () => {
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             User
           </span>
-          <span className="wrap-break-word text-sm font-semibold text-white">
-            {fullDisplayName || "—"}
-          </span>
+          {isEditingName ? (
+            <>
+              <Input
+                id="account-display-name"
+                label="Display name"
+                hideLabel
+                value={nameDraft}
+                onChange={(value) => setNameDraft(String(value))}
+                disabled={isSavingName}
+              />
+              <div className="mt-1 flex gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="flex-1 justify-center text-sm"
+                  disabled={isSavingName}
+                  onClick={() => {
+                    setNameDraft(fullDisplayName || "");
+                    setIsEditingName(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  svg={Save}
+                  iconSize="sm"
+                  color="#22d3ee"
+                  className="flex-1 justify-center text-sm"
+                  isLoading={isSavingName}
+                  disabled={isSavingName || !nameDraft.trim() || nameDraft.trim() === fullDisplayName}
+                  onClick={() => {
+                    void (async () => {
+                      setIsSavingName(true);
+                      try {
+                        const didUpdate = await updateSelfDisplayName?.(nameDraft);
+                        if (didUpdate) {
+                          setFirebaseDisplayName(nameDraft.trim());
+                          setIsEditingName(false);
+                        }
+                      } finally {
+                        setIsSavingName(false);
+                      }
+                    })();
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="wrap-break-word text-sm font-semibold text-white">
+                {fullDisplayName || "—"}
+              </span>
+              {sessionKind === "human" && updateSelfDisplayName ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  aria-label="Edit name"
+                  className="shrink-0 rounded p-0.5"
+                  onClick={() => setIsEditingName(true)}
+                  svg={Pencil}
+                >
+                </Button>
+              ) : null}
+            </div>
+          )}
         </div>
         {emailLine ? (
           <div className="flex flex-col gap-1">
@@ -264,47 +332,6 @@ const UserSection = () => {
               Email
             </span>
             <span className="wrap-break-word text-sm text-gray-300">{emailLine}</span>
-          </div>
-        ) : null}
-        {sessionKind === "human" && updateSelfDisplayName ? (
-          <div className="border-t border-gray-600 pt-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Name
-            </span>
-            <Input
-              className="mt-2"
-              id="account-display-name"
-              label="Display name"
-              hideLabel
-              value={nameDraft}
-              onChange={(value) => setNameDraft(String(value))}
-              disabled={isSavingName}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              svg={Save}
-              iconSize="sm"
-              color="#22d3ee"
-              className="mt-2 w-full justify-center text-sm"
-              isLoading={isSavingName}
-              disabled={isSavingName || !nameDraft.trim() || nameDraft.trim() === fullDisplayName}
-              onClick={() => {
-                void (async () => {
-                  setIsSavingName(true);
-                  try {
-                    const didUpdate = await updateSelfDisplayName(nameDraft);
-                    if (didUpdate) {
-                      setFirebaseDisplayName(nameDraft.trim());
-                    }
-                  } finally {
-                    setIsSavingName(false);
-                  }
-                })();
-              }}
-            >
-              Save name
-            </Button>
           </div>
         ) : null}
         <div className="flex flex-col gap-1">
@@ -352,9 +379,10 @@ const UserSection = () => {
               ))}
               {displayRows.length > 0 ? (
                 <li className="rounded-md border border-gray-700/80 bg-black/15">
-                  <button
+                  <Button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 px-2 py-2 text-left"
+                    variant="none"
+                    className="w-full justify-between gap-3 px-2 py-2 text-left"
                     onClick={() => setDisplaysExpanded((current) => !current)}
                     aria-expanded={displaysExpanded}
                     aria-controls="active-display-list"
@@ -370,7 +398,7 @@ const UserSection = () => {
                     ) : (
                       <ChevronRight className="size-4 shrink-0 text-gray-400" />
                     )}
-                  </button>
+                  </Button>
                   {displaysExpanded ? (
                     <ul
                       id="active-display-list"

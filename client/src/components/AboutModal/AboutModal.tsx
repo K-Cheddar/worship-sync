@@ -220,6 +220,11 @@ const AboutModal = ({
         const result = await serviceWorkerRegistration.checkForUpdate();
         if (result === "upToDate") {
           setReloadMessage("You're on the latest version.");
+        } else if (result === "restartRequired") {
+          setReloadMessage("Refreshing to apply the latest version…");
+          window.setTimeout(() => {
+            serviceWorkerRegistration.reloadPage();
+          }, 150);
         } else if (result === "unavailable") {
           setReloadMessage("Could not check for update.");
         }

@@ -39,6 +39,7 @@ import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get } from "firebase/database";
 import {
   BibleDisplayInfo,
+  BoardPostStreamInfo,
   DBAllItems,
   DBCredit,
   DBCredits,
@@ -184,6 +185,64 @@ const hasBibleDisplayData = (info?: BibleDisplayInfo) =>
 
 const hasParticipantOverlayData = (info?: OverlayInfo) =>
   Boolean(info?.name || info?.title || info?.event);
+
+const hasStbOverlayData = (info?: OverlayInfo) =>
+  Boolean(info?.heading || info?.subHeading);
+
+const hasQrOverlayData = (info?: OverlayInfo) =>
+  Boolean(info?.url || info?.description);
+
+const hasImageOverlayData = (info?: OverlayInfo) => Boolean(info?.imageUrl);
+
+const hasBoardPostData = (info?: { text?: string }) =>
+  Boolean(info?.text?.trim());
+
+const isIncomingOverlayTransitionNewer = (
+  current:
+    | Pick<OverlayInfo, "time" | "transitionSequence">
+    | Pick<BoardPostStreamInfo, "time" | "transitionSequence">
+    | undefined,
+  incoming:
+    | Pick<OverlayInfo, "time" | "transitionSequence">
+    | Pick<BoardPostStreamInfo, "time" | "transitionSequence">,
+) => {
+  if (
+    incoming.transitionSequence != null &&
+    current?.transitionSequence != null &&
+    incoming.transitionSequence !== current.transitionSequence
+  ) {
+    return incoming.transitionSequence > current.transitionSequence;
+  }
+
+  if (
+    incoming.transitionSequence != null &&
+    current?.transitionSequence == null
+  ) {
+    return true;
+  }
+
+  return !!(
+    (incoming.time && current?.time && incoming.time > current.time) ||
+    (incoming.time && !current?.time)
+  );
+};
+
+const shouldApplyIncomingOverlayPayload = <
+  T extends { time?: number; transitionSequence?: number },
+>(
+  current: T | undefined,
+  incoming: T,
+  hasIncomingData: boolean,
+  hasCurrentData: boolean,
+) => {
+  const currentHasOrderingMarkers =
+    current?.transitionSequence != null || current?.time != null;
+
+  return (
+    (hasIncomingData && !hasCurrentData && !currentHasOrderingMarkers) ||
+    isIncomingOverlayTransitionNewer(current, incoming)
+  );
+};
 
 /** Editor selection kept across undo/redo (not part of undo snapshots). */
 const getItemSelectionForUndoRedo = (
@@ -536,6 +595,7 @@ listenerMiddleware.startListening({
       timerInfo: item.timerInfo,
       songMetadata: item.songMetadata,
       shouldSendTo: item.shouldSendTo,
+      formattedSections: item.formattedSections,
       updatedAt,
     };
     db_item = applyPouchAudit(db_item, nextItem, {
@@ -2082,14 +2142,11 @@ listenerMiddleware.startListening({
     const state = (previousState as RootState).presentation;
     const info = action.payload as OverlayInfo;
     const currentParticipant = state.streamInfo.participantOverlayInfo;
-    return !!(
-      (info.time &&
-        hasParticipantOverlayData(info) &&
-        !hasParticipantOverlayData(currentParticipant)) ||
-      (info.time &&
-        currentParticipant?.time &&
-        info.time > currentParticipant.time) ||
-      (info.time && !currentParticipant?.time)
+    return shouldApplyIncomingOverlayPayload(
+      currentParticipant,
+      info,
+      hasParticipantOverlayData(info),
+      hasParticipantOverlayData(currentParticipant),
     );
   },
 
@@ -2110,11 +2167,11 @@ listenerMiddleware.startListening({
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateStbOverlayInfo" &&
-      !!(
-        (info.time &&
-          state.streamInfo.stbOverlayInfo?.time &&
-          info.time > state.streamInfo.stbOverlayInfo.time) ||
-        (info.time && !state.streamInfo.stbOverlayInfo?.time)
+      shouldApplyIncomingOverlayPayload(
+        state.streamInfo.stbOverlayInfo,
+        info,
+        hasStbOverlayData(info),
+        hasStbOverlayData(state.streamInfo.stbOverlayInfo),
       )
     );
   },
@@ -2136,11 +2193,11 @@ listenerMiddleware.startListening({
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateQrCodeOverlayInfo" &&
-      !!(
-        (info.time &&
-          state.streamInfo.qrCodeOverlayInfo?.time &&
-          info.time > state.streamInfo.qrCodeOverlayInfo.time) ||
-        (info.time && !state.streamInfo.qrCodeOverlayInfo?.time)
+      shouldApplyIncomingOverlayPayload(
+        state.streamInfo.qrCodeOverlayInfo,
+        info,
+        hasQrOverlayData(info),
+        hasQrOverlayData(state.streamInfo.qrCodeOverlayInfo),
       )
     );
   },
@@ -2162,11 +2219,11 @@ listenerMiddleware.startListening({
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateImageOverlayInfo" &&
-      !!(
-        (info.time &&
-          state.streamInfo.imageOverlayInfo?.time &&
-          info.time > state.streamInfo.imageOverlayInfo.time) ||
-        (info.time && !state.streamInfo.imageOverlayInfo?.time)
+      shouldApplyIncomingOverlayPayload(
+        state.streamInfo.imageOverlayInfo,
+        info,
+        hasImageOverlayData(info),
+        hasImageOverlayData(state.streamInfo.imageOverlayInfo),
       )
     );
   },
@@ -2214,12 +2271,16 @@ listenerMiddleware.startListening({
   predicate: (action, currentState) => {
     if (action.type !== "debouncedUpdateBoardPostStreamInfo") return false;
     const state = (currentState as RootState).presentation;
-    const info = action.payload as { time?: number; text?: string };
-    if (!info.time) return false;
+    const info = action.payload as BoardPostStreamInfo;
+    if (!info.time && info.transitionSequence == null) return false;
     const current = state.streamInfo.boardPostStreamInfo;
     // Always apply when incoming has content but local is empty (stream page opened after post was sent)
-    if (info.text?.trim() && !current?.text?.trim()) return true;
-    return !!((current?.time && info.time > current.time) || !current?.time);
+    return shouldApplyIncomingOverlayPayload(
+      current,
+      info,
+      hasBoardPostData(info),
+      hasBoardPostData(current),
+    );
   },
 
   effect: async (action, listenerApi) => {

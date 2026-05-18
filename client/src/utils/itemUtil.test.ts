@@ -6,8 +6,14 @@ import {
   createNewTimer,
   updateFormattedSections,
   makeUnique,
+  getBibleItemName,
+  getBibleVerseRange,
+  buildBibleOpenAtSearchParams,
+  createItemFromProps,
+  updateItemInList,
+  buildServiceTimeItem,
 } from "./itemUtil";
-import type { ServiceItem } from "../types";
+import type { ServiceItem, BibleInfo, verseType } from "../types";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
@@ -522,6 +528,197 @@ Let Your fire fall`;
       });
       expect(result.songOrder).toHaveLength(1);
       expect(result.songOrder[0].name).toBe("Verse");
+    });
+  });
+
+  describe("getBibleItemName", () => {
+    const verses: verseType[] = [
+      { index: 1, name: "1", text: "In the beginning" },
+      { index: 3, name: "3", text: "And God said" },
+    ];
+
+    it("returns chapter-only name when verses is empty", () => {
+      expect(getBibleItemName("John", "3", [], "esv")).toBe("John 3 ESV");
+    });
+
+    it("returns single-verse format when start and end names match", () => {
+      const single: verseType[] = [{ index: 1, name: "1", text: "verse" }];
+      expect(getBibleItemName("Genesis", "1", single, "esv")).toBe(
+        "Genesis 1:1 ESV",
+      );
+    });
+
+    it("returns range format when start and end names differ", () => {
+      expect(getBibleItemName("Genesis", "1", verses, "niv")).toBe(
+        "Genesis 1:1 - 3 NIV",
+      );
+    });
+
+    it("uppercases the version string", () => {
+      expect(getBibleItemName("John", "3", verses, "kjv")).toContain("KJV");
+    });
+  });
+
+  describe("getBibleVerseRange", () => {
+    it("returns zero range when bibleInfo is undefined", () => {
+      expect(getBibleVerseRange(undefined)).toEqual({
+        startVerse: 0,
+        endVerse: 0,
+      });
+    });
+
+    it("returns zero range when verses array is empty", () => {
+      const info = { verses: [] } as unknown as BibleInfo;
+      expect(getBibleVerseRange(info)).toEqual({ startVerse: 0, endVerse: 0 });
+    });
+
+    it("returns first and last verse indices", () => {
+      const info: Partial<BibleInfo> = {
+        verses: [
+          { index: 2, name: "2", text: "" },
+          { index: 5, name: "5", text: "" },
+          { index: 8, name: "8", text: "" },
+        ],
+      };
+      expect(getBibleVerseRange(info as BibleInfo)).toEqual({
+        startVerse: 2,
+        endVerse: 8,
+      });
+    });
+  });
+
+  describe("buildBibleOpenAtSearchParams", () => {
+    it("returns null when bibleInfo is undefined", () => {
+      expect(buildBibleOpenAtSearchParams(undefined)).toBeNull();
+    });
+
+    it("returns null when book is missing", () => {
+      expect(
+        buildBibleOpenAtSearchParams({ chapter: "1", version: "esv" } as any),
+      ).toBeNull();
+    });
+
+    it("returns null when chapter is missing", () => {
+      expect(
+        buildBibleOpenAtSearchParams({
+          book: "Genesis",
+          version: "esv",
+        } as any),
+      ).toBeNull();
+    });
+
+    it("returns null when version is missing", () => {
+      expect(
+        buildBibleOpenAtSearchParams({ book: "Genesis", chapter: "1" } as any),
+      ).toBeNull();
+    });
+
+    it("returns URLSearchParams with book, chapter, and version", () => {
+      const params = buildBibleOpenAtSearchParams({
+        book: "Genesis",
+        chapter: "1",
+        version: "esv",
+      } as any);
+      expect(params).not.toBeNull();
+      expect(params!.get("book")).toBe("Genesis");
+      expect(params!.get("chapter")).toBe("1");
+      expect(params!.get("version")).toBe("esv");
+    });
+  });
+
+  describe("createItemFromProps", () => {
+    it("creates a song item with defaults", () => {
+      const item = createItemFromProps({ name: "My Song" });
+      expect(item.name).toBe("My Song");
+      expect(item.type).toBe("song");
+      expect(item.selectedArrangement).toBe(0);
+      expect(item.shouldSendTo).toEqual({
+        projector: true,
+        monitor: true,
+        stream: true,
+      });
+    });
+
+    it("uses provided _id when given", () => {
+      const item = createItemFromProps({ _id: "my-id", name: "Song" });
+      expect(item._id).toBe("my-id");
+    });
+
+    it("falls back to generateRandomId when _id is not provided", () => {
+      const item = createItemFromProps({ name: "Song" });
+      expect(item._id).toBe("fixed-id");
+    });
+
+    it("defaults empty arrays for slides and arrangements", () => {
+      const item = createItemFromProps({ name: "Song" });
+      expect(item.slides).toEqual([]);
+      expect(item.arrangements).toEqual([]);
+    });
+
+    it("preserves provided type", () => {
+      const item = createItemFromProps({ name: "Bible", type: "bible" });
+      expect(item.type).toBe("bible");
+    });
+  });
+
+  describe("updateItemInList", () => {
+    it("updates the specified property on the matching item", () => {
+      const list = [
+        { _id: "i1", name: "Old Name" },
+        { _id: "i2", name: "Other" },
+      ];
+      const result = updateItemInList({
+        property: "name",
+        value: "New Name",
+        id: "i1",
+        list,
+      });
+      expect(result[0].name).toBe("New Name");
+      expect(result[1].name).toBe("Other");
+    });
+
+    it("returns list unchanged when id is not found", () => {
+      const list = [{ _id: "i1", name: "Unchanged" }];
+      const result = updateItemInList({
+        property: "name",
+        value: "New Name",
+        id: "missing",
+        list,
+      });
+      expect(result[0].name).toBe("Unchanged");
+    });
+
+    it("does not mutate the original list", () => {
+      const list = [{ _id: "i1", name: "Original" }];
+      const result = updateItemInList({
+        property: "name",
+        value: "Changed",
+        id: "i1",
+        list,
+      });
+      expect(list[0].name).toBe("Original");
+      expect(result[0].name).toBe("Changed");
+    });
+  });
+
+  describe("buildServiceTimeItem", () => {
+    it("returns a DBItem with the service-time type and expected shape", () => {
+      const item = buildServiceTimeItem();
+      expect(item.type).toBe("service-time");
+      expect(item.name).toBe("Upcoming Service");
+      expect(item.slides).toHaveLength(1);
+      expect(item.shouldSendTo).toEqual({
+        projector: false,
+        monitor: true,
+        stream: false,
+      });
+    });
+
+    it("includes the countdown timer placeholder in slide boxes", () => {
+      const item = buildServiceTimeItem();
+      const boxes = item.slides[0].boxes ?? [];
+      const textBox = boxes.find((b) => b.words === "{{service-time}}");
+      expect(textBox).toBeDefined();
     });
   });
 });

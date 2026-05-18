@@ -1,4 +1,5 @@
 import React, {
+  useCallback,
   forwardRef,
   useEffect,
   useLayoutEffect,
@@ -32,6 +33,7 @@ import MonitorView from "./MonitorView";
 import { useSelector } from "../../hooks";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
+import { serverNow } from "../../utils/serverTime";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -41,8 +43,12 @@ const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
 } as const;
 
 const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
+const STREAM_PREV_BOARD_POST_EXIT_MS = 500;
 const DISPLAY_PREV_LAYER_VISIBLE_MS = 500;
 const STREAM_PREV_TEXT_LAYER_VISIBLE_MS = 350;
+
+type StreamOverlayKeepAliveMap = Record<string, number>;
+type StreamOverlayKeepAliveMode = "max" | "replace";
 
 const getBoxesLayerKey = (boxes: Box[]) =>
   boxes
@@ -81,6 +87,49 @@ const hasImageOverlayData = (overlay?: OverlayInfo) => Boolean(overlay?.imageUrl
 
 const hasBoardPostData = (info?: BoardPostStreamInfo) =>
   Boolean(info?.text?.trim());
+
+const buildStreamOverlayIdentityKey = (
+  type: string,
+  info:
+    | OverlayInfo
+    | BoardPostStreamInfo
+    | undefined,
+  primaryValue: string | undefined,
+) => {
+  const trimmedPrimaryValue = primaryValue?.trim();
+  if (!info || !trimmedPrimaryValue) return null;
+
+  return [
+    type,
+    info.transitionSequence ?? "",
+    info?.time ?? "",
+    "id" in (info ?? {}) ? info?.id ?? "" : "",
+    trimmedPrimaryValue,
+  ].join("::");
+};
+
+const getLocalOverlayVisibleMs = (
+  durationSeconds: number | undefined,
+  totalVisibleMs: number | null,
+) => {
+  if (totalVisibleMs == null) return null;
+  return Math.max(0, durationSeconds ?? 0) * 1000 + totalVisibleMs;
+};
+
+const pruneExpiredOverlayKeepAliveEntries = (
+  keepAliveByKey: StreamOverlayKeepAliveMap,
+  nowMs: number,
+) => {
+  const activeEntries = Object.entries(keepAliveByKey).filter(
+    ([, untilMs]) => untilMs > nowMs,
+  );
+
+  if (activeEntries.length === Object.keys(keepAliveByKey).length) {
+    return keepAliveByKey;
+  }
+
+  return Object.fromEntries(activeEntries);
+};
 
 const getParticipantOverlayTotalVisibleMs = (overlay?: OverlayInfo) => {
   const lineCount = [overlay?.name, overlay?.title, overlay?.event].filter(
@@ -122,20 +171,31 @@ const getPrevOverlayVisibleUntilMs = ({
   prevTime,
   prevDuration,
   prevTotalVisibleMs,
+  prevTransitionSequence,
   currentTime,
   currentHasData,
+  currentTransitionSequence,
   nowMs,
 }: {
   prevHasData: boolean;
   prevTime?: number;
   prevDuration?: number;
   prevTotalVisibleMs: number | null;
+  prevTransitionSequence?: number;
   currentTime?: number;
   /** False when the live slot is an empty placeholder (e.g. after another overlay took the layer). */
   currentHasData: boolean;
+  currentTransitionSequence?: number;
   nowMs: number;
 }) => {
   if (!prevHasData || currentTime == null) return null;
+  if (
+    prevTransitionSequence != null &&
+    currentTransitionSequence != null &&
+    currentTransitionSequence <= prevTransitionSequence
+  ) {
+    return null;
+  }
   if (prevTime != null && currentTime <= prevTime) return null;
   const prevVisibleUntilMs = getOverlayVisibleUntilMs({
     hasData: prevHasData,
@@ -165,63 +225,6 @@ const getPrevOverlayVisibleUntilMs = ({
     return null;
   }
   return currentTime + STREAM_PREV_OVERLAY_EXIT_MS;
-};
-
-const isOverlayVisibleAtMs = ({
-  hasData,
-  time,
-  duration,
-  totalVisibleMs,
-  nowMs,
-}: {
-  hasData: boolean;
-  time?: number;
-  duration?: number;
-  totalVisibleMs: number | null;
-  nowMs: number;
-}) => {
-  const visibleUntilMs = getOverlayVisibleUntilMs({
-    hasData,
-    time,
-    duration,
-    totalVisibleMs,
-  });
-
-  if (visibleUntilMs == null) return false;
-  if (!Number.isFinite(visibleUntilMs)) return true;
-  return nowMs < visibleUntilMs;
-};
-
-const isPrevOverlayVisibleAtMs = ({
-  prevHasData,
-  prevTime,
-  prevDuration,
-  prevTotalVisibleMs,
-  currentTime,
-  currentHasData,
-  nowMs,
-}: {
-  prevHasData: boolean;
-  prevTime?: number;
-  prevDuration?: number;
-  prevTotalVisibleMs: number | null;
-  currentTime?: number;
-  currentHasData: boolean;
-  nowMs: number;
-}) => {
-  const visibleUntilMs = getPrevOverlayVisibleUntilMs({
-    prevHasData,
-    prevTime,
-    prevDuration,
-    prevTotalVisibleMs,
-    currentTime,
-    currentHasData,
-    nowMs,
-  });
-
-  if (visibleUntilMs == null) return false;
-  if (!Number.isFinite(visibleUntilMs)) return true;
-  return nowMs < visibleUntilMs;
 };
 
 type DisplayWindowProps = {
@@ -415,7 +418,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
     const isSlide = displayType === "slide";
-    const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() => Date.now());
+    const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() => serverNow());
+    const [streamOverlayKeepAliveByKey, setStreamOverlayKeepAliveByKey] =
+      useState<StreamOverlayKeepAliveMap>({});
     const storedMonitorSettings = useSelector(
       (state) => state.undoable.present.preferences.monitorSettings
     );
@@ -428,85 +433,315 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       return hasBoxes || hasBible || hasFormatted;
     }, [boxes?.length, bibleDisplayInfo?.title, bibleDisplayInfo?.text, formattedTextDisplayInfo?.text]);
 
+    // Keep the scheduled state clock for automatic rerenders, but never let a
+    // stale cached value remount an overlay that has already expired in wall
+    // clock time when another prop change causes a fresh render.
+    const streamOverlayEvaluationNowMs =
+      isStream && !overlayPreviewMode
+        ? Math.max(streamOverlayNowMs, serverNow())
+        : streamOverlayNowMs;
+
+    useEffect(() => {
+      if (!isStream || overlayPreviewMode) return;
+
+      setStreamOverlayKeepAliveByKey((prev) =>
+        pruneExpiredOverlayKeepAliveEntries(prev, streamOverlayEvaluationNowMs),
+      );
+    }, [isStream, overlayPreviewMode, streamOverlayEvaluationNowMs]);
+
+    const registerLocalStreamOverlayWindow = useCallback(
+      (
+        overlayKey: string | null,
+        localVisibleMs: number | null,
+        mode: StreamOverlayKeepAliveMode = "max",
+      ) => {
+        if (
+          !isStream ||
+          overlayPreviewMode ||
+          overlayKey == null ||
+          localVisibleMs == null ||
+          !Number.isFinite(localVisibleMs) ||
+          localVisibleMs <= 0
+        ) {
+          return;
+        }
+
+        const keepUntilMs = serverNow() + localVisibleMs;
+        setStreamOverlayKeepAliveByKey((prev) => {
+          const next = pruneExpiredOverlayKeepAliveEntries(prev, serverNow());
+          if (
+            mode === "max" &&
+            (next[overlayKey] ?? 0) >= keepUntilMs
+          ) {
+            return next;
+          }
+
+          return {
+            ...next,
+            [overlayKey]: keepUntilMs,
+          };
+        });
+      },
+      [isStream, overlayPreviewMode],
+    );
+
+    const participantOverlayVisibleUntilMs = getOverlayVisibleUntilMs({
+      hasData: hasParticipantOverlayData(participantOverlayInfo),
+      time: participantOverlayInfo?.time,
+      duration: participantOverlayInfo?.duration,
+      totalVisibleMs: getParticipantOverlayTotalVisibleMs(participantOverlayInfo),
+    });
+    const participantPrevOverlayVisibleUntilMs = getPrevOverlayVisibleUntilMs({
+      prevHasData: hasParticipantOverlayData(prevParticipantOverlayInfo),
+      prevTime: prevParticipantOverlayInfo?.time,
+      prevDuration: prevParticipantOverlayInfo?.duration,
+      prevTotalVisibleMs: getParticipantOverlayTotalVisibleMs(
+        prevParticipantOverlayInfo,
+      ),
+      prevTransitionSequence: prevParticipantOverlayInfo?.transitionSequence,
+      currentTime: participantOverlayInfo?.time,
+      currentHasData: hasParticipantOverlayData(participantOverlayInfo),
+      currentTransitionSequence: participantOverlayInfo?.transitionSequence,
+      nowMs: streamOverlayEvaluationNowMs,
+    });
+    const stbOverlayVisibleUntilMs = getOverlayVisibleUntilMs({
+      hasData: hasStbOverlayData(stbOverlayInfo),
+      time: stbOverlayInfo?.time,
+      duration: stbOverlayInfo?.duration,
+      totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
+    });
+    const stbPrevOverlayVisibleUntilMs = getPrevOverlayVisibleUntilMs({
+      prevHasData: hasStbOverlayData(prevStbOverlayInfo),
+      prevTime: prevStbOverlayInfo?.time,
+      prevDuration: prevStbOverlayInfo?.duration,
+      prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
+      prevTransitionSequence: prevStbOverlayInfo?.transitionSequence,
+      currentTime: stbOverlayInfo?.time,
+      currentHasData: hasStbOverlayData(stbOverlayInfo),
+      currentTransitionSequence: stbOverlayInfo?.transitionSequence,
+      nowMs: streamOverlayEvaluationNowMs,
+    });
+    const qrOverlayVisibleUntilMs = getOverlayVisibleUntilMs({
+      hasData: hasQrOverlayData(qrCodeOverlayInfo),
+      time: qrCodeOverlayInfo?.time,
+      duration: qrCodeOverlayInfo?.duration,
+      totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
+    });
+    const qrPrevOverlayVisibleUntilMs = getPrevOverlayVisibleUntilMs({
+      prevHasData: hasQrOverlayData(prevQrCodeOverlayInfo),
+      prevTime: prevQrCodeOverlayInfo?.time,
+      prevDuration: prevQrCodeOverlayInfo?.duration,
+      prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
+      prevTransitionSequence: prevQrCodeOverlayInfo?.transitionSequence,
+      currentTime: qrCodeOverlayInfo?.time,
+      currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
+      currentTransitionSequence: qrCodeOverlayInfo?.transitionSequence,
+      nowMs: streamOverlayEvaluationNowMs,
+    });
+    const imageOverlayVisibleUntilMs = getOverlayVisibleUntilMs({
+      hasData: hasImageOverlayData(imageOverlayInfo),
+      time: imageOverlayInfo?.time,
+      duration: imageOverlayInfo?.duration,
+      totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
+    });
+    const imagePrevOverlayVisibleUntilMs = getPrevOverlayVisibleUntilMs({
+      prevHasData: hasImageOverlayData(prevImageOverlayInfo),
+      prevTime: prevImageOverlayInfo?.time,
+      prevDuration: prevImageOverlayInfo?.duration,
+      prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
+      prevTransitionSequence: prevImageOverlayInfo?.transitionSequence,
+      currentTime: imageOverlayInfo?.time,
+      currentHasData: hasImageOverlayData(imageOverlayInfo),
+      currentTransitionSequence: imageOverlayInfo?.transitionSequence,
+      nowMs: streamOverlayEvaluationNowMs,
+    });
+    const boardPostOverlayVisibleUntilMs = getOverlayVisibleUntilMs({
+      hasData: hasBoardPostData(boardPostStreamInfo),
+      time: boardPostStreamInfo?.time,
+      duration: boardPostStreamInfo?.duration,
+      totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+    });
+    const boardPostPrevOverlayVisibleUntilMs = getPrevOverlayVisibleUntilMs({
+      prevHasData: hasBoardPostData(prevBoardPostStreamInfo),
+      prevTime: prevBoardPostStreamInfo?.time,
+      prevDuration: prevBoardPostStreamInfo?.duration,
+      prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+      prevTransitionSequence: prevBoardPostStreamInfo?.transitionSequence,
+      currentTime: boardPostStreamInfo?.time,
+      currentHasData: hasBoardPostData(boardPostStreamInfo),
+      currentTransitionSequence: boardPostStreamInfo?.transitionSequence,
+      nowMs: streamOverlayEvaluationNowMs,
+    });
+
+    const participantOverlaySyncVisible =
+      participantOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(participantOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < participantOverlayVisibleUntilMs);
+    const prevParticipantOverlaySyncVisible =
+      participantPrevOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(participantPrevOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < participantPrevOverlayVisibleUntilMs);
+    const stbOverlaySyncVisible =
+      stbOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(stbOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < stbOverlayVisibleUntilMs);
+    const prevStbOverlaySyncVisible =
+      stbPrevOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(stbPrevOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < stbPrevOverlayVisibleUntilMs);
+    const qrOverlaySyncVisible =
+      qrOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(qrOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < qrOverlayVisibleUntilMs);
+    const prevQrOverlaySyncVisible =
+      qrPrevOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(qrPrevOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < qrPrevOverlayVisibleUntilMs);
+    const imageOverlaySyncVisible =
+      imageOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(imageOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < imageOverlayVisibleUntilMs);
+    const prevImageOverlaySyncVisible =
+      imagePrevOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(imagePrevOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < imagePrevOverlayVisibleUntilMs);
+    const boardPostOverlaySyncVisible =
+      boardPostOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(boardPostOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < boardPostOverlayVisibleUntilMs);
+    const prevBoardPostOverlaySyncVisible =
+      boardPostPrevOverlayVisibleUntilMs != null &&
+      (!Number.isFinite(boardPostPrevOverlayVisibleUntilMs) ||
+        streamOverlayEvaluationNowMs < boardPostPrevOverlayVisibleUntilMs);
+
+    const participantOverlayKey = buildStreamOverlayIdentityKey(
+      "participant",
+      participantOverlayInfo,
+      [participantOverlayInfo?.name, participantOverlayInfo?.title, participantOverlayInfo?.event]
+        .filter((value): value is string => Boolean(value))
+        .join("|"),
+    );
+    const prevParticipantOverlayKey = buildStreamOverlayIdentityKey(
+      "participant",
+      prevParticipantOverlayInfo,
+      [
+        prevParticipantOverlayInfo?.name,
+        prevParticipantOverlayInfo?.title,
+        prevParticipantOverlayInfo?.event,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join("|"),
+    );
+    const stbOverlayKey = buildStreamOverlayIdentityKey(
+      "stb",
+      stbOverlayInfo,
+      [stbOverlayInfo?.heading, stbOverlayInfo?.subHeading]
+        .filter((value): value is string => Boolean(value))
+        .join("|"),
+    );
+    const prevStbOverlayKey = buildStreamOverlayIdentityKey(
+      "stb",
+      prevStbOverlayInfo,
+      [prevStbOverlayInfo?.heading, prevStbOverlayInfo?.subHeading]
+        .filter((value): value is string => Boolean(value))
+        .join("|"),
+    );
+    const qrOverlayKey = buildStreamOverlayIdentityKey(
+      "qr",
+      qrCodeOverlayInfo,
+      [qrCodeOverlayInfo?.url, qrCodeOverlayInfo?.description]
+        .filter((value): value is string => Boolean(value))
+        .join("|"),
+    );
+    const prevQrOverlayKey = buildStreamOverlayIdentityKey(
+      "qr",
+      prevQrCodeOverlayInfo,
+      [prevQrCodeOverlayInfo?.url, prevQrCodeOverlayInfo?.description]
+        .filter((value): value is string => Boolean(value))
+        .join("|"),
+    );
+    const imageOverlayKey = buildStreamOverlayIdentityKey(
+      "image",
+      imageOverlayInfo,
+      imageOverlayInfo?.imageUrl,
+    );
+    const prevImageOverlayKey = buildStreamOverlayIdentityKey(
+      "image",
+      prevImageOverlayInfo,
+      prevImageOverlayInfo?.imageUrl,
+    );
+    const boardPostOverlayKey = buildStreamOverlayIdentityKey(
+      "board-post",
+      boardPostStreamInfo,
+      boardPostStreamInfo?.text,
+    );
+    const prevBoardPostOverlayKey = buildStreamOverlayIdentityKey(
+      "board-post",
+      prevBoardPostStreamInfo,
+      prevBoardPostStreamInfo?.text,
+    );
+
+    const isLocallyKeptAlive = (overlayKey: string | null) =>
+      overlayKey != null &&
+      (streamOverlayKeepAliveByKey[overlayKey] ?? 0) > streamOverlayEvaluationNowMs;
+
+    const participantOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
+      participantOverlayInfo?.duration,
+      getParticipantOverlayTotalVisibleMs(participantOverlayInfo),
+    );
+    const stbOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
+      stbOverlayInfo?.duration,
+      STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
+    );
+    const qrOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
+      qrCodeOverlayInfo?.duration,
+      STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
+    );
+    const imageOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
+      imageOverlayInfo?.duration,
+      STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
+    );
+    const boardPostOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
+      boardPostStreamInfo?.duration,
+      STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+    );
+
+    const showParticipantOverlay =
+      participantOverlaySyncVisible || isLocallyKeptAlive(participantOverlayKey);
+    const showPrevParticipantOverlay =
+      prevParticipantOverlaySyncVisible ||
+      isLocallyKeptAlive(prevParticipantOverlayKey);
+    const showStbOverlay =
+      stbOverlaySyncVisible || isLocallyKeptAlive(stbOverlayKey);
+    const showPrevStbOverlay =
+      prevStbOverlaySyncVisible || isLocallyKeptAlive(prevStbOverlayKey);
+    const showQrOverlay =
+      qrOverlaySyncVisible || isLocallyKeptAlive(qrOverlayKey);
+    const showPrevQrOverlay =
+      prevQrOverlaySyncVisible || isLocallyKeptAlive(prevQrOverlayKey);
+    const showImageOverlay =
+      imageOverlaySyncVisible || isLocallyKeptAlive(imageOverlayKey);
+    const showPrevImageOverlay =
+      prevImageOverlaySyncVisible || isLocallyKeptAlive(prevImageOverlayKey);
+    const showBoardPostOverlay =
+      boardPostOverlaySyncVisible || isLocallyKeptAlive(boardPostOverlayKey);
+    const showPrevBoardPostOverlay =
+      prevBoardPostOverlaySyncVisible ||
+      isLocallyKeptAlive(prevBoardPostOverlayKey);
+
     const streamOverlayHideUntilMs = useMemo(() => {
       const visibleUntilValues = [
-        getOverlayVisibleUntilMs({
-          hasData: hasParticipantOverlayData(participantOverlayInfo),
-          time: participantOverlayInfo?.time,
-          duration: participantOverlayInfo?.duration,
-          totalVisibleMs: getParticipantOverlayTotalVisibleMs(participantOverlayInfo),
-        }),
-        getOverlayVisibleUntilMs({
-          hasData: hasStbOverlayData(stbOverlayInfo),
-          time: stbOverlayInfo?.time,
-          duration: stbOverlayInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
-        }),
-        getOverlayVisibleUntilMs({
-          hasData: hasQrOverlayData(qrCodeOverlayInfo),
-          time: qrCodeOverlayInfo?.time,
-          duration: qrCodeOverlayInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
-        }),
-        getOverlayVisibleUntilMs({
-          hasData: hasImageOverlayData(imageOverlayInfo),
-          time: imageOverlayInfo?.time,
-          duration: imageOverlayInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
-        }),
-        getPrevOverlayVisibleUntilMs({
-          prevHasData: hasParticipantOverlayData(prevParticipantOverlayInfo),
-          prevTime: prevParticipantOverlayInfo?.time,
-          prevDuration: prevParticipantOverlayInfo?.duration,
-          prevTotalVisibleMs: getParticipantOverlayTotalVisibleMs(
-            prevParticipantOverlayInfo,
-          ),
-          currentTime: participantOverlayInfo?.time,
-          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        }),
-        getPrevOverlayVisibleUntilMs({
-          prevHasData: hasStbOverlayData(prevStbOverlayInfo),
-          prevTime: prevStbOverlayInfo?.time,
-          prevDuration: prevStbOverlayInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
-          currentTime: stbOverlayInfo?.time,
-          currentHasData: hasStbOverlayData(stbOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        }),
-        getPrevOverlayVisibleUntilMs({
-          prevHasData: hasQrOverlayData(prevQrCodeOverlayInfo),
-          prevTime: prevQrCodeOverlayInfo?.time,
-          prevDuration: prevQrCodeOverlayInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
-          currentTime: qrCodeOverlayInfo?.time,
-          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        }),
-        getPrevOverlayVisibleUntilMs({
-          prevHasData: hasImageOverlayData(prevImageOverlayInfo),
-          prevTime: prevImageOverlayInfo?.time,
-          prevDuration: prevImageOverlayInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
-          currentTime: imageOverlayInfo?.time,
-          currentHasData: hasImageOverlayData(imageOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        }),
-        getOverlayVisibleUntilMs({
-          hasData: hasBoardPostData(boardPostStreamInfo),
-          time: boardPostStreamInfo?.time,
-          duration: boardPostStreamInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
-        }),
-        getPrevOverlayVisibleUntilMs({
-          prevHasData: hasBoardPostData(prevBoardPostStreamInfo),
-          prevTime: prevBoardPostStreamInfo?.time,
-          prevDuration: prevBoardPostStreamInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
-          currentTime: boardPostStreamInfo?.time,
-          currentHasData: hasBoardPostData(boardPostStreamInfo),
-          nowMs: streamOverlayNowMs,
-        }),
+        participantOverlayVisibleUntilMs,
+        stbOverlayVisibleUntilMs,
+        qrOverlayVisibleUntilMs,
+        imageOverlayVisibleUntilMs,
+        participantPrevOverlayVisibleUntilMs,
+        stbPrevOverlayVisibleUntilMs,
+        qrPrevOverlayVisibleUntilMs,
+        imagePrevOverlayVisibleUntilMs,
+        boardPostOverlayVisibleUntilMs,
+        boardPostPrevOverlayVisibleUntilMs,
+        ...Object.values(streamOverlayKeepAliveByKey),
       ].filter((value): value is number => value != null);
 
       if (visibleUntilValues.length === 0) return null;
@@ -516,185 +751,77 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       return Math.max(...visibleUntilValues);
     }, [
-      boardPostStreamInfo,
-      imageOverlayInfo,
-      participantOverlayInfo,
-      prevBoardPostStreamInfo,
-      prevImageOverlayInfo,
-      prevParticipantOverlayInfo,
-      prevQrCodeOverlayInfo,
-      prevStbOverlayInfo,
-      qrCodeOverlayInfo,
-      stbOverlayInfo,
-      streamOverlayNowMs,
+      boardPostOverlayVisibleUntilMs,
+      boardPostPrevOverlayVisibleUntilMs,
+      imageOverlayVisibleUntilMs,
+      imagePrevOverlayVisibleUntilMs,
+      participantOverlayVisibleUntilMs,
+      participantPrevOverlayVisibleUntilMs,
+      qrOverlayVisibleUntilMs,
+      qrPrevOverlayVisibleUntilMs,
+      stbOverlayVisibleUntilMs,
+      stbPrevOverlayVisibleUntilMs,
+      streamOverlayKeepAliveByKey,
     ]);
 
     const visibleParticipantOverlayInfo = useMemo(
-      () =>
-        isOverlayVisibleAtMs({
-          hasData: hasParticipantOverlayData(participantOverlayInfo),
-          time: participantOverlayInfo?.time,
-          duration: participantOverlayInfo?.duration,
-          totalVisibleMs: getParticipantOverlayTotalVisibleMs(
-            participantOverlayInfo,
-          ),
-          nowMs: streamOverlayNowMs,
-        })
-          ? participantOverlayInfo
-          : undefined,
-      [participantOverlayInfo, streamOverlayNowMs],
+      () => (showParticipantOverlay ? participantOverlayInfo : undefined),
+      [participantOverlayInfo, showParticipantOverlay],
     );
 
     const visiblePrevParticipantOverlayInfo = useMemo(
-      () =>
-        isPrevOverlayVisibleAtMs({
-          prevHasData: hasParticipantOverlayData(prevParticipantOverlayInfo),
-          prevTime: prevParticipantOverlayInfo?.time,
-          prevDuration: prevParticipantOverlayInfo?.duration,
-          prevTotalVisibleMs: getParticipantOverlayTotalVisibleMs(
-            prevParticipantOverlayInfo,
-          ),
-          currentTime: participantOverlayInfo?.time,
-          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        })
-          ? prevParticipantOverlayInfo
-          : undefined,
-      [
-        participantOverlayInfo,
-        prevParticipantOverlayInfo,
-        streamOverlayNowMs,
-      ],
+      () => (showPrevParticipantOverlay ? prevParticipantOverlayInfo : undefined),
+      [prevParticipantOverlayInfo, showPrevParticipantOverlay],
     );
 
     const visibleStbOverlayInfo = useMemo(
-      () =>
-        isOverlayVisibleAtMs({
-          hasData: hasStbOverlayData(stbOverlayInfo),
-          time: stbOverlayInfo?.time,
-          duration: stbOverlayInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
-          nowMs: streamOverlayNowMs,
-        })
-          ? stbOverlayInfo
-          : undefined,
-      [stbOverlayInfo, streamOverlayNowMs],
+      () => (showStbOverlay ? stbOverlayInfo : undefined),
+      [showStbOverlay, stbOverlayInfo],
     );
 
     const visiblePrevStbOverlayInfo = useMemo(
-      () =>
-        isPrevOverlayVisibleAtMs({
-          prevHasData: hasStbOverlayData(prevStbOverlayInfo),
-          prevTime: prevStbOverlayInfo?.time,
-          prevDuration: prevStbOverlayInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
-          currentTime: stbOverlayInfo?.time,
-          currentHasData: hasStbOverlayData(stbOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        })
-          ? prevStbOverlayInfo
-          : undefined,
-      [prevStbOverlayInfo, stbOverlayInfo, streamOverlayNowMs],
+      () => (showPrevStbOverlay ? prevStbOverlayInfo : undefined),
+      [prevStbOverlayInfo, showPrevStbOverlay],
     );
 
     const visibleQrCodeOverlayInfo = useMemo(
-      () =>
-        isOverlayVisibleAtMs({
-          hasData: hasQrOverlayData(qrCodeOverlayInfo),
-          time: qrCodeOverlayInfo?.time,
-          duration: qrCodeOverlayInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
-          nowMs: streamOverlayNowMs,
-        })
-          ? qrCodeOverlayInfo
-          : undefined,
-      [qrCodeOverlayInfo, streamOverlayNowMs],
+      () => (showQrOverlay ? qrCodeOverlayInfo : undefined),
+      [qrCodeOverlayInfo, showQrOverlay],
     );
 
     const visiblePrevQrCodeOverlayInfo = useMemo(
-      () =>
-        isPrevOverlayVisibleAtMs({
-          prevHasData: hasQrOverlayData(prevQrCodeOverlayInfo),
-          prevTime: prevQrCodeOverlayInfo?.time,
-          prevDuration: prevQrCodeOverlayInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
-          currentTime: qrCodeOverlayInfo?.time,
-          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        })
-          ? prevQrCodeOverlayInfo
-          : undefined,
-      [prevQrCodeOverlayInfo, qrCodeOverlayInfo, streamOverlayNowMs],
+      () => (showPrevQrOverlay ? prevQrCodeOverlayInfo : undefined),
+      [prevQrCodeOverlayInfo, showPrevQrOverlay],
     );
 
     const visibleImageOverlayInfo = useMemo(
-      () =>
-        isOverlayVisibleAtMs({
-          hasData: hasImageOverlayData(imageOverlayInfo),
-          time: imageOverlayInfo?.time,
-          duration: imageOverlayInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
-          nowMs: streamOverlayNowMs,
-        })
-          ? imageOverlayInfo
-          : undefined,
-      [imageOverlayInfo, streamOverlayNowMs],
+      () => (showImageOverlay ? imageOverlayInfo : undefined),
+      [imageOverlayInfo, showImageOverlay],
     );
 
     const visiblePrevImageOverlayInfo = useMemo(
-      () =>
-        isPrevOverlayVisibleAtMs({
-          prevHasData: hasImageOverlayData(prevImageOverlayInfo),
-          prevTime: prevImageOverlayInfo?.time,
-          prevDuration: prevImageOverlayInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
-          currentTime: imageOverlayInfo?.time,
-          currentHasData: hasImageOverlayData(imageOverlayInfo),
-          nowMs: streamOverlayNowMs,
-        })
-          ? prevImageOverlayInfo
-          : undefined,
-      [imageOverlayInfo, prevImageOverlayInfo, streamOverlayNowMs],
+      () => (showPrevImageOverlay ? prevImageOverlayInfo : undefined),
+      [prevImageOverlayInfo, showPrevImageOverlay],
     );
 
     const visibleBoardPostStreamInfo = useMemo(
-      () =>
-        isOverlayVisibleAtMs({
-          hasData: hasBoardPostData(boardPostStreamInfo),
-          time: boardPostStreamInfo?.time,
-          duration: boardPostStreamInfo?.duration,
-          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
-          nowMs: streamOverlayNowMs,
-        })
-          ? boardPostStreamInfo
-          : undefined,
-      [boardPostStreamInfo, streamOverlayNowMs],
+      () => (showBoardPostOverlay ? boardPostStreamInfo : undefined),
+      [boardPostStreamInfo, showBoardPostOverlay],
     );
 
     const visiblePrevBoardPostStreamInfo = useMemo(
-      () =>
-        isPrevOverlayVisibleAtMs({
-          prevHasData: hasBoardPostData(prevBoardPostStreamInfo),
-          prevTime: prevBoardPostStreamInfo?.time,
-          prevDuration: prevBoardPostStreamInfo?.duration,
-          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
-          currentTime: boardPostStreamInfo?.time,
-          currentHasData: hasBoardPostData(boardPostStreamInfo),
-          nowMs: streamOverlayNowMs,
-        })
-          ? prevBoardPostStreamInfo
-          : undefined,
-      [boardPostStreamInfo, prevBoardPostStreamInfo, streamOverlayNowMs],
+      () => (showPrevBoardPostOverlay ? prevBoardPostStreamInfo : undefined),
+      [prevBoardPostStreamInfo, showPrevBoardPostOverlay],
     );
 
     const hasActiveStreamOverlay =
       streamOverlayHideUntilMs != null &&
       (streamOverlayHideUntilMs === Number.POSITIVE_INFINITY ||
-        streamOverlayNowMs < streamOverlayHideUntilMs);
+        streamOverlayEvaluationNowMs < streamOverlayHideUntilMs);
 
     useEffect(() => {
       if (!isStream || overlayPreviewMode) return;
-      const nowMs = Date.now();
+      const nowMs = serverNow();
       setStreamOverlayNowMs(nowMs);
 
       if (
@@ -706,7 +833,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       }
 
       const timeoutId = window.setTimeout(() => {
-        setStreamOverlayNowMs(Date.now());
+        setStreamOverlayNowMs(serverNow());
       }, Math.max(0, streamOverlayHideUntilMs - nowMs) + 20);
 
       return () => window.clearTimeout(timeoutId);
@@ -1062,6 +1189,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     shouldAnimate={shouldAnimate}
                     stbOverlayInfo={visibleStbOverlayInfo}
                     prevStbOverlayInfo={visiblePrevStbOverlayInfo}
+                    currentKeepAliveKey={stbOverlayKey}
+                    prevKeepAliveKey={prevStbOverlayKey}
+                    currentKeepAliveMs={stbOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
                     ref={containerRef}
                   />
                 )}
@@ -1073,6 +1205,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     shouldAnimate={shouldAnimate}
                     participantOverlayInfo={visibleParticipantOverlayInfo}
                     prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
+                    currentKeepAliveKey={participantOverlayKey}
+                    prevKeepAliveKey={prevParticipantOverlayKey}
+                    currentKeepAliveMs={participantOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
                     ref={containerRef}
                   />
                 )}
@@ -1084,6 +1221,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     shouldAnimate={shouldAnimate}
                     qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
                     prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
+                    currentKeepAliveKey={qrOverlayKey}
+                    prevKeepAliveKey={prevQrOverlayKey}
+                    currentKeepAliveMs={qrOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
                     ref={containerRef}
                   />
                 )}
@@ -1095,6 +1237,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     shouldAnimate={shouldAnimate}
                     imageOverlayInfo={visibleImageOverlayInfo}
                     prevImageOverlayInfo={visiblePrevImageOverlayInfo}
+                    currentKeepAliveKey={imageOverlayKey}
+                    prevKeepAliveKey={prevImageOverlayKey}
+                    currentKeepAliveMs={imageOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
                     ref={containerRef}
                   />
                 )}
@@ -1106,6 +1253,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     shouldAnimate={shouldAnimate}
                     boardPostStreamInfo={visibleBoardPostStreamInfo}
                     prevBoardPostStreamInfo={visiblePrevBoardPostStreamInfo}
+                    currentKeepAliveKey={boardPostOverlayKey}
+                    prevKeepAliveKey={prevBoardPostOverlayKey}
+                    currentKeepAliveMs={boardPostOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_BOARD_POST_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
                   />
                 )}
             </>

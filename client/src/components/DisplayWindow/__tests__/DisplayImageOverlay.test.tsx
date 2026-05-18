@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import type { MutableRefObject } from "react";
+import { act, render, screen } from "@testing-library/react";
 import DisplayImageOverlay from "../DisplayImageOverlay";
 import { useGSAP } from "@gsap/react";
 
@@ -55,13 +56,45 @@ jest.mock("../SharedOverlay", () => ({
 
 describe("DisplayImageOverlay", () => {
   const gsapCallbacks: Array<() => void> = [];
+  const originalImage = global.Image;
+  let imageInstances: Array<{
+    complete: boolean;
+    naturalWidth: number;
+    onload: null | (() => void);
+    onerror: null | (() => void);
+    src: string;
+  }>;
 
   beforeEach(() => {
     jest.clearAllMocks();
     gsapCallbacks.length = 0;
+    imageInstances = [];
+    global.Image = class MockImage {
+      complete = false;
+      naturalWidth = 0;
+      onload: null | (() => void) = null;
+      onerror: null | (() => void) = null;
+      private _src = "";
+
+      constructor() {
+        imageInstances.push(this as unknown as (typeof imageInstances)[number]);
+      }
+
+      get src() {
+        return this._src;
+      }
+
+      set src(value: string) {
+        this._src = value;
+      }
+    } as unknown as typeof Image;
     (useGSAP as jest.Mock).mockImplementation((cb: () => void) => {
       gsapCallbacks.push(cb);
     });
+  });
+
+  afterEach(() => {
+    global.Image = originalImage;
   });
 
   it("renders current and previous overlays by default", () => {
@@ -105,10 +138,12 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("builds animation timelines when shouldAnimate is true and image urls exist", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         imageOverlayInfo={{
@@ -132,10 +167,12 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("keeps the previous image overlay visible when the current type has switched away", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         imageOverlayInfo={{ id: "img-current" }}
@@ -156,10 +193,12 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("keeps a previous video overlay visible when switching away to a different overlay type", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         imageOverlayInfo={{ id: "video-current" }}
@@ -179,6 +218,48 @@ describe("DisplayImageOverlay", () => {
     expect(gsapToMock).toHaveBeenCalled();
   });
 
+  it("starts local keep-alive only after the current image is locally ready to animate", () => {
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
+    const onLocalKeepAliveStart = jest.fn();
+
+    render(
+      <DisplayImageOverlay
+        ref={containerRef}
+        width={30}
+        shouldAnimate
+        currentKeepAliveKey="image::current"
+        currentKeepAliveMs={5000}
+        onLocalKeepAliveStart={onLocalKeepAliveStart}
+        imageOverlayInfo={{
+          id: "img-1",
+          name: "Current",
+          imageUrl: "https://cdn/current.jpg",
+          duration: 2,
+        }}
+      />,
+    );
+
+    gsapCallbacks.forEach((cb) => cb());
+
+    expect(onLocalKeepAliveStart).not.toHaveBeenCalled();
+
+    act(() => {
+      imageInstances[0].naturalWidth = 1920;
+      imageInstances[0].complete = true;
+      imageInstances[0].onload?.();
+    });
+
+    gsapCallbacks.slice(1).forEach((cb) => cb());
+
+    expect(onLocalKeepAliveStart).toHaveBeenCalledWith(
+      "image::current",
+      5000,
+      "max",
+    );
+  });
+
   it("keeps current overlay dependencies stable when no previous overlay is provided", () => {
     const overlayInfo = {
       id: "img-stable",
@@ -196,7 +277,19 @@ describe("DisplayImageOverlay", () => {
 
     const secondCurrentConfig = (useGSAP as jest.Mock).mock.calls[2][1];
 
-    expect(firstCurrentConfig.dependencies).toEqual([overlayInfo]);
-    expect(secondCurrentConfig.dependencies).toEqual([overlayInfo]);
+    expect(firstCurrentConfig.dependencies).toEqual([
+      undefined,
+      undefined,
+      overlayInfo,
+      undefined,
+      undefined,
+    ]);
+    expect(secondCurrentConfig.dependencies).toEqual([
+      undefined,
+      undefined,
+      overlayInfo,
+      undefined,
+      undefined,
+    ]);
   });
 });

@@ -219,6 +219,17 @@ On the stream surface, overlays are intended to behave as a **temporary top laye
 - Preserve the intent of **current + previous** stream state for transitions. Outgoing overlays may remain briefly only to animate off cleanly; stale prior overlay data must not replay or keep the item layer hidden longer than intended.
 - Keep stream transitions **calm and readable**. The stream should favor smooth fade/slide exits and returns over abrupt flashes, flicker, or overly busy animation.
 - Do not break the distinction between **overlay activity** and **operator-controlled overlay-only mode**. Automatic overlay display may temporarily hide the item layer, while the explicit stream content toggle should remain a separate, deliberate operator action.
+- Stream overlay timing now has **two authorities** that must stay in sync:
+  - **Shared timing** for cross-device send/expiry/order (`serverNow()` plus `transitionSequence`)
+  - **Local render timing** for finishing an exit animation on the receiving device
+- Any local “finish the exit” grace must remain **render-only state** inside the display layer. Do not add synced Redux/Firebase writes when an exit animation completes.
+- When a stream overlay moves from **current** to **prev** because of a clear or handoff, any local keep-alive must **replace** the old full-lifetime window with the short prev-exit window. Otherwise the stream item layer can stay hidden until the original duration expires after an early clear.
+- New stream overlay types should be reviewed explicitly for:
+  - shared clock usage
+  - sequence-aware ordering
+  - current/prev handoff safety
+  - late-start local exit completion
+  - early-clear item-layer return timing
 
 For deep context on the overlay state machine, Firebase sync race conditions, and the checklist for adding new overlay types, use `/overlay`.
 

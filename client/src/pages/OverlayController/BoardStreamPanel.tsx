@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useContext, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Airplay, ChevronDown } from "lucide-react";
 import Button from "../../components/Button/Button";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
@@ -8,20 +8,30 @@ import { useDispatch, useSelector } from "../../hooks";
 import { updateBoardPostStreamInfo } from "../../store/presentationSlice";
 import { useBoardData } from "../../boards/useBoardData";
 import { useBoardEventStream } from "../../boards/useBoardEventStream";
+import { useRestreamSession } from "../../boards/useRestreamSession";
 import {
   filterHighlightedBoardPosts,
   getBoardAuthorNameColorClass,
   getBoardAuthorNameHexColor,
   getStoredBoardDisplayAliasId,
 } from "../../boards/boardUtils";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "@/utils/cnHelper";
-import { DBBoardPost } from "../../types";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
+
+type HighlightedPostItem = {
+  id: string;
+  author: string;
+  authorId?: string;
+  text: string;
+  source: "board" | "restream";
+  timestamp: number;
+};
 
 const DEFAULT_BG_COLOR = "#32353beb";
 const DEFAULT_FONT_SIZE = 1.5;
@@ -149,10 +159,13 @@ const BoardStreamPanel = () => {
     (state) => state.presentation.isStreamTransmitting,
   );
 
+  const { churchId } = useContext(GlobalInfoContext) ?? {};
   const aliasId = getStoredBoardDisplayAliasId();
 
   const { posts, hasLoadedOnce, connectionStatus, loadBoard, loadPosts } =
     useBoardData(aliasId);
+
+  const { messages: restreamMessages } = useRestreamSession(churchId ?? "");
 
   useBoardEventStream(aliasId, (event) => {
     if (event.type === "connected") return;
@@ -167,12 +180,31 @@ const BoardStreamPanel = () => {
     }
   });
 
-  const highlightedPosts = useMemo(
-    () => filterHighlightedBoardPosts(posts),
-    [posts],
-  );
+  const highlightedItems = useMemo((): HighlightedPostItem[] => {
+    const boardItems: HighlightedPostItem[] = filterHighlightedBoardPosts(posts).map((post) => ({
+      id: post._id,
+      author: post.author,
+      authorId: post.authorId,
+      text: post.text,
+      source: "board",
+      timestamp: post.timestamp,
+    }));
+    const restreamItems: HighlightedPostItem[] = restreamMessages
+      .filter((m) => m.isHighlighted && !m.hidden && m.kind === "viewer_message")
+      .map((m) => ({
+        id: m.id,
+        author: m.author,
+        text: m.text,
+        source: "restream",
+        timestamp: m.postedAt ?? 0,
+      }));
+    return [...boardItems, ...restreamItems].sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+      return a.id.localeCompare(b.id);
+    });
+  }, [posts, restreamMessages]);
 
-  const [selectedPost, setSelectedPost] = useState<DBBoardPost | null>(null);
+  const [selectedPost, setSelectedPost] = useState<HighlightedPostItem | null>(null);
   const [backgroundColor, setBackgroundColor] = useState(DEFAULT_BG_COLOR);
   const [fontSize, setFontSize] = useState<number>(DEFAULT_FONT_SIZE);
   const [duration, setDuration] = useState<number>(DEFAULT_DURATION);
@@ -190,13 +222,13 @@ const BoardStreamPanel = () => {
       }
       : undefined;
 
-  const handleSend = (post: DBBoardPost) => {
-    setSelectedPost(post);
+  const handleSend = (item: HighlightedPostItem) => {
+    setSelectedPost(item);
     dispatch(
       updateBoardPostStreamInfo({
-        author: post.author,
-        authorHexColor: getBoardAuthorNameHexColor(post),
-        text: post.text,
+        author: item.author,
+        authorHexColor: getBoardAuthorNameHexColor(item),
+        text: item.text,
         backgroundColor,
         fontSize,
         duration,
@@ -227,7 +259,7 @@ const BoardStreamPanel = () => {
       );
     }
 
-    if (highlightedPosts.length === 0) {
+    if (highlightedItems.length === 0) {
       return (
         <div className="flex flex-1 items-center justify-center p-6 text-center text-slate-400">
           <p className="text-sm">
@@ -239,11 +271,11 @@ const BoardStreamPanel = () => {
 
     return (
       <div className="flex flex-col gap-1 overflow-y-auto p-2">
-        {highlightedPosts.map((post) => {
-          const isSelected = selectedPost?._id === post._id;
+        {highlightedItems.map((item) => {
+          const isSelected = selectedPost?.id === item.id;
           return (
             <li
-              key={post._id}
+              key={item.id}
               className={cn(
                 "flex w-full overflow-clip rounded-md leading-3 border-l-4 transition-colors border-t border-r border-b",
                 isSelected
@@ -257,18 +289,25 @@ const BoardStreamPanel = () => {
                 className="flex-col flex-1 h-full leading-4 items-start font-normal"
                 padding="px-2 py-1.5"
                 gap="gap-1"
-                onClick={() => setSelectedPost(post)}
+                onClick={() => setSelectedPost(item)}
               >
-                <p
-                  className={cn(
-                    "text-xs font-semibold",
-                    getBoardAuthorNameColorClass(post),
+                <div className="flex items-center gap-1.5">
+                  <p
+                    className={cn(
+                      "text-xs font-semibold",
+                      getBoardAuthorNameColorClass(item),
+                    )}
+                  >
+                    {item.author}
+                  </p>
+                  {item.source === "restream" && (
+                    <span className="rounded-full bg-cyan-500/15 px-1.5 py-0.5 text-xs font-semibold text-cyan-100">
+                      Restream
+                    </span>
                   )}
-                >
-                  {post.author}
-                </p>
+                </div>
                 <p className="mt-0.5 text-sm text-slate-200 whitespace-normal">
-                  {post.text}
+                  {item.text}
                 </p>
               </Button>
               <Button
@@ -282,7 +321,7 @@ const BoardStreamPanel = () => {
                 }
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleSend(post);
+                  handleSend(item);
                 }}
               >
                 Send

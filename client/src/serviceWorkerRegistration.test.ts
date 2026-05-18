@@ -122,4 +122,32 @@ describe("checkForUpdate", () => {
 
     await expect(updatePromise).resolves.toBe("updated");
   });
+
+  it("returns restartRequired when an update is found but does not take control", async () => {
+    const registration = new MockServiceWorkerRegistration();
+    const waitingWorker = new MockServiceWorker("installed");
+    registration.waiting = waitingWorker as unknown as ServiceWorker;
+
+    const serviceWorkerContainer = new EventTarget() as ServiceWorkerContainer;
+    Object.defineProperty(serviceWorkerContainer, "getRegistration", {
+      value: jest.fn().mockResolvedValue(registration),
+    });
+
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: serviceWorkerContainer,
+    });
+
+    const updatePromise = serviceWorkerRegistration.checkForUpdate();
+    await Promise.resolve();
+
+    expect(waitingWorker.postMessage).toHaveBeenCalledWith({
+      type: "SKIP_WAITING",
+    });
+
+    jest.advanceTimersByTime(8000);
+    await Promise.resolve();
+
+    await expect(updatePromise).resolves.toBe("restartRequired");
+  });
 });

@@ -9,6 +9,8 @@ import {
 } from "../types";
 import {
   deleteUnusedBibleItems,
+  deleteUnusedHeadings,
+  ensureCreditsIndexDoc,
   getAllCreditDocsForOutline,
   getAllCreditsHistory,
   getCreditUsageByList,
@@ -17,6 +19,7 @@ import {
   getCreditsByIds,
   getOverlayUsageByList,
   getOverlaysByIds,
+  isLegacyPreferencesDoc,
   migrateDocTypes,
   migrateFontSizesToDefaults,
   migrateFontSizesToPixels,
@@ -25,8 +28,10 @@ import {
   migrateSplitPreferencesDocs,
   loadPreferencesBundle,
   putCreditDoc,
+  putCreditHistoryDoc,
   putCreditHistoryDocs,
   putOverlayHistoryDoc,
+  putOverlayHistoryDocs,
   removeCreditHistoryDoc,
   removeOverlayHistoryDoc,
 } from "./dbUtils";
@@ -616,6 +621,55 @@ describe("dbUtils", () => {
     expect(biblePut.slides[1].boxes[2].fontSize).toBe(90);
   });
 
+  it("migrateFontSizesToDefaults handles free and timer types", async () => {
+    const db = createDb();
+    db.allDocs.mockResolvedValue({
+      rows: [
+        {
+          doc: {
+            _id: "free-1",
+            name: "Announcement",
+            type: "free",
+            slides: [{ boxes: [{ fontSize: 1 }] }],
+            arrangements: [],
+          },
+        },
+        {
+          doc: {
+            _id: "timer-1",
+            name: "Timer",
+            type: "timer",
+            slides: [{ boxes: [{ fontSize: 1 }] }],
+            arrangements: [],
+          },
+        },
+      ],
+    });
+
+    await migrateFontSizesToDefaults(db as unknown as PouchDB.Database);
+
+    const freePut = db.put.mock.calls[0][0];
+    expect(freePut.slides[0].boxes[0].fontSize).toBe(108);
+
+    const timerPut = db.put.mock.calls[1][0];
+    expect(timerPut.slides[0].boxes[0].fontSize).toBe(180);
+  });
+
+  it("migrateFontSizesToDefaults returns zeroes when db is falsy", async () => {
+    const result = await migrateFontSizesToDefaults(null as any);
+    expect(result).toEqual({ migratedCount: 0, errorCount: 0 });
+  });
+
+  it("migrateFontSizesToPixels returns zeroes when db is falsy", async () => {
+    const result = await migrateFontSizesToPixels(null as any);
+    expect(result).toEqual({ migratedCount: 0, errorCount: 0 });
+  });
+
+  it("migrateDocTypes returns zeroes when db is falsy", async () => {
+    const result = await migrateDocTypes(null as any);
+    expect(result).toEqual({ updatedCount: 0, errorCount: 0, skippedCount: 0 });
+  });
+
   it("migrates doc types and skips unchanged or design docs", async () => {
     const db = createDb();
     db.allDocs.mockResolvedValue({
@@ -855,6 +909,167 @@ describe("dbUtils", () => {
       docType: "preferences",
     });
     expect(byId.get("preferences")).not.toHaveProperty("quickLinks");
+  });
+
+  it("isLegacyPreferencesDoc returns true when doc has quickLinks array", () => {
+    expect(isLegacyPreferencesDoc({ quickLinks: [] } as any)).toBe(true);
+    expect(isLegacyPreferencesDoc({ quickLinks: [{ id: "q1" }] } as any)).toBe(true);
+  });
+
+  it("isLegacyPreferencesDoc returns false when quickLinks is absent or non-array", () => {
+    expect(isLegacyPreferencesDoc({} as any)).toBe(false);
+    expect(isLegacyPreferencesDoc({ quickLinks: "bad" } as any)).toBe(false);
+  });
+
+  it("getOverlaysByIds returns empty array immediately for empty input", async () => {
+    const db = createDb();
+    const result = await getOverlaysByIds(db as unknown as PouchDB.Database, []);
+    expect(result).toEqual([]);
+    expect(db.allDocs).not.toHaveBeenCalled();
+  });
+
+  it("getCreditsByIds returns empty array immediately for empty input", async () => {
+    const db = createDb();
+    const result = await getCreditsByIds(db as unknown as PouchDB.Database, "ol-1", []);
+    expect(result).toEqual([]);
+    expect(db.allDocs).not.toHaveBeenCalled();
+  });
+
+  it("deleteUnusedHeadings removes unused headings and keeps used ones", async () => {
+    const db = createDb();
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "ItemLists") return { itemLists: [{ _id: "l1", name: "L1" }] };
+      if (id === "l1")
+        return { items: [{ _id: "heading-kept", type: "heading" }] };
+      if (id === "heading-removed") return { _id: "heading-removed", _rev: "1-a" };
+      return {};
+    });
+    const allItems = {
+      _id: "allItems",
+      items: [
+        { _id: "heading-kept", type: "heading" },
+        { _id: "heading-removed", type: "heading" },
+        { _id: "song-1", type: "song" },
+      ],
+    } as any;
+    await deleteUnusedHeadings({ db: db as unknown as PouchDB.Database, allItems });
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({ items: expect.arrayContaining([
+        expect.objectContaining({ _id: "heading-kept" }),
+        expect.objectContaining({ _id: "song-1" }),
+      ]) }),
+    );
+    expect(db.remove).toHaveBeenCalled();
+  });
+
+  it("ensureCreditsIndexDoc creates index when absent", async () => {
+    const db = createDb();
+    db.get.mockRejectedValue({ status: 404 });
+    db.put.mockResolvedValue({ ok: true });
+    await ensureCreditsIndexDoc(db as unknown as PouchDB.Database, "ol-1");
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({ creditIds: [], outlineId: "ol-1" }),
+    );
+  });
+
+  it("ensureCreditsIndexDoc is a no-op when index already exists", async () => {
+    const db = createDb();
+    db.get.mockResolvedValue({ _id: getCreditsDocId("ol-1") });
+    await ensureCreditsIndexDoc(db as unknown as PouchDB.Database, "ol-1");
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("putCreditHistoryDoc creates a new doc when it does not exist", async () => {
+    const db = createDb();
+    db.get.mockRejectedValue({ status: 404 });
+    db.put.mockResolvedValue({ ok: true });
+    await putCreditHistoryDoc(db as unknown as PouchDB.Database, "Speakers", ["Alice"]);
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        heading: "Speakers",
+        lines: ["Alice"],
+        docType: "credit-history",
+      }),
+    );
+  });
+
+  it("putCreditHistoryDoc updates an existing doc", async () => {
+    const db = createDb();
+    const id = getCreditHistoryDocId("Speakers");
+    db.get.mockResolvedValue({ _id: id, _rev: "1-a", heading: "Speakers", lines: ["Old"] });
+    db.put.mockResolvedValue({ ok: true });
+    await putCreditHistoryDoc(db as unknown as PouchDB.Database, "Speakers", ["New"]);
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({ lines: ["New"], _rev: "1-a" }),
+    );
+  });
+
+  it("putOverlayHistoryDocs skips keys with empty values array", async () => {
+    const db = createDb();
+    db.get.mockRejectedValue({ status: 404 });
+    db.put.mockResolvedValue({ ok: true });
+    await putOverlayHistoryDocs(
+      db as unknown as PouchDB.Database,
+      { "participant.name": [], "qr-code.url": ["https://example.com"] },
+      ["participant.name", "qr-code.url"],
+    );
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({ values: ["https://example.com"] }),
+    );
+  });
+
+  it("getAllCreditDocsForOutline includes docs with no docType (legacy)", async () => {
+    const db = createDb();
+    const outlineId = "ol-2";
+    const prefix = `${CREDITS_OUTLINE_INDEX_PREFIX}${encodeURIComponent(outlineId)}-credit-`;
+    db.allDocs.mockResolvedValue({
+      rows: [
+        { doc: { _id: `${prefix}a`, id: "a", heading: "H" } }, // no docType
+        { doc: null }, // null row
+        { doc: { _id: `${prefix}b`, id: null } }, // null id
+      ],
+    });
+    const result = await getAllCreditDocsForOutline(
+      db as unknown as PouchDB.Database,
+      outlineId,
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("a");
+  });
+
+  it("loadPreferencesBundle throws when preferences doc is missing", async () => {
+    const db = createDb();
+    db.get.mockRejectedValue({ status: 404 });
+    await expect(
+      loadPreferencesBundle(db as unknown as PouchDB.Database),
+    ).rejects.toThrow("Missing or invalid preferences document");
+  });
+
+  it("loadPreferencesBundle falls back to defaults when no split docs and no legacy fields", async () => {
+    const db = createDb();
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "preferences") {
+        return {
+          _id: "preferences",
+          preferences: { defaultSlidesPerRow: 5 },
+          docType: "preferences",
+        };
+      }
+      throw createNotFoundError();
+    });
+    const bundle = await loadPreferencesBundle(db as unknown as PouchDB.Database);
+    expect(bundle.quickLinks).toEqual([]);
+    expect(bundle.monitorSettings.showClock).toBe(true);
+    expect(bundle.mediaRouteFolders).toEqual({});
+  });
+
+  it("migrateSplitPreferencesDocs returns skipped when no preferences doc exists", async () => {
+    const db = createDb();
+    db.get.mockRejectedValue({ status: 404 });
+    const result = await migrateSplitPreferencesDocs(db as unknown as PouchDB.Database);
+    expect(result.status).toBe("skipped");
+    expect(result.puts).toBe(0);
   });
 
   it("migrateSplitPreferencesDocs is idempotent when preferences is already slim", async () => {

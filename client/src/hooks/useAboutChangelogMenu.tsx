@@ -5,6 +5,11 @@ import ChangelogModal from "../components/ChangelogModal/ChangelogModal";
 import AboutModal from "../components/AboutModal/AboutModal";
 import type { MenuItemType } from "../types";
 import { useElectronWindows } from "./useElectronWindows";
+import {
+  getBuildTimeVersion,
+  getServerVersion,
+  isNewerVersion,
+} from "../utils/versionUtils";
 
 export const useAboutChangelogMenu = (): {
   aboutChangelogMenuItems: MenuItemType[];
@@ -46,6 +51,32 @@ export const useAboutChangelogMenu = (): {
     return () => {
       cancelled = true;
       unsubscribe?.();
+    };
+  }, [isElectron]);
+
+  useEffect(() => {
+    if (isElectron) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void getServerVersion().then((serverVersion) => {
+      if (cancelled) {
+        return;
+      }
+
+      const buildVersion = getBuildTimeVersion();
+      if (serverVersion && isNewerVersion(serverVersion, buildVersion)) {
+        setUpdateReadyVersion(serverVersion);
+        return;
+      }
+
+      setUpdateReadyVersion("");
+    });
+
+    return () => {
+      cancelled = true;
     };
   }, [isElectron]);
 

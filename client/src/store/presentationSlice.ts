@@ -8,6 +8,7 @@ import {
   Presentation,
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import { serverNow } from "../utils/serverTime";
 
 /** Copy slide so prev and current are different refs for crossfade (boxes/prevBoxes differ). */
 const copyStreamSlide = (slide: ItemSlideType | null): ItemSlideType | null =>
@@ -17,6 +18,8 @@ const copyStreamSlide = (slide: ItemSlideType | null): ItemSlideType | null =>
         boxes: slide.boxes?.map((b) => ({ ...b })) ?? [],
       }
     : null;
+
+const getSynchronizedStreamNow = () => serverNow();
 
 type PresentationState = {
   isProjectorTransmitting: boolean;
@@ -65,12 +68,22 @@ const initialState: PresentationState = {
     displayType: "stream",
     participantOverlayInfo: {
       name: "",
-      time: Date.now(),
+      time: getSynchronizedStreamNow(),
       id: generateRandomId(),
     },
-    stbOverlayInfo: { heading: "", time: Date.now(), id: generateRandomId() },
-    qrCodeOverlayInfo: { time: Date.now(), id: generateRandomId() },
-    imageOverlayInfo: { time: Date.now(), id: generateRandomId() },
+    stbOverlayInfo: {
+      heading: "",
+      time: getSynchronizedStreamNow(),
+      id: generateRandomId(),
+    },
+    qrCodeOverlayInfo: {
+      time: getSynchronizedStreamNow(),
+      id: generateRandomId(),
+    },
+    imageOverlayInfo: {
+      time: getSynchronizedStreamNow(),
+      id: generateRandomId(),
+    },
     formattedTextDisplayInfo: {
       text: "",
       time: Date.now(),
@@ -79,7 +92,7 @@ const initialState: PresentationState = {
       author: "",
       authorHexColor: "#e7e5e4",
       text: "",
-      time: Date.now(),
+      time: getSynchronizedStreamNow(),
     },
   },
 };
@@ -113,7 +126,6 @@ const hasQrOverlayData = (overlay?: OverlayInfo) =>
 
 const hasImageOverlayData = (overlay?: OverlayInfo) =>
   Boolean(overlay?.imageUrl);
-
 /** Sync echo of the overlay already applied locally — skip to avoid double prev/current. */
 const isSameImageOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
   Boolean(
@@ -122,6 +134,7 @@ const isSameImageOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     hasImageOverlayData(cur) &&
     hasImageOverlayData(next) &&
     cur.time === next.time &&
+    cur.transitionSequence === next.transitionSequence &&
     cur.id === next.id &&
     cur.imageUrl === next.imageUrl,
   );
@@ -133,6 +146,7 @@ const isSameParticipantOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     hasParticipantOverlayData(cur) &&
     hasParticipantOverlayData(next) &&
     cur.time === next.time &&
+    cur.transitionSequence === next.transitionSequence &&
     cur.id === next.id &&
     cur.name === next.name &&
     cur.title === next.title &&
@@ -146,6 +160,7 @@ const isSameStbOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     hasStbOverlayData(cur) &&
     hasStbOverlayData(next) &&
     cur.time === next.time &&
+    cur.transitionSequence === next.transitionSequence &&
     cur.id === next.id &&
     cur.heading === next.heading &&
     cur.subHeading === next.subHeading,
@@ -158,6 +173,7 @@ const isSameQrOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     hasQrOverlayData(cur) &&
     hasQrOverlayData(next) &&
     cur.time === next.time &&
+    cur.transitionSequence === next.transitionSequence &&
     cur.id === next.id &&
     cur.url === next.url &&
     cur.description === next.description,
@@ -169,7 +185,7 @@ const getNextTimestamp = (...times: Array<number | undefined>) => {
     return Math.max(highest, time);
   }, 0);
 
-  return Math.max(Date.now(), highestKnownTime + 1);
+  return Math.max(getSynchronizedStreamNow(), highestKnownTime + 1);
 };
 
 const getNextStreamOverlayTimestamp = (state: PresentationState) =>
@@ -181,36 +197,71 @@ const getNextStreamOverlayTimestamp = (state: PresentationState) =>
     state.streamInfo.boardPostStreamInfo?.time,
   );
 
-const emptyParticipantOverlay = (t: number): OverlayInfo => ({
+const getNextStreamOverlayTransitionSequence = (state: PresentationState) =>
+  [
+    state.streamInfo.participantOverlayInfo?.transitionSequence,
+    state.streamInfo.stbOverlayInfo?.transitionSequence,
+    state.streamInfo.qrCodeOverlayInfo?.transitionSequence,
+    state.streamInfo.imageOverlayInfo?.transitionSequence,
+    state.streamInfo.boardPostStreamInfo?.transitionSequence,
+    state.prevStreamInfo.participantOverlayInfo?.transitionSequence,
+    state.prevStreamInfo.stbOverlayInfo?.transitionSequence,
+    state.prevStreamInfo.qrCodeOverlayInfo?.transitionSequence,
+    state.prevStreamInfo.imageOverlayInfo?.transitionSequence,
+    state.prevStreamInfo.boardPostStreamInfo?.transitionSequence,
+  ].reduce<number>((highest, sequence) => {
+    if (sequence == null || !Number.isFinite(sequence)) return highest;
+    return Math.max(highest, sequence);
+  }, 0) + 1;
+
+const emptyParticipantOverlay = (
+  t: number,
+  transitionSequence?: number,
+): OverlayInfo => ({
   name: "",
   time: t,
+  transitionSequence,
   id: generateRandomId(),
 });
 
-const emptyStbOverlay = (t: number): OverlayInfo => ({
+const emptyStbOverlay = (
+  t: number,
+  transitionSequence?: number,
+): OverlayInfo => ({
   heading: "",
   subHeading: "",
   time: t,
+  transitionSequence,
   id: generateRandomId(),
 });
 
-const emptyQrOverlay = (t: number): OverlayInfo => ({
+const emptyQrOverlay = (t: number, transitionSequence?: number): OverlayInfo => ({
   description: "",
   time: t,
+  transitionSequence,
   id: generateRandomId(),
 });
 
-const emptyImageOverlay = (t: number): OverlayInfo => ({
+const emptyImageOverlay = (
+  t: number,
+  transitionSequence?: number,
+): OverlayInfo => ({
   name: "",
   imageUrl: "",
   time: t,
+  transitionSequence,
   id: generateRandomId(),
 });
 
 const isEmptySlotFromSameTransition = (
   overlay: OverlayInfo | undefined,
   t: number,
-) => Boolean(overlay?.time != null && overlay.time === t);
+  transitionSequence?: number,
+) =>
+  transitionSequence != null
+    ? overlay?.transitionSequence != null &&
+      overlay.transitionSequence === transitionSequence
+    : Boolean(overlay?.time != null && overlay.time === t);
 
 /**
  * Clears `prevStreamInfo` overlay slots other than `keep` before a live send.
@@ -222,6 +273,7 @@ const clearStalePrevStreamOverlaySlotsExcept = (
   state: PresentationState,
   keep: "participant" | "stb" | "qr" | "image" | "boardPost",
   t: number,
+  transitionSequence?: number,
 ) => {
   const { streamInfo, prevStreamInfo } = state;
   // Only clear a prev slot when stream has no live data for that type. Otherwise
@@ -232,33 +284,51 @@ const clearStalePrevStreamOverlaySlotsExcept = (
   if (
     keep !== "participant" &&
     !hasParticipantOverlayData(streamInfo.participantOverlayInfo) &&
-    !isEmptySlotFromSameTransition(streamInfo.participantOverlayInfo, t)
+    !isEmptySlotFromSameTransition(
+      streamInfo.participantOverlayInfo,
+      t,
+      transitionSequence,
+    )
   ) {
-    prevStreamInfo.participantOverlayInfo = emptyParticipantOverlay(t);
+    prevStreamInfo.participantOverlayInfo = emptyParticipantOverlay(
+      t,
+      transitionSequence,
+    );
   }
   if (
     keep !== "stb" &&
     !hasStbOverlayData(streamInfo.stbOverlayInfo) &&
-    !isEmptySlotFromSameTransition(streamInfo.stbOverlayInfo, t)
+    !isEmptySlotFromSameTransition(streamInfo.stbOverlayInfo, t, transitionSequence)
   ) {
-    prevStreamInfo.stbOverlayInfo = emptyStbOverlay(t);
+    prevStreamInfo.stbOverlayInfo = emptyStbOverlay(t, transitionSequence);
   }
   if (
     keep !== "qr" &&
     !hasQrOverlayData(streamInfo.qrCodeOverlayInfo) &&
-    !isEmptySlotFromSameTransition(streamInfo.qrCodeOverlayInfo, t)
+    !isEmptySlotFromSameTransition(
+      streamInfo.qrCodeOverlayInfo,
+      t,
+      transitionSequence,
+    )
   ) {
-    prevStreamInfo.qrCodeOverlayInfo = emptyQrOverlay(t);
+    prevStreamInfo.qrCodeOverlayInfo = emptyQrOverlay(t, transitionSequence);
   }
   if (
     keep !== "image" &&
     !hasImageOverlayData(streamInfo.imageOverlayInfo) &&
-    !isEmptySlotFromSameTransition(streamInfo.imageOverlayInfo, t)
+    !isEmptySlotFromSameTransition(
+      streamInfo.imageOverlayInfo,
+      t,
+      transitionSequence,
+    )
   ) {
-    prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t);
+    prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t, transitionSequence);
   }
   if (keep !== "boardPost" && !hasBoardPostData(streamInfo.boardPostStreamInfo)) {
-    prevStreamInfo.boardPostStreamInfo = emptyBoardPostStreamInfo(t);
+    prevStreamInfo.boardPostStreamInfo = emptyBoardPostStreamInfo(
+      t,
+      transitionSequence,
+    );
   }
 };
 
@@ -267,31 +337,42 @@ const clearStreamOverlaysExcept = (
   si: Presentation,
   keep: "participant" | "stb" | "qr" | "image" | "boardPost",
   t: number,
+  transitionSequence?: number,
 ) => {
   if (keep !== "participant")
-    si.participantOverlayInfo = emptyParticipantOverlay(t);
-  if (keep !== "stb") si.stbOverlayInfo = emptyStbOverlay(t);
-  if (keep !== "qr") si.qrCodeOverlayInfo = emptyQrOverlay(t);
-  if (keep !== "image") si.imageOverlayInfo = emptyImageOverlay(t);
-  if (keep !== "boardPost") si.boardPostStreamInfo = emptyBoardPostStreamInfo(t);
+    si.participantOverlayInfo = emptyParticipantOverlay(t, transitionSequence);
+  if (keep !== "stb") si.stbOverlayInfo = emptyStbOverlay(t, transitionSequence);
+  if (keep !== "qr") si.qrCodeOverlayInfo = emptyQrOverlay(t, transitionSequence);
+  if (keep !== "image")
+    si.imageOverlayInfo = emptyImageOverlay(t, transitionSequence);
+  if (keep !== "boardPost")
+    si.boardPostStreamInfo = emptyBoardPostStreamInfo(t, transitionSequence);
 };
 
-const emptyBoardPostStreamInfo = (t: number): BoardPostStreamInfo => ({
+const emptyBoardPostStreamInfo = (
+  t: number,
+  transitionSequence?: number,
+): BoardPostStreamInfo => ({
   author: "",
   authorHexColor: "#e7e5e4",
   text: "",
   time: t,
+  transitionSequence,
 });
 
 const hasBoardPostData = (info?: BoardPostStreamInfo) =>
   Boolean(info?.text?.trim());
 
-const clearAllStreamOverlays = (si: Presentation, t: number) => {
-  si.participantOverlayInfo = emptyParticipantOverlay(t);
-  si.stbOverlayInfo = emptyStbOverlay(t);
-  si.qrCodeOverlayInfo = emptyQrOverlay(t);
-  si.imageOverlayInfo = emptyImageOverlay(t);
-  si.boardPostStreamInfo = emptyBoardPostStreamInfo(t);
+const clearAllStreamOverlays = (
+  si: Presentation,
+  t: number,
+  transitionSequence?: number,
+) => {
+  si.participantOverlayInfo = emptyParticipantOverlay(t, transitionSequence);
+  si.stbOverlayInfo = emptyStbOverlay(t, transitionSequence);
+  si.qrCodeOverlayInfo = emptyQrOverlay(t, transitionSequence);
+  si.imageOverlayInfo = emptyImageOverlay(t, transitionSequence);
+  si.boardPostStreamInfo = emptyBoardPostStreamInfo(t, transitionSequence);
 };
 
 const preserveClearedStreamOverlaysForTransition = (
@@ -332,6 +413,7 @@ const clearStreamNonSlideItemData = (si: Presentation, t: number) => {
 function clearAllStreamOverlaysForTransition(state: PresentationState) {
   const { streamInfo, prevStreamInfo } = state;
   const t = getNextStreamOverlayTimestamp(state);
+  const transitionSequence = getNextStreamOverlayTransitionSequence(state);
 
   const snapParticipant = streamInfo.participantOverlayInfo;
   const snapStb = streamInfo.stbOverlayInfo;
@@ -352,32 +434,32 @@ function clearAllStreamOverlaysForTransition(state: PresentationState) {
   prevStreamInfo.participantOverlayInfo = liveParticipant
     ? prevParticipant?.id && prevParticipant.id === snapParticipant?.id
       ? prevParticipant
-      : { ...emptyParticipantOverlay(t), ...snapParticipant }
-    : emptyParticipantOverlay(t);
+      : { ...emptyParticipantOverlay(t, transitionSequence), ...snapParticipant }
+    : emptyParticipantOverlay(t, transitionSequence);
 
   prevStreamInfo.stbOverlayInfo = liveStb
     ? prevStb?.id && prevStb.id === snapStb?.id
       ? prevStb
-      : { ...emptyStbOverlay(t), ...snapStb }
-    : emptyStbOverlay(t);
+      : { ...emptyStbOverlay(t, transitionSequence), ...snapStb }
+    : emptyStbOverlay(t, transitionSequence);
 
   prevStreamInfo.qrCodeOverlayInfo = liveQr
     ? prevQr?.id && prevQr.id === snapQr?.id
       ? prevQr
-      : { ...emptyQrOverlay(t), ...snapQr }
-    : emptyQrOverlay(t);
+      : { ...emptyQrOverlay(t, transitionSequence), ...snapQr }
+    : emptyQrOverlay(t, transitionSequence);
 
   prevStreamInfo.boardPostStreamInfo = liveBoardPost
     ? snapBoardPost
-    : emptyBoardPostStreamInfo(t);
+    : emptyBoardPostStreamInfo(t, transitionSequence);
 
   prevStreamInfo.imageOverlayInfo = liveImage
     ? prevImage?.id && prevImage.id === snapImage?.id
       ? prevImage
-      : { ...emptyImageOverlay(t), ...snapImage }
-    : emptyImageOverlay(t);
+      : { ...emptyImageOverlay(t, transitionSequence), ...snapImage }
+    : emptyImageOverlay(t, transitionSequence);
 
-  clearAllStreamOverlays(streamInfo, t);
+  clearAllStreamOverlays(streamInfo, t, transitionSequence);
 }
 
 const applyStreamOverlayOnlyToggle = (
@@ -470,7 +552,6 @@ export const presentationSlice = createSlice({
     },
     /** Overlay operator: remove all stream overlays; slide/bible/formatted unchanged. */
     clearStreamOverlaysOnly: (state) => {
-      if (!state.isStreamTransmitting) return;
       if (!hasActiveStreamOverlay(state.streamInfo)) return;
       clearAllStreamOverlaysForTransition(state);
     },
@@ -480,58 +561,100 @@ export const presentationSlice = createSlice({
     ) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      const transitionSequence = getNextStreamOverlayTransitionSequence(state);
       if (action.payload.name || action.payload.title || action.payload.event) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "participant", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "participant",
+          t,
+          transitionSequence,
+        );
       }
       state.prevStreamInfo.participantOverlayInfo =
         state.streamInfo.participantOverlayInfo;
       state.streamInfo.participantOverlayInfo = {
         ...action.payload,
         time: t,
+        transitionSequence,
       };
       if (action.payload.name || action.payload.title || action.payload.event) {
         preserveClearedStreamOverlaysForTransition(state, "participant");
-        clearStreamOverlaysExcept(state.streamInfo, "participant", t);
+        clearStreamOverlaysExcept(
+          state.streamInfo,
+          "participant",
+          t,
+          transitionSequence,
+        );
       }
     },
     updateStbOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      const transitionSequence = getNextStreamOverlayTransitionSequence(state);
       if (action.payload.heading || action.payload.subHeading) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "stb", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "stb",
+          t,
+          transitionSequence,
+        );
       }
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
-      state.streamInfo.stbOverlayInfo = { ...action.payload, time: t };
+      state.streamInfo.stbOverlayInfo = {
+        ...action.payload,
+        time: t,
+        transitionSequence,
+      };
       if (action.payload.heading || action.payload.subHeading) {
         preserveClearedStreamOverlaysForTransition(state, "stb");
-        clearStreamOverlaysExcept(state.streamInfo, "stb", t);
+        clearStreamOverlaysExcept(state.streamInfo, "stb", t, transitionSequence);
       }
     },
     updateQrCodeOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      const transitionSequence = getNextStreamOverlayTransitionSequence(state);
       if (action.payload.url || action.payload.description) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "qr", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "qr",
+          t,
+          transitionSequence,
+        );
       }
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
-      state.streamInfo.qrCodeOverlayInfo = { ...action.payload, time: t };
+      state.streamInfo.qrCodeOverlayInfo = {
+        ...action.payload,
+        time: t,
+        transitionSequence,
+      };
       if (action.payload.url || action.payload.description) {
         preserveClearedStreamOverlaysForTransition(state, "qr");
-        clearStreamOverlaysExcept(state.streamInfo, "qr", t);
+        clearStreamOverlaysExcept(state.streamInfo, "qr", t, transitionSequence);
       }
     },
     updateImageOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      const transitionSequence = getNextStreamOverlayTransitionSequence(state);
       if (action.payload.imageUrl) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "image", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "image",
+          t,
+          transitionSequence,
+        );
       }
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
-      state.streamInfo.imageOverlayInfo = { ...action.payload, time: t };
+      state.streamInfo.imageOverlayInfo = {
+        ...action.payload,
+        time: t,
+        transitionSequence,
+      };
       if (action.payload.imageUrl) {
         preserveClearedStreamOverlaysForTransition(state, "image");
-        clearStreamOverlaysExcept(state.streamInfo, "image", t);
+        clearStreamOverlaysExcept(state.streamInfo, "image", t, transitionSequence);
       }
     },
     updateImageOverlayInfoFromRemote: (
@@ -539,7 +662,8 @@ export const presentationSlice = createSlice({
       action: PayloadAction<OverlayInfo>,
     ) => {
       const next = action.payload;
-      const t = next.time ?? Date.now();
+      const t = next.time ?? getSynchronizedStreamNow();
+      const transitionSequence = next.transitionSequence;
       const cur = state.streamInfo.imageOverlayInfo;
 
       if (isSameImageOverlayEcho(cur, next)) {
@@ -547,29 +671,39 @@ export const presentationSlice = createSlice({
       }
 
       if (next.imageUrl) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "image", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "image",
+          t,
+          transitionSequence,
+        );
       }
 
       if (hasImageOverlayData(cur) || next.imageUrl) {
         state.prevStreamInfo.imageOverlayInfo = cur;
-      } else if (!isEmptySlotFromSameTransition(cur, t)) {
-        state.prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t);
+      } else if (!isEmptySlotFromSameTransition(cur, t, transitionSequence)) {
+        state.prevStreamInfo.imageOverlayInfo = emptyImageOverlay(
+          t,
+          transitionSequence,
+        );
       }
 
       state.streamInfo.imageOverlayInfo = {
         ...next,
         time: t,
+        transitionSequence,
       };
       if (!next.imageUrl) return;
       preserveClearedStreamOverlaysForTransition(state, "image");
-      clearStreamOverlaysExcept(state.streamInfo, "image", t);
+      clearStreamOverlaysExcept(state.streamInfo, "image", t, transitionSequence);
     },
     updateParticipantOverlayInfoFromRemote: (
       state,
       action: PayloadAction<OverlayInfo>,
     ) => {
       const next = action.payload;
-      const t = next.time ?? Date.now();
+      const t = next.time ?? getSynchronizedStreamNow();
+      const transitionSequence = next.transitionSequence;
       const cur = state.streamInfo.participantOverlayInfo;
 
       if (isSameParticipantOverlayEcho(cur, next)) {
@@ -578,30 +712,42 @@ export const presentationSlice = createSlice({
 
       const nextHasLines = Boolean(next.name || next.title || next.event);
       if (nextHasLines) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "participant", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "participant",
+          t,
+          transitionSequence,
+        );
       }
       if (hasParticipantOverlayData(cur) || nextHasLines) {
         state.prevStreamInfo.participantOverlayInfo = cur;
-      } else if (!isEmptySlotFromSameTransition(cur, t)) {
+      } else if (!isEmptySlotFromSameTransition(cur, t, transitionSequence)) {
         // Later empty received after a cross-type switch: prev data is stale, clear it.
         state.prevStreamInfo.participantOverlayInfo =
-          emptyParticipantOverlay(t);
+          emptyParticipantOverlay(t, transitionSequence);
       }
 
       state.streamInfo.participantOverlayInfo = {
         ...next,
         time: t,
+        transitionSequence,
       };
       if (!nextHasLines) return;
       preserveClearedStreamOverlaysForTransition(state, "participant");
-      clearStreamOverlaysExcept(state.streamInfo, "participant", t);
+      clearStreamOverlaysExcept(
+        state.streamInfo,
+        "participant",
+        t,
+        transitionSequence,
+      );
     },
     updateStbOverlayInfoFromRemote: (
       state,
       action: PayloadAction<OverlayInfo>,
     ) => {
       const next = action.payload;
-      const t = next.time ?? Date.now();
+      const t = next.time ?? getSynchronizedStreamNow();
+      const transitionSequence = next.transitionSequence;
       const cur = state.streamInfo.stbOverlayInfo;
 
       if (isSameStbOverlayEcho(cur, next)) {
@@ -610,28 +756,38 @@ export const presentationSlice = createSlice({
 
       const nextHasStb = Boolean(next.heading || next.subHeading);
       if (nextHasStb) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "stb", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "stb",
+          t,
+          transitionSequence,
+        );
       }
       if (hasStbOverlayData(cur) || nextHasStb) {
         state.prevStreamInfo.stbOverlayInfo = cur;
-      } else if (!isEmptySlotFromSameTransition(cur, t)) {
-        state.prevStreamInfo.stbOverlayInfo = emptyStbOverlay(t);
+      } else if (!isEmptySlotFromSameTransition(cur, t, transitionSequence)) {
+        state.prevStreamInfo.stbOverlayInfo = emptyStbOverlay(
+          t,
+          transitionSequence,
+        );
       }
 
       state.streamInfo.stbOverlayInfo = {
         ...next,
         time: t,
+        transitionSequence,
       };
       if (!nextHasStb) return;
       preserveClearedStreamOverlaysForTransition(state, "stb");
-      clearStreamOverlaysExcept(state.streamInfo, "stb", t);
+      clearStreamOverlaysExcept(state.streamInfo, "stb", t, transitionSequence);
     },
     updateQrCodeOverlayInfoFromRemote: (
       state,
       action: PayloadAction<OverlayInfo>,
     ) => {
       const next = action.payload;
-      const t = next.time ?? Date.now();
+      const t = next.time ?? getSynchronizedStreamNow();
+      const transitionSequence = next.transitionSequence;
       const cur = state.streamInfo.qrCodeOverlayInfo;
 
       if (isSameQrOverlayEcho(cur, next)) {
@@ -640,21 +796,30 @@ export const presentationSlice = createSlice({
 
       const nextHasQr = Boolean(next.url || next.description);
       if (nextHasQr) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "qr", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "qr",
+          t,
+          transitionSequence,
+        );
       }
       if (hasQrOverlayData(cur) || nextHasQr) {
         state.prevStreamInfo.qrCodeOverlayInfo = cur;
-      } else if (!isEmptySlotFromSameTransition(cur, t)) {
-        state.prevStreamInfo.qrCodeOverlayInfo = emptyQrOverlay(t);
+      } else if (!isEmptySlotFromSameTransition(cur, t, transitionSequence)) {
+        state.prevStreamInfo.qrCodeOverlayInfo = emptyQrOverlay(
+          t,
+          transitionSequence,
+        );
       }
 
       state.streamInfo.qrCodeOverlayInfo = {
         ...next,
         time: t,
+        transitionSequence,
       };
       if (!nextHasQr) return;
       preserveClearedStreamOverlaysForTransition(state, "qr");
-      clearStreamOverlaysExcept(state.streamInfo, "qr", t);
+      clearStreamOverlaysExcept(state.streamInfo, "qr", t, transitionSequence);
     },
     updateBibleDisplayInfo: (
       state,
@@ -799,15 +964,30 @@ export const presentationSlice = createSlice({
     ) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      const transitionSequence = getNextStreamOverlayTransitionSequence(state);
       if (action.payload.text) {
-        clearStalePrevStreamOverlaySlotsExcept(state, "boardPost", t);
+        clearStalePrevStreamOverlaySlotsExcept(
+          state,
+          "boardPost",
+          t,
+          transitionSequence,
+        );
       }
       state.prevStreamInfo.boardPostStreamInfo =
         state.streamInfo.boardPostStreamInfo;
-      state.streamInfo.boardPostStreamInfo = { ...action.payload, time: t };
+      state.streamInfo.boardPostStreamInfo = {
+        ...action.payload,
+        time: t,
+        transitionSequence,
+      };
       if (action.payload.text) {
         preserveClearedStreamOverlaysForTransition(state, "boardPost");
-        clearStreamOverlaysExcept(state.streamInfo, "boardPost", t);
+        clearStreamOverlaysExcept(
+          state.streamInfo,
+          "boardPost",
+          t,
+          transitionSequence,
+        );
       }
     },
     updateBoardPostStreamInfoFromRemote: (
@@ -817,7 +997,11 @@ export const presentationSlice = createSlice({
       const t = action.payload.time ?? Date.now();
       state.prevStreamInfo.boardPostStreamInfo =
         state.streamInfo.boardPostStreamInfo;
-      state.streamInfo.boardPostStreamInfo = { ...action.payload, time: t };
+      state.streamInfo.boardPostStreamInfo = {
+        ...action.payload,
+        time: t,
+        transitionSequence: action.payload.transitionSequence,
+      };
     },
     clearProjector: (state) => {
       // set previous info for fading out
@@ -873,23 +1057,23 @@ export const presentationSlice = createSlice({
         bibleDisplayInfo: { title: "", text: "", time: Date.now() },
         participantOverlayInfo: {
           name: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         stbOverlayInfo: {
           heading: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         qrCodeOverlayInfo: {
           description: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         imageOverlayInfo: {
           name: "",
           imageUrl: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         formattedTextDisplayInfo: {
@@ -900,7 +1084,7 @@ export const presentationSlice = createSlice({
           author: "",
           authorHexColor: "#e7e5e4",
           text: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
         },
       };
     },
@@ -951,23 +1135,23 @@ export const presentationSlice = createSlice({
         bibleDisplayInfo: { title: "", text: "", time: Date.now() },
         participantOverlayInfo: {
           name: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         stbOverlayInfo: {
           heading: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         qrCodeOverlayInfo: {
           description: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         imageOverlayInfo: {
           name: "",
           imageUrl: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
           id: generateRandomId(),
         },
         formattedTextDisplayInfo: {
@@ -978,7 +1162,7 @@ export const presentationSlice = createSlice({
           author: "",
           authorHexColor: "#e7e5e4",
           text: "",
-          time: Date.now(),
+          time: getSynchronizedStreamNow(),
         },
       };
     },

@@ -1,3 +1,10 @@
+/**
+ * Layout for sortable overlay list rows. `shrink-0` keeps rows from collapsing in
+ * scrollable flex columns (notably iOS Safari).
+ */
+export const overlayListRowLayoutClass =
+  "flex w-full shrink-0 items-center overflow-clip rounded-md leading-snug border-l-4 transition-colors";
+
 /** Unselected overlay list row chrome (shared by Overlay rows, loading skeleton). */
 export const overlayRowUnselectedClass =
   "border-white/10 bg-black/50 hover:border-white/20";

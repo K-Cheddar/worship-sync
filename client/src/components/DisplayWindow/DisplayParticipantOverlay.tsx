@@ -13,6 +13,15 @@ type DisplayParticipantOverlayProps = {
   prevParticipantOverlayInfo?: Partial<OverlayInfo>;
   shouldAnimate?: boolean;
   shouldFillContainer?: boolean;
+  currentKeepAliveKey?: string | null;
+  prevKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  prevKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: (
+    overlayKey: string | null,
+    localVisibleMs: number | null,
+    mode?: "max" | "replace",
+  ) => void;
 };
 
 const DisplayParticipantOverlay = forwardRef<
@@ -26,6 +35,11 @@ const DisplayParticipantOverlay = forwardRef<
       prevParticipantOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
+      currentKeepAliveKey,
+      prevKeepAliveKey,
+      currentKeepAliveMs,
+      prevKeepAliveMs,
+      onLocalKeepAliveStart,
     },
     containerRef
   ) => {
@@ -99,6 +113,12 @@ const DisplayParticipantOverlay = forwardRef<
 
         // Only animate if there is overlay info
         if (participantData.length > 0) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
+
           const enterProps = isCenter
             ? {
               duration: 2.5,
@@ -190,7 +210,12 @@ const DisplayParticipantOverlay = forwardRef<
       },
       {
         scope: participantOverlayRef,
-        dependencies: [participantOverlayInfo],
+        dependencies: [
+          currentKeepAliveKey,
+          currentKeepAliveMs,
+          onLocalKeepAliveStart,
+          participantOverlayInfo,
+        ],
       }
     );
 
@@ -244,6 +269,11 @@ const DisplayParticipantOverlay = forwardRef<
           .set(prevParticipantOverlayRef.current, prevOverlayStartState);
 
         if (prevParticipantData.length > 0) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
           prevOverlayTimeline.current = gsap
             .timeline()
             .to(prevParticipantOverlayRef.current, {
@@ -272,9 +302,14 @@ const DisplayParticipantOverlay = forwardRef<
       {
         scope: prevParticipantOverlayRef,
         dependencies: [
+          currentKeepAliveKey,
+          currentKeepAliveMs,
           hasCurrentParticipantData,
           isCenter,
+          onLocalKeepAliveStart,
           participantOverlayInfo,
+          prevKeepAliveKey,
+          prevKeepAliveMs,
           prevIsCenter,
           prevParticipantOverlayInfo,
         ],

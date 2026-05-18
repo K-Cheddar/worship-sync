@@ -260,7 +260,17 @@ describe("DisplayParticipantOverlay", () => {
 
     const secondCurrentConfig = (useGSAP as jest.Mock).mock.calls[2][1];
 
-    expect(firstCurrentConfig.dependencies).toEqual([overlayInfo]);
-    expect(secondCurrentConfig.dependencies).toEqual([overlayInfo]);
+    expect(firstCurrentConfig.dependencies).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      overlayInfo,
+    ]);
+    expect(secondCurrentConfig.dependencies).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      overlayInfo,
+    ]);
   });
 });
