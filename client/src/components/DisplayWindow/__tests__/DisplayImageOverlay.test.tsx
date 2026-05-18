@@ -1,3 +1,4 @@
+import type { MutableRefObject } from "react";
 import { act, render, screen } from "@testing-library/react";
 import DisplayImageOverlay from "../DisplayImageOverlay";
 import { useGSAP } from "@gsap/react";
@@ -137,10 +138,12 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("builds animation timelines when shouldAnimate is true and image urls exist", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         imageOverlayInfo={{
@@ -164,10 +167,12 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("keeps the previous image overlay visible when the current type has switched away", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         imageOverlayInfo={{ id: "img-current" }}
@@ -188,10 +193,12 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("keeps a previous video overlay visible when switching away to a different overlay type", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         imageOverlayInfo={{ id: "video-current" }}
@@ -212,12 +219,14 @@ describe("DisplayImageOverlay", () => {
   });
 
   it("starts local keep-alive only after the current image is locally ready to animate", () => {
-    const containerRef = { current: document.createElement("div") };
+    const containerRef: MutableRefObject<HTMLDivElement | null> = {
+      current: document.createElement("div"),
+    };
     const onLocalKeepAliveStart = jest.fn();
 
     render(
       <DisplayImageOverlay
-        ref={containerRef as any}
+        ref={containerRef}
         width={30}
         shouldAnimate
         currentKeepAliveKey="image::current"

@@ -234,9 +234,15 @@ const shouldApplyIncomingOverlayPayload = <
   incoming: T,
   hasIncomingData: boolean,
   hasCurrentData: boolean,
-) =>
-  (hasIncomingData && !hasCurrentData) ||
-  isIncomingOverlayTransitionNewer(current, incoming);
+) => {
+  const currentHasOrderingMarkers =
+    current?.transitionSequence != null || current?.time != null;
+
+  return (
+    (hasIncomingData && !hasCurrentData && !currentHasOrderingMarkers) ||
+    isIncomingOverlayTransitionNewer(current, incoming)
+  );
+};
 
 /** Editor selection kept across undo/redo (not part of undo snapshots). */
 const getItemSelectionForUndoRedo = (

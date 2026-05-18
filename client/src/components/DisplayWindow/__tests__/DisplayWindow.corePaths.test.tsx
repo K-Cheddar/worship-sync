@@ -5,6 +5,53 @@ import { setServerTimeOffset } from "../../../utils/serverTime";
 
 const mockUseSelector = jest.fn();
 const mockUseCachedVideoUrl = jest.fn((url?: string) => url);
+type KeepAliveMode = "max" | "replace";
+type KeepAliveStart = (
+  overlayKey: string | null,
+  localVisibleMs: number | null,
+  mode?: KeepAliveMode,
+) => void;
+type ParticipantOverlayMockProps = {
+  participantOverlayInfo?: { name?: string };
+  prevParticipantOverlayInfo?: { name?: string };
+  currentKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  prevKeepAliveKey?: string | null;
+  prevKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: KeepAliveStart;
+};
+type StbOverlayMockProps = {
+  currentKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: KeepAliveStart;
+  prevKeepAliveKey?: string | null;
+  prevKeepAliveMs?: number | null;
+  prevStbOverlayInfo?: { heading?: string; subHeading?: string };
+  stbOverlayInfo?: { heading?: string; subHeading?: string };
+};
+type QrCodeOverlayMockProps = {
+  currentKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: KeepAliveStart;
+  prevKeepAliveKey?: string | null;
+  prevKeepAliveMs?: number | null;
+  prevQrCodeOverlayInfo?: { url?: string; description?: string };
+  qrCodeOverlayInfo?: { url?: string; description?: string };
+};
+type ImageOverlayMockProps = {
+  currentKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  imageOverlayInfo?: { imageUrl?: string };
+  onLocalKeepAliveStart?: KeepAliveStart;
+  prevImageOverlayInfo?: { imageUrl?: string };
+  prevKeepAliveKey?: string | null;
+  prevKeepAliveMs?: number | null;
+};
+type MonitorViewMockProps = {
+  showNextSlide?: boolean;
+  effectiveShowClock?: boolean;
+  effectiveShowTimer?: boolean;
+};
 
 jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) => mockUseSelector(selector),
@@ -41,9 +88,9 @@ jest.mock("../DisplayStreamBible", () => ({
 jest.mock("../DisplayParticipantOverlay", () => ({
   __esModule: true,
   default: (() => {
-    const React = require("react");
+    const React = require("react") as typeof import("react");
 
-    function MockDisplayParticipantOverlay({
+    const MockDisplayParticipantOverlay = ({
       participantOverlayInfo,
       prevParticipantOverlayInfo,
       currentKeepAliveKey,
@@ -51,19 +98,7 @@ jest.mock("../DisplayParticipantOverlay", () => ({
       prevKeepAliveKey,
       prevKeepAliveMs,
       onLocalKeepAliveStart,
-    }: {
-      participantOverlayInfo?: { name?: string };
-      prevParticipantOverlayInfo?: { name?: string };
-      currentKeepAliveKey?: string | null;
-      currentKeepAliveMs?: number | null;
-      prevKeepAliveKey?: string | null;
-      prevKeepAliveMs?: number | null;
-      onLocalKeepAliveStart?: (
-        overlayKey: string | null,
-        localVisibleMs: number | null,
-        mode?: "max" | "replace",
-      ) => void;
-    }) {
+    }: ParticipantOverlayMockProps) => {
       React.useEffect(() => {
         if (participantOverlayInfo?.name) {
           onLocalKeepAliveStart?.(
@@ -97,7 +132,7 @@ jest.mock("../DisplayParticipantOverlay", () => ({
           data-prev-name={prevParticipantOverlayInfo?.name || ""}
         />
       );
-    }
+    };
 
     return MockDisplayParticipantOverlay;
   })(),
@@ -105,9 +140,9 @@ jest.mock("../DisplayParticipantOverlay", () => ({
 jest.mock("../DisplayStbOverlay", () => ({
   __esModule: true,
   default: (() => {
-    const React = require("react");
+    const React = require("react") as typeof import("react");
 
-    function MockDisplayStbOverlay({
+    const MockDisplayStbOverlay = ({
       currentKeepAliveKey,
       currentKeepAliveMs,
       onLocalKeepAliveStart,
@@ -115,7 +150,7 @@ jest.mock("../DisplayStbOverlay", () => ({
       prevKeepAliveMs,
       prevStbOverlayInfo,
       stbOverlayInfo,
-    }: any) {
+    }: StbOverlayMockProps) => {
       React.useEffect(() => {
         if (stbOverlayInfo?.heading || stbOverlayInfo?.subHeading) {
           onLocalKeepAliveStart?.(
@@ -144,7 +179,7 @@ jest.mock("../DisplayStbOverlay", () => ({
       ]);
 
       return <div data-testid="display-stb-overlay-mock" />;
-    }
+    };
 
     return MockDisplayStbOverlay;
   })(),
@@ -152,9 +187,9 @@ jest.mock("../DisplayStbOverlay", () => ({
 jest.mock("../DisplayQrCodeOverlay", () => ({
   __esModule: true,
   default: (() => {
-    const React = require("react");
+    const React = require("react") as typeof import("react");
 
-    function MockDisplayQrCodeOverlay({
+    const MockDisplayQrCodeOverlay = ({
       currentKeepAliveKey,
       currentKeepAliveMs,
       onLocalKeepAliveStart,
@@ -162,7 +197,7 @@ jest.mock("../DisplayQrCodeOverlay", () => ({
       prevKeepAliveMs,
       prevQrCodeOverlayInfo,
       qrCodeOverlayInfo,
-    }: any) {
+    }: QrCodeOverlayMockProps) => {
       React.useEffect(() => {
         if (qrCodeOverlayInfo?.url || qrCodeOverlayInfo?.description) {
           onLocalKeepAliveStart?.(
@@ -191,7 +226,7 @@ jest.mock("../DisplayQrCodeOverlay", () => ({
       ]);
 
       return <div data-testid="display-qr-overlay-mock" />;
-    }
+    };
 
     return MockDisplayQrCodeOverlay;
   })(),
@@ -199,9 +234,9 @@ jest.mock("../DisplayQrCodeOverlay", () => ({
 jest.mock("../DisplayImageOverlay", () => ({
   __esModule: true,
   default: (() => {
-    const React = require("react");
+    const React = require("react") as typeof import("react");
 
-    function MockDisplayImageOverlay({
+    const MockDisplayImageOverlay = ({
       currentKeepAliveKey,
       currentKeepAliveMs,
       imageOverlayInfo,
@@ -209,7 +244,7 @@ jest.mock("../DisplayImageOverlay", () => ({
       prevImageOverlayInfo,
       prevKeepAliveKey,
       prevKeepAliveMs,
-    }: any) {
+    }: ImageOverlayMockProps) => {
       React.useEffect(() => {
         if (imageOverlayInfo?.imageUrl) {
           onLocalKeepAliveStart?.(
@@ -236,7 +271,7 @@ jest.mock("../DisplayImageOverlay", () => ({
       ]);
 
       return <div data-testid="display-image-overlay-mock" />;
-    }
+    };
 
     return MockDisplayImageOverlay;
   })(),
@@ -253,7 +288,11 @@ jest.mock("../HLSVideoPlayer", () => ({
 }));
 jest.mock("../MonitorView", () => ({
   __esModule: true,
-  default: ({ showNextSlide, effectiveShowClock, effectiveShowTimer }: any) => (
+  default: ({
+    showNextSlide,
+    effectiveShowClock,
+    effectiveShowTimer,
+  }: MonitorViewMockProps) => (
     <div
       data-testid="monitor-view-mock"
       data-show-next-slide={showNextSlide ? "true" : "false"}
@@ -933,7 +972,7 @@ describe("DisplayWindow core paths", () => {
         id: "m1",
         type: "video",
         background: "https://cdn.example.com/stream.m3u8",
-      } as any,
+      } as NonNullable<Box["mediaInfo"]>,
     };
 
     render(

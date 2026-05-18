@@ -1766,12 +1766,40 @@ describe("store module", () => {
     expect(store.getState().presentation.streamInfo.type).toBe("bible");
   });
 
-  it("applies a live remote participant overlay when the local slot only has a newer empty placeholder", async () => {
+  it("ignores a live remote participant overlay when the local slot only has a newer empty placeholder", async () => {
     const { store } = loadStoreWithPresentationSync();
 
     store.dispatch({
       type: "debouncedUpdateParticipantOverlayInfo",
-      payload: { id: "p1", name: "Alex", title: "Host", time: 1000 },
+      payload: { id: "p0", name: "Initial", title: "Host", time: 900 },
+    });
+    await waitForListenerDelay();
+
+    store.dispatch({
+      type: "debouncedUpdateParticipantOverlayInfo",
+      payload: { time: 1001, transitionSequence: 11 },
+    });
+    await waitForListenerDelay();
+
+    store.dispatch({
+      type: "debouncedUpdateParticipantOverlayInfo",
+      payload: { id: "p1", name: "Alex", title: "Host", time: 1000, transitionSequence: 10 },
+    });
+    await waitForListenerDelay();
+
+    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    expect(participant?.name ?? "").toBe("");
+    expect(participant?.title ?? "").toBe("");
+    expect(participant?.time).toBe(1001);
+    expect(participant?.transitionSequence).toBe(11);
+  });
+
+  it("applies a live remote participant overlay when the local slot has no ordering markers yet", async () => {
+    const { store } = loadStoreWithPresentationSync();
+
+    store.dispatch({
+      type: "debouncedUpdateParticipantOverlayInfo",
+      payload: { id: "p1", name: "Alex", title: "Host", time: 1000, transitionSequence: 10 },
     });
     await waitForListenerDelay();
 
@@ -1780,6 +1808,7 @@ describe("store module", () => {
     expect(participant?.name).toBe("Alex");
     expect(participant?.title).toBe("Host");
     expect(participant?.time).toBe(1000);
+    expect(participant?.transitionSequence).toBe(10);
   });
 
   it("applies a newer remote participant overlay transition when sequence is higher even if timestamp is lower", async () => {
