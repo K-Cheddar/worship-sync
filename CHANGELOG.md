@@ -1,3 +1,139 @@
+# [2.9.0](https://github.com/K-Cheddar/worship-sync/compare/v2.8.0...v2.9.0) (2026-05-15)
+
+
+### Features
+
+* Reference upcoming service countdown timer ([8e4d14a](https://github.com/K-Cheddar/worship-sync/commit/8e4d14a2f3e7fe336acde142786c82a88530b4bd))
+
+# [2.8.0](https://github.com/K-Cheddar/worship-sync/compare/v2.7.0...v2.8.0) (2026-05-13)
+
+
+### Bug Fixes
+
+* Improve timers between devices ([6a9f282](https://github.com/K-Cheddar/worship-sync/commit/6a9f28259e00cd79d49db54cdef72bc0e2dfc732))
+* resolve Qodo PR [#303](https://github.com/K-Cheddar/worship-sync/issues/303) review items ([9dc3491](https://github.com/K-Cheddar/worship-sync/commit/9dc349128374eda6baee21241c49e99723728ba0))
+
+
+### Features
+
+* add ability to send to discussion board ([b87bd1b](https://github.com/K-Cheddar/worship-sync/commit/b87bd1ba28946e89f79fdd43c9057742106c89b6))
+* read restream chat in discussion boards ([441c9e6](https://github.com/K-Cheddar/worship-sync/commit/441c9e6031aac535463ddf45bebb5923af54e858))
+
+# [2.7.0](https://github.com/K-Cheddar/worship-sync/compare/v2.6.2...v2.7.0) (2026-05-11)
+
+
+### Bug Fixes
+
+* Improve media modal/panel performance ([1105456](https://github.com/K-Cheddar/worship-sync/commit/11054561c647e5ee080613f046507e46425ef913))
+* Improve service planning updates and undo/redo for overlays ([77e7050](https://github.com/K-Cheddar/worship-sync/commit/77e7050a172841aaab4dfa8770389cc53cf31c9b))
+
+
+### Features
+
+* Add ability to change what displays an item sends to ([05562a8](https://github.com/K-Cheddar/worship-sync/commit/05562a862da16ae0cc5c312b2a944008a4aa6f76))
+
+## [2.6.2](https://github.com/K-Cheddar/worship-sync/compare/v2.6.1...v2.6.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* Improve service item drag and drop ([eae63d6](https://github.com/K-Cheddar/worship-sync/commit/eae63d61c099b3e5169c4364a22462edfd47c1a7))
+* Minor adjustments to service planning import ui ([84a6b6f](https://github.com/K-Cheddar/worship-sync/commit/84a6b6fc6a1d733e8be015319359ccbd862af023))
+
+## [2.6.1](https://github.com/K-Cheddar/worship-sync/compare/v2.6.0...v2.6.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* Allow importing songs without a fixed heading ([526f951](https://github.com/K-Cheddar/worship-sync/commit/526f95199c27a24238c5ae52b065c7b3ad3d09e6))
+
+# [2.6.0](https://github.com/K-Cheddar/worship-sync/compare/v2.5.3...v2.6.0) (2026-05-04)
+
+
+### Bug Fixes
+
+* Improve Board Controller on tablets ([201e6da](https://github.com/K-Cheddar/worship-sync/commit/201e6dabb1b4751e179c4c18589dcdd380759719))
+
+
+### Features
+
+* Import and save the service plan ([cea5ac5](https://github.com/K-Cheddar/worship-sync/commit/cea5ac5b57a1ab886a35690902d65f413ddd4328))
+
+## [2.5.3](https://github.com/K-Cheddar/worship-sync/compare/v2.5.2...v2.5.3) (2026-05-01)
+
+
+### Bug Fixes
+
+* Fix timer cross fade and minor ui improvements ([1991e5a](https://github.com/K-Cheddar/worship-sync/commit/1991e5ac299e71e00e40524c51bca66db13d2d2b))
+
+## [2.5.2](https://github.com/K-Cheddar/worship-sync/compare/v2.5.1...v2.5.2) (2026-04-29)
+
+
+### Bug Fixes
+
+* minor fixes ([926de01](https://github.com/K-Cheddar/worship-sync/commit/926de01b74ceb1dd07194409efedf99e6c5ce72f))
+
+## [2.5.1](https://github.com/K-Cheddar/worship-sync/compare/v2.5.0...v2.5.1) (2026-04-29)
+
+
+### Bug Fixes
+
+* Minor fixes ([7847965](https://github.com/K-Cheddar/worship-sync/commit/7847965eb3e5a1817c793b1b7e6e252f8e3f1cf0))
+
+# [2.5.0](https://github.com/K-Cheddar/worship-sync/compare/v2.4.0...v2.5.0) (2026-04-29)
+
+
+### Features
+
+* Improve pasting lyrics formatting ([c68f26f](https://github.com/K-Cheddar/worship-sync/commit/c68f26f77e5829195e90230bdd83dd028ea20bf7))
+
+# [2.4.0](https://github.com/K-Cheddar/worship-sync/compare/v2.3.0...v2.4.0) (2026-04-28)
+
+
+### Bug Fixes
+
+* Improve bible parsing from service planning import and search ([95039de](https://github.com/K-Cheddar/worship-sync/commit/95039de0151dd631a8d12c2baf4236af97cc28b0))
+* Improve credits and overlay display on safari ([e3f491f](https://github.com/K-Cheddar/worship-sync/commit/e3f491fc73735312b193670825d14fcb2aed8db8))
+* Improve projector transition ([4c12926](https://github.com/K-Cheddar/worship-sync/commit/4c12926be6471620b6a4b179b23631270c087a32))
+* Improve responsiveness for board stream panel ([d592b89](https://github.com/K-Cheddar/worship-sync/commit/d592b895e52f93461beda15a8495a85caf80da43))
+* Improve route persistence ([fb4c35e](https://github.com/K-Cheddar/worship-sync/commit/fb4c35ea4f0b1e5f5544c83e6dba5398e3841064))
+* Timers now work again ([3960ec9](https://github.com/K-Cheddar/worship-sync/commit/3960ec9aa9f7e61c9d23a39105e71a0de9e3f468))
+* Unify wording on media action bar ([fb2bfb5](https://github.com/K-Cheddar/worship-sync/commit/fb2bfb5655ad931c76b662491a2c2e4e6d140d21))
+
+
+### Features
+
+* Add ability to import multiple verses and improve service planning import ([ad64554](https://github.com/K-Cheddar/worship-sync/commit/ad645543ea754a2ff607b362d590b1df8084c0c3))
+* Add ability to show media used on a slide in media panel ([21421b7](https://github.com/K-Cheddar/worship-sync/commit/21421b7cc053d06db181831864070633f64028ff))
+
+# [2.3.0](https://github.com/K-Cheddar/worship-sync/compare/v2.2.1...v2.3.0) (2026-04-24)
+
+
+### Features
+
+* Add the ability to post comments from the discussion board to the stream ([03c193d](https://github.com/K-Cheddar/worship-sync/commit/03c193dd8e60475030b92fa89360e0f981e37ffa))
+* Syncing Service Planning shows insertions as they happen ([d8c3d84](https://github.com/K-Cheddar/worship-sync/commit/d8c3d8483faa0fea410834586cb31770bb51709f))
+
+## [2.2.1](https://github.com/K-Cheddar/worship-sync/compare/v2.2.0...v2.2.1) (2026-04-23)
+
+
+### Bug Fixes
+
+* Improve importing from service planning ([b8fb1c5](https://github.com/K-Cheddar/worship-sync/commit/b8fb1c52bf25eaca403604f9a2e58e2b930930f6))
+
+# [2.2.0](https://github.com/K-Cheddar/worship-sync/compare/v2.1.5...v2.2.0) (2026-04-20)
+
+
+### Bug Fixes
+
+* Allow bible verses to be added to outline from service planning ([4f9f95b](https://github.com/K-Cheddar/worship-sync/commit/4f9f95befb2343e1587c69a709c367680b64beed))
+
+
+### Features
+
+* Highlight song sections on selection within lyrics editor ([3273a28](https://github.com/K-Cheddar/worship-sync/commit/3273a288d5c47aa7a1b6cb8ca37120296d0facc5))
+* Import overlays, songs, and scriptures from service planning ([b86275c](https://github.com/K-Cheddar/worship-sync/commit/b86275ce931b41ffa9808308d8ab2293e07b487e))
+
 ## [2.1.5](https://github.com/K-Cheddar/worship-sync/compare/v2.1.4...v2.1.5) (2026-04-18)
 
 
