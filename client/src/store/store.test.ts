@@ -1781,4 +1781,34 @@ describe("store module", () => {
     expect(participant?.title).toBe("Host");
     expect(participant?.time).toBe(1000);
   });
+
+  it("applies a newer remote participant overlay transition when sequence is higher even if timestamp is lower", async () => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
+        id: "p-old",
+        name: "Old Host",
+        time: 1000,
+        transitionSequence: 10,
+      }),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateParticipantOverlayInfo",
+      payload: {
+        id: "p-new",
+        name: "New Host",
+        time: 999,
+        transitionSequence: 11,
+      },
+    });
+    await waitForListenerDelay();
+
+    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    expect(participant?.id).toBe("p-new");
+    expect(participant?.name).toBe("New Host");
+    expect(participant?.time).toBe(999);
+    expect(participant?.transitionSequence).toBe(11);
+  });
 });

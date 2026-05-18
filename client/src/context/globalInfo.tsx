@@ -1447,7 +1447,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         // Clean up stale instances (older than 1 hour)
         const now = Date.now();
         const staleInstances = Object.entries(data).filter(
-          ([_, instance]: [string, any]) => {
+          ([, instance]: [string, any]) => {
             const lastActive = new Date(instance.lastActive).getTime();
             return now - lastActive > 60 * 60 * 1000; // 1 hour
           }

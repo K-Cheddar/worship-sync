@@ -134,6 +134,7 @@ const WorkstationOperator = () => {
           id="operator-name"
           label="Operator Name"
           value={operatorName}
+          autoFocus
           required
           errorText={nameFieldError}
           onChange={(value) => {

@@ -18,6 +18,7 @@ import { useGSAP } from "@gsap/react";
 import { cn } from "../../utils/cnHelper";
 import { overlayBorderColorMap } from "../../utils/itemTypeMaps";
 import {
+  overlayListRowLayoutClass,
   overlayRowSelectedClass,
   overlayRowUnselectedClass,
 } from "./overlayRowStyles";
@@ -131,6 +132,11 @@ const Overlay = ({
             opacity: 0,
             duration: 0.5,
             ease: "power1.inOut",
+            onComplete: () => {
+              if (overlayRef.current) {
+                gsap.set(overlayRef.current, { clearProps: "height,opacity" });
+              }
+            },
           }
         );
       } else if (!initialList.includes(overlay.id)) {
@@ -148,6 +154,11 @@ const Overlay = ({
               opacity: 1,
               duration: 0.5,
               ease: "power1.inOut",
+              onComplete: () => {
+                if (overlayRef.current) {
+                  gsap.set(overlayRef.current, { clearProps: "height,opacity" });
+                }
+              },
             }
           )
           .then(() => {
@@ -175,7 +186,7 @@ const Overlay = ({
   return (
     <li
       className={cn(
-        "flex w-full overflow-clip rounded-md leading-3 border-l-4 transition-colors",
+        overlayListRowLayoutClass,
         isSelected
           ? cn(overlayRowSelectedClass, borderColor)
           : cn(overlayRowUnselectedClass, borderColor),
@@ -192,7 +203,7 @@ const Overlay = ({
       <Button
         variant="tertiary"
         wrap
-        className="flex-col flex-1 leading-4 text-center"
+        className="min-h-0 min-w-0 flex-col flex-1 self-stretch leading-4 text-center"
         padding="px-2 py-1.5"
         gap="gap-1"
         onClick={() => selectAndLoadOverlay(overlay.id)}

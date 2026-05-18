@@ -206,11 +206,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           batches_limit: 5,
         })
         .on("change", (event) => {
-          if (event.direction === "push") {
-            console.log("updating from local", event);
-          }
           if (event.direction === "pull") {
-            console.log("updating from remote", event);
             updater.current.dispatchEvent(
               new CustomEvent("update", { detail: event.change.docs })
             );

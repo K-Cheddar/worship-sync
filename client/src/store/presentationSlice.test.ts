@@ -1,6 +1,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { presentationSlice } from "./presentationSlice";
 import { createPresentation } from "../test/fixtures";
+import { setServerTimeOffset } from "../utils/serverTime";
 
 type PresentationState = ReturnType<typeof presentationSlice.reducer>;
 type PresentationSliceState = { presentation: PresentationState };
@@ -15,6 +16,15 @@ const createStore = (preloadedState?: Partial<PresentationSliceState>) =>
   });
 
 describe("presentationSlice", () => {
+  beforeEach(() => {
+    setServerTimeOffset(0);
+  });
+
+  afterEach(() => {
+    setServerTimeOffset(0);
+    jest.useRealTimers();
+  });
+
   describe("reducer only", () => {
     it("toggleProjectorTransmitting flips isProjectorTransmitting", () => {
       const store = createStore();
@@ -362,6 +372,45 @@ describe("presentationSlice", () => {
       });
       expect(streamInfo.bibleDisplayInfo?.title).toBe("John 3:16");
       expect(streamInfo.participantOverlayInfo?.name).toBe("Speaker");
+    });
+
+    it("uses the shared Firebase-offset clock when minting local stream overlay timestamps", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
+      setServerTimeOffset(30_000);
+
+      const base = presentationSlice.getInitialState();
+      const store = createStore({
+        presentation: {
+          ...base,
+          isStreamTransmitting: true,
+          streamInfo: {
+            ...base.streamInfo,
+            participantOverlayInfo: { id: "p-prev", name: "", time: 1 },
+            stbOverlayInfo: { id: "stb-prev", heading: "", time: 2 },
+            qrCodeOverlayInfo: { id: "qr-prev", description: "", time: 3 },
+            imageOverlayInfo: { id: "img-prev", imageUrl: "", time: 4 },
+            boardPostStreamInfo: {
+              author: "",
+              authorHexColor: "#e7e5e4",
+              text: "",
+              time: 5,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateParticipantOverlayInfo({
+          id: "p-next",
+          type: "participant",
+          name: "Speaker",
+        } as never),
+      );
+
+      expect(
+        store.getState().presentation.streamInfo.participantOverlayInfo?.time,
+      ).toBe(new Date("2026-05-17T12:00:30.000Z").getTime());
     });
 
     it("setStreamItemContentBlocked sets and clearStream resets streamItemContentBlocked", () => {
@@ -906,7 +955,7 @@ describe("presentationSlice", () => {
       expect(end.streamInfo.qrCodeOverlayInfo?.description).toBe("");
     });
 
-    it("clearStreamOverlaysOnly no-op when not stream transmitting", () => {
+    it("clearStreamOverlaysOnly clears overlays even when stream is not transmitting", () => {
       const base = presentationSlice.getInitialState();
       const store = createStore({
         presentation: {
@@ -919,9 +968,9 @@ describe("presentationSlice", () => {
         },
       });
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
-      expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
-      ).toBe("Ann");
+      const state = store.getState().presentation;
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
+      expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Ann");
     });
 
     it("clearStreamOverlaysOnly no-op when no active overlay", () => {

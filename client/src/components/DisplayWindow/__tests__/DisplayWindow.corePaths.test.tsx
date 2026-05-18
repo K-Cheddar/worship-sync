@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import DisplayWindow from "../DisplayWindow";
 import type { Box } from "../../../types";
+import { setServerTimeOffset } from "../../../utils/serverTime";
 
 const mockUseSelector = jest.fn();
 const mockUseCachedVideoUrl = jest.fn((url?: string) => url);
@@ -39,31 +40,206 @@ jest.mock("../DisplayStreamBible", () => ({
 }));
 jest.mock("../DisplayParticipantOverlay", () => ({
   __esModule: true,
-  default: ({
-    participantOverlayInfo,
-    prevParticipantOverlayInfo,
-  }: {
-    participantOverlayInfo?: { name?: string };
-    prevParticipantOverlayInfo?: { name?: string };
-  }) => (
-    <div
-      data-testid="display-participant-overlay-mock"
-      data-current-name={participantOverlayInfo?.name || ""}
-      data-prev-name={prevParticipantOverlayInfo?.name || ""}
-    />
-  ),
+  default: (() => {
+    const React = require("react");
+
+    function MockDisplayParticipantOverlay({
+      participantOverlayInfo,
+      prevParticipantOverlayInfo,
+      currentKeepAliveKey,
+      currentKeepAliveMs,
+      prevKeepAliveKey,
+      prevKeepAliveMs,
+      onLocalKeepAliveStart,
+    }: {
+      participantOverlayInfo?: { name?: string };
+      prevParticipantOverlayInfo?: { name?: string };
+      currentKeepAliveKey?: string | null;
+      currentKeepAliveMs?: number | null;
+      prevKeepAliveKey?: string | null;
+      prevKeepAliveMs?: number | null;
+      onLocalKeepAliveStart?: (
+        overlayKey: string | null,
+        localVisibleMs: number | null,
+        mode?: "max" | "replace",
+      ) => void;
+    }) {
+      React.useEffect(() => {
+        if (participantOverlayInfo?.name) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
+        }
+
+        if (prevParticipantOverlayInfo?.name) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
+        }
+      }, [
+        currentKeepAliveKey,
+        currentKeepAliveMs,
+        onLocalKeepAliveStart,
+        participantOverlayInfo?.name,
+        prevKeepAliveKey,
+        prevKeepAliveMs,
+        prevParticipantOverlayInfo?.name,
+      ]);
+
+      return (
+        <div
+          data-testid="display-participant-overlay-mock"
+          data-current-name={participantOverlayInfo?.name || ""}
+          data-prev-name={prevParticipantOverlayInfo?.name || ""}
+        />
+      );
+    }
+
+    return MockDisplayParticipantOverlay;
+  })(),
 }));
 jest.mock("../DisplayStbOverlay", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-stb-overlay-mock" />,
+  default: (() => {
+    const React = require("react");
+
+    function MockDisplayStbOverlay({
+      currentKeepAliveKey,
+      currentKeepAliveMs,
+      onLocalKeepAliveStart,
+      prevKeepAliveKey,
+      prevKeepAliveMs,
+      prevStbOverlayInfo,
+      stbOverlayInfo,
+    }: any) {
+      React.useEffect(() => {
+        if (stbOverlayInfo?.heading || stbOverlayInfo?.subHeading) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
+        }
+        if (prevStbOverlayInfo?.heading || prevStbOverlayInfo?.subHeading) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
+        }
+      }, [
+        currentKeepAliveKey,
+        currentKeepAliveMs,
+        onLocalKeepAliveStart,
+        prevKeepAliveKey,
+        prevKeepAliveMs,
+        prevStbOverlayInfo?.heading,
+        prevStbOverlayInfo?.subHeading,
+        stbOverlayInfo?.heading,
+        stbOverlayInfo?.subHeading,
+      ]);
+
+      return <div data-testid="display-stb-overlay-mock" />;
+    }
+
+    return MockDisplayStbOverlay;
+  })(),
 }));
 jest.mock("../DisplayQrCodeOverlay", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-qr-overlay-mock" />,
+  default: (() => {
+    const React = require("react");
+
+    function MockDisplayQrCodeOverlay({
+      currentKeepAliveKey,
+      currentKeepAliveMs,
+      onLocalKeepAliveStart,
+      prevKeepAliveKey,
+      prevKeepAliveMs,
+      prevQrCodeOverlayInfo,
+      qrCodeOverlayInfo,
+    }: any) {
+      React.useEffect(() => {
+        if (qrCodeOverlayInfo?.url || qrCodeOverlayInfo?.description) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
+        }
+        if (prevQrCodeOverlayInfo?.url || prevQrCodeOverlayInfo?.description) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
+        }
+      }, [
+        currentKeepAliveKey,
+        currentKeepAliveMs,
+        onLocalKeepAliveStart,
+        prevKeepAliveKey,
+        prevKeepAliveMs,
+        prevQrCodeOverlayInfo?.description,
+        prevQrCodeOverlayInfo?.url,
+        qrCodeOverlayInfo?.description,
+        qrCodeOverlayInfo?.url,
+      ]);
+
+      return <div data-testid="display-qr-overlay-mock" />;
+    }
+
+    return MockDisplayQrCodeOverlay;
+  })(),
 }));
 jest.mock("../DisplayImageOverlay", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-image-overlay-mock" />,
+  default: (() => {
+    const React = require("react");
+
+    function MockDisplayImageOverlay({
+      currentKeepAliveKey,
+      currentKeepAliveMs,
+      imageOverlayInfo,
+      onLocalKeepAliveStart,
+      prevImageOverlayInfo,
+      prevKeepAliveKey,
+      prevKeepAliveMs,
+    }: any) {
+      React.useEffect(() => {
+        if (imageOverlayInfo?.imageUrl) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
+        }
+        if (prevImageOverlayInfo?.imageUrl) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
+        }
+      }, [
+        currentKeepAliveKey,
+        currentKeepAliveMs,
+        imageOverlayInfo?.imageUrl,
+        onLocalKeepAliveStart,
+        prevImageOverlayInfo?.imageUrl,
+        prevKeepAliveKey,
+        prevKeepAliveMs,
+      ]);
+
+      return <div data-testid="display-image-overlay-mock" />;
+    }
+
+    return MockDisplayImageOverlay;
+  })(),
 }));
 jest.mock("../DisplayStreamFormattedText", () => ({
   __esModule: true,
@@ -130,10 +306,12 @@ const baseBox: Box = {
 describe("DisplayWindow core paths", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    setServerTimeOffset(0);
     mockUseSelector.mockImplementation((selector) => selector(baseState));
   });
 
   afterEach(() => {
+    setServerTimeOffset(0);
     jest.useRealTimers();
   });
 
@@ -354,6 +532,51 @@ describe("DisplayWindow core paths", () => {
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
+  it("keeps a participant overlay mounted long enough to finish the local exit when the device starts late", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0 + 250);
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-late-start",
+          type: "participant",
+          name: "Alice",
+          time: t0,
+          duration: 0,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(5_000);
+    });
+
+    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(249);
+    });
+
+    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
   it("does not remount an expired stream overlay when the preview opens later", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
@@ -373,6 +596,30 @@ describe("DisplayWindow core paths", () => {
     );
 
     expect(screen.queryByTestId("display-image-overlay-mock")).not.toBeInTheDocument();
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+  });
+
+  it("uses the shared Firebase-offset clock when deciding whether a stream overlay has already expired", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+    setServerTimeOffset(30_000);
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-server-expired",
+          type: "participant",
+          name: "Alice",
+          time: t0 + 24_000,
+          duration: 0,
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
     expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
   });
 
@@ -414,6 +661,123 @@ describe("DisplayWindow core paths", () => {
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
+  it("keeps a previous participant exit mounted long enough to finish when the clear reaches the device late", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0 + 250);
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p1-cleared-late",
+          type: "participant",
+          time: t0,
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p1-prev-late",
+          type: "participant",
+          name: "Alice",
+          time: t0 - 1000,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(screen.getByTestId("display-participant-overlay-mock")).toHaveAttribute(
+      "data-prev-name",
+      "Alice",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_250);
+    });
+
+    expect(screen.getByTestId("display-participant-overlay-mock")).toHaveAttribute(
+      "data-prev-name",
+      "Alice",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(249);
+    });
+
+    expect(screen.getByTestId("display-participant-overlay-mock")).toHaveAttribute(
+      "data-prev-name",
+      "Alice",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("restores stream item content shortly after an early clear instead of waiting for the original overlay duration", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-long",
+          type: "participant",
+          name: "Alice",
+          time: t0,
+          duration: 10,
+        }}
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-cleared-early",
+          type: "participant",
+          time: t0 + 250,
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p-long",
+          type: "participant",
+          name: "Alice",
+          time: t0,
+          duration: 10,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_499);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
   it("does not keep the stream item layer hidden when clearing an overlay that had already expired", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
@@ -438,6 +802,58 @@ describe("DisplayWindow core paths", () => {
     );
 
     expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+  });
+
+  it("does not remount an already-expired previous participant overlay when a new image overlay rerenders before the scheduled clock update fires", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-live",
+          type: "participant",
+          name: "Alice",
+          time: t0,
+          duration: 0,
+        }}
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(5_999);
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-cleared",
+          type: "participant",
+          time: t0 + 6_000,
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p-live",
+          type: "participant",
+          name: "Alice",
+          time: t0,
+          duration: 0,
+        }}
+        imageOverlayInfo={{
+          id: "img-live",
+          type: "image",
+          imageUrl: "https://img.example/live.jpg",
+          time: t0 + 6_000,
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-image-overlay-mock")).toBeInTheDocument();
   });
 
   it("keeps the previous participant overlay mounted during a same-type replacement so it can exit", () => {

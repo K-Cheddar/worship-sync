@@ -13,6 +13,15 @@ type DisplayQRCodeOverlayProps = {
   prevQrCodeOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
   shouldFillContainer?: boolean;
+  currentKeepAliveKey?: string | null;
+  prevKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  prevKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: (
+    overlayKey: string | null,
+    localVisibleMs: number | null,
+    mode?: "max" | "replace",
+  ) => void;
 };
 
 const DisplayQRCodeOverlay = forwardRef<
@@ -26,6 +35,11 @@ const DisplayQRCodeOverlay = forwardRef<
       prevQrCodeOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
+      currentKeepAliveKey,
+      prevKeepAliveKey,
+      currentKeepAliveMs,
+      prevKeepAliveMs,
+      onLocalKeepAliveStart,
     },
     containerRef
   ) => {
@@ -59,6 +73,11 @@ const DisplayQRCodeOverlay = forwardRef<
 
         // Only animate if there is overlay info
         if (qrCodeOverlayInfo.url || qrCodeOverlayInfo.description) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
           overlayTimeline.current
             .set(innerElements, { xPercent: 80, opacity: 0 })
             .to(qrCodeOverlayRef.current, {
@@ -102,7 +121,12 @@ const DisplayQRCodeOverlay = forwardRef<
       },
       {
         scope: qrCodeOverlayRef,
-        dependencies: [qrCodeOverlayInfo],
+        dependencies: [
+          currentKeepAliveKey,
+          currentKeepAliveMs,
+          onLocalKeepAliveStart,
+          qrCodeOverlayInfo,
+        ],
       }
     );
 
@@ -131,6 +155,11 @@ const DisplayQRCodeOverlay = forwardRef<
           });
 
         if (prevQrCodeOverlayInfo.url || prevQrCodeOverlayInfo.description) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
           prevOverlayTimeline.current.to(prevQrCodeOverlayRef.current, {
             opacity: 0,
             duration: 1.5,
@@ -140,7 +169,13 @@ const DisplayQRCodeOverlay = forwardRef<
       },
       {
         scope: prevQrCodeOverlayRef,
-        dependencies: [prevQrCodeOverlayInfo, qrCodeOverlayInfo],
+        dependencies: [
+          onLocalKeepAliveStart,
+          prevKeepAliveKey,
+          prevKeepAliveMs,
+          prevQrCodeOverlayInfo,
+          qrCodeOverlayInfo,
+        ],
       }
     );
 

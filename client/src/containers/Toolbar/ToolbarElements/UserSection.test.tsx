@@ -95,6 +95,54 @@ jest.mock("../../../components/Icon/Icon", () => ({
 }));
 
 describe("UserSection", () => {
+  it("does not count displays in the active session total", () => {
+    const globalInfo = createMockGlobalInfo({
+      user: "Alex Operator",
+      userEmail: "alex@example.com",
+      hostId: "host-1",
+      activeInstances: [
+        {
+          database: "main",
+          hostId: "host-1",
+          isOnController: true,
+          lastActive: new Date().toISOString(),
+          user: "Alex Operator",
+          name: "Alex Operator",
+          sessionKind: "human",
+          presenceSurface: "controller",
+          presenceRoute: "/controller",
+        },
+        {
+          database: "main",
+          hostId: "display-1",
+          isOnController: false,
+          lastActive: new Date().toISOString(),
+          user: "Projector PC",
+          name: "Projector PC",
+          sessionKind: "display",
+          presenceSurface: "display",
+          presenceRoute: "/projector",
+        },
+      ],
+    });
+    const controllerInfo = createMockControllerContext();
+
+    render(
+      <GlobalInfoContext.Provider value={globalInfo as never}>
+        <ControllerInfoContext.Provider value={controllerInfo as never}>
+          <UserSection />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    );
+
+    expect(
+      screen.getByRole("button", { name: /1 active session/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /2 active sessions/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("groups display routes into a single expandable row", () => {
     const globalInfo = createMockGlobalInfo({
       user: "Alex Operator",

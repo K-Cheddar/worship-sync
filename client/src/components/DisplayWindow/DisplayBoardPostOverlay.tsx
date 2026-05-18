@@ -12,6 +12,15 @@ type DisplayBoardPostOverlayProps = {
   boardPostStreamInfo?: BoardPostStreamInfo;
   prevBoardPostStreamInfo?: BoardPostStreamInfo;
   shouldAnimate?: boolean;
+  currentKeepAliveKey?: string | null;
+  prevKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  prevKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: (
+    overlayKey: string | null,
+    localVisibleMs: number | null,
+    mode?: "max" | "replace",
+  ) => void;
 };
 
 const DisplayBoardPostOverlay = ({
@@ -19,6 +28,11 @@ const DisplayBoardPostOverlay = ({
   boardPostStreamInfo,
   prevBoardPostStreamInfo,
   shouldAnimate = false,
+  currentKeepAliveKey,
+  prevKeepAliveKey,
+  currentKeepAliveMs,
+  prevKeepAliveMs,
+  onLocalKeepAliveStart,
 }: DisplayBoardPostOverlayProps) => {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const prevCardRef = useRef<HTMLDivElement | null>(null);
@@ -35,6 +49,11 @@ const DisplayBoardPostOverlay = ({
       cardTimeline.current?.clear();
       const el = cardRef.current;
       gsap.set(el, { opacity: 0 });
+      onLocalKeepAliveStart?.(
+        currentKeepAliveKey ?? null,
+        currentKeepAliveMs ?? null,
+        "max",
+      );
       cardTimeline.current = gsap
         .timeline()
         .fromTo(
@@ -49,7 +68,16 @@ const DisplayBoardPostOverlay = ({
           ease: "power1.inOut",
         });
     },
-    { scope: cardRef, dependencies: [boardPostStreamInfo, shouldAnimate] },
+    {
+      scope: cardRef,
+      dependencies: [
+        boardPostStreamInfo,
+        currentKeepAliveKey,
+        currentKeepAliveMs,
+        onLocalKeepAliveStart,
+        shouldAnimate,
+      ],
+    },
   );
 
   useGSAP(
@@ -59,6 +87,11 @@ const DisplayBoardPostOverlay = ({
       prevCardTimeline.current?.clear();
 
       if (prevBoardPostStreamInfo?.text?.trim()) {
+        onLocalKeepAliveStart?.(
+          prevKeepAliveKey ?? null,
+          prevKeepAliveMs ?? null,
+          "replace",
+        );
         prevCardTimeline.current = gsap.timeline().fromTo(
           prevCardRef.current,
           { opacity: 1 },
@@ -68,7 +101,13 @@ const DisplayBoardPostOverlay = ({
     },
     {
       scope: prevCardRef,
-      dependencies: [prevBoardPostStreamInfo, shouldAnimate],
+      dependencies: [
+        onLocalKeepAliveStart,
+        prevBoardPostStreamInfo,
+        prevKeepAliveKey,
+        prevKeepAliveMs,
+        shouldAnimate,
+      ],
     },
   );
 

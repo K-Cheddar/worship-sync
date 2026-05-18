@@ -316,6 +316,8 @@ export type BoardPostStreamInfo = {
   fontSize?: number;
   duration?: number;
   time?: number;
+  /** Monotonic sequence for stream overlay ordering across independently synced lanes. */
+  transitionSequence?: number;
 };
 
 export type RestreamConnectionState =
@@ -529,6 +531,8 @@ export type OverlayInfo = {
   duration?: number;
   type?: OverlayType;
   time?: number;
+  /** Monotonic sequence for stream overlay ordering across independently synced lanes. */
+  transitionSequence?: number;
   id: string;
   formatting?: OverlayFormatting;
   createdAt?: string;

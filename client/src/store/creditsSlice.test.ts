@@ -237,5 +237,147 @@ describe("creditsSlice", () => {
       expect(state.list[0].id).toBe("old-1");
       expect(state.isInitialized).toBe(true);
     });
+
+    it("addCredit appends when no credit is selected", () => {
+      const store = createStore();
+      const credit = createCreditsInfo({ id: "c1", heading: "H1" });
+      store.dispatch(creditsSlice.actions.addCredit(credit));
+      expect(store.getState().credits.list.some((c) => c.id === "c1")).toBe(true);
+      expect(store.getState().credits.selectedCreditId).toBe("c1");
+    });
+
+    it("addCredit inserts after the selected credit", () => {
+      const store = createStore();
+      const c1 = createCreditsInfo({ id: "c1", heading: "H1" });
+      const c2 = createCreditsInfo({ id: "c2", heading: "H2" });
+      const c3 = createCreditsInfo({ id: "c3", heading: "H3" });
+      store.dispatch(creditsSlice.actions.initiateCreditsList([c1, c2]));
+      store.dispatch(creditsSlice.actions.selectCredit("c1"));
+      store.dispatch(creditsSlice.actions.addCredit(c3));
+      const list = store.getState().credits.list;
+      expect(list[1].id).toBe("c3");
+    });
+
+    it("deleteCredit removes a credit by id", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.initiateCreditsList([
+          createCreditsInfo({ id: "c1", heading: "H1" }),
+          createCreditsInfo({ id: "c2", heading: "H2" }),
+        ]),
+      );
+      store.dispatch(creditsSlice.actions.deleteCredit("c1"));
+      expect(store.getState().credits.list).toHaveLength(1);
+      expect(store.getState().credits.list[0].id).toBe("c2");
+    });
+
+    it("updateCredit replaces the matching credit", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.initiateCreditsList([
+          createCreditsInfo({ id: "c1", heading: "Old" }),
+        ]),
+      );
+      store.dispatch(
+        creditsSlice.actions.updateCredit(
+          createCreditsInfo({ id: "c1", heading: "Updated" }),
+        ),
+      );
+      expect(store.getState().credits.list[0].heading).toBe("Updated");
+    });
+
+    it("updateInitialList snapshots the current list ids", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.initiateCreditsList([
+          createCreditsInfo({ id: "c1", heading: "H1" }),
+        ]),
+      );
+      store.dispatch(creditsSlice.actions.addCredit(createCreditsInfo({ id: "c2", heading: "H2" })));
+      store.dispatch(creditsSlice.actions.updateInitialList());
+      expect(store.getState().credits.initialList).toContain("c2");
+    });
+
+    it("setIsLoading sets the flag", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.setIsLoading(false));
+      expect(store.getState().credits.isLoading).toBe(false);
+    });
+
+    it("setScheduleName sets the schedule name", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.setScheduleName("Sunday Morning"));
+      expect(store.getState().credits.scheduleName).toBe("Sunday Morning");
+    });
+
+    it("setIsInitialized sets the flag", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.setIsInitialized(true));
+      expect(store.getState().credits.isInitialized).toBe(true);
+    });
+
+    it("initiateTransitionScene and initiateCreditsScene set scenes", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.initiateTransitionScene("scene-t"));
+      store.dispatch(creditsSlice.actions.initiateCreditsScene("scene-c"));
+      expect(store.getState().credits.transitionScene).toBe("scene-t");
+      expect(store.getState().credits.creditsScene).toBe("scene-c");
+    });
+
+    it("initiateLiveCredits sets live credits from payload", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.initiateLiveCredits([
+          createCreditsInfo({ id: "lc1", heading: "Live H1" }),
+        ]),
+      );
+      expect(store.getState().credits.liveCredits).toHaveLength(1);
+    });
+
+    it("initiateLiveCredits clears list when payload is empty", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.initiateLiveCredits([]));
+      expect(store.getState().credits.liveCredits).toHaveLength(0);
+    });
+
+    it("updateCreditsListFromRemote replaces list from remote", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.updateCreditsListFromRemote([
+          createCreditsInfo({ id: "r1", heading: "Remote" }),
+        ]),
+      );
+      expect(store.getState().credits.list).toHaveLength(1);
+    });
+
+    it("updateCreditsListFromRemote clears list when remote is empty", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.initiateCreditsList([
+        createCreditsInfo({ id: "c1", heading: "H1" }),
+      ]));
+      store.dispatch(creditsSlice.actions.updateCreditsListFromRemote([]));
+      expect(store.getState().credits.list).toHaveLength(0);
+    });
+
+    it("updateLiveCreditsFromRemote replaces live credits from remote", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.updateLiveCreditsFromRemote([
+          createCreditsInfo({ id: "r1", heading: "Remote Live" }),
+        ]),
+      );
+      expect(store.getState().credits.liveCredits).toHaveLength(1);
+    });
+
+    it("updateLiveCreditsFromRemote clears live credits when remote is empty", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.updateLiveCreditsFromRemote([]));
+      expect(store.getState().credits.liveCredits).toHaveLength(0);
+    });
+
+    it("forceUpdate is a no-op that does not throw", () => {
+      const store = createStore();
+      expect(() => store.dispatch(creditsSlice.actions.forceUpdate())).not.toThrow();
+    });
   });
 });

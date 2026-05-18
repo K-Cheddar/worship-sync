@@ -14,6 +14,15 @@ type DisplayImageOverlayProps = {
   prevImageOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
   shouldFillContainer?: boolean;
+  currentKeepAliveKey?: string | null;
+  prevKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  prevKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: (
+    overlayKey: string | null,
+    localVisibleMs: number | null,
+    mode?: "max" | "replace",
+  ) => void;
 };
 
 const DisplayImageOverlay = forwardRef<
@@ -27,6 +36,11 @@ const DisplayImageOverlay = forwardRef<
       prevImageOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
+      currentKeepAliveKey,
+      prevKeepAliveKey,
+      currentKeepAliveMs,
+      prevKeepAliveMs,
+      onLocalKeepAliveStart,
     },
     containerRef
   ) => {
@@ -82,6 +96,11 @@ const DisplayImageOverlay = forwardRef<
         // Only animate once the image has loaded so the fit-content container
         // already has its natural size when the fade-in begins.
         if (imageOverlayInfo.imageUrl && loadedImageUrl === imageOverlayInfo.imageUrl) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
           overlayTimeline.current
             .to(imageOverlayRef.current, {
               opacity: 1,
@@ -114,7 +133,13 @@ const DisplayImageOverlay = forwardRef<
       },
       {
         scope: imageOverlayRef,
-        dependencies: [imageOverlayInfo, loadedImageUrl],
+        dependencies: [
+          currentKeepAliveKey,
+          currentKeepAliveMs,
+          imageOverlayInfo,
+          loadedImageUrl,
+          onLocalKeepAliveStart,
+        ],
       }
     );
 
@@ -137,6 +162,11 @@ const DisplayImageOverlay = forwardRef<
           });
 
         if (prevImageOverlayInfo.imageUrl) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
           prevOverlayTimeline.current.to(prevImageOverlayRef.current, {
             opacity: 0,
             duration: 1.5,
@@ -146,7 +176,13 @@ const DisplayImageOverlay = forwardRef<
       },
       {
         scope: prevImageOverlayRef,
-        dependencies: [imageOverlayInfo, prevImageOverlayInfo],
+        dependencies: [
+          imageOverlayInfo,
+          onLocalKeepAliveStart,
+          prevImageOverlayInfo,
+          prevKeepAliveKey,
+          prevKeepAliveMs,
+        ],
       }
     );
 

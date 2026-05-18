@@ -13,6 +13,15 @@ type DisplayStbOverlayProps = {
   prevStbOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
   shouldFillContainer?: boolean;
+  currentKeepAliveKey?: string | null;
+  prevKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  prevKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: (
+    overlayKey: string | null,
+    localVisibleMs: number | null,
+    mode?: "max" | "replace",
+  ) => void;
 };
 
 const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
@@ -23,6 +32,11 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       prevStbOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
+      currentKeepAliveKey,
+      prevKeepAliveKey,
+      currentKeepAliveMs,
+      prevKeepAliveMs,
+      onLocalKeepAliveStart,
     },
     containerRef
   ) => {
@@ -45,6 +59,11 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
 
         // Only play animate if there is overlay info
         if (stbOverlayInfo.heading || stbOverlayInfo.subHeading) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
           overlayTimeline.current
             .to(stbOverlayRef.current, {
               yPercent: 0,
@@ -99,7 +118,12 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       },
       {
         scope: stbOverlayRef,
-        dependencies: [stbOverlayInfo],
+        dependencies: [
+          currentKeepAliveKey,
+          currentKeepAliveMs,
+          onLocalKeepAliveStart,
+          stbOverlayInfo,
+        ],
       }
     );
 
@@ -128,6 +152,11 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           .set(prevStbOverlayRef.current, prevOverlayStartState);
 
         if (prevStbOverlayInfo.heading || prevStbOverlayInfo.subHeading) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
           prevOverlayTimeline.current.to(prevStbOverlayRef.current, {
             yPercent: 120,
             opacity: 0,
@@ -138,7 +167,15 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       },
       {
         scope: prevStbOverlayRef,
-        dependencies: [opacity, prevStbOverlayInfo, stbOverlayInfo, yPercent],
+        dependencies: [
+          onLocalKeepAliveStart,
+          opacity,
+          prevKeepAliveKey,
+          prevKeepAliveMs,
+          prevStbOverlayInfo,
+          stbOverlayInfo,
+          yPercent,
+        ],
       }
     );
 

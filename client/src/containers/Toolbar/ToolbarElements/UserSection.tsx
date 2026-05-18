@@ -117,7 +117,6 @@ const UserSection = () => {
     }
   }, [activeInstances?.length]);
 
-  const activeCount = activeInstances?.length || 0;
   const { operatorRows, displayRows } = useMemo(() => {
     const instances = activeInstances || [];
     const sortedInstances = [...instances]
@@ -164,6 +163,7 @@ const UserSection = () => {
       })),
     [operatorRows]
   );
+  const activeCount = activeInstanceRows.length;
 
   const accountAriaLabel = (() => {
     let label = "";
