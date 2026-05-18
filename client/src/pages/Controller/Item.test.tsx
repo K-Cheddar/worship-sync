@@ -1,5 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Item from "./Item";
@@ -11,6 +11,7 @@ import {
   createMockGlobalContext,
   createMockPouchDB,
 } from "../../test/mocks";
+import type { DBItem } from "../../types";
 
 jest.mock("../../containers/ItemEditor/SlideEditor", () => () => (
   <div data-testid="slide-editor" />
@@ -57,7 +58,7 @@ describe("Controller Item page", () => {
     const store = createTestStore();
     const consoleErrorSpy = jest
       .spyOn(console, "error")
-      .mockImplementation(() => {});
+      .mockImplementation(() => { });
 
     const itemId = window.btoa(encodeURI("item-123"));
     const listId = window.btoa(encodeURI("list-456"));
@@ -85,5 +86,68 @@ describe("Controller Item page", () => {
     expect(store.getState().undoable.present.item.isLoading).toBe(false);
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("backfills formatted sections for free items missing them", async () => {
+    const dbGet = jest.fn().mockResolvedValue({
+      _id: "item-123",
+      name: "Free item",
+      type: "free",
+      slides: [
+        {
+          name: "Section 1",
+          boxes: [
+            { words: "ignored" },
+            { words: "Line one" },
+          ],
+        },
+        {
+          name: "Section 1",
+          boxes: [
+            { words: "ignored" },
+            { words: "Line two" },
+          ],
+        },
+      ],
+      formattedSections: [],
+    } as unknown as DBItem);
+    const controllerContext = createMockControllerContext({
+      db: createMockPouchDB({ get: dbGet }),
+    });
+    const globalContext = createMockGlobalContext();
+    const store = createTestStore();
+    const itemId = window.btoa(encodeURI("item-123"));
+    const listId = window.btoa(encodeURI("list-456"));
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={controllerContext as any}>
+          <GlobalInfoContext.Provider value={globalContext as any}>
+            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
+              <Routes>
+                <Route
+                  path="/controller/item/:itemId/:listId"
+                  element={<Item />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(store.getState().undoable.present.item.isLoading).toBe(false);
+    });
+
+    const { formattedSections } = store.getState().undoable.present.item;
+    expect(formattedSections).toHaveLength(1);
+    expect(formattedSections[0]).toEqual(
+      expect.objectContaining({
+        sectionNum: 1,
+        words: "Line one\nLine two",
+        slideSpan: 2,
+      }),
+    );
   });
 });
