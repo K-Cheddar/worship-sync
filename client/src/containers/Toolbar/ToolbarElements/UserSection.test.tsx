@@ -143,6 +143,39 @@ describe("UserSection", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows inline edit button next to name and toggles edit mode", () => {
+    const updateSelfDisplayName = jest.fn().mockResolvedValue(true);
+    const globalInfo = createMockGlobalInfo({
+      user: "Alex Operator",
+      userEmail: "alex@example.com",
+      sessionKind: "human",
+      updateSelfDisplayName,
+    });
+    const controllerInfo = createMockControllerContext();
+
+    render(
+      <GlobalInfoContext.Provider value={globalInfo as never}>
+        <ControllerInfoContext.Provider value={controllerInfo as never}>
+          <UserSection />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    );
+
+    expect(screen.getByRole("button", { name: /edit name/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /edit name/i }));
+
+    expect(screen.getByLabelText("Display name")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /save/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit name/i })).toBeInTheDocument();
+  });
+
   it("groups display routes into a single expandable row", () => {
     const globalInfo = createMockGlobalInfo({
       user: "Alex Operator",

@@ -31,7 +31,11 @@ type Config = {
   onUpdate?: (registration: ServiceWorkerRegistration) => void;
 };
 
-export type UpdateCheckResult = "updated" | "upToDate" | "unavailable";
+export type UpdateCheckResult =
+  | "updated"
+  | "upToDate"
+  | "restartRequired"
+  | "unavailable";
 
 export function reloadPage() {
   window.location.reload();
@@ -260,7 +264,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   );
 
   if (promptWaitingWorker(registration)) {
-    return (await activationPromise) ? "updated" : "upToDate";
+    return (await activationPromise) ? "updated" : "restartRequired";
   }
 
   let sawUpdateCandidate = Boolean(registration.installing);
@@ -325,7 +329,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   await registration.update();
 
   if (promptWaitingWorker(registration)) {
-    return (await activationPromise) ? "updated" : "upToDate";
+    return (await activationPromise) ? "updated" : "restartRequired";
   }
 
   const installDetected = await installPromise;
@@ -333,7 +337,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     return "upToDate";
   }
 
-  return (await activationPromise) ? "updated" : "upToDate";
+  return (await activationPromise) ? "updated" : "restartRequired";
 }
 
 export function unregister() {
