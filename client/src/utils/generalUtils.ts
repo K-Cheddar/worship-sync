@@ -249,6 +249,54 @@ export const keepElementInView = ({
   }
 };
 
+/**
+ * Scroll `elementId` into view inside scroll container `parentId` and resolve
+ * only once it is actually visible (or a timeout elapses). Used to guarantee the
+ * user can see each row being changed during an automated sync before moving on.
+ *
+ * Waits for the element to mount (it may be newly inserted), then polls
+ * keepElementInView — which smooth-scrolls and reports whether the child is in
+ * view — until it settles or `settleTimeoutMs` is reached.
+ */
+export const ensureElementInView = async (
+  elementId: string,
+  parentId: string,
+  options: {
+    appearTimeoutMs?: number;
+    settleTimeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {}
+): Promise<void> => {
+  const {
+    appearTimeoutMs = 1000,
+    settleTimeoutMs = 1000,
+    pollIntervalMs = 60,
+  } = options;
+
+  const getEls = () => ({
+    child: document.getElementById(elementId),
+    parent: document.getElementById(parentId),
+  });
+
+  // Wait for the row and its scroll container to mount.
+  const appearDeadline = Date.now() + appearTimeoutMs;
+  let { child, parent } = getEls();
+  while ((!child || !parent) && Date.now() < appearDeadline) {
+    await delay(pollIntervalMs);
+    ({ child, parent } = getEls());
+  }
+  if (!child || !parent) return;
+
+  // keepElementInView returns true while it still needs to scroll (child out of
+  // view) and false once the child is visible. Poll until it settles.
+  const settleDeadline = Date.now() + settleTimeoutMs;
+  while (Date.now() < settleDeadline) {
+    const stillScrolling = keepElementInView({ child, parent });
+    if (!stillScrolling) return;
+    await delay(pollIntervalMs);
+  }
+};
+
 export const checkMediaType = (mediaUrl?: string) => {
   if (!mediaUrl) return "image";
 

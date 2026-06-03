@@ -120,7 +120,9 @@ const Overlay = ({
         //     ease: "power1.inOut",
         //   });
       } else if (isDeleting) {
-        // delete animation
+        // delete animation — remove the row from the list only once the collapse
+        // finishes. Don't clearProps: the row stays collapsed until it unmounts,
+        // so it never flashes back to full size before disappearing.
         gsap.timeline().fromTo(
           overlayRef.current,
           {
@@ -133,9 +135,7 @@ const Overlay = ({
             duration: 0.5,
             ease: "power1.inOut",
             onComplete: () => {
-              if (overlayRef.current) {
-                gsap.set(overlayRef.current, { clearProps: "height,opacity" });
-              }
+              handleDeleteOverlay(overlay.id);
             },
           }
         );
@@ -170,11 +170,9 @@ const Overlay = ({
   );
 
   const deleteOverlayHandler = () => {
+    // Kick off the collapse animation; the list removal happens in its
+    // onComplete (see useGSAP above) so the two stay in sync.
     setIsDeleting(true);
-    setTimeout(() => {
-      handleDeleteOverlay(overlay.id);
-      setIsDeleting(false);
-    }, 500);
   };
 
   const overlayBaseClass = "flex items-center text-wrap text-center";

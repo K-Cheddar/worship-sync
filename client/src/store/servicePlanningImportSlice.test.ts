@@ -1,9 +1,11 @@
 import { configureStore } from "@reduxjs/toolkit";
 import servicePlanningImportReducer, {
   advanceServicePlanningSyncStep,
+  cancelServicePlanningSync,
   clearServicePlanningSyncState,
   completeServicePlanningSync,
   failServicePlanningSync,
+  finishServicePlanningSyncCancellation,
   recordServicePlanningSyncResult,
   resetServicePlanningImportPreview,
   setServicePlanningServiceOutline,
@@ -147,5 +149,35 @@ describe("servicePlanningImportSlice", () => {
     expect(state.sync.status).toBe("idle");
     expect(state.sync.mode).toBeNull();
     expect(state.sync.error).toBeNull();
+  });
+
+  it("keeps stop requests pending until the runner finalizes cancellation", () => {
+    const store = createStore();
+
+    store.dispatch(startServicePlanningSync({ mode: "outline" }));
+    store.dispatch(
+      setServicePlanningSyncActiveStep({
+        phase: "outline",
+        activeLabel: "Welcome Song",
+      }),
+    );
+    store.dispatch(cancelServicePlanningSync());
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe(
+      "cancelling",
+    );
+    expect(store.getState().servicePlanningImport.sync.activeLabel).toBe(
+      "Welcome Song",
+    );
+
+    store.dispatch(recordServicePlanningSyncResult({ outlineInserted: 1 }));
+    store.dispatch(finishServicePlanningSyncCancellation());
+
+    const state = store.getState()
+      .servicePlanningImport as ServicePlanningImportState;
+    expect(state.sync.status).toBe("cancelled");
+    expect(state.sync.phase).toBe("done");
+    expect(state.sync.activeLabel).toBe("");
+    expect(state.sync.outlineInserted).toBe(1);
   });
 });

@@ -34,6 +34,8 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
     isServicePlanningEnabled: true,
     servicePlanningAvailabilityMessage: null,
   }),
+  overlayPlanHasExecutableChange: (plan: Array<{ action: string }>) =>
+    Array.isArray(plan) && plan.some((item) => item.action !== "skip"),
 }));
 
 describe("ServicePlanningImportPanel", () => {
@@ -117,7 +119,12 @@ describe("ServicePlanningImportPanel", () => {
 
     expect(store.getState().servicePlanningImport.sync.status).toBe("running");
     expect(store.getState().servicePlanningImport.sync.mode).toBe("both");
-    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
+    // The pressed "Sync All" button becomes a "Stop syncing" button; the others
+    // stay disabled while the run is in progress.
+    expect(
+      screen.queryByRole("button", { name: "Sync All" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop syncing" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
     expect(screen.queryByText(/syncing outline/i)).not.toBeInTheDocument();
@@ -280,6 +287,72 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByRole("button", { name: "Sync All" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Sync Outline" }));
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe("running");
+    expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
+  });
+
+  it("normalizes Sync All to outline when overlays have no executable changes", async () => {
+    const user = userEvent.setup();
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [
+          {
+            sectionName: "Special Music",
+            headingName: null,
+            elementType: "Special Music",
+            title: "Goodness of God",
+            outlineItemType: "song",
+            cleanedTitle: "Goodness of God",
+            matchedLibraryItem: {
+              _id: "song-2",
+              name: "Goodness of God",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        lineItems: [
+          {
+            sectionName: "Special Music",
+            headingName: null,
+            elementType: "Special Music",
+            title: "Goodness of God",
+            ledBy: "Worship Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: {
+              _id: "song-2",
+              name: "Goodness of God",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+      }) as any),
+    );
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <ServicePlanningImportPanel />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sync All" }));
 
     expect(store.getState().servicePlanningImport.sync.status).toBe("running");
     expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
