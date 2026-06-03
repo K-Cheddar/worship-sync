@@ -1,3 +1,10 @@
+# [2.10.0](https://github.com/K-Cheddar/worship-sync/compare/v2.9.2...v2.10.0) (2026-06-03)
+
+
+### Features
+
+* Improve visibility and consistency of the Service Plan ([fd452f0](https://github.com/K-Cheddar/worship-sync/commit/fd452f0aa2aa3b18da9f1dacfa6afec6d19ec600))
+
 ## [2.9.2](https://github.com/K-Cheddar/worship-sync/compare/v2.9.1...v2.9.2) (2026-06-03)
 
 
