@@ -19,7 +19,8 @@
     "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",
     "email:preview": "node --import tsx scripts/preview-transactional-emails.ts",
     "prepare": "husky",
-    "release": "semantic-release"
+    "release": "semantic-release",
+    "release:ci": "node scripts/semantic-release-with-outputs.js"
   },
   "engines": {
     "node": "24.x"
