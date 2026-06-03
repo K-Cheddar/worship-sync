@@ -612,6 +612,78 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     );
   });
 
+  it("reattaches presentation listeners after the realtime database reconnects", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider();
+
+    const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
+
+    await waitFor(() =>
+      expect(onValueCallbacks.has(streamInfoPath)).toBe(true)
+    );
+    await waitFor(() =>
+      expect(onValueCallbacks.has(".info/connected")).toBe(true)
+    );
+
+    const countStreamInfoSubscriptions = () =>
+      onValueMock.mock.calls.filter(([target]) => target.path === streamInfoPath)
+        .length;
+    const initialSubscriptionCount = countStreamInfoSubscriptions();
+
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
+    });
+
+    expect(countStreamInfoSubscriptions()).toBe(initialSubscriptionCount);
+
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(false));
+    });
+    act(() => {
+      onValueCallbacks.get(".info/connected")?.(snapshotFor(true));
+    });
+
+    await waitFor(() =>
+      expect(countStreamInfoSubscriptions()).toBeGreaterThan(
+        initialSubscriptionCount,
+      )
+    );
+  });
+
+  it("remints shared realtime auth when a presentation listener loses permission", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider();
+
+    const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
+
+    await waitFor(() =>
+      expect(onValueErrorCallbacks.has(streamInfoPath)).toBe(true)
+    );
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
+    );
+
+    act(() => {
+      onValueErrorCallbacks
+        .get(streamInfoPath)
+        ?.(new Error("permission_denied"));
+    });
+
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(2)
+    );
+  });
+
   it("subscribes to church branding and exposes live branding updates", async () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");

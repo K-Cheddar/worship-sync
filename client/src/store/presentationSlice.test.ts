@@ -1804,6 +1804,72 @@ describe("presentationSlice", () => {
       expect(store.getState().presentation.streamInfo.type).toBe("free");
     });
 
+    it("remote clear keeps the outgoing verse in prev when stream snapshot arrives before the empty bible", () => {
+      const store = createStore();
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfoFromRemote({
+          title: "Jn 3:16",
+          text: "For God so loved",
+          time: 100,
+        }),
+      );
+
+      // Clear propagates as separate per-key remote updates; the emptied stream
+      // snapshot (type "") can land before the empty bible echo.
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote({
+          type: "",
+          name: "",
+          slide: null,
+          displayType: "stream",
+          time: 200,
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfoFromRemote({
+          title: "",
+          text: "",
+          time: 201,
+        }),
+      );
+
+      // The empty bible echo must not overwrite the verse already staged for the fade-out.
+      expect(
+        store.getState().presentation.prevStreamInfo.bibleDisplayInfo?.text,
+      ).toBe("For God so loved");
+    });
+
+    it("remote clear keeps the outgoing formatted text in prev when stream snapshot arrives before the empty update", () => {
+      const store = createStore();
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "Welcome",
+          time: 100,
+        } as never),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote({
+          type: "",
+          name: "",
+          slide: null,
+          displayType: "stream",
+          time: 200,
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "",
+          time: 201,
+        } as never),
+      );
+
+      expect(
+        store.getState().presentation.prevStreamInfo.formattedTextDisplayInfo
+          ?.text,
+      ).toBe("Welcome");
+    });
+
     it("updateFormattedTextDisplayInfoFromRemote with empty text does not clear live bible (firebase echo order)", () => {
       const store = createStore({
         presentation: {

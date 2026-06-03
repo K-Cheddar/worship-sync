@@ -519,7 +519,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         <div
           onMouseDown={handleTitleMouseDown}
           onTouchStart={handleTitleTouchStart}
-          className="flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
+          className="relative z-10 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
         >
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</span>
           <div className="flex shrink-0 items-center gap-1">

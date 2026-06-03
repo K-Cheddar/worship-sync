@@ -151,7 +151,7 @@ const Arrangement = ({
               }`}
             onClick={() => setSelectedArrangement(arrangement.id)}
           >
-            <p className="min-w-0 text-center wrap-break-word whitespace-normal max-h-12 overflow-hidden w-full">{arrangement.name}</p>
+            <p className="min-w-0 text-center wrap-break-word whitespace-normal w-full line-clamp-3">{arrangement.name}</p>
           </Button>
         )}
       </li>

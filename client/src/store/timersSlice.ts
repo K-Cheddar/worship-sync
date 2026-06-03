@@ -115,10 +115,12 @@ const hydrateTimer = (
     buildBaseTimer(
       {
         ...timerInfo,
+        hostId: runtimeSource?.hostId ?? timerInfo.hostId,
         status: runtimeSource?.status ?? timerInfo.status,
         remainingTime: runtimeSource?.remainingTime ?? timerInfo.remainingTime,
         startedAt: runtimeSource?.startedAt ?? timerInfo.startedAt,
         endTime: runtimeSource?.endTime ?? timerInfo.endTime,
+        time: runtimeSource?.time ?? timerInfo.time,
       },
       existingTimer
     ),
@@ -149,6 +151,7 @@ export const timersSlice = createSlice({
     setShouldUpdateTimers: (state, action: PayloadAction<boolean>) => {
       state.shouldUpdateTimers = action.payload;
     },
+    flushPendingTimerWrites: () => {},
     syncTimers: (state, action: PayloadAction<(TimerInfo | undefined)[]>) => {
       // Create a map of existing timers for quick lookup
       const existingTimersMap = new Map(
@@ -179,14 +182,21 @@ export const timersSlice = createSlice({
       const existingTimersMap = new Map(
         state.timers.map((timer) => [timer.id, timer])
       );
-      const nextTimers = state.timers.filter((timer) => timer.hostId === hostId);
+      // Keep one timer per id so a stale local copy cannot sit ahead of the
+      // fresh remote copy in the array and win a first-match selector.
+      const nextTimersMap = new Map(
+        state.timers
+          .filter((timer) => timer.hostId === hostId)
+          .map((timer) => [timer.id, timer] as const)
+      );
 
       remoteTimers.forEach((timerInfo) => {
-        const existingTimer = existingTimersMap.get(timerInfo.id);
-        nextTimers.push(hydrateTimer(timerInfo, existingTimer));
+        const existingTimer =
+          nextTimersMap.get(timerInfo.id) || existingTimersMap.get(timerInfo.id);
+        nextTimersMap.set(timerInfo.id, hydrateTimer(timerInfo, existingTimer));
       });
 
-      state.timers = nextTimers;
+      state.timers = Array.from(nextTimersMap.values());
     },
     reconcileTimersFromDocs: (
       state,
@@ -218,7 +228,7 @@ export const timersSlice = createSlice({
     addTimer: (state, action: PayloadAction<TimerInfo>) => {
       const timerInfo = {
         ...action.payload,
-        time: action.payload.time ?? Date.now(),
+        time: action.payload.time ?? serverNow(),
       };
       const existingTimer = state.timers.find((timer) => timer.id === timerInfo.id);
       const nextTimer = hydrateTimer(timerInfo, existingTimer);
@@ -242,7 +252,7 @@ export const timersSlice = createSlice({
           return applyTimerUpdate(
             {
               ...timerInfo,
-              time: Date.now(),
+              time: serverNow(),
             },
             timer
           );
@@ -263,7 +273,7 @@ export const timersSlice = createSlice({
               ...timer,
               color,
               hostId: hostId || timer.hostId,
-              time: Date.now(),
+              time: serverNow(),
             },
             timer
           );
@@ -317,6 +327,7 @@ export const {
   updateTimerFromRemote,
   tickTimers,
   setShouldUpdateTimers,
+  flushPendingTimerWrites,
   updateTimerColor,
   deleteTimer,
 } = timersSlice.actions;

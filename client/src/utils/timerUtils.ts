@@ -13,7 +13,7 @@ export const mergeTimers = (
   ownTimers: TimerInfo[] = [],
   hostId: string,
 ): TimerInfo[] => {
-  const timerMap = new Map();
+  const timerMap = new Map<string, TimerInfo>();
 
   // First add other timers to the map
   currentTimers.forEach((timer: TimerInfo) => {
@@ -22,9 +22,14 @@ export const mergeTimers = (
     }
   });
 
-  // Then add own timers, which will override any existing timers with the same ID
+  // Then add own timers, but do not overwrite a fresher timer from another host.
   ownTimers.forEach((timer: TimerInfo) => {
-    timerMap.set(timer.id, timer);
+    const existingTimer = timerMap.get(timer.id);
+    const existingTime = existingTimer?.time ?? -1;
+    const ownTime = timer.time ?? -1;
+    if (!existingTimer || ownTime >= existingTime) {
+      timerMap.set(timer.id, timer);
+    }
   });
 
   // Convert map back to array and filter out any undefined values

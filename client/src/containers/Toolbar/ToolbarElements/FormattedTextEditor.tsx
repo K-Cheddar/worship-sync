@@ -2,7 +2,7 @@ import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { useDispatch, useSelector } from "../../../hooks";
 import { updateSlides } from "../../../store/itemSlice";
-import { useContext, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
@@ -17,6 +17,7 @@ import { AlignRight } from "lucide-react";
 import { ALargeSmall } from "lucide-react";
 import { Bold } from "lucide-react";
 import { Italic } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
 import cn from "classnames";
@@ -24,6 +25,31 @@ import Icon from "../../../components/Icon/Icon";
 import { FONT_SIZE_BUTTON_STEP } from "../../../constants";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/DropdownMenu";
+
+/** Display units are rem×10 (e.g. 15 = 1.5 rem). */
+const FORMATTED_TEXT_FONT_PRESETS: readonly number[] = [
+  8, 10, 12, 14, 15, 16, 18, 20, 22, 24, 28, 32, 36, 40, 48, 56, 64, 80, 100,
+  120, 150,
+];
+
+function nearestFormattedTextPreset(display: number): number {
+  let best = FORMATTED_TEXT_FONT_PRESETS[0]!;
+  let bestDist = Infinity;
+  for (const p of FORMATTED_TEXT_FONT_PRESETS) {
+    const d = Math.abs(p - display);
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  return best;
+}
 
 type fieldType =
   | "paddingX"
@@ -44,7 +70,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     return slides[selectedSlide]?.formattedTextDisplayInfo;
   }, [slides, selectedSlide]);
 
-  const [formattedTextState, setFormattedTextState] = useState({
+  const stateFromInfo = () => ({
     backgroundColor: formattedTextDisplayInfo?.backgroundColor || "#eb8934",
     textColor: formattedTextDisplayInfo?.textColor || "#ffffff",
     fontSize: (formattedTextDisplayInfo?.fontSize || 1.5) * 10,
@@ -54,6 +80,13 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     isBold: formattedTextDisplayInfo?.isBold || false,
     isItalic: formattedTextDisplayInfo?.isItalic || false,
   });
+
+  const [formattedTextState, setFormattedTextState] = useState(stateFromInfo);
+
+  useEffect(() => {
+    setFormattedTextState(stateFromInfo());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formattedTextDisplayInfo]);
 
   const dispatch = useDispatch();
   const globalInfo = useContext(GlobalInfoContext);
@@ -149,13 +182,60 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         />
         <Input
           label="Font Size"
-          type="number"
-          value={formattedTextState.fontSize}
+          type="text"
+          inputMode="numeric"
+          value={String(formattedTextState.fontSize)}
           onChange={(val) => handleChange("fontSize", val.toString())}
-          className="w-8 2xl:w-10"
+          className={cn(
+            "w-16 shrink-0",
+            "[&:has([data-state=open])_input]:rounded-t-md [&:has([data-state=open])_input]:rounded-b-none",
+          )}
           inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"
+          inputClassName="pr-7"
+          endAdornment={
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  className="inline-flex h-7 w-6 min-h-0 shrink-0 items-center justify-center"
+                  padding="p-0.5"
+                  svg={ChevronDown}
+                  iconSize="sm"
+                  aria-label="Font size presets"
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={0}
+                className="box-border flex max-h-[min(18rem,55vh)] w-16 max-w-16 min-w-0 flex-col overflow-hidden rounded-b-md rounded-t-none border border-neutral-700 border-t-neutral-600 bg-neutral-900 p-0 text-neutral-100 shadow-none"
+              >
+                <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+                  {FORMATTED_TEXT_FONT_PRESETS.map((px) => {
+                    const isSelected =
+                      px === nearestFormattedTextPreset(formattedTextState.fontSize);
+                    return (
+                      <DropdownMenuItem
+                        key={px}
+                        data-preset-selected={isSelected || undefined}
+                        className={cn(
+                          "justify-center px-1.5 py-1 text-xs tabular-nums",
+                          isSelected
+                            ? "bg-cyan-950/70 font-medium text-cyan-50 ring-1 ring-cyan-500/35 ring-inset hover:bg-cyan-950/80 focus:bg-cyan-950/80 data-highlighted:bg-cyan-950/80 data-highlighted:text-cyan-50"
+                            : "text-neutral-100 hover:bg-neutral-800 hover:text-neutral-100 focus:bg-neutral-800 focus:text-neutral-100 data-highlighted:bg-neutral-800 data-highlighted:text-neutral-100",
+                        )}
+                        onSelect={() => handleChange("fontSize", String(px))}
+                      >
+                        {px}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }
         />
         <Button
           svg={Plus}

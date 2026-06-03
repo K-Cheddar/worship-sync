@@ -118,6 +118,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     songMetadata,
     baseItem,
   } = item;
+  const itemRef = useRef(item);
+  itemRef.current = item;
   const showEditorSkeleton = isLoading || isSectionLoading;
 
   const arrangement = arrangements[selectedArrangement];
@@ -373,6 +375,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       cursorPositionsRef.current[index] = cursorPosition;
     }
 
+    const currentItem = itemRef.current;
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
@@ -390,7 +393,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       dispatch(updateBoxes({ boxes: newBoxes }));
     }
 
-    const updatedSlides = item.slides.map((slide, slideIndex) => {
+    const updatedSlides = currentItem.slides.map((slide, slideIndex) => {
       if (slideIndex === selectedSlide) {
         return { ...slide, boxes: newBoxes };
       }
@@ -402,14 +405,14 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
 
     const updatedItem = {
-      ...item,
+      ...currentItem,
       slides: updatedSlides,
     };
 
     if (type === "bible") {
       const formattedItem = formatBible({
         item: updatedItem,
-        mode: item.bibleInfo?.fontMode || "separate",
+        mode: currentItem.bibleInfo?.fontMode || "separate",
       });
       dispatch(updateSlides({ slides: formattedItem.slides }));
     }
@@ -435,12 +438,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
         if (currentSlideIndexInSection === -1) {
           const formattedItem = formatFree({
-            ...updatedItem,
+            ...currentItem,
+            slides: updatedSlides,
           });
           if (typeof cursorPosition === "number") {
             const newSlides = formattedItem.slides;
             const newSelectedIndex = resolveFormattedSlideIndex({
-              oldSlides: item.slides,
+              oldSlides: currentItem.slides,
               newSlides,
               selectedSlide,
               maxSlideIndex: Math.max(0, newSlides.length - 1),
@@ -475,7 +479,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           }
         }
 
-        const formattedSections = item.formattedSections || [];
+        const formattedSections = currentItem.formattedSections || [];
         const updatedFormattedSections = formattedSections.map((section) => {
           if (section.sectionNum === currentSectionNum) {
             return {
@@ -495,13 +499,14 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         }
 
         const formattedItem = formatFree({
-          ...updatedItem,
+          ...currentItem,
+          slides: updatedSlides,
           formattedSections: updatedFormattedSections,
         });
         if (typeof cursorPosition === "number") {
           const newSlides = formattedItem.slides;
           const newSelectedIndex = resolveFormattedSlideIndex({
-            oldSlides: item.slides,
+            oldSlides: currentItem.slides,
             newSlides,
             selectedSlide,
             maxSlideIndex: Math.max(0, newSlides.length - 1),
@@ -901,12 +906,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       if (!currentSlide) return;
 
       if (type === "free") {
+        const currentItem = itemRef.current;
         const currentSectionMatch = currentSlide.name?.match(/Section (\d+)/);
         const currentSectionNum = currentSectionMatch
           ? parseInt(currentSectionMatch[1])
           : 1;
 
-        const formattedSections = item.formattedSections || [];
+        const formattedSections = currentItem.formattedSections || [];
         const updatedFormattedSections = formattedSections.map((section) => {
           if (section.sectionNum === currentSectionNum) {
             return {
@@ -928,7 +934,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         // Optimistic update - update state immediately
         dispatch(
           updateSlides({
-            slides: item.slides, // Keep current slides for now
+            slides: currentItem.slides, // Keep current slides for now
             formattedSections: updatedFormattedSections,
           })
         );
@@ -985,12 +991,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           }
 
           if (type === "free") {
+            const currentItem = itemRef.current;
             const currentSectionMatch = currentSlide.name?.match(/Section (\d+)/);
             const currentSectionNum = currentSectionMatch
               ? parseInt(currentSectionMatch[1])
               : 1;
 
-            const formattedSections = item.formattedSections || [];
+            const formattedSections = currentItem.formattedSections || [];
             const updatedFormattedSections = formattedSections.map((section) => {
               if (section.sectionNum === currentSectionNum) {
                 return {
@@ -1010,7 +1017,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             }
 
             const updatedItem = {
-              ...item,
+              ...currentItem,
               formattedSections: updatedFormattedSections,
             };
 

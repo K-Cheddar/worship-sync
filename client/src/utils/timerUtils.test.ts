@@ -40,6 +40,7 @@ describe("timerUtils", () => {
           status: "stopped",
           isActive: false,
           remainingTime: 30,
+          time: 100,
         },
       ];
       const own: TimerInfo[] = [
@@ -51,12 +52,50 @@ describe("timerUtils", () => {
           status: "running",
           isActive: true,
           remainingTime: 45,
+          time: 200,
         },
       ];
       const result = mergeTimers(current, own, hostA);
       expect(result).toHaveLength(1);
       expect(result[0].hostId).toBe(hostA);
       expect(result[0].name).toBe("New");
+    });
+
+    it("keeps a newer timer from another host over a stale own timer with the same id", () => {
+      const current: TimerInfo[] = [
+        {
+          id: "t1",
+          hostId: hostB,
+          name: "Remote newer",
+          timerType: "timer",
+          status: "running",
+          isActive: true,
+          remainingTime: 20,
+          time: 300,
+        },
+      ];
+      const own: TimerInfo[] = [
+        {
+          id: "t1",
+          hostId: hostA,
+          name: "Local stale",
+          timerType: "timer",
+          status: "stopped",
+          isActive: false,
+          remainingTime: 60,
+          time: 200,
+        },
+      ];
+
+      const result = mergeTimers(current, own, hostA);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual(expect.objectContaining({
+        hostId: hostB,
+        name: "Remote newer",
+        status: "running",
+        time: 300,
+      }));
     });
 
     it("merges multiple timers from both sources", () => {

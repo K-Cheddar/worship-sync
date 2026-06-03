@@ -57,6 +57,9 @@ const Controller = () => {
   );
   const { access } = useContext(GlobalInfoContext) || {};
 
+  const syncStatus = useSelector((s: RootState) => s.servicePlanningImport.sync.status);
+  const syncMode = useSelector((s: RootState) => s.servicePlanningImport.sync.mode);
+
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
 
@@ -80,6 +83,12 @@ const Controller = () => {
     setIsRightPanelOpen(true);
     dispatch(setRequestOpenMediaPanel(false));
   }, [requestOpenMediaPanel, dispatch]);
+
+  useEffect(() => {
+    if (syncStatus === "running" && (syncMode === "outline" || syncMode === "both")) {
+      setIsLeftPanelOpen(true);
+    }
+  }, [syncStatus, syncMode]);
 
   const handleElementClick = (element: React.MouseEvent) => {
     if (

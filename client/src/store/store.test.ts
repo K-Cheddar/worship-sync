@@ -1363,6 +1363,173 @@ describe("store module", () => {
     );
   });
 
+  it("keeps timer writes pending while Firebase is unavailable and flushes them after reconnect", async () => {
+    let storeModule: any;
+    let timersSliceModule: any;
+    const setMock = jest.fn();
+    const getMock = jest.fn(() => Promise.resolve({ val: () => [] }));
+    const refMock = jest.fn((_db: unknown, path: string) => path);
+    const globalFireDbInfo = {
+      db: undefined as unknown,
+      database: "main",
+      churchId: "church-main",
+    };
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: refMock,
+        set: setMock,
+        get: getMock,
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { timersSlice } = timersSliceModule;
+
+    store.dispatch(
+      timersSlice.actions.addTimer({
+        id: "timer-1",
+        hostId: "host-123",
+        name: "Countdown",
+        timerType: "timer",
+        status: "running",
+        isActive: true,
+        countdownTime: "00:05",
+        duration: 5,
+        remainingTime: 5,
+        endTime: "2026-04-05T12:00:05.000Z",
+        showMinutesOnly: false,
+        time: 100,
+      }),
+    );
+    await waitForListenerDelay();
+
+    expect(localStorage.getItem("timerInfo")).toContain("timer-1");
+    expect(setMock).not.toHaveBeenCalled();
+    expect(store.getState().timers.shouldUpdateTimers).toBe(true);
+
+    globalFireDbInfo.db = "firebase-db";
+    store.dispatch(timersSlice.actions.flushPendingTimerWrites());
+    await waitForListenerDelay();
+
+    expect(refMock).toHaveBeenCalledWith(
+      "firebase-db",
+      "churches/church-main/data/timers",
+    );
+    expect(setMock).toHaveBeenCalledWith(
+      "churches/church-main/data/timers",
+      [
+        expect.objectContaining({
+          id: "timer-1",
+          hostId: "host-123",
+          status: "running",
+          time: 100,
+        }),
+      ],
+    );
+    expect(store.getState().timers.shouldUpdateTimers).toBe(false);
+  });
+
+  it("does not overwrite a newer Firebase timer when flushing a stale pending local timer", async () => {
+    let storeModule: any;
+    let timersSliceModule: any;
+    const remoteTimer = {
+      id: "timer-1",
+      hostId: "remote-host",
+      name: "Remote Countdown",
+      timerType: "timer",
+      status: "running",
+      isActive: true,
+      countdownTime: "00:05",
+      duration: 5,
+      remainingTime: 4,
+      endTime: "2026-04-05T12:00:05.000Z",
+      showMinutesOnly: false,
+      time: 200,
+    };
+    const setMock = jest.fn();
+    const getMock = jest.fn(() =>
+      Promise.resolve({
+        val: () => [remoteTimer],
+      }),
+    );
+    const refMock = jest.fn((_db: unknown, path: string) => path);
+    const globalFireDbInfo = {
+      db: undefined as unknown,
+      database: "main",
+      churchId: "church-main",
+    };
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: refMock,
+        set: setMock,
+        get: getMock,
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { timersSlice } = timersSliceModule;
+
+    store.dispatch(
+      timersSlice.actions.addTimer({
+        id: "timer-1",
+        hostId: "host-123",
+        name: "Local Stale Countdown",
+        timerType: "timer",
+        status: "stopped",
+        isActive: false,
+        countdownTime: "00:05",
+        duration: 5,
+        remainingTime: 5,
+        endTime: "2026-04-05T12:00:05.000Z",
+        showMinutesOnly: false,
+        time: 100,
+      }),
+    );
+    await waitForListenerDelay();
+
+    globalFireDbInfo.db = "firebase-db";
+    store.dispatch(timersSlice.actions.flushPendingTimerWrites());
+    await waitForListenerDelay();
+
+    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+      expect.objectContaining({
+        id: "timer-1",
+        hostId: "remote-host",
+        status: "running",
+        time: 200,
+      }),
+    ]);
+    expect(store.getState().timers.shouldUpdateTimers).toBe(false);
+  });
+
   it("removes this host's last timer from localStorage and Firebase", async () => {
     let storeModule: any;
     let timersSliceModule: any;
