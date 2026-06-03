@@ -168,6 +168,7 @@ function getPresenceSurface(pathname: string): "controller" | "display" | null {
 
 const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
 const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
+const PRESENTATION_SHARED_TOKEN_REMINT_MAX = 2;
 
 const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
   Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
@@ -515,6 +516,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
+  const presentationRemintAttemptsRef = useRef(0);
+  const hasSeenRealtimeConnectedRef = useRef(false);
+  const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
   const presenceSurface = useMemo(
     () => getPresenceSurface(location.pathname),
@@ -565,6 +569,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
     churchIntegrationsRemintAttemptsRef.current = 0;
+    presentationRemintAttemptsRef.current = 0;
+    hasSeenRealtimeConnectedRef.current = false;
+    wasRealtimeConnectedRef.current = false;
   }, [sharedDataSessionScope]);
 
   useEffect(() => {
@@ -1081,6 +1088,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [dispatch]
   );
 
+  const handlePresentationListenerError = useCallback((error: unknown) => {
+    if (
+      isFirebasePermissionDenied(error) &&
+      presentationRemintAttemptsRef.current < PRESENTATION_SHARED_TOKEN_REMINT_MAX
+    ) {
+      presentationRemintAttemptsRef.current += 1;
+      setSharedDataTokenRemintNonce((n) => n + 1);
+      return;
+    }
+
+    console.error("Could not subscribe to live presentation updates:", error);
+  }, []);
+
   const activeInstanceName = useMemo(() => {
     const trimmedOperatorName = operatorName.trim();
     const trimmedUser = user.trim();
@@ -1544,55 +1564,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // });
 
 
-  // Monitor connection state and handle reconnection
-  useEffect(() => {
-    if (!firebaseDb || !isSharedDataScopeReady) return;
-
-    const connectedRef = ref(firebaseDb, ".info/connected");
-    const unsubscribe = onValue(connectedRef, (snap) => {
-      if (snap.val() === true) {
-        // When we reconnect, re-establish the active instance if we're on the controller page
-        if (isOnHumanPath && instanceRef.current) {
-          void settleFirebaseWrite(
-            set(instanceRef.current, {
-              lastActive: new Date().toISOString(),
-              user: activeInstanceName,
-              name: activeInstanceName,
-              database,
-              hostId,
-              isOnController: isOnHumanPath,
-              sessionKind,
-              deviceLabel: device?.label || null,
-              presenceSurface,
-              presenceRoute: location.pathname,
-            })
-          );
-        }
-      }
-    });
-
-    const offsetRef = ref(firebaseDb, ".info/serverTimeOffset");
-    const unsubscribeOffset = onValue(offsetRef, (snap) => {
-      setServerTimeOffset(snap.val() ?? 0);
-    });
-
-    return () => {
-      unsubscribe();
-      unsubscribeOffset();
-    };
-  }, [
-    activeInstanceName,
-    database,
-    device?.label,
-    firebaseDb,
-    hostId,
-    isOnHumanPath,
-    isSharedDataScopeReady,
-    location.pathname,
-    presenceSurface,
-    sessionKind,
-  ]);
-
   // Function to set up Firebase listeners
   const setupFirebaseListeners = useCallback(() => {
     if (!firebaseDb || !isSharedDataScopeReady) {
@@ -1613,11 +1584,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             : getChurchDataPath(churchId, "presentation", key);
         const updateRef = ref(firebaseDb, updatePath);
 
-        onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
-          if (!snapshot.exists()) return;
-          const data = snapshot.val();
-          updateFromRemote({ [key]: data });
-        });
+        onValueRef.current[_key] = onValue(
+          updateRef,
+          (snapshot) => {
+            if (!snapshot.exists()) return;
+            const data = snapshot.val();
+            updateFromRemote({ [key]: data });
+          },
+          handlePresentationListenerError,
+        );
       }
     }
   }, [
@@ -1626,6 +1601,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     isSharedDataScopeReady,
     updateFromRemote,
     clearPresentationFirebaseListeners,
+    handlePresentationListenerError,
   ]);
 
   // Function to set up storage listener
@@ -1656,6 +1632,73 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setupFirebaseListeners();
     setupStorageListener();
   }, [setupFirebaseListeners, setupStorageListener]);
+
+  // Monitor connection state and handle reconnection
+  useEffect(() => {
+    if (!firebaseDb || !isSharedDataScopeReady) {
+      hasSeenRealtimeConnectedRef.current = false;
+      wasRealtimeConnectedRef.current = false;
+      return;
+    }
+
+    const connectedRef = ref(firebaseDb, ".info/connected");
+    const unsubscribe = onValue(connectedRef, (snap) => {
+      const isConnected = snap.val() === true;
+      if (!isConnected) {
+        wasRealtimeConnectedRef.current = false;
+        return;
+      }
+
+      const shouldRefreshPresentationListeners =
+        hasSeenRealtimeConnectedRef.current && !wasRealtimeConnectedRef.current;
+      hasSeenRealtimeConnectedRef.current = true;
+      wasRealtimeConnectedRef.current = true;
+
+      if (shouldRefreshPresentationListeners) {
+        refreshPresentationListeners();
+      }
+
+      // When we reconnect, re-establish the active instance if we're on the controller page
+      if (isOnHumanPath && instanceRef.current) {
+        void settleFirebaseWrite(
+          set(instanceRef.current, {
+            lastActive: new Date().toISOString(),
+            user: activeInstanceName,
+            name: activeInstanceName,
+            database,
+            hostId,
+            isOnController: isOnHumanPath,
+            sessionKind,
+            deviceLabel: device?.label || null,
+            presenceSurface,
+            presenceRoute: location.pathname,
+          }),
+        );
+      }
+    });
+
+    const offsetRef = ref(firebaseDb, ".info/serverTimeOffset");
+    const unsubscribeOffset = onValue(offsetRef, (snap) => {
+      setServerTimeOffset(snap.val() ?? 0);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeOffset();
+    };
+  }, [
+    activeInstanceName,
+    database,
+    device?.label,
+    firebaseDb,
+    hostId,
+    isOnHumanPath,
+    isSharedDataScopeReady,
+    location.pathname,
+    presenceSurface,
+    refreshPresentationListeners,
+    sessionKind,
+  ]);
 
   // get updates from firebase - realtime changes from others
   useEffect(() => {
