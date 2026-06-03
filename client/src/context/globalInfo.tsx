@@ -168,7 +168,6 @@ function getPresenceSurface(pathname: string): "controller" | "display" | null {
 
 const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
 const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
-const PRESENTATION_SHARED_TOKEN_REMINT_MAX = 2;
 
 const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
   Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
@@ -516,7 +515,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
-  const presentationRemintAttemptsRef = useRef(0);
   const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
@@ -569,7 +567,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
     churchIntegrationsRemintAttemptsRef.current = 0;
-    presentationRemintAttemptsRef.current = 0;
     hasSeenRealtimeConnectedRef.current = false;
     wasRealtimeConnectedRef.current = false;
   }, [sharedDataSessionScope]);
@@ -1088,18 +1085,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [dispatch]
   );
 
-  const handlePresentationListenerError = useCallback((error: unknown) => {
-    if (
-      isFirebasePermissionDenied(error) &&
-      presentationRemintAttemptsRef.current < PRESENTATION_SHARED_TOKEN_REMINT_MAX
-    ) {
-      presentationRemintAttemptsRef.current += 1;
-      setSharedDataTokenRemintNonce((n) => n + 1);
-      return;
-    }
-
-    console.error("Could not subscribe to live presentation updates:", error);
-  }, []);
+  const handlePresentationListenerError = useCallback(
+    (key: string, path: string, error: unknown) => {
+      console.error(
+        "Could not subscribe to live presentation updates:",
+        { key, path },
+        error,
+      );
+    },
+    [],
+  );
 
   const activeInstanceName = useMemo(() => {
     const trimmedOperatorName = operatorName.trim();
@@ -1591,7 +1586,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             const data = snapshot.val();
             updateFromRemote({ [key]: data });
           },
-          handlePresentationListenerError,
+          (error) => {
+            handlePresentationListenerError(_key, updatePath, error);
+          },
         );
       }
     }

@@ -4,6 +4,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import servicePlanningImportReducer, {
+  cancelServicePlanningSync,
   setServicePlanningServiceOutline,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
@@ -22,6 +23,11 @@ jest.mock("../../context/toastContext", () => ({
     showToast: mockShowToast,
     removeToast: mockRemoveToast,
   }),
+}));
+
+jest.mock("../../utils/generalUtils", () => ({
+  ...jest.requireActual("../../utils/generalUtils"),
+  ensureElementInView: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../../hooks/useServicePlanningImport", () => ({
@@ -173,5 +179,95 @@ describe("useServicePlanningSyncRunner", () => {
 
     const state = store.getState().servicePlanningImport;
     expect(state.preview).toEqual(previewFixture);
+  });
+
+  it("finalizes a stop request after the active step records its result", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+    let resolveOutlineStep:
+      | ((value: { inserted: number; activeLabel: string }) => void)
+      | null = null;
+
+    mockPlanOutlineSyncSteps.mockReturnValue([
+      {
+        kind: "insertSong",
+        headingName: "Welcome",
+        candidate: {
+          title: "Welcome Song",
+          cleanedTitle: "Welcome Song",
+        },
+      },
+    ]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([
+      {
+        phase: "outline",
+        label: "Welcome Song",
+        status: "pending",
+      },
+    ]);
+    mockExecuteOutlineSyncStep.mockReturnValue(
+      new Promise((resolve) => {
+        resolveOutlineStep = resolve;
+      }),
+    );
+
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture as any));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "outline" }));
+    });
+
+    await waitFor(() => {
+      expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      store.dispatch(cancelServicePlanningSync());
+    });
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe(
+      "cancelling",
+    );
+    expect(mockShowToast).not.toHaveBeenCalledWith(
+      expect.stringContaining("Sync stopped"),
+      "info",
+    );
+
+    await act(async () => {
+      resolveOutlineStep?.({
+        inserted: 1,
+        activeLabel: "Welcome Song",
+      });
+    });
+
+    await waitFor(() => {
+      expect(store.getState().servicePlanningImport.sync.status).toBe(
+        "cancelled",
+      );
+    });
+
+    const sync = store.getState().servicePlanningImport.sync;
+    expect(sync.outlineInserted).toBe(1);
+    expect(sync.currentStep).toBe(1);
+    expect(mockShowToast).toHaveBeenCalledWith(
+      expect.stringContaining("1 outline item added"),
+      "info",
+    );
   });
 });

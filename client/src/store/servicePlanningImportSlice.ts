@@ -8,7 +8,11 @@ import { cleanPlanningTitle } from "../integrations/servicePlanning/cleanPlannin
 export type ServicePlanningSyncStatus =
   | "idle"
   | "running"
+  // User requested a stop; the runner finalizes to "cancelled" once the active
+  // step settles so the summary counts include any change already in flight.
+  | "cancelling"
   | "completed"
+  | "cancelled"
   | "failed";
 
 export type ServicePlanningSyncMode = "outline" | "overlays" | "both";
@@ -20,6 +24,8 @@ export type ServicePlanningSyncItemStatus =
   | "updated"
   | "created"
   | "added"
+  // Overlay already existed and matched the plan — nothing was changed.
+  | "found"
   | "already-present";
 
 export type ServicePlanningSyncItem = {
@@ -243,6 +249,20 @@ export const servicePlanningImportSlice = createSlice({
       state.sync.activeLabel = "";
       state.sync.activeSublabel = "";
     },
+    /** User requested a stop. The runner finalizes once any active step settles. */
+    cancelServicePlanningSync: (state) => {
+      if (state.sync.status !== "running") return;
+      state.sync.status = "cancelling";
+      state.sync.error = null;
+    },
+    finishServicePlanningSyncCancellation: (state) => {
+      if (state.sync.status !== "cancelling") return;
+      state.sync.status = "cancelled";
+      state.sync.phase = "done";
+      state.sync.activeLabel = "";
+      state.sync.activeSublabel = "";
+      state.sync.error = null;
+    },
     clearServicePlanningSyncState: (state) => {
       state.sync = {
         ...initialServicePlanningSyncSummary,
@@ -287,6 +307,8 @@ export const {
   recordServicePlanningSyncResult,
   completeServicePlanningSync,
   failServicePlanningSync,
+  cancelServicePlanningSync,
+  finishServicePlanningSyncCancellation,
   clearServicePlanningSyncState,
   resetServicePlanningImportState,
   refreshPreviewSongMatches,

@@ -456,6 +456,9 @@ const excludedActions: string[] = [
   overlaysSlice.actions.setHasPendingUpdate.toString(),
   overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
+  // Post-animation bookkeeping (marks rows as "seen" so they don't re-animate).
+  // It must not create undo entries, or undo steps stop mapping to user actions.
+  overlaysSlice.actions.addToInitialList.toString(),
   overlaysSlice.actions.mergeOverlayHistoryFromDb.toString(),
   overlaysSlice.actions.deleteOverlayHistoryEntry.toString(),
   overlaysSlice.actions.mergeOverlayIntoHistory.toString(),

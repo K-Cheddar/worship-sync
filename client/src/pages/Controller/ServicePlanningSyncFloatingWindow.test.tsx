@@ -19,6 +19,8 @@ import { useToast } from "../../context/toastContext";
 
 jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: jest.fn(),
+  overlayPlanHasExecutableChange: (plan: Array<{ action: string }>) =>
+    Array.isArray(plan) && plan.some((item) => item.action !== "skip"),
 }));
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
@@ -424,6 +426,68 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByText("Syncing outline")).toBeInTheDocument();
     expect(screen.queryByText("Outline pending")).not.toBeInTheDocument();
     expect(screen.queryByText("Outline pending")).not.toBeInTheDocument();
+  });
+
+  it("normalizes Sync All to outline when overlays have no executable changes", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            elementType: "Welcome Song",
+            title: "Welcome Song",
+            outlineItemType: "song",
+            cleanedTitle: "Welcome Song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Welcome Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        lineItems: [
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            sourceRowIndex: 0,
+            elementType: "Welcome Song",
+            title: "Welcome Song",
+            ledBy: "Praise Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Welcome Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync All" }));
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe("running");
+    expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
   });
 
   it("shows team assignments in a separate tab", async () => {

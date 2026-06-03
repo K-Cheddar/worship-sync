@@ -1,18 +1,22 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ExternalLink, BookOpen, Plus, RefreshCcw, Check, PanelsTopLeft } from "lucide-react";
+import { ExternalLink, BookOpen, Plus, RefreshCcw, Check, PanelsTopLeft, Square } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import Input from "../../components/Input/Input";
 import Spinner from "../../components/Spinner/Spinner";
 import { useDispatch, useSelector } from "../../hooks";
 import { useToast } from "../../context/toastContext";
-import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
+import {
+  useServicePlanningImport,
+  overlayPlanHasExecutableChange,
+} from "../../hooks/useServicePlanningImport";
 import {
   bibleRefToSearchString,
 } from "../../integrations/servicePlanning/parseBibleReference";
 import {
   startServicePlanningSync,
+  cancelServicePlanningSync,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
@@ -23,7 +27,10 @@ import type {
   OutlineItemCandidate,
   OverlaySyncPlanItem,
 } from "../../types/servicePlanningImport";
+import type { OverlayInfo } from "../../types";
 import cn from "classnames";
+
+const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
 
 const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   !candidate.outlineAlreadyPresent &&
@@ -305,6 +312,9 @@ const ServicePlanningImportPanel = () => {
 
   const url = useSelector((s) => s.servicePlanningImport.url);
   const preview = useSelector((s) => s.servicePlanningImport.preview);
+  const overlayList = useSelector(
+    (s) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
+  );
   const serviceOutline = useSelector(
     (s) => s.servicePlanningImport.serviceOutline,
   );
@@ -316,7 +326,9 @@ const ServicePlanningImportPanel = () => {
   );
   const sync = useSelector((s) => s.servicePlanningImport.sync);
   const [isLoading, setIsLoading] = useState(false);
-  const isSyncing = sync.status === "running";
+  const isSyncing =
+    sync.status === "running" || sync.status === "cancelling";
+  const isSyncStopping = sync.status === "cancelling";
   const matchedSongCount =
     preview?.outlineCandidates.filter(
       (candidate) =>
@@ -378,23 +390,43 @@ const ServicePlanningImportPanel = () => {
 
   const handleSync = (overlays: boolean, outline: boolean) => {
     if (!preview) return;
-    const hasSyncableOverlays = preview.overlayPlan.some(
-      (item) => item.action !== "skip",
+    const hasSyncableOverlays = overlayPlanHasExecutableChange(
+      preview.overlayPlan,
+      overlayList,
     );
     const hasSyncableOutline = preview.outlineCandidates.some(
       isSyncableOutlineCandidate,
     );
-    if (
-      (overlays && !outline && !hasSyncableOverlays) ||
-      (outline && !overlays && !hasSyncableOutline) ||
-      (overlays && outline && !hasSyncableOverlays && !hasSyncableOutline)
-    ) {
-      return;
-    }
-    const mode = overlays && outline ? "both" : overlays ? "overlays" : "outline";
+    const shouldSyncOverlays = overlays && hasSyncableOverlays;
+    const shouldSyncOutline = outline && hasSyncableOutline;
+    if (!shouldSyncOverlays && !shouldSyncOutline) return;
+
+    const mode =
+      shouldSyncOverlays && shouldSyncOutline
+        ? "both"
+        : shouldSyncOverlays
+          ? "overlays"
+          : "outline";
     dispatch(setServicePlanningFloatingWindowDismissed(false));
     dispatch(startServicePlanningSync({ mode }));
   };
+
+  const handleStopSync = () => {
+    dispatch(cancelServicePlanningSync());
+  };
+
+  const StopSyncButton = () => (
+    <Button
+      type="button"
+      variant="secondary"
+      color="#ef4444"
+      svg={Square}
+      disabled={isSyncStopping}
+      onClick={handleStopSync}
+    >
+      {isSyncStopping ? "Stopping..." : "Stop syncing"}
+    </Button>
+  );
 
   const handleCreateClick = (title: string) => {
     navigate(
@@ -426,8 +458,10 @@ const ServicePlanningImportPanel = () => {
     preview?.outlineCandidates.some(isSyncableOutlineCandidate),
   );
   const hasOverlayPlan = Boolean(preview?.overlayPlan.length);
+  // Evaluate against the current overlays list (not just the stored plan) so an
+  // overlay that already exists doesn't keep the sync buttons enabled.
   const hasSyncableOverlayItems = Boolean(
-    preview?.overlayPlan.some((item) => item.action !== "skip"),
+    preview && overlayPlanHasExecutableChange(preview.overlayPlan, overlayList),
   );
   const hasAnySyncableItems = hasSyncableOverlayItems || hasSyncableOutlineItems;
 
@@ -601,48 +635,60 @@ const ServicePlanningImportPanel = () => {
           )}
 
           <div className="flex flex-wrap gap-2 mt-2 pt-4 border-t border-gray-700">
-            <Button
-              type="button"
-              variant="secondary"
-              svg={Check}
-              isLoading={isSyncing}
-              disabled={
-                isSyncing ||
-                !isServicePlanningEnabled ||
-                !hasSyncableOverlayItems
-              }
-              onClick={() => void handleSync(true, false)}
-            >
-              Sync Overlays
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              svg={Check}
-              isLoading={isSyncing}
-              disabled={
-                isSyncing ||
-                !isServicePlanningEnabled ||
-                !hasSyncableOutlineItems
-              }
-              onClick={() => void handleSync(false, true)}
-            >
-              Sync Outline
-            </Button>
-            <Button
-              type="button"
-              variant="cta"
-              svg={Check}
-              isLoading={isSyncing}
-              disabled={
-                isSyncing ||
-                !isServicePlanningEnabled ||
-                !hasAnySyncableItems
-              }
-              onClick={() => void handleSync(true, true)}
-            >
-              Sync All
-            </Button>
+            {isSyncing && sync.mode === "overlays" ? (
+              <StopSyncButton />
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                svg={Check}
+                isLoading={isSyncing}
+                disabled={
+                  isSyncing ||
+                  !isServicePlanningEnabled ||
+                  !hasSyncableOverlayItems
+                }
+                onClick={() => void handleSync(true, false)}
+              >
+                Sync Overlays
+              </Button>
+            )}
+            {isSyncing && sync.mode === "outline" ? (
+              <StopSyncButton />
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                svg={Check}
+                isLoading={isSyncing}
+                disabled={
+                  isSyncing ||
+                  !isServicePlanningEnabled ||
+                  !hasSyncableOutlineItems
+                }
+                onClick={() => void handleSync(false, true)}
+              >
+                Sync Outline
+              </Button>
+            )}
+            {isSyncing && sync.mode === "both" ? (
+              <StopSyncButton />
+            ) : (
+              <Button
+                type="button"
+                variant="cta"
+                svg={Check}
+                isLoading={isSyncing}
+                disabled={
+                  isSyncing ||
+                  !isServicePlanningEnabled ||
+                  !hasAnySyncableItems
+                }
+                onClick={() => void handleSync(true, true)}
+              >
+                Sync All
+              </Button>
+            )}
             <Button
               variant="primary"
               color="#22d3ee"

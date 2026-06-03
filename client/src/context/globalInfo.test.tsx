@@ -655,33 +655,43 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     );
   });
 
-  it("remints shared realtime auth when a presentation listener loses permission", async () => {
+  it("logs presentation listener errors without reminting shared realtime auth", async () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");
     localStorage.setItem("database", "main");
 
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
 
-    renderProvider();
+    const consoleErrorSpy = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const listenerError = new Error("permission_denied");
 
-    const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
+    try {
+      renderProvider();
 
-    await waitFor(() =>
-      expect(onValueErrorCallbacks.has(streamInfoPath)).toBe(true)
-    );
-    await waitFor(() =>
-      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
-    );
+      const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
 
-    act(() => {
-      onValueErrorCallbacks
-        .get(streamInfoPath)
-        ?.(new Error("permission_denied"));
-    });
+      await waitFor(() =>
+        expect(onValueErrorCallbacks.has(streamInfoPath)).toBe(true)
+      );
+      await waitFor(() =>
+        expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
+      );
 
-    await waitFor(() =>
-      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(2)
-    );
+      act(() => {
+        onValueErrorCallbacks.get(streamInfoPath)?.(listenerError);
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Could not subscribe to live presentation updates:",
+        { key: "streamInfo", path: streamInfoPath },
+        listenerError,
+      );
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("subscribes to church branding and exposes live branding updates", async () => {

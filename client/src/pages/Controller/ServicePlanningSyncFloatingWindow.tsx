@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, Download, Plus, RefreshCw } from "lucide-react";
+import { Book, BookOpen, Check, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
+  cancelServicePlanningSync,
   clearServicePlanningSyncState,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportUrl,
   setServicePlanningServiceOutline,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
-import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
+import {
+  useServicePlanningImport,
+  overlayPlanHasExecutableChange,
+} from "../../hooks/useServicePlanningImport";
+import type { OverlayInfo } from "../../types";
 import {
   Popover,
   PopoverAnchor,
@@ -40,11 +45,14 @@ import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlan
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
 import { bibleRefToSearchString } from "../../integrations/servicePlanning/parseBibleReference";
 import { cn } from "../../utils/cnHelper";
+import { iconColorMap } from "../../utils/itemTypeMaps";
 
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 
 const MARGIN = 16;
+
+const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
 
 const StatusBadge = ({
   className,
@@ -153,6 +161,13 @@ const getSyncBadgeData = ({
       className: "bg-blue-900/60 text-blue-300",
     };
 
+  if (item.status === "found")
+    return {
+      type: "badge",
+      label: "Overlay found",
+      className: "bg-zinc-700 text-zinc-300",
+    };
+
   return null;
 };
 
@@ -175,8 +190,11 @@ const hasSyncableOutlineItems = (preview: ServicePlanningPreview | null): boolea
     ),
   );
 
-const hasSyncableOverlayItems = (preview: ServicePlanningPreview | null): boolean =>
-  Boolean(preview?.overlayPlan.some((item) => item.action !== "skip"));
+const hasSyncableOverlayItems = (
+  preview: ServicePlanningPreview | null,
+  overlays: OverlayInfo[],
+): boolean =>
+  Boolean(preview && overlayPlanHasExecutableChange(preview.overlayPlan, overlays));
 
 const getPreviewLineItems = (preview: ServicePlanningPreview | null) => {
   const maybeItems = (preview as Partial<ServicePlanningPreview> | null)?.lineItems;
@@ -230,6 +248,9 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
+  const overlays = useSelector(
+    (s: RootState) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
+  );
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
   const url = useSelector((s: RootState) => s.servicePlanningImport.url);
   const serviceOutline = useSelector(
@@ -281,7 +302,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   }, [dispatch, importUrl, loadPreview, setImportUrl, showToast]);
 
   const handleRefresh = useCallback(async () => {
-    if (!url || isRefreshing || sync.status === "running") return;
+    if (
+      !url ||
+      isRefreshing ||
+      sync.status === "running" ||
+      sync.status === "cancelling"
+    ) {
+      return;
+    }
     setIsRefreshing(true);
     try {
       const result = await loadPreview(url);
@@ -296,18 +324,25 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
   const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
     if (!preview) return;
-    const canSyncOverlays = hasSyncableOverlayItems(preview);
+    const canSyncOverlays = hasSyncableOverlayItems(preview, overlays);
     const canSyncOutline = hasSyncableOutlineItems(preview);
-    if (
-      (mode === "overlays" && !canSyncOverlays) ||
-      (mode === "outline" && !canSyncOutline) ||
-      (mode === "both" && !canSyncOverlays && !canSyncOutline)
-    ) {
-      return;
-    }
+    const shouldSyncOverlays = mode !== "outline" && canSyncOverlays;
+    const shouldSyncOutline = mode !== "overlays" && canSyncOutline;
+    if (!shouldSyncOverlays && !shouldSyncOutline) return;
+
+    const nextMode =
+      shouldSyncOverlays && shouldSyncOutline
+        ? "both"
+        : shouldSyncOverlays
+          ? "overlays"
+          : "outline";
     dispatch(setServicePlanningFloatingWindowDismissed(false));
-    dispatch(startServicePlanningSync({ mode }));
-  }, [dispatch, preview]);
+    dispatch(startServicePlanningSync({ mode: nextMode }));
+  }, [dispatch, overlays, preview]);
+
+  const handleStopSync = useCallback(() => {
+    dispatch(cancelServicePlanningSync());
+  }, [dispatch]);
 
   const handleCreateClick = (title: string) => {
     navigate(
@@ -325,17 +360,31 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     navigate(`/controller/bible?${params.toString()}`);
   };
 
-  const canSyncOverlays = hasSyncableOverlayItems(preview);
+  const canSyncOverlays = hasSyncableOverlayItems(preview, overlays);
   const canSyncOutline = hasSyncableOutlineItems(preview);
   const canSyncAny = canSyncOverlays || canSyncOutline;
 
-  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => [
+  const isSyncRunning = sync.status === "running";
+  const isSyncStopping = sync.status === "cancelling";
+  const isSyncActive = isSyncRunning || isSyncStopping;
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => isSyncActive ? [
+    {
+      id: "stop-sync",
+      label: isSyncStopping ? "Stopping..." : "Stop syncing",
+      disabled: isSyncStopping,
+      renderButton: (isMeasure) => (
+        <Button variant="tertiary" svg={Square} color="#ef4444" className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncStopping} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure || isSyncStopping ? undefined : handleStopSync}>{isSyncStopping ? "Stopping..." : "Stop syncing"}</Button>
+      ),
+      onOverflowSelect: isSyncStopping ? undefined : handleStopSync,
+      renderOverflowItem: () => <><Square className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} />{isSyncStopping ? "Stopping..." : "Stop syncing"}</>,
+    },
+  ] : [
     {
       id: "sync-all",
       label: "Sync All",
-      disabled: sync.status === "running" || !canSyncAny,
+      disabled: isSyncActive || !canSyncAny,
       renderButton: (isMeasure) => (
-        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={sync.status === "running" || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
+        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
       ),
       onOverflowSelect: () => handleSync("both"),
       renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync All</>,
@@ -343,7 +392,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     {
       id: "import",
       label: "Import",
-      disabled: sync.status === "running",
+      disabled: isSyncActive,
       renderButton: (isMeasure) => isMeasure ? (
         <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
       ) : (
@@ -351,7 +400,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           variant="tertiary"
           svg={Download}
           className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-          disabled={sync.status === "running"}
+          disabled={isSyncActive}
           onClick={() => setIsImportOpen(true)}
         >
           Import
@@ -363,7 +412,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     {
       id: "refresh",
       label: isRefreshing ? "Refreshing…" : "Refresh",
-      disabled: isRefreshing || sync.status === "running",
+      disabled: isRefreshing || isSyncActive,
       renderButton: (isMeasure) => (
         <Button
           variant="tertiary"
@@ -371,7 +420,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           iconSize="sm"
           color={isRefreshing ? "#22d3ee" : undefined}
           className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, isRefreshing && "[&_svg]:animate-spin")}
-          disabled={isRefreshing || sync.status === "running"}
+          disabled={isRefreshing || isSyncActive}
           tabIndex={isMeasure ? -1 : undefined}
           onClick={isMeasure ? undefined : () => void handleRefresh()}
         >
@@ -384,9 +433,9 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     {
       id: "sync-overlays",
       label: "Sync overlays",
-      disabled: sync.status === "running" || !canSyncOverlays,
+      disabled: isSyncActive || !canSyncOverlays,
       renderButton: (isMeasure) => (
-        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={sync.status === "running" || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
+        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
       ),
       onOverflowSelect: () => handleSync("overlays"),
       renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync overlays</>,
@@ -394,14 +443,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     {
       id: "sync-outline",
       label: "Sync outline",
-      disabled: sync.status === "running" || !canSyncOutline,
+      disabled: isSyncActive || !canSyncOutline,
       renderButton: (isMeasure) => (
-        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={sync.status === "running" || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
+        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
       ),
       onOverflowSelect: () => handleSync("outline"),
       renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
     },
-  ], [canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleSync, isRefreshing, sync.status]);
+  ], [canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
 
 
 
@@ -435,7 +484,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     return grouped;
   }, [sync.syncItems]);
 
-  const activeKey = sync.status === "running"
+  const activeKey = sync.status === "running" || sync.status === "cancelling"
     ? `${sync.activeLabel}::${sync.activeSublabel}`
     : null;
 
@@ -454,7 +503,9 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   if (!isVisible) return null;
 
   const isRunning = sync.status === "running";
+  const isCancelling = sync.status === "cancelling";
   const isFailed = sync.status === "failed";
+  const isCancelled = sync.status === "cancelled";
   const isPreviewOnly = sync.status === "idle" && Boolean(preview);
 
   const planLabel = serviceOutline?.planLabel?.trim() || "Service Planning";
@@ -462,9 +513,13 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     ? null
     : isRunning
       ? "Syncing"
-      : isFailed
-        ? "Sync Failed"
-        : "Sync Complete";
+      : isCancelling
+        ? "Stopping"
+        : isFailed
+          ? "Sync Failed"
+          : isCancelled
+            ? "Sync Stopped"
+            : "Sync Complete";
 
   const titleNode = (
     <span className="flex min-w-0 items-baseline gap-1.5 truncate">
@@ -498,7 +553,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           <p className="text-red-400">{sync.error || "Try again."}</p>
         ) : null}
 
-        {isRunning && sync.totalSteps > 0 ? (
+        {(isRunning || isCancelling) && sync.totalSteps > 0 ? (
           <div className="flex items-center gap-2 text-xs text-zinc-400">
             <Spinner width="14px" borderWidth="2px" />
             <span>
@@ -619,7 +674,9 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                         const hasCompletedSync = syncBadgeDataList.some(
                           (d) =>
                             d.type === "badge" &&
-                            (d.label === "Overlay updated" || d.label === "Overlay created"),
+                            (d.label === "Overlay updated" ||
+                              d.label === "Overlay created" ||
+                              d.label === "Overlay found"),
                         );
 
                         // Count deduplicated badge labels
@@ -680,8 +737,16 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                           >
                             <div className="flex flex-col gap-2">
                               <div className="flex gap-2">
-                                <div className="wrap-break-word text-xs text-zinc-100">
-                                  {item.elementType}
+                                <div className="flex min-w-0 items-center gap-1">
+                                  {item.outlineItemType === "song" && (
+                                    <Music size={11} className="shrink-0" color={iconColorMap.get("song")} />
+                                  )}
+                                  {item.outlineItemType === "bible" && (
+                                    <Book size={11} className="shrink-0" color={iconColorMap.get("bible")} />
+                                  )}
+                                  <span className="wrap-break-word text-xs text-zinc-100">
+                                    {item.elementType}
+                                  </span>
                                 </div>
                                 <div className="flex flex-wrap justify-end gap-1 h-fit">
                                   {badges}
@@ -691,7 +756,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                               {(item.title || item.ledBy) && (
                                 <div className="flex gap-2 flex-wrap">
                                   {item.title && (
-                                    <div className="wrap-break-word text-xs text-zinc-300">
+                                    <div className={cn(
+                                      "wrap-break-word text-xs",
+                                      item.outlineItemType === "song"
+                                        ? "font-medium text-blue-300"
+                                        : item.outlineItemType === "bible"
+                                          ? "font-medium text-yellow-300"
+                                          : "text-zinc-300"
+                                    )}>
                                       {item.outlineItemType === "bible" && item.parsedRef
                                         ? getBibleImportDisplayName(item.parsedRef, item.parsedRef.version)
                                         : item.title}
