@@ -1,3 +1,11 @@
+## [2.9.2](https://github.com/K-Cheddar/worship-sync/compare/v2.9.1...v2.9.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* Improve firebase connection ([d6473a5](https://github.com/K-Cheddar/worship-sync/commit/d6473a52079b1b8c9c0735489225c5ad13368fbe))
+* Multiple bug fixes ([2cada1e](https://github.com/K-Cheddar/worship-sync/commit/2cada1e7162d7a5e8bd9bfa8831d91aec7640b1c))
+
 ## [2.9.1](https://github.com/K-Cheddar/worship-sync/compare/v2.9.0...v2.9.1) (2026-05-18)
 
 
