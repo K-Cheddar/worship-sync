@@ -429,6 +429,107 @@ describe("SlideEditor", () => {
     jest.useRealTimers();
   });
 
+  it("keeps the latest free slide formatting when a debounced text reformat completes", () => {
+    jest.useFakeTimers();
+    mockFormatFree.mockImplementation((item: any) => item);
+
+    const initialStyle = {
+      backgroundColor: "#111111",
+      textColor: "#ffffff",
+      fontSize: 1.5,
+      paddingX: 2,
+      paddingY: 1,
+      align: "left",
+      isBold: false,
+      isItalic: false,
+    };
+    const updatedStyle = {
+      ...initialStyle,
+      backgroundColor: "#222222",
+    };
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            type: "free",
+            selectedSlide: 0,
+            slides: [
+              {
+                id: "s1",
+                type: "Media",
+                name: "Section 1A",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                ],
+                formattedTextDisplayInfo: initialStyle,
+              },
+            ],
+            formattedSections: [{ sectionNum: 1, words: "Hello", slideSpan: 1 }],
+          },
+        },
+      },
+    });
+
+    const { rerender } = render(<SlideEditor access="full" />);
+    fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
+
+    mockUpdateSlides.mockClear();
+    mockFormatFree.mockClear();
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            type: "free",
+            selectedSlide: 0,
+            slides: [
+              {
+                id: "s1",
+                type: "Media",
+                name: "Section 1A",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                ],
+                formattedTextDisplayInfo: updatedStyle,
+              },
+            ],
+            formattedSections: [
+              { sectionNum: 1, words: "Updated section text", slideSpan: 1 },
+            ],
+          },
+        },
+      },
+    });
+    rerender(<SlideEditor access="full" />);
+
+    try {
+      act(() => {
+        jest.advanceTimersByTime(300);
+      });
+
+      expect(mockFormatFree).toHaveBeenCalledTimes(1);
+      const formattedArg = mockFormatFree.mock.calls[0][0];
+      expect(formattedArg.slides[0].formattedTextDisplayInfo?.backgroundColor).toBe(
+        "#222222",
+      );
+      expect(mockUpdateSlides).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+          formattedSections: expect.any(Array),
+        }),
+      );
+      expect(
+        mockUpdateSlides.mock.lastCall?.[0].slides[0].formattedTextDisplayInfo
+          ?.backgroundColor,
+      ).toBe("#222222");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("cancels pending debounced free box edit when item identity changes before timeout", () => {
     jest.useFakeTimers();
     mockState = makeBaseState({

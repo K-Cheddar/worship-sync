@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { timersSlice } from "./timersSlice";
 import type { TimerInfo } from "../types";
 import { createTimerInfo } from "../test/fixtures";
+import { setServerTimeOffset } from "../utils/serverTime";
 
 type TimersState = ReturnType<typeof timersSlice.reducer>;
 type TimersSliceState = { timers: TimersState };
@@ -18,6 +19,7 @@ const createStore = (preloadedState?: Partial<TimersSliceState>) =>
 describe("timersSlice", () => {
   afterEach(() => {
     jest.useRealTimers();
+    setServerTimeOffset(0);
   });
 
   describe("reducer only", () => {
@@ -239,6 +241,49 @@ describe("timersSlice", () => {
       );
     });
 
+    it("stamps timer updates with the shared server-aligned clock", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+      setServerTimeOffset(8_000);
+
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "h1",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 300,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "running",
+            startedAt: new Date("2026-04-05T12:00:00.000Z").toISOString(),
+          },
+        }),
+      );
+
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          time: new Date("2026-04-05T12:00:08.000Z").getTime(),
+          endTime: new Date("2026-04-05T12:05:08.000Z").toISOString(),
+          status: "running",
+          isActive: true,
+          remainingTime: 300,
+        }),
+      );
+    });
+
     it("reconcileTimersFromRemote removes stale remote timers but keeps own timers", () => {
       const store = createStore({
         timers: {
@@ -278,6 +323,113 @@ describe("timersSlice", () => {
         expect.objectContaining({ id: "own-timer", hostId: "host-1" }),
         expect.objectContaining({ id: "remote-fresh", hostId: "host-3" }),
       ]);
+    });
+
+    it("reconcileTimersFromRemote replaces a stale local copy with fresher remote timer data for the same id", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "timer-1",
+              hostId: "monitor-host",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 0,
+              countdownTime: "10:50",
+              time: 100,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.reconcileTimersFromRemote({
+          hostId: "monitor-host",
+          timers: [
+            createTimerInfo({
+              id: "timer-1",
+              hostId: "controller-host",
+              status: "running",
+              isActive: true,
+              duration: 300,
+              remainingTime: 300,
+              countdownTime: "10:50",
+              time: 200,
+            }),
+          ],
+        }),
+      );
+
+      expect(store.getState().timers.timers).toHaveLength(1);
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          id: "timer-1",
+          hostId: "controller-host",
+          status: "running",
+          isActive: true,
+          remainingTime: 300,
+          endTime: "2026-04-05T12:05:00.000Z",
+        }),
+      );
+    });
+
+    it("reconcileTimersFromRemote preserves newer local timer host and timestamp over an older remote copy", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:01:00.000Z"));
+
+      const runningEndTime = new Date("2026-04-05T12:05:00.000Z").toISOString();
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "timer-1",
+              hostId: "controller-host",
+              status: "running",
+              isActive: true,
+              duration: 300,
+              remainingTime: 240,
+              endTime: runningEndTime,
+              time: 500,
+            }),
+          ],
+          shouldUpdateTimers: true,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.reconcileTimersFromRemote({
+          hostId: "controller-host",
+          timers: [
+            createTimerInfo({
+              id: "timer-1",
+              hostId: "remote-host",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 300,
+              time: 100,
+            }),
+          ],
+        }),
+      );
+
+      expect(store.getState().timers.timers).toHaveLength(1);
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          id: "timer-1",
+          hostId: "controller-host",
+          status: "running",
+          isActive: true,
+          remainingTime: 240,
+          endTime: runningEndTime,
+          time: 500,
+        }),
+      );
     });
 
     it("reconcileTimersFromDocs removes deleted item-backed timers and keeps unrelated timers", () => {

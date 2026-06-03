@@ -3,7 +3,11 @@ import { useDispatch, useSelector } from "react-redux";
 import { RootState } from "../../store/store";
 import { ref, onValue } from "firebase/database";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { tickTimers, setShouldUpdateTimers } from "../../store/timersSlice";
+import {
+  flushPendingTimerWrites,
+  tickTimers,
+  setShouldUpdateTimers,
+} from "../../store/timersSlice";
 import { useSyncRemoteTimers } from "../../hooks";
 import { getChurchDataPath } from "../../utils/firebasePaths";
 import { serverNow } from "../../utils/serverTime";
@@ -13,6 +17,9 @@ const TimerManager = () => {
   const { churchId, firebaseDb, hostId, loginState } =
     useContext(GlobalInfoContext) || {};
   const timers = useSelector((state: RootState) => state.timers.timers);
+  const shouldUpdateTimers = useSelector(
+    (state: RootState) => state.timers.shouldUpdateTimers
+  );
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useSyncRemoteTimers(firebaseDb, churchId, loginState === "guest", hostId);
@@ -37,6 +44,14 @@ const TimerManager = () => {
       unsubscribe();
     };
   }, [churchId, firebaseDb, loginState, dispatch]);
+
+  useEffect(() => {
+    if (!firebaseDb || !churchId || loginState === "guest" || !shouldUpdateTimers) {
+      return;
+    }
+
+    dispatch(flushPendingTimerWrites());
+  }, [churchId, firebaseDb, loginState, shouldUpdateTimers, dispatch]);
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);

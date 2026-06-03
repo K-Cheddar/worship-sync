@@ -1,4 +1,4 @@
-import { type FormEvent, useContext, useState } from "react";
+import { type FormEvent, useContext, useEffect, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
@@ -22,6 +22,17 @@ const WorkstationOperator = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [unlinkModalOpen, setUnlinkModalOpen] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
+
+  // Electron display windows that reopen on startup steal focus from the main window.
+  // Refocus the input whenever this window regains focus so the user doesn't have to click.
+  useEffect(() => {
+    const refocusInput = () => {
+      const input = document.getElementById("operator-name") as HTMLInputElement | null;
+      input?.focus();
+    };
+    window.addEventListener("focus", refocusInput);
+    return () => window.removeEventListener("focus", refocusInput);
+  }, []);
 
   const deviceId = context?.device?.deviceId;
   const deviceLabel = context?.device?.label?.trim() ?? "";

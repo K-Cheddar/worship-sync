@@ -847,7 +847,17 @@ export const presentationSlice = createSlice({
       action: PayloadAction<BibleDisplayInfo>,
     ) => {
       const t = action.payload.time ?? Date.now();
-      state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
+      const cur = state.streamInfo.bibleDisplayInfo;
+      const curHasData = Boolean(cur?.title?.trim() || cur?.text?.trim());
+      const nextHasData = Boolean(
+        action.payload.title?.trim() || action.payload.text?.trim(),
+      );
+      // Per-key sync: a cleared bible can arrive right after a sibling stream clear
+      // (updateStreamFromRemote) already moved the outgoing verse into prevStreamInfo
+      // for its fade-out. With nothing live to hand off, re-running the handoff would
+      // overwrite prev with an empty slot and kill the exit animation — nothing to do.
+      if (!curHasData && !nextHasData) return;
+      state.prevStreamInfo.bibleDisplayInfo = cur;
       const ft = state.streamInfo.formattedTextDisplayInfo;
       state.prevStreamInfo.formattedTextDisplayInfo = ft?.text?.trim()
         ? ft
@@ -918,6 +928,15 @@ export const presentationSlice = createSlice({
       // Per-key Firebase: cleared formatted arrives after bible; do not treat as
       // "switch to formatted" or we wipe scripture from streamInfo.
       if (!action.payload.text?.trim() && state.streamInfo.type === "bible") {
+        return;
+      }
+      // Same race as bible: a cleared formatted update can land after a sibling stream
+      // clear already preserved the outgoing text in prev for its exit. Nothing live to
+      // hand off → don't clobber prev with an empty slot and kill the fade-out.
+      if (
+        !action.payload.text?.trim() &&
+        !state.streamInfo.formattedTextDisplayInfo?.text?.trim()
+      ) {
         return;
       }
       const t = action.payload.time ?? Date.now();

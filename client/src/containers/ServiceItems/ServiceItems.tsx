@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 
 import { useSensors } from "../../utils/dndUtils";
 import {
@@ -38,6 +39,11 @@ import {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
   MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
 } from "../Media/mediaLibraryMediaActionUi";
+import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
+import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
+import type { ServiceTime } from "../../types";
+
+const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
 /** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
 const getControllerItemPath = (item: Pick<ServiceItemType, "_id" | "listId">) =>
@@ -56,6 +62,9 @@ const ServiceItems = () => {
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+  const serviceTimes = useSelector(
+    (state) => state.undoable.present.serviceTimes.list,
+  );
   const isServicePlanningOutlineSyncRunning = useSelector(
     (state) =>
       state.servicePlanningImport.sync.status === "running" &&
@@ -155,6 +164,26 @@ const ServiceItems = () => {
 
     return subtitles;
   }, [allSongDocs]);
+
+  const hasServiceTimeItem = useMemo(
+    () => serviceItems.some((item) => item.type === "service-time"),
+    [serviceItems],
+  );
+
+  const upcomingService = useDisplayedUpcomingService(
+    hasServiceTimeItem ? serviceTimes : EMPTY_SERVICE_TIMES,
+    NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
+    { keepRecentlyElapsedDuringGrace: true },
+  );
+
+  const upcomingServiceTargetIso = useMemo(() => {
+    if (!hasServiceTimeItem) return null;
+    return upcomingService?.nextAt.toISOString() ?? null;
+  }, [hasServiceTimeItem, upcomingService]);
+
+  const upcomingServiceTimeText = useNextServiceCountdownText(
+    upcomingServiceTargetIso,
+  );
 
   const serviceItemsByListId = useMemo(() => {
     const itemsByListId = new Map<string, ServiceItemType>();
@@ -801,10 +830,15 @@ const ServiceItems = () => {
                   }
                   if (hiddenListIds.has(item.listId)) return null;
                   const activeTimer = activeTimersByItemId.get(item._id);
+                  const serviceTimeTimerText =
+                    item.type === "service-time"
+                      ? upcomingServiceTimeText ?? undefined
+                      : undefined;
                   return (
                     <ServiceItem
-                      isActive={activeTimer != null}
+                      isActive={activeTimer != null || serviceTimeTimerText != null}
                       timerValue={activeTimer?.remainingTime}
+                      timerText={serviceTimeTimerText}
                       key={item.listId}
                       item={item}
                       subtitle={arrangementSubtitlesByItemId.get(item._id)}

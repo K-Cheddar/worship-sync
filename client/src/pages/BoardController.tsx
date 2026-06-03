@@ -30,6 +30,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { RootState } from "../store/store";
 import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 import BoardSyncProvider, { useBoardSync } from "../boards/BoardSyncContext";
+import { ControllerInfoContext } from "../context/controllerInfo";
 import { BoardRenameModal } from "../boards/BoardRenameModal";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import {
@@ -185,6 +186,11 @@ export const BoardControllerContent = () => {
 
   const isXlUp = useMediaQuery("(min-width: 1280px)");
   const isMobileStack = !isXlUp;
+  const isLgUp = useMediaQuery("(min-width: 1024px)");
+  const { setIsMobile } = useContext(ControllerInfoContext) || {};
+  useEffect(() => {
+    setIsMobile?.(!isLgUp);
+  }, [isLgUp, setIsMobile]);
 
   const loadAliases = useCallback(async () => {
     if (!db || !database) return;

@@ -21,6 +21,7 @@ const LONG_PRESS_MOVE_PX = 10;
 type ServiceItemsProps = {
   isActive: boolean;
   timerValue?: number;
+  timerText?: string;
   index: number;
   selectedItemListId: string | undefined;
   insertPointIndex: number;
@@ -45,6 +46,7 @@ type ServiceItemsProps = {
 const ServiceItem = ({
   isActive,
   timerValue,
+  timerText,
   item,
   subtitle,
   index,
@@ -252,6 +254,7 @@ const ServiceItem = ({
       type={item.type}
       image={item.background}
       timerValue={timerValue}
+      timerText={timerText}
       actions={actions}
       displayId={`service-item-${item.listId}`}
       id={item.listId}

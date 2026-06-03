@@ -26,6 +26,7 @@ type LeftPanelButtonProps = {
   className?: string;
   displayId?: string;
   timerValue?: number;
+  timerText?: string;
   isActive?: boolean;
   /** When provided, renders a multi-select tick badge on the left edge of the row. */
   multiSelectMode?: boolean;
@@ -48,6 +49,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       className,
       displayId,
       timerValue,
+      timerText,
       isActive,
       onClick,
       multiSelectMode,
@@ -109,7 +111,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           )}
           {isActive && (
             <span className="shrink-0 rounded-lg bg-black/55 px-2 py-1 text-xs font-semibold tabular-nums text-white">
-              {formatTime(timerValue || 0, false, true)}
+              {timerText ?? formatTime(timerValue || 0, false, true)}
             </span>
           )}
           <div className="min-w-0 flex-1 pl-1">

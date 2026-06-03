@@ -114,6 +114,37 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
+const writePendingTimersToStorageAndFirebase = async (
+  state: RootState,
+): Promise<boolean> => {
+  const { timers, shouldUpdateTimers } = state.timers;
+  if (!shouldUpdateTimers) return false;
+
+  const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
+
+  if (ownTimers.length > 0) {
+    localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
+  } else {
+    localStorage.removeItem("timerInfo");
+  }
+
+  if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) {
+    return false;
+  }
+
+  const timersRef = ref(
+    globalFireDbInfo.db,
+    getChurchDataPath(globalFireDbInfo.churchId, "timers"),
+  );
+
+  const snapshot = await get(timersRef);
+  const currentTimers = Array.isArray(snapshot.val()) ? snapshot.val() : [];
+  const mergedTimers = mergeTimers(currentTimers, ownTimers, globalHostId);
+
+  await Promise.resolve(set(timersRef, cleanObject(mergedTimers)));
+  return true;
+};
+
 const isListenerCancelledTaskError = (error: unknown): boolean =>
   typeof error === "object" &&
   error !== null &&
@@ -569,9 +600,9 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async (action, listenerApi) => {
+  effect: async (_action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
-    if (itemSlice.actions.setActiveItem.match(action)) {
+    if (itemSlice.actions.setActiveItem.match(_action)) {
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
@@ -1133,51 +1164,25 @@ listenerMiddleware.startListening({
       timersSlice.actions.tickTimers,
     );
     return (
-      (currentState as RootState).timers !==
+      timersSlice.actions.flushPendingTimerWrites.match(action) ||
+      ((currentState as RootState).timers !==
         (previousState as RootState).timers &&
-      !excluded(action) &&
-      action.type !== "RESET"
+        !excluded(action) &&
+        action.type !== "RESET")
     );
   },
 
   effect: async (action, listenerApi) => {
-    const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
-    // update firebase with timers
-    const { timers, shouldUpdateTimers } = state.timers;
+    const didWriteRemote = await writePendingTimersToStorageAndFirebase(
+      listenerApi.getState() as RootState,
+    );
 
-    if (!shouldUpdateTimers) return;
-
-    const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
-
-    if (ownTimers.length > 0) {
-      localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
-    } else {
-      localStorage.removeItem("timerInfo");
+    if (didWriteRemote) {
+      listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
     }
-
-    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
-      // Get current timers from Firebase
-      const timersRef = ref(
-        globalFireDbInfo.db,
-        getChurchDataPath(globalFireDbInfo.churchId, "timers"),
-      );
-
-      // Get current timers and merge with own timers
-      const snapshot = await get(timersRef);
-      const currentTimers = Array.isArray(snapshot.val()) ? snapshot.val() : [];
-
-      // Merge timers, prioritizing own timers over remote ones.
-      // Passing an empty ownTimers array removes this host's timers remotely.
-      const mergedTimers = mergeTimers(currentTimers, ownTimers, globalHostId);
-
-      set(timersRef, cleanObject(mergedTimers));
-    }
-
-    // Reset flag after writing (to localStorage and/or Firebase) so effect doesn't keep re-running.
-    listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
   },
 });
 

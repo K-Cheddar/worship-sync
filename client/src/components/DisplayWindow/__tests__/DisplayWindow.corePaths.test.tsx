@@ -843,6 +843,53 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
   });
 
+  it("keeps the stream item layer visible while a cleared bible fades out through prev state", () => {
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        shouldAnimate
+        bibleDisplayInfo={{ title: "Jn 3:16", text: "For God so loved", time: 1 }}
+      />,
+    );
+
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+
+    // Clear empties current content but leaves the outgoing verse in prev for the fade-out.
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        shouldAnimate
+        bibleDisplayInfo={{ title: "", text: "", time: 2 }}
+        prevBibleDisplayInfo={{ title: "Jn 3:16", text: "For God so loved", time: 1 }}
+      />,
+    );
+
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+  });
+
+  it("keeps the stream item layer visible while cleared formatted text fades out through prev state", () => {
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        shouldAnimate
+        formattedTextDisplayInfo={{ text: "Welcome", time: 1 }}
+      />,
+    );
+
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        shouldAnimate
+        formattedTextDisplayInfo={{ text: "", time: 2 }}
+        prevFormattedTextDisplayInfo={{ text: "Welcome", time: 1 }}
+      />,
+    );
+
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+  });
+
   it("does not remount an already-expired previous participant overlay when a new image overlay rerenders before the scheduled clock update fires", () => {
     jest.useFakeTimers();
     const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();

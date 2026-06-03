@@ -88,7 +88,7 @@ function SheetContent({
         {children}
         {showClose ? (
           <DialogPrimitive.Close
-            className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-md opacity-80 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:size-5 [&_svg]:shrink-0"
+            className="ring-offset-background focus:ring-ring absolute top-4 right-4 flex items-center justify-center rounded-md opacity-80 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none max-md:size-10 [&_svg]:size-5 max-md:[&_svg]:size-6 [&_svg]:shrink-0"
             aria-label="Close"
           >
             <XIcon className="text-neutral-200" />

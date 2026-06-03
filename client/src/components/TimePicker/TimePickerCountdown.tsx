@@ -408,6 +408,7 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
               data-testid={dataTestInputId}
               id={dropdownId}
               value={inputValue}
+              onChange={() => {}}
               onKeyDown={handleKeyDown}
               onFocus={handleFocus}
               onMouseUp={handleMouseUp}

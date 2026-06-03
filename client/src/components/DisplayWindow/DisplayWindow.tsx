@@ -433,6 +433,24 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       return hasBoxes || hasBible || hasFormatted;
     }, [boxes?.length, bibleDisplayInfo?.title, bibleDisplayInfo?.text, formattedTextDisplayInfo?.text]);
 
+    // Item content still animating out (e.g. after Clear, when current is empty but
+    // prev holds the outgoing bible/formatted/text). Keep the item layer visible so
+    // those exit animations can fade rather than being cut to opacity 0 instantly.
+    const hasExitingStreamItemData = useMemo(() => {
+      const hasPrevBoxes = streamPrevTextLayerBoxes.length > 0;
+      const hasPrevBible = !!(
+        prevBibleDisplayInfo?.title?.trim() ||
+        prevBibleDisplayInfo?.text?.trim()
+      );
+      const hasPrevFormatted = !!prevFormattedTextDisplayInfo?.text?.trim();
+      return hasPrevBoxes || hasPrevBible || hasPrevFormatted;
+    }, [
+      streamPrevTextLayerBoxes.length,
+      prevBibleDisplayInfo?.title,
+      prevBibleDisplayInfo?.text,
+      prevFormattedTextDisplayInfo?.text,
+    ]);
+
     // Keep the scheduled state clock for automatic rerenders, but never let a
     // stale cached value remount an overlay that has already expired in wall
     // clock time when another prop change causes a fresh render.
@@ -846,7 +864,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // Item content is shown only when we have item data, the operator hasn't manually hidden it,
     // and no active stream overlay is temporarily overriding the item layer.
     const showStreamItemContent =
-      hasStreamItemData &&
+      (hasStreamItemData || hasExitingStreamItemData) &&
       !streamItemContentBlocked &&
       !hasActiveStreamOverlay;
 
