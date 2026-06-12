@@ -1,3 +1,10 @@
+## [2.10.2](https://github.com/K-Cheddar/worship-sync/compare/v2.10.1...v2.10.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* Improve timer reliability and consistency ([85a66c7](https://github.com/K-Cheddar/worship-sync/commit/85a66c743b72d38b57bbb1f8b6a01533bad7eb66))
+
 ## [2.10.1](https://github.com/K-Cheddar/worship-sync/compare/v2.10.0...v2.10.1) (2026-06-03)
 
 
