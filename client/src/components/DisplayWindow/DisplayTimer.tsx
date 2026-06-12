@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { TimerInfo } from "../../types";
 import { useSelector } from "../../hooks";
+import { useLiveRemainingSeconds } from "../../hooks/useLiveRemainingSeconds";
 import { formatTime } from "./TimerDisplay";
 
 type DisplayTimerProps = {
@@ -19,6 +20,7 @@ const DisplayTimer = ({
   const timer = useSelector((state) =>
     state.timers.timers.find((t) => t.id === timerId)
   );
+  const liveRemaining = useLiveRemainingSeconds(timer);
 
   const displayTime = useMemo(() => {
     if (!timer) return null;
@@ -34,11 +36,8 @@ const DisplayTimer = ({
     if (timer.timerType === "countdown" && timer.status === "stopped") {
       return formatTime12Hour(timer.countdownTime || "00:00");
     }
-    return formatTime(
-      timer?.remainingTime || 0,
-      timer.showMinutesOnly
-    ).toString();
-  }, [timer]);
+    return formatTime(liveRemaining, timer.showMinutesOnly).toString();
+  }, [timer, liveRemaining]);
 
   if (
     !timer ||

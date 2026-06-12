@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useSelector } from "react-redux";
+import { useLiveRemainingSeconds } from "../../hooks/useLiveRemainingSeconds";
 import { TimerInfo } from "../../types";
 import type { RootState } from "../../store/store";
 import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
@@ -77,6 +78,7 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>
     state.timers.timers.find((t) => t.id === timerInfo?.id)
   );
+  const liveRemaining = useLiveRemainingSeconds(timer ?? timerInfo);
   const { services: availableServices } = useAvailableServiceTimes();
   const upcomingService = useDisplayedUpcomingService(
     availableServices,
@@ -127,10 +129,7 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
     ) {
       return formatTime12Hour(resolvedTimer.countdownTime || "00:00");
     }
-    return formatTime(
-      resolvedTimer.remainingTime || 0,
-      resolvedTimer.showMinutesOnly
-    );
+    return formatTime(liveRemaining, resolvedTimer.showMinutesOnly);
   };
 
   return (

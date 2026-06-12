@@ -193,6 +193,43 @@ export const timersSlice = createSlice({
       remoteTimers.forEach((timerInfo) => {
         const existingTimer =
           nextTimersMap.get(timerInfo.id) || existingTimersMap.get(timerInfo.id);
+
+        // Keep the local copy whenever it is at least as authoritative as the
+        // incoming echo, so a stale OR unstamped echo can't revert a newer local
+        // edit's metadata. hydrateTimer's timestamp guard only protects runtime
+        // fields, so without this a late echo carrying older/absent `time` could
+        // overwrite name/color/duration/display settings — and the pending flush
+        // could then persist the reversion. We short-circuit when the local copy
+        // is stamped and the echo is either older or carries no timestamp at all.
+        // A strictly-newer stamped echo — or any echo when the local copy is
+        // unstamped (e.g. rebuilt from a doc on refresh) — still wins via
+        // hydrateTimer.
+        //
+        // Ties (equal `time`) keep local so a same-millisecond/reordered echo
+        // can't revert metadata — EXCEPT when the remote carries live runtime the
+        // local copy is missing (running with an endTime while local is not
+        // running). That recovers a refreshed controller's live countdown instead
+        // of leaving it stuck on a stale stopped doc that happens to share the
+        // timestamp. (On a tie the metadata matches anyway, since any edit would
+        // have bumped `time`.)
+        if (existingTimer && existingTimer.time !== undefined) {
+          const localStrictlyNewer =
+            timerInfo.time === undefined ||
+            existingTimer.time > timerInfo.time;
+          const tie =
+            timerInfo.time !== undefined &&
+            existingTimer.time === timerInfo.time;
+          const remoteRuntimeAhead =
+            timerInfo.status === "running" &&
+            !!timerInfo.endTime &&
+            existingTimer.status !== "running";
+
+          if (localStrictlyNewer || (tie && !remoteRuntimeAhead)) {
+            nextTimersMap.set(timerInfo.id, existingTimer);
+            return;
+          }
+        }
+
         nextTimersMap.set(timerInfo.id, hydrateTimer(timerInfo, existingTimer));
       });
 
@@ -293,6 +330,7 @@ export const timersSlice = createSlice({
       });
     },
     tickTimers: (state) => {
+      let didAutoStop = false;
       state.timers.forEach((timer) => {
         if (timer.isActive && timer.status === "running" && timer.endTime) {
           const endTime = new Date(timer.endTime).getTime();
@@ -304,10 +342,18 @@ export const timersSlice = createSlice({
           if (timer.remainingTime === 0) {
             timer.status = "stopped";
             timer.isActive = false;
+            didAutoStop = true;
           }
         }
       });
-      state.shouldUpdateTimers = true;
+      // A per-second tick does not need to be written to Firebase: every device
+      // recomputes remainingTime from endTime locally, so pushing it each second
+      // is pure overhead (and makes the owning window churn on its own echoes).
+      // Only mark dirty when a timer actually auto-stops — a real state change
+      // that other devices must receive.
+      if (didAutoStop) {
+        state.shouldUpdateTimers = true;
+      }
     },
     deleteTimer: (state, action: PayloadAction<string>) => {
       state.timers = state.timers.filter(

@@ -1,49 +1,58 @@
-import { useContext, useEffect, useRef } from "react";
+import { useCallback, useContext, useEffect, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { RootState } from "../../store/store";
-import { ref, onValue } from "firebase/database";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   flushPendingTimerWrites,
   tickTimers,
   setShouldUpdateTimers,
 } from "../../store/timersSlice";
-import { useSyncRemoteTimers } from "../../hooks";
+import { useSyncRemoteTimers, useFirebaseValueWithRetry } from "../../hooks";
 import { getChurchDataPath } from "../../utils/firebasePaths";
 import { serverNow } from "../../utils/serverTime";
 
 const TimerManager = () => {
   const dispatch = useDispatch();
-  const { churchId, firebaseDb, hostId, loginState } =
+  const { churchId, firebaseDb, hostId, loginState, sharedDataReady } =
     useContext(GlobalInfoContext) || {};
   const timers = useSelector((state: RootState) => state.timers.timers);
   const shouldUpdateTimers = useSelector(
     (state: RootState) => state.timers.shouldUpdateTimers
   );
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Latest timers for the ticker to read without re-creating the interval.
+  const timersRef = useRef(timers);
+  timersRef.current = timers;
 
-  useSyncRemoteTimers(firebaseDb, churchId, loginState === "guest", hostId);
+  useSyncRemoteTimers(
+    firebaseDb,
+    churchId,
+    loginState === "guest",
+    hostId,
+    !!sharedDataReady
+  );
 
-  useEffect(() => {
-    if (!firebaseDb || loginState === "guest") return;
-
-    const activeInstancesRef = ref(
-      firebaseDb,
-      getChurchDataPath(churchId, "activeInstances")
-    );
-    const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
-      const data = snapshot.val();
+  const handleActiveInstances = useCallback(
+    (data: unknown) => {
       dispatch(
         setShouldUpdateTimers(
           !!data && Object.keys(data as Record<string, unknown>).length > 0
         )
       );
-    });
+    },
+    [dispatch]
+  );
 
-    return () => {
-      unsubscribe();
-    };
-  }, [churchId, firebaseDb, loginState, dispatch]);
+  useFirebaseValueWithRetry({
+    db: firebaseDb,
+    path: churchId ? getChurchDataPath(churchId, "activeInstances") : null,
+    enabled:
+      !!firebaseDb &&
+      !!churchId &&
+      loginState !== "guest" &&
+      !!sharedDataReady,
+    onData: handleActiveInstances,
+    label: "active instances",
+  });
 
   useEffect(() => {
     if (!firebaseDb || !churchId || loginState === "guest" || !shouldUpdateTimers) {
@@ -53,44 +62,40 @@ const TimerManager = () => {
     dispatch(flushPendingTimerWrites());
   }, [churchId, firebaseDb, loginState, shouldUpdateTimers, dispatch]);
 
+  const hasRunningTimers = timers.some(
+    (timer) => timer.isActive && timer.status === "running"
+  );
+
+  // The displayed per-second countdown is computed locally by the leaf timer
+  // components (useLiveRemainingSeconds), so this effect no longer dispatches
+  // every second. Its only job is to auto-stop a timer when it actually expires
+  // — a real state change other devices must receive. Keyed on the running
+  // boolean so it runs continuously rather than being recreated each render.
   useEffect(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (!hasRunningTimers) return;
 
-    // Only set up interval if there are running timers
-    const hasRunningTimers = timers.some(
-      (timer) => timer.isActive && timer.status === "running"
-    );
-
-    if (hasRunningTimers) {
-      const currentInterval = setInterval(() => {
-        const now = serverNow();
-        const runningTimers = timers.filter(
-          (timer) =>
-            timer.isActive && timer.status === "running" && timer.endTime
-        );
-
-        // Check if any timer needs updating
-        const shouldUpdate = runningTimers.some((timer) => {
-          const endTime = new Date(timer.endTime!).getTime();
-          const remainingSeconds = Math.floor((endTime - now) / 1000);
-          return remainingSeconds !== timer.remainingTime;
-        });
-
-        if (shouldUpdate) {
-          dispatch(tickTimers());
-        }
-      }, 16); // ~60fps for smoother updates
-
-      intervalRef.current = currentInterval;
-    }
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+    const intervalId = setInterval(() => {
+      const now = serverNow();
+      // Any timer still flagged running whose endTime has passed needs to be
+      // formally stopped. We key only on status + endTime (NOT remainingTime):
+      // a stale reconcile can leave a timer running with remainingTime already
+      // 0, and gating on `remainingTime !== 0` would leave it stuck running
+      // forever (never firing wrap-up / auto-advance). tickTimers flips it to
+      // stopped, so it won't re-dispatch on the next pass.
+      const anyExpired = timersRef.current.some(
+        (timer) =>
+          timer.isActive &&
+          timer.status === "running" &&
+          timer.endTime &&
+          Math.floor((new Date(timer.endTime).getTime() - now) / 1000) <= 0
+      );
+      if (anyExpired) {
+        dispatch(tickTimers());
       }
-    };
-  }, [timers, dispatch]);
+    }, 250);
+
+    return () => clearInterval(intervalId);
+  }, [hasRunningTimers, dispatch]);
 
   return null;
 };

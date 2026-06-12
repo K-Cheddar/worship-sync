@@ -1,8 +1,7 @@
-import { useSelector, useDispatch } from "../hooks";
+import { useSelector, useDispatch, useFirebaseValueWithRetry } from "../hooks";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
 import { useContext, useEffect, useCallback } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { onValue, ref } from "firebase/database";
 import {
   setMonitorClockFontSize,
   setMonitorShowTimer,
@@ -22,33 +21,40 @@ const Monitor = () => {
 
   const dispatch = useDispatch();
 
-  const { firebaseDb, churchId } = useContext(GlobalInfoContext) || {};
+  const { firebaseDb, churchId, sharedDataReady } =
+    useContext(GlobalInfoContext) || {};
 
-  useEffect(() => {
-    const getMonitorSettingsFromFirebase = async () => {
-      if (!firebaseDb) return;
+  const handleMonitorSettings = useCallback(
+    (data: unknown) => {
+      if (!data) return;
+      const settings = data as {
+        showClock: boolean;
+        showTimer: boolean;
+        showNextSlide?: boolean;
+        clockFontSize: number;
+        timerFontSize: number;
+        timerId?: string | null;
+      };
+      // Support both old (defaultMonitor*) and new (monitorSettings) formats
+      dispatch(setMonitorShowClock(settings.showClock));
+      dispatch(setMonitorShowTimer(settings.showTimer));
+      if (settings.showNextSlide !== undefined) {
+        dispatch(setMonitorShowNextSlide(settings.showNextSlide));
+      }
+      dispatch(setMonitorClockFontSize(settings.clockFontSize));
+      dispatch(setMonitorTimerFontSize(settings.timerFontSize));
+      dispatch(setMonitorTimerId(settings.timerId || null));
+    },
+    [dispatch]
+  );
 
-      const monitorSettingsRef = ref(
-        firebaseDb,
-        getChurchDataPath(churchId, "monitorSettings")
-      );
-      onValue(monitorSettingsRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          // Support both old (defaultMonitor*) and new (monitorSettings) formats
-          dispatch(setMonitorShowClock(data.showClock));
-          dispatch(setMonitorShowTimer(data.showTimer));
-          if (data.showNextSlide !== undefined) {
-            dispatch(setMonitorShowNextSlide(data.showNextSlide));
-          }
-          dispatch(setMonitorClockFontSize(data.clockFontSize));
-          dispatch(setMonitorTimerFontSize(data.timerFontSize));
-          dispatch(setMonitorTimerId(data.timerId || null));
-        }
-      });
-    };
-    getMonitorSettingsFromFirebase();
-  }, [churchId, firebaseDb, dispatch]);
+  useFirebaseValueWithRetry({
+    db: firebaseDb,
+    path: churchId ? getChurchDataPath(churchId, "monitorSettings") : null,
+    enabled: !!firebaseDb && !!churchId && !!sharedDataReady,
+    onData: handleMonitorSettings,
+    label: "monitor settings",
+  });
 
   const monitorTimer = useSelector((state) =>
     state.timers.timers.find((timer) => timer.id === monitorInfo.timerId)

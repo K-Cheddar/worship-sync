@@ -655,43 +655,39 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     );
   });
 
-  it("logs presentation listener errors without reminting shared realtime auth", async () => {
+  it("retries presentation listeners on permission_denied without reminting shared realtime auth", async () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");
     localStorage.setItem("database", "main");
 
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
 
-    const consoleErrorSpy = jest
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const listenerError = new Error("permission_denied");
+    renderProvider();
 
-    try {
-      renderProvider();
+    const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
 
-      const streamInfoPath = "churches/church-1/data/presentation/streamInfo";
+    await waitFor(() =>
+      expect(onValueErrorCallbacks.has(streamInfoPath)).toBe(true)
+    );
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
+    );
 
-      await waitFor(() =>
-        expect(onValueErrorCallbacks.has(streamInfoPath)).toBe(true)
-      );
-      await waitFor(() =>
-        expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
-      );
+    const countStreamInfoSubscriptions = () =>
+      onValueMock.mock.calls.filter(([target]) => target.path === streamInfoPath)
+        .length;
+    const before = countStreamInfoSubscriptions();
 
-      act(() => {
-        onValueErrorCallbacks.get(streamInfoPath)?.(listenerError);
-      });
+    // A permission_denied cancellation must re-attach (recover from the startup
+    // auth race) — but unlike branding it must NOT remint the shared-data token.
+    act(() => {
+      onValueErrorCallbacks.get(streamInfoPath)?.(new Error("permission_denied"));
+    });
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        "Could not subscribe to live presentation updates:",
-        { key: "streamInfo", path: streamInfoPath },
-        listenerError,
-      );
-      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1);
-    } finally {
-      consoleErrorSpy.mockRestore();
-    }
+    await waitFor(() =>
+      expect(countStreamInfoSubscriptions()).toBeGreaterThan(before)
+    );
+    expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1);
   });
 
   it("subscribes to church branding and exposes live branding updates", async () => {
