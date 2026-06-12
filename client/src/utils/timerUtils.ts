@@ -112,10 +112,23 @@ export const calculateRemainingTime = ({
       return timerInfo.duration || 0;
     }
 
-    // Keep current time when:
-    // 1. Pausing the timer
-    // 2. Resuming from paused state
-    if (timerInfo.status === "paused" || isResumingFromPaused) {
+    // Pausing from a running state: capture the live remaining from endTime.
+    // remainingTime is no longer ticked into Redux while running, so the stored
+    // value is stale — derive the true remaining at the moment of pausing.
+    if (timerInfo.status === "paused") {
+      if (previousStatus === "running" && timerInfo.endTime) {
+        const remainingSeconds = Math.floor(
+          (new Date(timerInfo.endTime).getTime() - serverNow()) / 1000,
+        );
+        return Math.max(0, remainingSeconds);
+      }
+      // Already paused (or nothing to derive from): keep the stored value.
+      return timerInfo.remainingTime || 0;
+    }
+
+    // Resuming from paused: keep the captured paused value. calculateEndTime
+    // rebuilds endTime from it so the countdown continues from where it froze.
+    if (isResumingFromPaused) {
       return timerInfo.remainingTime || 0;
     }
 

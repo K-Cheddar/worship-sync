@@ -241,6 +241,126 @@ describe("timersSlice", () => {
       );
     });
 
+    it("captures the accurate remainingTime when pausing a running timer", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "h1",
+              timerType: "timer",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 300,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      // Start: endTime = 12:05:00, remainingTime 300 (no longer ticked in Redux).
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "running",
+            startedAt: new Date("2026-04-05T12:00:00.000Z").toISOString(),
+          },
+        }),
+      );
+
+      // 120s elapse, then pause — remainingTime must be 180, not the stale 300.
+      jest.setSystemTime(new Date("2026-04-05T12:02:00.000Z"));
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "paused",
+          },
+        }),
+      );
+
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({ status: "paused", remainingTime: 180 }),
+      );
+    });
+
+    it("resuming a paused timer does not subtract the paused duration", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "h1",
+              timerType: "timer",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 300,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "running",
+            startedAt: new Date("2026-04-05T12:00:00.000Z").toISOString(),
+          },
+        }),
+      );
+
+      // Pause at 12:02 with 180s remaining.
+      jest.setSystemTime(new Date("2026-04-05T12:02:00.000Z"));
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "paused",
+          },
+        }),
+      );
+      expect(store.getState().timers.timers[0].remainingTime).toBe(180);
+
+      // Stay paused 60s, then resume at 12:03.
+      jest.setSystemTime(new Date("2026-04-05T12:03:00.000Z"));
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "running",
+            startedAt: new Date("2026-04-05T12:03:00.000Z").toISOString(),
+          },
+        }),
+      );
+
+      // endTime is rebuilt as now + 180s = 12:06:00 (the 60s pause is NOT
+      // subtracted), and remainingTime stays 180.
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          status: "running",
+          isActive: true,
+          remainingTime: 180,
+          endTime: new Date("2026-04-05T12:06:00.000Z").toISOString(),
+        }),
+      );
+    });
+
     it("tickTimers does NOT mark dirty on a non-expiry tick", () => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date("2026-04-05T12:00:01.000Z"));
@@ -639,7 +759,7 @@ describe("timersSlice", () => {
               time: 100,
             }),
           ],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0]).toEqual(
@@ -650,7 +770,7 @@ describe("timersSlice", () => {
           duration: 600,
           showMinutesOnly: true,
           time: 500,
-        })
+        }),
       );
     });
 
@@ -688,11 +808,11 @@ describe("timersSlice", () => {
               time: 200,
             }),
           ],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0]).toEqual(
-        expect.objectContaining({ name: "Renamed", duration: 900, time: 200 })
+        expect.objectContaining({ name: "Renamed", duration: 900, time: 200 }),
       );
     });
 
@@ -728,7 +848,7 @@ describe("timersSlice", () => {
         timersSlice.actions.reconcileTimersFromRemote({
           hostId: "controller-host",
           timers: [remote],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0].name).toBe("Local");
@@ -768,11 +888,11 @@ describe("timersSlice", () => {
               time: 200,
             }),
           ],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0]).toEqual(
-        expect.objectContaining({ name: "Local", color: "#00ff00", time: 200 })
+        expect.objectContaining({ name: "Local", color: "#00ff00", time: 200 }),
       );
     });
 
@@ -817,7 +937,7 @@ describe("timersSlice", () => {
               time: 200,
             }),
           ],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0]).toEqual(
@@ -826,7 +946,7 @@ describe("timersSlice", () => {
           status: "running",
           isActive: true,
           endTime: runningEndTime,
-        })
+        }),
       );
     });
 
@@ -862,11 +982,11 @@ describe("timersSlice", () => {
               time: 200,
             }),
           ],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0]).toEqual(
-        expect.objectContaining({ status: "running", isActive: true })
+        expect.objectContaining({ status: "running", isActive: true }),
       );
     });
 
@@ -896,7 +1016,7 @@ describe("timersSlice", () => {
         timersSlice.actions.reconcileTimersFromRemote({
           hostId: "controller-host",
           timers: [remote],
-        })
+        }),
       );
 
       expect(store.getState().timers.timers[0].name).toBe("Remote");

@@ -1007,12 +1007,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     (data: any) => {
       type updateInfoChildType = {
         info:
-          | PresentationType
-          | BibleDisplayInfo
-          | OverlayInfo
-          | TimerInfo
-          | ServiceTime[]
-          | boolean;
+        | PresentationType
+        | BibleDisplayInfo
+        | OverlayInfo
+        | TimerInfo
+        | ServiceTime[]
+        | boolean;
         updateAction: string;
       };
 
@@ -1446,15 +1446,22 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       firebaseDb,
       getChurchDataPath(churchId, "activeInstances"),
       (snapshot) => {
-        const data = snapshot.val();
+        // RTDB payload shape can drift, so treat each entry as a Partial and
+        // validate the fields we rely on rather than trusting `any`.
+        const data = snapshot.val() as Record<
+          string,
+          Partial<Instance>
+        > | null;
         if (data) {
           // Clean up stale instances (older than 1 hour)
           const now = Date.now();
-          const staleInstances = Object.entries(data).filter(
-            ([, instance]: [string, any]) => {
-              const lastActive = new Date(instance.lastActive).getTime();
-              return now - lastActive > 60 * 60 * 1000; // 1 hour
-            }
+          const isStale = (instance: Partial<Instance>) => {
+            if (!instance.lastActive) return false;
+            const lastActive = new Date(instance.lastActive).getTime();
+            return now - lastActive > 60 * 60 * 1000; // 1 hour
+          };
+          const staleInstances = Object.entries(data).filter(([, instance]) =>
+            isStale(instance)
           );
 
           // Remove stale instances
@@ -1466,10 +1473,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             void settleFirebaseWrite(set(staleRef, null));
           });
           const _activeInstances = Object.values(data).filter(
-            (instance: any): instance is Instance =>
-              (instance.isOnController ||
-                instance.presenceSurface === "display" ||
-                instance.sessionKind === "display") &&
+            (instance): instance is Instance =>
+              !!instance.lastActive &&
+              Boolean(
+                instance.isOnController ||
+                  instance.presenceSurface === "display" ||
+                  instance.sessionKind === "display"
+              ) &&
               now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
           );
           setActiveInstances(_activeInstances);
