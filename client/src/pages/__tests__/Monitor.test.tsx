@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import Monitor from "../Monitor";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -12,6 +12,7 @@ import {
 
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
+const onValueErrorCallbacks = new Map<string, (error: unknown) => void>();
 let fullscreenPresentationProps: any = null;
 
 const refMock = jest.fn(
@@ -21,8 +22,13 @@ const refMock = jest.fn(
     }) as { path: string }
 );
 const onValueMock = jest.fn(
-  (target: { path: string }, callback: (snapshot: any) => void) => {
+  (
+    target: { path: string },
+    callback: (snapshot: any) => void,
+    errorCallback?: (error: unknown) => void
+  ) => {
     onValueCallbacks.set(target.path, callback);
+    if (errorCallback) onValueErrorCallbacks.set(target.path, errorCallback);
     return jest.fn();
   }
 );
@@ -54,6 +60,9 @@ jest.mock("../../hooks", () => ({
   useDispatch: () => mockDispatch,
   useSelector: (selector: (state: typeof mockState) => unknown) =>
     selector(mockState),
+  useFirebaseValueWithRetry: jest.requireActual(
+    "../../hooks/useFirebaseValueWithRetry"
+  ).useFirebaseValueWithRetry,
 }));
 
 jest.mock("firebase/database", () => ({
@@ -61,7 +70,8 @@ jest.mock("firebase/database", () => ({
   onValue: (
     target: { path: string },
     callback: (snapshot: unknown) => void,
-  ) => onValueMock(target, callback),
+    errorCallback?: (error: unknown) => void,
+  ) => onValueMock(target, callback, errorCallback),
 }));
 
 jest.mock("../../hooks/useCloseOnEscape", () => ({
@@ -80,6 +90,7 @@ describe("Monitor page", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
     onValueCallbacks.clear();
+    onValueErrorCallbacks.clear();
     refMock.mockClear();
     onValueMock.mockClear();
     fullscreenPresentationProps = null;
@@ -96,6 +107,7 @@ describe("Monitor page", () => {
           {
             firebaseDb: "firebase-db",
             churchId: "church-main",
+            sharedDataReady: true,
           } as any
         }
       >
@@ -144,6 +156,7 @@ describe("Monitor page", () => {
           {
             firebaseDb: "firebase-db",
             churchId: "church-main",
+            sharedDataReady: true,
           } as any
         }
       >
@@ -185,6 +198,56 @@ describe("Monitor page", () => {
     expect(mockDispatch.mock.calls).not.toEqual(
       expect.arrayContaining([[setMonitorShowNextSlide(false)]])
     );
+  });
+
+  it("does not subscribe to monitor settings until shared data is ready", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={
+          {
+            firebaseDb: "firebase-db",
+            churchId: "church-main",
+            sharedDataReady: false,
+          } as any
+        }
+      >
+        <Monitor />
+      </GlobalInfoContext.Provider>
+    );
+
+    expect(
+      onValueCallbacks.has("churches/church-main/data/monitorSettings")
+    ).toBe(false);
+  });
+
+  it("re-attaches the monitor settings listener after a permission_denied error", async () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={
+          {
+            firebaseDb: "firebase-db",
+            churchId: "church-main",
+            sharedDataReady: true,
+          } as any
+        }
+      >
+        <Monitor />
+      </GlobalInfoContext.Provider>
+    );
+
+    const path = "churches/church-main/data/monitorSettings";
+    await waitFor(() => expect(onValueErrorCallbacks.has(path)).toBe(true));
+
+    const countSubscriptions = () =>
+      onValueMock.mock.calls.filter(([target]) => target.path === path).length;
+    const before = countSubscriptions();
+
+    // A startup-race permission_denied must re-attach, not stay cancelled.
+    act(() => {
+      onValueErrorCallbacks.get(path)?.({ code: "PERMISSION_DENIED" });
+    });
+
+    await waitFor(() => expect(countSubscriptions()).toBeGreaterThan(before));
   });
 
   it("passes current and previous monitor presentation info into FullscreenPresentation", () => {

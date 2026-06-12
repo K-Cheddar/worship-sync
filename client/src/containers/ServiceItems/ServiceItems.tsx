@@ -204,11 +204,13 @@ const ServiceItems = () => {
     const activeTimers = new Map<string, (typeof timers)[number]>();
 
     for (const timer of timers) {
-      if (
-        timerIdsInList.has(timer.id) &&
-        timer.status !== "stopped" &&
-        timer.remainingTime > 0
-      ) {
+      // Key off status, not the (now frozen-while-running) remainingTime: a
+      // running timer's row should show its live countdown; a paused timer
+      // shows only if it has time left.
+      const isActive =
+        timer.status === "running" ||
+        (timer.status === "paused" && timer.remainingTime > 0);
+      if (timerIdsInList.has(timer.id) && isActive) {
         activeTimers.set(timer.id, timer);
       }
     }
@@ -837,7 +839,7 @@ const ServiceItems = () => {
                   return (
                     <ServiceItem
                       isActive={activeTimer != null || serviceTimeTimerText != null}
-                      timerValue={activeTimer?.remainingTime}
+                      timer={activeTimer}
                       timerText={serviceTimeTimerText}
                       key={item.listId}
                       item={item}

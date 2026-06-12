@@ -57,6 +57,11 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
   const [secondEntry, setSecondEntry] = useState<string | null>(null);
   const pendingSegmentRef = useRef<Segment | null>(null);
   const activeSegmentRef = useRef<Segment | null>(null);
+  // Debounce single-digit commits so typing a two-digit value (e.g. "3" then
+  // "0") collapses into one onChange/Firebase write instead of persisting the
+  // intermediate value ("03") first.
+  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingCommitRef = useRef<(() => void) | null>(null);
 
   const getSegmentFromPos = (pos: number): Segment => {
     if (pos <= 1) return "hour";
@@ -129,17 +134,57 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
     nextMinute: string,
     nextSecond: string
   ) => {
+    clearPendingCommit();
     if (!nextHour || !nextMinute || !nextSecond) return;
     // Convert to duration (seconds) for timer variant
     const duration = timeToDuration(nextHour, nextMinute, nextSecond);
     onChange?.(duration);
   };
 
+  const clearPendingCommit = () => {
+    if (commitTimerRef.current) {
+      clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+    pendingCommitRef.current = null;
+  };
+
+  // Defer a single-digit commit so it persists on its own, but only refines the
+  // *write* timing — it must NOT touch the entry buffer. The buffer stays alive
+  // until the segment is left, so typing "2" then later "5" still accumulates to
+  // 25 (the second-digit branch reads the buffer), even after this fired. Any
+  // fuller commit (second digit, arrow, dropdown) cancels the pending write via
+  // clearPendingCommit so only the final value is written.
+  const scheduleCommit = (
+    nextHour: string,
+    nextMinute: string,
+    nextSecond: string
+  ) => {
+    clearPendingCommit();
+    const run = () => commitAndFormat(nextHour, nextMinute, nextSecond);
+    pendingCommitRef.current = run;
+    commitTimerRef.current = setTimeout(() => {
+      commitTimerRef.current = null;
+      pendingCommitRef.current = null;
+      run();
+    }, 300);
+  };
+
+  const flushPendingCommit = () => {
+    const run = pendingCommitRef.current;
+    clearPendingCommit();
+    run?.();
+  };
+
+  useEffect(() => () => clearPendingCommit(), []);
+
   const commitAndFormat = (
     nextHour: string,
     nextMinute: string,
     nextSecond: string
   ) => {
+    // A direct commit supersedes any pending single-digit commit.
+    clearPendingCommit();
     let h = Math.max(0, Number(nextHour) || 0);
     let m = nextMinute;
     let s = nextSecond || "00";
@@ -218,6 +263,9 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
           if (d >= 0 && d <= 2) {
             setHourEntry(String(d));
             setHour(pad2(d));
+            // Defer the commit so a second digit can refine it without writing
+            // the intermediate value first; commits on its own if none comes.
+            scheduleCommit(pad2(d), minute || "00", second || "00");
             selectSegment("hour");
             return;
           }
@@ -247,9 +295,13 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
         e.preventDefault();
         const d = Number(key);
         if (minuteEntry === null) {
-          // Always wait for second digit to allow values like 60-99
+          // Buffer the first digit so a second digit can refine it (e.g.
+          // 60-99). Defer the commit so a single-digit entry still updates the
+          // timer, without writing the intermediate value when a second digit
+          // follows.
           setMinuteEntry(String(d));
           setMinute(pad2(d));
+          scheduleCommit(hour || "00", pad2(d), second || "00");
           selectSegment("minute");
           return;
         }
@@ -268,9 +320,13 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
         e.preventDefault();
         const d = Number(key);
         if (secondEntry === null) {
-          // Always wait for second digit to allow values like 60-99
+          // Buffer the first digit so a second digit can refine it (e.g.
+          // 60-99). Defer the commit so a single-digit entry still updates the
+          // timer, without writing the intermediate value when a second digit
+          // follows.
           setSecondEntry(String(d));
           setSecond(pad2(d));
+          scheduleCommit(hour || "00", minute || "00", pad2(d));
           selectSegment("second");
           return;
         }
@@ -428,6 +484,7 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
               onChange={() => {}}
               onKeyDown={handleKeyDown}
               onFocus={handleFocus}
+              onBlur={flushPendingCommit}
               onMouseUp={handleMouseUp}
               aria-label={label || "Time"}
               role="combobox"

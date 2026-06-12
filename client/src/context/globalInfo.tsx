@@ -124,6 +124,10 @@ import type { ChurchIntegrations } from "../types/integrations";
 import { createDefaultChurchIntegrations } from "../types/integrations";
 import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
 import { setServerTimeOffset } from "../utils/serverTime";
+import {
+  isFirebasePermissionDenied,
+  subscribeWithPermissionRetry,
+} from "../utils/firebaseListeners";
 // import { useRealtimeDatabaseHealthCheck } from "@/hooks/useRealtimeDatabaseHealthCheck";
 
 /** Firebase client calls are Promise-like in production but may return void in tests. */
@@ -172,16 +176,6 @@ const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
 const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
   Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
 
-const isFirebasePermissionDenied = (error: unknown) => {
-  if (!error || typeof error !== "object") return false;
-  const maybe = error as { code?: string; message?: string };
-  const code = maybe.code?.toLowerCase();
-  if (code === "permission_denied") return true;
-  const msg = String(maybe.message || "").toLowerCase();
-  if (msg.includes("permission_denied")) return true;
-  if (msg.includes("permission to access")) return true;
-  return false;
-};
 
 async function awaitSharedRealtimeAuthReady(auth: Auth) {
   try {
@@ -377,6 +371,12 @@ type GlobalInfoContextType = {
   uploadPreset: string;
   setLoginState: (val: LoginStateType) => void;
   firebaseDb: Database | undefined;
+  /**
+   * True once this renderer has authenticated and the shared-data Firebase
+   * token is valid for the current scope. Gate church-data RTDB listeners on
+   * this so they don't attach before auth and get cancelled by the rules.
+   */
+  sharedDataReady: boolean;
   hostId: string;
   activeInstances: Instance[];
   access: AccessType;
@@ -1007,12 +1007,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     (data: any) => {
       type updateInfoChildType = {
         info:
-          | PresentationType
-          | BibleDisplayInfo
-          | OverlayInfo
-          | TimerInfo
-          | ServiceTime[]
-          | boolean;
+        | PresentationType
+        | BibleDisplayInfo
+        | OverlayInfo
+        | TimerInfo
+        | ServiceTime[]
+        | boolean;
         updateAction: string;
       };
 
@@ -1083,17 +1083,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
     },
     [dispatch]
-  );
-
-  const handlePresentationListenerError = useCallback(
-    (key: string, path: string, error: unknown) => {
-      console.error(
-        "Could not subscribe to live presentation updates:",
-        { key, path },
-        error,
-      );
-    },
-    [],
   );
 
   const activeInstanceName = useMemo(() => {
@@ -1450,44 +1439,56 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (!firebaseDb || !isSharedDataScopeReady) return;
 
-    const activeInstancesRef = ref(
+    // Listen for changes in active instances. Uses permission_denied recovery
+    // (same as TimerManager's activeInstances listener) so it can't lose the
+    // startup race and leave the context's instance list empty/stale.
+    const unsubscribe = subscribeWithPermissionRetry(
       firebaseDb,
-      getChurchDataPath(churchId, "activeInstances")
-    );
-
-    // Listen for changes in active instances
-    const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        // Clean up stale instances (older than 1 hour)
-        const now = Date.now();
-        const staleInstances = Object.entries(data).filter(
-          ([, instance]: [string, any]) => {
+      getChurchDataPath(churchId, "activeInstances"),
+      (snapshot) => {
+        // RTDB payload shape can drift, so treat each entry as a Partial and
+        // validate the fields we rely on rather than trusting `any`.
+        const data = snapshot.val() as Record<
+          string,
+          Partial<Instance>
+        > | null;
+        if (data) {
+          // Clean up stale instances (older than 1 hour)
+          const now = Date.now();
+          const isStale = (instance: Partial<Instance>) => {
+            if (!instance.lastActive) return false;
             const lastActive = new Date(instance.lastActive).getTime();
             return now - lastActive > 60 * 60 * 1000; // 1 hour
-          }
-        );
-
-        // Remove stale instances
-        staleInstances.forEach(([staleHostId]) => {
-          const staleRef = ref(
-            firebaseDb,
-            getChurchDataPath(churchId, "activeInstances", staleHostId)
+          };
+          const staleInstances = Object.entries(data).filter(([, instance]) =>
+            isStale(instance)
           );
-          void settleFirebaseWrite(set(staleRef, null));
-        });
-        const _activeInstances = Object.values(data).filter(
-          (instance: any): instance is Instance =>
-            (instance.isOnController ||
-              instance.presenceSurface === "display" ||
-              instance.sessionKind === "display") &&
-            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
-        );
-        setActiveInstances(_activeInstances);
-      } else {
-        setActiveInstances([]);
-      }
-    });
+
+          // Remove stale instances
+          staleInstances.forEach(([staleHostId]) => {
+            const staleRef = ref(
+              firebaseDb,
+              getChurchDataPath(churchId, "activeInstances", staleHostId)
+            );
+            void settleFirebaseWrite(set(staleRef, null));
+          });
+          const _activeInstances = Object.values(data).filter(
+            (instance): instance is Instance =>
+              !!instance.lastActive &&
+              Boolean(
+                instance.isOnController ||
+                  instance.presenceSurface === "display" ||
+                  instance.sessionKind === "display"
+              ) &&
+              now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
+          );
+          setActiveInstances(_activeInstances);
+        } else {
+          setActiveInstances([]);
+        }
+      },
+      { label: "active instances" }
+    );
 
     // Set this instance as active only if on controller page
     instanceRef.current = ref(
@@ -1577,18 +1578,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           key === "serviceTimes"
             ? getChurchDataPath(churchId, "services")
             : getChurchDataPath(churchId, "presentation", key);
-        const updateRef = ref(firebaseDb, updatePath);
 
-        onValueRef.current[_key] = onValue(
-          updateRef,
+        // Recover from permission_denied (same as the timer/instance listeners)
+        // so presentation sync can't be permanently cancelled by the startup
+        // auth race and left stale until a reconnect.
+        onValueRef.current[_key] = subscribeWithPermissionRetry(
+          firebaseDb,
+          updatePath,
           (snapshot) => {
             if (!snapshot.exists()) return;
             const data = snapshot.val();
             updateFromRemote({ [key]: data });
           },
-          (error) => {
-            handlePresentationListenerError(_key, updatePath, error);
-          },
+          { label: `presentation:${String(key)}` },
         );
       }
     }
@@ -1598,7 +1600,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     isSharedDataScopeReady,
     updateFromRemote,
     clearPresentationFirebaseListeners,
-    handlePresentationListenerError,
   ]);
 
   // Function to set up storage listener
@@ -2415,6 +2416,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       refreshAuthBootstrap,
       refreshPresentationListeners,
       updateSelfDisplayName,
+      sharedDataReady: isSharedDataScopeReady,
     }),
     [
       loginState,
@@ -2466,6 +2468,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       refreshAuthBootstrap,
       refreshPresentationListeners,
       updateSelfDisplayName,
+      isSharedDataScopeReady,
     ]
   );
 

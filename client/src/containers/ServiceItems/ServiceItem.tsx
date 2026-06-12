@@ -8,7 +8,8 @@ import {
   removeItemFromList,
 } from "../../store/itemListSlice";
 import gsap from "gsap";
-import { ServiceItem as ServiceItemType } from "../../types";
+import { ServiceItem as ServiceItemType, TimerInfo } from "../../types";
+import { useLiveRemainingSeconds } from "../../hooks/useLiveRemainingSeconds";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import { useGSAP } from "@gsap/react";
@@ -20,7 +21,8 @@ const LONG_PRESS_MOVE_PX = 10;
 
 type ServiceItemsProps = {
   isActive: boolean;
-  timerValue?: number;
+  /** Active timer for this item; its live countdown is computed locally. */
+  timer?: TimerInfo;
   timerText?: string;
   index: number;
   selectedItemListId: string | undefined;
@@ -45,7 +47,7 @@ type ServiceItemsProps = {
 
 const ServiceItem = ({
   isActive,
-  timerValue,
+  timer,
   timerText,
   item,
   subtitle,
@@ -61,6 +63,8 @@ const ServiceItem = ({
   dragActiveId,
 }: ServiceItemsProps) => {
   const dispatch = useDispatch();
+  // Live countdown computed locally so only this row re-renders each second.
+  const liveTimerValue = useLiveRemainingSeconds(timer);
   const serviceItemRef = useRef<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({
@@ -253,7 +257,7 @@ const ServiceItem = ({
       )}`}
       type={item.type}
       image={item.background}
-      timerValue={timerValue}
+      timerValue={timer ? liveTimerValue : undefined}
       timerText={timerText}
       actions={actions}
       displayId={`service-item-${item.listId}`}

@@ -78,18 +78,18 @@ jest.mock("./ServiceItem", () => ({
   default: ({
     item,
     isActive,
-    timerValue,
+    timer,
     timerText,
   }: {
     item: { listId: string; name: string; type: string };
     isActive: boolean;
-    timerValue?: number;
+    timer?: { remainingTime?: number };
     timerText?: string;
   }) => (
     <li
       data-testid={`row-${item.type}`}
       data-active={String(isActive)}
-      data-timer-value={timerValue ?? ""}
+      data-timer-value={timer?.remainingTime ?? ""}
       data-timer-text={timerText ?? ""}
     >
       {item.name}
