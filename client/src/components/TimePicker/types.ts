@@ -1,9 +1,14 @@
 export type Meridiem = "AM" | "PM" | "";
 export type Variant = "timer" | "countdown";
 export type Segment = "hour" | "minute" | "second" | "meridiem";
+/** `stacked`: label above the field (matches Input/Select). `inline`: label beside the field. */
+export type TimePickerLabelLayout = "stacked" | "inline";
 
 export interface BaseTimePickerProps {
   label?: string;
+  /** `stacked` matches Input; default `inline` preserves existing side-by-side labels. */
+  labelLayout?: TimePickerLabelLayout;
+  hideLabel?: boolean;
   labelClassName?: string;
   value?: string | number;
   onChange?: (value: string | number) => void;

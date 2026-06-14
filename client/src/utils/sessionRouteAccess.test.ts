@@ -45,6 +45,40 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
+  it("allows teams routes for human sessions with Teams view access", () => {
+    expect(
+      isRouteAllowedForSession("/teams/schedules", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "view",
+        permissions: { teams: "view" },
+      })
+    ).toBe(true);
+  });
+
+  it("allows teams routes for human sessions with scoped Teams access", () => {
+    expect(
+      isRouteAllowedForSession("/teams/schedules", {
+        loginState: "success",
+        sessionKind: "human",
+        access: "view",
+        role: "member",
+        permissions: { teams: "none", teamScopes: { "team-1": "edit" } },
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks teams routes for human sessions without Teams access", () => {
+    expect(
+      isRouteAllowedForSession("/teams/schedules", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "none" },
+      })
+    ).toBe(false);
+  });
+
   it("blocks account for guest sessions and falls back to controller", () => {
     expect(
       getAllowedRouteOrDefault("/account", {

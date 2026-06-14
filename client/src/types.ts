@@ -418,6 +418,16 @@ export type ServiceTimePosition =
   | "bottom-left"
   | "center";
 
+/**
+ * How many of a given team position a service needs filled, and optionally a
+ * minimum experience level for the slot.
+ */
+export type PositionRequirement = {
+  positionId: string;
+  count: number;
+  minLevelId?: string;
+};
+
 export type ServiceTime = {
   id: string;
   name: string;
@@ -444,6 +454,8 @@ export type ServiceTime = {
   nameFontSize?: number;
   timeFontSize?: number;
   shouldShowName?: boolean;
+  // which team positions (and how many) this service needs filled in schedules
+  positionRequirements?: PositionRequirement[];
   createdAt?: string;
   updatedAt?: string;
 };

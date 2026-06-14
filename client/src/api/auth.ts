@@ -3,12 +3,14 @@ import {
   isPackagedElectronRenderer,
 } from "../utils/environment";
 import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
+import { notifyAuthError } from "./authErrorBus";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
   AuthBootstrap,
   ChurchBranding,
   ChurchInviteRow,
   ChurchMemberRow,
+  MemberPermissions,
   DesktopAuthCompleteResponse,
   DesktopAuthProvider,
   DesktopAuthStartResponse,
@@ -17,6 +19,22 @@ import type {
   PairingClient,
   RedeemDisplayPairingResponse,
   RedeemWorkstationPairingResponse,
+  TeamRecord,
+  TeamPosition,
+  TeamQualificationArea,
+  TeamQualificationLevel,
+  TeamRole,
+  TeamIntakeForm,
+  TeamIntakePreview,
+  TeamIntakeSubmission,
+  TeamRosterMember,
+  TeamSchedule,
+  TeamScheduleAssignments,
+  TeamScheduleAttendance,
+  TeamScheduleAttendanceStatus,
+  TeamSchedulePublicSnapshot,
+  TeamScheduleShadowKind,
+  TeamsBootstrap,
   TrustedHumanDeviceListItem,
   WorkstationDeviceClient,
 } from "./authTypes";
@@ -79,6 +97,11 @@ const apiFetch = async <T>(
   }
 
   if (!response.ok) {
+    // A 401 means the session is gone; announce it so the app can prompt a
+    // refresh no matter which action triggered the request.
+    if (response.status === 401) {
+      notifyAuthError();
+    }
     throw new AuthApiError(data?.errorMessage || "Request failed", {
       status: response.status,
     });
@@ -287,6 +310,551 @@ export const updateChurchIntegrations = async (
     body: JSON.stringify(integrations),
   });
 
+export type TeamRosterMemberPayload = {
+  firstName: string;
+  lastName: string;
+  dateOfBirth?: string;
+  positionIds: string[];
+  teamMemberships?: TeamRosterMember["teamMemberships"];
+  qualifications?: TeamRosterMember["qualifications"];
+  blockoutDates: TeamRosterMember["blockoutDates"];
+  notes?: string;
+};
+
+export type TeamPositionPayload = {
+  name: string;
+  description?: string;
+  icon?: string;
+  groupId?: string;
+  teamId: string;
+};
+
+export type TeamPayload = {
+  name: string;
+  description?: string;
+  icon?: string;
+  memberIds: string[];
+};
+
+export type TeamRolePayload = {
+  teamId: string;
+  name: string;
+  description?: string;
+};
+
+export type TeamQualificationAreaPayload = {
+  teamId: string;
+  name: string;
+  description?: string;
+};
+
+export type TeamQualificationLevelPayload = {
+  areaId: string;
+  name: string;
+  description?: string;
+  rank: number;
+};
+
+export type TeamSchedulePayload = {
+  name: string;
+  description?: string;
+  teamId: string;
+  startDate?: string;
+  endDate?: string;
+  serviceIds: string[];
+  occurrences?: TeamSchedule["occurrences"];
+  assignments?: TeamScheduleAssignments;
+  attendance?: TeamScheduleAttendance;
+};
+
+export type TeamIntakeFormPayload = {
+  name: string;
+  startDate: string;
+  endDate: string;
+  availabilityServices: TeamIntakeForm["availabilityServices"];
+  availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
+  teamIds: string[];
+  active: boolean;
+};
+
+export type TeamIntakeSubmissionPayload = {
+  firstName: string;
+  lastName: string;
+  positionIds: string[];
+  occurrenceAvailability: TeamIntakeSubmission["occurrenceAvailability"];
+  blockoutRanges: TeamIntakeSubmission["blockoutRanges"];
+  notes?: string;
+};
+
+export const getTeamsBootstrap = async (churchId: string) =>
+  apiFetch<TeamsBootstrap>(`api/churches/${churchId}/teams/bootstrap`);
+
+export const createTeamIntakeForm = async (
+  churchId: string,
+  body: TeamIntakeFormPayload,
+) =>
+  apiFetch<{
+    success: boolean;
+    form: TeamIntakeForm;
+    publicToken: string;
+    publicUrl: string;
+  }>(`api/churches/${churchId}/team-intake/forms`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const updateTeamIntakeForm = async (
+  churchId: string,
+  formId: string,
+  body: Partial<TeamIntakeFormPayload>,
+) =>
+  apiFetch<{ success: boolean; form: TeamIntakeForm }>(
+    `api/churches/${churchId}/team-intake/forms/${formId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const getTeamIntakeFormLink = async (churchId: string, formId: string) =>
+  apiFetch<{
+    success: boolean;
+    form: TeamIntakeForm;
+    publicToken: string;
+    publicUrl: string;
+  }>(`api/churches/${churchId}/team-intake/forms/${formId}/link`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export const applyTeamIntakeSubmission = async (
+  churchId: string,
+  submissionId: string,
+  body: {
+    action: "reviewed" | "applied" | "dismissed";
+    memberId?: string;
+    createMember?: boolean;
+  },
+) =>
+  apiFetch<{
+    success: boolean;
+    submission: TeamIntakeSubmission;
+    member?: TeamRosterMember;
+  }>(`api/churches/${churchId}/team-intake/submissions/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const getTeamIntakePreview = async (token: string) =>
+  apiFetch<TeamIntakePreview>(
+    `api/team-intake/preview?token=${encodeURIComponent(token)}`,
+  );
+
+export const getTeamSchedulePublicLink = async (
+  churchId: string,
+  scheduleId: string,
+) =>
+  apiFetch<{ success: boolean; publicToken: string }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/link`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const getPublicTeamSchedule = async (token: string) =>
+  apiFetch<TeamSchedulePublicSnapshot>(
+    `api/team-schedule/public?token=${encodeURIComponent(token)}`,
+  );
+
+export const submitTeamIntake = async (
+  token: string,
+  body: TeamIntakeSubmissionPayload,
+) =>
+  apiFetch<{ success: boolean; submissionId: string }>(
+    `api/team-intake/submit?token=${encodeURIComponent(token)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const createTeamRosterMember = async (
+  churchId: string,
+  body: TeamRosterMemberPayload,
+) =>
+  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+    `api/churches/${churchId}/team-roster-members`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamRosterMember = async (
+  churchId: string,
+  memberId: string,
+  body: TeamRosterMemberPayload,
+) =>
+  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+    `api/churches/${churchId}/team-roster-members/${memberId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeamRosterMember = async (
+  churchId: string,
+  memberId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-roster-members/${memberId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeamRosterMember = async (
+  churchId: string,
+  memberId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-roster-members/${memberId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const createTeamPosition = async (
+  churchId: string,
+  body: TeamPositionPayload,
+) =>
+  apiFetch<{ success: boolean; position: TeamPosition }>(
+    `api/churches/${churchId}/team-positions`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamPosition = async (
+  churchId: string,
+  positionId: string,
+  body: TeamPositionPayload,
+) =>
+  apiFetch<{ success: boolean; position: TeamPosition }>(
+    `api/churches/${churchId}/team-positions/${positionId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const reorderTeamPositions = async (
+  churchId: string,
+  body: { teamId: string; positionIds: string[] },
+) =>
+  apiFetch<{ success: boolean; positions: TeamPosition[] }>(
+    `api/churches/${churchId}/team-positions/reorder`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeamPosition = async (
+  churchId: string,
+  positionId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-positions/${positionId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeamPosition = async (
+  churchId: string,
+  positionId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-positions/${positionId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const createTeamRole = async (churchId: string, body: TeamRolePayload) =>
+  apiFetch<{ success: boolean; role: TeamRole }>(
+    `api/churches/${churchId}/team-roles`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamRole = async (
+  churchId: string,
+  roleId: string,
+  body: TeamRolePayload,
+) =>
+  apiFetch<{ success: boolean; role: TeamRole }>(
+    `api/churches/${churchId}/team-roles/${roleId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeamRole = async (churchId: string, roleId: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-roles/${roleId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeamRole = async (churchId: string, roleId: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-roles/${roleId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const createTeamQualificationArea = async (
+  churchId: string,
+  body: TeamQualificationAreaPayload,
+) =>
+  apiFetch<{ success: boolean; area: TeamQualificationArea }>(
+    `api/churches/${churchId}/team-qualification-areas`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamQualificationArea = async (
+  churchId: string,
+  areaId: string,
+  body: TeamQualificationAreaPayload,
+) =>
+  apiFetch<{ success: boolean; area: TeamQualificationArea }>(
+    `api/churches/${churchId}/team-qualification-areas/${areaId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeamQualificationArea = async (
+  churchId: string,
+  areaId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-qualification-areas/${areaId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeamQualificationArea = async (
+  churchId: string,
+  areaId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-qualification-areas/${areaId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const createTeamQualificationLevel = async (
+  churchId: string,
+  body: TeamQualificationLevelPayload,
+) =>
+  apiFetch<{ success: boolean; level: TeamQualificationLevel }>(
+    `api/churches/${churchId}/team-qualification-levels`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamQualificationLevel = async (
+  churchId: string,
+  levelId: string,
+  body: TeamQualificationLevelPayload,
+) =>
+  apiFetch<{ success: boolean; level: TeamQualificationLevel }>(
+    `api/churches/${churchId}/team-qualification-levels/${levelId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeamQualificationLevel = async (
+  churchId: string,
+  levelId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-qualification-levels/${levelId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeamQualificationLevel = async (
+  churchId: string,
+  levelId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-qualification-levels/${levelId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const createTeam = async (churchId: string, body: TeamPayload) =>
+  apiFetch<{ success: boolean; team: TeamRecord }>(
+    `api/churches/${churchId}/teams`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeam = async (
+  churchId: string,
+  teamId: string,
+  body: TeamPayload,
+) =>
+  apiFetch<{ success: boolean; team: TeamRecord }>(
+    `api/churches/${churchId}/teams/${teamId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeam = async (churchId: string, teamId: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/teams/${teamId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeam = async (churchId: string, teamId: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/teams/${teamId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const createTeamSchedule = async (
+  churchId: string,
+  body: TeamSchedulePayload,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamSchedule = async (
+  churchId: string,
+  scheduleId: string,
+  body: TeamSchedulePayload,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const archiveTeamSchedule = async (
+  churchId: string,
+  scheduleId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const deleteTeamSchedule = async (
+  churchId: string,
+  scheduleId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const updateTeamScheduleAssignment = async (
+  churchId: string,
+  scheduleId: string,
+  body: {
+    serviceId: string;
+    positionSlotKey: string;
+    memberId: string | null;
+    serviceDate?: string;
+    sourceServiceId?: string;
+    sourcePositionSlotKey?: string;
+    shadowAction?: "add" | "remove";
+    shadowKind?: TeamScheduleShadowKind;
+  },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignments`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamScheduleAttendance = async (
+  churchId: string,
+  scheduleId: string,
+  body: {
+    occurrenceId: string;
+    memberId: string;
+    status: TeamScheduleAttendanceStatus | "";
+    columnKey?: string;
+    positionId?: string;
+    positionLabel?: string;
+  },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/attendance`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>
   apiFetch<{ success: boolean; invite: ChurchInviteRow }>(
     `api/churches/${churchId}/invites`,
@@ -342,12 +910,13 @@ export const updateChurchMemberAccess = async (
   churchId: string,
   userId: string,
   appAccess: "full" | "music" | "view",
+  permissions: MemberPermissions,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
     {
       method: "POST",
-      body: JSON.stringify({ appAccess }),
+      body: JSON.stringify({ appAccess, permissions }),
     },
   );
 

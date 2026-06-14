@@ -668,7 +668,7 @@ export const IntegrationsSettingsPanel = ({
     try {
       const response = await getRestreamConnectAuthorizeUrl(
         churchId,
-        "/account?tab=integrations",
+        "/account/integrations",
       );
       const nextPending = {
         connectRequestId: response.connectRequestId,
