@@ -129,7 +129,9 @@ test("shows an error state when the link is no longer valid", async () => {
   renderPage();
 
   expect(await screen.findByText("Schedule unavailable")).toBeInTheDocument();
-  expect(screen.getByText("Invalid or expired link.")).toBeInTheDocument();
+  expect(
+    screen.getByText("Invalid or expired link. Ask your team admin for a new link."),
+  ).toBeInTheDocument();
 });
 
 test("restores layout, theme, and highlight preferences from localStorage", async () => {
