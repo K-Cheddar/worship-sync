@@ -11,11 +11,18 @@ type LoginState =
 
 type SessionKind = "human" | "workstation" | "display" | null | undefined;
 type Access = "full" | "music" | "view" | null | undefined;
+type TeamsPermission = "none" | "view" | "edit" | null | undefined;
+type TeamScopedPermission = "view" | "edit";
 
 type RouteSessionContext = {
   loginState?: LoginState;
   sessionKind?: SessionKind;
   access?: Access;
+  role?: string | null;
+  permissions?: {
+    teams?: TeamsPermission;
+    teamScopes?: Record<string, TeamScopedPermission>;
+  } | null;
   operatorName?: string | null;
   displaySurfaceType?: string | null;
 };
@@ -27,10 +34,9 @@ const GUEST_ALLOWED_EXACT = new Set([
   "/credits-editor",
 ]);
 
-const HUMAN_ALLOWED_PREFIXES = ["/controller"];
+const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account"];
 const HUMAN_ALLOWED_EXACT = new Set([
   "/home",
-  "/account",
   "/overlay-controller",
   "/workstation/pair",
   "/display/pair",
@@ -44,6 +50,8 @@ const HUMAN_ALLOWED_EXACT = new Set([
   "/stream-info",
   "/credits",
 ]);
+
+const TEAMS_ALLOWED_PREFIXES = ["/teams"];
 
 const WORKSTATION_ALLOWED_PREFIXES = ["/controller"];
 
@@ -116,6 +124,12 @@ const matchesAllowedRoute = (
   exactPaths.has(pathname) ||
   prefixes.some((prefix) => pathname.startsWith(prefix));
 
+const hasTeamsViewAccess = (context: RouteSessionContext) =>
+  context.role === "admin" ||
+  context.permissions?.teams === "view" ||
+  context.permissions?.teams === "edit" ||
+  Object.keys(context.permissions?.teamScopes || {}).length > 0;
+
 export const isRouteAllowedForSession = (
   pathname: string,
   context: RouteSessionContext,
@@ -138,6 +152,10 @@ export const isRouteAllowedForSession = (
         pathname,
         HUMAN_ALLOWED_EXACT,
         HUMAN_ALLOWED_PREFIXES,
+      ) &&
+      !(
+        hasTeamsViewAccess(context) &&
+        matchesAllowedRoute(pathname, new Set(), TEAMS_ALLOWED_PREFIXES)
       )
     ) {
       return false;

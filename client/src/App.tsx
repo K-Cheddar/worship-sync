@@ -42,14 +42,33 @@ import InviteAccept from "./pages/InviteAccept";
 import PasswordReset from "./pages/PasswordReset";
 import RecoveryConfirm from "./pages/RecoveryConfirm";
 import Account from "./pages/Account";
+import Teams from "./pages/Teams/Teams";
+import TeamIntakePublic from "./pages/Teams/TeamIntakePublic";
+import TeamSchedulePublic from "./pages/Teams/TeamSchedulePublic";
 import { GlobalInfoContext } from "./context/globalInfo";
 import WorshipSyncIcon from "./assets/WorshipSyncIconNoBg.png";
 import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
+import TeamsAccessGuard from "./components/TeamsAccessGuard";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
 
 /** Connecting splash on entry and board/controller surfaces; display windows stay blank until ready. */
+const isTeamsAdminRoute = (pathname: string) => {
+  if (pathname === "/teams") return true;
+  return [
+    "/teams/schedules",
+    "/teams/members",
+    "/teams/positions",
+    "/teams/groups",
+    "/teams/services",
+    "/teams/forms",
+  ].some(
+    (adminPath) =>
+      pathname === adminPath || pathname.startsWith(`${adminPath}/`),
+  );
+};
+
 const isBootstrapSplashRoute = (pathname: string) => {
   /** Root entry: avoid flashing the entry screen before Navigate (e.g. workstation → operator). */
   if (pathname === "/" || pathname === "") return true;
@@ -59,6 +78,7 @@ const isBootstrapSplashRoute = (pathname: string) => {
   if (pathname === "/boards/controller") return true;
   if (pathname === "/boards/display") return true;
   if (pathname === "/credits-editor") return true;
+  if (isTeamsAdminRoute(pathname)) return true;
   if (pathname === "/workstation/pair" || pathname === "/workstation/operator") {
     return true;
   }
@@ -181,11 +201,49 @@ const AppRoutes = () => {
             element={<WorkstationPair lockedPairType="display" />}
           />
           <Route
-            path="/account"
+            path="/account/*"
             element={
-              <AuthGate allowedKinds={["human"]}>
-                <Account />
-              </AuthGate>
+              <ToastProvider>
+                <AuthGate allowedKinds={["human"]}>
+                  <Account />
+                </AuthGate>
+              </ToastProvider>
+            }
+          />
+          <Route
+            path="/teams/*"
+            element={
+              <ToastProvider>
+                <AuthGate allowedKinds={["human"]}>
+                  <TeamsAccessGuard>
+                    <Teams />
+                  </TeamsAccessGuard>
+                </AuthGate>
+              </ToastProvider>
+            }
+          />
+          <Route
+            path="/teams/intake/:token"
+            element={
+              <ToastProvider>
+                <TeamIntakePublic />
+              </ToastProvider>
+            }
+          />
+          <Route
+            path="/teams/intake"
+            element={
+              <ToastProvider>
+                <TeamIntakePublic />
+              </ToastProvider>
+            }
+          />
+          <Route
+            path="/teams/schedule/:token"
+            element={
+              <ToastProvider>
+                <TeamSchedulePublic />
+              </ToastProvider>
             }
           />
           <Route
@@ -307,11 +365,11 @@ const App: React.FC = () => {
       <Router>
         <GlobalInfoProvider>
           <FloatingWindowZIndexProvider>
-          <ToastProvider>
-            <RoutePersistence />
-            <TimerManager />
-            <AppRoutes />
-          </ToastProvider>
+            <ToastProvider>
+              <RoutePersistence />
+              <TimerManager />
+              <AppRoutes />
+            </ToastProvider>
           </FloatingWindowZIndexProvider>
         </GlobalInfoProvider>
       </Router>

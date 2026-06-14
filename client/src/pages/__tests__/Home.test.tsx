@@ -111,6 +111,9 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /Board moderation/i }),
     ).toHaveAttribute("href", "/boards/controller");
+    expect(
+      screen.getByRole("link", { name: /^Teams /i }),
+    ).toHaveAttribute("href", "/teams");
 
     expect(
       screen.getByText(

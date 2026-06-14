@@ -20,6 +20,7 @@ import {
   ScrollText,
   ScreenShare,
   Smartphone,
+  Users,
 } from "lucide-react";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import Button from "../components/Button/Button";
@@ -95,6 +96,13 @@ const adminLinks: CardLink[] = [
       "Invite teammates, manage access, pair workstations and displays, recovery and trusted devices, and branding for this church.",
     to: "/account",
     icon: Building2,
+  },
+  {
+    title: "Teams",
+    description:
+      "Manage scheduling roster people, roles, teams, services, and service assignments.",
+    to: "/teams",
+    icon: Users,
   },
 ];
 
@@ -296,9 +304,13 @@ const DesktopDownloadHelp = ({
 };
 
 const Welcome = () => {
-  const { loginState, role, access } = useContext(GlobalInfoContext) || {};
+  const { loginState, role, access, canViewTeams } =
+    useContext(GlobalInfoContext) || {};
   const isLoggedIn = loginState === "success";
   const isAdmin = role === "admin";
+  const visibleAdminLinks = adminLinks.filter(
+    (link) => isAdmin || (link.to === "/teams" && canViewTeams),
+  );
   const isMusicAccess = isLoggedIn && access === "music";
   const visiblePrimaryControllers = isMusicAccess
     ? primaryControllers.filter((link) => link.to === "/controller")
@@ -466,7 +478,7 @@ const Welcome = () => {
           </div>
         </section>
 
-        {isAdmin && (
+        {visibleAdminLinks.length > 0 && (
           <section className="mx-auto w-full max-w-5xl space-y-3 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="space-y-2 text-center">
               <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
@@ -481,13 +493,13 @@ const Welcome = () => {
                 Church administration
               </h2>
               <p className="text-sm text-gray-200">
-                People, devices, pairing, recovery, trust, and branding for
-                this church.
+                People, devices, teams, pairing, recovery, trust, and branding
+                for this church.
               </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              {adminLinks.map((link) => (
+              {visibleAdminLinks.map((link) => (
                 <HomeLinkCard key={link.to} {...link} />
               ))}
             </div>

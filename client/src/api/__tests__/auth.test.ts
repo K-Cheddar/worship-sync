@@ -136,15 +136,20 @@ describe("api/auth", () => {
     );
   });
 
-  it("posts member access updates with appAccess payload", async () => {
-    await updateChurchMemberAccess("church-1", "user-8", "music");
+  it("posts member access updates with appAccess and permissions payload", async () => {
+    await updateChurchMemberAccess("church-1", "user-8", "music", {
+      teams: "view",
+    });
 
     expect(global.fetch).toHaveBeenCalledWith(
       "http://localhost:5000/api/churches/church-1/members/user-8/access",
       expect.objectContaining({
         method: "POST",
         credentials: "include",
-        body: JSON.stringify({ appAccess: "music" }),
+        body: JSON.stringify({
+          appAccess: "music",
+          permissions: { teams: "view" },
+        }),
       }),
     );
   });

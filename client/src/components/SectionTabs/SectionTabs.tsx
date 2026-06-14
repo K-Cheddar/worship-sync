@@ -9,6 +9,7 @@ import {
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
 import { cn } from "@/utils/cnHelper";
+import ErrorBoundary from "../ErrorBoundary/ErrorBoundary";
 
 export type SectionTabItem<T extends string = string> = {
   value: T;
@@ -117,7 +118,7 @@ export function SectionTabs<T extends string>({
               item.contentClassName ?? "space-y-4",
             )}
           >
-            {item.content}
+            <ErrorBoundary>{item.content}</ErrorBoundary>
           </TabsContent>
         ))}
       </div>

@@ -2,8 +2,8 @@
 
 import React, { useMemo, useRef, useState, useEffect, useId } from "react";
 import Input from "@/components/ui/Input";
-import Label from "@/components/ui/Label";
 import { cn } from "@/utils/cnHelper";
+import TimePickerFieldLayout from "./TimePickerFieldLayout";
 import {
   Popover,
   PopoverContent,
@@ -21,6 +21,8 @@ import type { BaseTimePickerProps, Segment } from "./types";
 
 export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
   label,
+  labelLayout = "inline",
+  hideLabel = false,
   labelClassName,
   value,
   onChange,
@@ -455,19 +457,16 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
     (second ? pad2(second) : "ss");
 
   return (
-    <div className={cn("flex gap-2", className)}>
-      {label && (
-        <Label
-          htmlFor={dropdownId}
-          className={cn(
-            "p-1 text-sm font-semibold leading-none",
-            labelClassName,
-          )}
-        >
-          {label}:
-        </Label>
-      )}
-
+    <TimePickerFieldLayout
+      label={label}
+      labelLayout={labelLayout}
+      hideLabel={hideLabel}
+      labelClassName={labelClassName}
+      fieldId={dropdownId}
+      className={className}
+      message={message}
+      messageType={messageType}
+    >
       <Popover
         open={disabled ? false : open}
         onOpenChange={(nextOpen) => {
@@ -476,12 +475,12 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
         }}
       >
         <PopoverTrigger asChild>
-          <div className="relative">
+          <div className="relative w-full">
             <Input
               data-testid={dataTestInputId}
               id={dropdownId}
               value={inputValue}
-              onChange={() => {}}
+              onChange={() => { }}
               onKeyDown={handleKeyDown}
               onFocus={handleFocus}
               onBlur={flushPendingCommit}
@@ -489,7 +488,7 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
               aria-label={label || "Time"}
               role="combobox"
               aria-expanded={open}
-              className={inputClassName}
+              className={cn(labelLayout === "stacked" && "w-full", inputClassName)}
               ref={inputRef}
               readOnly
               disabled={disabled}
@@ -545,21 +544,6 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
           </PopoverContent>
         )}
       </Popover>
-      {message && (
-        <div className="flex gap-1">
-          <p
-            className={cn(
-              "text-sm text-right",
-              messageType === "error" && "text-red-700",
-              messageType === "warning" && "text-yellow-700",
-              messageType === "success" && "text-green-700",
-              messageType === "info" && "text-gray-700"
-            )}
-          >
-            {message}
-          </p>
-        </div>
-      )}
-    </div>
+    </TimePickerFieldLayout>
   );
 };

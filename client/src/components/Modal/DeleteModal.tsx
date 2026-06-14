@@ -11,6 +11,8 @@ interface DeleteModalProps {
   title?: string;
   message?: string;
   warningMessage?: string;
+  /** Optional list of side effects this deletion will cause (e.g. "Removed from 2 teams"). */
+  impacts?: string[];
   confirmText?: string;
   cancelText?: string;
   imageUrl?: string;
@@ -28,6 +30,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   title = "Confirm Deletion",
   message = "Are you sure you want to delete",
   warningMessage = "This action is permanent and will clear your undo history.",
+  impacts,
   confirmText = "Delete Forever",
   cancelText = "Cancel",
   imageUrl,
@@ -68,6 +71,18 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
         {message}{" "}
         {itemName && <span className="font-semibold">"{itemName}"</span>}?
       </p>
+      {impacts && impacts.length > 0 && (
+        <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+          <p className="mb-1 text-sm font-semibold text-amber-200">
+            This will also:
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-amber-100">
+            {impacts.map((impact, index) => (
+              <li key={index}>{impact}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="text-lg text-amber-400 mb-6">{warningMessage}</p>
       <div className="flex gap-6 w-full">
         <Button

@@ -179,6 +179,9 @@ jest.mock("./pages/RecoveryConfirm", () => () => (
 jest.mock("./pages/Account", () => () => (
   <div data-testid="account-page">Account Page</div>
 ));
+jest.mock("./pages/Teams/Teams", () => () => (
+  <div data-testid="teams-page">Teams Page</div>
+));
 
 // Mock the context providers (value shape from shared mocks)
 jest.mock("./context/globalInfo", () => {
