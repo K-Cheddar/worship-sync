@@ -13,12 +13,12 @@ type ScheduleAssignmentCellProps = {
   axisHighlightClassName?: string;
 };
 
-const ScheduleAssignmentCell = memo(function ScheduleAssignmentCell({
+const ScheduleAssignmentCell = memo(({
   children,
   rowTone,
   highlighted = false,
   axisHighlightClassName,
-}: ScheduleAssignmentCellProps) {
+}: ScheduleAssignmentCellProps) => {
   return (
     <td
       className={cn(
@@ -35,5 +35,6 @@ const ScheduleAssignmentCell = memo(function ScheduleAssignmentCell({
     </td>
   );
 });
+ScheduleAssignmentCell.displayName = "ScheduleAssignmentCell";
 
 export default ScheduleAssignmentCell;

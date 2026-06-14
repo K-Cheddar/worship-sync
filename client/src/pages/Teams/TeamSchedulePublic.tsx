@@ -317,6 +317,28 @@ const TeamSchedulePublic = () => {
   }, [highlightMemberId, highlightableMembers]);
 
   const churchLogoUrl = snapshot?.churchLogoUrl?.trim() || "";
+  const scheduleUnavailableMessage =
+    (error ? `${error} Ask your team admin for a new link.` : "") ||
+    "This schedule link is no longer valid. Ask your team admin for a new link.";
+  const churchLogo = (() => {
+    if (!churchLogoUrl || !snapshot) return null;
+    if (isDark) {
+      return (
+        <ChurchLogoImg
+          src={churchLogoUrl}
+          variant="board-attendee"
+          alt={snapshot.churchName}
+        />
+      );
+    }
+    return (
+      <img
+        src={churchLogoUrl}
+        alt={snapshot.churchName}
+        className="size-16 shrink-0 rounded-lg border border-gray-200 bg-white object-contain p-1 shadow-sm sm:size-20"
+      />
+    );
+  })();
 
   if (loading) {
     return (
@@ -352,7 +374,7 @@ const TeamSchedulePublic = () => {
                 isDark ? "text-red-100/80" : "text-red-700",
               )}
             >
-              {error || "This schedule link is no longer valid."}
+              {scheduleUnavailableMessage}
             </p>
           </div>
         </div>
@@ -388,21 +410,7 @@ const TeamSchedulePublic = () => {
             </Button>
           </div>
           <div className="mt-3 flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
-            {churchLogoUrl ? (
-              isDark ? (
-                <ChurchLogoImg
-                  src={churchLogoUrl}
-                  variant="board-attendee"
-                  alt={snapshot.churchName}
-                />
-              ) : (
-                <img
-                  src={churchLogoUrl}
-                  alt={snapshot.churchName}
-                  className="size-16 shrink-0 rounded-lg border border-gray-200 bg-white object-contain p-1 shadow-sm sm:size-20"
-                />
-              )
-            ) : null}
+            {churchLogo}
             <h1 className="min-w-0 flex-1 text-3xl font-semibold sm:text-4xl">
               {snapshot.schedule.name}
             </h1>

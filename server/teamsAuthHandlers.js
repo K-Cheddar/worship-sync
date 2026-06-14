@@ -41,6 +41,42 @@ export const createTeamsAuthHandlers = ({
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
 
+  const sendTeamsJsonError = (res, error, fallbackMessage) => {
+    const statusCode =
+      Number.isInteger(error?.statusCode) && error.statusCode >= 400
+        ? error.statusCode
+        : 500;
+    if (statusCode >= 500) {
+      console.error(fallbackMessage, error);
+    }
+    return res.status(statusCode).json({
+      success: false,
+      errorMessage:
+        statusCode < 500 && error?.message ? error.message : fallbackMessage,
+    });
+  };
+
+  const buildPublicTokenRateLimitKey = (req, token) => {
+    const tokenText = String(token || "").trim();
+    return `${getClientIp(req)}:${tokenText ? hashValue(tokenText) : "missing-token"}`;
+  };
+
+  const enforcePublicTokenRateLimit = ({
+    req,
+    scope,
+    token,
+    limit,
+    windowMs,
+    blockMs,
+  }) =>
+    enforceRateLimit({
+      scope,
+      key: buildPublicTokenRateLimitKey(req, token),
+      limit,
+      windowMs,
+      blockMs,
+    });
+
   const buildTeamIntakePublicUrl = (token) =>
     `${APP_BASE_URL}/#/teams/intake/${encodeURIComponent(String(token || "").trim())}`;
 
@@ -891,6 +927,29 @@ export const createTeamsAuthHandlers = ({
     return attendance;
   };
 
+  const validateTeamScheduleAttendanceUpdatePayload = (body) => {
+    const occurrenceId = normalizeShortText(body?.occurrenceId, { max: 180 });
+    if (!occurrenceId) {
+      throw httpError(400, "Occurrence is required.");
+    }
+    const memberId = normalizeShortText(body?.memberId, { max: 160 });
+    if (!memberId) {
+      throw httpError(400, "Member is required.");
+    }
+    const status = normalizeShortText(body?.status, { max: 40 });
+    if (status && status !== "present" && status !== "absent") {
+      throw httpError(400, "Attendance status must be present or absent.");
+    }
+    return {
+      occurrenceId,
+      memberId,
+      status,
+      columnKey: normalizeShortText(body?.columnKey, { max: 180 }),
+      positionId: normalizeShortText(body?.positionId, { max: 160 }),
+      positionLabel: normalizeShortText(body?.positionLabel, { max: 160 }),
+    };
+  };
+
   const validateTeamSchedulePayload = async (body, churchId) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
@@ -1674,37 +1733,44 @@ export const createTeamsAuthHandlers = ({
 
   const buildPublicTeamScheduleSnapshot = async (schedule) => {
     const churchId = schedule.churchId;
+    const assignedMemberIds = new Set();
+    const referencedPositionIds = new Set();
+    Object.values(schedule.assignments || {}).forEach((row) => {
+      Object.entries(row || {}).forEach(([cellKey, cell]) => {
+        const cellMemberIds = getScheduleAssignmentCellMemberIds(cell);
+        cellMemberIds.forEach((memberId) => assignedMemberIds.add(memberId));
+        if (cellMemberIds.length > 0) {
+          const parsed = parseScheduleSlotKey(cellKey);
+          if (parsed?.positionId) referencedPositionIds.add(parsed.positionId);
+        }
+      });
+    });
     const church = await getDoc(COLLECTIONS.churches, churchId);
     const team = schedule.teamId
       ? await getTeamEntity("team", schedule.teamId)
       : null;
     const [positions, members, churchLogoUrl] = await Promise.all([
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamPositions,
-        "positionId",
-        churchId,
+      Promise.all(
+        [...referencedPositionIds].map((positionId) =>
+          getTeamEntity("position", positionId),
+        ),
       ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamRosterMembers,
-        "memberId",
-        churchId,
+      Promise.all(
+        [...assignedMemberIds].map((memberId) =>
+          getTeamEntity("member", memberId),
+        ),
       ),
       readChurchPublicBoardHeaderLogoUrl(churchId),
     ]);
 
-    // A public link must only reveal people actually placed on this schedule,
-    // never the church's full roster. Collect the assigned member ids first and
-    // filter to them before any names leave the server.
-    const assignedMemberIds = new Set();
-    Object.values(schedule.assignments || {}).forEach((row) => {
-      Object.values(row || {}).forEach((cell) => {
-        getScheduleAssignmentCellMemberIds(cell).forEach((memberId) =>
-          assignedMemberIds.add(memberId),
-        );
-      });
-    });
-    const assignedMembers = members.filter((member) =>
-      assignedMemberIds.has(member.memberId),
+    const assignedMembers = members.filter(
+      (member) => member && member.churchId === churchId,
+    );
+    const referencedPositions = positions.filter(
+      (position) =>
+        position &&
+        position.churchId === churchId &&
+        position.teamId === schedule.teamId,
     );
 
     const firstNameCounts = new Map();
@@ -1738,7 +1804,7 @@ export const createTeamsAuthHandlers = ({
         assignments: schedule.assignments || {},
       },
       positions: sortPositionsByOrder(
-        positions.filter((position) => position.teamId === schedule.teamId),
+        referencedPositions,
       ).map((position) => ({
         positionId: position.positionId,
         name: position.name,
@@ -2301,10 +2367,7 @@ export const createTeamsAuthHandlers = ({
           ...(await buildTeamsBootstrap(req.params.churchId)),
         });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not load teams.",
-        });
+        return sendTeamsJsonError(res, error, "Could not load teams.");
       }
     },
 
@@ -2334,10 +2397,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, member });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this member.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this member.");
       }
     },
 
@@ -2377,10 +2437,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, member });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this member.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this member.");
       }
     },
 
@@ -2412,10 +2469,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not archive this member.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this member.");
       }
     },
 
@@ -2444,10 +2498,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, position });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this position.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this position.");
       }
     },
 
@@ -2487,10 +2538,7 @@ export const createTeamsAuthHandlers = ({
           publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
         });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this intake form.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this intake form.");
       }
     },
 
@@ -2530,10 +2578,7 @@ export const createTeamsAuthHandlers = ({
           form: sanitizeTeamIntakeFormForAdmin(nextForm),
         });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this intake form.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this intake form.");
       }
     },
 
@@ -2574,25 +2619,21 @@ export const createTeamsAuthHandlers = ({
           publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
         });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not create a new intake link.",
-        });
+        return sendTeamsJsonError(res, error, "Could not create a new intake link.");
       }
     },
 
     async getTeamIntakePreview(req, res) {
       try {
-        const { form, publicTokenKey } = await getTeamIntakeFormByToken(
-          req.query?.token,
-        );
-        enforceRateLimit({
+        enforcePublicTokenRateLimit({
+          req,
           scope: "team-intake-preview",
-          key: `${getClientIp(req)}:${publicTokenKey}`,
+          token: req.query?.token,
           limit: 30,
           windowMs: 10 * 60 * 1000,
           blockMs: 10 * 60 * 1000,
         });
+        const { form } = await getTeamIntakeFormByToken(req.query?.token);
         assertTeamIntakeFormIsOpen(form);
         const church = await getDoc(COLLECTIONS.churches, form.churchId);
         const churchLogoUrl = await readChurchPublicBoardHeaderLogoUrl(
@@ -2650,25 +2691,21 @@ export const createTeamsAuthHandlers = ({
           teams,
         });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not load this intake form.",
-        });
+        return sendTeamsJsonError(res, error, "Could not load this intake form.");
       }
     },
 
     async submitTeamIntake(req, res) {
       try {
-        const { form, publicTokenKey } = await getTeamIntakeFormByToken(
-          req.query?.token,
-        );
-        enforceRateLimit({
+        enforcePublicTokenRateLimit({
+          req,
           scope: "team-intake-submit",
-          key: `${getClientIp(req)}:${publicTokenKey}`,
+          token: req.query?.token,
           limit: 10,
           windowMs: 10 * 60 * 1000,
           blockMs: 30 * 60 * 1000,
         });
+        const { form } = await getTeamIntakeFormByToken(req.query?.token);
         assertTeamIntakeFormIsOpen(form);
         const payload = await validateTeamIntakeSubmissionPayload(
           req.body,
@@ -2690,10 +2727,7 @@ export const createTeamsAuthHandlers = ({
         );
         return res.json({ success: true, submissionId });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not submit this form.",
-        });
+        return sendTeamsJsonError(res, error, "Could not submit this form.");
       }
     },
 
@@ -2719,10 +2753,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, position });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this position.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this position.");
       }
     },
 
@@ -2785,10 +2816,7 @@ export const createTeamsAuthHandlers = ({
         }));
         return res.json({ success: true, positions: reordered });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not reorder positions.",
-        });
+        return sendTeamsJsonError(res, error, "Could not reorder positions.");
       }
     },
 
@@ -2810,10 +2838,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not archive this position.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this position.");
       }
     },
 
@@ -2835,10 +2860,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, role });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this role.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this role.");
       }
     },
 
@@ -2861,10 +2883,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, role });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this role.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this role.");
       }
     },
 
@@ -2886,10 +2905,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not archive this role.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this role.");
       }
     },
 
@@ -2911,10 +2927,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not delete this role.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this role.");
       }
     },
 
@@ -2939,11 +2952,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, area });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not save this qualification area.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this qualification area.");
       }
     },
 
@@ -2969,11 +2978,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, area });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not save this qualification area.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this qualification area.");
       }
     },
 
@@ -2995,11 +3000,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not archive this qualification area.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this qualification area.");
       }
     },
 
@@ -3021,11 +3022,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not delete this qualification area.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this qualification area.");
       }
     },
 
@@ -3050,11 +3047,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, level });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not save this qualification level.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this qualification level.");
       }
     },
 
@@ -3080,11 +3073,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, level });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not save this qualification level.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this qualification level.");
       }
     },
 
@@ -3106,11 +3095,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not archive this qualification level.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this qualification level.");
       }
     },
 
@@ -3132,11 +3117,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage:
-            error.message || "Could not delete this qualification level.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this qualification level.");
       }
     },
 
@@ -3158,10 +3139,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, team });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this team.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this team.");
       }
     },
 
@@ -3184,10 +3162,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, team });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this team.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this team.");
       }
     },
 
@@ -3209,10 +3184,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not archive this team.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this team.");
       }
     },
 
@@ -3242,10 +3214,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, schedule });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this schedule.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this schedule.");
       }
     },
 
@@ -3277,32 +3246,25 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, publicToken: publicLinkToken });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not create a public link.",
-        });
+        return sendTeamsJsonError(res, error, "Could not create a public link.");
       }
     },
 
     async getPublicTeamSchedule(req, res) {
       try {
-        const { schedule, publicTokenKey } = await getTeamScheduleByToken(
-          req.query?.token,
-        );
-        enforceRateLimit({
+        enforcePublicTokenRateLimit({
+          req,
           scope: "team-schedule-public",
-          key: `${getClientIp(req)}:${publicTokenKey}`,
+          token: req.query?.token,
           limit: 60,
           windowMs: 10 * 60 * 1000,
           blockMs: 10 * 60 * 1000,
         });
+        const { schedule } = await getTeamScheduleByToken(req.query?.token);
         const snapshot = await buildPublicTeamScheduleSnapshot(schedule);
         return res.json({ success: true, ...snapshot });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not load this schedule.",
-        });
+        return sendTeamsJsonError(res, error, "Could not load this schedule.");
       }
     },
 
@@ -3339,10 +3301,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, schedule });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not save this schedule.",
-        });
+        return sendTeamsJsonError(res, error, "Could not save this schedule.");
       }
     },
 
@@ -3374,10 +3333,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not archive this schedule.",
-        });
+        return sendTeamsJsonError(res, error, "Could not archive this schedule.");
       }
     },
 
@@ -3409,10 +3365,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not delete this member.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this member.");
       }
     },
 
@@ -3434,10 +3387,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not delete this position.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this position.");
       }
     },
 
@@ -3459,10 +3409,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not delete this team.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this team.");
       }
     },
 
@@ -3494,10 +3441,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not delete this schedule.",
-        });
+        return sendTeamsJsonError(res, error, "Could not delete this schedule.");
       }
     },
 
@@ -3615,10 +3559,7 @@ export const createTeamsAuthHandlers = ({
           ...(member ? { member } : {}),
         });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not update this submission.",
-        });
+        return sendTeamsJsonError(res, error, "Could not update this submission.");
       }
     },
 
@@ -3663,10 +3604,7 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, schedule });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not update this assignment.",
-        });
+        return sendTeamsJsonError(res, error, "Could not update this assignment.");
       }
     },
 
@@ -3684,15 +3622,11 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           existing.teamId,
         );
+        const payload = validateTeamScheduleAttendanceUpdatePayload(req.body);
         const schedule = await updateTeamScheduleAttendanceInStore({
           churchId: req.params.churchId,
           scheduleId: req.params.scheduleId,
-          occurrenceId: req.body?.occurrenceId,
-          memberId: req.body?.memberId,
-          status: req.body?.status,
-          columnKey: req.body?.columnKey,
-          positionId: req.body?.positionId,
-          positionLabel: req.body?.positionLabel,
+          ...payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -3700,15 +3634,12 @@ export const createTeamsAuthHandlers = ({
           churchId: req.params.churchId,
           userId: admin.user.uid,
           scheduleId: req.params.scheduleId,
-          occurrenceId: String(req.body?.occurrenceId || "").trim(),
-          memberId: req.body?.memberId || null,
+          occurrenceId: payload.occurrenceId,
+          memberId: payload.memberId,
         });
         return res.json({ success: true, schedule });
       } catch (error) {
-        return res.status(error.statusCode || 500).json({
-          success: false,
-          errorMessage: error.message || "Could not update attendance.",
-        });
+        return sendTeamsJsonError(res, error, "Could not update attendance.");
       }
     },
   };

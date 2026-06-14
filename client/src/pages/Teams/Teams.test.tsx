@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ContextType } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Teams from "./Teams";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -14,9 +15,16 @@ import {
   updateTeam,
   updateTeamScheduleAssignment,
 } from "../../api/auth";
+import type { TeamSchedulePayload } from "../../api/auth";
+import type {
+  TeamRecord,
+  TeamSchedule,
+  TeamService,
+  TeamsBootstrap,
+} from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 
-let mockState: any;
+let mockState: unknown;
 const mockDispatch = jest.fn();
 
 jest.mock("../../hooks", () => ({
@@ -70,7 +78,24 @@ const mockCreateTeamSchedule = jest.mocked(createTeamSchedule);
 const mockUpdateTeam = jest.mocked(updateTeam);
 const sundayOccurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
 
-const baseBootstrap = {
+type TeamsBootstrapResponse = Awaited<ReturnType<typeof getTeamsBootstrap>>;
+type TestTeamsBootstrap = TeamsBootstrap & { services?: TeamService[] };
+type CreateTeamPositionResponse = Awaited<ReturnType<typeof createTeamPosition>>;
+type CreateTeamRosterMemberResponse = Awaited<
+  ReturnType<typeof createTeamRosterMember>
+>;
+type CreateTeamScheduleResponse = Awaited<ReturnType<typeof createTeamSchedule>>;
+type DeleteTeamPositionResponse = Awaited<ReturnType<typeof deleteTeamPosition>>;
+type UpdateTeamResponse = Awaited<ReturnType<typeof updateTeam>>;
+type UpdateTeamScheduleAssignmentResponse = Awaited<
+  ReturnType<typeof updateTeamScheduleAssignment>
+>;
+
+const asTeamsBootstrapResponse = (
+  value: TestTeamsBootstrap,
+): TeamsBootstrapResponse => value;
+
+const baseBootstrap: TestTeamsBootstrap = {
   success: true,
   members: [],
   positions: [],
@@ -86,7 +111,7 @@ const baseBootstrap = {
   schedules: [],
 };
 
-const scheduleBootstrap = {
+const scheduleBootstrap: TestTeamsBootstrap = {
   success: true,
   positions: [
     {
@@ -190,7 +215,11 @@ const renderTeams = (
   render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <GlobalInfoContext.Provider
-        value={createMockGlobalContext(contextOverrides) as any}
+        value={
+          createMockGlobalContext(contextOverrides) as ContextType<
+            typeof GlobalInfoContext
+          >
+        }
       >
         <ToastProvider>
           <Routes>
@@ -218,7 +247,9 @@ describe("Teams", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockState = makeMockState();
-    mockGetTeamsBootstrap.mockResolvedValue(baseBootstrap as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(baseBootstrap),
+    );
   });
 
   it("renders the empty schedule state after bootstrap loads", async () => {
@@ -312,11 +343,12 @@ describe("Teams", () => {
       position: {
         positionId: "position-vocal",
         churchId: "church-1",
+        teamId: "team-main",
         name: "Vocal",
         description: "",
         icon: "Mic",
       },
-    } as any);
+    } satisfies CreateTeamPositionResponse);
 
     renderTeams("/teams/positions");
     await screen.findByRole("button", { name: /Create position/i });
@@ -347,13 +379,23 @@ describe("Teams", () => {
 
   it("permanently deletes a position after confirmation", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...baseBootstrap,
-      positions: [
-        { positionId: "position-vocal", churchId: "church-1", teamId: "team-main", name: "Vocal", icon: "Mic" },
-      ],
-    } as any);
-    mockDeleteTeamPosition.mockResolvedValue({ success: true } as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...baseBootstrap,
+        positions: [
+          {
+            positionId: "position-vocal",
+            churchId: "church-1",
+            teamId: "team-main",
+            name: "Vocal",
+            icon: "Mic",
+          },
+        ],
+      }),
+    );
+    mockDeleteTeamPosition.mockResolvedValue({
+      success: true,
+    } satisfies DeleteTeamPositionResponse);
 
     renderTeams("/teams/positions");
     await screen.findByRole("button", { name: /More actions for Vocal/i });
@@ -369,7 +411,9 @@ describe("Teams", () => {
 
   it("shows unavailable members as disabled in the assign panel", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue(scheduleBootstrap as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
 
     renderTeams();
     await openVocalSlot(user);
@@ -386,40 +430,42 @@ describe("Teams", () => {
 
   it("shows other eligible members when opening an occupied slot", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      members: [
-        ...scheduleBootstrap.members,
-        {
-          memberId: "member-jordan",
-          churchId: "church-1",
-          firstName: "Jordan",
-          lastName: "Ray",
-          positionIds: ["position-vocal"],
-          blockoutDates: [],
-          notes: "",
-        },
-      ],
-      teams: [
-        {
-          ...scheduleBootstrap.teams[0],
-          memberIds: [
-            ...scheduleBootstrap.teams[0].memberIds,
-            "member-jordan",
-          ],
-        },
-      ],
-      schedules: [
-        {
-          ...scheduleBootstrap.schedules[0],
-          assignments: {
-            [sundayOccurrenceId]: {
-              "position-vocal::0": { primaryMemberId: "member-avery" },
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: [
+          ...scheduleBootstrap.members,
+          {
+            memberId: "member-jordan",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Ray",
+            positionIds: ["position-vocal"],
+            blockoutDates: [],
+            notes: "",
+          },
+        ],
+        teams: [
+          {
+            ...scheduleBootstrap.teams[0],
+            memberIds: [
+              ...scheduleBootstrap.teams[0].memberIds,
+              "member-jordan",
+            ],
+          },
+        ],
+        schedules: [
+          {
+            ...scheduleBootstrap.schedules[0],
+            assignments: {
+              [sundayOccurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-avery" },
+              },
             },
           },
-        },
-      ],
-    } as any);
+        ],
+      }),
+    );
 
     renderTeams();
     // Open the occupied slot without clearing the input: the other eligible
@@ -437,50 +483,52 @@ describe("Teams", () => {
 
   it("limits day-of replacements to eligible members and hides clear assignment", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      members: [
-        ...scheduleBootstrap.members,
-        {
-          memberId: "member-jordan",
-          churchId: "church-1",
-          firstName: "Jordan",
-          lastName: "Ray",
-          positionIds: ["position-vocal"],
-          blockoutDates: [],
-          notes: "",
-        },
-        {
-          memberId: "member-casey",
-          churchId: "church-1",
-          firstName: "Casey",
-          lastName: "Poe",
-          positionIds: ["position-keys"],
-          blockoutDates: [],
-          notes: "",
-        },
-      ],
-      teams: [
-        {
-          ...scheduleBootstrap.teams[0],
-          memberIds: [
-            ...scheduleBootstrap.teams[0].memberIds,
-            "member-jordan",
-            "member-casey",
-          ],
-        },
-      ],
-      schedules: [
-        {
-          ...scheduleBootstrap.schedules[0],
-          assignments: {
-            [sundayOccurrenceId]: {
-              "position-vocal::0": { primaryMemberId: "member-avery" },
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: [
+          ...scheduleBootstrap.members,
+          {
+            memberId: "member-jordan",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Ray",
+            positionIds: ["position-vocal"],
+            blockoutDates: [],
+            notes: "",
+          },
+          {
+            memberId: "member-casey",
+            churchId: "church-1",
+            firstName: "Casey",
+            lastName: "Poe",
+            positionIds: ["position-keys"],
+            blockoutDates: [],
+            notes: "",
+          },
+        ],
+        teams: [
+          {
+            ...scheduleBootstrap.teams[0],
+            memberIds: [
+              ...scheduleBootstrap.teams[0].memberIds,
+              "member-jordan",
+              "member-casey",
+            ],
+          },
+        ],
+        schedules: [
+          {
+            ...scheduleBootstrap.schedules[0],
+            assignments: {
+              [sundayOccurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-avery" },
+              },
             },
           },
-        },
-      ],
-    } as any);
+        ],
+      }),
+    );
 
     renderTeams();
     await waitForScheduleGrid();
@@ -509,30 +557,32 @@ describe("Teams", () => {
 
   it("omits members who are not eligible for the position from assignment suggestions", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      members: [
-        ...scheduleBootstrap.members,
-        {
-          memberId: "member-jordan",
-          churchId: "church-1",
-          firstName: "Jordan",
-          lastName: "Ray",
-          positionIds: ["position-keys"],
-          blockoutDates: [],
-          notes: "",
-        },
-      ],
-      teams: [
-        {
-          ...scheduleBootstrap.teams[0],
-          memberIds: [
-            ...scheduleBootstrap.teams[0].memberIds,
-            "member-jordan",
-          ],
-        },
-      ],
-    } as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: [
+          ...scheduleBootstrap.members,
+          {
+            memberId: "member-jordan",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Ray",
+            positionIds: ["position-keys"],
+            blockoutDates: [],
+            notes: "",
+          },
+        ],
+        teams: [
+          {
+            ...scheduleBootstrap.teams[0],
+            memberIds: [
+              ...scheduleBootstrap.teams[0].memberIds,
+              "member-jordan",
+            ],
+          },
+        ],
+      }),
+    );
 
     renderTeams();
     await openVocalSlot(user);
@@ -543,7 +593,9 @@ describe("Teams", () => {
 
   it("loads the saved schedule name when editing a schedule", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue(scheduleBootstrap as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
 
     renderTeams();
     await waitForScheduleGrid();
@@ -556,22 +608,24 @@ describe("Teams", () => {
     const user = userEvent.setup();
     // A real service so the save can regenerate the same Sunday occurrence the
     // copied assignments are keyed to.
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      services: [
-        {
-          serviceId: "service-sunday",
-          churchId: "church-1",
-          name: "Sunday",
-          reccurence: "one_time",
-          dateTimeISO: "2026-07-05T10:00:00.000Z",
-        },
-      ],
-    } as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        services: [
+          {
+            serviceId: "service-sunday",
+            churchId: "church-1",
+            name: "Sunday",
+            reccurence: "one_time",
+            dateTimeISO: "2026-07-05T10:00:00.000Z",
+          } as TeamService,
+        ],
+      }),
+    );
     mockCreateTeamSchedule.mockResolvedValue({
       success: true,
       schedule: { ...scheduleBootstrap.schedules[0], scheduleId: "schedule-copy" },
-    } as any);
+    } satisfies CreateTeamScheduleResponse);
 
     renderTeams();
     await waitForScheduleGrid();
@@ -588,7 +642,7 @@ describe("Teams", () => {
     await waitFor(() => {
       expect(mockCreateTeamSchedule).toHaveBeenCalled();
     });
-    const payload = mockCreateTeamSchedule.mock.calls[0][1] as any;
+    const payload = mockCreateTeamSchedule.mock.calls[0][1] as TeamSchedulePayload;
     // The copy remaps assignments onto the freshly generated occurrence (its id
     // is timezone-dependent), so assert on the carried-over content, not the key.
     expect(Object.values(payload.assignments)).toEqual([
@@ -597,7 +651,9 @@ describe("Teams", () => {
   });
 
   it("loads Teams in view-only mode without schedule edit actions", async () => {
-    mockGetTeamsBootstrap.mockResolvedValue(scheduleBootstrap as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
 
     renderTeams("/teams", {
       role: "member",
@@ -632,7 +688,7 @@ describe("Teams", () => {
             occurrences: [],
             assignments: {},
           }}
-          selectedSchedule={scheduleBootstrap.schedules[0] as any}
+          selectedSchedule={scheduleBootstrap.schedules[0] as TeamSchedule}
           defaultTeamId="team-main"
           defaultServiceIds={["service-sunday"]}
           defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}
@@ -641,9 +697,9 @@ describe("Teams", () => {
               serviceId: "service-sunday",
               churchId: "church-1",
               ...mockSharedServices[0],
-            } as any,
+            } as TeamService,
           ]}
-          activeTeams={scheduleBootstrap.teams as any}
+          activeTeams={scheduleBootstrap.teams as TeamRecord[]}
           churchId="church-1"
           canEdit
           onDraftChange={jest.fn()}
@@ -660,7 +716,9 @@ describe("Teams", () => {
   });
 
   it("shows assignment counts beside members in the schedule roster", async () => {
-    mockGetTeamsBootstrap.mockResolvedValue(scheduleBootstrap as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
 
     renderTeams();
     await waitForScheduleGrid();
@@ -670,38 +728,39 @@ describe("Teams", () => {
   });
 
   it("shows last initials when multiple team members share a first name", async () => {
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      members: [
-        {
-          memberId: "member-jordan-s",
-          churchId: "church-1",
-          firstName: "Jordan",
-          lastName: "Smith",
-          positionIds: ["position-vocal"],
-          blockoutDates: [],
-          notes: "",
-        },
-        {
-          memberId: "member-jordan-m",
-          churchId: "church-1",
-          firstName: "Jordan",
-          lastName: "Miller",
-          positionIds: ["position-vocal"],
-          blockoutDates: [],
-          notes: "",
-        },
-      ],
-      teams: [
-        {
-          teamId: "team-main",
-          churchId: "church-1",
-          name: "Main Team",
-          memberIds: ["member-jordan-s", "member-jordan-m"],
-          positionIds: ["position-vocal"],
-        },
-      ],
-    } as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: [
+          {
+            memberId: "member-jordan-s",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Smith",
+            positionIds: ["position-vocal"],
+            blockoutDates: [],
+            notes: "",
+          },
+          {
+            memberId: "member-jordan-m",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Miller",
+            positionIds: ["position-vocal"],
+            blockoutDates: [],
+            notes: "",
+          },
+        ],
+        teams: [
+          {
+            teamId: "team-main",
+            churchId: "church-1",
+            name: "Main Team",
+            memberIds: ["member-jordan-s", "member-jordan-m"],
+          },
+        ],
+      }),
+    );
 
     renderTeams();
     await waitForScheduleGrid();
@@ -712,7 +771,7 @@ describe("Teams", () => {
 
   it("adds a shadow member from the assignment submenu", async () => {
     const user = userEvent.setup();
-    const shadowBootstrap = {
+    const shadowBootstrap: TestTeamsBootstrap = {
       ...scheduleBootstrap,
       members: [
         ...scheduleBootstrap.members,
@@ -746,7 +805,9 @@ describe("Teams", () => {
         },
       ],
     };
-    mockGetTeamsBootstrap.mockResolvedValue(shadowBootstrap as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(shadowBootstrap),
+    );
     mockUpdateTeamScheduleAssignment.mockResolvedValue({
       success: true,
       schedule: {
@@ -760,7 +821,7 @@ describe("Teams", () => {
           },
         },
       },
-    } as any);
+    } satisfies UpdateTeamScheduleAssignmentResponse);
 
     renderTeams();
     await openVocalSlot(user);
@@ -786,15 +847,17 @@ describe("Teams", () => {
 
   it("assigns an eligible member from the autocomplete", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      schedules: [
-        {
-          ...scheduleBootstrap.schedules[0],
-          assignments: {},
-        },
-      ],
-    } as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        schedules: [
+          {
+            ...scheduleBootstrap.schedules[0],
+            assignments: {},
+          },
+        ],
+      }),
+    );
     mockUpdateTeamScheduleAssignment.mockResolvedValue({
       success: true,
       schedule: {
@@ -805,7 +868,7 @@ describe("Teams", () => {
           },
         },
       },
-    } as any);
+    } satisfies UpdateTeamScheduleAssignmentResponse);
 
     renderTeams();
     await openVocalSlot(user);
@@ -827,10 +890,12 @@ describe("Teams", () => {
 
   it("creates and assigns a new member when the typed name matches nobody", async () => {
     const user = userEvent.setup();
-    mockGetTeamsBootstrap.mockResolvedValue({
-      ...scheduleBootstrap,
-      schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }],
-    } as any);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }],
+      }),
+    );
     mockCreateTeamRosterMember.mockResolvedValue({
       success: true,
       member: {
@@ -842,14 +907,14 @@ describe("Teams", () => {
         blockoutDates: [],
         notes: "",
       },
-    } as any);
+    } satisfies CreateTeamRosterMemberResponse);
     mockUpdateTeam.mockResolvedValue({
       success: true,
       team: {
         ...scheduleBootstrap.teams[0],
         memberIds: [...scheduleBootstrap.teams[0].memberIds, "member-new"],
       },
-    } as any);
+    } satisfies UpdateTeamResponse);
     mockUpdateTeamScheduleAssignment.mockResolvedValue({
       success: true,
       schedule: {
@@ -860,7 +925,7 @@ describe("Teams", () => {
           },
         },
       },
-    } as any);
+    } satisfies UpdateTeamScheduleAssignmentResponse);
 
     renderTeams();
     const vocalCombo = await openVocalSlot(user);

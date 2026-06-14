@@ -38,7 +38,7 @@ type ScheduleGridCellProps = {
   canEdit: boolean;
 };
 
-const ScheduleGridCell = memo(function ScheduleGridCell({
+const ScheduleGridCell = memo(({
   occurrenceId,
   occurrenceName,
   columnKey,
@@ -54,7 +54,7 @@ const ScheduleGridCell = memo(function ScheduleGridCell({
   allMembers,
   duplicateFirstNames,
   canEdit,
-}: ScheduleGridCellProps) {
+}: ScheduleGridCellProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
   const shadowAssignments = getCellShadowAssignments(assignmentCell);
@@ -196,5 +196,6 @@ const ScheduleGridCell = memo(function ScheduleGridCell({
     </ScheduleAssignmentCell>
   );
 });
+ScheduleGridCell.displayName = "ScheduleGridCell";
 
 export default ScheduleGridCell;

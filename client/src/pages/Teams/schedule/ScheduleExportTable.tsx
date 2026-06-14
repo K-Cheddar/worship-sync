@@ -394,7 +394,7 @@ const ByDateLayout = ({ model, p }: { model: ScheduleExportModel; p: Palette }) 
                 </span>
               ) : null}
             </div>
-            <dl className="divide-y text-sm" style={{ borderColor: "transparent" }}>
+            <dl className="divide-y border-transparent text-sm">
               {entries.map((entry, entryIndex) => (
                 <div
                   key={entry.columnKey}

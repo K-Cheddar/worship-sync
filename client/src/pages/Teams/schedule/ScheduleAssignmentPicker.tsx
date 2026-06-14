@@ -60,7 +60,7 @@ type ScheduleAssignmentPickerProps = {
   inputRef?: React.RefObject<HTMLInputElement | null>;
 };
 
-const ScheduleAssignmentPicker = memo(function ScheduleAssignmentPicker({
+const ScheduleAssignmentPicker = memo(({
   open,
   anchorEl,
   label,
@@ -79,7 +79,7 @@ const ScheduleAssignmentPicker = memo(function ScheduleAssignmentPicker({
   onClearAssignment,
   pendingSubmenu,
   inputRef: externalInputRef,
-}: ScheduleAssignmentPickerProps) {
+}: ScheduleAssignmentPickerProps) => {
   const listboxId = useId();
   const internalInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || internalInputRef;
@@ -505,5 +505,6 @@ const ScheduleAssignmentPicker = memo(function ScheduleAssignmentPicker({
     </Popover>
   );
 });
+ScheduleAssignmentPicker.displayName = "ScheduleAssignmentPicker";
 
 export default ScheduleAssignmentPicker;

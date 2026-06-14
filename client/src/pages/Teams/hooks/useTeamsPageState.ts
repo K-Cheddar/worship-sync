@@ -387,15 +387,16 @@ export const useTeamsPageState = () => {
     return () => updater.removeEventListener("update", handleUpdate);
   }, [applyTeamsDoc, controllerContext?.updater]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (isCancelled = () => false) => {
     if (!churchId) {
-      setLoading(false);
+      if (!isCancelled()) setLoading(false);
       return;
     }
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
     try {
       const response = await getTeamsBootstrap(churchId);
+      if (isCancelled()) return;
       const nextData = buildTeamsDataFromBootstrap(response);
       const nextSelectedScheduleId =
         selectedScheduleIdRef.current &&
@@ -445,15 +446,21 @@ export const useTeamsPageState = () => {
           });
       }
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not load teams.");
+      if (!isCancelled()) {
+        showApiErrorToast(showToast, error, "Could not load teams.");
+      }
     } finally {
       refreshInFlightRef.current = false;
-      setLoading(false);
+      if (!isCancelled()) setLoading(false);
     }
   }, [canEditAnyTeam, churchId, dispatch, persistTeamsDataSnapshot, showToast, teamsDb]);
 
   useEffect(() => {
-    void refresh();
+    let cancelled = false;
+    void refresh(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [refresh]);
 
   const upsertData = useCallback(
