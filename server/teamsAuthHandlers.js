@@ -1734,15 +1734,11 @@ export const createTeamsAuthHandlers = ({
   const buildPublicTeamScheduleSnapshot = async (schedule) => {
     const churchId = schedule.churchId;
     const assignedMemberIds = new Set();
-    const referencedPositionIds = new Set();
     Object.values(schedule.assignments || {}).forEach((row) => {
-      Object.entries(row || {}).forEach(([cellKey, cell]) => {
-        const cellMemberIds = getScheduleAssignmentCellMemberIds(cell);
-        cellMemberIds.forEach((memberId) => assignedMemberIds.add(memberId));
-        if (cellMemberIds.length > 0) {
-          const parsed = parseScheduleSlotKey(cellKey);
-          if (parsed?.positionId) referencedPositionIds.add(parsed.positionId);
-        }
+      Object.values(row || {}).forEach((cell) => {
+        getScheduleAssignmentCellMemberIds(cell).forEach((memberId) =>
+          assignedMemberIds.add(memberId),
+        );
       });
     });
     const church = await getDoc(COLLECTIONS.churches, churchId);
@@ -1750,11 +1746,16 @@ export const createTeamsAuthHandlers = ({
       ? await getTeamEntity("team", schedule.teamId)
       : null;
     const [positions, members, churchLogoUrl] = await Promise.all([
-      Promise.all(
-        [...referencedPositionIds].map((positionId) =>
-          getTeamEntity("position", positionId),
-        ),
-      ),
+      team && team.churchId === churchId
+        ? queryDocs(
+            COLLECTIONS.teamPositions,
+            [
+              { field: "churchId", value: churchId },
+              { field: "teamId", value: schedule.teamId },
+            ],
+            { limit: TEAM_COLLECTION_QUERY_LIMIT },
+          )
+        : [],
       Promise.all(
         [...assignedMemberIds].map((memberId) =>
           getTeamEntity("member", memberId),
