@@ -1,3 +1,11 @@
+## [2.11.1](https://github.com/K-Cheddar/worship-sync/compare/v2.11.0...v2.11.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* Improve intake form ([a981a6c](https://github.com/K-Cheddar/worship-sync/commit/a981a6c86a1661f68dc1238f22c6134c06ba1c67))
+* Improve teams UX + Auto Refresh Discussion Boards ([4c5bb6b](https://github.com/K-Cheddar/worship-sync/commit/4c5bb6ba8ec131b694ce715f5459460fcee67989))
+
 # [2.11.0](https://github.com/K-Cheddar/worship-sync/compare/v2.10.2...v2.11.0) (2026-06-15)
 
 
