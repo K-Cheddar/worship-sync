@@ -1,3 +1,10 @@
+## [2.11.2](https://github.com/K-Cheddar/worship-sync/compare/v2.11.1...v2.11.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* Improve teams editing on mobile ([ca82c5d](https://github.com/K-Cheddar/worship-sync/commit/ca82c5d1cab3e07c86521c821187636d6c89b755))
+
 ## [2.11.1](https://github.com/K-Cheddar/worship-sync/compare/v2.11.0...v2.11.1) (2026-06-15)
 
 
