@@ -411,58 +411,45 @@ const IntakeManager = ({
           {newestSubmissions.map((submission) => {
             const suggestedMember = selectIntakeMemberMatch(submission, members);
             const selectedMemberId =
-              selectedMemberBySubmission[submission.submissionId] || "";
+              selectedMemberBySubmission[submission.submissionId] ??
+              suggestedMember?.memberId ??
+              "";
+            const canLinkSubmission = submission.status !== "applied";
+            const needsAction =
+              submission.status === "new" || submission.status === "reviewed";
+            const linkedMember = submission.appliedMemberId
+              ? members.find((member) => member.memberId === submission.appliedMemberId)
+              : undefined;
             return (
               <article
                 key={submission.submissionId}
                 className="rounded-md border border-gray-700 bg-gray-950/60 p-3"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
                     <h3 className="font-semibold">
                       {submission.firstName} {submission.lastName}
                     </h3>
                     <p className="text-xs text-gray-400">
-                      {submission.status} | {new Date(submission.submittedAt).toLocaleString()}
+                      {submission.status === "applied" && linkedMember
+                        ? `Linked to ${memberName(linkedMember)}`
+                        : submission.status}{" "}
+                      | {new Date(submission.submittedAt).toLocaleString()}
                     </p>
-                    {suggestedMember ? (
+                    {suggestedMember && canLinkSubmission ? (
                       <p className="mt-1 text-xs text-emerald-200">
                         Suggested match: {memberName(suggestedMember)}
                       </p>
                     ) : null}
                   </div>
-                  {canEdit ? (
-                    <div className="flex flex-wrap gap-2">
-                      {suggestedMember && submission.status !== "applied" ? (
-                        <Button
-                          variant="secondary"
-                          svg={Check}
-                          iconSize="sm"
-                          onClick={() =>
-                            void updateSubmission(
-                              submission,
-                              "applied",
-                              suggestedMember.memberId,
-                            )
-                          }
-                        >
-                          Apply match
-                        </Button>
-                      ) : null}
-                      {submission.status !== "applied" ? (
-                        <Button
-                          variant="secondary"
-                          svg={Plus}
-                          iconSize="sm"
-                          onClick={() => void updateSubmission(submission, "applied", undefined, true)}
-                        >
-                          Create member
-                        </Button>
-                      ) : null}
-                      {submission.status !== "applied" ? (
-                        <div className="flex min-w-56 items-end gap-2">
+                  {canEdit && needsAction ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canLinkSubmission ? (
+                        <>
                           <Select
                             label="Match member"
+                            hideLabel
+                            className="min-w-48"
                             value={selectedMemberId}
                             onChange={(memberId) =>
                               setSelectedMemberBySubmission((current) => ({
@@ -470,33 +457,48 @@ const IntakeManager = ({
                                 [submission.submissionId]: String(memberId),
                               }))
                             }
-                            options={[
-                              { label: "Choose member", value: "" },
-                              ...members.map((member) => ({
-                                label: memberName(member),
-                                value: member.memberId,
-                              })),
-                            ]}
+                            options={members.map((member) => ({
+                              label: memberName(member),
+                              value: member.memberId,
+                            }))}
                           />
                           <Button
                             variant="secondary"
+                            svg={Check}
+                            iconSize="sm"
+                            padding="px-2 py-1"
                             disabled={!selectedMemberId}
                             onClick={() =>
                               void updateSubmission(submission, "applied", selectedMemberId)
                             }
                           >
-                            Apply
+                            Link to member
                           </Button>
-                        </div>
+                          <Button
+                            variant="tertiary"
+                            svg={Plus}
+                            iconSize="sm"
+                            padding="px-2 py-1"
+                            onClick={() =>
+                              void updateSubmission(submission, "applied", undefined, true)
+                            }
+                          >
+                            Create member
+                          </Button>
+                        </>
+                      ) : null}
+                      {submission.status === "new" ? (
+                        <Button
+                          variant="textLink"
+                          padding="px-1 py-0.5"
+                          onClick={() => void updateSubmission(submission, "reviewed")}
+                        >
+                          Mark reviewed
+                        </Button>
                       ) : null}
                       <Button
-                        variant="tertiary"
-                        onClick={() => void updateSubmission(submission, "reviewed")}
-                      >
-                        Mark reviewed
-                      </Button>
-                      <Button
-                        variant="tertiary"
+                        variant="textLink"
+                        padding="px-1 py-0.5"
                         onClick={() => void updateSubmission(submission, "dismissed")}
                       >
                         Dismiss
