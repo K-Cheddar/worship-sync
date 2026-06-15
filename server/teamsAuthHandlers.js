@@ -41,6 +41,14 @@ export const createTeamsAuthHandlers = ({
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
 
+  const withTeamsErrorNextStep = (message) => {
+    if (/\btry again\b/i.test(message)) {
+      return message;
+    }
+    const trimmed = message.trim().replace(/\.\s*$/, "");
+    return `${trimmed}. Try again in a moment.`;
+  };
+
   const sendTeamsJsonError = (res, error, fallbackMessage) => {
     const statusCode =
       Number.isInteger(error?.statusCode) && error.statusCode >= 400
@@ -52,7 +60,9 @@ export const createTeamsAuthHandlers = ({
     return res.status(statusCode).json({
       success: false,
       errorMessage:
-        statusCode < 500 && error?.message ? error.message : fallbackMessage,
+        statusCode < 500 && error?.message
+          ? error.message
+          : withTeamsErrorNextStep(fallbackMessage),
     });
   };
 
