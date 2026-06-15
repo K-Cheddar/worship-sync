@@ -51,12 +51,6 @@ const qualificationStatusOptions: {
     { value: "expired", label: "Expired" },
   ];
 
-const qualificationStatusLabel = (
-  status: TeamMemberQualificationStatus | undefined,
-) =>
-  qualificationStatusOptions.find((option) => option.value === status)?.label ||
-  "In training";
-
 type MemberManagerProps = {
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -111,13 +105,6 @@ const MemberManager = ({
   const areaById = useMemo(
     () => new Map(data.qualificationAreas.map((area) => [area.areaId, area])),
     [data.qualificationAreas],
-  );
-  const levelById = useMemo(
-    () =>
-      new Map(
-        data.qualificationLevels.map((level) => [level.levelId, level]),
-      ),
-    [data.qualificationLevels],
   );
 
   const openMemberEditor = (member: TeamRosterMember) => {

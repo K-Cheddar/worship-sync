@@ -163,6 +163,9 @@ export const useTeamsPageState = () => {
   // Separate in-flight gate for background polling so a silent poll never trips
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
+  // Cleared on unmount so a background poll that resolves after the page is gone
+  // doesn't apply state or persist (mirrors refresh's isCancelled guard).
+  const isMountedRef = useRef(true);
   const deferredRefreshTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
@@ -660,8 +663,10 @@ export const useTeamsPageState = () => {
     backgroundRefreshInFlightRef.current = true;
     try {
       const response = await getTeamsBootstrap(churchId);
-      // Bail on stale writes: the active church may have switched, or a local
-      // edit may have landed, while the request was in flight.
+      // Bail on stale writes: the page may have unmounted, the active church may
+      // have switched, or a local edit may have landed while the request was in
+      // flight.
+      if (!isMountedRef.current) return;
       if (churchIdRef.current !== churchId) return;
       if (isLocalEditCoolingDown()) return;
       const nextData = buildTeamsDataFromBootstrap(response);
@@ -784,14 +789,17 @@ export const useTeamsPageState = () => {
     };
   }, [backgroundRefresh, churchId]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set in the effect body (not just init) so a StrictMode/remount re-run
+    // restores it after the prior cleanup flipped it false.
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
       if (deferredRefreshTimeoutRef.current) {
         clearTimeout(deferredRefreshTimeoutRef.current);
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   const pageData = useMemo(
     () => ({
