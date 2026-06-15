@@ -7,6 +7,7 @@ import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
 import FormActionButtons from "../components/FormActionButtons";
+import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -34,6 +35,7 @@ import {
   emptyRange,
   memberMatchesListQuery,
   memberName,
+  orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
 import type { TeamsData } from "../types";
@@ -44,10 +46,10 @@ const qualificationStatusOptions: {
   value: TeamMemberQualificationStatus;
   label: string;
 }[] = [
-  { value: "in_training", label: "In training" },
-  { value: "completed", label: "Completed" },
-  { value: "expired", label: "Expired" },
-];
+    { value: "in_training", label: "In training" },
+    { value: "completed", label: "Completed" },
+    { value: "expired", label: "Expired" },
+  ];
 
 const qualificationStatusLabel = (
   status: TeamMemberQualificationStatus | undefined,
@@ -118,33 +120,20 @@ const MemberManager = ({
     [data.qualificationLevels],
   );
 
-  const roleSummaryForMember = (member: TeamRosterMember) =>
-    Object.entries(member.teamMemberships || {})
-      .map(([teamId, membership]) => {
-        const label =
-          membership.roleLabel ||
-          (membership.roleId ? roleById.get(membership.roleId)?.name : "") ||
-          "";
-        if (!label) return "";
-        return `${teamNameById.get(teamId) || "Team"}: ${label}`;
-      })
-      .filter(Boolean)
-      .join(" | ");
-
-  const qualificationSummaryForMember = (member: TeamRosterMember) =>
-    (member.qualifications || [])
-      .map((qualification) => {
-        const areaName = areaById.get(qualification.areaId)?.name;
-        if (!areaName) return "";
-        const levelName = qualification.levelId
-          ? levelById.get(qualification.levelId)?.name
-          : "";
-        return [areaName, levelName, qualificationStatusLabel(qualification.status)]
-          .filter(Boolean)
-          .join(" ");
-      })
-      .filter(Boolean)
-      .join(", ");
+  const openMemberEditor = (member: TeamRosterMember) => {
+    setEditing(member);
+    setShowCreate(true);
+    setDraft({
+      firstName: member.firstName,
+      lastName: member.lastName,
+      dateOfBirth: member.dateOfBirth || "",
+      positionIds: member.positionIds || [],
+      teamMemberships: member.teamMemberships || {},
+      qualifications: member.qualifications || [],
+      blockoutDates: member.blockoutDates || [],
+      notes: member.notes || "",
+    });
+  };
 
   const filteredMembers = useMemo(
     () =>
@@ -236,26 +225,24 @@ const MemberManager = ({
     }
   };
 
-  // Positions are owned by teams; show the team as a sublabel so the picker reads
-  // as positions grouped by team (sorted so same-team positions sit together).
-  const positionOptions = [...positions]
-    .sort((a, b) =>
-      (teamNameById.get(a.teamId) || "").localeCompare(teamNameById.get(b.teamId) || "") ||
-      a.name.localeCompare(b.name),
-    )
-    .map((position) => ({
-      id: position.positionId,
-      label: position.name,
-      sublabel: teamNameById.get(position.teamId) || "No team",
-      archived: Boolean(position.archivedAt),
-    }));
+  // Positions follow each team's Positions tab order; teams follow the roster list.
+  const positionOptions = useMemo(
+    () =>
+      orderPositionsByTeamList(positions, data.teams).map((position) => ({
+        id: position.positionId,
+        label: position.name,
+        sublabel: teamNameById.get(position.teamId) || "No team",
+        archived: Boolean(position.archivedAt),
+      })),
+    [positions, data.teams, teamNameById],
+  );
 
   const roleTeamIds = Array.from(
     new Set([
       ...(editing
         ? data.teams
-            .filter((team) => (team.memberIds || []).includes(editing.memberId))
-            .map((team) => team.teamId)
+          .filter((team) => (team.memberIds || []).includes(editing.memberId))
+          .map((team) => team.teamId)
         : []),
       ...Object.keys(draft.teamMemberships || {}),
     ]),
@@ -273,8 +260,8 @@ const MemberManager = ({
     areaId: data.qualificationAreas[0]?.areaId || "",
     levelId: data.qualificationAreas[0]
       ? data.qualificationLevels.find(
-          (level) => level.areaId === data.qualificationAreas[0].areaId,
-        )?.levelId || ""
+        (level) => level.areaId === data.qualificationAreas[0].areaId,
+      )?.levelId || ""
       : "",
     teamId: data.qualificationAreas[0]?.teamId || "",
     status: "in_training",
@@ -290,72 +277,71 @@ const MemberManager = ({
         }}
         canEdit={canEdit}
         title={editing ? "Edit member" : "Create member"}
-        sectionTitle="Members"
+        sectionTitle={
+          <>
+            Members{" "}
+            <span className="text-sm font-normal text-gray-400">({members.length})</span>
+          </>
+        }
         description="Keep roster details and availability current."
         createLabel="Create member"
+        scrollableList
+        listToolbar={
+          members.length > 0 ? (
+            <EntityListSearch
+              label="Members"
+              value={listQuery}
+              onChange={setListQuery}
+            />
+          ) : null
+        }
         list={
           <>
             {members.length === 0 ? <p className="text-sm text-gray-300">No members yet.</p> : null}
-            {members.length > 0 ? (
-              <EntityListSearch
-                label="Members"
-                value={listQuery}
-                onChange={setListQuery}
-              />
-            ) : null}
             {members.length > 0 && filteredMembers.length === 0 ? (
               <p className="text-sm text-gray-300">No matches.</p>
             ) : null}
-            {filteredMembers.map((member) => {
-              const positionNames = (member.positionIds || [])
-                .map((positionId) => positions.find((position) => position.positionId === positionId)?.name)
-                .filter(Boolean)
-                .join(", ");
-              const roleSummary = roleSummaryForMember(member);
-              const qualificationSummary = qualificationSummaryForMember(member);
-              return (
-                <EntityRow
-                  key={member.memberId}
-                  title={memberName(member)}
-                  subtitle={[roleSummary, positionNames || "No positions"]
-                    .filter(Boolean)
-                    .join(" | ")}
-                  note={
-                    qualificationSummary || member.notes
-                      ? [qualificationSummary, member.notes].filter(Boolean).join(" | ")
-                      : undefined
-                  }
-                  archived={Boolean(member.archivedAt)}
-                  canEdit={canEdit}
-                  onEdit={() => {
-                    setEditing(member);
-                    setShowCreate(true);
-                    setDraft({
-                      firstName: member.firstName,
-                      lastName: member.lastName,
-                      dateOfBirth: member.dateOfBirth || "",
-                      positionIds: member.positionIds || [],
-                      teamMemberships: member.teamMemberships || {},
-                      qualifications: member.qualifications || [],
-                      blockoutDates: member.blockoutDates || [],
-                      notes: member.notes || "",
-                    });
-                  }}
-                  onArchive={async () => {
-                    const archivedMember = { ...member, archivedAt: new Date().toISOString() };
+            {filteredMembers.map((member) => (
+              <EntityRow
+                key={member.memberId}
+                compact
+                title={memberName(member)}
+                archived={Boolean(member.archivedAt)}
+                canEdit={canEdit}
+                onTitleClick={() => openMemberEditor(member)}
+              />
+            ))}
+          </>
+        }
+        formHeaderActions={
+          editing ? (
+            <EntityFormDangerActions
+              archived={Boolean(editing.archivedAt)}
+              canEdit={canEdit}
+              archiveLabel="Archive member"
+              deleteLabel="Delete member"
+              menuLabel="Member actions"
+              onArchive={
+                editing.archivedAt
+                  ? undefined
+                  : async () => {
+                    const archivedMember = {
+                      ...editing,
+                      archivedAt: new Date().toISOString(),
+                    };
                     onSaved(archivedMember);
                     try {
-                      await archiveTeamRosterMember(churchId, member.memberId);
+                      await archiveTeamRosterMember(churchId, editing.memberId);
+                      reset();
                     } catch (error) {
                       showApiErrorToast(showToast, error, "Could not archive this member.");
-                      onSaved(member);
+                      onSaved(editing);
                     }
-                  }}
-                  onDelete={() => setDeleting(member)}
-                />
-              );
-            })}
-          </>
+                  }
+              }
+              onDelete={() => setDeleting(editing)}
+            />
+          ) : null
         }
       >
         <div className="grid gap-3 sm:grid-cols-2">
@@ -461,15 +447,15 @@ const MemberManager = ({
                           (item, itemIndex) =>
                             itemIndex === index
                               ? {
-                                  ...item,
-                                  areaId:
-                                    areaId === NO_SELECTION_VALUE ? "" : areaId,
-                                  teamId:
-                                    areaId === NO_SELECTION_VALUE
-                                      ? ""
-                                      : areaById.get(areaId)?.teamId || "",
-                                  levelId: "",
-                                }
+                                ...item,
+                                areaId:
+                                  areaId === NO_SELECTION_VALUE ? "" : areaId,
+                                teamId:
+                                  areaId === NO_SELECTION_VALUE
+                                    ? ""
+                                    : areaById.get(areaId)?.teamId || "",
+                                levelId: "",
+                              }
                               : item,
                         ),
                       }))
@@ -487,12 +473,12 @@ const MemberManager = ({
                           (item, itemIndex) =>
                             itemIndex === index
                               ? {
-                                  ...item,
-                                  levelId:
-                                    levelId === NO_SELECTION_VALUE
-                                      ? undefined
-                                      : levelId,
-                                }
+                                ...item,
+                                levelId:
+                                  levelId === NO_SELECTION_VALUE
+                                    ? undefined
+                                    : levelId,
+                              }
                               : item,
                         ),
                       }))
@@ -510,9 +496,9 @@ const MemberManager = ({
                           (item, itemIndex) =>
                             itemIndex === index
                               ? {
-                                  ...item,
-                                  status: status as TeamMemberQualificationStatus,
-                                }
+                                ...item,
+                                status: status as TeamMemberQualificationStatus,
+                              }
                               : item,
                         ),
                       }))
@@ -624,6 +610,7 @@ const MemberManager = ({
         </fieldset>
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
         <FormActionButtons
+          pinFooter
           saveLabel="Save member"
           onSave={() => void submit()}
           onCancel={reset}

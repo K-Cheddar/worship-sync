@@ -1,5 +1,7 @@
 import { Save, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import { cn } from "@/utils/cnHelper";
+import { teamsFormStickyFooterClassName } from "../teamsStyles";
 
 type FormActionButtonsProps = {
   saveLabel: string;
@@ -7,6 +9,8 @@ type FormActionButtonsProps = {
   onCancel: () => void;
   disabled?: boolean;
   isLoading?: boolean;
+  /** Pin Cancel/Save to the bottom of a scrollable form panel. */
+  pinFooter?: boolean;
 };
 
 const FormActionButtons = ({
@@ -15,28 +19,31 @@ const FormActionButtons = ({
   onCancel,
   disabled = false,
   isLoading = false,
+  pinFooter = false,
 }: FormActionButtonsProps) => (
-  <div className="flex gap-2">
-    <Button
-      variant="secondary"
-      className="flex-1 justify-center"
-      svg={X}
-      iconSize="sm"
-      onClick={onCancel}
-    >
-      Cancel
-    </Button>
-    <Button
-      variant="cta"
-      className="flex-1 justify-center"
-      svg={Save}
-      iconSize="sm"
-      disabled={disabled}
-      isLoading={isLoading}
-      onClick={onSave}
-    >
-      {saveLabel}
-    </Button>
+  <div className={cn(pinFooter && teamsFormStickyFooterClassName)}>
+    <div className="flex gap-3">
+      <Button
+        variant="secondary"
+        className="flex-1 justify-center"
+        svg={X}
+        iconSize="sm"
+        onClick={onCancel}
+      >
+        Cancel
+      </Button>
+      <Button
+        variant="cta"
+        className="flex-1 justify-center"
+        svg={Save}
+        iconSize="sm"
+        disabled={disabled}
+        isLoading={isLoading}
+        onClick={onSave}
+      >
+        {saveLabel}
+      </Button>
+    </div>
   </div>
 );
 

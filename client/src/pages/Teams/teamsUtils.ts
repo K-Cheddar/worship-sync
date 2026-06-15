@@ -68,6 +68,27 @@ export const sortPositionsByOrder = (
     return orderA - orderB;
   });
 
+/** Positions for multi-team pickers: teams follow the roster list, positions follow each team's Positions tab order. */
+export const orderPositionsByTeamList = (
+  positions: TeamPosition[],
+  teams: TeamRecord[],
+): TeamPosition[] => {
+  const byTeam = new Map<string, TeamPosition[]>();
+  positions.forEach((position) => {
+    const list = byTeam.get(position.teamId) || [];
+    list.push(position);
+    byTeam.set(position.teamId, list);
+  });
+  const teamOrder = teams.map((team) => team.teamId);
+  const teamIds = [
+    ...teamOrder.filter((id) => byTeam.has(id)),
+    ...[...byTeam.keys()].filter((id) => !teamOrder.includes(id)),
+  ];
+  return teamIds.flatMap((teamId) =>
+    sortPositionsByOrder(byTeam.get(teamId) || []),
+  );
+};
+
 export const normalizeTeamsData = (data?: Partial<TeamsData>): TeamsData => ({
   members: (data?.members || []).map(normalizeRosterMember),
   positions: sortPositionsByOrder(data?.positions || []),
@@ -602,6 +623,14 @@ export const positionMatchesListQuery = (
   query: string,
 ) => entityMatchesQuery([position.name, position.description], query);
 
+export const roleMatchesListQuery = (role: TeamRole, query: string) =>
+  entityMatchesQuery([role.name, role.description], query);
+
+export const qualificationAreaMatchesListQuery = (
+  area: TeamQualificationArea,
+  query: string,
+) => entityMatchesQuery([area.name, area.description], query);
+
 export const entityStatus = (archivedAt?: string | null) =>
   archivedAt ? "Archived" : "Active";
 
@@ -610,8 +639,6 @@ export const isActive = (item: { archivedAt?: string | null }) =>
 
 export const formatServiceTiming = (service?: TeamService | null) => {
   if (!service) return "";
-  if (service.overrideDateTimeISO)
-    return `Override: ${formatOneTime(service.overrideDateTimeISO)}`;
   if (service.reccurence === "one_time")
     return formatOneTime(service.dateTimeISO);
   if (service.reccurence === "weekly")

@@ -17,15 +17,6 @@ const TeamsGroupsPage = () => {
       }
       onArchived={() => void refresh()}
       onRemoved={(teamId) => removeData("teams", "teamId", teamId)}
-      onRoleSaved={(role, replaceId) =>
-        upsertData("teamRoles", "roleId", role, replaceId)
-      }
-      onAreaSaved={(area, replaceId) =>
-        upsertData("qualificationAreas", "areaId", area, replaceId)
-      }
-      onLevelSaved={(level, replaceId) =>
-        upsertData("qualificationLevels", "levelId", level, replaceId)
-      }
     />
   );
 };

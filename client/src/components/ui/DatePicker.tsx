@@ -15,7 +15,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import Calendar from "@/components/ui/Calendar";
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import {
+  formatDateInputValue,
+  formatPlainDate,
+  parsePlainDate,
+} from "@/utils/plainDate";
 
 export type DatePickerProps = {
   /** Value is a plain calendar date string, `yyyy-MM-dd` (no timezone). */
@@ -127,7 +131,9 @@ const DatePicker = ({
                 disabled && "cursor-not-allowed",
                 inputClassName,
               )}
-              onChange={(event) => commitTyped(event.target.value)}
+              onChange={(event) =>
+                commitTyped(formatDateInputValue(event.target.value))
+              }
               onBlur={() => setText(displayValue(value))}
             />
             <PopoverTrigger asChild>

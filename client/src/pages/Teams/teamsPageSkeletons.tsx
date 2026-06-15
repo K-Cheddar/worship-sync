@@ -266,6 +266,18 @@ export const TeamsGroupsPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+export const TeamsRolesPageSkeleton = () => (
+  <SkeletonStatus label="Loading team roles">
+    <SkeletonManagerPanel withTeamSelect withSearch />
+  </SkeletonStatus>
+);
+
+export const TeamsQualificationsPageSkeleton = () => (
+  <SkeletonStatus label="Loading qualifications">
+    <SkeletonManagerPanel withTeamSelect withSearch />
+  </SkeletonStatus>
+);
+
 export const TeamsServicesPageSkeleton = () => (
   <SkeletonStatus label="Loading services">
     <SkeletonManagerPanel withSearch={false} rowCount={3} />
@@ -299,6 +311,10 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
       return <TeamsPositionsPageSkeleton />;
     case "groups":
       return <TeamsGroupsPageSkeleton />;
+    case "roles":
+      return <TeamsRolesPageSkeleton />;
+    case "qualifications":
+      return <TeamsQualificationsPageSkeleton />;
     case "services":
       return <TeamsServicesPageSkeleton />;
     case "forms":

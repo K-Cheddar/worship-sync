@@ -11,11 +11,33 @@ process.env.FIREBASE_PRIVATE_KEY = "";
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  addTeamsSseClient,
+  removeTeamsSseClient,
+} from "../server/teamsSse.js";
+
 const {
   authHandlers,
   canSeedHumanBearerAuthForServerTests,
   seedActiveHumanBearerForServerTests,
 } = await import("../authService.js");
+
+// Minimal stand-in for an SSE response: captures the `data:` frames the teams
+// broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
+const createSseClient = () => {
+  const writes = [];
+  return {
+    write(chunk) {
+      writes.push(String(chunk));
+      return true;
+    },
+    events() {
+      return writes
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => JSON.parse(line.slice("data: ".length).trim()));
+    },
+  };
+};
 
 const createSession = () => ({
   destroy(callback) {
@@ -701,6 +723,98 @@ test("schedule assignments block duplicate positions and unavailable members", a
   );
   assert.equal(blockedUnavailable.statusCode, 400);
   assert.match(blockedUnavailable.payload.errorMessage, /unavailable/i);
+});
+
+test("schedule assignment updates broadcast the new schedule over SSE", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("sse_broadcast");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship Team",
+    positions: [{ name: "Vocal", icon: "mic" }],
+    members: [{ firstName: "Avery", lastName: "Stone", positions: ["Vocal"] }],
+  });
+  const serviceId = "service-sunday";
+  const occurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "July",
+      teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: [serviceId],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-07-05T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  // Subscribe only after creating the schedule so we observe just the
+  // assignment broadcast, not the create one.
+  const sseClient = createSseClient();
+  addTeamsSseClient(context.churchId, sseClient);
+  t.after(() => removeTeamsSseClient(context.churchId, sseClient));
+
+  const slotKey = `${positionIds.Vocal}::0`;
+  const assign = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: slotKey,
+      memberId: memberIds.Avery,
+      serviceDate: "2026-07-05",
+    },
+  });
+  assert.equal(assign.statusCode, 200);
+
+  const updates = sseClient
+    .events()
+    .filter((event) => event.type === "schedule-updated");
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].churchId, context.churchId);
+  assert.equal(updates[0].schedule.scheduleId, scheduleId);
+  assert.equal(
+    getMemberId(updates[0].schedule.assignments?.[occurrenceId]?.[slotKey]),
+    memberIds.Avery,
+  );
+});
+
+test("schedule mutations do not broadcast to other churches", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("sse_scope");
+  const { teamId } = await seedTeam(context, { teamName: "Solo Team" });
+
+  const otherChurchClient = createSseClient();
+  addTeamsSseClient("some_other_church", otherChurchClient);
+  t.after(() => removeTeamsSseClient("some_other_church", otherChurchClient));
+
+  await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August",
+      teamId,
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      serviceIds: ["service-x"],
+      occurrences: [
+        {
+          occurrenceId: "service-x@2026-08-02T10:00:00.000Z",
+          serviceId: "service-x",
+          name: "Sunday",
+          startsAt: "2026-08-02T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+
+  assert.equal(otherChurchClient.events().length, 0);
 });
 
 test("team schedules persist private attendance records", async (t) => {

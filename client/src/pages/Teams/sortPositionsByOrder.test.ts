@@ -1,5 +1,5 @@
-import type { TeamPosition } from "../../api/authTypes";
-import { sortPositionsByOrder } from "./teamsUtils";
+import type { TeamPosition, TeamRecord } from "../../api/authTypes";
+import { orderPositionsByTeamList, sortPositionsByOrder } from "./teamsUtils";
 
 const position = (
   positionId: string,
@@ -40,5 +40,36 @@ describe("sortPositionsByOrder", () => {
     const sorted = sortPositionsByOrder(input);
     expect(input.map((p) => p.positionId)).toEqual(["keys", "vocal"]);
     expect(sorted).not.toBe(input);
+  });
+});
+
+describe("orderPositionsByTeamList", () => {
+  const teamA: TeamRecord = {
+    teamId: "team-a",
+    churchId: "c",
+    name: "Team A",
+    memberIds: [],
+  };
+  const teamB: TeamRecord = {
+    teamId: "team-b",
+    churchId: "c",
+    name: "Team B",
+    memberIds: [],
+  };
+
+  it("orders positions within each team by order and groups teams by the teams list", () => {
+    const positions = [
+      { ...position("b-keys", 1), teamId: "team-b" },
+      { ...position("a-vocal", 1), teamId: "team-a" },
+      { ...position("b-vocal", 0), teamId: "team-b" },
+      { ...position("a-keys", 0), teamId: "team-a" },
+    ];
+    const ordered = orderPositionsByTeamList(positions, [teamA, teamB]);
+    expect(ordered.map((p) => p.positionId)).toEqual([
+      "a-keys",
+      "a-vocal",
+      "b-vocal",
+      "b-keys",
+    ]);
   });
 });

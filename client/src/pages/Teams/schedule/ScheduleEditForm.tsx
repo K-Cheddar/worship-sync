@@ -1,12 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Trash2 } from "lucide-react";
-import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
 import FormActionButtons from "../components/FormActionButtons";
+import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { generateScheduleOccurrences } from "@/utils/teamScheduleOccurrences";
 import {
   archiveTeamSchedule,
@@ -66,22 +65,26 @@ const ScheduleEditForm = ({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const draftRef = useRef(draft);
   const skipNextPersistRef = useRef(false);
+  // The last draft we synced from the schedule/persisted source. If the live
+  // draft has diverged from this, the operator has unsaved edits in progress and
+  // a remote-driven reset must not clobber them.
+  const syncedBaselineRef = useRef(draft);
 
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
 
   useEffect(() => {
+    const nextDraft = buildScheduleDraft({
+      persistedDraft,
+      selectedSchedule,
+      defaultTeamId,
+      defaultServiceIds,
+      defaultRange,
+    });
     skipNextPersistRef.current = true;
-    setDraft(
-      buildScheduleDraft({
-        persistedDraft,
-        selectedSchedule,
-        defaultTeamId,
-        defaultServiceIds,
-        defaultRange,
-      }),
-    );
+    syncedBaselineRef.current = nextDraft;
+    setDraft(nextDraft);
     // persistedDraft is intentionally omitted; remote draft sync is handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the active schedule changes
   }, [defaultRange, defaultServiceIds, defaultTeamId, draftKey, selectedSchedule?.scheduleId]);
@@ -95,9 +98,19 @@ const ScheduleEditForm = ({
       defaultRange,
     });
     if (scheduleDraftsMatch(draftRef.current, nextDraft)) {
+      syncedBaselineRef.current = nextDraft;
+      return;
+    }
+    // Live polling/SSE replaces the selectedSchedule object whenever another
+    // admin edits this schedule (including assignment-only changes). If the
+    // operator has unsaved edits in this form — the draft has diverged from the
+    // last synced baseline — don't overwrite their work with the remote version.
+    // Their edits win until they save or cancel.
+    if (!scheduleDraftsMatch(draftRef.current, syncedBaselineRef.current)) {
       return;
     }
     skipNextPersistRef.current = true;
+    syncedBaselineRef.current = nextDraft;
     setDraft(nextDraft);
   }, [
     defaultRange,
@@ -247,7 +260,40 @@ const ScheduleEditForm = ({
 
   return (
     <>
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+      <div className="mt-4 flex items-start justify-between gap-3">
+        <h3 className="text-lg font-semibold">
+          {selectedSchedule ? "Edit schedule" : "New schedule"}
+        </h3>
+        {canEdit && selectedSchedule ? (
+          <EntityFormDangerActions
+            archived={Boolean(selectedSchedule.archivedAt)}
+            canEdit={canEdit}
+            archiveLabel="Archive schedule"
+            deleteLabel="Delete schedule"
+            menuLabel="Schedule actions"
+            onArchive={
+              selectedSchedule.archivedAt
+                ? undefined
+                : async () => {
+                  if (!canEdit) return;
+                  const archivedSchedule = {
+                    ...selectedSchedule,
+                    archivedAt: new Date().toISOString(),
+                  };
+                  onScheduleSaved(archivedSchedule);
+                  try {
+                    await archiveTeamSchedule(churchId, selectedSchedule.scheduleId);
+                  } catch (error) {
+                    showApiErrorToast(showToast, error, "Could not archive this schedule.");
+                    onScheduleSaved(selectedSchedule);
+                  }
+                }
+            }
+            onDelete={() => setDeletingSchedule(true)}
+          />
+        ) : null}
+      </div>
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <Input
           className={inputStackClassName}
           label="Name"
@@ -315,41 +361,6 @@ const ScheduleEditForm = ({
             }
             isLoading={saving}
           />
-          {canEdit && selectedSchedule ? (
-            <div className="flex flex-wrap gap-2">
-              {!selectedSchedule.archivedAt ? (
-                <Button
-                  variant="secondary"
-                  svg={Archive}
-                  iconSize="sm"
-                  onClick={async () => {
-                    if (!canEdit) return;
-                    const archivedSchedule = {
-                      ...selectedSchedule,
-                      archivedAt: new Date().toISOString(),
-                    };
-                    onScheduleSaved(archivedSchedule);
-                    try {
-                      await archiveTeamSchedule(churchId, selectedSchedule.scheduleId);
-                    } catch (error) {
-                      showApiErrorToast(showToast, error, "Could not archive this schedule.");
-                      onScheduleSaved(selectedSchedule);
-                    }
-                  }}
-                >
-                  Archive schedule
-                </Button>
-              ) : null}
-              <Button
-                variant="destructive"
-                svg={Trash2}
-                iconSize="sm"
-                onClick={() => setDeletingSchedule(true)}
-              >
-                Delete schedule
-              </Button>
-            </div>
-          ) : null}
         </div>
       </div>
       <DeleteModal

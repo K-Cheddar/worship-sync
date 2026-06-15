@@ -32,6 +32,7 @@ import { sanitizePositionRequirements } from "../schedule/scheduleRequirements";
 import CreatePanel from "../CreatePanel";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
+import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import { cn } from "@/utils/cnHelper";
 import {
@@ -160,15 +161,24 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
               subtitle={formatServiceTiming(service)}
               archived={Boolean(service.archivedAt)}
               canEdit={canEdit}
-              onEdit={() => startEdit(service)}
-              onArchive={() => {
-                if (!canEdit) return;
-                dispatch(removeService(service.id));
-                if (editing?.id === service.id) reset();
-              }}
+              onTitleClick={() => startEdit(service)}
             />
           ))}
         </>
+      }
+      formHeaderActions={
+        editing ? (
+          <EntityFormDangerActions
+            canEdit={canEdit}
+            deleteLabel="Remove service"
+            menuLabel="Service actions"
+            onDelete={() => {
+              if (!canEdit) return;
+              dispatch(removeService(editing.id));
+              reset();
+            }}
+          />
+        ) : null
       }
     >
       <Input label="Name" value={draft.name || ""} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
@@ -376,6 +386,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       </fieldset>
 
       <FormActionButtons
+        pinFooter
         saveLabel="Save service"
         onSave={submit}
         onCancel={reset}

@@ -20,6 +20,7 @@ import {
   authSessionConfig,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
+  requireTeamsViewSession,
 } from "./authService.js";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
 import { createLyricsImportService } from "./lyricsImport.js";
@@ -47,6 +48,10 @@ import {
   createRestreamService,
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
+import {
+  addTeamsSseClient,
+  removeTeamsSseClient,
+} from "./server/teamsSse.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -1166,6 +1171,49 @@ app.get("/api/boards/stream/:aliasId", (req, res) => {
     res.end();
   });
 });
+
+// Live channel for the Teams scheduling grid. Schedule mutation handlers push
+// the updated schedule doc to every other client viewing this church so the
+// grid collaborates in real time (see server/teamsSse.js).
+app.get(
+  "/api/churches/:churchId/teams/stream",
+  requireAppSession,
+  async (req, res) => {
+    const churchId = req.params.churchId;
+    if (!churchId || req.appSession.churchId !== churchId) {
+      res.status(403).json({ error: "That church is not available." });
+      return;
+    }
+
+    // Gate the stream behind the same Teams view permission getTeamsBootstrap
+    // requires — otherwise any app-session holder for the church (including
+    // users with no Teams access) could subscribe and receive schedule payloads.
+    try {
+      await requireTeamsViewSession(req, churchId);
+    } catch {
+      res.status(403).json({ error: "Teams access required" });
+      return;
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+    res.write(`data: ${JSON.stringify({ type: "connected", churchId })}\n\n`);
+
+    addTeamsSseClient(churchId, res);
+
+    const heartbeat = setInterval(() => {
+      res.write(": keep-alive\n\n");
+    }, 25000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      removeTeamsSseClient(churchId, res);
+      res.end();
+    });
+  },
+);
 
 app.get("/api/boards/admin/bootstrap", async (req, res) => {
   try {

@@ -218,6 +218,20 @@ const IntakeManager = ({
     }
   };
 
+  const openIntakeFormEditor = (form: TeamIntakeForm) => {
+    setEditing(form);
+    setDraft({
+      name: form.name,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      availabilityServices: form.availabilityServices || [],
+      availabilityOccurrences: form.availabilityOccurrences || [],
+      teamIds: form.teamIds || [],
+      active: form.active,
+    });
+    setShowCreate(true);
+  };
+
   const updateSubmission = async (
     submission: TeamIntakeSubmission,
     action: "reviewed" | "applied" | "dismissed",
@@ -289,26 +303,17 @@ const IntakeManager = ({
                       svg={Clipboard}
                       iconSize="sm"
                       padding="px-2 py-1"
-                      onClick={() => void copyFormLink(form)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void copyFormLink(form);
+                      }}
                     >
                       Copy link
                     </Button>
                   ) : null
                 }
                 canEdit={canEdit}
-                onEdit={() => {
-                  setEditing(form);
-                  setDraft({
-                    name: form.name,
-                    startDate: form.startDate,
-                    endDate: form.endDate,
-                    availabilityServices: form.availabilityServices || [],
-                    availabilityOccurrences: form.availabilityOccurrences || [],
-                    teamIds: form.teamIds || [],
-                    active: form.active,
-                  });
-                  setShowCreate(true);
-                }}
+                onTitleClick={() => openIntakeFormEditor(form)}
               />
             ))}
           </>
@@ -377,7 +382,18 @@ const IntakeManager = ({
               : "Set the form start and end dates first."
           }
         />
+        {editing && canEdit ? (
+          <Button
+            variant="secondary"
+            svg={Clipboard}
+            iconSize="sm"
+            onClick={() => void copyFormLink(editing)}
+          >
+            Copy public link
+          </Button>
+        ) : null}
         <FormActionButtons
+          pinFooter
           saveLabel="Save form"
           onSave={() => void submit()}
           onCancel={reset}

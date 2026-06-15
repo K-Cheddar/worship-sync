@@ -21,3 +21,25 @@ export const formatPlainDate = (date: Date) => {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+/** Auto-insert `/` separators while typing an MM/DD/YYYY date. */
+export const formatDateInputValue = (raw: string): string => {
+  // Preserve alternate typed formats (ISO, month names).
+  if (/[a-zA-Z]/.test(raw) || /^\d{4}-\d{1,2}-\d{1,2}/.test(raw.trim())) {
+    return raw;
+  }
+
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  if (!digits) return "";
+
+  let formatted = digits.slice(0, 2);
+  if (digits.length >= 2) formatted += "/";
+  if (digits.length >= 3) {
+    formatted += digits.slice(2, 4);
+    if (digits.length >= 4) formatted += "/";
+  }
+  if (digits.length >= 5) {
+    formatted += digits.slice(4);
+  }
+  return formatted;
+};

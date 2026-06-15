@@ -70,7 +70,7 @@ import type {
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
-import { panelClassName } from "../teamsStyles";
+import { panelClassName, panelHeaderPaddingClassName, panelShellClassName } from "../teamsStyles";
 import type {
   PendingCellAssignment,
   TeamsData,
@@ -1911,81 +1911,85 @@ const ScheduleTab = ({
 
   return (
     <div className="space-y-4">
-      <section className={panelClassName}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Schedules</h2>
-        </div>
-        <p className="mt-1 text-sm text-gray-400">
-          Assign people to services by position.
-        </p>
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <Select
-              className="min-w-56"
-              label="Open schedule"
-              value={selectedSchedule?.scheduleId || ""}
-              onChange={(scheduleId) => {
-                setSelectedScheduleId(scheduleId);
-                setShowForm(false);
-              }}
-              options={schedules.map((schedule) => ({
-                label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
-                value: schedule.scheduleId,
-              }))}
-            />
-            {canEdit ? (
-              <Button
-                variant="secondary"
-                svg={Plus}
-                iconSize="sm"
-                onClick={() => {
-                  setSelectedScheduleId("");
-                  setShowForm(true);
-                }}
-              >
-                New schedule
-              </Button>
-            ) : null}
-            {canEdit && selectedSchedule && !showForm ? (
-              <Button variant="tertiary" iconSize="sm" onClick={() => setShowForm(true)}>
-                Edit schedule
-              </Button>
-            ) : null}
-            {canEdit && selectedSchedule && !showForm ? (
-              <Button
-                variant="tertiary"
-                svg={Copy}
-                iconSize="sm"
-                onClick={handleCopySchedule}
-              >
-                Copy schedule
-              </Button>
-            ) : null}
+      <section className={panelShellClassName}>
+        <div className={cn(panelHeaderPaddingClassName, showForm ? "pb-0" : "pb-4")}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Schedules</h2>
           </div>
-          <Button variant="tertiary" svg={RefreshCw} iconSize="sm" onClick={onRefresh}>
-            Refresh
-          </Button>
+          <p className="mt-1 text-sm text-gray-400">
+            Assign people to services by position.
+          </p>
+          <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <Select
+                className="min-w-56"
+                label="Open schedule"
+                value={selectedSchedule?.scheduleId || ""}
+                onChange={(scheduleId) => {
+                  setSelectedScheduleId(scheduleId);
+                  setShowForm(false);
+                }}
+                options={schedules.map((schedule) => ({
+                  label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
+                  value: schedule.scheduleId,
+                }))}
+              />
+              {canEdit ? (
+                <Button
+                  variant="secondary"
+                  svg={Plus}
+                  iconSize="sm"
+                  onClick={() => {
+                    setSelectedScheduleId("");
+                    setShowForm(true);
+                  }}
+                >
+                  New schedule
+                </Button>
+              ) : null}
+              {canEdit && selectedSchedule && !showForm ? (
+                <Button variant="tertiary" iconSize="sm" onClick={() => setShowForm(true)}>
+                  Edit schedule
+                </Button>
+              ) : null}
+              {canEdit && selectedSchedule && !showForm ? (
+                <Button
+                  variant="tertiary"
+                  svg={Copy}
+                  iconSize="sm"
+                  onClick={handleCopySchedule}
+                >
+                  Copy schedule
+                </Button>
+              ) : null}
+            </div>
+            <Button variant="tertiary" svg={RefreshCw} iconSize="sm" onClick={onRefresh}>
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {showForm ? (
-          <ScheduleEditForm
-            draftKey={draftKey}
-            persistedDraft={persistedDraft}
-            selectedSchedule={selectedSchedule}
-            defaultTeamId={defaultTeamId}
-            defaultServiceIds={defaultServiceIds}
-            defaultRange={defaultRange}
-            services={data.services}
-            activeTeams={activeTeams}
-            churchId={churchId}
-            canEdit={canEdit}
-            onDraftChange={onScheduleDraftChanged}
-            onDraftFlush={onScheduleDraftFlush}
-            onScheduleSaved={onScheduleSaved}
-            onScheduleRemoved={onScheduleRemoved}
-            setSelectedScheduleId={setSelectedScheduleId}
-            onCancel={() => setShowForm(false)}
-          />
+          <div className="border-t border-gray-700/50 px-4 pb-4">
+            <ScheduleEditForm
+              draftKey={draftKey}
+              persistedDraft={persistedDraft}
+              selectedSchedule={selectedSchedule}
+              defaultTeamId={defaultTeamId}
+              defaultServiceIds={defaultServiceIds}
+              defaultRange={defaultRange}
+              services={data.services}
+              activeTeams={activeTeams}
+              churchId={churchId}
+              canEdit={canEdit}
+              onDraftChange={onScheduleDraftChanged}
+              onDraftFlush={onScheduleDraftFlush}
+              onScheduleSaved={onScheduleSaved}
+              onScheduleRemoved={onScheduleRemoved}
+              setSelectedScheduleId={setSelectedScheduleId}
+              onCancel={() => setShowForm(false)}
+            />
+          </div>
         ) : null}
       </section>
 

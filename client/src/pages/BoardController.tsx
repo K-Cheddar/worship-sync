@@ -44,6 +44,7 @@ import {
   normalizeBoardPresentationFontScale,
   getBoardPostRange,
   isCurrentBoardView,
+  isTimestampFromPreviousLocalDay,
   isWorshipSyncModeratorBoardPost,
   setStoredBoardDisplayAliasId,
   sortBoardPostsAscending,
@@ -55,6 +56,8 @@ import {
 } from "../boards/boardPanelTheme";
 import {
   deleteBoardAlias,
+  hardResetBoardAlias,
+  resetRestreamSession,
   updateBoardPresentationFontScale,
   updateBoardPostHidden,
   updateBoardPostHighlighted,
@@ -157,6 +160,11 @@ export const BoardControllerContent = () => {
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
   );
   const restreamSession = useRestreamSession(churchId || "");
+  const {
+    isLoading: isRestreamLoading,
+    session: restreamSessionData,
+    reload: reloadRestreamSession,
+  } = restreamSession;
   const visibleRestreamMessageCount = useMemo(
     () =>
       filterRestreamMessagesForDisplay(restreamSession.messages).length,
@@ -183,6 +191,10 @@ export const BoardControllerContent = () => {
   const boardIdToViewRef = useRef("");
   const selectedBoardIdRef = useRef("");
   const selectedAliasIdRef = useRef("");
+  // Board ids we've already evaluated for the new-day auto-reset, so a session
+  // is only ever rolled once at open time (never mid-use if midnight passes).
+  const autoRolledBoardIdsRef = useRef<Set<string>>(new Set());
+  const autoRolledRestreamSessionIdsRef = useRef<Set<string>>(new Set());
 
   const isXlUp = useMediaQuery("(min-width: 1280px)");
   const isMobileStack = !isXlUp;
@@ -369,6 +381,77 @@ export const BoardControllerContent = () => {
       ...selectedAlias.history.slice().reverse(),
     ];
   }, [selectedAlias]);
+
+  // Auto-start a fresh discussion board session when the operator opens the
+  // controller on a new day and the current session (from an earlier day) still
+  // holds posts. Evaluated once per board at open time so a service running past
+  // midnight is never interrupted; old sessions and posts stay in the history.
+  useEffect(() => {
+    if (isLoading || !selectedAlias || !currentBoard || !isViewingCurrent) {
+      return;
+    }
+    const staleBoardId = currentBoard.id;
+    if (autoRolledBoardIdsRef.current.has(staleBoardId)) return;
+    autoRolledBoardIdsRef.current.add(staleBoardId);
+
+    if (posts.length === 0) return;
+    if (!isTimestampFromPreviousLocalDay(currentBoard.createdAt)) return;
+
+    const aliasId = selectedAlias.aliasId;
+    void (async () => {
+      try {
+        await hardResetBoardAlias(aliasId);
+        setSelectedBoardId("");
+        pullFromRemote?.();
+        showToast("Started a fresh session for today.", "success");
+      } catch (error) {
+        // Leave the existing session in place; the operator can still start one
+        // manually from Board tools. Allow a retry if this board reappears.
+        autoRolledBoardIdsRef.current.delete(staleBoardId);
+        console.warn("Could not auto-start a new board session:", error);
+      }
+    })();
+  }, [
+    isLoading,
+    selectedAlias,
+    currentBoard,
+    posts.length,
+    isViewingCurrent,
+    pullFromRemote,
+    showToast,
+  ]);
+
+  // Clear earlier Restream chat the first time we see an enabled session from a
+  // previous local day that still has messages. Evaluated once per session id
+  // so live chat is never wiped mid-service when the date changes while open.
+  useEffect(() => {
+    if (!churchId || isRestreamLoading) return;
+    const session = restreamSessionData;
+    if (!session?.enabled || !session.sessionId) return;
+    const staleSessionId = session.sessionId;
+    if (autoRolledRestreamSessionIdsRef.current.has(staleSessionId)) return;
+    autoRolledRestreamSessionIdsRef.current.add(staleSessionId);
+
+    if (session.messageCount <= 0) return;
+    if (!isTimestampFromPreviousLocalDay(session.startedAt)) return;
+
+    void (async () => {
+      try {
+        await resetRestreamSession(churchId);
+        await reloadRestreamSession();
+        showToast("Cleared earlier Restream chat.", "success");
+      } catch (error) {
+        autoRolledRestreamSessionIdsRef.current.delete(staleSessionId);
+        console.warn("Could not auto-reset the Restream session:", error);
+      }
+    })();
+  }, [
+    churchId,
+    isRestreamLoading,
+    restreamSessionData,
+    reloadRestreamSession,
+    showToast,
+  ]);
 
   const handleCopy = async (value: string, label: string) => {
     try {
