@@ -201,7 +201,9 @@ export const overlayPlanHasExecutableChange = (
     if (item.action === "update") {
       const target = overlays.find((o) => o.id === item.targetOverlayId);
       if (target) {
-        if (Object.keys(getChangedOverlayPatch(target, item.patch)).length > 0) {
+        if (
+          Object.keys(getChangedOverlayPatch(target, item.patch)).length > 0
+        ) {
           return true;
         }
         claimed.add(target.id);
@@ -222,7 +224,9 @@ export const overlayPlanHasExecutableChange = (
       : undefined;
 
     if (existing) {
-      if (Object.keys(getChangedOverlayPatch(existing, item.patch)).length > 0) {
+      if (
+        Object.keys(getChangedOverlayPatch(existing, item.patch)).length > 0
+      ) {
         return true;
       }
       claimed.add(existing.id);
@@ -237,11 +241,9 @@ export const overlayPlanHasExecutableChange = (
 
 const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   !candidate.outlineAlreadyPresent &&
-  (
-    (candidate.outlineItemType === "song" &&
-      Boolean(candidate.matchedLibraryItem)) ||
-    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef))
-  );
+  ((candidate.outlineItemType === "song" &&
+    Boolean(candidate.matchedLibraryItem)) ||
+    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)));
 
 export const useServicePlanningImport = () => {
   const dispatch = useDispatch();
@@ -303,8 +305,14 @@ export const useServicePlanningImport = () => {
         const sectionName = sectionNameByRow.get(block.source) ?? "";
         const sourceRowIndex = sectionRowIndexByRow.get(block.source) ?? -1;
         for (const candidate of block.candidates) {
-          const repeatedOverlayKey = getRepeatedOverlayDedupeKey(block, candidate);
-          if (repeatedOverlayKey && repeatedOverlayKeys.has(repeatedOverlayKey)) {
+          const repeatedOverlayKey = getRepeatedOverlayDedupeKey(
+            block,
+            candidate,
+          );
+          if (
+            repeatedOverlayKey &&
+            repeatedOverlayKeys.has(repeatedOverlayKey)
+          ) {
             overlayPlan.push({
               sectionName,
               sourceRowIndex,
@@ -315,7 +323,8 @@ export const useServicePlanningImport = () => {
               rawNameToken: candidate.rawNameToken,
               action: "skip",
               patch: { ...candidate.patch },
-              reason: "An identical overlay for this rule is already planned earlier in the service.",
+              reason:
+                "An identical overlay for this rule is already planned earlier in the service.",
             });
             continue;
           }
@@ -440,8 +449,7 @@ export const useServicePlanningImport = () => {
               filter: (rule) => rule.outlineSync?.enabled ?? false,
             },
           );
-          const outlineItemType =
-            elementRule?.outlineSync?.itemType ?? "none";
+          const outlineItemType = elementRule?.outlineSync?.itemType ?? "none";
           let matchedLibraryItem: ServiceItem | null = null;
           let parsedRef: ParsedBibleRef | null = null;
           const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
@@ -779,7 +787,9 @@ export const useServicePlanningImport = () => {
 
   const planOverlaySyncSteps = useCallback(
     (preview: ServicePlanningPreview) => {
-      const skipped = preview.overlayPlan.filter((item) => item.action === "skip");
+      const skipped = preview.overlayPlan.filter(
+        (item) => item.action === "skip",
+      );
       const steps = preview.overlayPlan.filter(
         (item): item is ExecutableOverlaySyncPlanItem => item.action !== "skip",
       );
@@ -809,9 +819,15 @@ export const useServicePlanningImport = () => {
 
           let label = "";
           if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
-            label = getBibleImportDisplayName(candidate.parsedRef, candidate.parsedRef.version);
+            label = getBibleImportDisplayName(
+              candidate.parsedRef,
+              candidate.parsedRef.version,
+            );
           } else if (candidate.outlineItemType === "song") {
-            label = candidate.matchedLibraryItem?.name || candidate.cleanedTitle || candidate.title;
+            label =
+              candidate.matchedLibraryItem?.name ||
+              candidate.cleanedTitle ||
+              candidate.title;
           }
           if (!label) continue;
 
@@ -827,15 +843,18 @@ export const useServicePlanningImport = () => {
 
       if (mode !== "outline") {
         for (const item of preview.overlayPlan) {
-          if (item.action === "skip" && !item.targetOverlayId) continue;
+          if (item.action === "skip") continue;
           const event =
-            item.patch.event || item.targetOverlayEvent || item.targetOverlayName || item.elementType;
+            item.patch.event ||
+            item.targetOverlayEvent ||
+            item.targetOverlayName ||
+            item.elementType;
           const name = item.patch.name;
           items.push({
             label: name || event || "",
             sublabel: name ? event : undefined,
             phase: "overlays",
-            status: item.action === "skip" ? "already-present" : "pending",
+            status: "pending",
             sourceLineItemKey: getOverlayPlanLineItemKey(item),
           });
         }
@@ -849,7 +868,11 @@ export const useServicePlanningImport = () => {
   const executeOutlineSyncStep = useCallback(
     async (
       step: ServicePlanningOutlineSyncStep,
-    ): Promise<{ inserted: number; activeLabel: string; activeListId?: string }> => {
+    ): Promise<{
+      inserted: number;
+      activeLabel: string;
+      activeListId?: string;
+    }> => {
       const currentList = [...store.getState().undoable.present.itemList.list];
       const result = await executeOutlineSyncUtilityStep({
         step,
@@ -882,7 +905,9 @@ export const useServicePlanningImport = () => {
           ? step.headingName
           : step.candidate.title ||
             step.candidate.cleanedTitle ||
-            (step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd" ? "" : step.headingName);
+            (step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
+              ? ""
+              : step.headingName);
 
       return {
         inserted: result.inserted,

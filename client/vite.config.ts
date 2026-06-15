@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { VitePWA } from "vite-plugin-pwa";
@@ -7,12 +7,38 @@ import fs from "fs";
 
 export default defineConfig(({ mode }) => {
   const isDev = mode === "development";
+  const isHerokuBuild = mode === "heroku";
+  const enableSentryUpload =
+    !isHerokuBuild && Boolean(process.env.SENTRY_AUTH_TOKEN);
+
+  const plugins: PluginOption[] = [react()];
+
+  if (enableSentryUpload) {
+    plugins.push(
+      sentryVitePlugin({
+        authToken: process.env.SENTRY_AUTH_TOKEN,
+        org: "worshipsync",
+        project: "javascript-react",
+      })
+    );
+  }
+
+  plugins.push(
+    VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "service-worker.ts",
+      injectManifest: {
+        maximumFileSizeToCacheInBytes: 7 * 1024 * 1024, // 7 MiB (main bundle is over 5 MiB)
+      },
+    })
+  );
 
   return {
     root: ".",
     base: "/",
     build: {
-      sourcemap: true,
+      sourcemap: !isHerokuBuild,
       outDir: "dist",
       rollupOptions: {
         input: {
@@ -35,22 +61,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [
-      react(),
-      sentryVitePlugin({
-        authToken: process.env.SENTRY_AUTH_TOKEN,
-        org: "worshipsync",
-        project: "javascript-react",
-      }),
-      VitePWA({
-        strategies: "injectManifest",
-        srcDir: "src",
-        filename: "service-worker.ts",
-        injectManifest: {
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB (main bundle is over 4 MiB)
-        },
-      }),
-    ],
+    plugins,
     server: isDev
       ? {
           host: "local.worshipsync.net",

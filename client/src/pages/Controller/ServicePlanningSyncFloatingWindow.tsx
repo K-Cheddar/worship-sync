@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Book, BookOpen, Check, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
+import { Book, BookOpen, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -49,6 +49,7 @@ import { iconColorMap } from "../../utils/itemTypeMaps";
 
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
+import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 
 const MARGIN = 16;
 
@@ -175,6 +176,26 @@ const pluralizeBadgeLabel = (label: string, count: number): string => {
   const [phase, ...rest] = label.split(" ");
   const phaseP = phase === "Outline" ? "outlines" : "overlays";
   return `${count} ${phaseP} ${rest.join(" ")}`;
+};
+
+/** Hide no-op overlay badges when the same row also changed during sync. */
+const filterRedundantOverlayBadges = (
+  badges: NonNullable<SyncBadgeData>[],
+): NonNullable<SyncBadgeData>[] => {
+  const badgeLabels = badges
+    .filter((badge) => badge.type === "badge")
+    .map((badge) => badge.label);
+  const hasOverlayChange = badgeLabels.some(
+    (label) => label === "Overlay updated" || label === "Overlay created",
+  );
+
+  if (!hasOverlayChange) return badges;
+
+  return badges.filter(
+    (badge) =>
+      badge.type !== "badge" ||
+      (badge.label !== "Overlay current" && badge.label !== "Overlay found"),
+  );
 };
 
 const hasSyncableOutlineItems = (preview: ServicePlanningPreview | null): boolean =>
@@ -384,10 +405,10 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       label: "Sync All",
       disabled: isSyncActive || !canSyncAny,
       renderButton: (isMeasure) => (
-        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
+        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
       ),
       onOverflowSelect: () => handleSync("both"),
-      renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync All</>,
+      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync All</>,
     },
     {
       id: "import",
@@ -435,20 +456,20 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       label: "Sync overlays",
       disabled: isSyncActive || !canSyncOverlays,
       renderButton: (isMeasure) => (
-        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
+        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
       ),
       onOverflowSelect: () => handleSync("overlays"),
-      renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync overlays</>,
+      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync overlays</>,
     },
     {
       id: "sync-outline",
       label: "Sync outline",
       disabled: isSyncActive || !canSyncOutline,
       renderButton: (isMeasure) => (
-        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
+        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
       ),
       onOverflowSelect: () => handleSync("outline"),
-      renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
+      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
     },
   ], [canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
 
@@ -456,12 +477,12 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
   const isVisible =
     !floatingWindowDismissed && (sync.status !== "idle" || Boolean(preview));
-  const windowWidth = Math.min(600, window.innerWidth);
+  const windowWidth = getControllerRightPanelWidthPx(window.innerWidth);
   const maxWindowHeight = Math.max(window.innerHeight - MARGIN * 2, 240);
-  const positionRef = useRef({
+  const defaultPosition = {
     x: Math.max(window.innerWidth - windowWidth - MARGIN, 0),
     y: MARGIN,
-  });
+  };
 
   const lineItemsBySection = useMemo(
     () => buildLineItemsBySection(preview),
@@ -543,7 +564,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       ref={floatingWindowRef}
       title={titleNode}
       onClose={handleClose}
-      defaultPosition={positionRef.current}
+      defaultPosition={defaultPosition}
       defaultWidth={windowWidth}
       defaultHeight={maxWindowHeight}
       autoHeight
@@ -655,16 +676,18 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                         const relatedSyncItems =
                           syncItemsByLineItemKey.get(lineItemKey) ?? [];
 
-                        const syncBadgeDataList = relatedSyncItems
-                          .map((syncItem) =>
-                            getSyncBadgeData({
-                              item: syncItem,
-                              isRunning,
-                              activeLabel: sync.activeLabel,
-                              activeSublabel: sync.activeSublabel,
-                            }),
-                          )
-                          .filter((d): d is NonNullable<SyncBadgeData> => d !== null);
+                        const syncBadgeDataList = filterRedundantOverlayBadges(
+                          relatedSyncItems
+                            .map((syncItem) =>
+                              getSyncBadgeData({
+                                item: syncItem,
+                                isRunning,
+                                activeLabel: sync.activeLabel,
+                                activeSublabel: sync.activeSublabel,
+                              }),
+                            )
+                            .filter((d): d is NonNullable<SyncBadgeData> => d !== null),
+                        );
 
                         const activeSyncData = syncBadgeDataList.find(
                           (d) => d.type === "active",
@@ -808,14 +831,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                                   color="#22d3ee"
                                   iconSize="sm"
                                   className="self-start text-xs"
-                                  aria-label={`Add ${item.cleanedTitle || cleanPlanningTitle(item.title)} to list`}
+                                  aria-label={`Create song ${item.cleanedTitle || cleanPlanningTitle(item.title)}`}
                                   onClick={() =>
                                     handleCreateClick(
                                       item.cleanedTitle || cleanPlanningTitle(item.title),
                                     )
                                   }
                                 >
-                                  Add to list
+                                  Create song
                                 </Button>
                               ) : null}
                             </div>

@@ -355,6 +355,70 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByText("Announcement")).toBeInTheDocument();
   });
 
+  it("shows only overlay change badges when an overlay was updated on the row", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    const lineItem = {
+      sectionName: "Welcome",
+      headingName: "Welcome",
+      sourceRowIndex: 0,
+      elementType: "Co-Host",
+      title: "John Smith",
+      ledBy: "",
+      selectedForOutline: false,
+      outlineItemType: "none",
+      matchedLibraryItem: null,
+      parsedRef: null,
+      overlayReady: true,
+      outlineAlreadyPresent: false,
+    } as const;
+    const lineItemKey = getServicePlanningLineItemKey(lineItem);
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [],
+        lineItems: [lineItem],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    store.dispatch(startServicePlanningSync({ mode: "overlays" }));
+    store.dispatch(
+      setServicePlanningSyncPlanInfo({
+        totalSteps: 1,
+        syncItems: [
+          {
+            label: "John Smith",
+            sublabel: "Co-Host",
+            phase: "overlays",
+            status: "already-present",
+            sourceLineItemKey: lineItemKey,
+          },
+          {
+            label: "John Smith",
+            sublabel: "Co-Host",
+            phase: "overlays",
+            status: "updated",
+            sourceLineItemKey: lineItemKey,
+          },
+        ],
+      }),
+    );
+    store.dispatch(completeServicePlanningSync());
+
+    renderWindow(store);
+
+    expect(screen.getByText("Overlay updated")).toBeInTheDocument();
+    expect(screen.queryByText("Overlay current")).not.toBeInTheDocument();
+    expect(screen.queryByText("Overlay created")).not.toBeInTheDocument();
+  });
+
   it("keeps duplicate rows isolated by their source row index", () => {
     const store = configureStore({
       reducer: {
@@ -488,6 +552,70 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     expect(store.getState().servicePlanningImport.sync.status).toBe("running");
     expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
+  });
+
+  it("shows Create song for unmatched outline songs instead of Add to list", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [],
+        lineItems: [
+          {
+            sectionName: "Worship",
+            headingName: "Worship",
+            sourceRowIndex: 0,
+            elementType: "Song",
+            title: "New Song Title",
+            cleanedTitle: "New Song Title",
+            ledBy: "Praise Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: null,
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+          {
+            sectionName: "Worship",
+            headingName: "Worship",
+            sourceRowIndex: 1,
+            elementType: "Song",
+            title: "Existing Song",
+            cleanedTitle: "Existing Song",
+            ledBy: "Praise Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Existing Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(
+      screen.getByRole("button", { name: "Create song New Song Title" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add .* to list/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Create song Existing Song/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows team assignments in a separate tab", async () => {

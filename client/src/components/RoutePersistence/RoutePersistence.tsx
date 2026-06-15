@@ -55,6 +55,8 @@ const RoutePersistence: React.FC = () => {
       loginState: context?.loginState,
       sessionKind: context?.sessionKind,
       access: context?.access,
+      role: context?.role,
+      permissions: context?.permissions,
       operatorName: context?.operatorName,
       displaySurfaceType: context?.device?.surfaceType,
     }),
@@ -63,6 +65,8 @@ const RoutePersistence: React.FC = () => {
       context?.device?.surfaceType,
       context?.loginState,
       context?.operatorName,
+      context?.permissions,
+      context?.role,
       context?.sessionKind,
     ]
   );

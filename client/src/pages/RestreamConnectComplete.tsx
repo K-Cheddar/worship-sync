@@ -11,7 +11,7 @@ const RestreamConnectComplete = () => {
 
   const status = String(params.get("status") || "").trim().toLowerCase();
   const accountLabel = String(params.get("accountLabel") || "").trim();
-  const returnTo = String(params.get("returnTo") || "/account?tab=integrations").trim();
+  const returnTo = String(params.get("returnTo") || "/account/integrations").trim();
   const message = String(params.get("message") || "").trim();
 
   const wasSuccessful = status === "success";
@@ -22,7 +22,7 @@ const RestreamConnectComplete = () => {
   const detail = wasSuccessful
     ? "Return to WorshipSync. You can close this browser tab."
     : message || "The Restream connection did not finish. Return to WorshipSync and try again.";
-  const returnHref = `#${returnTo.startsWith("/") ? returnTo : "/account?tab=integrations"}`;
+  const returnHref = `#${returnTo.startsWith("/") ? returnTo : "/account/integrations"}`;
 
   return (
     <AuthScreenMain>

@@ -180,7 +180,7 @@ describe("IntegrationsSettingsPanel", () => {
     await waitFor(() => {
       expect(mockGetRestreamConnectAuthorizeUrl).toHaveBeenCalledWith(
         "church-1",
-        "/account?tab=integrations",
+        "/account/integrations",
       );
     });
     expect(openExternalUrl).toHaveBeenCalledWith(
@@ -205,7 +205,7 @@ describe("IntegrationsSettingsPanel", () => {
     await waitFor(() => {
       expect(mockGetRestreamConnectAuthorizeUrl).toHaveBeenCalledWith(
         "church-1",
-        "/account?tab=integrations",
+        "/account/integrations",
       );
     });
 

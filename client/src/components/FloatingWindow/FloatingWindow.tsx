@@ -16,6 +16,14 @@ const TITLE_BAR_HEIGHT = 40;
 const MIN_WIDTH = 200;
 const MIN_HEIGHT = TITLE_BAR_HEIGHT + 60;
 const ANIM_MS = 180;
+const TITLE_BAR_CONTROL_CLASS =
+  "max-md:!min-h-8 max-md:!min-w-8 max-md:p-1 touch-manipulation";
+const BOTTOM_EDGE_RESIZE_CLASS =
+  "absolute bottom-0 left-12 right-12 z-0 h-1 cursor-ns-resize pointer-coarse:h-12";
+const BOTTOM_CORNER_RESIZE_CLASS =
+  "absolute bottom-0 z-0 h-3 w-3 pointer-coarse:h-12 pointer-coarse:w-12";
+const SIDE_EDGE_RESIZE_CLASS =
+  "absolute top-10 bottom-12 z-0 w-1 cursor-ew-resize pointer-coarse:w-12";
 
 export interface FloatingWindowHandle {
   restore: () => void;
@@ -515,11 +523,11 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           className,
         )}
       >
-        {/* Title bar */}
+        {/* Title bar — keep above content and resize handles for reliable close/minimize taps */}
         <div
           onMouseDown={handleTitleMouseDown}
           onTouchStart={handleTitleTouchStart}
-          className="relative z-10 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
+          className="relative z-20 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
         >
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</span>
           <div className="flex shrink-0 items-center gap-1">
@@ -527,6 +535,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
               variant="tertiary"
               svg={isMinimized ? Maximize2 : Minus}
               iconSize="sm"
+              className={TITLE_BAR_CONTROL_CLASS}
               onClick={handleMinimize}
               aria-label={isMinimized ? "Restore window" : "Minimize window"}
             />
@@ -534,6 +543,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
               variant="tertiary"
               svg={X}
               iconSize="sm"
+              className={TITLE_BAR_CONTROL_CLASS}
               onClick={handleClose}
               aria-label="Close window"
             />
@@ -552,19 +562,24 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           </div>
         </div>
 
-        {/* Resize handles — edges and corners */}
+        {/* Resize handles — sides and bottom only (never on the title bar) */}
         {!isMinimized && (
           <>
-            {/* Edges */}
-            <div data-resize-dir="n" className="absolute top-0 left-12 right-12 h-1 cursor-ns-resize pointer-coarse:h-6" {...resizeHandleProps} />
-            <div data-resize-dir="s" className="absolute bottom-0 left-12 right-12 h-1 cursor-ns-resize pointer-coarse:h-6" {...resizeHandleProps} />
-            <div data-resize-dir="w" className="absolute left-0 top-12 bottom-12 w-1 cursor-ew-resize pointer-coarse:w-6" {...resizeHandleProps} />
-            <div data-resize-dir="e" className="absolute right-0 top-12 bottom-12 w-1 cursor-ew-resize pointer-coarse:w-6" {...resizeHandleProps} />
-            {/* Corners */}
-            <div data-resize-dir="nw" className="absolute top-0 left-0 h-3 w-3 cursor-nwse-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
-            <div data-resize-dir="ne" className="absolute top-0 right-0 h-3 w-3 cursor-nesw-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
-            <div data-resize-dir="sw" className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
-            <div data-resize-dir="se" className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
+            <div data-testid="resize-handle-w" data-resize-dir="w" className={cn(SIDE_EDGE_RESIZE_CLASS, "left-0")} {...resizeHandleProps} />
+            <div data-testid="resize-handle-e" data-resize-dir="e" className={cn(SIDE_EDGE_RESIZE_CLASS, "right-0")} {...resizeHandleProps} />
+            <div data-testid="resize-handle-s" data-resize-dir="s" className={BOTTOM_EDGE_RESIZE_CLASS} {...resizeHandleProps} />
+            <div
+              data-testid="resize-handle-sw"
+              data-resize-dir="sw"
+              className={cn(BOTTOM_CORNER_RESIZE_CLASS, "left-0 cursor-nesw-resize")}
+              {...resizeHandleProps}
+            />
+            <div
+              data-testid="resize-handle-se"
+              data-resize-dir="se"
+              className={cn(BOTTOM_CORNER_RESIZE_CLASS, "right-0 cursor-nwse-resize")}
+              {...resizeHandleProps}
+            />
           </>
         )}
       </div>

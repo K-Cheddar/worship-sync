@@ -30,6 +30,7 @@ import {
   getChurchIntegrationsPath,
   normalizeChurchIntegrationsForStorage,
 } from "./server/churchIntegrations.js";
+import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -92,6 +93,15 @@ const COLLECTIONS = {
   workstationDevices: "workstationDevices",
   displayPairings: "displayPairings",
   displayDevices: "displayDevices",
+  teamRosterMembers: "teamRosterMembers",
+  teamPositions: "teamPositions",
+  teams: "teams",
+  teamRoles: "teamRoles",
+  teamQualificationAreas: "teamQualificationAreas",
+  teamQualificationLevels: "teamQualificationLevels",
+  teamSchedules: "teamSchedules",
+  teamIntakeForms: "teamIntakeForms",
+  teamIntakeSubmissions: "teamIntakeSubmissions",
   adminRecoveryRequests: "adminRecoveryRequests",
   securityEvents: "securityEvents",
   emailCodeChallenges: "emailCodeChallenges",
@@ -106,6 +116,7 @@ const hashValue = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 const randomSecret = (bytes = 32) => crypto.randomBytes(bytes).toString("hex");
 const APP_ACCESS_VALUES = new Set(["full", "music", "view"]);
+const TEAM_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
 const DESKTOP_AUTH_PROVIDER_VALUES = new Set(["google", "microsoft"]);
 const DESKTOP_AUTH_STATUS_PENDING = "pending";
 const DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE = "awaiting_exchange";
@@ -118,6 +129,51 @@ const normalizeAppAccess = (value, fallback = "view") => {
     .trim()
     .toLowerCase();
   return APP_ACCESS_VALUES.has(normalized) ? normalized : fallback;
+};
+const normalizeTeamPermission = (value, fallback = "none") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return TEAM_PERMISSION_VALUES.has(normalized) ? normalized : fallback;
+};
+const normalizeTeamScopePermission = (value) => {
+  const normalized = normalizeTeamPermission(value, "none");
+  return normalized === "none" ? "" : normalized;
+};
+const normalizeTeamScopes = (teamScopes) => {
+  if (
+    !teamScopes ||
+    typeof teamScopes !== "object" ||
+    Array.isArray(teamScopes)
+  ) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(teamScopes)
+      .map(([teamId, permission]) => [
+        String(teamId || "").trim(),
+        normalizeTeamScopePermission(permission),
+      ])
+      .filter(([teamId, permission]) => teamId && permission),
+  );
+};
+const normalizeMembershipPermissions = (permissions, role = "member") => {
+  if (role === "admin") {
+    return { teams: "edit", teamScopes: {} };
+  }
+  return {
+    teams: normalizeTeamPermission(permissions?.teams, "none"),
+    teamScopes: normalizeTeamScopes(permissions?.teamScopes),
+  };
+};
+const hasAnyTeamScope = (permissions) =>
+  Object.keys(permissions?.teamScopes || {}).length > 0;
+const hasTeamScope = (permissions, teamId, required = "view") => {
+  const scopedPermission = permissions?.teamScopes?.[teamId];
+  return (
+    scopedPermission === "edit" ||
+    (required === "view" && scopedPermission === "view")
+  );
 };
 const normalizeDesktopAuthProvider = (value) => {
   const normalized = String(value || "")
@@ -313,6 +369,15 @@ const memoryState = {
   workstationDevices: new Map(),
   displayPairings: new Map(),
   displayDevices: new Map(),
+  teamRosterMembers: new Map(),
+  teamPositions: new Map(),
+  teams: new Map(),
+  teamRoles: new Map(),
+  teamQualificationAreas: new Map(),
+  teamQualificationLevels: new Map(),
+  teamSchedules: new Map(),
+  teamIntakeForms: new Map(),
+  teamIntakeSubmissions: new Map(),
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
   emailCodeChallenges: new Map(),
@@ -330,6 +395,15 @@ const collectionMap = {
   [COLLECTIONS.workstationDevices]: memoryState.workstationDevices,
   [COLLECTIONS.displayPairings]: memoryState.displayPairings,
   [COLLECTIONS.displayDevices]: memoryState.displayDevices,
+  [COLLECTIONS.teamRosterMembers]: memoryState.teamRosterMembers,
+  [COLLECTIONS.teamPositions]: memoryState.teamPositions,
+  [COLLECTIONS.teams]: memoryState.teams,
+  [COLLECTIONS.teamRoles]: memoryState.teamRoles,
+  [COLLECTIONS.teamQualificationAreas]: memoryState.teamQualificationAreas,
+  [COLLECTIONS.teamQualificationLevels]: memoryState.teamQualificationLevels,
+  [COLLECTIONS.teamSchedules]: memoryState.teamSchedules,
+  [COLLECTIONS.teamIntakeForms]: memoryState.teamIntakeForms,
+  [COLLECTIONS.teamIntakeSubmissions]: memoryState.teamIntakeSubmissions,
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
@@ -1262,17 +1336,17 @@ const redeemWorkstationPairingFirestore = async (
       .limit(1);
     const querySnap = await transaction.get(pairingQuery);
     if (querySnap.empty) {
-      throw httpError(400, "This workstation pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     const docSnap = querySnap.docs[0];
     const pairingRef = docSnap.ref;
     const pairing = docSnap.data();
     if (pairing.status !== "pending") {
-      throw httpError(400, "This workstation pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     if (new Date(pairing.expiresAt).getTime() < Date.now()) {
       transaction.update(pairingRef, { status: "expired" });
-      throw httpError(400, "This workstation pairing code has expired.");
+      throw httpError(400, "That code expired. Generate a new one.");
     }
     const credential = crypto.randomUUID();
     const deviceId = createId("workstation");
@@ -1313,7 +1387,7 @@ const redeemWorkstationPairingMemory = async (token, platformTypeFromBody) => {
     token,
   );
   if (!pairing || pairing.status !== "pending") {
-    throw httpError(400, "This workstation pairing code is not active.");
+    throw httpError(400, "That code isn't valid. Generate a new one.");
   }
   if (new Date(pairing.expiresAt).getTime() < Date.now()) {
     await setDoc(
@@ -1322,7 +1396,7 @@ const redeemWorkstationPairingMemory = async (token, platformTypeFromBody) => {
       { status: "expired" },
       { merge: true },
     );
-    throw httpError(400, "This workstation pairing code has expired.");
+    throw httpError(400, "That code expired. Generate a new one.");
   }
   const credential = crypto.randomUUID();
   const deviceId = createId("workstation");
@@ -1368,17 +1442,17 @@ const redeemDisplayPairingFirestore = async (token) => {
       .limit(1);
     const querySnap = await transaction.get(pairingQuery);
     if (querySnap.empty) {
-      throw httpError(400, "This display pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     const docSnap = querySnap.docs[0];
     const pairingRef = docSnap.ref;
     const pairing = docSnap.data();
     if (pairing.status !== "pending") {
-      throw httpError(400, "This display pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     if (new Date(pairing.expiresAt).getTime() < Date.now()) {
       transaction.update(pairingRef, { status: "expired" });
-      throw httpError(400, "This display pairing code has expired.");
+      throw httpError(400, "That code expired. Generate a new one.");
     }
     const credential = crypto.randomUUID();
     const deviceId = createId("display");
@@ -1414,7 +1488,7 @@ const redeemDisplayPairingFirestore = async (token) => {
 const redeemDisplayPairingMemory = async (token) => {
   const pairing = await findDocByTokenHash(COLLECTIONS.displayPairings, token);
   if (!pairing || pairing.status !== "pending") {
-    throw httpError(400, "This display pairing code is not active.");
+    throw httpError(400, "That code isn't valid. Generate a new one.");
   }
   if (new Date(pairing.expiresAt).getTime() < Date.now()) {
     await setDoc(
@@ -1423,7 +1497,7 @@ const redeemDisplayPairingMemory = async (token) => {
       { status: "expired" },
       { merge: true },
     );
-    throw httpError(400, "This display pairing code has expired.");
+    throw httpError(400, "That code expired. Generate a new one.");
   }
   const credential = crypto.randomUUID();
   const deviceId = createId("display");
@@ -1529,6 +1603,10 @@ const buildHumanBootstrap = ({
   uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
   role: membership.role,
   appAccess: membership.appAccess || "view",
+  permissions: normalizeMembershipPermissions(
+    membership.permissions,
+    membership.role,
+  ),
   user: {
     uid: user.uid,
     email: user.email,
@@ -1913,6 +1991,7 @@ const createChurchWithRootAdmin = async ({
     userId: uid,
     role: "admin",
     appAccess: "full",
+    permissions: normalizeMembershipPermissions(null, "admin"),
     status: "active",
     createdAt: nowIso(),
     createdByUid: uid,
@@ -2046,6 +2125,10 @@ const acceptInviteMembership = async ({ invite, user }) => {
           userId: user.uid,
           role: invite.role,
           appAccess: invite.appAccess,
+          permissions: normalizeMembershipPermissions(
+            invite.permissions,
+            invite.role,
+          ),
           status: "active",
           createdAt: invite.createdAt || nowIso(),
           createdByUid: invite.createdByUid,
@@ -2118,6 +2201,10 @@ const acceptInviteMembership = async ({ invite, user }) => {
         userId: user.uid,
         role: invite.role,
         appAccess: invite.appAccess,
+        permissions: normalizeMembershipPermissions(
+          latestInvite.permissions,
+          latestInvite.role,
+        ),
         status: "active",
         createdAt: invite.createdAt || nowIso(),
         createdByUid: invite.createdByUid,
@@ -2229,6 +2316,7 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
       transaction.update(membershipRef, {
         role: "member",
         appAccess: normalizeAppAccess(membershipData.appAccess, "full"),
+        permissions: normalizeMembershipPermissions(null, "member"),
       });
       transaction.update(churchRef, {
         adminCount: nextAdminCount,
@@ -2247,6 +2335,7 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
       {
         role: "member",
         appAccess: normalizeAppAccess(membership.appAccess, "full"),
+        permissions: normalizeMembershipPermissions(null, "member"),
       },
       { merge: true },
     );
@@ -2267,7 +2356,12 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
   }
 };
 
-const updateMemberAppAccess = async ({ churchId, userId, appAccess }) => {
+const updateMemberAccessSettings = async ({
+  churchId,
+  userId,
+  appAccess,
+  permissions,
+}) => {
   const membershipId = membershipIdFor({ churchId, userId });
   const db = requireFirestore();
   if (db) {
@@ -2283,7 +2377,7 @@ const updateMemberAppAccess = async ({ churchId, userId, appAccess }) => {
       if (membershipData.status !== "active") {
         throw httpError(400, "Only active members can be updated.");
       }
-      transaction.update(membershipRef, { appAccess });
+      transaction.update(membershipRef, { appAccess, permissions });
     });
   } else {
     const membership = await getDoc(COLLECTIONS.memberships, membershipId);
@@ -2296,7 +2390,7 @@ const updateMemberAppAccess = async ({ churchId, userId, appAccess }) => {
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
-      { appAccess },
+      { appAccess, permissions },
       { merge: true },
     );
   }
@@ -2348,6 +2442,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
           userId: recoveryRequest.requesterUid,
           role: "admin",
           appAccess: "full",
+          permissions: normalizeMembershipPermissions(null, "admin"),
           status: "active",
           createdAt: requestData.createdAt || nowIso(),
           createdByUid: "recovery",
@@ -2385,6 +2480,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
         userId: recoveryRequest.requesterUid,
         role: "admin",
         appAccess: "full",
+        permissions: normalizeMembershipPermissions(null, "admin"),
         status: "active",
         createdAt: nowIso(),
         createdByUid: "recovery",
@@ -2440,6 +2536,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
           userId,
           role: "admin",
           appAccess: "full",
+          permissions: normalizeMembershipPermissions(null, "admin"),
           status: "active",
           createdAt: nowIso(),
           createdByUid: "support",
@@ -2466,6 +2563,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
         userId,
         role: "admin",
         appAccess: "full",
+        permissions: normalizeMembershipPermissions(null, "admin"),
         status: "active",
         createdAt: nowIso(),
         createdByUid: "support",
@@ -2681,6 +2779,45 @@ const requireAdminSession = async (req, churchId) => {
   return bootstrap;
 };
 
+const requireTeamsViewSession = async (req, churchId) => {
+  const bootstrap = await requireHumanSession(req);
+  const teamsPermission = bootstrap.permissions?.teams || "none";
+  if (
+    bootstrap.churchId !== churchId ||
+    (bootstrap.role !== "admin" &&
+      teamsPermission !== "view" &&
+      teamsPermission !== "edit" &&
+      !hasAnyTeamScope(bootstrap.permissions))
+  ) {
+    throw httpError(403, "Teams access required");
+  }
+  return bootstrap;
+};
+
+const requireTeamsEditSession = async (req, churchId) => {
+  const bootstrap = await requireHumanSession(req);
+  if (
+    bootstrap.churchId !== churchId ||
+    (bootstrap.role !== "admin" && bootstrap.permissions?.teams !== "edit")
+  ) {
+    throw httpError(403, "Teams edit access required");
+  }
+  return bootstrap;
+};
+
+const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
+  const bootstrap = await requireHumanSession(req);
+  if (
+    bootstrap.churchId !== churchId ||
+    (bootstrap.role !== "admin" &&
+      bootstrap.permissions?.teams !== "edit" &&
+      !hasTeamScope(bootstrap.permissions, teamId, "edit"))
+  ) {
+    throw httpError(403, "Teams edit access required");
+  }
+  return bootstrap;
+};
+
 const requireRealtimeDatabase = () => {
   if (!firebaseRuntime?.rtdb) {
     throw httpError(503, "Realtime Database is not configured on the server.");
@@ -2726,6 +2863,9 @@ export const seedActiveHumanBearerForServerTests = async ({
   email,
   churchId,
   churchName = "Human bearer test church",
+  role = "admin",
+  appAccess = "full",
+  permissions,
 }) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
     throw new Error(
@@ -2759,8 +2899,9 @@ export const seedActiveHumanBearerForServerTests = async ({
       membershipId,
       churchId,
       userId,
-      role: "admin",
-      appAccess: "full",
+      role,
+      appAccess,
+      permissions: normalizeMembershipPermissions(permissions, role),
       status: "active",
       createdAt: nowIso(),
       createdByUid: userId,
@@ -2791,6 +2932,29 @@ export const seedActiveHumanBearerForServerTests = async ({
   });
   return { humanApiToken, churchId, membershipId };
 };
+
+const teamsAuthHandlers = createTeamsAuthHandlers({
+  COLLECTIONS,
+  addSecurityEvent,
+  assertCsrf,
+  createId,
+  deleteDoc,
+  enforceRateLimit,
+  getClientIp,
+  getDoc,
+  hashValue,
+  httpError,
+  nowIso,
+  queryDocs,
+  randomSecret,
+  readChurchPublicBoardHeaderLogoUrl,
+  requireAdminSession,
+  requireTeamsEditSession,
+  requireTeamsEditForTeamSession,
+  requireTeamsViewSession,
+  requireFirestore,
+  setDoc,
+});
 
 export const authHandlers = {
   async getAuthMe(req, res) {
@@ -3518,10 +3682,7 @@ export const authHandlers = {
         }
         const fingerprintHash = readDeviceFingerprint(req.body);
         if (fingerprintHash !== desktopRequest.fingerprintHash) {
-          throw httpError(
-            403,
-            "This resend request is not valid for this device.",
-          );
+          throw httpError(403, "Please sign in again.");
         }
         const storedUser = await getDoc(
           COLLECTIONS.users,
@@ -3694,32 +3855,20 @@ export const authHandlers = {
 
       const challenge = await getEmailChallenge(pendingAuthId);
       if (!challenge) {
-        throw httpError(
-          400,
-          "This sign-in code has expired. Try signing in again.",
-        );
+        throw httpError(400, "Please sign in again.");
       }
       if (new Date(challenge.expiresAt).getTime() < Date.now()) {
         await deleteDoc(COLLECTIONS.emailCodeChallenges, pendingAuthId);
-        throw httpError(
-          400,
-          "This sign-in code has expired. Try signing in again.",
-        );
+        throw httpError(400, "Please sign in again.");
       }
       if (challenge.lockedAt) {
-        throw httpError(
-          400,
-          "This sign-in code has been locked after too many attempts. Sign in again to get a new code.",
-        );
+        throw httpError(400, "Please sign in again.");
       }
       if (challenge.codeHash !== hashValue(code)) {
         const { shouldLock } =
           await recordFailedEmailChallengeAttempt(challenge);
         if (shouldLock) {
-          throw httpError(
-            400,
-            "This sign-in code has been locked after too many attempts. Sign in again to get a new code.",
-          );
+          throw httpError(400, "Please sign in again.");
         }
         throw httpError(400, "That code is not valid.");
       }
@@ -3985,6 +4134,10 @@ export const authHandlers = {
           }
           return {
             ...membership,
+            permissions: normalizeMembershipPermissions(
+              membership.permissions,
+              membership.role,
+            ),
             user: user
               ? {
                   ...user,
@@ -4126,6 +4279,7 @@ export const authHandlers = {
     }
   },
 
+  ...teamsAuthHandlers,
   async createInvite(req, res) {
     try {
       await assertCsrf(req);
@@ -4133,6 +4287,10 @@ export const authHandlers = {
       const email = normalizeEmail(req.body?.email);
       const role = req.body?.role || "admin";
       const appAccess = req.body?.appAccess || "full";
+      const permissions = normalizeMembershipPermissions(
+        req.body?.permissions,
+        role,
+      );
       if (!email) {
         throw httpError(400, "Email is required.");
       }
@@ -4152,6 +4310,7 @@ export const authHandlers = {
         email,
         role,
         appAccess,
+        permissions,
         status: "pending",
         tokenHash: hashValue(rawToken),
         expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
@@ -4467,10 +4626,15 @@ export const authHandlers = {
       if (targetMembership.role === "admin" && appAccess !== "full") {
         throw httpError(400, "Admins must keep full access.");
       }
-      await updateMemberAppAccess({
+      const permissions = normalizeMembershipPermissions(
+        req.body?.permissions,
+        targetMembership.role,
+      );
+      await updateMemberAccessSettings({
         churchId: req.params.churchId,
         userId: req.params.userId,
         appAccess,
+        permissions,
       });
       await addSecurityEvent({
         type: "member_access_updated",
@@ -4478,6 +4642,7 @@ export const authHandlers = {
         userId: admin.user.uid,
         targetUserId: req.params.userId,
         appAccess,
+        permissions,
       });
       return res.json({ success: true });
     } catch (error) {
@@ -5037,16 +5202,13 @@ export const authHandlers = {
           : COLLECTIONS.displayPairings;
       const pairing = await findDocByTokenHash(collection, token);
       if (!pairing || pairing.churchId !== req.params.churchId) {
-        throw httpError(
-          400,
-          "That pairing code was not found for this church.",
-        );
+        throw httpError(400, "That code isn't valid. Generate a new one.");
       }
       if (pairing.status !== "pending") {
-        throw httpError(400, "This pairing code is no longer active.");
+        throw httpError(400, "That code isn't valid. Generate a new one.");
       }
       if (new Date(pairing.expiresAt).getTime() < Date.now()) {
-        throw httpError(400, "This pairing code has expired.");
+        throw httpError(400, "That code expired. Generate a new one.");
       }
       const church = await getChurchById(req.params.churchId);
       if (!church) {

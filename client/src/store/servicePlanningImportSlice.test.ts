@@ -86,6 +86,43 @@ describe("servicePlanningImportSlice", () => {
     expect(state.outlinePreviewExpanded).toBe(true);
   });
 
+  it("resolves the pending sync item for the active phase and sublabel", () => {
+    const store = createStore();
+
+    store.dispatch(startServicePlanningSync({ mode: "both" }));
+    store.dispatch(
+      setServicePlanningSyncPlanInfo({
+        totalSteps: 2,
+        syncItems: [
+          {
+            phase: "outline",
+            label: "Welcome Song",
+            sublabel: "Welcome",
+            status: "pending",
+          },
+          {
+            phase: "overlays",
+            label: "Welcome Song",
+            status: "pending",
+          },
+        ],
+      }),
+    );
+    store.dispatch(
+      setServicePlanningSyncActiveStep({
+        phase: "overlays",
+        activeLabel: "Welcome Song",
+      }),
+    );
+    store.dispatch(
+      advanceServicePlanningSyncStep({ resolvedStatus: "updated" }),
+    );
+
+    const items = store.getState().servicePlanningImport.sync.syncItems;
+    expect(items[0]?.status).toBe("pending");
+    expect(items[1]?.status).toBe("updated");
+  });
+
   it("tracks a staged sync run from start through completion", () => {
     const store = createStore();
 
@@ -104,7 +141,9 @@ describe("servicePlanningImportSlice", () => {
       }),
     );
     store.dispatch(recordServicePlanningSyncResult({ outlineInserted: 1 }));
-    store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
+    store.dispatch(
+      advanceServicePlanningSyncStep({ resolvedStatus: "updated" }),
+    );
     store.dispatch(setServicePlanningSyncPhase("overlays"));
     store.dispatch(
       setServicePlanningSyncActiveStep({
@@ -118,7 +157,9 @@ describe("servicePlanningImportSlice", () => {
         overlaysCreated: 1,
       }),
     );
-    store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
+    store.dispatch(
+      advanceServicePlanningSyncStep({ resolvedStatus: "updated" }),
+    );
     store.dispatch(completeServicePlanningSync());
 
     const state = store.getState()

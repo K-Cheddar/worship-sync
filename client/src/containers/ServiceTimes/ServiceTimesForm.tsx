@@ -24,6 +24,7 @@ import {
 } from "../../types";
 import Toggle from "../../components/Toggle/Toggle";
 import TimePicker from "../../components/TimePicker/TimePicker";
+import DateTimePicker from "@/components/ui/DateTimePicker";
 import { ordinals, weekdays } from "./utils";
 import { cn } from "@/utils/cnHelper";
 import StreamPreview from "./StreamPreview";
@@ -194,13 +195,12 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
           />
 
           {recurrence === "one_time" && (
-            <Input
+            <DateTimePicker
               className={stackedFieldClass}
               label="Date & Time"
               labelClassName={labelClassName}
-              type="datetime-local"
               value={dateTimeISO}
-              onChange={(v) => setDateTimeISO(String(v))}
+              onChange={setDateTimeISO}
             />
           )}
 

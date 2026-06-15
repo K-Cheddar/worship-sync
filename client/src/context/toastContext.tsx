@@ -3,11 +3,14 @@ import React, {
   useContext,
   useState,
   useCallback,
+  useEffect,
   useMemo,
 } from "react";
 import { createPortal } from "react-dom";
 import ToastContainer, { ToastData } from "../components/Toast/ToastContainer";
 import { ToastPosition, ToastVariant } from "../components/Toast/Toast";
+import { registerAuthErrorHandler } from "../api/authErrorBus";
+import { showAuthErrorToast } from "../utils/apiErrorToast";
 
 type ToastContextType = {
   showToast: (
@@ -67,6 +70,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     []
   );
+
+  // Any action that 401s (via the central API layer) shows the refresh toast,
+  // even if the call site doesn't handle the error itself.
+  useEffect(() => {
+    return registerAuthErrorHandler(() => showAuthErrorToast(showToast));
+  }, [showToast]);
 
   const toastPortal = useMemo(
     () =>

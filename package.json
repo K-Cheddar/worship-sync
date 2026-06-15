@@ -5,7 +5,7 @@
   "scripts": {
     "start": "tsx server.js",
     "test": "npm run test:server",
-    "test:server": "node --import tsx --test server/boardService.test.js server/authResponseSanitize.test.js server/authSessionRecovery.test.js server/inviteMembershipGuards.test.js server/churchBranding.test.js server/authDesktopBroker.test.js server/authInviteRevoke.test.js server/humanApiBearerAuth.test.js",
+    "test:server": "node --import tsx --test server/boardService.test.js server/authResponseSanitize.test.js server/authSessionRecovery.test.js server/inviteMembershipGuards.test.js server/churchBranding.test.js server/authDesktopBroker.test.js server/authInviteRevoke.test.js server/humanApiBearerAuth.test.js server/teamsApi.test.js",
     "migrate:auth": "node scripts/migrate-auth.js",
     "migrate:auth:dry-run": "node scripts/migrate-auth.js --dry-run",
     "migrate:rtdb": "node scripts/migrate-rtdb.js",
@@ -13,7 +13,7 @@
     "backfill:song-artists": "node scripts/backfill-song-artists.js",
     "backfill:song-artists:dry-run": "node scripts/backfill-song-artists.js --dry-run",
     "checks": "npm run test:server && npm run test --prefix client && npm run lint:check --prefix client",
-    "heroku-postbuild": "cd client && npm ci && npm run build",
+    "heroku-postbuild": "cd client && npm ci && npm run build:heroku",
     "client": "cd client && npm run dev",
     "server": "npx nodemon server.js",
     "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",

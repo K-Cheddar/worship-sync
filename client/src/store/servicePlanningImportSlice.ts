@@ -194,11 +194,20 @@ export const servicePlanningImportSlice = createSlice({
     },
     advanceServicePlanningSyncStep: (
       state,
-      action: PayloadAction<{ resolvedStatus: Exclude<ServicePlanningSyncItemStatus, "pending" | "already-present"> }>,
+      action: PayloadAction<{
+        resolvedStatus: Exclude<
+          ServicePlanningSyncItemStatus,
+          "pending" | "already-present"
+        >;
+      }>,
     ) => {
       if (state.sync.activeLabel) {
         const idx = state.sync.syncItems.findIndex(
-          (item) => item.status === "pending" && item.label === state.sync.activeLabel,
+          (item) =>
+            item.status === "pending" &&
+            item.phase === state.sync.phase &&
+            item.label === state.sync.activeLabel &&
+            (item.sublabel || "") === (state.sync.activeSublabel || ""),
         );
         if (idx !== -1) {
           state.sync.syncItems[idx].status = action.payload.resolvedStatus;
@@ -270,11 +279,17 @@ export const servicePlanningImportSlice = createSlice({
       };
     },
     resetServicePlanningImportState: () => initialServicePlanningImportState,
-    refreshPreviewSongMatches: (state, action: PayloadAction<ServiceItem[]>) => {
+    refreshPreviewSongMatches: (
+      state,
+      action: PayloadAction<ServiceItem[]>,
+    ) => {
       if (!state.preview) return;
       const songs = action.payload.filter((item) => item.type === "song");
       for (const lineItem of state.preview.lineItems) {
-        if (lineItem.outlineItemType === "song" && !lineItem.matchedLibraryItem) {
+        if (
+          lineItem.outlineItemType === "song" &&
+          !lineItem.matchedLibraryItem
+        ) {
           const match = findBestServicePlanningSongMatch(
             lineItem.cleanedTitle || cleanPlanningTitle(lineItem.title),
             songs,
@@ -283,8 +298,14 @@ export const servicePlanningImportSlice = createSlice({
         }
       }
       for (const candidate of state.preview.outlineCandidates) {
-        if (candidate.outlineItemType === "song" && !candidate.matchedLibraryItem) {
-          const match = findBestServicePlanningSongMatch(candidate.cleanedTitle, songs);
+        if (
+          candidate.outlineItemType === "song" &&
+          !candidate.matchedLibraryItem
+        ) {
+          const match = findBestServicePlanningSongMatch(
+            candidate.cleanedTitle,
+            songs,
+          );
           if (match) candidate.matchedLibraryItem = match;
         }
       }

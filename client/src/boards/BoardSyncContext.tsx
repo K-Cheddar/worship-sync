@@ -14,6 +14,7 @@ import { getApiBasePath } from "../utils/environment";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { BoardConnectionStatus } from "./useBoardData";
 import { createBoardRequestHeaders } from "./api";
+import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "../utils/authUserMessages";
 
 const BOARD_SESSION_TIMEOUT_MS = 15000;
 const getRetryDelay = (attempt: number) => Math.min(30000, 5000 * 2 ** attempt);
@@ -44,7 +45,7 @@ const getBoardSession = async () => {
     );
     if (!bootstrapResponse.ok) {
       if (bootstrapResponse.status === 401) {
-        throw new Error("Sign in again to open discussion boards.");
+        throw new Error(AUTH_SIGN_IN_AGAIN_MESSAGE);
       }
       throw new Error("Could not prepare discussion boards.");
     }

@@ -40,7 +40,10 @@ import type {
   ChurchBrandColor,
   ChurchBranding,
   ChurchLogoAsset,
+  MemberPermissions,
+  TeamsPermission,
 } from "../../api/authTypes";
+import { teamsPageAccessOptions } from "../Account/accountTeamsAccess";
 import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
@@ -220,6 +223,7 @@ const cleanupLogoAssets = async (assets: Array<ChurchLogoAsset | null>) => {
 };
 
 type InviteAccessOption = "admin" | "full" | "music" | "view";
+type TeamsAccessOption = TeamsPermission;
 type WorkstationAccessOption = "full" | "music" | "view";
 type DisplaySurfaceOption =
   | "projector"
@@ -489,6 +493,8 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
   const { showApiError } = useApiErrorToast();
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteAccess, setInviteAccess] = useState<InviteAccessOption>("full");
+  const [inviteTeamsAccess, setInviteTeamsAccess] =
+    useState<TeamsAccessOption>("none");
   const [inviteEmailError, setInviteEmailError] = useState("");
   const [isSending, setIsSending] = useState(false);
 
@@ -497,6 +503,9 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     const selectedInviteOption =
       inviteOptions.find((option) => option.value === inviteAccess) ||
       inviteOptions[0];
+    const permissions: MemberPermissions = {
+      teams: inviteAccess === "admin" ? "edit" : inviteTeamsAccess,
+    };
     if (!email) {
       setInviteEmailError("Enter an email before sending the invite");
       return;
@@ -508,6 +517,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
         email,
         role: selectedInviteOption.role,
         appAccess: selectedInviteOption.appAccess,
+        permissions,
       });
       setInviteEmail("");
       await onInvited();
@@ -523,7 +533,15 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     } finally {
       setIsSending(false);
     }
-  }, [churchId, inviteAccess, inviteEmail, onInvited, showApiError, showToast]);
+  }, [
+    churchId,
+    inviteAccess,
+    inviteEmail,
+    inviteTeamsAccess,
+    onInvited,
+    showApiError,
+    showToast,
+  ]);
 
   return (
     <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
@@ -556,6 +574,21 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
               setInviteAccess(value as InviteAccessOption)
             }
             options={inviteSelectOptions}
+            selectClassName={cn("mt-1 w-full", ACCOUNT_CONTROL_SELECT_CLASSNAME)}
+          />
+        </div>
+        <div className="min-w-0 flex-1 basis-[min(100%,10rem)] md:basis-0">
+          <Select
+            className="w-full"
+            id="invite-teams-access"
+            label="Global Teams access"
+            labelClassName="text-gray-200"
+            value={inviteAccess === "admin" ? "edit" : inviteTeamsAccess}
+            onChange={(value) =>
+              setInviteTeamsAccess(value as TeamsAccessOption)
+            }
+            options={teamsPageAccessOptions}
+            disabled={inviteAccess === "admin"}
             selectClassName={cn("mt-1 w-full", ACCOUNT_CONTROL_SELECT_CLASSNAME)}
           />
         </div>

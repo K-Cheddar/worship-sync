@@ -56,7 +56,7 @@ import {
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
-import type { ChurchBranding } from "../api/authTypes";
+import type { ChurchBranding, MemberPermissions } from "../api/authTypes";
 
 import {
   BibleDisplayInfo,
@@ -65,7 +65,11 @@ import {
 } from "../types";
 import { ActionCreators } from "redux-undo";
 import {
+  AUTH_SIGN_IN_AGAIN_MESSAGE,
+  AUTH_VERIFY_DEVICE_MESSAGE,
+  getDesktopSignInErrorMessage,
   getForgotPasswordErrorMessage,
+  getResendEmailCodeErrorMessage,
   getSignInFlowErrorMessage,
   getVerifyEmailCodeErrorMessage,
   SIGN_IN_UNEXPECTED_RESPONSE,
@@ -147,6 +151,7 @@ function getPresenceSurface(pathname: string): "controller" | "display" | null {
     pathname.startsWith("/overlay-controller") ||
     pathname.startsWith("/board-controller") ||
     pathname.startsWith("/credits-editor") ||
+    pathname.startsWith("/teams") ||
     pathname.startsWith("/boards/controller") ||
     pathname === "/home" ||
     pathname.startsWith("/account")
@@ -380,6 +385,11 @@ type GlobalInfoContextType = {
   hostId: string;
   activeInstances: Instance[];
   access: AccessType;
+  permissions: MemberPermissions;
+  canViewTeams: boolean;
+  canEditTeams: boolean;
+  canViewTeam?: (teamId: string) => boolean;
+  canEditTeam?: (teamId: string) => boolean;
   churchId: string;
   churchName: string;
   churchStatus: string;
@@ -476,6 +486,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
   const [access, setAccess] = useState<AccessType>("full");
+  const [permissions, setPermissions] = useState<MemberPermissions>({
+    teams: "none",
+  });
   const [churchId, setChurchId] = useState("");
   const [churchName, setChurchName] = useState("");
   const [churchStatus, setChurchStatus] = useState("active");
@@ -503,6 +516,21 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [humanAuthDisplayName, setHumanAuthDisplayName] = useState("");
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
+  const canEditTeams = role === "admin" || permissions.teams === "edit";
+  const canEditTeam = useCallback(
+    (teamId: string) =>
+      canEditTeams || permissions.teamScopes?.[teamId] === "edit",
+    [canEditTeams, permissions.teamScopes],
+  );
+  const canViewTeam = useCallback(
+    (teamId: string) =>
+      canEditTeam(teamId) || permissions.teamScopes?.[teamId] === "view",
+    [canEditTeam, permissions.teamScopes],
+  );
+  const hasScopedTeamsAccess =
+    Object.keys(permissions.teamScopes || {}).length > 0;
+  const canViewTeams =
+    canEditTeams || permissions.teams === "view" || hasScopedTeamsAccess;
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
@@ -515,6 +543,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
+  const presentationRemintAttemptsRef = useRef(0);
   const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
@@ -567,6 +596,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
     churchIntegrationsRemintAttemptsRef.current = 0;
+    presentationRemintAttemptsRef.current = 0;
     hasSeenRealtimeConnectedRef.current = false;
     wasRealtimeConnectedRef.current = false;
   }, [sharedDataSessionScope]);
@@ -678,6 +708,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setDatabase("");
       setUploadPreset("bpqu4ma5");
       setAccess("full");
+      setPermissions({ teams: "none" });
       setChurchId("");
       setChurchName("");
       setChurchStatus("active");
@@ -727,6 +758,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setDatabase(bootstrap.database || "demo");
     setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
     setAccess((bootstrap.appAccess as AccessType) || "view");
+    setPermissions(bootstrap.permissions || { teams: "none" });
     setChurchId(bootstrap.churchId || "");
     setChurchName(bootstrap.churchName?.trim() || "");
     setChurchStatus(bootstrap.churchStatus || "active");
@@ -1262,11 +1294,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             );
             setPendingEmailVerificationId(restoredSession.pendingAuthId);
           } else if (restoredSession.requiresEmailCode) {
-            setAuthError("Verify this device to continue.");
+            setAuthError(AUTH_VERIFY_DEVICE_MESSAGE);
           } else if (restoredSession.requiresEmailCode === false) {
-            setAuthError(
-              "There is no active sign-in code for this device. Sign in again to receive a new code.",
-            );
+            setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
           }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
         } catch (error) {
@@ -1277,7 +1307,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           }
 
           console.error("Auth session restore failed:", error);
-          setAuthError("Could not restore your session.");
+          setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
         }
       } catch (error) {
@@ -1477,8 +1507,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               !!instance.lastActive &&
               Boolean(
                 instance.isOnController ||
-                  instance.presenceSurface === "display" ||
-                  instance.sessionKind === "display"
+                instance.presenceSurface === "display" ||
+                instance.sessionKind === "display"
               ) &&
               now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
           );
@@ -2036,11 +2066,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           setLoginState("idle");
           return false;
         }
-        setAuthError(
-          error instanceof AuthApiError
-            ? error.message
-            : "Could not finish sign-in. Try again.",
-        );
+        setAuthError(getDesktopSignInErrorMessage(error));
         setLoginState("error");
         return false;
       }
@@ -2116,7 +2142,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       const desktopResend =
         !user && isElectron() ? getPendingDesktopEmailResendState() : null;
       if (!user && !desktopResend) {
-        setAuthError("Sign in again to continue.");
+        setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
         return {};
       }
 
@@ -2163,11 +2189,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           );
           return {};
         }
-        setAuthError(
-          error instanceof AuthApiError
-            ? error.message
-            : "Could not resend the code. Try again."
-        );
+        setAuthError(getResendEmailCodeErrorMessage(error));
         return {};
       }
     },
@@ -2397,6 +2419,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       hostId,
       activeInstances,
       access,
+      permissions,
+      canViewTeams,
+      canEditTeams,
+      canViewTeam,
+      canEditTeam,
       churchId,
       churchName,
       churchStatus,
@@ -2449,6 +2476,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       hostId,
       activeInstances,
       access,
+      permissions,
+      canViewTeams,
+      canEditTeams,
+      canViewTeam,
+      canEditTeam,
       churchId,
       churchName,
       churchStatus,

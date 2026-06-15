@@ -174,7 +174,7 @@ describe("HistorySuggestField", () => {
       expect(onRemove).toHaveBeenCalledWith("Alice");
     });
 
-    it("shows suggestions sorted alphabetically", () => {
+    it("shows suggestions sorted alphabetically when empty", () => {
       const unsorted = ["Zara", "Alice", "Molly"];
       const Wrapper = () => {
         const [value, setValue] = useState("");
@@ -196,6 +196,32 @@ describe("HistorySuggestField", () => {
         "Alice",
         "Molly",
         "Zara",
+      ]);
+    });
+
+    it("ranks prefix and word-start matches before substring matches", () => {
+      const history = ["Card", "Derrick", "John Davis"];
+      const Wrapper = () => {
+        const [value, setValue] = useState("d");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={history}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      const input = screen.getByRole("textbox", { name: /Name/i });
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: "d" } });
+      const options = screen.getAllByRole("option");
+      expect(options.map((o) => o.textContent?.trim())).toEqual([
+        "Derrick",
+        "John Davis",
+        "Card",
       ]);
     });
   });

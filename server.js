@@ -654,6 +654,146 @@ app.post(
   "/api/churches/:churchId/integrations",
   authHandlers.updateChurchIntegrations,
 );
+app.get(
+  "/api/churches/:churchId/teams/bootstrap",
+  authHandlers.getTeamsBootstrap,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/forms",
+  authHandlers.createTeamIntakeForm,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/forms/:formId",
+  authHandlers.updateTeamIntakeForm,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/forms/:formId/link",
+  authHandlers.getTeamIntakeFormLink,
+);
+app.post(
+  "/api/churches/:churchId/team-intake/submissions/:submissionId",
+  authHandlers.updateTeamIntakeSubmission,
+);
+app.get("/api/team-intake/preview", authHandlers.getTeamIntakePreview);
+app.post("/api/team-intake/submit", authHandlers.submitTeamIntake);
+app.post(
+  "/api/churches/:churchId/team-roster-members",
+  authHandlers.createTeamRosterMember,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId",
+  authHandlers.updateTeamRosterMember,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId/archive",
+  authHandlers.archiveTeamRosterMember,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId/delete",
+  authHandlers.deleteTeamRosterMember,
+);
+app.post("/api/churches/:churchId/team-positions", authHandlers.createTeamPosition);
+// Registered before the :positionId route so "reorder" is not read as a positionId.
+app.post(
+  "/api/churches/:churchId/team-positions/reorder",
+  authHandlers.reorderTeamPositions,
+);
+app.post(
+  "/api/churches/:churchId/team-positions/:positionId",
+  authHandlers.updateTeamPosition,
+);
+app.post(
+  "/api/churches/:churchId/team-positions/:positionId/archive",
+  authHandlers.archiveTeamPosition,
+);
+app.post(
+  "/api/churches/:churchId/team-positions/:positionId/delete",
+  authHandlers.deleteTeamPosition,
+);
+app.post("/api/churches/:churchId/team-roles", authHandlers.createTeamRole);
+app.post(
+  "/api/churches/:churchId/team-roles/:roleId",
+  authHandlers.updateTeamRole,
+);
+app.post(
+  "/api/churches/:churchId/team-roles/:roleId/archive",
+  authHandlers.archiveTeamRole,
+);
+app.post(
+  "/api/churches/:churchId/team-roles/:roleId/delete",
+  authHandlers.deleteTeamRole,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-areas",
+  authHandlers.createTeamQualificationArea,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-areas/:areaId",
+  authHandlers.updateTeamQualificationArea,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-areas/:areaId/archive",
+  authHandlers.archiveTeamQualificationArea,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-areas/:areaId/delete",
+  authHandlers.deleteTeamQualificationArea,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-levels",
+  authHandlers.createTeamQualificationLevel,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-levels/:levelId",
+  authHandlers.updateTeamQualificationLevel,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-levels/:levelId/archive",
+  authHandlers.archiveTeamQualificationLevel,
+);
+app.post(
+  "/api/churches/:churchId/team-qualification-levels/:levelId/delete",
+  authHandlers.deleteTeamQualificationLevel,
+);
+app.post("/api/churches/:churchId/teams", authHandlers.createTeam);
+app.post("/api/churches/:churchId/teams/:teamId", authHandlers.updateTeam);
+app.post(
+  "/api/churches/:churchId/teams/:teamId/archive",
+  authHandlers.archiveTeam,
+);
+app.post(
+  "/api/churches/:churchId/teams/:teamId/delete",
+  authHandlers.deleteTeam,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules",
+  authHandlers.createTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId",
+  authHandlers.updateTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/archive",
+  authHandlers.archiveTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/delete",
+  authHandlers.deleteTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignments",
+  authHandlers.updateTeamScheduleAssignment,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/attendance",
+  authHandlers.updateTeamScheduleAttendance,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/link",
+  authHandlers.getTeamSchedulePublicLink,
+);
+app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.post(
   "/api/churches/:churchId/invites/:inviteId/revoke",
