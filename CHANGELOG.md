@@ -1,3 +1,20 @@
+# [2.11.0](https://github.com/K-Cheddar/worship-sync/compare/v2.10.2...v2.11.0) (2026-06-15)
+
+
+### Bug Fixes
+
+* address Qodo teams scheduling feedback ([fc9d36c](https://github.com/K-Cheddar/worship-sync/commit/fc9d36cb90bb733b82402293df16dc863dcbd356))
+* Fixing multiple bugs ([1e10f17](https://github.com/K-Cheddar/worship-sync/commit/1e10f1736a3785be349adb063372a69bfe81572d))
+* Leaked auth error handler ([370f2a7](https://github.com/K-Cheddar/worship-sync/commit/370f2a70774d5e9f243ecc786b1ac67bf5d542f8))
+* preserve public schedule team positions ([55a33e3](https://github.com/K-Cheddar/worship-sync/commit/55a33e36a7024c9b730d289cebade972a25f7a3d))
+* Redundant nested ToastProviders ([f9ca8bd](https://github.com/K-Cheddar/worship-sync/commit/f9ca8bdab102c1ac54b4f232f99f86774ec08b2e))
+* Teams API errors lack next steps ([14100e9](https://github.com/K-Cheddar/worship-sync/commit/14100e949737e52554e7309360fa15d116ae1cc3))
+
+
+### Features
+
+* Adding Teams Scheduling ([f7b2b7a](https://github.com/K-Cheddar/worship-sync/commit/f7b2b7a6b0bff24a0a9e56160d16266a1ee09a8c))
+
 ## [2.10.2](https://github.com/K-Cheddar/worship-sync/compare/v2.10.1...v2.10.2) (2026-06-12)
 
 
