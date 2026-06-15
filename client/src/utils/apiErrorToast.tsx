@@ -1,5 +1,6 @@
 import Button from "../components/Button/Button";
 import { AuthApiError } from "../api/auth";
+import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "./authUserMessages";
 import type { ToastData } from "../components/Toast/ToastContainer";
 import type { ToastVariant } from "../components/Toast/Toast";
 
@@ -12,8 +13,7 @@ export const isAuthApiError = (error: unknown): error is AuthApiError =>
   error instanceof AuthApiError &&
   (error.status === 401 || error.status === 403);
 
-const AUTH_ERROR_TOAST_MESSAGE =
-  "Authentication required — refresh the page to continue.";
+const AUTH_ERROR_TOAST_MESSAGE = AUTH_SIGN_IN_AGAIN_MESSAGE;
 
 let authErrorToastVisible = false;
 
@@ -25,7 +25,7 @@ export const isAuthFailureMessage = (message: string) => {
   const normalized = message.trim().toLowerCase();
   return (
     normalized.includes("authentication required") ||
-    message.trim() === AUTH_ERROR_TOAST_MESSAGE
+    message.trim() === AUTH_SIGN_IN_AGAIN_MESSAGE
   );
 };
 

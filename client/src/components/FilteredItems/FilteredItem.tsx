@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LayoutList, Plus, Check, Trash2, WholeWord } from "lucide-react";
 import Button from "../Button/Button";
 import { ServiceItem } from "../../types";
@@ -28,7 +28,7 @@ const FilteredItem = ({
   item,
   addItemToList,
   setItemToBeDeleted,
-  showWords: _showWords,
+  showWords,
   searchValue,
   updateShowWords,
   artistName,
@@ -36,14 +36,8 @@ const FilteredItem = ({
   onViewSongSections,
 }: FilteredItemProps) => {
   const [justAdded, setJustAdded] = useState(false);
-  const [showWords, setShowWords] = useState(_showWords);
-
-  useEffect(() => {
-    setShowWords(_showWords);
-  }, [_showWords]);
 
   const _updateShowWords = () => {
-    setShowWords(!showWords);
     updateShowWords(!showWords, index);
   };
 
@@ -153,7 +147,7 @@ const FilteredItem = ({
             "px-4 text-sm text-gray-300 transition-all",
             showWordsSection
               ? "max-h-32 overflow-y-auto border-t-2 border-white/10 py-2"
-              : "max-h-0",
+              : "max-h-0 overflow-hidden",
           )}
         />
       </div>

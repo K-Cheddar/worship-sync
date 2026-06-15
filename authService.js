@@ -141,7 +141,11 @@ const normalizeTeamScopePermission = (value) => {
   return normalized === "none" ? "" : normalized;
 };
 const normalizeTeamScopes = (teamScopes) => {
-  if (!teamScopes || typeof teamScopes !== "object" || Array.isArray(teamScopes)) {
+  if (
+    !teamScopes ||
+    typeof teamScopes !== "object" ||
+    Array.isArray(teamScopes)
+  ) {
     return {};
   }
   return Object.fromEntries(
@@ -969,10 +973,7 @@ const issueDesktopAuthExchangeCode = async (desktopAuthId) =>
       await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
     );
     if (!request || request.status !== DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
-      throw httpError(
-        409,
-        "This desktop sign-in request is not ready for confirmation.",
-      );
+      throw httpError(409, "Sign-in timed out. Try again.");
     }
     const exchangeExpiresAtMs = request.exchangeCodeExpiresAt
       ? new Date(request.exchangeCodeExpiresAt).getTime()
@@ -1014,13 +1015,10 @@ const readDesktopAuthRequestForSecret = async ({
     await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
   );
   if (!request) {
-    throw httpError(
-      404,
-      "This desktop sign-in request was not found. Start again in WorshipSync.",
-    );
+    throw httpError(404, "Sign-in timed out. Try again.");
   }
   if (request.secretHash !== hashValue(desktopAuthSecret)) {
-    throw httpError(403, "This desktop sign-in request is not valid.");
+    throw httpError(403, "Sign-in timed out. Try again.");
   }
   return request;
 };
@@ -1332,17 +1330,17 @@ const redeemWorkstationPairingFirestore = async (
       .limit(1);
     const querySnap = await transaction.get(pairingQuery);
     if (querySnap.empty) {
-      throw httpError(400, "This workstation pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     const docSnap = querySnap.docs[0];
     const pairingRef = docSnap.ref;
     const pairing = docSnap.data();
     if (pairing.status !== "pending") {
-      throw httpError(400, "This workstation pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     if (new Date(pairing.expiresAt).getTime() < Date.now()) {
       transaction.update(pairingRef, { status: "expired" });
-      throw httpError(400, "This workstation pairing code has expired.");
+      throw httpError(400, "That code expired. Generate a new one.");
     }
     const credential = crypto.randomUUID();
     const deviceId = createId("workstation");
@@ -1383,7 +1381,7 @@ const redeemWorkstationPairingMemory = async (token, platformTypeFromBody) => {
     token,
   );
   if (!pairing || pairing.status !== "pending") {
-    throw httpError(400, "This workstation pairing code is not active.");
+    throw httpError(400, "That code isn't valid. Generate a new one.");
   }
   if (new Date(pairing.expiresAt).getTime() < Date.now()) {
     await setDoc(
@@ -1392,7 +1390,7 @@ const redeemWorkstationPairingMemory = async (token, platformTypeFromBody) => {
       { status: "expired" },
       { merge: true },
     );
-    throw httpError(400, "This workstation pairing code has expired.");
+    throw httpError(400, "That code expired. Generate a new one.");
   }
   const credential = crypto.randomUUID();
   const deviceId = createId("workstation");
@@ -1438,17 +1436,17 @@ const redeemDisplayPairingFirestore = async (token) => {
       .limit(1);
     const querySnap = await transaction.get(pairingQuery);
     if (querySnap.empty) {
-      throw httpError(400, "This display pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     const docSnap = querySnap.docs[0];
     const pairingRef = docSnap.ref;
     const pairing = docSnap.data();
     if (pairing.status !== "pending") {
-      throw httpError(400, "This display pairing code is not active.");
+      throw httpError(400, "That code isn't valid. Generate a new one.");
     }
     if (new Date(pairing.expiresAt).getTime() < Date.now()) {
       transaction.update(pairingRef, { status: "expired" });
-      throw httpError(400, "This display pairing code has expired.");
+      throw httpError(400, "That code expired. Generate a new one.");
     }
     const credential = crypto.randomUUID();
     const deviceId = createId("display");
@@ -1484,7 +1482,7 @@ const redeemDisplayPairingFirestore = async (token) => {
 const redeemDisplayPairingMemory = async (token) => {
   const pairing = await findDocByTokenHash(COLLECTIONS.displayPairings, token);
   if (!pairing || pairing.status !== "pending") {
-    throw httpError(400, "This display pairing code is not active.");
+    throw httpError(400, "That code isn't valid. Generate a new one.");
   }
   if (new Date(pairing.expiresAt).getTime() < Date.now()) {
     await setDoc(
@@ -1493,7 +1491,7 @@ const redeemDisplayPairingMemory = async (token) => {
       { status: "expired" },
       { merge: true },
     );
-    throw httpError(400, "This display pairing code has expired.");
+    throw httpError(400, "That code expired. Generate a new one.");
   }
   const credential = crypto.randomUUID();
   const deviceId = createId("display");
@@ -3249,7 +3247,7 @@ export const authHandlers = {
 
       const provider = normalizeDesktopAuthProvider(req.body?.provider);
       if (!provider) {
-        throw httpError(400, "A valid desktop sign-in provider is required.");
+        throw httpError(400, "Sign-in timed out. Try again.");
       }
 
       const desktopAuthId = createId("desktop_auth");
@@ -3297,7 +3295,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Could not start desktop sign-in",
+        errorMessage: error.message || "Sign-in timed out. Try again.",
       });
     }
   },
@@ -3325,16 +3323,10 @@ export const authHandlers = {
         await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
       );
       if (!request) {
-        throw httpError(
-          404,
-          "This desktop sign-in request was not found. Start again in WorshipSync.",
-        );
+        throw httpError(404, "Sign-in timed out. Try again.");
       }
       if (request.status === DESKTOP_AUTH_STATUS_EXPIRED) {
-        throw httpError(
-          400,
-          "This desktop sign-in request expired. Start again in WorshipSync.",
-        );
+        throw httpError(400, "Sign-in timed out. Try again.");
       }
       if (request.status === DESKTOP_AUTH_STATUS_COMPLETED) {
         return res.json({ success: true, status: request.status });
@@ -3343,10 +3335,7 @@ export const authHandlers = {
       const verified = await verifyIdToken(idToken);
       const user = await upsertProfileFromVerifiedToken(verified);
       if (request.userId && request.userId !== user.uid) {
-        throw httpError(
-          409,
-          "This desktop sign-in request is already in use. Start again in WorshipSync.",
-        );
+        throw httpError(409, "Sign-in timed out. Try again.");
       }
       const { church, membership } = await getHumanContext({
         uid: verified.uid,
@@ -3417,7 +3406,7 @@ export const authHandlers = {
         });
       }
 
-      throw httpError(500, "Could not complete desktop sign-in.");
+      throw httpError(500, "Sign-in timed out. Try again.");
     } catch (error) {
       try {
         if (desktopAuthId) {
@@ -3455,7 +3444,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Could not complete desktop sign-in",
+        errorMessage: error.message || "Sign-in timed out. Try again.",
       });
     }
   },
@@ -3507,7 +3496,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Could not load desktop sign-in status",
+        errorMessage: error.message || "Sign-in timed out. Try again.",
       });
     }
   },
@@ -3539,10 +3528,7 @@ export const authHandlers = {
         desktopAuthSecret,
       });
       if (request.status !== DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
-        throw httpError(
-          409,
-          "This desktop sign-in request is not ready to finish. Return to your browser and try again.",
-        );
+        throw httpError(409, "Sign-in timed out. Try again.");
       }
       const exchangeExpiresAt = request.exchangeCodeExpiresAt
         ? new Date(request.exchangeCodeExpiresAt).getTime()
@@ -3552,20 +3538,14 @@ export const authHandlers = {
         exchangeExpiresAt <= Date.now() ||
         request.exchangeCodeHash !== hashValue(exchangeCode)
       ) {
-        throw httpError(
-          409,
-          "This desktop sign-in confirmation expired. Return to your browser and try again.",
-        );
+        throw httpError(409, "Sign-in timed out. Try again.");
       }
 
       const trustedDevice = request.trustedDeviceId
         ? await getDoc(COLLECTIONS.trustedHumanDevices, request.trustedDeviceId)
         : null;
       if (!trustedDevice || trustedDevice.revokedAt) {
-        throw httpError(
-          409,
-          "This trusted device is no longer available. Sign in again to continue.",
-        );
+        throw httpError(409, "Please sign in again.");
       }
 
       const { user, church, membership } = await getHumanContext({
@@ -3616,7 +3596,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Could not finish desktop sign-in",
+        errorMessage: error.message || "Sign-in timed out. Try again.",
       });
     }
   },
@@ -3656,10 +3636,7 @@ export const authHandlers = {
           desktopAuthSecret: desktopAuthSecretTrim,
         });
         if (desktopRequest.status !== DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE) {
-          throw httpError(
-            400,
-            "This desktop sign-in request is not waiting for a verification code.",
-          );
+          throw httpError(400, "Sign-in timed out. Try again.");
         }
         const resolvedPendingId =
           String(pendingAuthId || "").trim() ||
@@ -3671,17 +3648,11 @@ export const authHandlers = {
           desktopRequest.pendingAuthId &&
           desktopRequest.pendingAuthId !== resolvedPendingId
         ) {
-          throw httpError(
-            400,
-            "That verification request does not match this desktop sign-in.",
-          );
+          throw httpError(400, "Sign-in timed out. Try again.");
         }
         const fingerprintHash = readDeviceFingerprint(req.body);
         if (fingerprintHash !== desktopRequest.fingerprintHash) {
-          throw httpError(
-            403,
-            "This resend request is not valid for this device.",
-          );
+          throw httpError(403, "Please sign in again.");
         }
         const storedUser = await getDoc(
           COLLECTIONS.users,
@@ -3854,32 +3825,20 @@ export const authHandlers = {
 
       const challenge = await getEmailChallenge(pendingAuthId);
       if (!challenge) {
-        throw httpError(
-          400,
-          "This sign-in code has expired. Try signing in again.",
-        );
+        throw httpError(400, "Please sign in again.");
       }
       if (new Date(challenge.expiresAt).getTime() < Date.now()) {
         await deleteDoc(COLLECTIONS.emailCodeChallenges, pendingAuthId);
-        throw httpError(
-          400,
-          "This sign-in code has expired. Try signing in again.",
-        );
+        throw httpError(400, "Please sign in again.");
       }
       if (challenge.lockedAt) {
-        throw httpError(
-          400,
-          "This sign-in code has been locked after too many attempts. Sign in again to get a new code.",
-        );
+        throw httpError(400, "Please sign in again.");
       }
       if (challenge.codeHash !== hashValue(code)) {
         const { shouldLock } =
           await recordFailedEmailChallengeAttempt(challenge);
         if (shouldLock) {
-          throw httpError(
-            400,
-            "This sign-in code has been locked after too many attempts. Sign in again to get a new code.",
-          );
+          throw httpError(400, "Please sign in again.");
         }
         throw httpError(400, "That code is not valid.");
       }
@@ -5213,16 +5172,13 @@ export const authHandlers = {
           : COLLECTIONS.displayPairings;
       const pairing = await findDocByTokenHash(collection, token);
       if (!pairing || pairing.churchId !== req.params.churchId) {
-        throw httpError(
-          400,
-          "That pairing code was not found for this church.",
-        );
+        throw httpError(400, "That code isn't valid. Generate a new one.");
       }
       if (pairing.status !== "pending") {
-        throw httpError(400, "This pairing code is no longer active.");
+        throw httpError(400, "That code isn't valid. Generate a new one.");
       }
       if (new Date(pairing.expiresAt).getTime() < Date.now()) {
-        throw httpError(400, "This pairing code has expired.");
+        throw httpError(400, "That code expired. Generate a new one.");
       }
       const church = await getChurchById(req.params.churchId);
       if (!church) {

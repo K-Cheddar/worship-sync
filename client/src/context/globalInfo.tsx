@@ -65,7 +65,11 @@ import {
 } from "../types";
 import { ActionCreators } from "redux-undo";
 import {
+  AUTH_SIGN_IN_AGAIN_MESSAGE,
+  AUTH_VERIFY_DEVICE_MESSAGE,
+  getDesktopSignInErrorMessage,
   getForgotPasswordErrorMessage,
+  getResendEmailCodeErrorMessage,
   getSignInFlowErrorMessage,
   getVerifyEmailCodeErrorMessage,
   SIGN_IN_UNEXPECTED_RESPONSE,
@@ -1290,11 +1294,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             );
             setPendingEmailVerificationId(restoredSession.pendingAuthId);
           } else if (restoredSession.requiresEmailCode) {
-            setAuthError("Verify this device to continue.");
+            setAuthError(AUTH_VERIFY_DEVICE_MESSAGE);
           } else if (restoredSession.requiresEmailCode === false) {
-            setAuthError(
-              "There is no active sign-in code for this device. Sign in again to receive a new code.",
-            );
+            setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
           }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
         } catch (error) {
@@ -1305,7 +1307,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           }
 
           console.error("Auth session restore failed:", error);
-          setAuthError("Could not restore your session.");
+          setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
         }
       } catch (error) {
@@ -2064,11 +2066,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           setLoginState("idle");
           return false;
         }
-        setAuthError(
-          error instanceof AuthApiError
-            ? error.message
-            : "Could not finish sign-in. Try again.",
-        );
+        setAuthError(getDesktopSignInErrorMessage(error));
         setLoginState("error");
         return false;
       }
@@ -2144,7 +2142,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       const desktopResend =
         !user && isElectron() ? getPendingDesktopEmailResendState() : null;
       if (!user && !desktopResend) {
-        setAuthError("Sign in again to continue.");
+        setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
         return {};
       }
 
@@ -2191,11 +2189,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           );
           return {};
         }
-        setAuthError(
-          error instanceof AuthApiError
-            ? error.message
-            : "Could not resend the code. Try again."
-        );
+        setAuthError(getResendEmailCodeErrorMessage(error));
         return {};
       }
     },

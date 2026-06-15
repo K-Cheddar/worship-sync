@@ -5,6 +5,23 @@
 
 import { INVALID_EMAIL_FORMAT_MESSAGE } from "./emailFormat";
 
+/** Shown when the session is gone or verification cannot continue — sign in fresh. */
+export const AUTH_SIGN_IN_AGAIN_MESSAGE = "Please sign in again.";
+
+/** Pending email verification during session restore. */
+export const AUTH_VERIFY_DEVICE_MESSAGE =
+  "Enter the code from your email to continue.";
+
+/** Desktop browser ↔ app handoff expired or failed. */
+export const AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE =
+  "Sign-in timed out. Try again.";
+
+export const PAIRING_CODE_INVALID_MESSAGE =
+  "That code isn't valid. Generate a new one.";
+
+export const PAIRING_CODE_EXPIRED_MESSAGE =
+  "That code expired. Generate a new one.";
+
 const DEFAULT_SIGN_IN =
   "Could not sign in. Check your email and password, then try again.";
 
@@ -40,11 +57,69 @@ const FIREBASE_AUTH_MESSAGES: Record<string, string> = {
 const VERIFY_CODE_API_MESSAGES: Record<string, string> = {
   "That code is not valid.":
     "That code does not match. Check the number from your email and try again.",
+  "This sign-in code has expired. Try signing in again.":
+    AUTH_SIGN_IN_AGAIN_MESSAGE,
+  "This sign-in code has been locked after too many attempts. Sign in again to get a new code.":
+    AUTH_SIGN_IN_AGAIN_MESSAGE,
 };
 
 const SESSION_API_MESSAGES: Record<string, string> = {
-  "Identity token is required.": DEFAULT_FINISH_SIGN_IN,
+  "Identity token is required.": AUTH_SIGN_IN_AGAIN_MESSAGE,
+  "This trusted device is no longer available. Sign in again to continue.":
+    AUTH_SIGN_IN_AGAIN_MESSAGE,
+  "Please sign in again.": AUTH_SIGN_IN_AGAIN_MESSAGE,
 };
+
+const DESKTOP_SIGN_IN_API_MESSAGES: Record<string, string> = {
+  "This desktop sign-in request is not ready for confirmation.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in request was not found. Start again in WorshipSync.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in request is not valid.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in request expired. Start again in WorshipSync.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in request is already in use. Start again in WorshipSync.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in request is not ready to finish. Return to your browser and try again.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in confirmation expired. Return to your browser and try again.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This desktop sign-in request is not waiting for a verification code.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "That verification request does not match this desktop sign-in.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "This resend request is not valid for this device.":
+    AUTH_SIGN_IN_AGAIN_MESSAGE,
+  "A valid desktop sign-in provider is required.":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "Could not start desktop sign-in": AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "Could not complete desktop sign-in": AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "Could not complete desktop sign-in.": AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "Could not load desktop sign-in status":
+    AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "Could not finish desktop sign-in": AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  "Sign-in timed out. Try again.": AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+};
+
+const PAIRING_CODE_API_MESSAGES: Record<string, string> = {
+  "This workstation pairing code is not active.": PAIRING_CODE_INVALID_MESSAGE,
+  "This workstation pairing code has expired.": PAIRING_CODE_EXPIRED_MESSAGE,
+  "This display pairing code is not active.": PAIRING_CODE_INVALID_MESSAGE,
+  "This display pairing code has expired.": PAIRING_CODE_EXPIRED_MESSAGE,
+  "That pairing code was not found for this church.":
+    PAIRING_CODE_INVALID_MESSAGE,
+  "This pairing code is no longer active.": PAIRING_CODE_INVALID_MESSAGE,
+  "This pairing code has expired.": PAIRING_CODE_EXPIRED_MESSAGE,
+  "That code isn't valid. Generate a new one.": PAIRING_CODE_INVALID_MESSAGE,
+  "That code expired. Generate a new one.": PAIRING_CODE_EXPIRED_MESSAGE,
+};
+
+const mapKnownAuthApiMessage = (raw: string): string | undefined =>
+  VERIFY_CODE_API_MESSAGES[raw] ??
+  SESSION_API_MESSAGES[raw] ??
+  DESKTOP_SIGN_IN_API_MESSAGES[raw] ??
+  PAIRING_CODE_API_MESSAGES[raw];
 
 export const isFirebaseAuthError = (
   error: unknown,
@@ -73,13 +148,17 @@ const normalizeApiMessage = (error: unknown): string => {
   return String(error).trim();
 };
 
-export const getSessionApiErrorMessage = (error: unknown): string => {
+const getMappedAuthApiErrorMessage = (
+  error: unknown,
+  defaultMessage: string,
+): string => {
   const raw = normalizeApiMessage(error);
   if (!raw || raw === "Request failed") {
-    return DEFAULT_FINISH_SIGN_IN;
+    return defaultMessage;
   }
-  if (SESSION_API_MESSAGES[raw]) {
-    return SESSION_API_MESSAGES[raw];
+  const mapped = mapKnownAuthApiMessage(raw);
+  if (mapped) {
+    return mapped;
   }
   if (
     raw.length < 160 &&
@@ -88,26 +167,23 @@ export const getSessionApiErrorMessage = (error: unknown): string => {
   ) {
     return raw;
   }
-  return DEFAULT_FINISH_SIGN_IN;
+  return defaultMessage;
 };
 
-export const getVerifyEmailCodeErrorMessage = (error: unknown): string => {
-  const raw = normalizeApiMessage(error);
-  if (!raw || raw === "Request failed") {
-    return DEFAULT_VERIFY_CODE;
-  }
-  if (VERIFY_CODE_API_MESSAGES[raw]) {
-    return VERIFY_CODE_API_MESSAGES[raw];
-  }
-  if (
-    raw.length < 160 &&
-    !raw.includes("at ") &&
-    !raw.toLowerCase().includes("stack")
-  ) {
-    return raw;
-  }
-  return DEFAULT_VERIFY_CODE;
-};
+export const getSessionApiErrorMessage = (error: unknown): string =>
+  getMappedAuthApiErrorMessage(error, DEFAULT_FINISH_SIGN_IN);
+
+export const getVerifyEmailCodeErrorMessage = (error: unknown): string =>
+  getMappedAuthApiErrorMessage(error, DEFAULT_VERIFY_CODE);
+
+export const getResendEmailCodeErrorMessage = (error: unknown): string =>
+  getMappedAuthApiErrorMessage(error, "Could not resend the code. Try again.");
+
+export const getDesktopSignInErrorMessage = (error: unknown): string =>
+  getMappedAuthApiErrorMessage(error, AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE);
+
+export const getPairingCodeErrorMessage = (error: unknown): string =>
+  getMappedAuthApiErrorMessage(error, "Could not link this device.");
 
 export const getForgotPasswordErrorMessage = (error: unknown): string => {
   const raw = normalizeApiMessage(error);

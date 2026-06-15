@@ -13,7 +13,7 @@
     "backfill:song-artists": "node scripts/backfill-song-artists.js",
     "backfill:song-artists:dry-run": "node scripts/backfill-song-artists.js --dry-run",
     "checks": "npm run test:server && npm run test --prefix client && npm run lint:check --prefix client",
-    "heroku-postbuild": "cd client && npm ci && npm run build",
+    "heroku-postbuild": "cd client && npm ci && npm run build:heroku",
     "client": "cd client && npm run dev",
     "server": "npx nodemon server.js",
     "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",

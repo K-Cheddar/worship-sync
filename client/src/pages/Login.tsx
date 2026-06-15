@@ -816,7 +816,7 @@ const Login = () => {
     }
     if (showWebSessionNavigatingChrome) return "Signed in";
     if (hasPendingDesktopAuth) return "Continue in browser";
-    if (mode === "code") return "Verify this device";
+    if (mode === "code") return "Check your email";
     if (mode === "forgotPassword") {
       return forgotPasswordEmailSent ? "Check your email" : "Forgot password";
     }

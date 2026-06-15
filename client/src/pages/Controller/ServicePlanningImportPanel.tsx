@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ExternalLink, BookOpen, Plus, RefreshCcw, Check, PanelsTopLeft, Square } from "lucide-react";
+import { ExternalLink, BookOpen, Plus, RefreshCcw, RefreshCw, PanelsTopLeft, Square } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import Input from "../../components/Input/Input";
@@ -641,7 +641,7 @@ const ServicePlanningImportPanel = () => {
               <Button
                 type="button"
                 variant="secondary"
-                svg={Check}
+                svg={RefreshCw}
                 isLoading={isSyncing}
                 disabled={
                   isSyncing ||
@@ -659,7 +659,7 @@ const ServicePlanningImportPanel = () => {
               <Button
                 type="button"
                 variant="secondary"
-                svg={Check}
+                svg={RefreshCw}
                 isLoading={isSyncing}
                 disabled={
                   isSyncing ||
@@ -677,7 +677,7 @@ const ServicePlanningImportPanel = () => {
               <Button
                 type="button"
                 variant="cta"
-                svg={Check}
+                svg={RefreshCw}
                 isLoading={isSyncing}
                 disabled={
                   isSyncing ||

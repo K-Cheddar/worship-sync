@@ -82,6 +82,7 @@
   "scripts": {
     "dev": "npm run electron",
     "build": "vite build",
+    "build:heroku": "vite build --mode heroku",
     "build:electron": "electron-vite build",
     "build:lint": "npm run lint && vite build",
     "build:strict": "npm run lint:check && vite build",

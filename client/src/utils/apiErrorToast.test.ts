@@ -1,4 +1,5 @@
 import { AuthApiError } from "../api/auth";
+import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "./authUserMessages";
 import {
   getApiErrorMessage,
   getPersistedFailureMessage,
@@ -51,7 +52,7 @@ describe("apiErrorToast", () => {
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "Authentication required — refresh the page to continue.",
+        message: AUTH_SIGN_IN_AGAIN_MESSAGE,
         variant: "error",
         persist: true,
         children: expect.any(Function),
@@ -81,6 +82,7 @@ describe("apiErrorToast", () => {
 
   it("detects auth failure messages stored in cache", () => {
     expect(isAuthFailureMessage("Authentication required")).toBe(true);
+    expect(isAuthFailureMessage(AUTH_SIGN_IN_AGAIN_MESSAGE)).toBe(true);
     expect(isAuthFailureMessage("Could not save.")).toBe(false);
   });
 

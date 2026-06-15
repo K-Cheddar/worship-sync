@@ -1,4 +1,11 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useDispatch } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FilePlus, WholeWord } from "lucide-react";
@@ -93,12 +100,34 @@ const FilteredItems = ({
     null,
   );
 
+  const filteredListRef = useRef(filteredList);
+  filteredListRef.current = filteredList;
+  const showWordsRef = useRef(showWords);
+  showWordsRef.current = showWords;
+
   const virtualizer = useVirtualizer({
     count: filteredList.length,
     getScrollElement: () => listScrollRef.current,
-    estimateSize: () => 60,
+    getItemKey: (index) => filteredListRef.current[index]?._id ?? index,
+    estimateSize: (index) => {
+      const item = filteredListRef.current[index];
+      if (!item?.matchedWords) return 60;
+      const isExpanded = item.showWords ?? showWordsRef.current;
+      return isExpanded ? 180 : 60;
+    },
     overscan: 5,
   });
+
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+
+  const listLayoutKey = useMemo(
+    () =>
+      filteredList
+        .map((item) => `${item._id}:${item.showWords ?? showWords}`)
+        .join("|"),
+    [filteredList, showWords],
+  );
 
   const viewSongDoc = useMemo(() => {
     if (!viewSectionsSongId || type !== "song") return null;
@@ -212,13 +241,26 @@ const FilteredItems = ({
       const results = await searchItems(debouncedSearchValue);
       setFilteredList(results);
       setIsSearchLoading(false);
-      virtualizer.measure();
       listScrollRef.current?.scrollTo({ top: 0 });
     };
 
     performSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearchValue, searchItems]);
+
+  // Item heights change when lyrics expand/collapse, but that does not resize the
+  // scroll container — only a window resize would otherwise re-measure. Re-read
+  // visible row sizes after the DOM reflects the latest list + showWords state.
+  useLayoutEffect(() => {
+    const scrollEl = listScrollRef.current;
+    if (!scrollEl) return;
+
+    const instance = virtualizerRef.current;
+    instance.measure();
+    scrollEl.querySelectorAll("[data-index]").forEach((node) => {
+      instance.measureElement(node as HTMLDivElement);
+    });
+  }, [listLayoutKey, filteredList.length]);
 
   const deleteItem = async (item: ServiceItem) => {
     setItemToBeDeleted(null);
@@ -383,6 +425,7 @@ const FilteredItems = ({
                   }}
                 >
                   <FilteredItem
+                    key={item._id}
                     item={item}
                     index={virtualItem.index}
                     showWords={item.showWords ?? showWords}

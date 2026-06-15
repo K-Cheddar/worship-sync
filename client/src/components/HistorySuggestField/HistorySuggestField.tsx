@@ -10,8 +10,41 @@ const HISTORY_SORT = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: "base" });
 const MAX_SUGGESTIONS = 10;
 
-function sortAndSlice(items: string[], max = MAX_SUGGESTIONS): string[] {
-  return [...items].sort(HISTORY_SORT).slice(0, max);
+/** Lower rank = better match for the active query. */
+function getSuggestionMatchRank(value: string, query: string): number {
+  const lower = value.toLowerCase();
+  const q = query.toLowerCase();
+  if (lower.startsWith(q)) return 0;
+  const wordPrefix = lower
+    .split(/\s+/)
+    .some((word) => word.startsWith(q));
+  if (wordPrefix) return 1;
+  const index = lower.indexOf(q);
+  return index >= 0 ? 2 + index : Number.POSITIVE_INFINITY;
+}
+
+function compareHistorySuggestions(
+  a: string,
+  b: string,
+  query?: string
+): number {
+  const trimmedQuery = query?.trim().toLowerCase();
+  if (trimmedQuery) {
+    const rankA = getSuggestionMatchRank(a, trimmedQuery);
+    const rankB = getSuggestionMatchRank(b, trimmedQuery);
+    if (rankA !== rankB) return rankA - rankB;
+  }
+  return HISTORY_SORT(a, b);
+}
+
+function sortAndSlice(
+  items: string[],
+  query?: string,
+  max = MAX_SUGGESTIONS
+): string[] {
+  return [...items]
+    .sort((a, b) => compareHistorySuggestions(a, b, query))
+    .slice(0, max);
 }
 
 function getCaretLineInfo(value: string, caret: number) {
@@ -125,7 +158,8 @@ const HistorySuggestField = ({
           return t && !existingTrimmed.has(t);
         });
         const filtered = sortAndSlice(
-          base.filter((line) => line.toLowerCase().includes(currentLine))
+          base.filter((line) => line.toLowerCase().includes(currentLine)),
+          currentLine
         );
         setSuggestions(filtered);
       } else {
@@ -142,7 +176,8 @@ const HistorySuggestField = ({
               v.trim() &&
               v.trim().toLowerCase().includes(current) &&
               v.trim().toLowerCase() !== current
-          )
+          ),
+          current
         );
         setSuggestions(filtered);
       }

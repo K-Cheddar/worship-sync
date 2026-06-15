@@ -13,6 +13,7 @@ import {
 } from "../utils/authStorage";
 import { getDisplayPairingDestination } from "../utils/displaySurface";
 import { isElectron } from "../utils/environment";
+import { getPairingCodeErrorMessage } from "../utils/authUserMessages";
 import { GlobalInfoContext } from "../context/globalInfo";
 
 const roleDescription = (pairType: "workstation" | "display") =>
@@ -104,9 +105,7 @@ const WorkstationPair = ({
           navigate(returnPath || "/workstation/operator", { replace: true });
         }
       } catch (error) {
-        setBannerError(
-          error instanceof Error ? error.message : "Could not link this device"
-        );
+        setBannerError(getPairingCodeErrorMessage(error));
       } finally {
         setIsLoading(false);
       }
