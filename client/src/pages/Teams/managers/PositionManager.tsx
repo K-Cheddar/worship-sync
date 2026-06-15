@@ -307,6 +307,16 @@ const PositionManager = ({
             />
           ) : null
         }
+        formFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Save position"
+            onSave={() => void submit()}
+            onCancel={reset}
+            disabled={!canEdit || !draft.name.trim()}
+            isLoading={saving}
+          />
+        }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
@@ -319,14 +329,6 @@ const PositionManager = ({
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
         <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-24" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
-        <FormActionButtons
-          pinFooter
-          saveLabel="Save position"
-          onSave={() => void submit()}
-          onCancel={reset}
-          disabled={!canEdit || !draft.name.trim()}
-          isLoading={saving}
-        />
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

@@ -180,6 +180,15 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
           />
         ) : null
       }
+      formFooter={
+        <FormActionButtons
+          pinFooter
+          saveLabel="Save service"
+          onSave={submit}
+          onCancel={reset}
+          disabled={!canEdit || !canSave}
+        />
+      }
     >
       <Input label="Name" value={draft.name || ""} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
       <Select
@@ -384,14 +393,6 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
           </div>
         )}
       </fieldset>
-
-      <FormActionButtons
-        pinFooter
-        saveLabel="Save service"
-        onSave={submit}
-        onCancel={reset}
-        disabled={!canEdit || !canSave}
-      />
     </CreatePanel>
   );
 };

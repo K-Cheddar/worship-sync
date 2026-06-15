@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
 import Button from "../../components/Button/Button";
-import { panelClassName, panelFormScrollPaddingClassName, panelHeaderPaddingClassName, panelScrollPaddingClassName, panelShellClassName, teamsCreatePanelFormClassName, teamsCreatePanelListClosedClassName, teamsCreatePanelListOpenClassName, teamsCreatePanelRowClassName, teamsPanelMaxHeightClassName } from "./teamsStyles";
+import { panelClassName, panelFormScrollPaddingClassName, panelHeaderPaddingClassName, panelScrollPaddingClassName, panelShellClassName, teamsCreatePanelFormClassName, teamsCreatePanelFormOpenMobileClassName, teamsCreatePanelListClosedClassName, teamsCreatePanelListOpenClassName, teamsCreatePanelOpenMobileClassName, teamsCreatePanelRowClassName, teamsPanelMaxHeightClassName } from "./teamsStyles";
 
 type CreatePanelProps = {
   /** Whether the create/edit form is revealed. */
@@ -28,6 +28,8 @@ type CreatePanelProps = {
   list: ReactNode;
   /** Optional actions in the top-right of the open form panel (e.g. archive/delete menu). */
   formHeaderActions?: ReactNode;
+  /** Save/cancel actions pinned below the form scroll area. */
+  formFooter?: ReactNode;
   /** The form fields. */
   children: ReactNode;
 };
@@ -50,18 +52,24 @@ const CreatePanel = ({
   scrollableList = false,
   list,
   formHeaderActions,
+  formFooter,
   children,
 }: CreatePanelProps) => {
   const formPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    const scrollContainer = formPanelRef.current?.closest(".teams-section-scroll");
+    if (scrollContainer instanceof HTMLElement) {
+      scrollContainer.scrollTop = 0;
+      return;
+    }
     formPanelRef.current?.scrollIntoView({ block: "nearest" });
   }, [open]);
 
   return (
-    <div className="space-y-4">
-      <div className={teamsCreatePanelRowClassName}>
+    <div className={cn("space-y-4", open && teamsCreatePanelOpenMobileClassName)}>
+      <div className={cn(teamsCreatePanelRowClassName, open && teamsCreatePanelOpenMobileClassName)}>
         <div
           className={cn(
             "w-full min-w-0 space-y-3",
@@ -117,12 +125,18 @@ const CreatePanel = ({
               ? cn(
                 "flex w-full flex-col",
                 teamsCreatePanelFormClassName,
+                teamsCreatePanelFormOpenMobileClassName,
                 teamsPanelMaxHeightClassName,
               )
               : "pointer-events-none max-h-0 w-0 opacity-0",
           )}
         >
-          <section className={cn(panelShellClassName, "flex min-h-0 w-full min-w-0 flex-1 flex-col")}>
+          <section
+            className={cn(
+              panelShellClassName,
+              "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
+            )}
+          >
             <div
               className={cn(
                 "flex shrink-0 items-start justify-between gap-3",
@@ -140,6 +154,7 @@ const CreatePanel = ({
             >
               {children}
             </div>
+            {formFooter}
           </section>
         </div>
       </div>

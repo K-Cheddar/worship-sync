@@ -187,6 +187,16 @@ const TeamManager = ({
             />
           ) : null
         }
+        formFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Save team"
+            onSave={() => void submit()}
+            onCancel={reset}
+            disabled={!canEdit || !draft.name.trim()}
+            isLoading={saving}
+          />
+        }
       >
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
         <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
@@ -196,14 +206,6 @@ const TeamManager = ({
           options={members.map((member) => ({ id: member.memberId, label: memberName(member), archived: Boolean(member.archivedAt) }))}
           value={draft.memberIds}
           onChange={(memberIds) => setDraft((d) => ({ ...d, memberIds }))}
-        />
-        <FormActionButtons
-          pinFooter
-          saveLabel="Save team"
-          onSave={() => void submit()}
-          onCancel={reset}
-          disabled={!canEdit || !draft.name.trim()}
-          isLoading={saving}
         />
       </CreatePanel>
       <DeleteModal

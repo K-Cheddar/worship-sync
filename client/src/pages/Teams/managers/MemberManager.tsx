@@ -330,6 +330,16 @@ const MemberManager = ({
             />
           ) : null
         }
+        formFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Save member"
+            onSave={() => void submit()}
+            onCancel={reset}
+            disabled={!canEdit || !draft.firstName.trim() || !draft.lastName.trim()}
+            isLoading={saving}
+          />
+        }
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <Input label="First name" value={draft.firstName} onChange={(firstName) => setDraft((d) => ({ ...d, firstName: String(firstName) }))} />
@@ -596,14 +606,6 @@ const MemberManager = ({
           </Button>
         </fieldset>
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
-        <FormActionButtons
-          pinFooter
-          saveLabel="Save member"
-          onSave={() => void submit()}
-          onCancel={reset}
-          disabled={!canEdit || !draft.firstName.trim() || !draft.lastName.trim()}
-          isLoading={saving}
-        />
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

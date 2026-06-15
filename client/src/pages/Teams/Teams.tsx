@@ -130,7 +130,7 @@ const TeamsLayout = () => {
             <TeamsSidebarNav />
           </aside>
 
-          <div className="scrollbar-variable min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5">
+          <div className="teams-section-scroll scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-3 sm:p-5">
             {loading ? (
               getTeamsSectionSkeleton(activeSection.routePath)
             ) : (

@@ -1,7 +1,7 @@
 import { Save, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
-import { teamsFormStickyFooterClassName } from "../teamsStyles";
+import { teamsFormPanelFooterClassName } from "../teamsStyles";
 
 type FormActionButtonsProps = {
   saveLabel: string;
@@ -21,7 +21,7 @@ const FormActionButtons = ({
   isLoading = false,
   pinFooter = false,
 }: FormActionButtonsProps) => (
-  <div className={cn(pinFooter && teamsFormStickyFooterClassName)}>
+  <div className={cn(pinFooter && teamsFormPanelFooterClassName)}>
     <div className="flex gap-3">
       <Button
         variant="secondary"

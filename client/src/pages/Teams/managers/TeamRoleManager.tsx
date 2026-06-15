@@ -238,6 +238,16 @@ const TeamRoleManager = ({
             />
           ) : null
         }
+        formFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Save role"
+            onSave={() => void submit()}
+            onCancel={reset}
+            disabled={!canEdit || !draft.name.trim()}
+            isLoading={saving}
+          />
+        }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
@@ -259,14 +269,6 @@ const TeamRoleManager = ({
           onChange={(description) =>
             setDraft((current) => ({ ...current, description }))
           }
-        />
-        <FormActionButtons
-          pinFooter
-          saveLabel="Save role"
-          onSave={() => void submit()}
-          onCancel={reset}
-          disabled={!canEdit || !draft.name.trim()}
-          isLoading={saving}
         />
       </CreatePanel>
       <DeleteModal
