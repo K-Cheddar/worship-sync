@@ -973,7 +973,10 @@ const issueDesktopAuthExchangeCode = async (desktopAuthId) =>
       await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
     );
     if (!request || request.status !== DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
-      throw httpError(409, "Sign-in timed out. Try again.");
+      throw httpError(
+        409,
+        "This desktop sign-in request is not ready for confirmation.",
+      );
     }
     const exchangeExpiresAtMs = request.exchangeCodeExpiresAt
       ? new Date(request.exchangeCodeExpiresAt).getTime()
@@ -1015,10 +1018,13 @@ const readDesktopAuthRequestForSecret = async ({
     await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
   );
   if (!request) {
-    throw httpError(404, "Sign-in timed out. Try again.");
+    throw httpError(
+      404,
+      "This desktop sign-in request was not found. Start again in WorshipSync.",
+    );
   }
   if (request.secretHash !== hashValue(desktopAuthSecret)) {
-    throw httpError(403, "Sign-in timed out. Try again.");
+    throw httpError(403, "This desktop sign-in request is not valid.");
   }
   return request;
 };
@@ -3247,7 +3253,7 @@ export const authHandlers = {
 
       const provider = normalizeDesktopAuthProvider(req.body?.provider);
       if (!provider) {
-        throw httpError(400, "Sign-in timed out. Try again.");
+        throw httpError(400, "A valid desktop sign-in provider is required.");
       }
 
       const desktopAuthId = createId("desktop_auth");
@@ -3295,7 +3301,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Sign-in timed out. Try again.",
+        errorMessage: error.message || "Could not start desktop sign-in",
       });
     }
   },
@@ -3323,10 +3329,16 @@ export const authHandlers = {
         await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
       );
       if (!request) {
-        throw httpError(404, "Sign-in timed out. Try again.");
+        throw httpError(
+          404,
+          "This desktop sign-in request was not found. Start again in WorshipSync.",
+        );
       }
       if (request.status === DESKTOP_AUTH_STATUS_EXPIRED) {
-        throw httpError(400, "Sign-in timed out. Try again.");
+        throw httpError(
+          400,
+          "This desktop sign-in request expired. Start again in WorshipSync.",
+        );
       }
       if (request.status === DESKTOP_AUTH_STATUS_COMPLETED) {
         return res.json({ success: true, status: request.status });
@@ -3335,7 +3347,10 @@ export const authHandlers = {
       const verified = await verifyIdToken(idToken);
       const user = await upsertProfileFromVerifiedToken(verified);
       if (request.userId && request.userId !== user.uid) {
-        throw httpError(409, "Sign-in timed out. Try again.");
+        throw httpError(
+          409,
+          "This desktop sign-in request is already in use. Start again in WorshipSync.",
+        );
       }
       const { church, membership } = await getHumanContext({
         uid: verified.uid,
@@ -3406,7 +3421,7 @@ export const authHandlers = {
         });
       }
 
-      throw httpError(500, "Sign-in timed out. Try again.");
+      throw httpError(500, "Could not complete desktop sign-in.");
     } catch (error) {
       try {
         if (desktopAuthId) {
@@ -3444,7 +3459,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Sign-in timed out. Try again.",
+        errorMessage: error.message || "Could not complete desktop sign-in",
       });
     }
   },
@@ -3496,7 +3511,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Sign-in timed out. Try again.",
+        errorMessage: error.message || "Could not load desktop sign-in status",
       });
     }
   },
@@ -3528,7 +3543,10 @@ export const authHandlers = {
         desktopAuthSecret,
       });
       if (request.status !== DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
-        throw httpError(409, "Sign-in timed out. Try again.");
+        throw httpError(
+          409,
+          "This desktop sign-in request is not ready to finish. Return to your browser and try again.",
+        );
       }
       const exchangeExpiresAt = request.exchangeCodeExpiresAt
         ? new Date(request.exchangeCodeExpiresAt).getTime()
@@ -3538,14 +3556,20 @@ export const authHandlers = {
         exchangeExpiresAt <= Date.now() ||
         request.exchangeCodeHash !== hashValue(exchangeCode)
       ) {
-        throw httpError(409, "Sign-in timed out. Try again.");
+        throw httpError(
+          409,
+          "This desktop sign-in confirmation expired. Return to your browser and try again.",
+        );
       }
 
       const trustedDevice = request.trustedDeviceId
         ? await getDoc(COLLECTIONS.trustedHumanDevices, request.trustedDeviceId)
         : null;
       if (!trustedDevice || trustedDevice.revokedAt) {
-        throw httpError(409, "Please sign in again.");
+        throw httpError(
+          409,
+          "This trusted device is no longer available. Sign in again to continue.",
+        );
       }
 
       const { user, church, membership } = await getHumanContext({
@@ -3596,7 +3620,7 @@ export const authHandlers = {
       });
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: error.message || "Sign-in timed out. Try again.",
+        errorMessage: error.message || "Could not finish desktop sign-in",
       });
     }
   },
@@ -3636,7 +3660,10 @@ export const authHandlers = {
           desktopAuthSecret: desktopAuthSecretTrim,
         });
         if (desktopRequest.status !== DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE) {
-          throw httpError(400, "Sign-in timed out. Try again.");
+          throw httpError(
+            400,
+            "This desktop sign-in request is not waiting for a verification code.",
+          );
         }
         const resolvedPendingId =
           String(pendingAuthId || "").trim() ||
@@ -3648,7 +3675,10 @@ export const authHandlers = {
           desktopRequest.pendingAuthId &&
           desktopRequest.pendingAuthId !== resolvedPendingId
         ) {
-          throw httpError(400, "Sign-in timed out. Try again.");
+          throw httpError(
+            400,
+            "That verification request does not match this desktop sign-in.",
+          );
         }
         const fingerprintHash = readDeviceFingerprint(req.body);
         if (fingerprintHash !== desktopRequest.fingerprintHash) {

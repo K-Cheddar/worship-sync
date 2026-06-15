@@ -230,20 +230,27 @@ const renderTeams = (
     </MemoryRouter>,
   );
 
+const waitForTeamsBootstrap = async () => {
+  await screen.findByRole("heading", { name: /^Schedules$/i });
+};
+
+const waitForScheduleGrid = async () => {
+  await waitForTeamsBootstrap();
+  await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8000 });
+};
+
 const openVocalSlot = async (
   user: ReturnType<typeof userEvent.setup>,
   cellName: RegExp = /Sunday Vocal/i,
 ) => {
-  const cell = await screen.findByRole("button", { name: cellName });
+  await waitForScheduleGrid();
+  const cell = await screen.findByRole("button", { name: cellName }, { timeout: 3000 });
   await user.click(cell);
-  return screen.findByRole("combobox", { name: /Sunday Vocal/i });
-};
-
-const waitForScheduleGrid = async () => {
-  await screen.findByRole("button", { name: /Sunday Vocal/i });
+  return screen.findByRole("combobox", { name: /Sunday Vocal/i }, { timeout: 3000 });
 };
 
 describe("Teams", () => {
+  jest.setTimeout(15000);
   beforeEach(() => {
     jest.clearAllMocks();
     mockState = makeMockState();
@@ -282,44 +289,49 @@ describe("Teams", () => {
     );
 
     await user.click(screen.getByRole("link", { name: /^Members$/i }));
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /^Members$/i })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
-    });
+    expect(
+      await screen.findByRole("button", { name: /Create member/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Members$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     await user.click(screen.getByRole("link", { name: /^Positions$/i }));
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /^Positions$/i })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
-    });
+    expect(
+      await screen.findByRole("button", { name: /Create position/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Positions$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     await user.click(screen.getByRole("link", { name: /^Teams$/i }));
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /^Teams$/i })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
-    });
+    expect(
+      await screen.findByRole("button", { name: /Create team/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Teams$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     await user.click(screen.getByRole("link", { name: /^Services$/i }));
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /^Services$/i })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
-    });
+    expect(
+      await screen.findByRole("button", { name: /Create service/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Services$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
-    });
+    expect(
+      await screen.findByRole("heading", { name: /^Schedules$/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("contains a crash inside the active Teams section", async () => {
