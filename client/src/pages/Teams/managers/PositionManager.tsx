@@ -28,12 +28,12 @@ import EntityListSearch from "../components/EntityListSearch";
 import EntityRow from "../components/EntityRow";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
+import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import PositionIconPicker from "../PositionIconPicker";
 import { useSensors } from "../../../utils/dndUtils";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
   describeDeletionImpacts,
-  entityStatus,
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
@@ -172,34 +172,25 @@ const PositionManager = ({
     }
   };
 
+  const openPositionEditor = (position: TeamPosition) => {
+    setEditing(position);
+    setSelectedTeamId(position.teamId);
+    setShowCreate(true);
+    setDraft({
+      name: position.name,
+      description: position.description || "",
+      icon: position.icon || "",
+    });
+  };
+
   const positionRowProps = (position: TeamPosition) => ({
     title: position.name,
-    subtitle: position.description || entityStatus(position.archivedAt),
+    subtitle: position.description || undefined,
     icon: position.icon,
     archived: Boolean(position.archivedAt),
+    compact: true,
     canEdit,
-    onEdit: () => {
-      setEditing(position);
-      setSelectedTeamId(position.teamId);
-      setShowCreate(true);
-      setDraft({
-        name: position.name,
-        description: position.description || "",
-        icon: position.icon || "",
-      });
-    },
-    onArchive: async () => {
-      if (!canEdit) return;
-      const archivedPosition = { ...position, archivedAt: new Date().toISOString() };
-      onSaved(archivedPosition);
-      try {
-        await archiveTeamPosition(churchId, position.positionId);
-      } catch (error) {
-        showApiErrorToast(showToast, error, "Could not archive this position.");
-        onSaved(position);
-      }
-    },
-    onDelete: () => setDeleting(position),
+    onTitleClick: () => openPositionEditor(position),
   });
 
   return (
@@ -215,6 +206,32 @@ const PositionManager = ({
         sectionTitle="Positions"
         description="Define roles and position requirements."
         createLabel="Create position"
+        scrollableList
+        listToolbar={
+          activeTeams.length === 0 ? null : (
+            <div className="space-y-3">
+              <Select
+                label="Team"
+                value={teamId}
+                onChange={(value) => {
+                  setSelectedTeamId(value);
+                  if (editing) reset();
+                }}
+                options={activeTeams.map((team) => ({
+                  label: team.name,
+                  value: team.teamId,
+                }))}
+              />
+              {teamPositions.length > 0 ? (
+                <EntityListSearch
+                  label="Positions"
+                  value={listQuery}
+                  onChange={setListQuery}
+                />
+              ) : null}
+            </div>
+          )
+        }
         list={
           <>
             {activeTeams.length === 0 ? (
@@ -223,27 +240,8 @@ const PositionManager = ({
               </p>
             ) : (
               <>
-                <Select
-                  label="Team"
-                  value={teamId}
-                  onChange={(value) => {
-                    setSelectedTeamId(value);
-                    if (editing) reset();
-                  }}
-                  options={activeTeams.map((team) => ({
-                    label: team.name,
-                    value: team.teamId,
-                  }))}
-                />
                 {teamPositions.length === 0 ? (
                   <p className="text-sm text-gray-300">No positions in this team yet.</p>
-                ) : null}
-                {teamPositions.length > 0 ? (
-                  <EntityListSearch
-                    label="Positions"
-                    value={listQuery}
-                    onChange={setListQuery}
-                  />
                 ) : null}
                 {teamPositions.length > 0 && filteredTeamPositions.length === 0 ? (
                   <p className="text-sm text-gray-300">No matches.</p>
@@ -279,6 +277,36 @@ const PositionManager = ({
             )}
           </>
         }
+        formHeaderActions={
+          editing ? (
+            <EntityFormDangerActions
+              archived={Boolean(editing.archivedAt)}
+              canEdit={canEdit}
+              archiveLabel="Archive position"
+              deleteLabel="Delete position"
+              menuLabel="Position actions"
+              onArchive={
+                editing.archivedAt
+                  ? undefined
+                  : async () => {
+                    const archivedPosition = {
+                      ...editing,
+                      archivedAt: new Date().toISOString(),
+                    };
+                    onSaved(archivedPosition);
+                    try {
+                      await archiveTeamPosition(churchId, editing.positionId);
+                      reset();
+                    } catch (error) {
+                      showApiErrorToast(showToast, error, "Could not archive this position.");
+                      onSaved(editing);
+                    }
+                  }
+              }
+              onDelete={() => setDeleting(editing)}
+            />
+          ) : null
+        }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
@@ -292,6 +320,7 @@ const PositionManager = ({
         <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-24" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
         <FormActionButtons
+          pinFooter
           saveLabel="Save position"
           onSave={() => void submit()}
           onCancel={reset}

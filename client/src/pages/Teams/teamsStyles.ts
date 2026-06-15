@@ -1,5 +1,45 @@
-export const panelClassName =
-  "rounded-xl border border-gray-700 bg-gray-950/45 p-4";
+export const panelShellClassName =
+  "rounded-xl border border-gray-700 bg-gray-950/45";
+
+export const panelClassName = `${panelShellClassName} p-4`;
+
+/** Fixed header area inside a panel with an inner scroll region. */
+export const panelHeaderPaddingClassName = "px-4 pt-4";
+
+/** Scrollable body inside a panel; padding keeps the scrollbar at the panel edge. */
+export const panelScrollPaddingClassName = "px-4 pb-4";
+
+/** Form scroll body: bottom inset comes from the sticky footer instead. */
+export const panelFormScrollPaddingClassName = "px-4 pb-0";
+
+/** Side-by-side list + edit form row inside Teams managers. */
+export const teamsCreatePanelRowClassName =
+  "flex w-full min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch";
+
+/** List column when the edit form is open: shares space instead of a fixed max width. */
+export const teamsCreatePanelListOpenClassName =
+  "lg:min-w-0 lg:flex-1 lg:max-w-2xl";
+
+/** List column when only the list is shown. */
+export const teamsCreatePanelListClosedClassName = "lg:mx-auto lg:max-w-3xl";
+
+/** Edit form column beside the list. */
+export const teamsCreatePanelFormClassName = "lg:min-w-0 lg:flex-1 lg:max-w-xl";
+
+/** Max height for Teams list/form panels that scroll internally within the content area. */
+export const teamsPanelMaxHeightClassName =
+  "max-h-[min(48rem,calc(100dvh-14rem))]";
+
+/** Sticky save/cancel footer inside Teams edit panels. */
+export const teamsFormStickyFooterClassName =
+  "sticky bottom-0 z-10 -mx-4 mt-4 border-t border-gray-700/50 bg-gray-950/45 px-4 py-3 backdrop-blur-sm";
+
+/** Icon-only row actions: compact on desktop, touch-friendly on mobile. */
+export const teamsRowIconButtonClassName =
+  "max-md:[&_svg]:size-8 lg:p-0.5 lg:[&_svg]:size-3.5";
+
+export const teamsRowIconButtonPadding =
+  "px-2 py-1 max-md:px-2 lg:px-1 lg:py-0.5";
 export const inputStackClassName = "min-w-0 w-full";
 
 export const boardDarkFieldClassName =

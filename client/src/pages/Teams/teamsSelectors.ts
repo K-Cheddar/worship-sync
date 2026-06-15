@@ -76,12 +76,53 @@ export const normalizeMemberNameKey = (
     .toLowerCase()
     .replace(/\s+/g, " ");
 
+const splitNormalizedName = (normalizedName: string) => {
+  const parts = normalizedName.trim().split(/\s+/).filter(Boolean);
+  return {
+    first: parts[0] || "",
+    last: parts.slice(1).join(" "),
+  };
+};
+
+const isCloseLastNameMatch = (submissionLast: string, memberLast: string) => {
+  if (!submissionLast || !memberLast) return false;
+  if (submissionLast === memberLast) return true;
+  const prefixLength = Math.min(3, submissionLast.length, memberLast.length);
+  if (
+    prefixLength >= 2 &&
+    submissionLast.slice(0, prefixLength) === memberLast.slice(0, prefixLength)
+  ) {
+    return true;
+  }
+  return (
+    submissionLast.startsWith(memberLast) ||
+    memberLast.startsWith(submissionLast)
+  );
+};
+
 export const selectIntakeMemberMatch = (
   submission: TeamIntakeSubmission,
   members: TeamRosterMember[],
-) =>
-  members.find(
+) => {
+  const exact = members.find(
     (member) =>
       normalizeMemberNameKey(member.firstName, member.lastName) ===
       submission.normalizedName,
   );
+  if (exact) return exact;
+
+  const { first: submissionFirst, last: submissionLast } = splitNormalizedName(
+    submission.normalizedName,
+  );
+  if (!submissionFirst) return undefined;
+
+  return members.find((member) => {
+    const memberKey = normalizeMemberNameKey(member.firstName, member.lastName);
+    const { first: memberFirst, last: memberLast } =
+      splitNormalizedName(memberKey);
+    return (
+      submissionFirst === memberFirst &&
+      isCloseLastNameMatch(submissionLast, memberLast)
+    );
+  });
+};

@@ -234,6 +234,15 @@ const waitForTeamsBootstrap = async () => {
   await screen.findByRole("heading", { name: /^Schedules$/i });
 };
 
+const openTeamsSectionsNavIfNeeded = async (
+  user: ReturnType<typeof userEvent.setup>,
+) => {
+  const openButton = screen.queryByRole("button", { name: /Open Teams sections/i });
+  if (openButton) {
+    await user.click(openButton);
+  }
+};
+
 const waitForScheduleGrid = async () => {
   await waitForTeamsBootstrap();
   await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8000 });
@@ -275,6 +284,8 @@ describe("Teams", () => {
 
     expect(await screen.findByRole("heading", { name: /^Schedules$/i })).toBeInTheDocument();
 
+    await openTeamsSectionsNavIfNeeded(user);
+
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
       "href",
       "/teams/schedules",
@@ -288,6 +299,7 @@ describe("Teams", () => {
       "/teams/intake",
     );
 
+    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Members$/i }));
     expect(
       await screen.findByRole("button", { name: /Create member/i }),
@@ -297,6 +309,7 @@ describe("Teams", () => {
       "page",
     );
 
+    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Positions$/i }));
     expect(
       await screen.findByRole("button", { name: /Create position/i }),
@@ -306,6 +319,7 @@ describe("Teams", () => {
       "page",
     );
 
+    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Teams$/i }));
     expect(
       await screen.findByRole("button", { name: /Create team/i }),
@@ -315,6 +329,7 @@ describe("Teams", () => {
       "page",
     );
 
+    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Services$/i }));
     expect(
       await screen.findByRole("button", { name: /Create service/i }),
@@ -324,6 +339,7 @@ describe("Teams", () => {
       "page",
     );
 
+    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     expect(
       await screen.findByRole("heading", { name: /^Schedules$/i }),
@@ -410,11 +426,14 @@ describe("Teams", () => {
     } satisfies DeleteTeamPositionResponse);
 
     renderTeams("/teams/positions");
-    await screen.findByRole("button", { name: /More actions for Vocal/i });
+    await screen.findByRole("button", { name: /Edit Vocal/i });
 
-    await user.click(await screen.findByRole("button", { name: /More actions for Vocal/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /^Delete$/i }));
-    await user.click(await screen.findByRole("button", { name: /Delete Forever/i }));
+    await user.click(screen.getByRole("button", { name: /Edit Vocal/i }));
+    expect(await screen.findByRole("heading", { name: /Edit position/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Position actions/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Delete position/i }));
+    await user.click(screen.getByRole("button", { name: /Delete Forever/i }));
 
     await waitFor(() => {
       expect(mockDeleteTeamPosition).toHaveBeenCalledWith("church-1", "position-vocal");
@@ -683,6 +702,23 @@ describe("Teams", () => {
     expect(
       screen.queryByRole("button", { name: /Edit schedule/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("hides the view-only badge when the user has scoped team edit access", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams("/teams", {
+      role: "member",
+      permissions: { teams: "none", teamScopes: { "team-main": "edit" } },
+      canViewTeams: true,
+      canEditTeams: false,
+      canEditTeam: jest.fn((teamId: string) => teamId === "team-main"),
+    });
+    await waitForScheduleGrid();
+
+    expect(screen.queryByText("View-only Teams access")).not.toBeInTheDocument();
   });
 
   it("keeps the saved schedule name when a cached edit draft is blank", () => {

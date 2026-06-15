@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { emitTeamsEvent } from "./teamsSse.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -3223,6 +3224,7 @@ export const createTeamsAuthHandlers = ({
           userId: admin.user.uid,
           scheduleId: schedule.scheduleId,
         });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this schedule.");
@@ -3310,6 +3312,7 @@ export const createTeamsAuthHandlers = ({
           userId: admin.user.uid,
           scheduleId: schedule.scheduleId,
         });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this schedule.");
@@ -3340,6 +3343,9 @@ export const createTeamsAuthHandlers = ({
           type: "team_schedule_archived",
           churchId: req.params.churchId,
           userId: admin.user.uid,
+          scheduleId: req.params.scheduleId,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-removed", {
           scheduleId: req.params.scheduleId,
         });
         return res.json({ success: true });
@@ -3448,6 +3454,9 @@ export const createTeamsAuthHandlers = ({
           type: "team_schedule_deleted",
           churchId: req.params.churchId,
           userId: admin.user.uid,
+          scheduleId: req.params.scheduleId,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-removed", {
           scheduleId: req.params.scheduleId,
         });
         return res.json({ success: true });
@@ -3613,6 +3622,7 @@ export const createTeamsAuthHandlers = ({
           positionSlotKey: String(req.body?.positionSlotKey || "").trim(),
           memberId: req.body?.memberId || null,
         });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update this assignment.");
@@ -3648,6 +3658,7 @@ export const createTeamsAuthHandlers = ({
           occurrenceId: payload.occurrenceId,
           memberId: payload.memberId,
         });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update attendance.");

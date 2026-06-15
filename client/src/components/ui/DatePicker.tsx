@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { format, isValid, parse } from "date-fns";
 import type { Matcher } from "react-day-picker";
 import { CalendarDays } from "lucide-react";
 
@@ -15,7 +14,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import Calendar from "@/components/ui/Calendar";
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { useSegmentedDateInput } from "@/hooks/useSegmentedDateInput";
+import { parsePlainDate } from "@/utils/plainDate";
 
 export type DatePickerProps = {
   /** Value is a plain calendar date string, `yyyy-MM-dd` (no timezone). */
@@ -36,26 +36,6 @@ export type DatePickerProps = {
   id?: string;
 };
 
-/** Display/typing format. */
-const DISPLAY_FORMAT = "MM/dd/yyyy";
-/** Formats accepted when the user types a date. */
-const PARSE_FORMATS = ["MM/dd/yyyy", "M/d/yyyy", "yyyy-MM-dd", "MMM d, yyyy", "MMMM d, yyyy"];
-
-const parseTypedDate = (text: string): Date | undefined => {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-  for (const fmt of PARSE_FORMATS) {
-    const parsed = parse(trimmed, fmt, new Date());
-    if (isValid(parsed) && parsed.getFullYear() > 1000) return parsed;
-  }
-  return undefined;
-};
-
-const displayValue = (value: string) => {
-  const date = parsePlainDate(value);
-  return date ? format(date, DISPLAY_FORMAT) : "";
-};
-
 const DatePicker = ({
   value,
   onChange,
@@ -71,32 +51,27 @@ const DatePicker = ({
   id,
 }: DatePickerProps) => {
   const [open, setOpen] = React.useState(false);
-  const [text, setText] = React.useState(() => displayValue(value));
   const generatedId = React.useId();
   const fieldId = id || generatedId;
-  const selected = parsePlainDate(value);
   const minDate = min ? parsePlainDate(min) : undefined;
   const maxDate = max ? parsePlainDate(max) : undefined;
 
-  // Keep the input text in sync when the value changes from outside (e.g. the
-  // calendar, or a parent reset).
-  React.useEffect(() => {
-    setText(displayValue(value));
-  }, [value]);
+  const {
+    inputRef,
+    inputValue,
+    selectedDate,
+    calendarMonth,
+    setCalendarMonth,
+    handleKeyDown,
+    handleFocus,
+    handleMouseUp,
+    handleBlur,
+    handleCalendarSelect,
+  } = useSegmentedDateInput({ value, onChange });
 
   const disabledMatchers: Matcher[] = [];
   if (minDate) disabledMatchers.push({ before: minDate });
   if (maxDate) disabledMatchers.push({ after: maxDate });
-
-  const commitTyped = (next: string) => {
-    setText(next);
-    if (!next.trim()) {
-      onChange("");
-      return;
-    }
-    const parsed = parseTypedDate(next);
-    if (parsed) onChange(formatPlainDate(parsed));
-  };
 
   return (
     <div className={cn("group relative h-fit", className)}>
@@ -116,19 +91,24 @@ const DatePicker = ({
           <div className="relative">
             <Input
               id={fieldId}
+              ref={inputRef}
               type="text"
               inputMode="numeric"
               disabled={disabled}
+              readOnly
               aria-label={ariaLabel || label}
               placeholder={placeholder}
-              value={text}
+              value={inputValue}
               className={cn(
                 "py-1 pl-2 pr-9 text-sm shadow-none",
                 disabled && "cursor-not-allowed",
                 inputClassName,
               )}
-              onChange={(event) => commitTyped(event.target.value)}
-              onBlur={() => setText(displayValue(value))}
+              onChange={() => { }}
+              onKeyDown={handleKeyDown}
+              onFocus={handleFocus}
+              onMouseUp={handleMouseUp}
+              onBlur={handleBlur}
             />
             <PopoverTrigger asChild>
               <button
@@ -145,16 +125,18 @@ const DatePicker = ({
         <PopoverContent
           align="start"
           className="w-auto rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+          onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <Calendar
             mode="single"
-            selected={selected}
-            defaultMonth={selected}
+            selected={selectedDate}
+            month={calendarMonth}
+            onMonthChange={setCalendarMonth}
             startMonth={minDate}
             endMonth={maxDate}
             disabled={disabledMatchers.length ? disabledMatchers : undefined}
             onSelect={(date) => {
-              onChange(date ? formatPlainDate(date) : "");
+              handleCalendarSelect(date);
               setOpen(false);
             }}
           />

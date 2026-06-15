@@ -11,6 +11,7 @@ import {
   getBoardPostsForAttendeeView,
   isBoardAuthorInUse,
   isBoardPostOwnedByParticipant,
+  isTimestampFromPreviousLocalDay,
   isWorshipSyncModeratorBoardPost,
   normalizeAliasId,
   sortBoardPostsAscending,
@@ -228,5 +229,34 @@ describe("boardUtils", () => {
         (post) => post.id,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("isTimestampFromPreviousLocalDay", () => {
+  const now = new Date(2026, 5, 14, 10, 0, 0).getTime(); // Jun 14 2026, 10:00 local
+
+  it("returns true for a timestamp on an earlier local calendar day", () => {
+    const yesterdayLateNight = new Date(2026, 5, 13, 23, 59, 0).getTime();
+    expect(isTimestampFromPreviousLocalDay(yesterdayLateNight, now)).toBe(true);
+  });
+
+  it("returns true across a multi-day gap (last week's session)", () => {
+    const lastWeek = new Date(2026, 5, 7, 11, 0, 0).getTime();
+    expect(isTimestampFromPreviousLocalDay(lastWeek, now)).toBe(true);
+  });
+
+  it("returns false for a timestamp earlier the same local day", () => {
+    const earlierToday = new Date(2026, 5, 14, 0, 1, 0).getTime();
+    expect(isTimestampFromPreviousLocalDay(earlierToday, now)).toBe(false);
+  });
+
+  it("returns false for a future timestamp", () => {
+    const tomorrow = new Date(2026, 5, 15, 1, 0, 0).getTime();
+    expect(isTimestampFromPreviousLocalDay(tomorrow, now)).toBe(false);
+  });
+
+  it("returns false for missing or invalid timestamps", () => {
+    expect(isTimestampFromPreviousLocalDay(undefined, now)).toBe(false);
+    expect(isTimestampFromPreviousLocalDay(Number.NaN, now)).toBe(false);
   });
 });

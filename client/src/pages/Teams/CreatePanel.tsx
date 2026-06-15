@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
 import Button from "../../components/Button/Button";
-import { panelClassName } from "./teamsStyles";
+import { panelClassName, panelFormScrollPaddingClassName, panelHeaderPaddingClassName, panelScrollPaddingClassName, panelShellClassName, teamsCreatePanelFormClassName, teamsCreatePanelListClosedClassName, teamsCreatePanelListOpenClassName, teamsCreatePanelRowClassName, teamsPanelMaxHeightClassName } from "./teamsStyles";
 
 type CreatePanelProps = {
   /** Whether the create/edit form is revealed. */
@@ -15,13 +15,19 @@ type CreatePanelProps = {
   /** Heading shown above the form when open (e.g. "Create position" / "Edit position"). */
   title: string;
   /** Heading for the list section (e.g. "Positions"). */
-  sectionTitle: string;
+  sectionTitle: ReactNode;
   /** Label for the collapsed create button (e.g. "Create position"). */
   createLabel: string;
   /** Optional helper text shown under the section title. */
   description?: ReactNode;
+  /** Optional filters rendered above the list (e.g. search). Kept visible when the list scrolls. */
+  listToolbar?: ReactNode;
+  /** When true, the list scrolls inside the panel while the heading and toolbar stay fixed. */
+  scrollableList?: boolean;
   /** The list of existing entities. */
   list: ReactNode;
+  /** Optional actions in the top-right of the open form panel (e.g. archive/delete menu). */
+  formHeaderActions?: ReactNode;
   /** The form fields. */
   children: ReactNode;
 };
@@ -40,42 +46,100 @@ const CreatePanel = ({
   sectionTitle,
   createLabel,
   description,
+  listToolbar,
+  scrollableList = false,
   list,
+  formHeaderActions,
   children,
 }: CreatePanelProps) => {
+  const formPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    formPanelRef.current?.scrollIntoView({ block: "nearest" });
+  }, [open]);
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-center">
-        <div className="w-full min-w-0 space-y-3 lg:max-w-3xl">
-          <section className={panelClassName}>
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">{sectionTitle}</h2>
-              {!open && canEdit ? (
-                <Button variant="primary" svg={Plus} iconSize="sm" onClick={onOpenCreate}>
-                  {createLabel}
-                </Button>
+      <div className={teamsCreatePanelRowClassName}>
+        <div
+          className={cn(
+            "w-full min-w-0 space-y-3",
+            open ? teamsCreatePanelListOpenClassName : teamsCreatePanelListClosedClassName,
+            open && "max-lg:hidden",
+          )}
+        >
+          <section
+            className={cn(
+              scrollableList ? panelShellClassName : panelClassName,
+              scrollableList && cn("flex flex-col", teamsPanelMaxHeightClassName),
+            )}
+          >
+            <div className={cn(scrollableList && cn("shrink-0", panelHeaderPaddingClassName))}>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">{sectionTitle}</h2>
+                {!open && canEdit ? (
+                  <Button variant="primary" svg={Plus} iconSize="sm" onClick={onOpenCreate}>
+                    {createLabel}
+                  </Button>
+                ) : null}
+              </div>
+              {description ? (
+                <p className="mt-1 text-sm text-gray-400">{description}</p>
               ) : null}
             </div>
-            {description ? (
-              <p className="mt-1 text-sm text-gray-400">{description}</p>
+            {listToolbar ? (
+              <div className={cn("mt-4 shrink-0", scrollableList && "px-4")}>{listToolbar}</div>
             ) : null}
-            <div className="mt-4 space-y-2">{list}</div>
+            <div
+              className={cn(
+                "space-y-2",
+                scrollableList
+                  ? cn(
+                    "scrollbar-variable mt-4 min-h-0 flex-1 overflow-y-auto",
+                    panelScrollPaddingClassName,
+                  )
+                  : "mt-4",
+              )}
+            >
+              {list}
+            </div>
           </section>
         </div>
         <div
+          ref={formPanelRef}
           inert={!open}
           role="region"
           aria-label={title}
           className={cn(
-            "overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none",
+            "min-w-0 overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none",
             open
-              ? "max-h-[3000px] opacity-100 lg:max-h-none lg:w-md"
-              : "pointer-events-none max-h-0 opacity-0 lg:max-h-none lg:w-0 lg:opacity-0",
+              ? cn(
+                "flex w-full flex-col",
+                teamsCreatePanelFormClassName,
+                teamsPanelMaxHeightClassName,
+              )
+              : "pointer-events-none max-h-0 w-0 opacity-0",
           )}
         >
-          <section className={cn(panelClassName, "lg:w-md")}>
-            <h2 className="text-lg font-semibold">{title}</h2>
-            <div className="mt-4 space-y-3">{children}</div>
+          <section className={cn(panelShellClassName, "flex min-h-0 w-full min-w-0 flex-1 flex-col")}>
+            <div
+              className={cn(
+                "flex shrink-0 items-start justify-between gap-3",
+                panelHeaderPaddingClassName,
+              )}
+            >
+              <h2 className="text-lg font-semibold">{title}</h2>
+              {formHeaderActions}
+            </div>
+            <div
+              className={cn(
+                "scrollbar-variable mt-4 min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto",
+                panelFormScrollPaddingClassName,
+              )}
+            >
+              {children}
+            </div>
           </section>
         </div>
       </div>

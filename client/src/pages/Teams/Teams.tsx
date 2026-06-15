@@ -1,21 +1,11 @@
-import { lazy, Suspense, useMemo, type ReactNode } from "react";
-import {
-  CalendarDays,
-  ClipboardList,
-  ContactRound,
-  ListChecks,
-  Settings2,
-  UserRoundCog,
-  Users,
-} from "lucide-react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { ListChecks, PanelLeft, Users } from "lucide-react";
 import {
   Navigate,
-  NavLink,
   Outlet,
   Route,
   Routes,
   useLocation,
-  useNavigate,
 } from "react-router-dom";
 import HomeToolbarMenu from "../../components/HomeToolbarMenu/HomeToolbarMenu";
 import Icon from "../../components/Icon/Icon";
@@ -23,77 +13,29 @@ import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import { ChurchLogoImg } from "../../components/ChurchLogoImg";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Button from "../../components/Button/Button";
-import Select from "../../components/Select/Select";
-import { cn } from "../../utils/cnHelper";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
+import { getActiveTeamsNavSection, teamsNavSections } from "./teamsNavSections";
 
 const TeamsSchedulesPage = lazy(() => import("./pages/TeamsSchedulesPage"));
 const TeamsFormsPage = lazy(() => import("./pages/TeamsFormsPage"));
 const TeamsMembersPage = lazy(() => import("./pages/TeamsMembersPage"));
 const TeamsPositionsPage = lazy(() => import("./pages/TeamsPositionsPage"));
 const TeamsGroupsPage = lazy(() => import("./pages/TeamsGroupsPage"));
+const TeamsRolesPage = lazy(() => import("./pages/TeamsRolesPage"));
+const TeamsQualificationsPage = lazy(() => import("./pages/TeamsQualificationsPage"));
 const TeamsServicesPage = lazy(() => import("./pages/TeamsServicesPage"));
-
-const teamsAdminSections = [
-  {
-    path: "/teams/schedules",
-    routePath: "schedules",
-    label: "Schedules",
-    description: "Assign people to services by position.",
-    icon: CalendarDays,
-  },
-  {
-    path: "/teams/members",
-    routePath: "members",
-    label: "Members",
-    description: "Keep roster details and availability current.",
-    icon: ContactRound,
-  },
-  {
-    path: "/teams/positions",
-    routePath: "positions",
-    label: "Positions",
-    description: "Define roles and position requirements.",
-    icon: UserRoundCog,
-  },
-  {
-    path: "/teams/groups",
-    routePath: "groups",
-    label: "Teams",
-    description: "Organize members into scheduling teams.",
-    icon: Users,
-  },
-  {
-    path: "/teams/services",
-    routePath: "services",
-    label: "Services",
-    description: "Manage service times used for scheduling.",
-    icon: Settings2,
-  },
-  {
-    path: "/teams/forms",
-    routePath: "forms",
-    label: "Forms",
-    description: "Share intake forms and review submissions.",
-    icon: ClipboardList,
-  },
-] as const;
-
-const teamsSectionSelectOptions = teamsAdminSections.map((section) => ({
-  value: section.path,
-  label: section.label,
-}));
-
-const getActiveSection = (pathname: string) =>
-  teamsAdminSections.find(
-    (section) =>
-      pathname === section.path || pathname.startsWith(`${section.path}/`),
-  ) || teamsAdminSections[0];
 
 const TeamsSectionLoadingFallback = () => {
   const location = useLocation();
-  const activeSection = getActiveSection(location.pathname);
+  const activeSection = getActiveTeamsNavSection(location.pathname);
   return getTeamsSectionSkeleton(activeSection.routePath);
 };
 
@@ -124,11 +66,11 @@ const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
 );
 
 const TeamsLayout = () => {
-  const { loading, toolbarLogoUrl, churchName, canEditTeams } = useTeamsPage();
+  const { loading, toolbarLogoUrl, churchName, canEditAnyTeam } = useTeamsPage();
   const location = useLocation();
-  const navigate = useNavigate();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const activeSection = useMemo(
-    () => getActiveSection(location.pathname),
+    () => getActiveTeamsNavSection(location.pathname),
     [location.pathname],
   );
 
@@ -161,61 +103,34 @@ const TeamsLayout = () => {
           <p className="mx-auto max-w-3xl text-sm text-gray-200">
             Manage scheduling roster people, positions, teams, services, and schedule assignments.
           </p>
-          {!canEditTeams ? (
+          {!canEditAnyTeam ? (
             <p className="mx-auto rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100">
               View-only Teams access
             </p>
           ) : null}
         </section>
 
-        <section className="mx-auto mt-6 grid min-h-0 w-full flex-1 grid-rows-[auto_1fr] overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-1">
-          <aside className="border-b border-gray-700 bg-gray-950/70 p-3 lg:border-b-0 lg:border-r lg:p-4">
-            <nav
-              className="hidden gap-2 lg:flex lg:flex-col"
-              aria-label="Teams sections"
+        <section className="mx-auto mt-6 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-3 lg:hidden">
+            <Button
+              variant="secondary"
+              svg={PanelLeft}
+              iconSize="sm"
+              aria-label="Open Teams sections"
+              onClick={() => setMobileNavOpen(true)}
             >
-              {teamsAdminSections.map((section) => (
-                <NavLink
-                  key={section.path}
-                  to={section.path}
-                  aria-label={section.label}
-                  className={({ isActive }) =>
-                    cn(
-                      "group flex items-start gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors",
-                      isActive
-                        ? "bg-cyan-500/15 text-white ring-1 ring-cyan-400/40"
-                        : "text-gray-200 hover:bg-gray-800 hover:text-white",
-                    )
-                  }
-                >
-                  <Icon
-                    svg={section.icon}
-                    size="md"
-                    className="mt-0.5 shrink-0 text-cyan-300"
-                  />
-                  <span className="min-w-0">
-                    <span className="block font-semibold">{section.label}</span>
-                    <span className="mt-0.5 block text-xs leading-snug text-gray-400 group-hover:text-gray-300">
-                      {section.description}
-                    </span>
-                  </span>
-                </NavLink>
-              ))}
-            </nav>
+              Sections
+            </Button>
+            <p className="truncate text-sm font-semibold text-gray-100">
+              {activeSection.label}
+            </p>
+          </div>
 
-            <Select
-              id="teams-section-select"
-              label="Teams section"
-              hideLabel
-              className="lg:hidden"
-              selectClassName="rounded-lg border-gray-600 font-semibold"
-              value={activeSection.path}
-              onChange={(path) => navigate(path)}
-              options={teamsSectionSelectOptions}
-            />
+          <aside className="hidden min-h-0 border-gray-700 bg-gray-950/70 lg:block lg:border-r lg:p-4">
+            <TeamsSidebarNav />
           </aside>
 
-          <div className="scrollbar-variable min-h-0 overflow-y-auto p-3 sm:p-5">
+          <div className="scrollbar-variable min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5">
             {loading ? (
               getTeamsSectionSkeleton(activeSection.routePath)
             ) : (
@@ -224,6 +139,21 @@ const TeamsLayout = () => {
           </div>
         </section>
       </div>
+
+      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+        <SheetContent
+          side="left"
+          className="flex w-[16rem] max-w-[85vw] flex-col border-gray-700 bg-gray-950/95 p-0"
+          aria-describedby={undefined}
+        >
+          <SheetHeader className="border-gray-700 bg-gray-950/95">
+            <SheetTitle>Teams sections</SheetTitle>
+          </SheetHeader>
+          <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4">
+            <TeamsSidebarNav onNavigate={() => setMobileNavOpen(false)} />
+          </div>
+        </SheetContent>
+      </Sheet>
     </main>
   );
 };
@@ -233,7 +163,7 @@ const TeamsRoutes = () => (
     <Route element={<TeamsLayout />}>
       <Route index element={<Navigate to="schedules" replace />} />
       <Route
-        path={teamsAdminSections[0].routePath}
+        path={teamsNavSections[0].routePath}
         element={
           <TeamsSectionRoute>
             <TeamsSchedulesPage />
@@ -241,7 +171,7 @@ const TeamsRoutes = () => (
         }
       />
       <Route
-        path={teamsAdminSections[1].routePath}
+        path={teamsNavSections[1].routePath}
         element={
           <TeamsSectionRoute>
             <TeamsMembersPage />
@@ -249,7 +179,7 @@ const TeamsRoutes = () => (
         }
       />
       <Route
-        path={teamsAdminSections[2].routePath}
+        path={teamsNavSections[2].routePath}
         element={
           <TeamsSectionRoute>
             <TeamsPositionsPage />
@@ -257,7 +187,7 @@ const TeamsRoutes = () => (
         }
       />
       <Route
-        path={teamsAdminSections[3].routePath}
+        path={teamsNavSections[3].routePath}
         element={
           <TeamsSectionRoute>
             <TeamsGroupsPage />
@@ -265,7 +195,23 @@ const TeamsRoutes = () => (
         }
       />
       <Route
-        path={teamsAdminSections[4].routePath}
+        path={teamsNavSections[4].routePath}
+        element={
+          <TeamsSectionRoute>
+            <TeamsRolesPage />
+          </TeamsSectionRoute>
+        }
+      />
+      <Route
+        path={teamsNavSections[5].routePath}
+        element={
+          <TeamsSectionRoute>
+            <TeamsQualificationsPage />
+          </TeamsSectionRoute>
+        }
+      />
+      <Route
+        path={teamsNavSections[6].routePath}
         element={
           <TeamsSectionRoute>
             <TeamsServicesPage />
@@ -273,7 +219,7 @@ const TeamsRoutes = () => (
         }
       />
       <Route
-        path={teamsAdminSections[5].routePath}
+        path={teamsNavSections[7].routePath}
         element={
           <TeamsSectionRoute>
             <TeamsFormsPage />

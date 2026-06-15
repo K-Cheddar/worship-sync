@@ -77,6 +77,28 @@ const createUndoableState = () => ({
   future: [],
 });
 
+const bulkImportReviewHeading = { name: "Bible import review" };
+
+const submitBulkImport = async (
+  text: string,
+  expectedPassageLoads = 1,
+) => {
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  const referencesInput = await screen.findByLabelText(/Bible references/i);
+  fireEvent.change(referencesInput, { target: { value: text } });
+  fireEvent.click(screen.getByRole("button", { name: "Import multiple" }));
+
+  await waitFor(() => {
+    expect(mockedLoadBibleChapterVerses).toHaveBeenCalledTimes(
+      expectedPassageLoads,
+    );
+  });
+
+  return screen.findByRole("heading", bulkImportReviewHeading, {
+    timeout: 3000,
+  });
+};
+
 const createBibleStore = () => {
   const undoableState = createUndoableState();
   const verses = [{ name: "1", index: 0, text: "For God so loved the world" }];
@@ -234,7 +256,7 @@ describe("Bible", () => {
 
   it("imports multiple Bible references into a review view", async () => {
     const store = createBibleStore();
-    mockedLoadBibleChapterVerses.mockResolvedValue([
+    mockedLoadBibleChapterVerses.mockImplementation(async () => [
       { name: "16", index: 15, text: "I will ask the Father" },
     ]);
 
@@ -250,14 +272,8 @@ describe("Bible", () => {
       </Provider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Import" }));
-    fireEvent.change(screen.getByLabelText(/Bible references/i), {
-      target: { value: "Main Text: John 14:16-18\nAll NKJV" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Import multiple" }));
-
     expect(
-      await screen.findByRole("heading", { name: "Bible import review" }),
+      await submitBulkImport("Main Text: John 14:16-18\nAll NKJV"),
     ).toBeInTheDocument();
     expect(screen.getByText("John 14:16-18 NKJV")).toBeInTheDocument();
     expect(screen.getByText("I will ask the Father")).toBeInTheDocument();
@@ -265,7 +281,7 @@ describe("Bible", () => {
 
   it("adds selected imported Bible references one at a time", async () => {
     const store = createBibleStore();
-    mockedLoadBibleChapterVerses.mockResolvedValue([
+    mockedLoadBibleChapterVerses.mockImplementation(async () => [
       { name: "16", index: 15, text: "I will ask the Father" },
     ]);
     mockedCreateBibleItemFromParsedReference
@@ -288,13 +304,7 @@ describe("Bible", () => {
       </Provider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Import" }));
-    fireEvent.change(screen.getByLabelText(/Bible references/i), {
-      target: { value: "John 14:16-18; Acts 1:4-8\nAll NKJV" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Import multiple" }));
-
-    await screen.findByRole("heading", { name: "Bible import review" });
+    await submitBulkImport("John 14:16-18; Acts 1:4-8\nAll NKJV", 2);
     fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
 
     await waitFor(() => {
@@ -325,7 +335,7 @@ describe("Bible", () => {
     expect(store.getState().itemList.list).toHaveLength(2);
     await waitFor(() => {
       expect(
-        screen.queryByRole("heading", { name: "Bible import review" }),
+        screen.queryByRole("heading", bulkImportReviewHeading),
       ).not.toBeInTheDocument();
     });
     expect(window.sessionStorage.getItem("worshipSync_bibleBulkImport_activeId"))
@@ -373,7 +383,9 @@ describe("Bible", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: "Bible import review" }),
+      await screen.findByRole("heading", bulkImportReviewHeading, {
+        timeout: 3000,
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText("John 14:16-18 NKJV")).toBeInTheDocument();
   });

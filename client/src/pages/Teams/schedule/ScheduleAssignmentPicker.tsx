@@ -280,7 +280,7 @@ const ScheduleAssignmentPicker = memo(({
         role={menuView === "members" ? "listbox" : "menu"}
         align="start"
         sideOffset={4}
-        className="z-50 w-[--radix-popover-trigger-width] rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+        className="z-50 w-48 rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
           if (menuView !== "createMember") event.preventDefault();
@@ -495,7 +495,7 @@ const ScheduleAssignmentPicker = memo(({
                 </>
               ) : (
                 <p className="px-2 py-1 text-xs text-gray-500">
-                  No eligible members. Check the panel for conflicts.
+                  No eligible members.
                 </p>
               )}
             </div>

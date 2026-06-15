@@ -61,6 +61,18 @@ const Calendar = ({
         selected: cn(
           "[&>button]:bg-cyan-500 [&>button]:text-white [&>button]:hover:bg-cyan-400",
         ),
+        range_start: cn(
+          "rounded-l-md bg-cyan-500/20",
+          "[&>button]:rounded-r-none [&>button]:bg-cyan-500 [&>button]:text-white [&>button]:hover:bg-cyan-400",
+        ),
+        range_middle: cn(
+          "rounded-none bg-cyan-500/20",
+          "[&>button]:rounded-none [&>button]:bg-cyan-500/20 [&>button]:text-white [&>button]:hover:bg-cyan-500/30",
+        ),
+        range_end: cn(
+          "rounded-r-md bg-cyan-500/20",
+          "[&>button]:rounded-l-none [&>button]:bg-cyan-500 [&>button]:text-white [&>button]:hover:bg-cyan-400",
+        ),
         today: "[&>button]:border [&>button]:border-cyan-400/60",
         outside: "[&>button]:text-gray-600",
         disabled: "[&>button]:text-gray-700 [&>button]:opacity-50",

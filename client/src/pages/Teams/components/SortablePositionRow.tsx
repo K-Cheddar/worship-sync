@@ -2,8 +2,13 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { type ComponentProps } from "react";
+import { cn } from "@/utils/cnHelper";
 import Button from "../../../components/Button/Button";
 import EntityRow from "./EntityRow";
+import {
+  teamsRowIconButtonClassName,
+  teamsRowIconButtonPadding,
+} from "../teamsStyles";
 
 type SortablePositionRowProps = ComponentProps<typeof EntityRow> & {
   id: string;
@@ -26,8 +31,9 @@ const SortablePositionRow = ({ id, ...rowProps }: SortablePositionRowProps) => {
       ref={setActivatorNodeRef}
       type="button"
       variant="tertiary"
-      className="shrink-0 touch-none"
-      padding="px-1 py-1"
+      className={cn("shrink-0 touch-none self-center", teamsRowIconButtonClassName)}
+      padding={teamsRowIconButtonPadding}
+      iconSize="sm"
       svg={GripVertical}
       aria-label={`Drag to reorder ${rowProps.title}`}
       {...attributes}

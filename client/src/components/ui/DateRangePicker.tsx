@@ -56,7 +56,15 @@ const displayRange = (value: DateRangeValue) => {
  * Range counterpart to `DatePicker`: one input and one calendar where the user
  * clicks a start then an end. Values are plain `yyyy-MM-dd` strings. The field
  * is read-only (click to open the calendar) since typing a range is fiddly.
+ *
+ * Uses `min={1}` so react-day-picker does not complete the range on the first
+ * click (its default `min={0}` sets start and end to the same day immediately).
  */
+const MIN_RANGE_NIGHTS = 1;
+
+const isCompleteRange = (range: DateRange | undefined) =>
+  Boolean(range?.from && range?.to);
+
 const DateRangePicker = ({
   value,
   onChange,
@@ -87,6 +95,16 @@ const DateRangePicker = ({
   const disabledMatchers: Matcher[] = [];
   if (minDate) disabledMatchers.push({ before: minDate });
   if (maxDate) disabledMatchers.push({ after: maxDate });
+
+  const handleSelect = (range: DateRange | undefined) => {
+    onChange({
+      startDate: range?.from ? formatPlainDate(range.from) : "",
+      endDate: range?.to ? formatPlainDate(range.to) : "",
+    });
+    if (isCompleteRange(range)) {
+      setOpen(false);
+    }
+  };
 
   return (
     <div className={cn("group relative h-fit", className)}>
@@ -136,18 +154,15 @@ const DateRangePicker = ({
         >
           <Calendar
             mode="range"
+            min={MIN_RANGE_NIGHTS}
+            resetOnSelect
             selected={selected}
             defaultMonth={from || minDate}
             startMonth={minDate}
             endMonth={maxDate}
             disabled={disabledMatchers.length ? disabledMatchers : undefined}
-            onSelect={(range) => {
-              onChange({
-                startDate: range?.from ? formatPlainDate(range.from) : "",
-                endDate: range?.to ? formatPlainDate(range.to) : "",
-              });
-              if (range?.from && range?.to) setOpen(false);
-            }}
+            excludeDisabled={disabledMatchers.length > 0}
+            onSelect={handleSelect}
           />
         </PopoverContent>
       </Popover>

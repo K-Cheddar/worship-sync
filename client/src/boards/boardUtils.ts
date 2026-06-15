@@ -303,6 +303,34 @@ export const getBoardLabel = (board: DBBoard | undefined): string => {
   return formatBoardTimestamp(board.createdAt);
 };
 
+/**
+ * True when `timestamp` falls on an earlier local calendar day than `now`.
+ * Used to auto-roll the discussion board and Restream sessions when the
+ * operator opens the controller on a new day. Invalid or future timestamps
+ * return false so we never reset a session we cannot confidently age.
+ */
+export const isTimestampFromPreviousLocalDay = (
+  timestamp: number | undefined,
+  now: number = Date.now(),
+): boolean => {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return false;
+  }
+  const then = new Date(timestamp);
+  const today = new Date(now);
+  const thenStartOfDay = new Date(
+    then.getFullYear(),
+    then.getMonth(),
+    then.getDate(),
+  ).getTime();
+  const todayStartOfDay = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+  return thenStartOfDay < todayStartOfDay;
+};
+
 const CHURCH_ADJECTIVES = [
   "Joyful",
   "Faithful",

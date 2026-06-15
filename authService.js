@@ -2779,7 +2779,7 @@ const requireAdminSession = async (req, churchId) => {
   return bootstrap;
 };
 
-const requireTeamsViewSession = async (req, churchId) => {
+export const requireTeamsViewSession = async (req, churchId) => {
   const bootstrap = await requireHumanSession(req);
   const teamsPermission = bootstrap.permissions?.teams || "none";
   if (
