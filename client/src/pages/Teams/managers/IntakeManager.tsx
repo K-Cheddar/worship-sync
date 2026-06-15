@@ -318,6 +318,16 @@ const IntakeManager = ({
             ))}
           </>
         }
+        formFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Save form"
+            onSave={() => void submit()}
+            onCancel={reset}
+            disabled={!canEdit}
+            isLoading={saving}
+          />
+        }
       >
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
         <div className="grid gap-3 sm:grid-cols-2">
@@ -392,14 +402,6 @@ const IntakeManager = ({
             Copy public link
           </Button>
         ) : null}
-        <FormActionButtons
-          pinFooter
-          saveLabel="Save form"
-          onSave={() => void submit()}
-          onCancel={reset}
-          disabled={!canEdit}
-          isLoading={saving}
-        />
       </CreatePanel>
 
       <section className={panelClassName}>

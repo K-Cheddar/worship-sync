@@ -369,6 +369,16 @@ const QualificationManager = ({
             />
           ) : null
         }
+        formFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Save area"
+            onSave={() => void submitArea()}
+            onCancel={reset}
+            disabled={!canEdit || !draft.name.trim()}
+            isLoading={saving}
+          />
+        }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
@@ -483,14 +493,6 @@ const QualificationManager = ({
             Save this area first, then add qualification levels.
           </p>
         )}
-        <FormActionButtons
-          pinFooter
-          saveLabel="Save area"
-          onSave={() => void submitArea()}
-          onCancel={reset}
-          disabled={!canEdit || !draft.name.trim()}
-          isLoading={saving}
-        />
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

@@ -28,11 +28,19 @@ export const teamsCreatePanelFormClassName = "lg:min-w-0 lg:flex-1 lg:max-w-xl";
 
 /** Max height for Teams list/form panels that scroll internally within the content area. */
 export const teamsPanelMaxHeightClassName =
-  "max-h-[min(48rem,calc(100dvh-14rem))]";
+  "lg:max-h-[min(48rem,calc(100dvh-14rem))]";
 
-/** Sticky save/cancel footer inside Teams edit panels. */
-export const teamsFormStickyFooterClassName =
-  "sticky bottom-0 z-10 -mx-4 mt-4 border-t border-gray-700/50 bg-gray-950/45 px-4 py-3 backdrop-blur-sm";
+/** Create/edit panel fills the Teams content column on mobile. */
+export const teamsCreatePanelOpenMobileClassName =
+  "max-lg:flex max-lg:min-h-0 max-lg:flex-1 max-lg:flex-col";
+
+/** Edit form column uses remaining height on mobile instead of a viewport max-height. */
+export const teamsCreatePanelFormOpenMobileClassName =
+  "max-lg:min-h-0 max-lg:flex-1 max-lg:max-h-none";
+
+/** Pinned save/cancel footer below the form scroll area. */
+export const teamsFormPanelFooterClassName =
+  "shrink-0 border-t border-gray-700/50 bg-gray-950/45 px-4 py-3";
 
 /** Icon-only row actions: compact on desktop, touch-friendly on mobile. */
 export const teamsRowIconButtonClassName =
