@@ -203,48 +203,32 @@ const AppRoutes = () => {
           <Route
             path="/account/*"
             element={
-              <ToastProvider>
-                <AuthGate allowedKinds={["human"]}>
-                  <Account />
-                </AuthGate>
-              </ToastProvider>
+              <AuthGate allowedKinds={["human"]}>
+                <Account />
+              </AuthGate>
             }
           />
           <Route
             path="/teams/*"
             element={
-              <ToastProvider>
-                <AuthGate allowedKinds={["human"]}>
-                  <TeamsAccessGuard>
-                    <Teams />
-                  </TeamsAccessGuard>
-                </AuthGate>
-              </ToastProvider>
+              <AuthGate allowedKinds={["human"]}>
+                <TeamsAccessGuard>
+                  <Teams />
+                </TeamsAccessGuard>
+              </AuthGate>
             }
           />
           <Route
             path="/teams/intake/:token"
-            element={
-              <ToastProvider>
-                <TeamIntakePublic />
-              </ToastProvider>
-            }
+            element={<TeamIntakePublic />}
           />
           <Route
             path="/teams/intake"
-            element={
-              <ToastProvider>
-                <TeamIntakePublic />
-              </ToastProvider>
-            }
+            element={<TeamIntakePublic />}
           />
           <Route
             path="/teams/schedule/:token"
-            element={
-              <ToastProvider>
-                <TeamSchedulePublic />
-              </ToastProvider>
-            }
+            element={<TeamSchedulePublic />}
           />
           <Route
             path="/workstation/operator"
