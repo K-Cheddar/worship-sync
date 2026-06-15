@@ -565,15 +565,17 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         {/* Resize handles — sides and bottom only (never on the title bar) */}
         {!isMinimized && (
           <>
-            <div data-resize-dir="w" className={cn(SIDE_EDGE_RESIZE_CLASS, "left-0")} {...resizeHandleProps} />
-            <div data-resize-dir="e" className={cn(SIDE_EDGE_RESIZE_CLASS, "right-0")} {...resizeHandleProps} />
-            <div data-resize-dir="s" className={BOTTOM_EDGE_RESIZE_CLASS} {...resizeHandleProps} />
+            <div data-testid="resize-handle-w" data-resize-dir="w" className={cn(SIDE_EDGE_RESIZE_CLASS, "left-0")} {...resizeHandleProps} />
+            <div data-testid="resize-handle-e" data-resize-dir="e" className={cn(SIDE_EDGE_RESIZE_CLASS, "right-0")} {...resizeHandleProps} />
+            <div data-testid="resize-handle-s" data-resize-dir="s" className={BOTTOM_EDGE_RESIZE_CLASS} {...resizeHandleProps} />
             <div
+              data-testid="resize-handle-sw"
               data-resize-dir="sw"
               className={cn(BOTTOM_CORNER_RESIZE_CLASS, "left-0 cursor-nesw-resize")}
               {...resizeHandleProps}
             />
             <div
+              data-testid="resize-handle-se"
               data-resize-dir="se"
               className={cn(BOTTOM_CORNER_RESIZE_CLASS, "right-0 cursor-nwse-resize")}
               {...resizeHandleProps}

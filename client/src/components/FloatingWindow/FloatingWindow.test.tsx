@@ -37,15 +37,15 @@ describe("FloatingWindow", () => {
   it("exposes side and bottom resize handles below the title bar", () => {
     renderWindow();
 
-    const west = document.querySelector("[data-resize-dir='w']");
-    const east = document.querySelector("[data-resize-dir='e']");
+    const west = screen.getByTestId("resize-handle-w");
+    const east = screen.getByTestId("resize-handle-e");
     expect(west).toHaveClass("top-10", "pointer-coarse:w-12");
     expect(east).toHaveClass("top-10", "pointer-coarse:w-12");
-    expect(document.querySelector("[data-resize-dir='s']")).toHaveClass("pointer-coarse:h-12");
-    expect(document.querySelector("[data-resize-dir='sw']")).toHaveClass("pointer-coarse:h-12");
-    expect(document.querySelector("[data-resize-dir='se']")).toHaveClass("pointer-coarse:h-12");
-    expect(document.querySelector("[data-resize-dir='n']")).toBeNull();
-    expect(document.querySelector("[data-resize-dir='ne']")).toBeNull();
-    expect(document.querySelector("[data-resize-dir='nw']")).toBeNull();
+    expect(screen.getByTestId("resize-handle-s")).toHaveClass("pointer-coarse:h-12");
+    expect(screen.getByTestId("resize-handle-sw")).toHaveClass("pointer-coarse:h-12");
+    expect(screen.getByTestId("resize-handle-se")).toHaveClass("pointer-coarse:h-12");
+    expect(screen.queryByTestId("resize-handle-n")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("resize-handle-ne")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("resize-handle-nw")).not.toBeInTheDocument();
   });
 });
