@@ -10,6 +10,8 @@ export type ScheduleMemberPickerMember = {
   eligible: boolean;
   issue: string;
   usesSubmenu: boolean;
+  /** Member asked for this position via intake. A soft preference signal. */
+  desiresPosition: boolean;
 };
 
 export const splitTypedMemberName = (raw: string) => {
@@ -22,6 +24,11 @@ export const memberQualifiesForPosition = (
   member: TeamRosterMember,
   positionId: string,
 ) => (member.positionIds || []).includes(positionId);
+
+export const memberDesiresPosition = (
+  member: TeamRosterMember,
+  positionId: string,
+) => (member.desiredPositionIds || []).includes(positionId);
 
 export const sortScheduleMemberPickerRows = (
   rows: ScheduleMemberPickerMember[],
@@ -36,6 +43,11 @@ export const sortScheduleMemberPickerRows = (
     }
     if (a.eligible !== b.eligible) {
       return a.eligible ? -1 : 1;
+    }
+    // Among otherwise-equal members, float those who asked for this position
+    // (intake desire) to the top so schedulers reach for willing people first.
+    if (a.desiresPosition !== b.desiresPosition) {
+      return a.desiresPosition ? -1 : 1;
     }
     return compareTeamRosterMembersByScheduleDisplay(
       a.member,
@@ -201,6 +213,7 @@ export const buildScheduleMemberPickerMembers = ({
             ...issueArgs,
           }),
       usesSubmenu: Boolean(usesSubmenu && eligible),
+      desiresPosition: memberDesiresPosition(member, positionId),
     };
   });
 

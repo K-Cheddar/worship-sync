@@ -82,6 +82,7 @@ const MemberManager = ({
     lastName: "",
     dateOfBirth: "",
     positionIds: [],
+    desiredPositionIds: [],
     teamMemberships: {},
     qualifications: [],
     blockoutDates: [],
@@ -115,6 +116,7 @@ const MemberManager = ({
       lastName: member.lastName,
       dateOfBirth: member.dateOfBirth || "",
       positionIds: member.positionIds || [],
+      desiredPositionIds: member.desiredPositionIds || [],
       teamMemberships: member.teamMemberships || {},
       qualifications: member.qualifications || [],
       blockoutDates: member.blockoutDates || [],
@@ -143,6 +145,7 @@ const MemberManager = ({
       lastName: "",
       dateOfBirth: "",
       positionIds: [],
+      desiredPositionIds: [],
       teamMemberships: {},
       qualifications: [],
       blockoutDates: [],
@@ -189,6 +192,7 @@ const MemberManager = ({
       lastName: body.lastName.trim(),
       dateOfBirth: body.dateOfBirth || "",
       positionIds: body.positionIds,
+      desiredPositionIds: body.desiredPositionIds || [],
       teamMemberships: body.teamMemberships || {},
       qualifications: body.qualifications || [],
       blockoutDates: body.blockoutDates,
@@ -222,6 +226,16 @@ const MemberManager = ({
         archived: Boolean(position.archivedAt),
       })),
     [positions, data.teams, teamNameById],
+  );
+
+  // Positions the member asked for (intake) but is not yet eligible to be
+  // scheduled for. Promoting one adds it to positionIds (the assignment gate).
+  const desiredNotEligible = useMemo(
+    () =>
+      (draft.desiredPositionIds || []).filter(
+        (positionId) => !draft.positionIds.includes(positionId),
+      ),
+    [draft.desiredPositionIds, draft.positionIds],
   );
 
   const roleTeamIds = Array.from(
@@ -348,9 +362,49 @@ const MemberManager = ({
         <DatePicker label="Date of birth" value={draft.dateOfBirth || ""} onChange={(dateOfBirth) => setDraft((d) => ({ ...d, dateOfBirth }))} />
         <EntityMultiSelect
           label="Positions"
+          description="Positions this member can be scheduled for."
           options={positionOptions}
           value={draft.positionIds}
           onChange={(positionIds) => setDraft((d) => ({ ...d, positionIds }))}
+        />
+        {desiredNotEligible.length > 0 ? (
+          <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3">
+            <p className="text-sm font-semibold text-amber-100">
+              Requested from intake, not yet schedulable
+            </p>
+            <p className="mt-0.5 text-xs text-amber-100/80">
+              These positions are what the member wants to do. Add one to make
+              them assignable to it.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {desiredNotEligible.map((positionId) => (
+                <Button
+                  key={positionId}
+                  variant="secondary"
+                  svg={Plus}
+                  iconSize="sm"
+                  padding="px-2 py-1"
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      positionIds: [...d.positionIds, positionId],
+                    }))
+                  }
+                >
+                  {positionNameById.get(positionId) || "Position"}
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <EntityMultiSelect
+          label="Desired positions"
+          description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
+          options={positionOptions}
+          value={draft.desiredPositionIds || []}
+          onChange={(desiredPositionIds) =>
+            setDraft((d) => ({ ...d, desiredPositionIds }))
+          }
         />
         <fieldset className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Team roles</legend>

@@ -1508,6 +1508,70 @@ test("public schedule disambiguates duplicate first names with a last initial", 
   jordans.forEach((item) => assert.match(item.name, /^Jordan [A-Z]\.$/));
 });
 
+test("intake form stores custom wording and ships it on the public preview", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_custom_copy");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+  });
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Fall volunteers",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      teamIds: [worship.teamId],
+      active: true,
+      welcomeMessage: "Welcome to Worship sign-ups!",
+      positionsMessage: "In which positions would you like to serve?",
+      availabilityMessage: "Which Sundays can you make it?",
+      notesMessage: "Anything we should plan around?",
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  assert.equal(form.payload.form.welcomeMessage, "Welcome to Worship sign-ups!");
+  assert.equal(
+    form.payload.form.positionsMessage,
+    "In which positions would you like to serve?",
+  );
+  const token = form.payload.publicToken;
+
+  const previewRes = createRes();
+  await authHandlers.getTeamIntakePreview(
+    { params: {}, headers: {}, session: createSession(), query: { token } },
+    previewRes,
+  );
+  assert.equal(previewRes.statusCode, 200);
+  assert.equal(
+    previewRes.payload.form.welcomeMessage,
+    "Welcome to Worship sign-ups!",
+  );
+  assert.equal(
+    previewRes.payload.form.availabilityMessage,
+    "Which Sundays can you make it?",
+  );
+  assert.equal(
+    previewRes.payload.form.notesMessage,
+    "Anything we should plan around?",
+  );
+
+  // Clearing a message persists as empty so the public form falls back to its
+  // default wording; untouched messages are preserved.
+  const updated = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context,
+    params: { formId: form.payload.form.formId },
+    body: { positionsMessage: "" },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.payload.form.positionsMessage, "");
+  assert.equal(
+    updated.payload.form.welcomeMessage,
+    "Welcome to Worship sign-ups!",
+  );
+});
+
 test("intake submission rejects positions outside the form's team scope", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("intake_scope");
@@ -1633,11 +1697,371 @@ test("applying intake as a new member adds them to position teams", async (t) =>
   assert.equal(applyRes.statusCode, 200);
   assert.ok(applyRes.payload.member?.memberId);
 
+  // Intake positions record desire only; applying must NOT grant scheduling
+  // eligibility. The new member is assignable to nothing until an admin
+  // promotes a desired position into positionIds.
+  assert.deepEqual(applyRes.payload.member.positionIds, []);
+  assert.deepEqual(applyRes.payload.member.desiredPositionIds, [positionId]);
+
   const bootstrapAfterApply = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
   });
   const team = bootstrapAfterApply.payload.teams.find(
     (item) => item.teamId === worship.teamId,
   );
+  // Team visibility is still added so the admin can find and promote them.
   assert.ok(team.memberIds.includes(applyRes.payload.member.memberId));
+});
+
+test("applying intake to an existing member sets desire without granting eligibility", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_existing_member_desire");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [
+      { name: "Vocal", icon: "mic" },
+      { name: "Keys", icon: "piano" },
+    ],
+    members: [{ firstName: "Sam", lastName: "Lee", positions: ["Vocal"] }],
+  });
+  const vocalId = worship.positionIds.Vocal;
+  const keysId = worship.positionIds.Keys;
+  const memberId = worship.memberIds.Sam;
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Fall volunteers",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      teamIds: [worship.teamId],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  const token = form.payload.publicToken;
+
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token },
+      body: {
+        firstName: "Sam",
+        lastName: "Lee",
+        positionIds: [keysId],
+      },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const bootstrapBeforeApply = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const submission = bootstrapBeforeApply.payload.intakeSubmissions.find(
+    (item) => item.firstName === "Sam",
+  );
+  assert.ok(submission?.submissionId);
+
+  const applyRes = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "applied", memberId },
+  });
+  assert.equal(applyRes.statusCode, 200);
+
+  // Eligibility (positionIds) is untouched by the apply; desire reflects the
+  // latest submission (replace, not union).
+  assert.deepEqual(applyRes.payload.member.positionIds, [vocalId]);
+  assert.deepEqual(applyRes.payload.member.desiredPositionIds, [keysId]);
+});
+
+test("a dismissed intake submission can be restored to the active queue", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_restore_dismissed");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+  });
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Fall volunteers",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      teamIds: [worship.teamId],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+      body: {
+        firstName: "Pat",
+        lastName: "Reed",
+        positionIds: [worship.positionIds.Vocal],
+      },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const submission = bootstrap.payload.intakeSubmissions.find(
+    (item) => item.firstName === "Pat",
+  );
+  assert.ok(submission?.submissionId);
+
+  const dismissed = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "dismissed" },
+  });
+  assert.equal(dismissed.statusCode, 200);
+  assert.equal(dismissed.payload.submission.status, "dismissed");
+
+  // Restoring sends the submission back to "new" without losing its data, so
+  // an accidental dismiss is recoverable.
+  const restored = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "new" },
+  });
+  assert.equal(restored.statusCode, 200);
+  assert.equal(restored.payload.submission.status, "new");
+  assert.deepEqual(restored.payload.submission.positionIds, [
+    worship.positionIds.Vocal,
+  ]);
+});
+
+test("linking intake merges overlapping blockout dates instead of duplicating", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_merge_blockouts");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+    members: [
+      {
+        firstName: "Sam",
+        lastName: "Lee",
+        positions: ["Vocal"],
+        blockoutDates: [
+          { startDate: "2026-06-22", endDate: "2026-06-27", notes: "Vacation" },
+        ],
+      },
+    ],
+  });
+  const memberId = worship.memberIds.Sam;
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Fall volunteers",
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      teamIds: [worship.teamId],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+      body: {
+        firstName: "Sam",
+        lastName: "Lee",
+        positionIds: [worship.positionIds.Vocal],
+        // A single day already inside the member's existing range, plus a
+        // duplicate of that range — both should collapse into one entry.
+        blockoutRanges: [
+          { startDate: "2026-06-23", endDate: "2026-06-23" },
+          { startDate: "2026-06-22", endDate: "2026-06-27" },
+        ],
+      },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const submission = bootstrap.payload.intakeSubmissions.find(
+    (item) => item.firstName === "Sam",
+  );
+
+  const applyRes = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "applied", memberId },
+  });
+  assert.equal(applyRes.statusCode, 200);
+
+  // The single date and the duplicate range are all covered by 6/22–6/27, so
+  // the member keeps exactly one blockout entry with both notes preserved.
+  assert.equal(applyRes.payload.member.blockoutDates.length, 1);
+  const [range] = applyRes.payload.member.blockoutDates;
+  assert.equal(range.startDate, "2026-06-22");
+  assert.equal(range.endDate, "2026-06-27");
+  assert.match(range.notes, /Vacation/);
+  assert.match(range.notes, /From intake form/);
+
+  // Re-applying the same submission must not stack duplicate notes or entries.
+  const reapply = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "applied", memberId },
+  });
+  assert.equal(reapply.statusCode, 200);
+  assert.equal(reapply.payload.member.blockoutDates.length, 1);
+  assert.equal(
+    reapply.payload.member.blockoutDates[0].notes.match(/From intake form/g)
+      .length,
+    1,
+  );
+});
+
+test("intake service availability becomes a hard scheduling constraint", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_availability_constraint");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+    members: [{ firstName: "Sam", lastName: "Lee", positions: ["Vocal"] }],
+  });
+  const vocalId = positionIds.Vocal;
+  const memberId = memberIds.Sam;
+
+  const serviceId = "service-sunday";
+  const availableOccurrenceId = "service-sunday@2026-06-07T10:00:00.000Z";
+  const unavailableOccurrenceId = "service-sunday@2026-06-14T10:00:00.000Z";
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "June volunteers",
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      teamIds: [teamId],
+      active: true,
+      availabilityOccurrences: [
+        {
+          occurrenceId: availableOccurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-06-07T10:00:00.000Z",
+        },
+        {
+          occurrenceId: unavailableOccurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-06-14T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  assert.equal(form.statusCode, 200);
+
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+      body: {
+        firstName: "Sam",
+        lastName: "Lee",
+        positionIds: [vocalId],
+        occurrenceAvailability: {
+          [availableOccurrenceId]: "available",
+          [unavailableOccurrenceId]: "unavailable",
+        },
+      },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const submission = bootstrap.payload.intakeSubmissions.find(
+    (item) => item.firstName === "Sam",
+  );
+
+  const applyRes = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "applied", memberId },
+  });
+  assert.equal(applyRes.statusCode, 200);
+  assert.equal(
+    applyRes.payload.member.serviceAvailability[unavailableOccurrenceId],
+    "unavailable",
+  );
+
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "June",
+      teamId,
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      serviceIds: [serviceId],
+      occurrences: [
+        {
+          occurrenceId: availableOccurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-06-07T10:00:00.000Z",
+        },
+        {
+          occurrenceId: unavailableOccurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-06-14T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  // Assigning the member to the occurrence they said they can't make is blocked.
+  const blocked = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: unavailableOccurrenceId,
+      positionSlotKey: `${vocalId}::0`,
+      memberId,
+      serviceDate: "2026-06-14",
+    },
+  });
+  assert.equal(blocked.statusCode, 400);
+  assert.match(blocked.payload.errorMessage, /unavailable for this service/i);
+
+  // The occurrence they marked available is fine.
+  const allowed = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: availableOccurrenceId,
+      positionSlotKey: `${vocalId}::0`,
+      memberId,
+      serviceDate: "2026-06-07",
+    },
+  });
+  assert.equal(allowed.statusCode, 200);
 });

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, HTMLProps, useId, forwardRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  HTMLProps,
+  useId,
+  forwardRef,
+  type ReactNode,
+} from "react";
 
 import UITextarea from "@/components/ui/Textarea";
 import Label from "@/components/ui/Label";
@@ -11,6 +19,9 @@ type TextAreaProps = Omit<HTMLProps<HTMLTextAreaElement>, "onChange" | "value"> 
   value: string | number;
   label?: string;
   hideLabel?: boolean;
+  /** Helper text rendered between the label and the textarea. */
+  description?: ReactNode;
+  descriptionClassName?: string;
   autoResize?: boolean;
   onChange: (value: string) => void;
   labelClassName?: string;
@@ -24,6 +35,8 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
   onChange,
   label,
   hideLabel = false,
+  description,
+  descriptionClassName,
   autoResize = false,
   labelClassName,
   ...rest
@@ -102,6 +115,16 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
         >
           {label}:
         </Label>
+      ) : null}
+      {description != null && !hideLabel ? (
+        <p
+          className={cn(
+            "shrink-0 px-1 pb-1 text-xs text-gray-400",
+            descriptionClassName,
+          )}
+        >
+          {description}
+        </p>
       ) : null}
       <UITextarea
         id={id}

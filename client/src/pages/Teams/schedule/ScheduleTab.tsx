@@ -555,6 +555,9 @@ const ScheduleTab = ({
         return "Not eligible for this position";
       }
       if (serviceDateBlockedOut(member, getOccurrenceDate(occurrence))) return "Blocked out";
+      if (member.serviceAvailability?.[occurrenceId] === "unavailable") {
+        return "Marked unavailable for this service";
+      }
       const row = selectedSchedule?.assignments?.[occurrenceId] || {};
       const assignedElsewhere = Object.entries(row).some(([assignedPositionSlotKey, cell]) => {
         const isSourceCell =

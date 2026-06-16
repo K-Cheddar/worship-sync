@@ -140,7 +140,20 @@ export type TeamRosterMember = {
   firstName: string;
   lastName: string;
   dateOfBirth?: string;
+  /** Positions the member can be scheduled for. The hard assignment gate. */
   positionIds: string[];
+  /**
+   * Positions the member has expressed interest in via intake, independent of
+   * eligibility. A soft signal for scheduling; admins promote these into
+   * `positionIds` to grant assignability.
+   */
+  desiredPositionIds?: string[];
+  /**
+   * Per-occurrence service availability gathered from intake, keyed by
+   * occurrenceId (`serviceId@startsAt`). "unavailable" is a hard scheduling
+   * constraint: the member cannot be assigned to that occurrence.
+   */
+  serviceAvailability?: Record<string, "available" | "unavailable">;
   teamMemberships?: Record<string, TeamMemberMembership>;
   qualifications?: TeamMemberQualification[];
   blockoutDates: TeamBlockoutDateRange[];
@@ -355,16 +368,20 @@ export type TeamIntakeForm = {
   // way).
   teamIds: string[];
   active: boolean;
+  /**
+   * Optional copy overrides shown on the public form. When blank, the public
+   * form falls back to its built-in default wording.
+   */
+  welcomeMessage?: string;
+  positionsMessage?: string;
+  availabilityMessage?: string;
+  notesMessage?: string;
   publicUrl?: string;
   submissionCount?: number;
   archivedAt?: string | null;
 };
 
-export type TeamIntakeSubmissionStatus =
-  | "new"
-  | "reviewed"
-  | "applied"
-  | "dismissed";
+export type TeamIntakeSubmissionStatus = "new" | "applied" | "dismissed";
 
 export type TeamIntakeBlockoutRange = {
   startDate: string;
@@ -403,6 +420,10 @@ export type TeamIntakePreview = {
     | "endDate"
     | "availabilityServices"
     | "availabilityOccurrences"
+    | "welcomeMessage"
+    | "positionsMessage"
+    | "availabilityMessage"
+    | "notesMessage"
   >;
   /** Allowlisted position fields only — the public link never ships internal columns. */
   positions: Pick<TeamPosition, "positionId" | "teamId" | "name" | "icon">[];

@@ -97,6 +97,40 @@ describe("scheduleMemberPickerUtils", () => {
     ]);
   });
 
+  it("floats members who desire the position above equal peers and flags them", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members: [
+        {
+          memberId: "anna",
+          churchId: "c1",
+          firstName: "Anna",
+          lastName: "Aaron",
+          positionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+        {
+          memberId: "zane",
+          churchId: "c1",
+          firstName: "Zane",
+          lastName: "Zimmer",
+          positionIds: ["position-vocal"],
+          desiredPositionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+      ],
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+    });
+
+    // Zane sorts after Anna by name, but desiring the position floats him up.
+    expect(rows.map((row) => row.member.memberId)).toEqual(["zane", "anna"]);
+    expect(rows.map((row) => row.desiresPosition)).toEqual([true, false]);
+  });
+
   it("filters members by position and query", () => {
     const rows = buildScheduleMemberPickerMembers({
       members,

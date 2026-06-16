@@ -8,7 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, Plus, Star } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
@@ -30,6 +30,14 @@ import { useScheduleMemberPicker } from "./useScheduleMemberPicker";
 
 type MemberAssignmentAction = "replace" | TeamScheduleShadowKind;
 type PickerMenuView = "members" | "assignmentActions" | "createMember";
+
+/** Marks a member who asked for this position via intake (soft preference). */
+const WantsThisBadge = () => (
+  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+    <Star className="h-3 w-3 fill-current" aria-hidden />
+    Wants this
+  </span>
+);
 
 type ScheduleAssignmentPickerProps = {
   open: boolean;
@@ -438,6 +446,7 @@ const ScheduleAssignmentPicker = memo(({
                             }}
                           >
                             <span className="block flex-1 font-medium">{memberLabel}</span>
+                            {row.desiresPosition ? <WantsThisBadge /> : null}
                             <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
                           </button>
                         </div>
@@ -454,7 +463,7 @@ const ScheduleAssignmentPicker = memo(({
                           aria-selected={highlighted}
                           type="button"
                           className={cn(
-                            "w-full rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
+                            "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
                             highlighted && "bg-gray-800",
                           )}
                           onMouseDown={(event) => {
@@ -462,7 +471,8 @@ const ScheduleAssignmentPicker = memo(({
                             onSelectMember(row.member.memberId);
                           }}
                         >
-                          {memberLabel}
+                          <span className="block flex-1">{memberLabel}</span>
+                          {row.desiresPosition ? <WantsThisBadge /> : null}
                         </button>
                       </div>
                     );

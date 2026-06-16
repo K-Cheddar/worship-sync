@@ -18,11 +18,13 @@ import EntityMultiSelect from "./EntityMultiSelect";
 import {
   boardDarkFieldClassName,
   boardFieldLabelClassName,
+  boardFieldsetDescriptionClassName,
   boardHeaderClassName,
   boardIntakeFormSectionClassName,
   boardPublicPageClassName,
 } from "./teamsStyles";
 import { formatPlainDateRangeLabel, formatShortOccurrenceDate } from "./teamsUtils";
+import { DEFAULT_INTAKE_FORM_COPY, resolveIntakeCopy } from "./intakeFormCopy";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { useToast } from "../../context/toastContext";
 
@@ -201,8 +203,11 @@ const TeamIntakePublic = () => {
             {preview.churchName} ·{" "}
             {formatPlainDateRangeLabel(preview.form.startDate, preview.form.endDate)}
           </p>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-stone-400">
-            Share the positions you can serve in, your availability, and any dates you&apos;re away.
+          <p className="mt-2 max-w-2xl whitespace-pre-line text-sm leading-relaxed text-stone-400">
+            {resolveIntakeCopy(
+              preview.form.welcomeMessage,
+              DEFAULT_INTAKE_FORM_COPY.welcome,
+            )}
           </p>
         </header>
 
@@ -230,7 +235,10 @@ const TeamIntakePublic = () => {
 
           <EntityMultiSelect
             label="Positions"
-            description="Check the positions you can serve in."
+            description={resolveIntakeCopy(
+              preview.form.positionsMessage,
+              DEFAULT_INTAKE_FORM_COPY.positions,
+            )}
             variant="board-attendee"
             showSearch={false}
             options={positionOptions}
@@ -243,6 +251,10 @@ const TeamIntakePublic = () => {
           {preview.form.availabilityOccurrences.length > 0 ? (
             <EntityMultiSelect
               label="Service date availability"
+              description={resolveIntakeCopy(
+                preview.form.availabilityMessage,
+                DEFAULT_INTAKE_FORM_COPY.availability,
+              )}
               variant="board-attendee"
               emphasizeSublabel
               options={preview.form.availabilityOccurrences.map((occurrence) => ({
@@ -282,6 +294,11 @@ const TeamIntakePublic = () => {
 
           <TextArea
             label="Notes"
+            description={resolveIntakeCopy(
+              preview.form.notesMessage,
+              DEFAULT_INTAKE_FORM_COPY.notes,
+            )}
+            descriptionClassName={boardFieldsetDescriptionClassName}
             value={payload.notes || ""}
             labelClassName={boardFieldLabelClassName}
             textareaClassName={cn(boardDarkFieldClassName, "min-h-24")}

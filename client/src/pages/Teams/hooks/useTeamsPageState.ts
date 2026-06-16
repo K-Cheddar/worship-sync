@@ -304,7 +304,15 @@ export const useTeamsPageState = () => {
         const changedKeys = teamsDataKeys.filter(
           (key) => current[key] !== nextData[key],
         );
-        persistTeamsDataSnapshot(nextData, changedKeys);
+        // Persisting dispatches the autosave indicator (consumed by other
+        // components such as UserSection). React 18 runs this updater during
+        // the render phase, so dispatching synchronously here triggers a
+        // "Cannot update a component while rendering a different component"
+        // warning. Defer to a microtask so it runs after commit. Each call
+        // captures its own changedKeys, so batched edits still persist fully.
+        if (changedKeys.length > 0) {
+          queueMicrotask(() => persistTeamsDataSnapshot(nextData, changedKeys));
+        }
         return nextData;
       });
     },
