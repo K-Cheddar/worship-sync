@@ -437,7 +437,7 @@ export const applyTeamIntakeSubmission = async (
   churchId: string,
   submissionId: string,
   body: {
-    action: "new" | "applied" | "dismissed";
+    action: "new" | "reviewed" | "applied" | "dismissed";
     memberId?: string;
     createMember?: boolean;
   },

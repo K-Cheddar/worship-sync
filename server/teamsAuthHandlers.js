@@ -3678,6 +3678,16 @@ export const createTeamsAuthHandlers = ({
               },
               { merge: true },
             );
+            // Mirror the create path: surface the linked member on the rosters
+            // of teams that own their desired positions so an admin can find and
+            // promote them. Visibility only — assignability stays gated by
+            // `positionIds`, which we never touch here.
+            await addMemberToTeamsForPositions({
+              churchId: req.params.churchId,
+              positionIds: nextDesiredPositionIds,
+              memberId: member.memberId,
+              adminUserId: admin.user.uid,
+            });
             member = await getTeamEntity("member", member.memberId);
           }
           update.status = "applied";
@@ -3686,6 +3696,9 @@ export const createTeamsAuthHandlers = ({
           update.appliedMemberId = member.memberId;
         } else if (action === "dismissed") {
           update.status = "dismissed";
+        } else if (action === "reviewed") {
+          // Legacy clients may still send "reviewed"; keep accepting it.
+          update.status = "reviewed";
         } else if (action === "new") {
           // Restore a dismissed submission back into the active queue. The
           // submission data was never deleted, so this is a safe undo.
