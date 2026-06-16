@@ -85,7 +85,17 @@ const EntityRow = ({
   const useFooterActions = !compact && actionsPlacement === "footer-end" && Boolean(actions);
   const useHeaderActions =
     !compact && isClickable && Boolean(actions) && actionsPlacement === "aside";
-  const useStackedCardLayout = !compact && isClickable && (showCornerBadge || useFooterActions);
+  const useStackedCardLayout =
+    !compact && (showCornerBadge || useFooterActions || useHeaderActions);
+  const clickableBodyClassName =
+    useStackedCardLayout || useHeaderActions || compact
+      ? "flex-1"
+      : "w-full flex-1";
+  const rootLayoutClassName = (() => {
+    if (compact) return "items-center gap-2 p-2";
+    if (useStackedCardLayout || useHeaderActions) return "flex-col gap-3 p-3";
+    return "flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between";
+  })();
   const titleClassName = compact
     ? "truncate text-sm font-medium text-gray-100"
     : "truncate font-semibold text-white";
@@ -161,11 +171,7 @@ const EntityRow = ({
       className={cn(
         "flex min-w-0 cursor-pointer items-center gap-2 rounded-md text-left",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
-        useStackedCardLayout || useHeaderActions
-          ? "flex-1"
-          : compact
-            ? "flex-1"
-            : "w-full flex-1",
+        clickableBodyClassName,
       )}
       aria-label={`Edit ${title}`}
       onClick={onTitleClick}
@@ -189,11 +195,7 @@ const EntityRow = ({
       style={style}
       className={cn(
         "group flex rounded-lg border border-gray-800 bg-gray-950/40",
-        compact
-          ? "items-center gap-2 p-2"
-          : useStackedCardLayout || useHeaderActions
-            ? "flex-col gap-3 p-3"
-            : "flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between",
+        rootLayoutClassName,
         isClickable &&
         "cursor-pointer transition-colors hover:border-gray-600/80 hover:bg-gray-900/60",
       )}
