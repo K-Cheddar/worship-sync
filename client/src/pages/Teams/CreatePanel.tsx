@@ -73,7 +73,9 @@ const CreatePanel = ({
   const formPanelRef = useRef<HTMLDivElement>(null);
   const asidePanelRef = useRef<HTMLDivElement>(null);
   const formOpenOnMobile = open;
+  const asideOpenOnMobile = asideOpen;
   const panelOpenOnMobile = open || asideOpen;
+  const listHiddenOnMobile = formOpenOnMobile || asideOpenOnMobile;
   const listSharesSpace = open || asideOpen;
 
   useEffect(() => {
@@ -91,9 +93,8 @@ const CreatePanel = ({
     const scrollContainer = asidePanelRef.current?.closest(".teams-section-scroll");
     if (scrollContainer instanceof HTMLElement) {
       scrollContainer.scrollTop = 0;
-      return;
     }
-    asidePanelRef.current?.scrollIntoView({ block: "nearest" });
+    asidePanelRef.current?.scrollIntoView({ block: "start" });
   }, [asideOpen]);
 
   return (
@@ -110,7 +111,7 @@ const CreatePanel = ({
             listSharesSpace
               ? teamsCreatePanelListOpenClassName
               : teamsCreatePanelListClosedClassName,
-            formOpenOnMobile && "max-lg:hidden",
+            listHiddenOnMobile && "max-lg:hidden",
           )}
         >
           <section
