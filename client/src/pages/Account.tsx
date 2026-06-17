@@ -1,14 +1,12 @@
 import type { CSSProperties } from "react";
-import { lazy, Suspense, useContext, useMemo, type ReactNode } from "react";
-import { Building2, ListChecks, LogIn } from "lucide-react";
+import { lazy, Suspense, useContext, useMemo, useState, type ReactNode } from "react";
+import { Building2, ListChecks, LogIn, PanelLeft } from "lucide-react";
 import {
   Navigate,
-  NavLink,
   Outlet,
   Route,
   Routes,
   useLocation,
-  useNavigate,
 } from "react-router-dom";
 import Button from "../components/Button/Button";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
@@ -18,12 +16,16 @@ import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import { useSelector } from "../hooks";
 import type { RootState } from "../store/store";
 import Icon from "../components/Icon/Icon";
-import Select from "../components/Select/Select";
 import ErrorBoundary from "../components/ErrorBoundary/ErrorBoundary";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "../utils/cnHelper";
 import {
   ACCOUNT_SECTIONS,
-  accountSectionSelectOptions,
   getActiveAccountSection,
   parseLegacyAccountTab,
 } from "./Account/accountConstants";
@@ -31,6 +33,7 @@ import { AccountPageProvider, useAccountPage } from "./Account/AccountPageContex
 import AccountAccessDenied from "./Account/components/AccountAccessDenied";
 import AccountDeleteModalHost from "./Account/components/AccountDeleteModalHost";
 import AccountSectionHeader from "./Account/components/AccountSectionHeader";
+import AccountSidebarNav from "./Account/components/AccountSidebarNav";
 import { AccountSectionRouteSkeleton } from "./Account/accountPageSkeletons";
 
 const AccountPeoplePage = lazy(() => import("./Account/pages/AccountPeoplePage"));
@@ -102,9 +105,9 @@ const AccountSectionLayout = () => {
 
 const AccountShell = () => {
   const location = useLocation();
-  const navigate = useNavigate();
   const { loginState, churchName } = useContext(GlobalInfoContext) || {};
   const { canManage, toolbarLogoUrl } = useAccountPage();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const isLoggedIn = loginState === "success";
   const churchNameTrimmed = churchName?.trim() ?? "";
   const activeSection = useMemo(
@@ -171,65 +174,55 @@ const AccountShell = () => {
 
         <section
           className={cn(
-            "mx-auto mt-6 grid min-h-0 w-full flex-1 overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40",
-            canManage
-              ? "grid-rows-[auto_1fr] lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-1"
-              : "grid-cols-1 grid-rows-1",
+            "mx-auto mt-6 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40",
+            canManage && "lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]",
           )}
         >
           {canManage ? (
-            <aside className="border-b border-gray-700 bg-gray-950/70 p-3 lg:border-b-0 lg:border-r lg:p-4">
-              <nav
-                className="hidden gap-2 lg:flex lg:flex-col"
-                aria-label="Church administration sections"
-              >
-                {ACCOUNT_SECTIONS.map((section) => (
-                  <NavLink
-                    key={section.id}
-                    to={section.path}
-                    aria-label={section.label}
-                    className={() =>
-                      cn(
-                        "group flex items-start gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors",
-                        activeSection.id === section.id
-                          ? "bg-cyan-500/15 text-white ring-1 ring-cyan-400/40"
-                          : "text-gray-200 hover:bg-gray-800 hover:text-white",
-                      )
-                    }
-                  >
-                    <Icon
-                      svg={section.icon}
-                      size="md"
-                      className="mt-0.5 shrink-0 text-cyan-300"
-                    />
-                    <span className="min-w-0">
-                      <span className="block font-semibold">{section.label}</span>
-                      <span className="mt-0.5 block text-xs leading-snug text-gray-400 group-hover:text-gray-300">
-                        {section.description}
-                      </span>
-                    </span>
-                  </NavLink>
-                ))}
-              </nav>
+            <>
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-3 lg:hidden">
+                <Button
+                  variant="secondary"
+                  svg={PanelLeft}
+                  iconSize="sm"
+                  aria-label="Open church administration sections"
+                  onClick={() => setMobileNavOpen(true)}
+                >
+                  Sections
+                </Button>
+                <p className="truncate text-sm font-semibold text-gray-100">
+                  {activeSection.label}
+                </p>
+              </div>
 
-              <Select
-                id="account-section-select"
-                label="Church administration section"
-                hideLabel
-                className="lg:hidden"
-                selectClassName="rounded-lg border-gray-600 font-semibold"
-                value={activeSection.path}
-                onChange={(path) => navigate(path)}
-                options={accountSectionSelectOptions}
-              />
-            </aside>
+              <aside className="hidden min-h-0 border-gray-700 bg-gray-950/70 lg:block lg:border-r lg:p-4">
+                <AccountSidebarNav />
+              </aside>
+            </>
           ) : null}
 
-          <div className="scrollbar-variable min-h-0 overflow-y-auto p-3 sm:p-5">
+          <div className="scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-3 sm:p-5">
             <Outlet />
           </div>
         </section>
       </div>
+
+      {canManage ? (
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <SheetContent
+            side="left"
+            className="flex w-[16rem] max-w-[85vw] flex-col border-gray-700 bg-gray-950/95 p-0"
+            aria-describedby={undefined}
+          >
+            <SheetHeader className="border-gray-700 bg-gray-950/95">
+              <SheetTitle>Church administration sections</SheetTitle>
+            </SheetHeader>
+            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4">
+              <AccountSidebarNav onNavigate={() => setMobileNavOpen(false)} />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </main>
   );
 };
@@ -287,7 +280,6 @@ export default AccountPage;
 
 export {
   ACCOUNT_SECTIONS,
-  accountSectionSelectOptions,
   getLegacyAccountTabPath,
   parseLegacyAccountTab,
 } from "./Account/accountConstants";

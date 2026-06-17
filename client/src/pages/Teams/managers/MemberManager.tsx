@@ -27,7 +27,11 @@ import type {
 } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
-import EntityListSearch from "../components/EntityListSearch";
+import {
+  MemberFilterPanel,
+  MemberListFilterToolbar,
+  MEMBER_FILTER_PANEL_ID,
+} from "../components/MemberListFilters";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
@@ -42,6 +46,11 @@ import {
 } from "../teamsUtils";
 import { TEAMS_MEMBER_EDIT_SEARCH_PARAM } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import {
+  countActiveMemberListFilters,
+  emptyMemberListFilters,
+  memberMatchesListFilters,
+} from "../teamsSelectors";
 import type { TeamsData } from "../types";
 
 const NO_SELECTION_VALUE = "__none";
@@ -94,11 +103,14 @@ const MemberManager = ({
   });
   const [saving, setSaving] = useState(false);
   const [listQuery, setListQuery] = useState("");
+  const [listFilters, setListFilters] = useState(emptyMemberListFilters);
+  const [showFilters, setShowFilters] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const pendingEditMemberIdRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback((member: TeamRosterMember) => {
+    setShowFilters(false);
     setEditing(member);
     setShowCreate(true);
     setDraft({
@@ -132,6 +144,20 @@ const MemberManager = ({
     openMemberEditor(member);
   }, [members, openMemberEditor]);
 
+  useEffect(() => {
+    if (!showCreate) return;
+    setShowFilters(false);
+  }, [showCreate]);
+
+  useEffect(() => {
+    if (!showFilters) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowFilters(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showFilters]);
+
   const positionNameById = useMemo(
     () => new Map(positions.map((position) => [position.positionId, position.name])),
     [positions],
@@ -140,6 +166,11 @@ const MemberManager = ({
     () => new Map(data.teams.map((team) => [team.teamId, team.name])),
     [data.teams],
   );
+  const teamsById = useMemo(
+    () => new Map(data.teams.map((team) => [team.teamId, team])),
+    [data.teams],
+  );
+  const activeFilterCount = countActiveMemberListFilters(listFilters);
   const roleById = useMemo(
     () => new Map(data.teamRoles.map((role) => [role.roleId, role])),
     [data.teamRoles],
@@ -156,10 +187,13 @@ const MemberManager = ({
           const positionNames = (member.positionIds || [])
             .map((positionId) => positionNameById.get(positionId))
             .filter(Boolean) as string[];
-          return memberMatchesListQuery(member, listQuery, positionNames);
+          if (!memberMatchesListQuery(member, listQuery, positionNames)) {
+            return false;
+          }
+          return memberMatchesListFilters(member, listFilters, teamsById);
         }),
       ),
-    [members, listQuery, positionNameById],
+    [members, listQuery, listFilters, positionNameById, teamsById],
   );
 
   const reset = () => {
@@ -302,6 +336,7 @@ const MemberManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
+          setShowFilters(false);
           reset();
           setShowCreate(true);
         }}
@@ -310,7 +345,10 @@ const MemberManager = ({
         sectionTitle={
           <>
             Members{" "}
-            <span className="text-sm font-normal text-gray-400">({members.length})</span>
+            <span className="text-sm font-normal text-gray-400">
+              ({filteredMembers.length}
+              {listQuery || activeFilterCount > 0 ? ` of ${members.length}` : ""})
+            </span>
           </>
         }
         description="Keep roster details and availability current."
@@ -318,12 +356,40 @@ const MemberManager = ({
         scrollableList
         listToolbar={
           members.length > 0 ? (
-            <EntityListSearch
-              label="Members"
-              value={listQuery}
-              onChange={setListQuery}
+            <MemberListFilterToolbar
+              listQuery={listQuery}
+              onListQueryChange={setListQuery}
+              filters={listFilters}
+              filtersOpen={showFilters}
+              filtersDisabled={showCreate}
+              onFiltersOpenChange={(next) => {
+                if (showCreate && next) return;
+                setShowFilters(next);
+              }}
             />
           ) : null
+        }
+        asideOpen={showFilters && !showCreate}
+        asideId={MEMBER_FILTER_PANEL_ID}
+        asideTitle="Filter members"
+        asideHeaderActions={
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={X}
+            iconSize="sm"
+            padding="p-0.5"
+            className="shrink-0 text-gray-400 hover:text-white"
+            aria-label="Close filters"
+            onClick={() => setShowFilters(false)}
+          />
+        }
+        aside={
+          <MemberFilterPanel
+            data={data}
+            value={listFilters}
+            onChange={setListFilters}
+          />
         }
         list={
           <>

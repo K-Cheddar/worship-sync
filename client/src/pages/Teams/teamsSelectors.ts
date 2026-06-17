@@ -1,5 +1,7 @@
 import type {
   TeamIntakeSubmission,
+  TeamMemberQualificationStatus,
+  TeamRecord,
   TeamRosterMember,
 } from "../../api/authTypes";
 import type { TeamsData } from "./types";
@@ -119,6 +121,101 @@ const isCloseLastNameMatch = (submissionLast: string, memberLast: string) => {
     submissionLast.startsWith(memberLast) ||
     memberLast.startsWith(submissionLast)
   );
+};
+
+export type MemberListFilterState = {
+  teamIds: string[];
+  positionIds: string[];
+  roleIds: string[];
+  qualificationAreaIds: string[];
+  qualificationLevelIds: string[];
+  qualificationStatuses: TeamMemberQualificationStatus[];
+};
+
+export const emptyMemberListFilters = (): MemberListFilterState => ({
+  teamIds: [],
+  positionIds: [],
+  roleIds: [],
+  qualificationAreaIds: [],
+  qualificationLevelIds: [],
+  qualificationStatuses: [],
+});
+
+export const countActiveMemberListFilters = (filters: MemberListFilterState) =>
+  filters.teamIds.length +
+  filters.positionIds.length +
+  filters.roleIds.length +
+  filters.qualificationAreaIds.length +
+  filters.qualificationLevelIds.length +
+  filters.qualificationStatuses.length;
+
+export const isMemberOnTeam = (
+  member: TeamRosterMember,
+  teamId: string,
+  teamsById: Map<string, TeamRecord>,
+) => {
+  const team = teamsById.get(teamId);
+  if ((team?.memberIds || []).includes(member.memberId)) return true;
+  return Boolean(member.teamMemberships?.[teamId]);
+};
+
+export const memberMatchesListFilters = (
+  member: TeamRosterMember,
+  filters: MemberListFilterState,
+  teamsById: Map<string, TeamRecord>,
+) => {
+  if (filters.teamIds.length > 0) {
+    const onTeam = filters.teamIds.some((teamId) =>
+      isMemberOnTeam(member, teamId, teamsById),
+    );
+    if (!onTeam) return false;
+  }
+  if (filters.positionIds.length > 0) {
+    const positionIds = member.positionIds || [];
+    if (!filters.positionIds.some((id) => positionIds.includes(id))) {
+      return false;
+    }
+  }
+  if (filters.roleIds.length > 0) {
+    const memberships = member.teamMemberships || {};
+    const memberRoleIds = Object.values(memberships)
+      .map((membership) => membership.roleId)
+      .filter(Boolean) as string[];
+    if (!filters.roleIds.some((id) => memberRoleIds.includes(id))) {
+      return false;
+    }
+  }
+  const qualifications = member.qualifications || [];
+  const hasQualificationFilters =
+    filters.qualificationAreaIds.length > 0 ||
+    filters.qualificationLevelIds.length > 0 ||
+    filters.qualificationStatuses.length > 0;
+
+  if (hasQualificationFilters) {
+    const matchesQualificationFilters = qualifications.some((qualification) => {
+      if (
+        filters.qualificationAreaIds.length > 0 &&
+        !filters.qualificationAreaIds.includes(qualification.areaId)
+      ) {
+        return false;
+      }
+      if (
+        filters.qualificationLevelIds.length > 0 &&
+        !filters.qualificationLevelIds.includes(qualification.levelId)
+      ) {
+        return false;
+      }
+      if (
+        filters.qualificationStatuses.length > 0 &&
+        !filters.qualificationStatuses.includes(qualification.status)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    if (!matchesQualificationFilters) return false;
+  }
+  return true;
 };
 
 export const selectIntakeMemberMatch = (
