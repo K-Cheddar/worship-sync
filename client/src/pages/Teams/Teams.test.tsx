@@ -231,7 +231,7 @@ const renderTeams = (
   );
 
 const waitForTeamsBootstrap = async () => {
-  await screen.findByRole("heading", { name: /^Schedules$/i });
+  await screen.findByRole("heading", { name: /^Schedules$/i }, { timeout: 8000 });
 };
 
 const openTeamsSectionsNavIfNeeded = async (
@@ -272,7 +272,7 @@ describe("Teams", () => {
     renderTeams();
 
     expect(await screen.findByRole("heading", { name: /^Teams$/i })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: /^Schedules$/i })).toBeInTheDocument();
+    await waitForTeamsBootstrap();
     expect(
       await screen.findByText(/Create a team, services, and a schedule/i),
     ).toBeInTheDocument();

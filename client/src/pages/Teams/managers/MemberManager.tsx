@@ -1,5 +1,6 @@
-import { useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
@@ -27,6 +28,7 @@ import type {
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import EntityListSearch from "../components/EntityListSearch";
+import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
@@ -38,6 +40,8 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
+import { TEAMS_MEMBER_EDIT_SEARCH_PARAM } from "../teamsReturnNavigation";
+import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import type { TeamsData } from "../types";
 
 const NO_SELECTION_VALUE = "__none";
@@ -82,6 +86,7 @@ const MemberManager = ({
     lastName: "",
     dateOfBirth: "",
     positionIds: [],
+    desiredPositionIds: [],
     teamMemberships: {},
     qualifications: [],
     blockoutDates: [],
@@ -89,6 +94,43 @@ const MemberManager = ({
   });
   const [saving, setSaving] = useState(false);
   const [listQuery, setListQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const pendingEditMemberIdRef = useRef<string | null>(null);
+
+  const openMemberEditor = useCallback((member: TeamRosterMember) => {
+    setEditing(member);
+    setShowCreate(true);
+    setDraft({
+      firstName: member.firstName,
+      lastName: member.lastName,
+      dateOfBirth: member.dateOfBirth || "",
+      positionIds: member.positionIds || [],
+      desiredPositionIds: member.desiredPositionIds || [],
+      teamMemberships: member.teamMemberships || {},
+      qualifications: member.qualifications || [],
+      blockoutDates: member.blockoutDates || [],
+      notes: member.notes || "",
+    });
+  }, []);
+
+  useEffect(() => {
+    const editMemberId = searchParams.get(TEAMS_MEMBER_EDIT_SEARCH_PARAM)?.trim();
+    if (!editMemberId || !canEdit) return;
+    pendingEditMemberIdRef.current = editMemberId;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
+    setSearchParams(nextParams, { replace: true });
+  }, [canEdit, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const editMemberId = pendingEditMemberIdRef.current;
+    if (!editMemberId) return;
+    const member = members.find((item) => item.memberId === editMemberId);
+    if (!member) return;
+    pendingEditMemberIdRef.current = null;
+    openMemberEditor(member);
+  }, [members, openMemberEditor]);
 
   const positionNameById = useMemo(
     () => new Map(positions.map((position) => [position.positionId, position.name])),
@@ -106,21 +148,6 @@ const MemberManager = ({
     () => new Map(data.qualificationAreas.map((area) => [area.areaId, area])),
     [data.qualificationAreas],
   );
-
-  const openMemberEditor = (member: TeamRosterMember) => {
-    setEditing(member);
-    setShowCreate(true);
-    setDraft({
-      firstName: member.firstName,
-      lastName: member.lastName,
-      dateOfBirth: member.dateOfBirth || "",
-      positionIds: member.positionIds || [],
-      teamMemberships: member.teamMemberships || {},
-      qualifications: member.qualifications || [],
-      blockoutDates: member.blockoutDates || [],
-      notes: member.notes || "",
-    });
-  };
 
   const filteredMembers = useMemo(
     () =>
@@ -143,11 +170,16 @@ const MemberManager = ({
       lastName: "",
       dateOfBirth: "",
       positionIds: [],
+      desiredPositionIds: [],
       teamMemberships: {},
       qualifications: [],
       blockoutDates: [],
       notes: "",
     });
+  };
+
+  const cancelEditing = () => {
+    finishEditing(reset);
   };
 
   const confirmDelete = async () => {
@@ -189,6 +221,7 @@ const MemberManager = ({
       lastName: body.lastName.trim(),
       dateOfBirth: body.dateOfBirth || "",
       positionIds: body.positionIds,
+      desiredPositionIds: body.desiredPositionIds || [],
       teamMemberships: body.teamMemberships || {},
       qualifications: body.qualifications || [],
       blockoutDates: body.blockoutDates,
@@ -203,7 +236,7 @@ const MemberManager = ({
       if (!editing) {
         onSaved(response.member, localMemberId);
       }
-      reset();
+      finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();
@@ -222,6 +255,16 @@ const MemberManager = ({
         archived: Boolean(position.archivedAt),
       })),
     [positions, data.teams, teamNameById],
+  );
+
+  // Positions the member asked for (intake) but is not yet eligible to be
+  // scheduled for. Promoting one adds it to positionIds (the assignment gate).
+  const desiredNotEligible = useMemo(
+    () =>
+      (draft.desiredPositionIds || []).filter(
+        (positionId) => !draft.positionIds.includes(positionId),
+      ),
+    [draft.desiredPositionIds, draft.positionIds],
   );
 
   const roleTeamIds = Array.from(
@@ -301,33 +344,37 @@ const MemberManager = ({
           </>
         }
         formHeaderActions={
-          editing ? (
-            <EntityFormDangerActions
-              archived={Boolean(editing.archivedAt)}
-              canEdit={canEdit}
-              archiveLabel="Archive member"
-              deleteLabel="Delete member"
-              menuLabel="Member actions"
-              onArchive={
-                editing.archivedAt
-                  ? undefined
-                  : async () => {
-                    const archivedMember = {
-                      ...editing,
-                      archivedAt: new Date().toISOString(),
-                    };
-                    onSaved(archivedMember);
-                    try {
-                      await archiveTeamRosterMember(churchId, editing.memberId);
-                      reset();
-                    } catch (error) {
-                      showApiErrorToast(showToast, error, "Could not archive this member.");
-                      onSaved(editing);
-                    }
+          editing || returnTo ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+              {editing ? (
+                <EntityFormDangerActions
+                  archived={Boolean(editing.archivedAt)}
+                  canEdit={canEdit}
+                  archiveLabel="Archive member"
+                  deleteLabel="Delete member"
+                  menuLabel="Member actions"
+                  onArchive={
+                    editing.archivedAt
+                      ? undefined
+                      : async () => {
+                        const archivedMember = {
+                          ...editing,
+                          archivedAt: new Date().toISOString(),
+                        };
+                        onSaved(archivedMember);
+                        try {
+                          await archiveTeamRosterMember(churchId, editing.memberId);
+                          finishEditing(reset);
+                        } catch (error) {
+                          showApiErrorToast(showToast, error, "Could not archive this member.");
+                          onSaved(editing);
+                        }
+                      }
                   }
-              }
-              onDelete={() => setDeleting(editing)}
-            />
+                  onDelete={() => setDeleting(editing)}
+                />
+              ) : null}
+            </TeamsReturnToolbar>
           ) : null
         }
         formFooter={
@@ -335,7 +382,7 @@ const MemberManager = ({
             pinFooter
             saveLabel="Save member"
             onSave={() => void submit()}
-            onCancel={reset}
+            onCancel={cancelEditing}
             disabled={!canEdit || !draft.firstName.trim() || !draft.lastName.trim()}
             isLoading={saving}
           />
@@ -348,9 +395,49 @@ const MemberManager = ({
         <DatePicker label="Date of birth" value={draft.dateOfBirth || ""} onChange={(dateOfBirth) => setDraft((d) => ({ ...d, dateOfBirth }))} />
         <EntityMultiSelect
           label="Positions"
+          description="Positions this member can be scheduled for."
           options={positionOptions}
           value={draft.positionIds}
           onChange={(positionIds) => setDraft((d) => ({ ...d, positionIds }))}
+        />
+        {desiredNotEligible.length > 0 ? (
+          <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3">
+            <p className="text-sm font-semibold text-amber-100">
+              Requested from intake, not yet schedulable
+            </p>
+            <p className="mt-0.5 text-xs text-amber-100/80">
+              These positions are what the member wants to do. Add one to make
+              them assignable to it.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {desiredNotEligible.map((positionId) => (
+                <Button
+                  key={positionId}
+                  variant="secondary"
+                  svg={Plus}
+                  iconSize="sm"
+                  padding="px-2 py-1"
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      positionIds: [...d.positionIds, positionId],
+                    }))
+                  }
+                >
+                  {positionNameById.get(positionId) || "Position"}
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <EntityMultiSelect
+          label="Desired positions"
+          description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
+          options={positionOptions}
+          value={draft.desiredPositionIds || []}
+          onChange={(desiredPositionIds) =>
+            setDraft((d) => ({ ...d, desiredPositionIds }))
+          }
         />
         <fieldset className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Team roles</legend>

@@ -55,6 +55,43 @@ test("renders the scoped form once the preview loads", async () => {
   expect(mockGetPreview).toHaveBeenCalledWith("tok_123");
 });
 
+test("falls back to default wording when no custom messages are set", async () => {
+  mockGetPreview.mockResolvedValue(preview as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(
+    screen.getByText(/share the positions you can serve in/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/check the positions you can serve in/i),
+  ).toBeInTheDocument();
+});
+
+test("renders the form creator's custom wording when provided", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      welcomeMessage: "Welcome to Worship sign-ups!",
+      positionsMessage: "In which positions would you like to serve?",
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(
+    screen.getByText("Welcome to Worship sign-ups!"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText("In which positions would you like to serve?"),
+  ).toBeInTheDocument();
+  // The replaced default wording should no longer appear.
+  expect(
+    screen.queryByText(/check the positions you can serve in/i),
+  ).not.toBeInTheDocument();
+});
+
 test("shows an error state when the preview cannot load", async () => {
   mockGetPreview.mockRejectedValue(new Error("This form is closed."));
   renderPage();

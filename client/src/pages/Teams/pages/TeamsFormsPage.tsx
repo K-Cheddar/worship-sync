@@ -10,6 +10,7 @@ const TeamsFormsPage = () => {
       submissions={pageData.intakeSubmissions}
       services={pageData.services}
       members={pageData.members}
+      positions={pageData.positions}
       teams={pageData.teams}
       canEdit={canEditTeams}
       onFormSaved={(form) => upsertData("intakeForms", "formId", form)}
@@ -17,6 +18,7 @@ const TeamsFormsPage = () => {
         upsertData("intakeSubmissions", "submissionId", submission)
       }
       onMemberSaved={(member) => upsertData("members", "memberId", member)}
+      onTeamSaved={(team) => upsertData("teams", "teamId", team)}
     />
   );
 };

@@ -448,6 +448,51 @@ export const memberName = (member?: TeamRosterMember | null) => {
   return `${member.firstName} ${member.lastName}`.trim();
 };
 
+export {
+  TEAMS_MEMBER_EDIT_SEARCH_PARAM,
+  TEAMS_TEAM_SEARCH_PARAM,
+  buildTeamsMemberEditPath,
+  buildTeamsPositionsPath,
+} from "./teamsReturnNavigation";
+
+/** @deprecated Use TEAMS_TEAM_SEARCH_PARAM from teamsReturnNavigation */
+export const TEAMS_POSITIONS_TEAM_SEARCH_PARAM = "teamId";
+
+export const getMemberTeamIds = (
+  member: TeamRosterMember,
+  positionTeamById: Map<string, string>,
+) =>
+  Array.from(
+    new Set([
+      ...Object.keys(member.teamMemberships || {}),
+      ...(member.qualifications || [])
+        .map((qualification) => qualification.teamId || "")
+        .filter(Boolean),
+      ...(member.positionIds || [])
+        .map((positionId) => positionTeamById.get(positionId) || "")
+        .filter(Boolean),
+    ]),
+  );
+
+export const canEditRosterMember = ({
+  member,
+  positionTeamById,
+  canEditTeams,
+  editableTeamIds,
+}: {
+  member: TeamRosterMember;
+  positionTeamById: Map<string, string>;
+  canEditTeams: boolean;
+  editableTeamIds: Set<string>;
+}) => {
+  if (canEditTeams) return true;
+  if (editableTeamIds.size === 0) return false;
+  const teamIds = getMemberTeamIds(member, positionTeamById);
+  return (
+    teamIds.length > 0 && teamIds.every((teamId) => editableTeamIds.has(teamId))
+  );
+};
+
 export const compareTeamRosterMembersByName = (
   a: TeamRosterMember,
   b: TeamRosterMember,

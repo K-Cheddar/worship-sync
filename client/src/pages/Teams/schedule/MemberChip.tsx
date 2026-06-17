@@ -7,6 +7,8 @@ type MemberChipProps = {
   label: string;
   subtitle?: string;
   issue?: string;
+  /** Non-blocking caution shown in amber; the member stays selectable. */
+  warning?: string;
   assignmentCount?: number;
   disabled?: boolean;
   highlighted?: boolean;
@@ -22,6 +24,7 @@ const MemberChip = ({
   label,
   subtitle,
   issue,
+  warning,
   assignmentCount = 0,
   disabled,
   highlighted = false,
@@ -73,11 +76,11 @@ const MemberChip = ({
               onSelect?.();
             }}
           >
-            <MemberChipLabel label={label} subtitle={subtitle} issue={issue} disabled={disabled} />
+            <MemberChipLabel label={label} subtitle={subtitle} issue={issue} warning={warning} disabled={disabled} />
           </button>
         ) : (
           <div className="min-w-0 flex-1">
-            <MemberChipLabel label={label} subtitle={subtitle} issue={issue} disabled={disabled} />
+            <MemberChipLabel label={label} subtitle={subtitle} issue={issue} warning={warning} disabled={disabled} />
           </div>
         )}
 
@@ -172,11 +175,13 @@ const MemberChipLabel = ({
   label,
   subtitle,
   issue,
+  warning,
   disabled,
 }: {
   label: string;
   subtitle?: string;
   issue?: string;
+  warning?: string;
   disabled?: boolean;
 }) => (
   <>
@@ -189,6 +194,11 @@ const MemberChipLabel = ({
         )}
       >
         {subtitle}
+      </span>
+    ) : null}
+    {warning ? (
+      <span className="block truncate text-xs font-normal text-amber-300">
+        ⚠ {warning}
       </span>
     ) : null}
   </>

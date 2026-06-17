@@ -315,6 +315,8 @@ export type TeamRosterMemberPayload = {
   lastName: string;
   dateOfBirth?: string;
   positionIds: string[];
+  desiredPositionIds?: string[];
+  serviceAvailability?: TeamRosterMember["serviceAvailability"];
   teamMemberships?: TeamRosterMember["teamMemberships"];
   qualifications?: TeamRosterMember["qualifications"];
   blockoutDates: TeamRosterMember["blockoutDates"];
@@ -375,6 +377,10 @@ export type TeamIntakeFormPayload = {
   availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
   teamIds: string[];
   active: boolean;
+  welcomeMessage?: string;
+  positionsMessage?: string;
+  availabilityMessage?: string;
+  notesMessage?: string;
 };
 
 export type TeamIntakeSubmissionPayload = {
@@ -431,7 +437,7 @@ export const applyTeamIntakeSubmission = async (
   churchId: string,
   submissionId: string,
   body: {
-    action: "reviewed" | "applied" | "dismissed";
+    action: "new" | "reviewed" | "applied" | "dismissed";
     memberId?: string;
     createMember?: boolean;
   },
@@ -440,6 +446,8 @@ export const applyTeamIntakeSubmission = async (
     success: boolean;
     submission: TeamIntakeSubmission;
     member?: TeamRosterMember;
+    /** Teams whose rosters changed (member added), for an immediate local refresh. */
+    teams?: TeamRecord[];
   }>(`api/churches/${churchId}/team-intake/submissions/${submissionId}`, {
     method: "POST",
     body: JSON.stringify(body),

@@ -104,7 +104,12 @@ const EntityMultiSelect = ({
         ) : null}
       </div>
       {description ? (
-        <p className={cn(isBoard ? boardFieldsetDescriptionClassName : "px-1 text-xs text-gray-400")}>
+        <p
+          className={cn(
+            "mb-2",
+            isBoard ? boardFieldsetDescriptionClassName : "px-1 text-xs text-gray-400",
+          )}
+        >
           {description}
         </p>
       ) : null}

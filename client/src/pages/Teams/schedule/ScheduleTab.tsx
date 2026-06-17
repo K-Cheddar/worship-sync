@@ -88,6 +88,9 @@ import {
   scheduleMemberName,
   serializeAssignmentCell,
 } from "../teamsUtils";
+import { buildScheduleReturnTo } from "../teamsReturnNavigation";
+import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
+import type { TeamsReturnTo } from "../teamsReturnNavigation";
 import {
   buildScheduleColumns,
   getRequiredCount,
@@ -145,6 +148,8 @@ import type { TeamSchedulePayload } from "../../../api/auth";
 const ScheduleTab = ({
   data,
   canEdit,
+  canEditMember,
+  onEditMember,
   selectedScheduleId,
   setSelectedScheduleId,
   scheduleDrafts,
@@ -155,9 +160,12 @@ const ScheduleTab = ({
   onScheduleDraftChanged,
   onScheduleDraftFlush,
   onRefresh,
+  trackTeamsSave,
 }: {
   data: TeamsData;
   canEdit: boolean;
+  canEditMember?: (member: TeamRosterMember) => boolean;
+  onEditMember?: (memberId: string, returnTo: TeamsReturnTo) => void;
   selectedScheduleId: string;
   setSelectedScheduleId: (scheduleId: string) => void;
   scheduleDrafts: TeamsScheduleDrafts;
@@ -168,6 +176,9 @@ const ScheduleTab = ({
   onScheduleDraftChanged: (draftKey: string, draft: TeamSchedulePayload) => void;
   onScheduleDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;
   onRefresh: () => void;
+  // Registers an in-flight schedule save with the page so inbound sync stays
+  // gated until it settles (prevents a poll/SSE from reverting pending edits).
+  trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
 }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -278,6 +289,10 @@ const ScheduleTab = ({
   }, [activeTeamMembers, selectedSchedule?.assignments]);
   const [showForm, setShowForm] = useState(false);
   const [membersPanelOpen, setMembersPanelOpen] = useState(true);
+  const pendingScheduleSlotRestoreRef = useRef<{
+    activeSlot: ScheduleFocusedCell;
+    slotPickerMode?: "assign" | "replace";
+  } | null>(null);
   const [membersPanelQuery, setMembersPanelQuery] = useState("");
   const [memberPositionFilterIds, setMemberPositionFilterIds] = useState<string[]>([]);
   const membersPanelRef = useRef<HTMLDivElement>(null);
@@ -335,14 +350,19 @@ const ScheduleTab = ({
   // each one validates against the previous result.
   const assignmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const scheduleMutationSeqRef = useRef(0);
-  const enqueueAssignmentSave = useCallback(<T,>(task: () => Promise<T>) => {
-    const run = assignmentSaveQueueRef.current.then(task, task);
-    assignmentSaveQueueRef.current = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }, []);
+  const enqueueAssignmentSave = useCallback(
+    <T,>(task: () => Promise<T>) => {
+      const run = assignmentSaveQueueRef.current.then(task, task);
+      assignmentSaveQueueRef.current = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      // Keep inbound sync gated until this save (and the rest of the queue)
+      // has drained, so a poll/SSE can't apply a snapshot missing it.
+      return trackTeamsSave(run);
+    },
+    [trackTeamsSave],
+  );
   const [detailOccurrenceId, setDetailOccurrenceId] = useState<string | null>(null);
   const persistedDraft = scheduleDrafts[draftKey];
 
@@ -392,7 +412,6 @@ const ScheduleTab = ({
       setSlotPickerMode(mode);
       setPickerAnchorEl(anchorEl);
       setPendingCellAssignment(null);
-      setMembersPanelOpen(true);
       const column = scheduleColumns.find((item) => item.columnKey === cell.columnKey);
       if (column) {
         setMemberPositionFilterIds([column.positionId]);
@@ -405,6 +424,41 @@ const ScheduleTab = ({
     },
     [scheduleColumns],
   );
+
+  useTeamsRestoreOnMount({
+    onScheduleRestore: (restore) => {
+      if (restore.scheduleId) {
+        setSelectedScheduleId(restore.scheduleId);
+      }
+      if (restore.membersPanelOpen !== undefined) {
+        setMembersPanelOpen(restore.membersPanelOpen);
+      }
+      if (restore.activeSlot) {
+        pendingScheduleSlotRestoreRef.current = {
+          activeSlot: restore.activeSlot,
+          slotPickerMode: restore.slotPickerMode,
+        };
+      }
+    },
+  });
+
+  useEffect(() => {
+    const pending = pendingScheduleSlotRestoreRef.current;
+    if (!pending?.activeSlot) return;
+    const column = scheduleColumns.find(
+      (item) => item.columnKey === pending.activeSlot.columnKey,
+    );
+    const occurrence = scheduleOccurrences.find(
+      (item) => item.occurrenceId === pending.activeSlot.occurrenceId,
+    );
+    if (!column || !occurrence) return;
+    setActiveSlot(pending.activeSlot);
+    setSlotPickerMode(pending.slotPickerMode ?? "assign");
+    setMemberPositionFilterIds([column.positionId]);
+    setAssignmentQuery("");
+    setPickerAnchorEl(null);
+    pendingScheduleSlotRestoreRef.current = null;
+  }, [scheduleColumns, scheduleOccurrences]);
 
   useEffect(() => {
     if (!activeSlot) return undefined;
@@ -551,10 +605,10 @@ const ScheduleTab = ({
       if (!member || !occurrence || !selectedTeam) return "Not available";
       if (member.archivedAt) return "Member archived";
       if (!selectedTeam.memberIds.includes(memberId)) return "Not on this team";
-      if (assignmentKind !== "shadow" && !(member.positionIds || []).includes(positionId)) {
-        return "Not eligible for this position";
-      }
-      if (serviceDateBlockedOut(member, getOccurrenceDate(occurrence))) return "Blocked out";
+      // Being already assigned in this service is the dominant, most actionable
+      // reason — it applies even to eligible members and tells the admin the
+      // person is taken (vs. simply not eligible). Surface it before the
+      // eligibility/blockout checks so those don't mask it.
       const row = selectedSchedule?.assignments?.[occurrenceId] || {};
       const assignedElsewhere = Object.entries(row).some(([assignedPositionSlotKey, cell]) => {
         const isSourceCell =
@@ -563,9 +617,31 @@ const ScheduleTab = ({
         const assignedMemberIds = getCellMemberIds(cell);
         return assignedMemberIds.includes(memberId);
       });
-      return assignedElsewhere ? "Already assigned in this service" : "";
+      if (assignedElsewhere) return "Already assigned in this service";
+      if (assignmentKind !== "shadow" && !(member.positionIds || []).includes(positionId)) {
+        return "Not eligible for this position";
+      }
+      if (serviceDateBlockedOut(member, getOccurrenceDate(occurrence))) return "Blocked out";
+      // Intake service availability is intentionally NOT a hard block — it is
+      // surfaced as a soft warning (see serviceAvailabilityWarning). Only
+      // blockout dates make a member truly unavailable.
+      return "";
     },
     [data.members, scheduleOccurrences, selectedSchedule?.assignments, selectedTeam],
+  );
+
+  // Soft, non-blocking warning: the member marked this service unavailable on an
+  // intake form. They can still be scheduled (e.g. you confirmed with them), but
+  // the scheduler should know. Empty string when there's nothing to warn about.
+  const getServiceAvailabilityWarning = useCallback(
+    (memberId: string, occurrenceId: string) => {
+      const member = data.members.find((item) => item.memberId === memberId);
+      if (member?.serviceAvailability?.[occurrenceId] === "unavailable") {
+        return "Marked this service unavailable on intake";
+      }
+      return "";
+    },
+    [data.members],
   );
 
   const commitAssignment = async ({
@@ -1220,17 +1296,15 @@ const ScheduleTab = ({
         // Patch just this attendance cell instead of re-PUTting the whole
         // schedule, so a concurrent assignment edit by another admin isn't
         // clobbered.
-        await updateTeamScheduleAttendance(
-          churchId,
-          selectedSchedule.scheduleId,
-          {
+        await trackTeamsSave(
+          updateTeamScheduleAttendance(churchId, selectedSchedule.scheduleId, {
             occurrenceId: row.occurrenceId,
             memberId: row.memberId,
             status,
             columnKey: row.columnKey,
             positionId: row.positionId,
             positionLabel: row.positionLabel,
-          },
+          }),
         );
       } catch (error) {
         if (scheduleMutationSeqRef.current === mutationSeq) {
@@ -1239,7 +1313,7 @@ const ScheduleTab = ({
         showApiErrorToast(showToast, error, "Could not update attendance.");
       }
     },
-    [churchId, canEdit, onScheduleSaved, selectedSchedule, showToast],
+    [churchId, canEdit, onScheduleSaved, selectedSchedule, showToast, trackTeamsSave],
   );
 
   const rescheduleSuggestionRows = useMemo(
@@ -1344,6 +1418,28 @@ const ScheduleTab = ({
     selectedSchedule?.assignments,
   ]);
 
+  const handleEditMemberFromPanel = useCallback(
+    (memberId: string) => {
+      if (!onEditMember || !selectedScheduleId) return;
+      onEditMember(
+        memberId,
+        buildScheduleReturnTo({
+          scheduleId: selectedScheduleId,
+          activeSlot: activeSlot ?? undefined,
+          slotPickerMode,
+          membersPanelOpen,
+        }),
+      );
+    },
+    [
+      activeSlot,
+      membersPanelOpen,
+      onEditMember,
+      selectedScheduleId,
+      slotPickerMode,
+    ],
+  );
+
   const handleActiveSlotMemberSelect = (memberId: string) => {
     if (!canEdit) return;
     if (!activeSlot || !activeSlotMeta) return;
@@ -1380,6 +1476,14 @@ const ScheduleTab = ({
       );
     },
     [absentMemberIdsByOccurrence, activeSlot, activeSlotMeta, getAssignmentIssue],
+  );
+
+  const activeSlotGetWarning = useCallback(
+    (memberId: string) => {
+      if (!activeSlot) return "";
+      return getServiceAvailabilityWarning(memberId, activeSlot.occurrenceId);
+    },
+    [activeSlot, getServiceAvailabilityWarning],
   );
 
   const activeSlotGetAssignmentActionIssues = useCallback(
@@ -2290,6 +2394,7 @@ const ScheduleTab = ({
                       ? undefined
                       : activeSlotGetAssignmentActionIssues
                   }
+                  getWarning={activeSlotGetWarning}
                   onSelectMember={handleActiveSlotMemberSelect}
                   onAssignmentAction={handleActiveSlotAssignmentAction}
                   onCreateMember={
@@ -2337,6 +2442,9 @@ const ScheduleTab = ({
                   onSelectMember={canEdit ? handleActiveSlotMemberSelect : () => undefined}
                   getIssue={activeSlotGetIssue}
                   getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
+                  getWarning={activeSlotGetWarning}
+                  canEditMember={canEditMember}
+                  onEditMember={handleEditMemberFromPanel}
                 />
               </div>
             </ScheduleAssignmentProvider>

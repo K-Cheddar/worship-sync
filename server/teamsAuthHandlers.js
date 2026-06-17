@@ -206,6 +206,68 @@ export const createTeamsAuthHandlers = ({
       .filter(Boolean);
   };
 
+  // Per-occurrence availability map keyed by occurrenceId (`serviceId@startsAt`).
+  // Any value other than "unavailable" is treated as available.
+  const normalizeServiceAvailability = (value) => {
+    const result = {};
+    if (value && typeof value === "object") {
+      Object.entries(value).forEach(([occurrenceId, status]) => {
+        const key = normalizeShortText(occurrenceId, { max: 200 });
+        if (!key) return;
+        result[key] = status === "unavailable" ? "unavailable" : "available";
+      });
+    }
+    return result;
+  };
+
+  // Combine the notes of merged blockout ranges, de-duplicating individual
+  // entries (split on ";") so repeated intake submissions don't stack identical
+  // notes like "From intake form".
+  const combineBlockoutNotes = (...notes) => {
+    const seen = new Set();
+    const parts = [];
+    notes.forEach((note) => {
+      String(note || "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .forEach((part) => {
+          if (seen.has(part)) return;
+          seen.add(part);
+          parts.push(part);
+        });
+    });
+    return parts.join("; ");
+  };
+
+  // Collapse overlapping or duplicate blockout ranges into the fewest entries
+  // that cover the same days. Ranges are plain "YYYY-MM-DD" strings, so string
+  // comparison is a valid date comparison. Adjacent-but-not-overlapping ranges
+  // (e.g. 6/23 then 6/24) are intentionally left separate.
+  const mergeBlockoutDateRanges = (ranges) => {
+    const valid = (Array.isArray(ranges) ? ranges : []).filter(
+      (range) => range && range.startDate && range.endDate,
+    );
+    const sorted = [...valid].sort((a, b) =>
+      a.startDate === b.startDate
+        ? a.endDate.localeCompare(b.endDate)
+        : a.startDate.localeCompare(b.startDate),
+    );
+    const merged = [];
+    sorted.forEach((range) => {
+      const current = merged[merged.length - 1];
+      // Sorted by start, so an overlap exists when this range starts on or
+      // before the running range's end. Fold it in and extend the end.
+      if (current && range.startDate <= current.endDate) {
+        if (range.endDate > current.endDate) current.endDate = range.endDate;
+        current.notes = combineBlockoutNotes(current.notes, range.notes);
+      } else {
+        merged.push({ ...range });
+      }
+    });
+    return merged;
+  };
+
   const getTeamEntity = async (kind, id) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const trimmedId = String(id || "").trim();
@@ -291,6 +353,41 @@ export const createTeamsAuthHandlers = ({
       await collectMemberTeamIds(member, churchId),
     );
 
+  // Add a member to each given team's roster. Tolerant of stale/foreign/archived
+  // team ids (skipped), since callers may pass ids from intake forms that could
+  // be out of date. Returns the team ids whose roster actually changed.
+  const addMemberToTeams = async ({
+    churchId,
+    teamIds,
+    memberId,
+    adminUserId,
+  }) => {
+    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
+    const ids = normalizeIdArray(teamIds);
+    if (!normalizedMemberId || ids.length === 0) return [];
+    const now = nowIso();
+    const addedTeamIds = [];
+    await Promise.all(
+      ids.map(async (teamId) => {
+        const team = await getDoc(COLLECTIONS.teams, teamId);
+        if (!team || team.churchId !== churchId || team.archivedAt) return;
+        if ((team.memberIds || []).includes(normalizedMemberId)) return;
+        await setDoc(
+          COLLECTIONS.teams,
+          teamId,
+          {
+            memberIds: [...(team.memberIds || []), normalizedMemberId],
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        addedTeamIds.push(teamId);
+      }),
+    );
+    return addedTeamIds;
+  };
+
   const addMemberToTeamsForPositions = async ({
     churchId,
     positionIds,
@@ -310,26 +407,12 @@ export const createTeamsAuthHandlers = ({
     const teamIds = Array.from(
       new Set(positions.map((position) => position.teamId).filter(Boolean)),
     );
-    const now = nowIso();
-    await Promise.all(
-      teamIds.map(async (teamId) => {
-        const team = await assertTeamEntityInChurch("team", teamId, churchId, {
-          label: "Team",
-        });
-        if ((team.memberIds || []).includes(normalizedMemberId)) return;
-        await setDoc(
-          COLLECTIONS.teams,
-          teamId,
-          {
-            memberIds: [...(team.memberIds || []), normalizedMemberId],
-            updatedAt: now,
-            updatedByUid: adminUserId,
-          },
-          { merge: true },
-        );
-      }),
-    );
-    return teamIds;
+    return addMemberToTeams({
+      churchId,
+      teamIds,
+      memberId: normalizedMemberId,
+      adminUserId,
+    });
   };
 
   const listTeamCollectionForChurch = async (
@@ -675,6 +758,23 @@ export const createTeamsAuthHandlers = ({
       payload.qualifications = await normalizeTeamMemberQualifications(
         body?.qualifications,
         churchId,
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body || {}, "desiredPositionIds")
+    ) {
+      payload.desiredPositionIds = await assertTeamEntityIdsInChurch(
+        "position",
+        body?.desiredPositionIds,
+        churchId,
+        { label: "Position" },
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body || {}, "serviceAvailability")
+    ) {
+      payload.serviceAvailability = normalizeServiceAvailability(
+        body?.serviceAvailability,
       );
     }
     return payload;
@@ -1496,6 +1596,12 @@ export const createTeamsAuthHandlers = ({
       body?.teamIds !== undefined
         ? normalizeIdArray(body.teamIds)
         : existing?.teamIds || [];
+    // Optional public-form copy overrides. Empty means "use the built-in
+    // default" on the public form, so we store "" rather than a placeholder.
+    const normalizeMessage = (key) =>
+      body?.[key] !== undefined
+        ? normalizeLongText(body[key], { max: 500 })
+        : existing?.[key] || "";
     return {
       name,
       startDate,
@@ -1504,6 +1610,10 @@ export const createTeamsAuthHandlers = ({
       availabilityOccurrences,
       teamIds,
       active: Boolean(body?.active ?? existing?.active),
+      welcomeMessage: normalizeMessage("welcomeMessage"),
+      positionsMessage: normalizeMessage("positionsMessage"),
+      availabilityMessage: normalizeMessage("availabilityMessage"),
+      notesMessage: normalizeMessage("notesMessage"),
     };
   };
 
@@ -1971,6 +2081,9 @@ export const createTeamsAuthHandlers = ({
         ) {
           throw httpError(400, "That member is unavailable for this service.");
         }
+        // Note: intake service availability ("didn't pick this service") is a
+        // soft scheduling warning surfaced in the picker, not a hard block — only
+        // blockout dates make a member truly unavailable.
 
         const serviceAssignments = assignments[serviceId] || {};
         const assignedElsewhere = Object.values(serviceAssignments).some(
@@ -2052,6 +2165,8 @@ export const createTeamsAuthHandlers = ({
     if (isMemberUnavailableForService(member, { date: serviceDate || "" })) {
       throw httpError(400, "That member is unavailable for this service.");
     }
+    // Intake service availability is a soft warning only (surfaced in the
+    // picker); only blockout dates hard-block assignment here.
 
     const serviceAssignments = assignments[serviceId] || {};
     const assignedElsewhere = Object.entries(serviceAssignments).some(
@@ -2691,6 +2806,10 @@ export const createTeamsAuthHandlers = ({
             endDate: form.endDate,
             availabilityServices: form.availabilityServices || [],
             availabilityOccurrences: form.availabilityOccurrences || [],
+            welcomeMessage: form.welcomeMessage || "",
+            positionsMessage: form.positionsMessage || "",
+            availabilityMessage: form.availabilityMessage || "",
+            notesMessage: form.notesMessage || "",
           },
           // Allowlist the fields the public form needs — never ship internal
           // position columns (description, order, timestamps) on a public link.
@@ -3479,6 +3598,10 @@ export const createTeamsAuthHandlers = ({
         const action = String(req.body?.action || "").trim();
         const now = nowIso();
         let member = null;
+        // Teams whose rosters changed by this apply, returned so the client can
+        // refresh memberships immediately (so a created member shows up on the
+        // schedule without waiting for a full reload).
+        let updatedTeams = [];
         const update = {
           status: action,
           reviewedAt: now,
@@ -3488,13 +3611,39 @@ export const createTeamsAuthHandlers = ({
         };
 
         if (action === "applied") {
-          const blockoutDates = (submission.blockoutRanges || []).map(
-            (range) => ({
+          const blockoutDates = mergeBlockoutDateRanges(
+            (submission.blockoutRanges || []).map((range) => ({
               startDate: range.startDate,
               endDate: range.endDate,
               notes: "From intake form",
-            }),
+            })),
           );
+          // Intake positions are what the member *wants* to do, not what they
+          // are eligible to be scheduled for. Apply records desire only; an
+          // admin promotes desired positions into `positionIds` (the schedule
+          // gate) explicitly. Never auto-grant eligibility here.
+          const desiredPositionIds = submission.positionIds || [];
+          // Per-service availability the submitter marked. "unavailable" entries
+          // become a hard scheduling constraint on the member.
+          const submissionAvailability = normalizeServiceAvailability(
+            submission.occurrenceAvailability,
+          );
+          // Teams the member should join so they appear on those schedules
+          // (shadow-eligible even with no positions): the teams that own their
+          // requested positions, plus the teams the form explicitly collects
+          // for. An all-teams form (empty teamIds) intentionally adds no extra
+          // teams beyond the requested-position ones — we never mass-add.
+          const intakeForm = await getDoc(
+            COLLECTIONS.teamIntakeForms,
+            submission.formId,
+          );
+          const formTeamIds =
+            intakeForm && intakeForm.churchId === req.params.churchId
+              ? normalizeIdArray(intakeForm.teamIds)
+              : [];
+          const addedTeamIds = new Set();
+          const trackTeams = (ids) =>
+            (ids || []).forEach((id) => addedTeamIds.add(id));
           if (req.body?.createMember) {
             member = await upsertTeamEntity({
               kind: "member",
@@ -3503,18 +3652,35 @@ export const createTeamsAuthHandlers = ({
                 firstName: submission.firstName,
                 lastName: submission.lastName,
                 dateOfBirth: "",
-                positionIds: submission.positionIds || [],
+                positionIds: [],
+                desiredPositionIds,
+                serviceAvailability: submissionAvailability,
                 blockoutDates,
                 notes: normalizeLongText(submission.notes),
               },
               adminUserId: admin.user.uid,
             });
-            await addMemberToTeamsForPositions({
-              churchId: req.params.churchId,
-              positionIds: submission.positionIds || [],
-              memberId: member.memberId,
-              adminUserId: admin.user.uid,
-            });
+            // Surface the new member on the rosters of teams that own their
+            // desired positions, plus the form's scoped teams, so an admin can
+            // find and (if needed) promote them. This is team visibility only;
+            // assignability is still gated by `positionIds`, which stays empty
+            // until promotion — so they can only be shadowed in for now.
+            trackTeams(
+              await addMemberToTeamsForPositions({
+                churchId: req.params.churchId,
+                positionIds: desiredPositionIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
+            trackTeams(
+              await addMemberToTeams({
+                churchId: req.params.churchId,
+                teamIds: formTeamIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
           } else {
             const memberId = normalizeShortText(req.body?.memberId, {
               max: 160,
@@ -3525,24 +3691,52 @@ export const createTeamsAuthHandlers = ({
               req.params.churchId,
               { label: "Member", active: false },
             );
-            const nextPositionIds = normalizeIdArray([
-              ...(member.positionIds || []),
-              ...(submission.positionIds || []),
-            ]);
-            const nextBlockoutDates = [
+            // Latest intake wins for desired positions; eligibility
+            // (`positionIds`) is left untouched.
+            const nextDesiredPositionIds = normalizeIdArray(desiredPositionIds);
+            // Merge the intake blockouts into the member's existing ones so
+            // repeat submissions and overlapping ranges don't pile up duplicates.
+            const nextBlockoutDates = mergeBlockoutDateRanges([
               ...(member.blockoutDates || []),
               ...blockoutDates,
-            ];
+            ]);
+            // Merge availability per occurrence; the latest submission wins for
+            // any occurrence it covers, while older occurrences are preserved.
+            const nextServiceAvailability = {
+              ...(member.serviceAvailability || {}),
+              ...submissionAvailability,
+            };
             await setDoc(
               COLLECTIONS.teamRosterMembers,
               member.memberId,
               {
-                positionIds: nextPositionIds,
+                desiredPositionIds: nextDesiredPositionIds,
+                serviceAvailability: nextServiceAvailability,
                 blockoutDates: nextBlockoutDates,
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
               },
               { merge: true },
+            );
+            // Mirror the create path: surface the linked member on the rosters
+            // of teams that own their desired positions, plus the form's scoped
+            // teams. Visibility only — assignability stays gated by
+            // `positionIds`, which we never touch here.
+            trackTeams(
+              await addMemberToTeamsForPositions({
+                churchId: req.params.churchId,
+                positionIds: nextDesiredPositionIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
+            trackTeams(
+              await addMemberToTeams({
+                churchId: req.params.churchId,
+                teamIds: formTeamIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
             );
             member = await getTeamEntity("member", member.memberId);
           }
@@ -3550,10 +3744,30 @@ export const createTeamsAuthHandlers = ({
           update.appliedAt = now;
           update.appliedByUid = admin.user.uid;
           update.appliedMemberId = member.memberId;
-        } else if (action === "reviewed" || action === "dismissed") {
-          update.status = action;
+          update.appliedMemberCreated = Boolean(req.body?.createMember);
+          updatedTeams = (
+            await Promise.all(
+              Array.from(addedTeamIds).map((teamId) =>
+                getDoc(COLLECTIONS.teams, teamId),
+              ),
+            )
+          ).filter((team) => team && team.churchId === req.params.churchId);
+        } else if (action === "dismissed") {
+          update.status = "dismissed";
+        } else if (action === "reviewed") {
+          // Legacy clients may still send "reviewed"; keep accepting it.
+          update.status = "reviewed";
+        } else if (action === "new") {
+          // Restore a dismissed submission back into the active queue. The
+          // submission data was never deleted, so this is a safe undo.
+          update.status = "new";
         } else {
-          throw httpError(400, "Review action is required.");
+          throw httpError(
+            400,
+            action
+              ? `Unsupported submission action: "${action}".`
+              : "Review action is required.",
+          );
         }
 
         await setDoc(
@@ -3577,6 +3791,7 @@ export const createTeamsAuthHandlers = ({
             ...update,
           },
           ...(member ? { member } : {}),
+          ...(updatedTeams.length ? { teams: updatedTeams } : {}),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update this submission.");

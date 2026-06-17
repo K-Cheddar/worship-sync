@@ -11,13 +11,8 @@ import {
   reorderTeamPositions,
   type TeamSchedulePayload,
 } from "../../../api/auth";
-import {
-  ControllerInfoContext,
-  globalDb,
-} from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
-import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
 import { useDispatch, useSelector } from "../../../hooks";
 import type { RootState } from "../../../store/store";
 import {
@@ -26,33 +21,23 @@ import {
 } from "../../../store/autosaveIndicatorSlice";
 import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
 import { teamsDataKeys } from "../teamsConstants";
-import {
-  isNewerTeamsDoc,
-  isPouchNotFoundError,
-  isTeamsPouchDoc,
-  loadTeamsPouchDocs,
-  persistTeamsDataDoc,
-  persistTeamsDraftsDoc,
-  persistTeamsMetaDoc,
-} from "../teamsPouch";
-import type {
-  TeamsData,
-  TeamsDataKey,
-  TeamsPouchDoc,
-  TeamsScheduleDrafts,
-} from "../types";
+import type { TeamsData, TeamsDataKey, TeamsScheduleDrafts } from "../types";
 import {
   buildTeamsDataFromBootstrap,
   emptyData,
   applyTeamEntityDeletionLocally,
   isActive,
-  normalizeTeamsData,
-  normalizeTeamsDataKey,
   scheduleDraftsMatch,
   sortPositionsByOrder,
   toTeamService,
   upsertListItem,
 } from "../teamsUtils";
+import {
+  readScheduleDrafts,
+  readSelectedScheduleId,
+  writeScheduleDrafts,
+  writeSelectedScheduleId,
+} from "../teamsLocalStore";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { SCHEDULE_DRAFT_PERSIST_DELAY_MS } from "../schedule/scheduleDraftUtils";
 import { normalizeTeamsForSelectors } from "../teamsSelectors";
@@ -66,15 +51,18 @@ const BACKGROUND_POLL_INTERVAL_MS = 15000;
 // After a local optimistic edit, ignore inbound polls/pushes for this long so a
 // slightly-stale server snapshot (or an echo of our own change) can't revert it.
 const LOCAL_EDIT_COOLDOWN_MS = 3000;
+// Keep the "Syncing…" toolbar chip visible at least this long after the last
+// teams save settles, so a fast REST round-trip still registers visually.
+const TEAMS_AUTOSAVE_LINGER_MS = 800;
 
 // Structural equality for a teams collection, used to decide whether a polled
-// snapshot actually changed before applying/persisting it. Preferred over
-// `JSON.stringify` comparison: it short-circuits on the first difference (cheaper
-// than serializing whole collections on every 15s poll), is insensitive to
-// object key order (no false "changed" from server vs. locally-built objects),
-// and — unlike an updatedAt/length signature — can never miss a real change.
-// Arrays stay order-sensitive, which is correct: collection ordering is
-// meaningful and server-stable.
+// snapshot actually changed before applying it. Preferred over `JSON.stringify`
+// comparison: it short-circuits on the first difference (cheaper than
+// serializing whole collections on every 15s poll), is insensitive to object
+// key order (no false "changed" from server vs. locally-built objects), and —
+// unlike an updatedAt/length signature — can never miss a real change. Arrays
+// stay order-sensitive, which is correct: collection ordering is meaningful and
+// server-stable.
 const deepEqual = (a: unknown, b: unknown): boolean => {
   if (a === b) return true;
   if (
@@ -111,7 +99,6 @@ const teamsDataKeyEquals = (a: unknown, b: unknown) => deepEqual(a, b);
 
 export const useTeamsPageState = () => {
   const context = useContext(GlobalInfoContext);
-  const controllerContext = useContext(ControllerInfoContext);
   const { showToast } = useToast();
   const dispatch = useDispatch();
   const churchId = context?.churchId || "";
@@ -128,26 +115,16 @@ export const useTeamsPageState = () => {
       ),
     [canEditTeams, context?.permissions?.teamScopes],
   );
-  const teamsDb = controllerContext?.db || globalDb;
   const sharedServices = useSelector(
     (state: RootState) => state.undoable.present.serviceTimes.list,
   );
   const [data, setData] = useState<TeamsData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
-  const [lastRemoteSyncAt, setLastRemoteSyncAt] = useState<
-    string | undefined
-  >();
   const [scheduleDrafts, setScheduleDrafts] = useState<TeamsScheduleDrafts>({});
   const dataRef = useRef(data);
   const selectedScheduleIdRef = useRef(selectedScheduleId);
-  const lastRemoteSyncAtRef = useRef(lastRemoteSyncAt);
   const scheduleDraftsRef = useRef(scheduleDrafts);
-  const dataDocUpdatedAtRef = useRef<Partial<Record<TeamsDataKey, string>>>({});
-  const metaDocUpdatedAtRef = useRef<string | undefined>(undefined);
-  const draftsDocUpdatedAtRef = useRef<string | undefined>(undefined);
-  const dataPersistPromiseRef = useRef<Promise<unknown>>(Promise.resolve());
-  const draftPersistPromiseRef = useRef<Promise<unknown>>(Promise.resolve());
   const draftPersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -156,6 +133,12 @@ export const useTeamsPageState = () => {
   const churchIdRef = useRef(churchId);
   // Timestamp of the last local optimistic edit, used to gate inbound sync.
   const lastLocalEditAtRef = useRef(0);
+  // Number of teams saves still in flight (schedule grid, position reorder, …).
+  // Schedule assignment saves in particular are serialized and can take longer
+  // than the fixed edit cooldown to drain; inbound sync stays gated while any
+  // remain so a poll/SSE can't apply a server snapshot missing not-yet-saved
+  // edits.
+  const pendingTeamsSavesRef = useRef(0);
   // Set while an inbound (poll/SSE) change is being applied so it isn't mistaken
   // for a local edit — applying a remote update must not start the local-edit
   // cooldown (which would needlessly defer further inbound syncs).
@@ -164,11 +147,20 @@ export const useTeamsPageState = () => {
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
   // Cleared on unmount so a background poll that resolves after the page is gone
-  // doesn't apply state or persist (mirrors refresh's isCancelled guard).
+  // doesn't apply state (mirrors refresh's isCancelled guard).
   const isMountedRef = useRef(true);
   const deferredRefreshTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
+  // Drives the global "Synced ⇄ Syncing…" toolbar chip for teams edits. Counts
+  // real saves in flight (not cache writes — there is no cache); a single
+  // begin/end pair is dispatched per active burst, with a short linger so a fast
+  // round-trip is still visible.
+  const teamsAutosaveDepthRef = useRef(0);
+  const teamsAutosaveActiveRef = useRef(false);
+  const teamsAutosaveEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const toolbarLogoUrl = useMemo(
     () => resolveChurchToolbarLogoUrl(context?.churchBranding),
     [context?.churchBranding],
@@ -188,127 +180,123 @@ export const useTeamsPageState = () => {
   }, [selectedScheduleId]);
 
   useEffect(() => {
-    lastRemoteSyncAtRef.current = lastRemoteSyncAt;
-  }, [lastRemoteSyncAt]);
-
-  useEffect(() => {
     scheduleDraftsRef.current = scheduleDrafts;
   }, [scheduleDrafts]);
 
-  const applyTeamsDoc = useCallback(
-    (doc: TeamsPouchDoc) => {
-      if (doc.churchId !== churchId) return;
-      if (doc.docType === "teams-cache") {
-        if (!isNewerTeamsDoc(metaDocUpdatedAtRef.current, doc.updatedAt))
-          return;
-        metaDocUpdatedAtRef.current = doc.updatedAt;
-        teamsDataKeys.forEach((key) => {
-          dataDocUpdatedAtRef.current[key] = doc.updatedAt;
-        });
-        draftsDocUpdatedAtRef.current = doc.updatedAt;
-        const nextData = normalizeTeamsData(doc.data);
-        setData(nextData);
-        scheduleDraftsRef.current = doc.scheduleDrafts || {};
-        setScheduleDrafts(doc.scheduleDrafts || {});
-        setLastRemoteSyncAt(doc.lastRemoteSyncAt);
-        setSelectedScheduleId((current) =>
-          current &&
-          nextData.schedules.some((schedule) => schedule.scheduleId === current)
-            ? current
-            : doc.selectedScheduleId ||
-              nextData.schedules.find(isActive)?.scheduleId ||
-              nextData.schedules[0]?.scheduleId ||
-              "",
-        );
-        return;
-      }
+  // Restore per-church local UI state (in-progress drafts + last-selected
+  // schedule) from localStorage. This is local-only and synchronous, so it
+  // seeds the refs before the REST bootstrap resolves — letting `refresh`
+  // preserve the user's last selection. Server data is never read from here.
+  useEffect(() => {
+    if (!churchId) return;
+    const storedDrafts = readScheduleDrafts(churchId);
+    scheduleDraftsRef.current = storedDrafts;
+    setScheduleDrafts(storedDrafts);
+    const storedSelected = readSelectedScheduleId(churchId);
+    if (storedSelected) {
+      selectedScheduleIdRef.current = storedSelected;
+      setSelectedScheduleId(storedSelected);
+    }
+  }, [churchId]);
 
-      if (doc.docType === "teams-data") {
-        if (
-          !isNewerTeamsDoc(dataDocUpdatedAtRef.current[doc.key], doc.updatedAt)
-        )
-          return;
-        dataDocUpdatedAtRef.current[doc.key] = doc.updatedAt;
-        setData((current) => ({
-          ...current,
-          [doc.key]: normalizeTeamsDataKey(doc.key, doc.items),
-        }));
-        return;
-      }
-
-      if (doc.docType === "teams-meta") {
-        if (!isNewerTeamsDoc(metaDocUpdatedAtRef.current, doc.updatedAt))
-          return;
-        metaDocUpdatedAtRef.current = doc.updatedAt;
-        setLastRemoteSyncAt(doc.lastRemoteSyncAt);
-        setSelectedScheduleId(
-          (current) => current || doc.selectedScheduleId || "",
-        );
-        return;
-      }
-
-      if (doc.docType === "teams-drafts") {
-        if (!isNewerTeamsDoc(draftsDocUpdatedAtRef.current, doc.updatedAt))
-          return;
-        draftsDocUpdatedAtRef.current = doc.updatedAt;
-        scheduleDraftsRef.current = doc.scheduleDrafts || {};
-        setScheduleDrafts(doc.scheduleDrafts || {});
-        return;
-      }
-    },
-    [churchId],
-  );
-
-  // Persist the cache to Pouch in the background. Only the keys that actually
-  // changed are written, so a single edit touches one doc (and broadcasts once)
-  // instead of rewriting all nine collections on every change. The UI itself
-  // updates synchronously via setData, so this never gates the optimistic render.
-  const persistTeamsDataSnapshot = useCallback(
-    (nextData: TeamsData, keys: TeamsDataKey[] = teamsDataKeys) => {
-      if (!teamsDb || !churchId || !canEditAnyTeam || keys.length === 0) return;
+  // Show the toolbar autosave chip while teams edits are saving. begin is
+  // dispatched once per burst (depth 0→1); end is deferred by a short linger so
+  // a fast save still flips the chip visibly, and is cancelled if another save
+  // starts during the linger. Driven by real saves (there is no cache to write).
+  const beginTeamsAutosave = useCallback(() => {
+    teamsAutosaveDepthRef.current += 1;
+    if (teamsAutosaveEndTimerRef.current) {
+      clearTimeout(teamsAutosaveEndTimerRef.current);
+      teamsAutosaveEndTimerRef.current = null;
+    }
+    if (!teamsAutosaveActiveRef.current) {
+      teamsAutosaveActiveRef.current = true;
       dispatch(
         autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
           AUTOSAVE_DEBOUNCE_KEYS.teams,
         ),
       );
-      dataPersistPromiseRef.current = dataPersistPromiseRef.current
-        .catch(() => undefined)
-        .then(() =>
-          Promise.all(
-            keys.map((key) =>
-              persistTeamsDataDoc(teamsDb, churchId, key, nextData[key]),
-            ),
+    }
+  }, [dispatch]);
+
+  const endTeamsAutosave = useCallback(() => {
+    teamsAutosaveDepthRef.current = Math.max(
+      0,
+      teamsAutosaveDepthRef.current - 1,
+    );
+    if (teamsAutosaveDepthRef.current > 0 || teamsAutosaveEndTimerRef.current) {
+      return;
+    }
+    teamsAutosaveEndTimerRef.current = setTimeout(() => {
+      teamsAutosaveEndTimerRef.current = null;
+      if (teamsAutosaveActiveRef.current) {
+        teamsAutosaveActiveRef.current = false;
+        dispatch(
+          autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+            AUTOSAVE_DEBOUNCE_KEYS.teams,
           ),
-        )
-        .catch((error) => {
-          console.error("Could not persist teams cache.", error);
-        })
-        .finally(() => {
-          dispatch(
-            autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-              AUTOSAVE_DEBOUNCE_KEYS.teams,
-            ),
-          );
-        });
+        );
+      }
+    }, TEAMS_AUTOSAVE_LINGER_MS);
+  }, [dispatch]);
+
+  // Balance the indicator on unmount so the global chip can't get stuck on
+  // "Syncing…" if the page leaves while a save (or linger) is outstanding.
+  useEffect(
+    () => () => {
+      if (teamsAutosaveEndTimerRef.current) {
+        clearTimeout(teamsAutosaveEndTimerRef.current);
+        teamsAutosaveEndTimerRef.current = null;
+      }
+      if (teamsAutosaveActiveRef.current) {
+        teamsAutosaveActiveRef.current = false;
+        dispatch(
+          autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+            AUTOSAVE_DEBOUNCE_KEYS.teams,
+          ),
+        );
+      }
     },
-    [canEditAnyTeam, churchId, dispatch, teamsDb],
+    [dispatch],
   );
 
   const updateDataLocal = useCallback(
     (updater: (current: TeamsData) => TeamsData) => {
+      // Start the inbound-sync cooldown for genuine local edits (not remote
+      // applies). The autosave chip is driven by the real save via
+      // `trackTeamsSave`, not by this optimistic apply — so "Syncing…" reflects
+      // an actual in-flight save rather than flashing after one has completed.
       if (!applyingRemoteRef.current) {
         lastLocalEditAtRef.current = Date.now();
       }
-      setData((current) => {
-        const nextData = updater(current);
-        const changedKeys = teamsDataKeys.filter(
-          (key) => current[key] !== nextData[key],
-        );
-        persistTeamsDataSnapshot(nextData, changedKeys);
-        return nextData;
-      });
+      setData(updater);
     },
-    [persistTeamsDataSnapshot],
+    [],
+  );
+
+  // Wrap an in-flight teams save (schedule assignments/attendance from the grid,
+  // position reorders, …) so inbound sync stays gated until it settles: the
+  // cooldown stays "hot" for the full drain of the serialized save queue, plus a
+  // short tail after the last save lands. Also drives the toolbar autosave chip
+  // off the real save lifecycle, so "Syncing…" means a save is actually pending.
+  const trackTeamsSave = useCallback(
+    <T,>(run: Promise<T>): Promise<T> => {
+      pendingTeamsSavesRef.current += 1;
+      lastLocalEditAtRef.current = Date.now();
+      beginTeamsAutosave();
+      run
+        .catch(() => undefined)
+        .finally(() => {
+          pendingTeamsSavesRef.current = Math.max(
+            0,
+            pendingTeamsSavesRef.current - 1,
+          );
+          lastLocalEditAtRef.current = Date.now();
+          endTeamsAutosave();
+        });
+      return run;
+    },
+    [beginTeamsAutosave, endTeamsAutosave],
   );
 
   const updateSelectedScheduleId = useCallback(
@@ -318,55 +306,16 @@ export const useTeamsPageState = () => {
       // inbound SSE/poll grid updates for a few seconds after every dropdown
       // switch. Only edits to schedule data set lastLocalEditAtRef.
       setSelectedScheduleId(scheduleId);
-      if (teamsDb && churchId && canEditAnyTeam) {
-        dispatch(
-          autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-            AUTOSAVE_DEBOUNCE_KEYS.teams,
-          ),
-        );
-        void persistTeamsMetaDoc(teamsDb, {
-          churchId,
-          selectedScheduleId: scheduleId,
-          lastRemoteSyncAt: lastRemoteSyncAtRef.current,
-        })
-          .catch((error) => {
-            console.error("Could not persist teams selection.", error);
-          })
-          .finally(() => {
-            dispatch(
-              autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-                AUTOSAVE_DEBOUNCE_KEYS.teams,
-              ),
-            );
-          });
-      }
+      selectedScheduleIdRef.current = scheduleId;
+      writeSelectedScheduleId(churchId, scheduleId);
     },
-    [canEditAnyTeam, churchId, dispatch, teamsDb],
+    [churchId],
   );
 
-  const persistScheduleDraftsToPouch = useCallback(() => {
-    if (!teamsDb || !churchId || !canEditAnyTeam) return;
-    dispatch(
-      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-        AUTOSAVE_DEBOUNCE_KEYS.teams,
-      ),
-    );
-    draftPersistPromiseRef.current = draftPersistPromiseRef.current
-      .catch(() => undefined)
-      .then(() =>
-        persistTeamsDraftsDoc(teamsDb, churchId, scheduleDraftsRef.current),
-      )
-      .catch((error) => {
-        console.error("Could not persist schedule draft.", error);
-      })
-      .finally(() => {
-        dispatch(
-          autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-            AUTOSAVE_DEBOUNCE_KEYS.teams,
-          ),
-        );
-      });
-  }, [canEditAnyTeam, churchId, dispatch, teamsDb]);
+  const persistScheduleDrafts = useCallback(() => {
+    if (!canEditAnyTeam) return;
+    writeScheduleDrafts(churchId, scheduleDraftsRef.current);
+  }, [canEditAnyTeam, churchId]);
 
   const updateScheduleDraft = useCallback(
     (draftKey: string, draft: TeamSchedulePayload) => {
@@ -378,20 +327,20 @@ export const useTeamsPageState = () => {
         ...scheduleDraftsRef.current,
         [draftKey]: draft,
       };
-      // Reflect the write in React state right away. The Pouch change feed is the
-      // only other path that updates this state, and it's async — consumers like
-      // the schedule form (which seeds from persistedDraft the moment it opens, as
-      // happens on "Copy schedule") must not have to wait for that round-trip.
+      // Reflect the write in React state right away so consumers like the
+      // schedule form (which seeds from persistedDraft the moment it opens, as
+      // happens on "Copy schedule") see it immediately. The localStorage write
+      // is debounced below to avoid serializing on every keystroke.
       setScheduleDrafts(scheduleDraftsRef.current);
       if (draftPersistTimeoutRef.current) {
         clearTimeout(draftPersistTimeoutRef.current);
       }
       draftPersistTimeoutRef.current = setTimeout(() => {
         draftPersistTimeoutRef.current = null;
-        persistScheduleDraftsToPouch();
+        persistScheduleDrafts();
       }, SCHEDULE_DRAFT_PERSIST_DELAY_MS);
     },
-    [canEditAnyTeam, persistScheduleDraftsToPouch],
+    [canEditAnyTeam, persistScheduleDrafts],
   );
 
   const flushScheduleDraft = useCallback(
@@ -413,9 +362,9 @@ export const useTeamsPageState = () => {
         clearTimeout(draftPersistTimeoutRef.current);
         draftPersistTimeoutRef.current = null;
       }
-      persistScheduleDraftsToPouch();
+      persistScheduleDrafts();
     },
-    [canEditAnyTeam, persistScheduleDraftsToPouch],
+    [canEditAnyTeam, persistScheduleDrafts],
   );
 
   const refreshInFlightRef = useRef(false);
@@ -425,52 +374,6 @@ export const useTeamsPageState = () => {
   const bootstrapLoadRef = useRef<Promise<void> | null>(null);
   // Warn at most once per session if the server reports a truncated (capped) view.
   const truncationWarnedRef = useRef(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadLocalTeamsDoc = async () => {
-      if (!teamsDb || !churchId) {
-        setLoading(false);
-        return;
-      }
-      try {
-        const docs = await loadTeamsPouchDocs(teamsDb);
-        if (!cancelled) {
-          docs.forEach((doc) => {
-            if (doc && isTeamsPouchDoc(doc)) applyTeamsDoc(doc);
-          });
-        }
-      } catch (error) {
-        if (!isPouchNotFoundError(error)) {
-          console.error("Could not load teams cache.", error);
-        }
-      }
-    };
-
-    setLoading(true);
-    void loadLocalTeamsDoc();
-    return () => {
-      cancelled = true;
-    };
-  }, [applyTeamsDoc, churchId, teamsDb]);
-
-  useGlobalBroadcast((event) => {
-    const docs = (event.detail || []) as unknown[];
-    const doc = docs.find(isTeamsPouchDoc);
-    if (doc) applyTeamsDoc(doc);
-  }, 100);
-
-  useEffect(() => {
-    const updater = controllerContext?.updater;
-    if (!updater) return undefined;
-    const handleUpdate = (event: Event) => {
-      const docs = ((event as CustomEvent).detail || []) as unknown[];
-      const doc = docs.find(isTeamsPouchDoc);
-      if (doc) applyTeamsDoc(doc);
-    };
-    updater.addEventListener("update", handleUpdate);
-    return () => updater.removeEventListener("update", handleUpdate);
-  }, [applyTeamsDoc, controllerContext?.updater]);
 
   const refresh = useCallback(async (isCancelled: () => boolean = () => false) => {
     if (!churchId) {
@@ -514,43 +417,19 @@ export const useTeamsPageState = () => {
           : nextData.schedules.find(isActive)?.scheduleId ||
             nextData.schedules[0]?.scheduleId ||
             "";
-      const syncedAt = new Date().toISOString();
-      teamsDataKeys.forEach((key) => {
-        dataDocUpdatedAtRef.current[key] = syncedAt;
-      });
-      metaDocUpdatedAtRef.current = syncedAt;
       setData(nextData);
-      setLastRemoteSyncAt(syncedAt);
       setSelectedScheduleId(nextSelectedScheduleId);
+      selectedScheduleIdRef.current = nextSelectedScheduleId;
+      // Keep localStorage in step when the bootstrap falls back to a different
+      // schedule (e.g. the persisted one no longer exists), so a reload doesn't
+      // briefly restore a stale id.
+      writeSelectedScheduleId(churchId, nextSelectedScheduleId);
       if (response.truncated && !truncationWarnedRef.current) {
         truncationWarnedRef.current = true;
         showToast(
           "This church has more teams data than we can load at once, so some rows may be missing. Please contact support.",
           "neutral",
         );
-      }
-      persistTeamsDataSnapshot(nextData);
-      if (teamsDb && canEditAnyTeam) {
-        dispatch(
-          autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-            AUTOSAVE_DEBOUNCE_KEYS.teams,
-          ),
-        );
-        void persistTeamsMetaDoc(teamsDb, {
-          churchId,
-          selectedScheduleId: nextSelectedScheduleId,
-          lastRemoteSyncAt: syncedAt,
-        })
-          .catch((error) => {
-            console.error("Could not persist teams metadata.", error);
-          })
-          .finally(() => {
-            dispatch(
-              autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-                AUTOSAVE_DEBOUNCE_KEYS.teams,
-              ),
-            );
-          });
       }
     })();
     bootstrapLoadRef.current = load;
@@ -566,7 +445,7 @@ export const useTeamsPageState = () => {
       bootstrapLoadRef.current = null;
       if (!isCancelled()) setLoading(false);
     }
-  }, [canEditAnyTeam, churchId, dispatch, persistTeamsDataSnapshot, showToast, teamsDb]);
+  }, [churchId, showToast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -629,29 +508,44 @@ export const useTeamsPageState = () => {
         ),
       }));
       try {
-        await reorderTeamPositions(churchId, {
-          teamId,
-          positionIds: orderedPositionIds,
-        });
+        // Gate inbound sync on the real save (same as schedule edits) so a slow
+        // reorder can't be reverted by a poll landing mid-request.
+        await trackTeamsSave(
+          reorderTeamPositions(churchId, {
+            teamId,
+            positionIds: orderedPositionIds,
+          }),
+        );
       } catch (error) {
         updateDataLocal((current) => ({ ...current, positions: previousPositions }));
         showApiErrorToast(showToast, error, "Could not reorder positions.");
       }
     },
-    [canEditAnyTeam, canEditTeam, churchId, showToast, updateDataLocal],
+    [
+      canEditAnyTeam,
+      canEditTeam,
+      churchId,
+      showToast,
+      trackTeamsSave,
+      updateDataLocal,
+    ],
   );
 
-  // True while a local optimistic edit is still settling. Inbound syncs are
-  // held off during this window so they can't revert the edit (or an echo of it).
+  // True while a local optimistic edit is still settling, or while any teams
+  // save is still in flight. Inbound syncs are held off in this window so they
+  // can't revert the edit (or an echo of it), or apply a server snapshot that
+  // predates a still-pending save.
   const isLocalEditCoolingDown = useCallback(
-    () => Date.now() - lastLocalEditAtRef.current < LOCAL_EDIT_COOLDOWN_MS,
+    () =>
+      pendingTeamsSavesRef.current > 0 ||
+      Date.now() - lastLocalEditAtRef.current < LOCAL_EDIT_COOLDOWN_MS,
     [],
   );
 
   // Silent background re-fetch used by polling and (as a fallback) by the live
-  // channel. Unlike `refresh`, it never toggles `loading`, diff-gates so the
-  // "Syncing…" indicator stays quiet when nothing changed, and bails out while a
-  // local edit is settling so it can't clobber optimistic state.
+  // channel. Unlike `refresh`, it never toggles `loading`, diff-gates so it
+  // stays a no-op when nothing changed, and bails out while a local edit is
+  // settling so it can't clobber optimistic state.
   const backgroundRefresh = useCallback(async () => {
     if (!churchId) return;
     // Don't pile onto a full (loading) refresh, and don't run two polls at once.
@@ -674,10 +568,6 @@ export const useTeamsPageState = () => {
         (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
       );
       if (changedKeys.length === 0) return;
-      const syncedAt = new Date().toISOString();
-      changedKeys.forEach((key) => {
-        dataDocUpdatedAtRef.current[key] = syncedAt;
-      });
       setData((current) => {
         let merged = current;
         changedKeys.forEach((key) => {
@@ -686,16 +576,18 @@ export const useTeamsPageState = () => {
         return merged;
       });
       if (changedKeys.includes("schedules")) {
-        setSelectedScheduleId((current) =>
+        const current = selectedScheduleIdRef.current;
+        const nextSelectedScheduleId =
           current &&
           nextData.schedules.some((schedule) => schedule.scheduleId === current)
             ? current
             : nextData.schedules.find(isActive)?.scheduleId ||
               nextData.schedules[0]?.scheduleId ||
-              "",
-        );
+              "";
+        setSelectedScheduleId(nextSelectedScheduleId);
+        selectedScheduleIdRef.current = nextSelectedScheduleId;
+        writeSelectedScheduleId(churchId, nextSelectedScheduleId);
       }
-      persistTeamsDataSnapshot(nextData, changedKeys);
     } catch (error) {
       // Background sync failures are non-fatal: the next poll, focus, or manual
       // refresh recovers. Stay silent so we don't toast on a repeating timer.
@@ -703,7 +595,7 @@ export const useTeamsPageState = () => {
     } finally {
       backgroundRefreshInFlightRef.current = false;
     }
-  }, [churchId, isLocalEditCoolingDown, persistTeamsDataSnapshot]);
+  }, [churchId, isLocalEditCoolingDown]);
 
   // Run a guarded background refresh once the local-edit cooldown clears. Used
   // when a live event arrives mid-edit and we defer applying it.
@@ -752,11 +644,13 @@ export const useTeamsPageState = () => {
           const remaining = dataRef.current.schedules.filter(
             (schedule) => schedule.scheduleId !== removedId,
           );
-          setSelectedScheduleId(
+          const nextSelectedScheduleId =
             remaining.find(isActive)?.scheduleId ||
-              remaining[0]?.scheduleId ||
-              "",
-          );
+            remaining[0]?.scheduleId ||
+            "";
+          setSelectedScheduleId(nextSelectedScheduleId);
+          selectedScheduleIdRef.current = nextSelectedScheduleId;
+          writeSelectedScheduleId(churchIdRef.current, nextSelectedScheduleId);
         }
       }
     },
@@ -825,6 +719,7 @@ export const useTeamsPageState = () => {
     upsertData,
     removeData,
     reorderPositions,
+    trackTeamsSave,
     refresh,
     updateSelectedScheduleId,
     updateScheduleDraft,

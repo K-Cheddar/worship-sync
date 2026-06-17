@@ -10,6 +10,13 @@ export type ScheduleMemberPickerMember = {
   eligible: boolean;
   issue: string;
   usesSubmenu: boolean;
+  /** Member asked for this position via intake. A soft preference signal. */
+  desiresPosition: boolean;
+  /**
+   * Non-blocking caution (e.g. marked this service unavailable on intake). The
+   * member is still selectable; this just informs the scheduler.
+   */
+  warning: string;
 };
 
 export const splitTypedMemberName = (raw: string) => {
@@ -23,19 +30,40 @@ export const memberQualifiesForPosition = (
   positionId: string,
 ) => (member.positionIds || []).includes(positionId);
 
+export const memberDesiresPosition = (
+  member: TeamRosterMember,
+  positionId: string,
+) => (member.desiredPositionIds || []).includes(positionId);
+
+/** 0 = fully available, 1 = selectable with caution, 2 = not selectable. */
+export const getScheduleMemberPickerAvailabilityRank = (
+  row: ScheduleMemberPickerMember,
+) => {
+  if (!row.eligible) return 2;
+  if (row.warning) return 1;
+  return 0;
+};
+
 export const sortScheduleMemberPickerRows = (
   rows: ScheduleMemberPickerMember[],
   positionId: string,
   duplicateFirstNames: Set<string>,
 ) =>
   [...rows].sort((a, b) => {
+    const aRank = getScheduleMemberPickerAvailabilityRank(a);
+    const bRank = getScheduleMemberPickerAvailabilityRank(b);
+    if (aRank !== bRank) {
+      return aRank - bRank;
+    }
     const aQualifies = memberQualifiesForPosition(a.member, positionId);
     const bQualifies = memberQualifiesForPosition(b.member, positionId);
     if (aQualifies !== bQualifies) {
       return aQualifies ? -1 : 1;
     }
-    if (a.eligible !== b.eligible) {
-      return a.eligible ? -1 : 1;
+    // Among otherwise-equal members, float those who asked for this position
+    // (intake desire) to the top so schedulers reach for willing people first.
+    if (a.desiresPosition !== b.desiresPosition) {
+      return a.desiresPosition ? -1 : 1;
     }
     return compareTeamRosterMembersByScheduleDisplay(
       a.member,
@@ -56,25 +84,7 @@ export const shouldShowScheduleMemberPositionGroupDivider = (
 export const shouldShowScheduleMemberEligibilityGroupDivider = (
   rows: ScheduleMemberPickerMember[],
   index: number,
-  positionId: string,
-) => {
-  if (index <= 0) return false;
-
-  const previousQualifies = memberQualifiesForPosition(
-    rows[index - 1].member,
-    positionId,
-  );
-  const currentQualifies = memberQualifiesForPosition(
-    rows[index].member,
-    positionId,
-  );
-
-  return (
-    previousQualifies === currentQualifies &&
-    rows[index - 1].eligible &&
-    !rows[index].eligible
-  );
-};
+) => index > 0 && rows[index - 1].eligible && !rows[index].eligible;
 
 export const isSelectableScheduleMember = ({
   memberId,
@@ -123,8 +133,13 @@ export const getScheduleMemberUnavailableReason = ({
     memberId !== currentPrimaryMemberId;
   if (usesSubmenu && getAssignmentActionIssues) {
     const issues = getAssignmentActionIssues(memberId);
+    // Shadow is the most permissive action (it doesn't require position
+    // eligibility), so when a member is fully blocked its shadow reason is the
+    // real, binding constraint. Lead with it so we don't mislead with
+    // "Not eligible for this position" when the true reason is e.g. blocked
+    // out, marked unavailable, or already assigned.
     return (
-      issues.replace || issues.shadow || issues.reverseShadow || "Unavailable"
+      issues.shadow || issues.replace || issues.reverseShadow || "Unavailable"
     );
   }
   return getIssue(memberId) || "Unavailable";
@@ -139,6 +154,7 @@ export const buildScheduleMemberPickerMembers = ({
   duplicateFirstNames,
   getIssue,
   getAssignmentActionIssues,
+  getWarning,
   filterByQuery = true,
 }: {
   members: TeamRosterMember[];
@@ -151,6 +167,7 @@ export const buildScheduleMemberPickerMembers = ({
   getAssignmentActionIssues?: (
     memberId: string,
   ) => MemberAssignmentActionIssues;
+  getWarning?: (memberId: string) => string;
   filterByQuery?: boolean;
 }): ScheduleMemberPickerMember[] => {
   const trimmedQuery = assignmentQuery.trim();
@@ -201,6 +218,10 @@ export const buildScheduleMemberPickerMembers = ({
             ...issueArgs,
           }),
       usesSubmenu: Boolean(usesSubmenu && eligible),
+      desiresPosition: memberDesiresPosition(member, positionId),
+      // Only surface a warning when the member is actually selectable — a
+      // blocked row already shows its blocking reason.
+      warning: eligible && getWarning ? getWarning(member.memberId) : "",
     };
   });
 

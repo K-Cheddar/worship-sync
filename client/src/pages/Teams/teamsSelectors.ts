@@ -67,6 +67,27 @@ export const selectNewestIntakeSubmissions = (data: TeamsData) =>
       new Date(a.submittedAt || 0).getTime(),
   );
 
+export type SubmissionStatusFilter = "needs_action" | "processed" | "all";
+
+// "needs_action" = still open (new); "processed" = resolved (applied or
+// dismissed). Once a submission has been linked/applied or dismissed it leaves
+// the active "Needs action" view.
+const NEEDS_ACTION_STATUSES: ReadonlySet<TeamIntakeSubmission["status"]> =
+  new Set(["new"]);
+
+export const intakeSubmissionNeedsAction = (
+  submission: Pick<TeamIntakeSubmission, "status">,
+) => NEEDS_ACTION_STATUSES.has(submission.status);
+
+export const submissionMatchesStatusFilter = (
+  status: TeamIntakeSubmission["status"],
+  filter: SubmissionStatusFilter,
+) => {
+  if (filter === "all") return true;
+  const needsAction = NEEDS_ACTION_STATUSES.has(status);
+  return filter === "needs_action" ? needsAction : !needsAction;
+};
+
 export const normalizeMemberNameKey = (
   firstName: string | undefined,
   lastName: string | undefined,

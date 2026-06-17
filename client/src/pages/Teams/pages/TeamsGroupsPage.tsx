@@ -9,6 +9,8 @@ const TeamsGroupsPage = () => {
     <TeamManager
       teams={pageData.teams}
       positions={pageData.positions}
+      roles={pageData.teamRoles}
+      qualificationAreas={pageData.qualificationAreas}
       members={pageData.members}
       data={pageData}
       canEdit={canEditTeams}

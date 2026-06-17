@@ -20,6 +20,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
+import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { getActiveTeamsNavSection, teamsNavSections } from "./teamsNavSections";
@@ -68,6 +69,7 @@ const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
 const TeamsLayout = () => {
   const { loading, toolbarLogoUrl, churchName, canEditAnyTeam } = useTeamsPage();
   const location = useLocation();
+  useTeamsAbandonedReturnCleanup();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const activeSection = useMemo(
     () => getActiveTeamsNavSection(location.pathname),
