@@ -1,3 +1,10 @@
+## [2.12.1](https://github.com/K-Cheddar/worship-sync/compare/v2.12.0...v2.12.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* fix member filter on mobile ([030cb50](https://github.com/K-Cheddar/worship-sync/commit/030cb502d3d8398dc2c7052ea9f77ab9c8ff6d26))
+
 # [2.12.0](https://github.com/K-Cheddar/worship-sync/compare/v2.11.3...v2.12.0) (2026-06-17)
 
 
