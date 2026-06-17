@@ -1,3 +1,13 @@
+## [2.11.3](https://github.com/K-Cheddar/worship-sync/compare/v2.11.2...v2.11.3) (2026-06-17)
+
+
+### Bug Fixes
+
+* Improve intake form messaging and availability ingestion ([f2f60c7](https://github.com/K-Cheddar/worship-sync/commit/f2f60c737e2a348d46c7317e8b6b2ec30229b2ec))
+* Restore backward-compatible reviewed intake submission action ([53be4e1](https://github.com/K-Cheddar/worship-sync/commit/53be4e1a773e07f35827ec7aea2644845d26b200))
+* Schedule syncing ([c4d9c46](https://github.com/K-Cheddar/worship-sync/commit/c4d9c46b90a172cf44eacde67acb7ccf049b62ec))
+* Show top-end EntityRow badges and remove nested ternaries ([4edcb50](https://github.com/K-Cheddar/worship-sync/commit/4edcb50fb84eaba0946a6a0ed3cee61daaa356b0))
+
 ## [2.11.2](https://github.com/K-Cheddar/worship-sync/compare/v2.11.1...v2.11.2) (2026-06-15)
 
 
