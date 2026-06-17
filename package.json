@@ -1,7 +1,7 @@
 {
   "name": "worship-sync-server",
   "private": true,
-  "version": "2.11.3",
+  "version": "2.12.0",
   "scripts": {
     "start": "tsx server.js",
     "test": "npm run test:server",

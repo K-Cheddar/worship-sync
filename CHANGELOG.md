@@ -1,3 +1,10 @@
+# [2.12.0](https://github.com/K-Cheddar/worship-sync/compare/v2.11.3...v2.12.0) (2026-06-17)
+
+
+### Features
+
+* Members can now be filtered by team, position, etc ([b8717eb](https://github.com/K-Cheddar/worship-sync/commit/b8717eb85ff1796660ea37954d2e17c4a08207c3))
+
 ## [2.11.3](https://github.com/K-Cheddar/worship-sync/compare/v2.11.2...v2.11.3) (2026-06-17)
 
 
