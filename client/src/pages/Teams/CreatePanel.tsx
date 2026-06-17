@@ -26,6 +26,16 @@ type CreatePanelProps = {
   scrollableList?: boolean;
   /** The list of existing entities. */
   list: ReactNode;
+  /** Optional secondary panel beside the list (e.g. member filters). */
+  asideOpen?: boolean;
+  /** Heading for the aside panel when open. */
+  asideTitle?: string;
+  /** Optional actions in the top-right of the aside panel (e.g. back/close). */
+  asideHeaderActions?: ReactNode;
+  /** Aside panel body (e.g. filter controls). */
+  aside?: ReactNode;
+  /** Optional id for the aside region (for aria-controls). */
+  asideId?: string;
   /** Optional actions in the top-right of the open form panel (e.g. archive/delete menu). */
   formHeaderActions?: ReactNode;
   /** Save/cancel actions pinned below the form scroll area. */
@@ -51,11 +61,20 @@ const CreatePanel = ({
   listToolbar,
   scrollableList = false,
   list,
+  asideOpen = false,
+  asideTitle = "",
+  asideHeaderActions,
+  aside,
+  asideId,
   formHeaderActions,
   formFooter,
   children,
 }: CreatePanelProps) => {
   const formPanelRef = useRef<HTMLDivElement>(null);
+  const asidePanelRef = useRef<HTMLDivElement>(null);
+  const formOpenOnMobile = open;
+  const panelOpenOnMobile = open || asideOpen;
+  const listSharesSpace = open || asideOpen;
 
   useEffect(() => {
     if (!open) return;
@@ -67,14 +86,31 @@ const CreatePanel = ({
     formPanelRef.current?.scrollIntoView({ block: "nearest" });
   }, [open]);
 
+  useEffect(() => {
+    if (!asideOpen) return;
+    const scrollContainer = asidePanelRef.current?.closest(".teams-section-scroll");
+    if (scrollContainer instanceof HTMLElement) {
+      scrollContainer.scrollTop = 0;
+      return;
+    }
+    asidePanelRef.current?.scrollIntoView({ block: "nearest" });
+  }, [asideOpen]);
+
   return (
-    <div className={cn("space-y-4", open && teamsCreatePanelOpenMobileClassName)}>
-      <div className={cn(teamsCreatePanelRowClassName, open && teamsCreatePanelOpenMobileClassName)}>
+    <div className={cn("space-y-4", panelOpenOnMobile && teamsCreatePanelOpenMobileClassName)}>
+      <div
+        className={cn(
+          teamsCreatePanelRowClassName,
+          panelOpenOnMobile && teamsCreatePanelOpenMobileClassName,
+        )}
+      >
         <div
           className={cn(
             "w-full min-w-0 space-y-3",
-            open ? teamsCreatePanelListOpenClassName : teamsCreatePanelListClosedClassName,
-            open && "max-lg:hidden",
+            listSharesSpace
+              ? teamsCreatePanelListOpenClassName
+              : teamsCreatePanelListClosedClassName,
+            formOpenOnMobile && "max-lg:hidden",
           )}
         >
           <section
@@ -111,6 +147,51 @@ const CreatePanel = ({
               )}
             >
               {list}
+            </div>
+          </section>
+        </div>
+        <div
+          ref={asidePanelRef}
+          id={asideId}
+          inert={!asideOpen}
+          role="region"
+          aria-label={asideTitle}
+          className={cn(
+            "min-w-0 overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none",
+            asideOpen
+              ? cn(
+                "flex w-full flex-col",
+                teamsCreatePanelFormClassName,
+                teamsCreatePanelFormOpenMobileClassName,
+                teamsPanelMaxHeightClassName,
+              )
+              : "pointer-events-none max-h-0 w-0 opacity-0",
+          )}
+        >
+          <section
+            className={cn(
+              panelShellClassName,
+              "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
+            )}
+          >
+            <div
+              className={cn(
+                "sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-gray-700/50 bg-gray-900",
+                panelHeaderPaddingClassName,
+                "pb-3",
+              )}
+            >
+              <h2 className="text-lg font-semibold">{asideTitle}</h2>
+              {asideHeaderActions}
+            </div>
+            <div
+              className={cn(
+                "scrollbar-variable mt-4 min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto",
+                panelFormScrollPaddingClassName,
+                "pb-4",
+              )}
+            >
+              {aside}
             </div>
           </section>
         </div>

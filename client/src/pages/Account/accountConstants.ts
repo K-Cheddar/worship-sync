@@ -75,11 +75,6 @@ export const parseLegacyAccountTab = (search: string): AccountTabId | null => {
   return tab as AccountTabId;
 };
 
-export const accountSectionSelectOptions = ACCOUNT_SECTIONS.map((section) => ({
-  value: section.path,
-  label: section.label,
-}));
-
 /** @deprecated Use `/account/{section}` paths. Kept for external redirects. */
 export const getLegacyAccountTabPath = (tabId: AccountTabId) =>
   tabId === "people" ? "/account/people" : `/account/${tabId}`;
