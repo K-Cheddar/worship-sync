@@ -1696,6 +1696,8 @@ test("applying intake as a new member adds them to position teams", async (t) =>
   });
   assert.equal(applyRes.statusCode, 200);
   assert.ok(applyRes.payload.member?.memberId);
+  // The submission records that applying created a new member (vs linking).
+  assert.equal(applyRes.payload.submission.appliedMemberCreated, true);
 
   // Intake positions record desire only; applying must NOT grant scheduling
   // eligibility. The new member is assignable to nothing until an admin
@@ -1711,6 +1713,62 @@ test("applying intake as a new member adds them to position teams", async (t) =>
   );
   // Team visibility is still added so the admin can find and promote them.
   assert.ok(team.memberIds.includes(applyRes.payload.member.memberId));
+});
+
+test("creating a member with no requested positions still joins the form's teams", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_no_positions_team");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+  });
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Fall volunteers",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      teamIds: [worship.teamId],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+
+  // Submit with NO positions selected — just a willing volunteer.
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+      body: { firstName: "Pat", lastName: "Reed", positionIds: [] },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const submission = bootstrap.payload.intakeSubmissions.find(
+    (item) => item.firstName === "Pat",
+  );
+
+  const applyRes = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submission.submissionId },
+    body: { action: "applied", createMember: true },
+  });
+  assert.equal(applyRes.statusCode, 200);
+  // No positions, but added to the form's team so they appear on its schedule
+  // (shadow-eligible only, since positionIds stays empty).
+  assert.deepEqual(applyRes.payload.member.positionIds, []);
+  const memberId = applyRes.payload.member.memberId;
+  const returnedTeam = (applyRes.payload.teams || []).find(
+    (item) => item.teamId === worship.teamId,
+  );
+  assert.ok(returnedTeam, "apply response should include the changed team");
+  assert.ok(returnedTeam.memberIds.includes(memberId));
 });
 
 test("applying intake to an existing member sets desire without granting eligibility", async (t) => {
@@ -1777,6 +1835,8 @@ test("applying intake to an existing member sets desire without granting eligibi
   // latest submission (replace, not union).
   assert.deepEqual(applyRes.payload.member.positionIds, [vocalId]);
   assert.deepEqual(applyRes.payload.member.desiredPositionIds, [keysId]);
+  // Linking an existing member is not a create.
+  assert.notEqual(applyRes.payload.submission.appliedMemberCreated, true);
 });
 
 test("a dismissed intake submission can be restored to the active queue", async (t) => {
@@ -1934,7 +1994,7 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
   );
 });
 
-test("intake service availability becomes a hard scheduling constraint", async (t) => {
+test("intake service availability is a soft warning, not a hard block", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("intake_availability_constraint");
   const { teamId, positionIds, memberIds } = await seedTeam(context, {
@@ -2038,30 +2098,51 @@ test("intake service availability becomes a hard scheduling constraint", async (
   });
   const scheduleId = schedule.payload.schedule.scheduleId;
 
-  // Assigning the member to the occurrence they said they can't make is blocked.
-  const blocked = await callHandler(authHandlers.updateTeamScheduleAssignment, {
-    context,
-    params: { scheduleId },
-    body: {
-      serviceId: unavailableOccurrenceId,
-      positionSlotKey: `${vocalId}::0`,
-      memberId,
-      serviceDate: "2026-06-14",
+  // The member's availability is recorded for the picker to warn on, but it does
+  // NOT block: assigning them to the service they marked unavailable still works.
+  assert.equal(
+    applyRes.payload.member.serviceAvailability[unavailableOccurrenceId],
+    "unavailable",
+  );
+  const allowedDespiteWarning = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: unavailableOccurrenceId,
+        positionSlotKey: `${vocalId}::0`,
+        memberId,
+        serviceDate: "2026-06-14",
+      },
     },
-  });
-  assert.equal(blocked.statusCode, 400);
-  assert.match(blocked.payload.errorMessage, /unavailable for this service/i);
+  );
+  assert.equal(allowedDespiteWarning.statusCode, 200);
 
-  // The occurrence they marked available is fine.
-  const allowed = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+  // A blockout date, by contrast, IS a hard block.
+  await callHandler(authHandlers.updateTeamRosterMember, {
     context,
-    params: { scheduleId },
+    params: { memberId },
     body: {
-      serviceId: availableOccurrenceId,
-      positionSlotKey: `${vocalId}::0`,
-      memberId,
-      serviceDate: "2026-06-07",
+      firstName: "Sam",
+      lastName: "Lee",
+      positionIds: [vocalId],
+      blockoutDates: [{ startDate: "2026-06-07", endDate: "2026-06-07" }],
     },
   });
-  assert.equal(allowed.statusCode, 200);
+  const blockedByBlockout = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: availableOccurrenceId,
+        positionSlotKey: `${vocalId}::0`,
+        memberId,
+        serviceDate: "2026-06-07",
+      },
+    },
+  );
+  assert.equal(blockedByBlockout.statusCode, 400);
+  assert.match(blockedByBlockout.payload.errorMessage, /unavailable for this service/i);
 });

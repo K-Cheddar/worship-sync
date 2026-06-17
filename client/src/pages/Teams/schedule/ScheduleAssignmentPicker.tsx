@@ -8,7 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronRight, Plus, Star } from "lucide-react";
+import { ChevronRight, Plus, Star, TriangleAlert } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
@@ -39,6 +39,20 @@ const WantsThisBadge = () => (
   </span>
 );
 
+/**
+ * Non-blocking caution (e.g. the member marked this service unavailable on
+ * intake). They can still be picked — this just flags it.
+ */
+const WarningBadge = ({ label }: { label: string }) => (
+  <span
+    title={label}
+    aria-label={label}
+    className="inline-flex shrink-0 items-center rounded-full bg-amber-500/20 p-1 text-amber-200"
+  >
+    <TriangleAlert className="h-3 w-3" aria-hidden />
+  </span>
+);
+
 type ScheduleAssignmentPickerProps = {
   open: boolean;
   anchorEl: HTMLElement | null;
@@ -52,6 +66,7 @@ type ScheduleAssignmentPickerProps = {
   duplicateFirstNames?: Set<string>;
   getIssue: (memberId: string) => string;
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
+  getWarning?: (memberId: string) => string;
   onSelectMember: (memberId: string) => void;
   onAssignmentAction?: (memberId: string, action: MemberAssignmentAction) => void;
   onCreateMember?: (member: { firstName: string; lastName: string }) => Promise<void> | void;
@@ -81,6 +96,7 @@ const ScheduleAssignmentPicker = memo(({
   duplicateFirstNames,
   getIssue,
   getAssignmentActionIssues,
+  getWarning,
   onSelectMember,
   onAssignmentAction,
   onCreateMember,
@@ -108,6 +124,7 @@ const ScheduleAssignmentPicker = memo(({
     duplicateFirstNames: duplicateFirstNameKeys,
     getIssue,
     getAssignmentActionIssues,
+    getWarning,
     canCreateMember: Boolean(onCreateMember),
   });
 
@@ -288,7 +305,7 @@ const ScheduleAssignmentPicker = memo(({
         role={menuView === "members" ? "listbox" : "menu"}
         align="start"
         sideOffset={4}
-        className="z-50 w-48 rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+        className="z-50 w-48 overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
           if (menuView !== "createMember") event.preventDefault();
@@ -313,7 +330,7 @@ const ScheduleAssignmentPicker = memo(({
             onKeyDown={handleInputKeyDown}
           />
         </div>
-        <div className="max-h-56 overflow-y-auto">
+        <div className="max-h-56 overflow-x-hidden overflow-y-auto">
           {pendingSubmenu && menuView === "assignmentActions" ? (
             <MemberAssignmentSubmenu
               title={pendingSubmenu.title}
@@ -437,7 +454,7 @@ const ScheduleAssignmentPicker = memo(({
                             aria-selected={highlighted}
                             type="button"
                             className={cn(
-                              "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
+                              "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
                               highlighted && "bg-gray-800",
                             )}
                             onMouseDown={(event) => {
@@ -445,7 +462,8 @@ const ScheduleAssignmentPicker = memo(({
                               openAssignmentActions(row.member.memberId);
                             }}
                           >
-                            <span className="block flex-1 font-medium">{memberLabel}</span>
+                            <span className="min-w-0 flex-1 truncate font-medium">{memberLabel}</span>
+                            {row.warning ? <WarningBadge label={row.warning} /> : null}
                             {row.desiresPosition ? <WantsThisBadge /> : null}
                             <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
                           </button>
@@ -463,7 +481,7 @@ const ScheduleAssignmentPicker = memo(({
                           aria-selected={highlighted}
                           type="button"
                           className={cn(
-                            "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
+                            "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
                             highlighted && "bg-gray-800",
                           )}
                           onMouseDown={(event) => {
@@ -471,7 +489,8 @@ const ScheduleAssignmentPicker = memo(({
                             onSelectMember(row.member.memberId);
                           }}
                         >
-                          <span className="block flex-1">{memberLabel}</span>
+                          <span className="min-w-0 flex-1 truncate">{memberLabel}</span>
+                          {row.warning ? <WarningBadge label={row.warning} /> : null}
                           {row.desiresPosition ? <WantsThisBadge /> : null}
                         </button>
                       </div>

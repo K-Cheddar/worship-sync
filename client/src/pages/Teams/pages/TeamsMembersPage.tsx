@@ -1,22 +1,6 @@
 import MemberManager from "../managers/MemberManager";
 import { useTeamsPage } from "../TeamsPageContext";
-import type { TeamRosterMember } from "../../../api/authTypes";
-
-const getMemberTeamIds = (
-  member: TeamRosterMember,
-  positionTeamById: Map<string, string>,
-) =>
-  Array.from(
-    new Set([
-      ...Object.keys(member.teamMemberships || {}),
-      ...(member.qualifications || [])
-        .map((qualification) => qualification.teamId || "")
-        .filter(Boolean),
-      ...(member.positionIds || [])
-        .map((positionId) => positionTeamById.get(positionId) || "")
-        .filter(Boolean),
-    ]),
-  );
+import { canEditRosterMember } from "../teamsUtils";
 
 const TeamsMembersPage = () => {
   const { pageData, upsertData, removeData, refresh, canEditTeams, canEditTeam } =
@@ -50,13 +34,14 @@ const TeamsMembersPage = () => {
         );
         return area ? editableTeamIds.has(area.teamId) : false;
       }),
-      members: pageData.members.filter((member) => {
-        const teamIds = getMemberTeamIds(member, positionTeamById);
-        return (
-          teamIds.length > 0 &&
-          teamIds.every((teamId) => editableTeamIds.has(teamId))
-        );
-      }),
+      members: pageData.members.filter((member) =>
+        canEditRosterMember({
+          member,
+          positionTeamById,
+          canEditTeams,
+          editableTeamIds,
+        }),
+      ),
     };
 
   return (

@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -11,21 +11,32 @@ import {
   updateTeam,
   type TeamPayload,
 } from "../../../api/auth";
-import type { TeamRecord, TeamPosition, TeamRosterMember } from "../../../api/authTypes";
+import type { TeamRecord, TeamPosition, TeamQualificationArea, TeamRole, TeamRosterMember } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
+import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
+import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import PositionIconPicker from "../PositionIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
-import { describeDeletionImpacts, memberName } from "../teamsUtils";
+import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
+import {
+  buildGroupsReturnTo,
+  buildTeamsPositionsPath,
+  buildTeamsQualificationsPath,
+  buildTeamsRolesPath,
+} from "../teamsReturnNavigation";
+import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import type { TeamsData } from "../types";
 
 type TeamManagerProps = {
   teams: TeamRecord[];
   positions: TeamPosition[];
+  roles: TeamRole[];
+  qualificationAreas: TeamQualificationArea[];
   members: TeamRosterMember[];
   data: TeamsData;
   canEdit: boolean;
@@ -37,6 +48,8 @@ type TeamManagerProps = {
 const TeamManager = ({
   teams,
   positions,
+  roles,
+  qualificationAreas,
   members,
   data,
   canEdit,
@@ -58,6 +71,25 @@ const TeamManager = ({
     memberIds: [],
   });
   const [saving, setSaving] = useState(false);
+  const pendingEditTeamIdRef = useRef<string | null>(null);
+  const { returnTo, finishEditing } = useTeamsReturnNavigation();
+
+  const editingTeamPositions = useMemo(() => {
+    if (!editing) return [];
+    return sortPositionsByOrder(
+      positions.filter((position) => position.teamId === editing.teamId),
+    );
+  }, [editing, positions]);
+
+  const editingTeamRoles = useMemo(() => {
+    if (!editing) return [];
+    return roles.filter((role) => role.teamId === editing.teamId);
+  }, [editing, roles]);
+
+  const editingTeamQualificationAreas = useMemo(() => {
+    if (!editing) return [];
+    return qualificationAreas.filter((area) => area.teamId === editing.teamId);
+  }, [editing, qualificationAreas]);
 
   const reset = () => {
     setEditing(null);
@@ -65,7 +97,11 @@ const TeamManager = ({
     setDraft({ name: "", description: "", icon: "", memberIds: [] });
   };
 
-  const startEditingTeam = (team: TeamRecord) => {
+  const cancelEditing = () => {
+    finishEditing(reset);
+  };
+
+  const startEditingTeam = useCallback((team: TeamRecord) => {
     setEditing(team);
     setShowCreate(true);
     setDraft({
@@ -74,7 +110,22 @@ const TeamManager = ({
       icon: team.icon || "",
       memberIds: team.memberIds || [],
     });
-  };
+  }, []);
+
+  useTeamsRestoreOnMount({
+    onGroupsRestore: (restore) => {
+      pendingEditTeamIdRef.current = restore.editTeamId;
+    },
+  });
+
+  useEffect(() => {
+    const editTeamId = pendingEditTeamIdRef.current;
+    if (!editTeamId) return;
+    const team = teams.find((item) => item.teamId === editTeamId);
+    if (!team) return;
+    pendingEditTeamIdRef.current = null;
+    startEditingTeam(team);
+  }, [startEditingTeam, teams]);
 
   const confirmDelete = async () => {
     if (!canEdit) return;
@@ -119,7 +170,7 @@ const TeamManager = ({
       if (!editing) {
         onSaved(response.team, localTeamId);
       }
-      reset();
+      finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this team.");
       onArchived();
@@ -127,6 +178,9 @@ const TeamManager = ({
       setSaving(false);
     }
   };
+
+  const formatNameList = (names: string[]) =>
+    names.length === 0 ? "None yet." : names.join(", ");
 
   return (
     <>
@@ -141,6 +195,11 @@ const TeamManager = ({
         sectionTitle="Teams"
         description="Organize members into scheduling teams."
         createLabel="Create team"
+        listToolbar={
+          returnTo && !showCreate ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
+          ) : null
+        }
         list={
           <>
             {teams.length === 0 ? <p className="text-sm text-gray-300">No teams yet.</p> : null}
@@ -158,33 +217,37 @@ const TeamManager = ({
           </>
         }
         formHeaderActions={
-          editing ? (
-            <EntityFormDangerActions
-              archived={Boolean(editing.archivedAt)}
-              canEdit={canEdit}
-              archiveLabel="Archive team"
-              deleteLabel="Delete team"
-              menuLabel="Team actions"
-              onArchive={
-                editing.archivedAt
-                  ? undefined
-                  : async () => {
-                    const archivedTeam = {
-                      ...editing,
-                      archivedAt: new Date().toISOString(),
-                    };
-                    onSaved(archivedTeam);
-                    try {
-                      await archiveTeam(churchId, editing.teamId);
-                      reset();
-                    } catch (error) {
-                      showApiErrorToast(showToast, error, "Could not archive this team.");
-                      onSaved(editing);
-                    }
+          showCreate ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+              {editing ? (
+                <EntityFormDangerActions
+                  archived={Boolean(editing.archivedAt)}
+                  canEdit={canEdit}
+                  archiveLabel="Archive team"
+                  deleteLabel="Delete team"
+                  menuLabel="Team actions"
+                  onArchive={
+                    editing.archivedAt
+                      ? undefined
+                      : async () => {
+                        const archivedTeam = {
+                          ...editing,
+                          archivedAt: new Date().toISOString(),
+                        };
+                        onSaved(archivedTeam);
+                        try {
+                          await archiveTeam(churchId, editing.teamId);
+                          finishEditing(reset);
+                        } catch (error) {
+                          showApiErrorToast(showToast, error, "Could not archive this team.");
+                          onSaved(editing);
+                        }
+                      }
                   }
-              }
-              onDelete={() => setDeleting(editing)}
-            />
+                  onDelete={() => setDeleting(editing)}
+                />
+              ) : null}
+            </TeamsReturnToolbar>
           ) : null
         }
         formFooter={
@@ -192,7 +255,7 @@ const TeamManager = ({
             pinFooter
             saveLabel="Save team"
             onSave={() => void submit()}
-            onCancel={reset}
+            onCancel={cancelEditing}
             disabled={!canEdit || !draft.name.trim()}
             isLoading={saving}
           />
@@ -207,6 +270,33 @@ const TeamManager = ({
           value={draft.memberIds}
           onChange={(memberIds) => setDraft((d) => ({ ...d, memberIds }))}
         />
+        {editing ? (
+          <div className="space-y-4">
+            <TeamEditorRelatedSection
+              title="Positions"
+              summary={formatNameList(editingTeamPositions.map((position) => position.name))}
+              editLabel="Edit positions"
+              editPath={buildTeamsPositionsPath(editing.teamId)}
+              returnTo={buildGroupsReturnTo(editing.teamId)}
+            />
+            <TeamEditorRelatedSection
+              title="Team roles"
+              summary={formatNameList(editingTeamRoles.map((role) => role.name))}
+              editLabel="Edit roles"
+              editPath={buildTeamsRolesPath(editing.teamId)}
+              returnTo={buildGroupsReturnTo(editing.teamId)}
+            />
+            <TeamEditorRelatedSection
+              title="Qualifications"
+              summary={formatNameList(
+                editingTeamQualificationAreas.map((area) => area.name),
+              )}
+              editLabel="Edit qualifications"
+              editPath={buildTeamsQualificationsPath(editing.teamId)}
+              returnTo={buildGroupsReturnTo(editing.teamId)}
+            />
+          </div>
+        ) : null}
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

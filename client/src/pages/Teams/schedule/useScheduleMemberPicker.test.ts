@@ -131,6 +131,42 @@ describe("scheduleMemberPickerUtils", () => {
     expect(rows.map((row) => row.desiresPosition)).toEqual([true, false]);
   });
 
+  it("attaches a non-blocking warning without making the member ineligible", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members,
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+      getWarning: (memberId) =>
+        memberId === "m1" ? "Marked this service unavailable on intake" : "",
+    });
+
+    const avery = rows.find((row) => row.member.memberId === "m1");
+    expect(avery?.eligible).toBe(true);
+    expect(avery?.warning).toBe("Marked this service unavailable on intake");
+    const morgan = rows.find((row) => row.member.memberId === "m2");
+    expect(morgan?.warning).toBe("");
+  });
+
+  it("lists fully available members before those marked unavailable on intake", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members,
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+      getWarning: (memberId) =>
+        memberId === "m1" ? "Marked this service unavailable on intake" : "",
+    });
+
+    expect(rows.map((row) => row.member.memberId)).toEqual(["m2", "m1"]);
+  });
+
   it("filters members by position and query", () => {
     const rows = buildScheduleMemberPickerMembers({
       members,
@@ -173,20 +209,57 @@ describe("scheduleMemberPickerUtils", () => {
     });
 
     expect(rows.map((row) => row.member.memberId)).toEqual(["m1", "m2"]);
-    expect(
-      shouldShowScheduleMemberEligibilityGroupDivider(
-        rows,
-        0,
-        "position-vocal",
-      ),
-    ).toBe(false);
-    expect(
-      shouldShowScheduleMemberEligibilityGroupDivider(
-        rows,
-        1,
-        "position-vocal",
-      ),
-    ).toBe(true);
+    expect(shouldShowScheduleMemberEligibilityGroupDivider(rows, 0)).toBe(
+      false,
+    );
+    expect(shouldShowScheduleMemberEligibilityGroupDivider(rows, 1)).toBe(true);
+  });
+
+  it("lists available shadow candidates before position-qualified members who are blocked out", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members: [
+        {
+          memberId: "blocked",
+          churchId: "c1",
+          firstName: "Kevin",
+          lastName: "Miller",
+          positionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+        {
+          memberId: "shadow",
+          churchId: "c1",
+          firstName: "Enya-Kaye",
+          lastName: "Lee",
+          positionIds: ["position-drums"],
+          blockoutDates: [],
+        },
+      ],
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "m1",
+      hasPrimaryAssignee: true,
+      duplicateFirstNames,
+      getIssue: (memberId) => (memberId === "blocked" ? "Blocked out" : ""),
+      getAssignmentActionIssues: (memberId) =>
+        memberId === "blocked"
+          ? {
+              replace: "Blocked out",
+              shadow: "Blocked out",
+              reverseShadow: "Blocked out",
+            }
+          : {
+              replace: "Not eligible for this position",
+              shadow: "",
+              reverseShadow: "Not eligible for this position",
+            },
+    });
+
+    expect(rows.map((row) => row.member.memberId)).toEqual([
+      "shadow",
+      "blocked",
+    ]);
+    expect(shouldShowScheduleMemberEligibilityGroupDivider(rows, 1)).toBe(true);
   });
 
   it("excludes the current primary assignee from the list", () => {
@@ -227,6 +300,32 @@ describe("scheduleMemberPickerUtils", () => {
     const drummer = rows.find((row) => row.member.memberId === "m3");
     expect(drummer?.eligible).toBe(true);
     expect(drummer?.usesSubmenu).toBe(true);
+  });
+
+  it("reports the shadow blocker, not 'not eligible', when a member is fully blocked", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members,
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "m1",
+      hasPrimaryAssignee: true,
+      duplicateFirstNames,
+      getIssue: () => "",
+      // m3 can't be primary/reverse-shadow (not eligible) AND can't even plain
+      // shadow (blocked out). The real reason is the blockout, not eligibility.
+      getAssignmentActionIssues: (memberId) =>
+        memberId === "m3"
+          ? {
+              replace: "Not eligible for this position",
+              shadow: "Blocked out",
+              reverseShadow: "Not eligible for this position",
+            }
+          : { replace: "", shadow: "", reverseShadow: "" },
+    });
+
+    const drummer = rows.find((row) => row.member.memberId === "m3");
+    expect(drummer?.eligible).toBe(false);
+    expect(drummer?.issue).toBe("Blocked out");
   });
 
   it("lists position-qualified members before other shadow candidates when occupied", () => {

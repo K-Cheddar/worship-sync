@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Users } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
 import { cn } from "@/utils/cnHelper";
@@ -51,6 +51,9 @@ type ScheduleMembersPanelProps = {
   onSelectMember: (memberId: string) => void;
   getIssue: (memberId: string) => string;
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
+  getWarning?: (memberId: string) => string;
+  canEditMember?: (member: TeamRosterMember) => boolean;
+  onEditMember?: (memberId: string) => void;
 };
 
 const ScheduleMembersPanel = ({
@@ -75,6 +78,9 @@ const ScheduleMembersPanel = ({
   onSelectMember,
   getIssue,
   getAssignmentActionIssues,
+  getWarning,
+  canEditMember,
+  onEditMember,
 }: ScheduleMembersPanelProps) => {
   const isAssignMode = mode === "assign" && Boolean(slotContext);
   const searchValue = isAssignMode ? assignmentQuery : membersPanelQuery;
@@ -144,6 +150,21 @@ const ScheduleMembersPanel = ({
             <dd className="mt-0.5 whitespace-pre-wrap text-gray-200">{member.notes}</dd>
           </div>
         ) : null}
+        {canEditMember?.(member) ? (
+          <div className="pt-1">
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={Pencil}
+              iconSize="sm"
+              padding="px-2 py-1"
+              className="text-xs"
+              onClick={() => onEditMember?.(member.memberId)}
+            >
+              Edit member
+            </Button>
+          </div>
+        ) : null}
       </dl>
     );
   };
@@ -156,6 +177,7 @@ const ScheduleMembersPanel = ({
     duplicateFirstNames,
     getIssue,
     getAssignmentActionIssues,
+    getWarning,
     filterByQuery: isAssignMode,
   });
 
@@ -218,7 +240,6 @@ const ScheduleMembersPanel = ({
       const showEligibilityGroupDivider = shouldShowScheduleMemberEligibilityGroupDivider(
         assignPicker.positionMembers,
         index,
-        slotContext.positionId,
       );
 
       return (
@@ -229,6 +250,7 @@ const ScheduleMembersPanel = ({
             label={scheduleMemberName(row.member, duplicateFirstNames)}
             subtitle={row.eligible ? baseSubtitle : row.issue}
             issue={row.eligible ? undefined : row.issue}
+            warning={row.eligible ? row.warning || undefined : undefined}
             assignmentCount={scheduleAssignmentCounts.get(row.member.memberId) || 0}
             disabled={!row.eligible}
             expanded={expandedMemberIdSet.has(row.member.memberId)}
@@ -248,16 +270,29 @@ const ScheduleMembersPanel = ({
     <aside
       data-schedule-members-panel
       className={cn(
-        "relative flex shrink-0 flex-col self-stretch overflow-hidden rounded-lg border bg-gray-950/60 transition-[width,border-color] duration-300 ease-in-out lg:sticky lg:top-4 lg:min-h-0",
+        "relative flex shrink-0 flex-col self-stretch rounded-lg border bg-gray-950/60 transition-[width,border-color] duration-300 ease-in-out lg:sticky lg:top-4 lg:min-h-0",
         open ? "w-full lg:w-80" : "w-10",
         isAssignMode ? "border-orange-400/40" : "border-gray-700",
       )}
       aria-label="Members"
     >
+      <Button
+        type="button"
+        variant="tertiary"
+        padding="px-1 py-1"
+        className={cn(
+          "absolute left-0 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
+          isAssignMode ? "border-orange-400/40" : "border-gray-700",
+        )}
+        svg={open ? ChevronRight : ChevronLeft}
+        aria-expanded={open}
+        aria-label={open ? "Hide members" : "Show members"}
+        onClick={() => onOpenChange(!open)}
+      />
       {open ? (
         <div
           ref={panelRef}
-          className="relative flex h-full min-h-0 w-full flex-col p-3"
+          className="relative flex h-full min-h-0 w-full flex-col overflow-hidden p-3"
         >
           {isAssignMode && slotContext ? (
             <ScheduleSlotContextHeader
@@ -268,26 +303,14 @@ const ScheduleMembersPanel = ({
             />
           ) : (
             <div className="shrink-0">
-              <div className="relative flex items-center justify-center">
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  padding="px-1 py-1"
-                  className="absolute left-0 shrink-0"
-                  svg={ChevronRight}
-                  aria-expanded
-                  aria-label="Hide members"
-                  onClick={() => onOpenChange(false)}
+              <div className="flex items-center justify-center gap-2">
+                <Icon
+                  svg={Users}
+                  size="sm"
+                  className="shrink-0 text-orange-400"
+                  alt=""
                 />
-                <div className="flex items-center gap-2">
-                  <Icon
-                    svg={Users}
-                    size="sm"
-                    className="shrink-0 text-orange-400"
-                    alt=""
-                  />
-                  <p className="text-sm font-semibold text-white">Members</p>
-                </div>
+                <p className="text-sm font-semibold text-white">Members</p>
               </div>
               <p className="mt-1 text-xs text-gray-300">
                 Use the highlight icon to mark assignments on the grid. Open details with the info icon.
@@ -316,17 +339,8 @@ const ScheduleMembersPanel = ({
           </div>
         </div>
       ) : (
-        <div className="flex h-full w-10 flex-col items-center gap-2 py-3">
+        <div className="flex h-full w-10 flex-col items-center py-3">
           <Icon svg={Users} size="sm" className="text-orange-400" alt="Members" />
-          <Button
-            type="button"
-            variant="tertiary"
-            padding="px-1 py-1"
-            svg={ChevronLeft}
-            aria-expanded={false}
-            aria-label="Show members"
-            onClick={() => onOpenChange(true)}
-          />
         </div>
       )}
     </aside>

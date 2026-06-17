@@ -26,6 +26,8 @@ import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import EntityListSearch from "../components/EntityListSearch";
 import EntityRow from "../components/EntityRow";
+import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
+import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
@@ -37,6 +39,9 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
 
 type PositionDraft = { name: string; description: string; icon: string };
@@ -75,9 +80,20 @@ const PositionManager = ({
   const [draft, setDraft] = useState<PositionDraft>({ name: "", description: "", icon: "" });
   const [saving, setSaving] = useState(false);
   const [listQuery, setListQuery] = useState("");
+  const { returnTo, finishEditing } = useTeamsReturnNavigation();
+
+  const applyTeamId = useCallback((nextTeamId: string) => {
+    setSelectedTeamId(nextTeamId);
+  }, []);
+
+  useTeamsTeamSearchParam(
+    activeTeams.map((team) => team.teamId),
+    applyTeamId,
+  );
 
   // Default the selected team to the first active team once teams load.
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
+
   const teamPositions = positions.filter((position) => position.teamId === teamId);
   const filteredTeamPositions = useMemo(
     () =>
@@ -107,6 +123,10 @@ const PositionManager = ({
     setEditing(null);
     setShowCreate(false);
     setDraft({ name: "", description: "", icon: "" });
+  };
+
+  const cancelEditing = () => {
+    finishEditing(reset);
   };
 
   const confirmDelete = async () => {
@@ -163,7 +183,7 @@ const PositionManager = ({
       if (!editing) {
         onSaved(response.position, localPositionId);
       }
-      reset();
+      finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this position.");
       onArchived();
@@ -208,8 +228,20 @@ const PositionManager = ({
         createLabel="Create position"
         scrollableList
         listToolbar={
-          activeTeams.length === 0 ? null : (
+          activeTeams.length === 0 ? (
+            returnTo && !showCreate ? (
+              <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
+            ) : (
+              <TeamsSectionReturnPrompt
+                message="Create a team first — positions belong to a team."
+                originSection={TEAMS_SECTION_PATHS.positions}
+              />
+            )
+          ) : (
             <div className="space-y-3">
+              {returnTo && !showCreate ? (
+                <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
+              ) : null}
               <Select
                 label="Team"
                 value={teamId}
@@ -235,9 +267,10 @@ const PositionManager = ({
         list={
           <>
             {activeTeams.length === 0 ? (
-              <p className="text-sm text-gray-300">
-                Create a team first — positions belong to a team.
-              </p>
+              <TeamsSectionReturnPrompt
+                message="Create a team first — positions belong to a team."
+                originSection={TEAMS_SECTION_PATHS.positions}
+              />
             ) : (
               <>
                 {teamPositions.length === 0 ? (
@@ -278,33 +311,37 @@ const PositionManager = ({
           </>
         }
         formHeaderActions={
-          editing ? (
-            <EntityFormDangerActions
-              archived={Boolean(editing.archivedAt)}
-              canEdit={canEdit}
-              archiveLabel="Archive position"
-              deleteLabel="Delete position"
-              menuLabel="Position actions"
-              onArchive={
-                editing.archivedAt
-                  ? undefined
-                  : async () => {
-                    const archivedPosition = {
-                      ...editing,
-                      archivedAt: new Date().toISOString(),
-                    };
-                    onSaved(archivedPosition);
-                    try {
-                      await archiveTeamPosition(churchId, editing.positionId);
-                      reset();
-                    } catch (error) {
-                      showApiErrorToast(showToast, error, "Could not archive this position.");
-                      onSaved(editing);
-                    }
+          editing || returnTo ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+              {editing ? (
+                <EntityFormDangerActions
+                  archived={Boolean(editing.archivedAt)}
+                  canEdit={canEdit}
+                  archiveLabel="Archive position"
+                  deleteLabel="Delete position"
+                  menuLabel="Position actions"
+                  onArchive={
+                    editing.archivedAt
+                      ? undefined
+                      : async () => {
+                        const archivedPosition = {
+                          ...editing,
+                          archivedAt: new Date().toISOString(),
+                        };
+                        onSaved(archivedPosition);
+                        try {
+                          await archiveTeamPosition(churchId, editing.positionId);
+                          finishEditing(reset);
+                        } catch (error) {
+                          showApiErrorToast(showToast, error, "Could not archive this position.");
+                          onSaved(editing);
+                        }
+                      }
                   }
-              }
-              onDelete={() => setDeleting(editing)}
-            />
+                  onDelete={() => setDeleting(editing)}
+                />
+              ) : null}
+            </TeamsReturnToolbar>
           ) : null
         }
         formFooter={
@@ -312,7 +349,7 @@ const PositionManager = ({
             pinFooter
             saveLabel="Save position"
             onSave={() => void submit()}
-            onCancel={reset}
+            onCancel={cancelEditing}
             disabled={!canEdit || !draft.name.trim()}
             isLoading={saving}
           />

@@ -353,6 +353,41 @@ export const createTeamsAuthHandlers = ({
       await collectMemberTeamIds(member, churchId),
     );
 
+  // Add a member to each given team's roster. Tolerant of stale/foreign/archived
+  // team ids (skipped), since callers may pass ids from intake forms that could
+  // be out of date. Returns the team ids whose roster actually changed.
+  const addMemberToTeams = async ({
+    churchId,
+    teamIds,
+    memberId,
+    adminUserId,
+  }) => {
+    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
+    const ids = normalizeIdArray(teamIds);
+    if (!normalizedMemberId || ids.length === 0) return [];
+    const now = nowIso();
+    const addedTeamIds = [];
+    await Promise.all(
+      ids.map(async (teamId) => {
+        const team = await getDoc(COLLECTIONS.teams, teamId);
+        if (!team || team.churchId !== churchId || team.archivedAt) return;
+        if ((team.memberIds || []).includes(normalizedMemberId)) return;
+        await setDoc(
+          COLLECTIONS.teams,
+          teamId,
+          {
+            memberIds: [...(team.memberIds || []), normalizedMemberId],
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        addedTeamIds.push(teamId);
+      }),
+    );
+    return addedTeamIds;
+  };
+
   const addMemberToTeamsForPositions = async ({
     churchId,
     positionIds,
@@ -372,26 +407,12 @@ export const createTeamsAuthHandlers = ({
     const teamIds = Array.from(
       new Set(positions.map((position) => position.teamId).filter(Boolean)),
     );
-    const now = nowIso();
-    await Promise.all(
-      teamIds.map(async (teamId) => {
-        const team = await assertTeamEntityInChurch("team", teamId, churchId, {
-          label: "Team",
-        });
-        if ((team.memberIds || []).includes(normalizedMemberId)) return;
-        await setDoc(
-          COLLECTIONS.teams,
-          teamId,
-          {
-            memberIds: [...(team.memberIds || []), normalizedMemberId],
-            updatedAt: now,
-            updatedByUid: adminUserId,
-          },
-          { merge: true },
-        );
-      }),
-    );
-    return teamIds;
+    return addMemberToTeams({
+      churchId,
+      teamIds,
+      memberId: normalizedMemberId,
+      adminUserId,
+    });
   };
 
   const listTeamCollectionForChurch = async (
@@ -1468,11 +1489,6 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
-  // The member marked themselves unavailable for this specific occurrence on an
-  // intake form. occurrenceId is the schedule row id (`serviceId@startsAt`).
-  const isMemberUnavailableForOccurrence = (member, occurrenceId) =>
-    member?.serviceAvailability?.[occurrenceId] === "unavailable";
-
   const TEAM_SCHEDULE_SHADOW_KINDS = new Set(["shadow", "reverse_shadow"]);
 
   const normalizeScheduleAssignmentCell = (cell) => {
@@ -2065,12 +2081,9 @@ export const createTeamsAuthHandlers = ({
         ) {
           throw httpError(400, "That member is unavailable for this service.");
         }
-        if (isMemberUnavailableForOccurrence(member, serviceId)) {
-          throw httpError(
-            400,
-            "That member marked themselves unavailable for this service.",
-          );
-        }
+        // Note: intake service availability ("didn't pick this service") is a
+        // soft scheduling warning surfaced in the picker, not a hard block — only
+        // blockout dates make a member truly unavailable.
 
         const serviceAssignments = assignments[serviceId] || {};
         const assignedElsewhere = Object.values(serviceAssignments).some(
@@ -2152,12 +2165,8 @@ export const createTeamsAuthHandlers = ({
     if (isMemberUnavailableForService(member, { date: serviceDate || "" })) {
       throw httpError(400, "That member is unavailable for this service.");
     }
-    if (isMemberUnavailableForOccurrence(member, serviceId)) {
-      throw httpError(
-        400,
-        "That member marked themselves unavailable for this service.",
-      );
-    }
+    // Intake service availability is a soft warning only (surfaced in the
+    // picker); only blockout dates hard-block assignment here.
 
     const serviceAssignments = assignments[serviceId] || {};
     const assignedElsewhere = Object.entries(serviceAssignments).some(
@@ -3589,6 +3598,10 @@ export const createTeamsAuthHandlers = ({
         const action = String(req.body?.action || "").trim();
         const now = nowIso();
         let member = null;
+        // Teams whose rosters changed by this apply, returned so the client can
+        // refresh memberships immediately (so a created member shows up on the
+        // schedule without waiting for a full reload).
+        let updatedTeams = [];
         const update = {
           status: action,
           reviewedAt: now,
@@ -3615,6 +3628,22 @@ export const createTeamsAuthHandlers = ({
           const submissionAvailability = normalizeServiceAvailability(
             submission.occurrenceAvailability,
           );
+          // Teams the member should join so they appear on those schedules
+          // (shadow-eligible even with no positions): the teams that own their
+          // requested positions, plus the teams the form explicitly collects
+          // for. An all-teams form (empty teamIds) intentionally adds no extra
+          // teams beyond the requested-position ones — we never mass-add.
+          const intakeForm = await getDoc(
+            COLLECTIONS.teamIntakeForms,
+            submission.formId,
+          );
+          const formTeamIds =
+            intakeForm && intakeForm.churchId === req.params.churchId
+              ? normalizeIdArray(intakeForm.teamIds)
+              : [];
+          const addedTeamIds = new Set();
+          const trackTeams = (ids) =>
+            (ids || []).forEach((id) => addedTeamIds.add(id));
           if (req.body?.createMember) {
             member = await upsertTeamEntity({
               kind: "member",
@@ -3632,15 +3661,26 @@ export const createTeamsAuthHandlers = ({
               adminUserId: admin.user.uid,
             });
             // Surface the new member on the rosters of teams that own their
-            // desired positions so an admin can find and promote them. This is
-            // team visibility only; assignability is still gated by
-            // `positionIds`, which stays empty until promotion.
-            await addMemberToTeamsForPositions({
-              churchId: req.params.churchId,
-              positionIds: desiredPositionIds,
-              memberId: member.memberId,
-              adminUserId: admin.user.uid,
-            });
+            // desired positions, plus the form's scoped teams, so an admin can
+            // find and (if needed) promote them. This is team visibility only;
+            // assignability is still gated by `positionIds`, which stays empty
+            // until promotion — so they can only be shadowed in for now.
+            trackTeams(
+              await addMemberToTeamsForPositions({
+                churchId: req.params.churchId,
+                positionIds: desiredPositionIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
+            trackTeams(
+              await addMemberToTeams({
+                churchId: req.params.churchId,
+                teamIds: formTeamIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
           } else {
             const memberId = normalizeShortText(req.body?.memberId, {
               max: 160,
@@ -3679,21 +3719,39 @@ export const createTeamsAuthHandlers = ({
               { merge: true },
             );
             // Mirror the create path: surface the linked member on the rosters
-            // of teams that own their desired positions so an admin can find and
-            // promote them. Visibility only — assignability stays gated by
+            // of teams that own their desired positions, plus the form's scoped
+            // teams. Visibility only — assignability stays gated by
             // `positionIds`, which we never touch here.
-            await addMemberToTeamsForPositions({
-              churchId: req.params.churchId,
-              positionIds: nextDesiredPositionIds,
-              memberId: member.memberId,
-              adminUserId: admin.user.uid,
-            });
+            trackTeams(
+              await addMemberToTeamsForPositions({
+                churchId: req.params.churchId,
+                positionIds: nextDesiredPositionIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
+            trackTeams(
+              await addMemberToTeams({
+                churchId: req.params.churchId,
+                teamIds: formTeamIds,
+                memberId: member.memberId,
+                adminUserId: admin.user.uid,
+              }),
+            );
             member = await getTeamEntity("member", member.memberId);
           }
           update.status = "applied";
           update.appliedAt = now;
           update.appliedByUid = admin.user.uid;
           update.appliedMemberId = member.memberId;
+          update.appliedMemberCreated = Boolean(req.body?.createMember);
+          updatedTeams = (
+            await Promise.all(
+              Array.from(addedTeamIds).map((teamId) =>
+                getDoc(COLLECTIONS.teams, teamId),
+              ),
+            )
+          ).filter((team) => team && team.churchId === req.params.churchId);
         } else if (action === "dismissed") {
           update.status = "dismissed";
         } else if (action === "reviewed") {
@@ -3704,7 +3762,12 @@ export const createTeamsAuthHandlers = ({
           // submission data was never deleted, so this is a safe undo.
           update.status = "new";
         } else {
-          throw httpError(400, "Review action is required.");
+          throw httpError(
+            400,
+            action
+              ? `Unsupported submission action: "${action}".`
+              : "Review action is required.",
+          );
         }
 
         await setDoc(
@@ -3728,6 +3791,7 @@ export const createTeamsAuthHandlers = ({
             ...update,
           },
           ...(member ? { member } : {}),
+          ...(updatedTeams.length ? { teams: updatedTeams } : {}),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update this submission.");

@@ -406,6 +406,8 @@ export type TeamIntakeSubmission = {
   appliedAt?: string;
   appliedByUid?: string;
   appliedMemberId?: string;
+  /** True when applying created a new member rather than linking an existing one. */
+  appliedMemberCreated?: boolean;
 };
 
 export type TeamIntakePreview = {

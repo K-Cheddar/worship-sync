@@ -17,6 +17,7 @@ export type UseScheduleMemberPickerArgs = {
   getAssignmentActionIssues?: (
     memberId: string,
   ) => MemberAssignmentActionIssues;
+  getWarning?: (memberId: string) => string;
   canCreateMember?: boolean;
   filterByQuery?: boolean;
 };
@@ -39,6 +40,7 @@ export const useScheduleMemberPicker = ({
   duplicateFirstNames,
   getIssue,
   getAssignmentActionIssues,
+  getWarning,
   canCreateMember = false,
   filterByQuery = true,
 }: UseScheduleMemberPickerArgs): UseScheduleMemberPickerResult => {
@@ -55,6 +57,7 @@ export const useScheduleMemberPicker = ({
         duplicateFirstNames,
         getIssue,
         getAssignmentActionIssues,
+        getWarning,
         filterByQuery,
       }),
     [
@@ -64,6 +67,7 @@ export const useScheduleMemberPicker = ({
       filterByQuery,
       getAssignmentActionIssues,
       getIssue,
+      getWarning,
       hasPrimaryAssignee,
       members,
       positionId,

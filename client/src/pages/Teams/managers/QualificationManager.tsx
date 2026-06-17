@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 import { Plus, Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
@@ -26,10 +26,15 @@ import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import EntityListSearch from "../components/EntityListSearch";
 import EntityRow from "../components/EntityRow";
+import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
+import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 
 type QualificationManagerProps = {
   areas: TeamQualificationArea[];
@@ -74,6 +79,16 @@ const QualificationManager = ({
   const [levelSavingKey, setLevelSavingKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [listQuery, setListQuery] = useState("");
+  const { returnTo, finishEditing } = useTeamsReturnNavigation();
+
+  const applyTeamId = useCallback((nextTeamId: string) => {
+    setSelectedTeamId(nextTeamId);
+  }, []);
+
+  useTeamsTeamSearchParam(
+    activeTeams.map((team) => team.teamId),
+    applyTeamId,
+  );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
   const teamAreas = areas.filter((area) => area.teamId === teamId);
@@ -128,6 +143,10 @@ const QualificationManager = ({
     setNewLevelName("");
     setNewLevelRank("1");
     setLevelSavingKey("");
+  };
+
+  const cancelEditing = () => {
+    finishEditing(reset);
   };
 
   const openAreaEditor = (area: TeamQualificationArea) => {
@@ -196,7 +215,11 @@ const QualificationManager = ({
         resetLevelDrafts(response.area);
       } else {
         setEditing(response.area);
-        reset();
+        if (returnTo) {
+          finishEditing(reset);
+        } else {
+          reset();
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification area.");
@@ -274,8 +297,20 @@ const QualificationManager = ({
         createLabel="Create area"
         scrollableList
         listToolbar={
-          activeTeams.length === 0 ? null : (
+          activeTeams.length === 0 ? (
+            returnTo && !showCreate ? (
+              <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
+            ) : (
+              <TeamsSectionReturnPrompt
+                message="Create a team first — qualification areas belong to a team."
+                originSection={TEAMS_SECTION_PATHS.qualifications}
+              />
+            )
+          ) : (
             <div className="space-y-3">
+              {returnTo && !showCreate ? (
+                <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
+              ) : null}
               <Select
                 label="Team"
                 value={teamId}
@@ -301,9 +336,10 @@ const QualificationManager = ({
         list={
           <>
             {activeTeams.length === 0 ? (
-              <p className="text-sm text-gray-300">
-                Create a team first — qualification areas belong to a team.
-              </p>
+              <TeamsSectionReturnPrompt
+                message="Create a team first — qualification areas belong to a team."
+                originSection={TEAMS_SECTION_PATHS.qualifications}
+              />
             ) : (
               <>
                 {teamAreas.length === 0 ? (
@@ -336,37 +372,41 @@ const QualificationManager = ({
           </>
         }
         formHeaderActions={
-          editing ? (
-            <EntityFormDangerActions
-              archived={Boolean(editing.archivedAt)}
-              canEdit={canEdit}
-              archiveLabel="Archive area"
-              deleteLabel="Delete area"
-              menuLabel="Qualification area actions"
-              onArchive={
-                editing.archivedAt
-                  ? undefined
-                  : async () => {
-                    const archivedArea = {
-                      ...editing,
-                      archivedAt: new Date().toISOString(),
-                    };
-                    onAreaSaved(archivedArea);
-                    try {
-                      await archiveTeamQualificationArea(churchId, editing.areaId);
-                      reset();
-                    } catch (error) {
-                      showApiErrorToast(
-                        showToast,
-                        error,
-                        "Could not archive this qualification area.",
-                      );
-                      onAreaSaved(editing);
-                    }
+          editing || returnTo ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+              {editing ? (
+                <EntityFormDangerActions
+                  archived={Boolean(editing.archivedAt)}
+                  canEdit={canEdit}
+                  archiveLabel="Archive area"
+                  deleteLabel="Delete area"
+                  menuLabel="Qualification area actions"
+                  onArchive={
+                    editing.archivedAt
+                      ? undefined
+                      : async () => {
+                        const archivedArea = {
+                          ...editing,
+                          archivedAt: new Date().toISOString(),
+                        };
+                        onAreaSaved(archivedArea);
+                        try {
+                          await archiveTeamQualificationArea(churchId, editing.areaId);
+                          finishEditing(reset);
+                        } catch (error) {
+                          showApiErrorToast(
+                            showToast,
+                            error,
+                            "Could not archive this qualification area.",
+                          );
+                          onAreaSaved(editing);
+                        }
+                      }
                   }
-              }
-              onDelete={() => setDeleting(editing)}
-            />
+                  onDelete={() => setDeleting(editing)}
+                />
+              ) : null}
+            </TeamsReturnToolbar>
           ) : null
         }
         formFooter={
@@ -374,7 +414,7 @@ const QualificationManager = ({
             pinFooter
             saveLabel="Save area"
             onSave={() => void submitArea()}
-            onCancel={reset}
+            onCancel={cancelEditing}
             disabled={!canEdit || !draft.name.trim()}
             isLoading={saving}
           />

@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -17,10 +17,15 @@ import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import EntityListSearch from "../components/EntityListSearch";
 import EntityRow from "../components/EntityRow";
+import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
+import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 
 type TeamRoleManagerProps = {
   roles: TeamRole[];
@@ -55,6 +60,16 @@ const TeamRoleManager = ({
   });
   const [saving, setSaving] = useState(false);
   const [listQuery, setListQuery] = useState("");
+  const { returnTo, finishEditing } = useTeamsReturnNavigation();
+
+  const applyTeamId = useCallback((nextTeamId: string) => {
+    setSelectedTeamId(nextTeamId);
+  }, []);
+
+  useTeamsTeamSearchParam(
+    activeTeams.map((team) => team.teamId),
+    applyTeamId,
+  );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
   const teamRoles = roles.filter((role) => role.teamId === teamId);
@@ -67,6 +82,10 @@ const TeamRoleManager = ({
     setEditing(null);
     setShowCreate(false);
     setDraft({ teamId: teamId, name: "", description: "" });
+  };
+
+  const cancelEditing = () => {
+    finishEditing(reset);
   };
 
   const openRoleEditor = (role: TeamRole) => {
@@ -131,7 +150,7 @@ const TeamRoleManager = ({
       if (!editing) {
         onSaved(response.role, localRoleId);
       }
-      reset();
+      finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this role.");
       onArchived();
@@ -155,8 +174,20 @@ const TeamRoleManager = ({
         createLabel="Create role"
         scrollableList
         listToolbar={
-          activeTeams.length === 0 ? null : (
+          activeTeams.length === 0 ? (
+            returnTo && !showCreate ? (
+              <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
+            ) : (
+              <TeamsSectionReturnPrompt
+                message="Create a team first — roles belong to a team."
+                originSection={TEAMS_SECTION_PATHS.roles}
+              />
+            )
+          ) : (
             <div className="space-y-3">
+              {returnTo && !showCreate ? (
+                <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
+              ) : null}
               <Select
                 label="Team"
                 value={teamId}
@@ -182,9 +213,10 @@ const TeamRoleManager = ({
         list={
           <>
             {activeTeams.length === 0 ? (
-              <p className="text-sm text-gray-300">
-                Create a team first — roles belong to a team.
-              </p>
+              <TeamsSectionReturnPrompt
+                message="Create a team first — roles belong to a team."
+                originSection={TEAMS_SECTION_PATHS.roles}
+              />
             ) : (
               <>
                 {teamRoles.length === 0 ? (
@@ -209,33 +241,37 @@ const TeamRoleManager = ({
           </>
         }
         formHeaderActions={
-          editing ? (
-            <EntityFormDangerActions
-              archived={Boolean(editing.archivedAt)}
-              canEdit={canEdit}
-              archiveLabel="Archive role"
-              deleteLabel="Delete role"
-              menuLabel="Role actions"
-              onArchive={
-                editing.archivedAt
-                  ? undefined
-                  : async () => {
-                    const archivedRole = {
-                      ...editing,
-                      archivedAt: new Date().toISOString(),
-                    };
-                    onSaved(archivedRole);
-                    try {
-                      await archiveTeamRole(churchId, editing.roleId);
-                      reset();
-                    } catch (error) {
-                      showApiErrorToast(showToast, error, "Could not archive this role.");
-                      onSaved(editing);
-                    }
+          editing || returnTo ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+              {editing ? (
+                <EntityFormDangerActions
+                  archived={Boolean(editing.archivedAt)}
+                  canEdit={canEdit}
+                  archiveLabel="Archive role"
+                  deleteLabel="Delete role"
+                  menuLabel="Role actions"
+                  onArchive={
+                    editing.archivedAt
+                      ? undefined
+                      : async () => {
+                        const archivedRole = {
+                          ...editing,
+                          archivedAt: new Date().toISOString(),
+                        };
+                        onSaved(archivedRole);
+                        try {
+                          await archiveTeamRole(churchId, editing.roleId);
+                          finishEditing(reset);
+                        } catch (error) {
+                          showApiErrorToast(showToast, error, "Could not archive this role.");
+                          onSaved(editing);
+                        }
+                      }
                   }
-              }
-              onDelete={() => setDeleting(editing)}
-            />
+                  onDelete={() => setDeleting(editing)}
+                />
+              ) : null}
+            </TeamsReturnToolbar>
           ) : null
         }
         formFooter={
@@ -243,7 +279,7 @@ const TeamRoleManager = ({
             pinFooter
             saveLabel="Save role"
             onSave={() => void submit()}
-            onCancel={reset}
+            onCancel={cancelEditing}
             disabled={!canEdit || !draft.name.trim()}
             isLoading={saving}
           />

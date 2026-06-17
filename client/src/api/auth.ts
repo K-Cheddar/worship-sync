@@ -446,6 +446,8 @@ export const applyTeamIntakeSubmission = async (
     success: boolean;
     submission: TeamIntakeSubmission;
     member?: TeamRosterMember;
+    /** Teams whose rosters changed (member added), for an immediate local refresh. */
+    teams?: TeamRecord[];
   }>(`api/churches/${churchId}/team-intake/submissions/${submissionId}`, {
     method: "POST",
     body: JSON.stringify(body),
