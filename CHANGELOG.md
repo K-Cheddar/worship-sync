@@ -1,3 +1,10 @@
+# [2.13.0](https://github.com/K-Cheddar/worship-sync/compare/v2.12.1...v2.13.0) (2026-06-19)
+
+
+### Features
+
+* Add ability to group services ([8e20700](https://github.com/K-Cheddar/worship-sync/commit/8e20700030904a65a7a7be19ca6dc1a411305c09))
+
 ## [2.12.1](https://github.com/K-Cheddar/worship-sync/compare/v2.12.0...v2.12.1) (2026-06-17)
 
 
