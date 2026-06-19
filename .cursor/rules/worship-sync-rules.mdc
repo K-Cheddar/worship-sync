@@ -1,15 +1,10 @@
 ---
-description: 
+description: WorshipSync project standards — follow AGENTS.md
 alwaysApply: true
 ---
 
-Use tailwind
+@AGENTS.md
 
-Write DRY code
+**Single source of truth:** All agent guidance lives in `AGENTS.md`. Read it before substantive work.
 
-Use resuable components
-avoid nested ternaries
-
-Prefer es6 syntax for functions
-
-Ensure code is optimized for performance and clarity
+When updating standards, edit `AGENTS.md` only. Do not duplicate or drift guidance in `.cursor/rules` or other docs. If anything conflicts with `AGENTS.md`, follow `AGENTS.md`.

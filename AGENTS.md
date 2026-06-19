@@ -170,6 +170,19 @@ When possible, reviewers should verify relevant commands:
 
 - Client lint enforces this rule: **avoid direct Node access; prefer using the methods from Testing Library** (`screen` / `within` / `getBy*` / `findBy*` / `queryBy*`, including `getByRole` with `name` when appropriate). Do not chain DOM traversal APIs on queried elements (for example `closest`, `parentElement`, `querySelector` on a node returned from a query) to reach a parent or sibling; that is what the rule flags.
 
+```tsx
+// Bad — lint error
+const select = screen.getByRole("combobox");
+const options = select.querySelectorAll("option");
+
+// Good
+const options = screen.getAllByRole("option");
+// or, when scoping to a region:
+within(screen.getByRole("dialog")).getAllByRole("option");
+```
+
+After adding or editing tests, run `cd client && npm run lint:check`. Do not leave scratch files such as `__tmp_*.test.tsx`; delete debug-only tests or promote them to real coverage before finishing.
+
 **`jest/no-conditional-expect`**
 
 - Client lint enforces this rule: **do not call `expect` inside conditional branches** (`if` / `else` / `switch`, ternary callbacks, and similar). Conditionals can skip assertions and make failures harder to interpret. Prefer **partitioning the data first** (for example `filter` into two arrays) and then asserting with top-level `expect` calls, or use a single aggregate assertion (`every` / `some` with a clear predicate) that does not wrap `expect` in a branch.
@@ -180,6 +193,14 @@ If confidence is limited, the review should say so clearly rather than implying 
 ## Repo-Specific Guidance
 
 ### Client
+
+**Coding conventions**
+
+- Use Tailwind for styling
+- Write DRY code; prefer reusable components over ad hoc markup
+- Avoid nested ternaries
+- Prefer ES6 syntax for functions
+- Optimize for performance and clarity
 
 Prefer existing patterns already used in the client:
 
@@ -242,7 +263,6 @@ Server changes should be reviewed for:
 - Input validation
 - Failure modes for upload and third-party integrations
 - Avoiding silent data shape changes
-
 
 ## Best-Practice Expectations
 
