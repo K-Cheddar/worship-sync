@@ -15,6 +15,7 @@ import PouchDB from "pouchdb-browser";
 import Button from "../components/Button/Button";
 import DeleteModal from "../components/Modal/DeleteModal";
 import Menu from "../components/Menu/Menu";
+import Icon from "../components/Icon/Icon";
 import {
   Sheet,
   SheetContent,
@@ -948,8 +949,8 @@ export const BoardControllerContent = () => {
                           menuItems={[
                             {
                               element: (
-                                <div className="flex items-center gap-2">
-                                  <LayoutList className="size-4 text-gray-300" />
+                                <div className="flex items-center gap-2 max-md:min-h-12">
+                                  <Icon svg={LayoutList} color="#d1d5dc" />
                                   Manage boards
                                 </div>
                               ),
@@ -957,8 +958,8 @@ export const BoardControllerContent = () => {
                             },
                             {
                               element: (
-                                <div className="flex items-center gap-2">
-                                  <SlidersHorizontal className="size-4 text-gray-300" />
+                                <div className="flex items-center gap-2 max-md:min-h-12">
+                                  <Icon svg={SlidersHorizontal} color="#d1d5dc" />
                                   Board tools
                                 </div>
                               ),

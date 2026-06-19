@@ -1229,6 +1229,26 @@ app.get("/api/boards/admin/bootstrap", async (req, res) => {
   }
 });
 
+app.get("/api/boards/admin/aliases", async (req, res) => {
+  try {
+    await ensureBoardDbExists();
+    const database = req.appSession.database;
+    const rows = await getBoardDocsByRange({
+      startkey: "alias:",
+      endkey: `alias:${String.fromCharCode(0xfff0)}`,
+    });
+    const aliases = rows
+      .map((row) => row.doc)
+      .filter((doc) => doc?.aliasId && doc.database === database)
+      .sort((a, b) => String(a.title).localeCompare(String(b.title)))
+      .map(serializeBoardAlias);
+    res.json({ aliases });
+  } catch (error) {
+    console.error("Error listing board aliases:", error);
+    res.status(500).json({ error: "Could not load discussion boards." });
+  }
+});
+
 app.post("/api/boards/admin/aliases", async (req, res) => {
   try {
     const validation = validateAliasInput(req.body || {});

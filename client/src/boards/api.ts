@@ -137,6 +137,13 @@ const fetchJson = async <T>(
   return data as T;
 };
 
+export type BoardAliasesResponse = {
+  aliases: DBBoardAlias[];
+};
+
+export const getBoardAliases = () =>
+  fetchJson<BoardAliasesResponse>("api/boards/admin/aliases");
+
 export const getBoardAlias = (aliasId: string) =>
   fetchJson<BoardAliasResponse>(`api/boards/${encodeURIComponent(aliasId)}`);
 

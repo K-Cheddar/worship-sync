@@ -407,6 +407,13 @@ const createWindow = () => {
 
   setupContextMenu(mainWindow.webContents);
 
+  // The identify glow lives in a separate window, so if the renderer reloads or
+  // crashes (no cancel IPC sent, generation counter restarts at 0) clear the
+  // glow and reset the floor here so identify keeps working and nothing is left
+  // stranded on a display.
+  mainWindow.webContents.on("did-start-loading", resetIdentifyState);
+  mainWindow.webContents.on("render-process-gone", resetIdentifyState);
+
   // Load the app
   if (isDev) {
     // In development, load from Vite dev server
@@ -543,6 +550,16 @@ const createWindow = () => {
   mainWindow.on("closed", () => {
     desktopAuthListenerReady = false;
     mainWindow = null;
+    // Destroy the identify glow so a hidden overlay can't keep the app alive
+    // and block "window-all-closed".
+    if (pendingIdentifyHide) {
+      clearTimeout(pendingIdentifyHide);
+      pendingIdentifyHide = null;
+    }
+    if (identifyOverlay && !identifyOverlay.isDestroyed()) {
+      identifyOverlay.destroy();
+    }
+    identifyOverlay = null;
   });
 };
 
@@ -1118,6 +1135,135 @@ ipcMain.handle("get-displays", () => {
     internal: display.internal,
     label: display.label,
   }));
+});
+
+// --- Display "identify" glow ---------------------------------------------
+// A single reusable click-through overlay that we reposition to whichever
+// display the operator is hovering in the menu, so they can tell which
+// physical screen a label refers to without opening a window onto it.
+let identifyOverlay: BrowserWindow | null = null;
+// Debounce hiding so moving between adjacent display rows (leave -> enter)
+// repositions the glow instead of flickering it off and back on.
+let pendingIdentifyHide: NodeJS.Timeout | null = null;
+const IDENTIFY_HIDE_DEBOUNCE_MS = 120;
+// Generation floor: identify "show" requests carry the renderer's menu-session
+// generation. When a menu closes we bump this floor; any in-flight show from the
+// closed session is stale (generation < floor) and ignored, so a late IPC can't
+// resurrect the glow over live output. Reset to 0 when the renderer reloads.
+let validIdentifyGeneration = 0;
+
+const IDENTIFY_GLOW_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  html,body{margin:0;height:100%;width:100%;overflow:hidden;background:transparent;}
+  .glow{position:fixed;inset:0;box-shadow:inset 0 0 0 6px rgba(59,130,246,0.95),
+    inset 0 0 24px 4px rgba(59,130,246,0.4);
+    animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.55;}}
+</style></head><body><div class="glow"></div></body></html>`;
+
+const getIdentifyOverlay = (): BrowserWindow => {
+  if (identifyOverlay && !identifyOverlay.isDestroyed()) return identifyOverlay;
+  identifyOverlay = new BrowserWindow({
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    show: false,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: { sandbox: true },
+  });
+  identifyOverlay.setIgnoreMouseEvents(true);
+  // Float above fullscreen projector/monitor output so the glow is visible
+  // even while a display window is live.
+  identifyOverlay.setAlwaysOnTop(true, "screen-saver");
+  identifyOverlay.setVisibleOnAllWorkspaces(true);
+  void identifyOverlay.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(IDENTIFY_GLOW_HTML)}`,
+  );
+  identifyOverlay.on("closed", () => {
+    identifyOverlay = null;
+  });
+  return identifyOverlay;
+};
+
+const hideIdentifyOverlayNow = (): void => {
+  if (pendingIdentifyHide) {
+    clearTimeout(pendingIdentifyHide);
+    pendingIdentifyHide = null;
+  }
+  if (identifyOverlay && !identifyOverlay.isDestroyed()) {
+    identifyOverlay.hide();
+  }
+};
+
+// Called when the renderer (re)loads: its generation counter restarts at 0, so
+// drop the floor back in step and clear any glow left over from the old page.
+const resetIdentifyState = (): void => {
+  validIdentifyGeneration = 0;
+  hideIdentifyOverlayNow();
+};
+
+const showIdentifyGlow = (
+  display: Electron.Display,
+  generation: number,
+): boolean => {
+  // Ignore stale shows from a menu session that has since been cancelled.
+  if (generation < validIdentifyGeneration) return false;
+  if (pendingIdentifyHide) {
+    clearTimeout(pendingIdentifyHide);
+    pendingIdentifyHide = null;
+  }
+  const overlay = getIdentifyOverlay();
+  overlay.setBounds(display.bounds);
+  overlay.setAlwaysOnTop(true, "screen-saver");
+  overlay.showInactive(); // never steal focus from the menu or live output
+  return true;
+};
+
+ipcMain.handle(
+  "identify-display",
+  (_event, displayId: number, generation: number) => {
+    const target = screen.getAllDisplays().find((d) => d.id === displayId);
+    if (!target) return false;
+    return showIdentifyGlow(target, generation);
+  },
+);
+
+// Glow the display that "Last Used Display" would actually open onto, using the
+// same resolution (id -> saved bounds -> index fallback) as opening a window.
+ipcMain.handle(
+  "identify-display-for-window",
+  (_event, windowType: WindowType, generation: number) => {
+    const target = windowStateManager.getDisplayForWindow(windowType);
+    if (!target) return false;
+    return showIdentifyGlow(target, generation);
+  },
+);
+
+// Soft hide (row leave): debounced so moving to an adjacent row repositions the
+// glow instead of flickering it off and back on.
+ipcMain.handle("hide-identify-display", () => {
+  if (pendingIdentifyHide) clearTimeout(pendingIdentifyHide);
+  pendingIdentifyHide = setTimeout(() => {
+    pendingIdentifyHide = null;
+    if (identifyOverlay && !identifyOverlay.isDestroyed()) {
+      identifyOverlay.hide();
+    }
+  }, IDENTIFY_HIDE_DEBOUNCE_MS);
+  return true;
+});
+
+// Hard cancel (menu close / unmount): hide immediately and raise the generation
+// floor so any in-flight show from the closed session is rejected.
+ipcMain.handle("cancel-identify-display", (_event, generation: number) => {
+  validIdentifyGeneration = Math.max(validIdentifyGeneration, generation);
+  hideIdentifyOverlayNow();
+  return true;
 });
 
 // Helper function to get window by type (uses generic display window store)
