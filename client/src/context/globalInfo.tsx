@@ -53,10 +53,15 @@ import {
   SessionKind,
   updateWorkstationOperator,
   updateHumanProfile,
+  updateHumanNotificationPreferences,
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
-import type { ChurchBranding, MemberPermissions } from "../api/authTypes";
+import type {
+  ChurchBranding,
+  MemberPermissions,
+  NotificationPreference,
+} from "../api/authTypes";
 
 import {
   BibleDisplayInfo,
@@ -410,6 +415,11 @@ type GlobalInfoContextType = {
   refreshAuthBootstrap: () => Promise<void>;
   refreshPresentationListeners: () => void;
   updateSelfDisplayName: (displayName: string) => Promise<boolean>;
+  /** True when this user can edit any team — gates the intake-notify toggle. */
+  canManageIntakeNotifications: boolean;
+  /** Resolved on/off for "email me about new intake submissions". */
+  intakeNotificationsEnabled: boolean;
+  setIntakeNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -507,6 +517,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [churchIntegrationsListenGeneration, setChurchIntegrationsListenGeneration] =
     useState(0);
   const [role, setRole] = useState("");
+  const [intakeNotifyPreference, setIntakeNotifyPreference] =
+    useState<NotificationPreference>("default");
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
     useState<string | null>(null);
@@ -531,6 +543,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     Object.keys(permissions.teamScopes || {}).length > 0;
   const canViewTeams =
     canEditTeams || permissions.teams === "view" || hasScopedTeamsAccess;
+  // Anyone who can edit at least one team is a potential intake-notify
+  // recipient — same predicate the server derives recipients from.
+  const canManageIntakeNotifications =
+    canEditTeams ||
+    Object.values(permissions.teamScopes || {}).includes("edit");
+  // "default" (and anything unset) means on for editors; only explicit "off"
+  // mutes — mirrors isIntakeNotificationEnabled on the server.
+  const intakeNotificationsEnabled = intakeNotifyPreference !== "off";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
@@ -764,6 +784,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setChurchStatus(bootstrap.churchStatus || "active");
     setRecoveryEmail(bootstrap.recoveryEmail || "");
     setRole(bootstrap.role || "");
+    setIntakeNotifyPreference(
+      bootstrap.notifications?.intakeSubmissions || "default",
+    );
     if (bootstrap.sessionKind === "workstation") {
       clearLegacyWorkstationOperatorName();
       setOperatorNameState(workstationSessionOperator);
@@ -2308,6 +2331,28 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [refreshAuthBootstrap]);
 
+  const setIntakeNotificationsEnabled = useCallback(
+    async (enabled: boolean) => {
+      const next: NotificationPreference = enabled ? "on" : "off";
+      const previous = intakeNotifyPreference;
+      setIntakeNotifyPreference(next); // optimistic; reconciled by refresh
+      try {
+        await updateHumanNotificationPreferences({ intakeSubmissions: next });
+        await refreshAuthBootstrap();
+        return true;
+      } catch (error) {
+        setIntakeNotifyPreference(previous);
+        setAuthError(
+          error instanceof Error && error.message
+            ? error.message
+            : "Could not update your notification settings."
+        );
+        return false;
+      }
+    },
+    [intakeNotifyPreference, refreshAuthBootstrap]
+  );
+
   const setOperatorName = useCallback((value: string) => {
     setOperatorNameState(value);
     if (sessionKind === "workstation") {
@@ -2443,6 +2488,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       refreshAuthBootstrap,
       refreshPresentationListeners,
       updateSelfDisplayName,
+      canManageIntakeNotifications,
+      intakeNotificationsEnabled,
+      setIntakeNotificationsEnabled,
       sharedDataReady: isSharedDataScopeReady,
     }),
     [
@@ -2500,6 +2548,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       refreshAuthBootstrap,
       refreshPresentationListeners,
       updateSelfDisplayName,
+      canManageIntakeNotifications,
+      intakeNotificationsEnabled,
+      setIntakeNotificationsEnabled,
       isSharedDataScopeReady,
     ]
   );

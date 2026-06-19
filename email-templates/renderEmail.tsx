@@ -4,6 +4,7 @@ import {
   AccountRestoredEmail,
   AdminRecoveryRequestEmail,
   InviteEmail,
+  IntakeSubmissionsDigestEmail,
   PairingSetupCodeEmail,
   PasswordResetEmail,
   SignInCodeEmail,
@@ -50,6 +51,15 @@ export async function renderAccountRestoredEmail(props: {
   resetUrl: string;
 }) {
   return renderEmailHtmlAndText(<AccountRestoredEmail {...props} />);
+}
+
+export async function renderIntakeSubmissionsDigestEmail(props: {
+  churchName: string;
+  formName: string;
+  reviewUrl: string;
+  submitterNames: string[];
+}) {
+  return renderEmailHtmlAndText(<IntakeSubmissionsDigestEmail {...props} />);
 }
 
 export async function renderPairingSetupCodeEmail(props: {

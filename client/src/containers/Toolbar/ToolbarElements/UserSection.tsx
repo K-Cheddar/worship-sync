@@ -17,6 +17,7 @@ import Icon from "../../../components/Icon/Icon";
 import Button from "../../../components/Button/Button";
 import PopOver from "../../../components/PopOver/PopOver";
 import Input from "../../../components/Input/Input";
+import { Switch } from "../../../components/ui/Switch";
 import { WORKSTATION_END_SESSION_LABEL } from "../../../components/WorkstationUnpairConfirmModal/WorkstationUnpairConfirmModal";
 import { getHumanAuth } from "../../../firebase/apps";
 import {
@@ -61,6 +62,9 @@ const UserSection = () => {
     churchName,
     churchBranding,
     updateSelfDisplayName,
+    canManageIntakeNotifications,
+    intakeNotificationsEnabled,
+    setIntakeNotificationsEnabled,
     exitGuestMode,
     endWorkstationOperatorSession,
   } = useContext(GlobalInfoContext) || {};
@@ -73,6 +77,7 @@ const UserSection = () => {
   const [isSavingName, setIsSavingName] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [displaysExpanded, setDisplaysExpanded] = useState(false);
+  const [isSavingNotify, setIsSavingNotify] = useState(false);
   const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
   useEffect(() => {
@@ -347,6 +352,40 @@ const UserSection = () => {
             </span>
           </div>
         </div>
+        {isLoggedIn &&
+        canManageIntakeNotifications &&
+        setIntakeNotificationsEnabled ? (
+          <div className="flex flex-col gap-1 border-t border-gray-600 pt-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Notifications
+            </span>
+            <label className="flex items-start justify-between gap-3">
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium text-white">
+                  New intake submissions
+                </span>
+                <span className="text-xs text-gray-400">
+                  Email me when someone submits a team availability form.
+                </span>
+              </span>
+              <Switch
+                checked={Boolean(intakeNotificationsEnabled)}
+                disabled={isSavingNotify}
+                aria-label="Email me about new intake submissions"
+                onCheckedChange={(checked) => {
+                  void (async () => {
+                    setIsSavingNotify(true);
+                    try {
+                      await setIntakeNotificationsEnabled(checked);
+                    } finally {
+                      setIsSavingNotify(false);
+                    }
+                  })();
+                }}
+              />
+            </label>
+          </div>
+        ) : null}
         {activeInstanceRows.length > 0 || displayRows.length > 0 ? (
           <div className="border-t border-gray-600 pt-3">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">

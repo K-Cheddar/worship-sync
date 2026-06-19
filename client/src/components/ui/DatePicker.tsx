@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import type { Matcher } from "react-day-picker";
-import { CalendarDays } from "lucide-react";
-
 import { cn } from "@/utils/cnHelper";
 import Input from "@/components/ui/Input";
 import Label from "@/components/ui/Label";
@@ -11,9 +9,13 @@ import {
   Popover,
   PopoverAnchor,
   PopoverContent,
-  PopoverTrigger,
 } from "@/components/ui/Popover";
 import Calendar from "@/components/ui/Calendar";
+import DateFieldCalendarTrigger from "@/components/ui/DateFieldCalendarTrigger";
+import {
+  DATE_PICKER_POPOVER_KEYSHORTCUT,
+  openCalendarOnAltArrowDown,
+} from "@/components/ui/datePickerAccessibility";
 import { useSegmentedDateInput } from "@/hooks/useSegmentedDateInput";
 import { parsePlainDate } from "@/utils/plainDate";
 
@@ -73,6 +75,15 @@ const DatePicker = ({
   if (minDate) disabledMatchers.push({ before: minDate });
   if (maxDate) disabledMatchers.push({ after: maxDate });
 
+  const openCalendar = () => {
+    if (!disabled) setOpen(true);
+  };
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (openCalendarOnAltArrowDown(event, openCalendar, disabled)) return;
+    handleKeyDown(event);
+  };
+
   return (
     <div className={cn("group relative h-fit", className)}>
       {label ? (
@@ -97,6 +108,9 @@ const DatePicker = ({
               disabled={disabled}
               readOnly
               aria-label={ariaLabel || label}
+              aria-haspopup="dialog"
+              aria-expanded={open}
+              aria-keyshortcuts={DATE_PICKER_POPOVER_KEYSHORTCUT}
               placeholder={placeholder}
               value={inputValue}
               className={cn(
@@ -105,21 +119,13 @@ const DatePicker = ({
                 inputClassName,
               )}
               onChange={() => { }}
-              onKeyDown={handleKeyDown}
+              onClick={openCalendar}
+              onKeyDown={handleInputKeyDown}
               onFocus={handleFocus}
               onMouseUp={handleMouseUp}
               onBlur={handleBlur}
             />
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                disabled={disabled}
-                aria-label="Open calendar"
-                className="absolute top-1/2 right-1.5 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 disabled:pointer-events-none"
-              >
-                <CalendarDays className="h-4 w-4" aria-hidden />
-              </button>
-            </PopoverTrigger>
+            <DateFieldCalendarTrigger disabled={disabled} />
           </div>
         </PopoverAnchor>
         <PopoverContent

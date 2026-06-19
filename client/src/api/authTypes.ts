@@ -52,6 +52,13 @@ export type MemberPermissions = {
   teamScopes?: Record<string, TeamScopedPermission>;
 };
 
+/** "default" resolves to on for editors; the server stores the tri-state. */
+export type NotificationPreference = "on" | "off" | "default";
+
+export type MemberNotifications = {
+  intakeSubmissions: NotificationPreference;
+};
+
 export type AuthBootstrap = {
   authenticated: boolean;
   sessionKind: SessionKind;
@@ -64,6 +71,7 @@ export type AuthBootstrap = {
   uploadPreset?: string;
   appAccess?: "full" | "music" | "view";
   permissions?: MemberPermissions;
+  notifications?: MemberNotifications;
   role?: string | null;
   user?: {
     uid: string;
@@ -281,10 +289,19 @@ export type TeamScheduleAttendance = Record<
 
 export type TeamScheduleOccurrence = {
   occurrenceId: string;
+  // representative service for back-compat lookups; for a combined occurrence this
+  // is the earliest service of the group. Use `serviceIds` for the full set.
   serviceId: string;
+  // set when several combined services merged into this occurrence (the shared
+  // serviceGroupId); absent for a plain single-service occurrence.
+  groupId?: string;
+  // every service this occurrence covers (one for ungrouped, many for a group).
+  serviceIds?: string[];
   name: string;
   startsAt: string;
-  // optional per-date override of the service's position requirements
+  // optional per-date override of the service's position requirements. For a
+  // combined occurrence this holds the union (max count per position) of its
+  // grouped services so one set of cells covers them all.
   positionRequirements?: PositionRequirement[];
 };
 

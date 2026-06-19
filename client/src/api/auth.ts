@@ -10,7 +10,9 @@ import type {
   ChurchBranding,
   ChurchInviteRow,
   ChurchMemberRow,
+  MemberNotifications,
   MemberPermissions,
+  NotificationPreference,
   DesktopAuthCompleteResponse,
   DesktopAuthProvider,
   DesktopAuthStartResponse,
@@ -233,6 +235,17 @@ export const updateHumanProfile = async (body: { displayName: string }) =>
     success: boolean;
     user: { uid: string; email: string; displayName: string };
   }>("api/auth/profile", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const updateHumanNotificationPreferences = async (body: {
+  intakeSubmissions?: NotificationPreference;
+}) =>
+  apiFetch<{
+    success: boolean;
+    notifications: MemberNotifications;
+  }>("api/auth/notification-preferences", {
     method: "POST",
     body: JSON.stringify(body),
   });

@@ -9,6 +9,7 @@ import {
   renderAccountRestoredEmail,
   renderAdminRecoveryRequestEmail,
   renderInviteEmail,
+  renderIntakeSubmissionsDigestEmail,
   renderPairingSetupCodeEmail,
   renderPasswordResetEmail,
   renderSignInCodeEmail,
@@ -74,6 +75,15 @@ const main = async () => {
       html: renderAccountRestoredEmail({
         churchName: "Sample Community Church",
         resetUrl: `${demoBase}/#/auth/reset?oobCode=demo-restore-token`,
+      }).then(({ html }) => html),
+    },
+    {
+      file: "intake-submissions-digest.html",
+      html: renderIntakeSubmissionsDigestEmail({
+        churchName: "Sample Community Church",
+        formName: "June availability",
+        reviewUrl: `${demoBase}/#/teams`,
+        submitterNames: ["Jordan Lee", "Sam Rivera", "Alex Kim"],
       }).then(({ html }) => html),
     },
   ];

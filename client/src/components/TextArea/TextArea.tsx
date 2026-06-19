@@ -130,7 +130,7 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
         id={id}
         ref={setTextAreaRef}
         className={cn(
-          "min-h-0 w-full resize-none select-text",
+          "min-h-0 w-full resize-none select-text text-sm",
           autoResize ? "flex-none overflow-x-hidden overflow-y-hidden" : "flex-1",
           textareaClassName
         )}

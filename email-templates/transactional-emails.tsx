@@ -297,6 +297,63 @@ export function PairingSetupCodeEmail({
   );
 }
 
+type IntakeSubmissionsDigestEmailProps = {
+  churchName: string;
+  formName: string;
+  reviewUrl: string;
+  /** Submitter display names, in arrival order. Length drives the summary line. */
+  submitterNames: string[];
+};
+
+const digestListItemStyle = {
+  color: worshipSyncEmailBrand.textPrimary,
+  fontSize: "15px",
+  lineHeight: "24px",
+  margin: "0 0 6px",
+};
+
+export function IntakeSubmissionsDigestEmail({
+  churchName,
+  formName,
+  reviewUrl,
+  submitterNames,
+}: IntakeSubmissionsDigestEmailProps) {
+  const count = submitterNames.length;
+  const churchDisplay = churchName.trim() || "your church";
+  const formDisplay = formName.trim() || "team availability";
+  const countLabel = `${count} new ${count === 1 ? "response" : "responses"}`;
+  return (
+    <WorshipSyncEmailLayout
+      previewText={`${countLabel} on ${formDisplay}`}
+      title="New availability responses"
+    >
+      <Text style={bodyText}>
+        {countLabel} came in on{" "}
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          {formDisplay}
+        </strong>{" "}
+        for {churchDisplay}.
+      </Text>
+      <Section style={{ margin: "0 0 24px" }}>
+        {submitterNames.map((name, index) => (
+          <Text key={`${name}-${index}`} style={digestListItemStyle}>
+            • {name}
+          </Text>
+        ))}
+      </Section>
+      <Section style={{ margin: "0 0 16px", textAlign: "center" }}>
+        <Button href={reviewUrl} style={ctaButtonStyle}>
+          Review responses
+        </Button>
+      </Section>
+      <Text style={finePrint}>
+        You receive these because you can edit this team. Turn them off anytime
+        from your account menu in WorshipSync.
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}
+
 export function AccountRestoredEmail({
   churchName,
   resetUrl,

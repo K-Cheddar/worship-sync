@@ -3,6 +3,7 @@ import type {
   TeamRecord,
   TeamSchedule,
   TeamScheduleAssignments,
+  TeamScheduleAttendance,
   TeamScheduleOccurrence,
   TeamService,
 } from "../../../api/authTypes";
@@ -86,12 +87,17 @@ export const remapAssignmentsToOccurrences = ({
 }): TeamScheduleAssignments => {
   if (!assignments || Object.keys(assignments).length === 0) return {};
 
+  // Combined occurrences are keyed by their shared group so they line up across a
+  // date shift the same way single services do.
+  const bucketKey = (occurrence: TeamScheduleOccurrence) =>
+    occurrence.groupId ? `group:${occurrence.groupId}` : occurrence.serviceId;
   const byService = (occurrences: TeamScheduleOccurrence[]) => {
     const map = new Map<string, TeamScheduleOccurrence[]>();
     occurrences.forEach((occurrence) => {
-      const list = map.get(occurrence.serviceId) || [];
+      const key = bucketKey(occurrence);
+      const list = map.get(key) || [];
       list.push(occurrence);
-      map.set(occurrence.serviceId, list);
+      map.set(key, list);
     });
     map.forEach((list) =>
       list.sort(
@@ -153,6 +159,121 @@ export const buildScheduleCopyDraft = ({
   assignments: source.assignments || {},
   attendance: {},
 });
+
+const occurrenceDate = (occurrence: TeamScheduleOccurrence) =>
+  occurrence.startsAt.slice(0, 10);
+
+const occurrenceServiceIds = (occurrence: TeamScheduleOccurrence) =>
+  occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId];
+
+/**
+ * Map each source occurrence to the target occurrence(s) covering the same
+ * service on the same date. Unlike {@link remapAssignmentsToOccurrences} (which
+ * lines services up by chronological index for date shifts), this keys on
+ * (serviceId, date) — the part of a service's identity that does *not* change
+ * when it's combined or un-combined. That makes it the safe path when grouping is
+ * turned on/off for services an existing schedule already uses: the occurrence id
+ * format flips (`first@…` ⇄ `group:…@…`) but the service+date is unchanged.
+ *
+ * One source can fan out to several targets (un-combining) and several sources
+ * can land on one target (combining); callers decide how to merge colliding rows.
+ */
+const mapOccurrencesByServiceDate = (
+  sourceOccurrences: TeamScheduleOccurrence[],
+  targetOccurrences: TeamScheduleOccurrence[],
+): Map<string, string[]> => {
+  const targetByServiceDate = new Map<string, string>();
+  targetOccurrences.forEach((target) => {
+    occurrenceServiceIds(target).forEach((serviceId) => {
+      targetByServiceDate.set(
+        `${serviceId}@${occurrenceDate(target)}`,
+        target.occurrenceId,
+      );
+    });
+  });
+
+  const map = new Map<string, string[]>();
+  sourceOccurrences.forEach((source) => {
+    const targetIds = [
+      ...new Set(
+        occurrenceServiceIds(source)
+          .map((serviceId) =>
+            targetByServiceDate.get(`${serviceId}@${occurrenceDate(source)}`),
+          )
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (targetIds.length) map.set(source.occurrenceId, targetIds);
+  });
+  return map;
+};
+
+/**
+ * Re-key assignments when an existing schedule's occurrence ids change shape due
+ * to services being combined/un-combined. Rows are matched by (serviceId, date)
+ * and, when several source rows collapse onto one combined occurrence, merged
+ * cell-by-cell with the earliest service winning a contested slot. A no-op when
+ * the ids are unchanged (it reproduces the assignments exactly).
+ */
+export const rekeyAssignmentsByServiceDate = ({
+  sourceOccurrences,
+  targetOccurrences,
+  assignments,
+}: {
+  sourceOccurrences: TeamScheduleOccurrence[];
+  targetOccurrences: TeamScheduleOccurrence[];
+  assignments: TeamScheduleAssignments;
+}): TeamScheduleAssignments => {
+  if (!assignments || Object.keys(assignments).length === 0) return {};
+  const map = mapOccurrencesByServiceDate(sourceOccurrences, targetOccurrences);
+  // Earliest service first so its assignments take precedence in a merge.
+  const orderedSources = [...sourceOccurrences].sort(
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+  );
+  const result: TeamScheduleAssignments = {};
+  orderedSources.forEach((source) => {
+    const row = assignments[source.occurrenceId];
+    const targetIds = map.get(source.occurrenceId);
+    if (!row || !targetIds) return;
+    targetIds.forEach((targetId) => {
+      const dest = (result[targetId] ||= {});
+      Object.entries(row).forEach(([cellKey, cell]) => {
+        if (dest[cellKey] === undefined) dest[cellKey] = cell;
+      });
+    });
+  });
+  return result;
+};
+
+/** Attendance counterpart of {@link rekeyAssignmentsByServiceDate}, merged per member. */
+export const rekeyAttendanceByServiceDate = ({
+  sourceOccurrences,
+  targetOccurrences,
+  attendance,
+}: {
+  sourceOccurrences: TeamScheduleOccurrence[];
+  targetOccurrences: TeamScheduleOccurrence[];
+  attendance: TeamScheduleAttendance;
+}): TeamScheduleAttendance => {
+  if (!attendance || Object.keys(attendance).length === 0) return {};
+  const map = mapOccurrencesByServiceDate(sourceOccurrences, targetOccurrences);
+  const orderedSources = [...sourceOccurrences].sort(
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+  );
+  const result: TeamScheduleAttendance = {};
+  orderedSources.forEach((source) => {
+    const row = attendance[source.occurrenceId];
+    const targetIds = map.get(source.occurrenceId);
+    if (!row || !targetIds) return;
+    targetIds.forEach((targetId) => {
+      const dest = (result[targetId] ||= {});
+      Object.entries(row).forEach(([memberId, entry]) => {
+        if (dest[memberId] === undefined) dest[memberId] = entry;
+      });
+    });
+  });
+  return result;
+};
 
 export type ScheduleEditFormProps = {
   draftKey: string;

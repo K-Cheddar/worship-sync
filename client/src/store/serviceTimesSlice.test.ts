@@ -23,12 +23,36 @@ const createStore = (preloadedState?: Partial<ServiceTimesSliceState>) =>
 
 describe("serviceTimesSlice", () => {
   describe("reducer only", () => {
-    it("addService appends to list", () => {
-      const store = createStore();
-      const service = createServiceTime({ id: "s1", name: "Service 1" });
-      store.dispatch(addService(service));
-      expect(store.getState().serviceTimes.list).toHaveLength(1);
-      expect(store.getState().serviceTimes.list[0].name).toBe("Service 1");
+    it("addService inserts services in schedule order", () => {
+      const store = createStore({
+        serviceTimes: {
+          list: [
+            createServiceTime({
+              id: "sunday",
+              name: "Sunday",
+              reccurence: "weekly",
+              dayOfWeek: 0,
+              time: "11:00",
+            }),
+          ],
+          isInitialized: true,
+        },
+      });
+      store.dispatch(
+        addService(
+          createServiceTime({
+            id: "wednesday",
+            name: "Wednesday",
+            reccurence: "weekly",
+            dayOfWeek: 3,
+            time: "19:00",
+          }),
+        ),
+      );
+      expect(store.getState().serviceTimes.list.map((service) => service.id)).toEqual([
+        "sunday",
+        "wednesday",
+      ]);
     });
 
     it("updateService updates existing service by id", () => {
@@ -43,8 +67,8 @@ describe("serviceTimesSlice", () => {
       });
       store.dispatch(updateService({ id: "s1", changes: { name: "Updated" } }));
       const list = store.getState().serviceTimes.list;
-      expect(list[0].name).toBe("Updated");
-      expect(list[1].name).toBe("Other");
+      expect(list.find((service) => service.id === "s1")?.name).toBe("Updated");
+      expect(list.find((service) => service.id === "s2")?.name).toBe("Other");
     });
 
     it("removeService removes by id", () => {

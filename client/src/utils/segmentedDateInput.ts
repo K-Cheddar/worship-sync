@@ -47,6 +47,51 @@ export type SegmentedDateDisplayParts = {
   yearEntry?: string | null;
 };
 
+export type DateRangeEndpoint = "start" | "end";
+
+export type DateRangeField = `${DateRangeEndpoint}-${DateSegment}`;
+
+/** Character index where the end date begins in `MM/DD/YYYY – MM/DD/YYYY`. */
+export const DATE_RANGE_END_OFFSET = 13;
+
+export const DATE_RANGE_FIELD_ORDER: DateRangeField[] = [
+  "start-month",
+  "start-day",
+  "start-year",
+  "end-month",
+  "end-day",
+  "end-year",
+];
+
+export const parseDateRangeField = (
+  field: DateRangeField,
+): { endpoint: DateRangeEndpoint; segment: DateSegment } => {
+  const [endpoint, segment] = field.split("-") as [
+    DateRangeEndpoint,
+    DateSegment,
+  ];
+  return { endpoint, segment };
+};
+
+export const getDateRangeFieldRange = (
+  field: DateRangeField,
+): [number, number] => {
+  const { endpoint, segment } = parseDateRangeField(field);
+  const offset = endpoint === "start" ? 0 : DATE_RANGE_END_OFFSET;
+  const [start, end] = DATE_SEGMENT_RANGES[segment];
+  return [start + offset, end + offset];
+};
+
+export const getDateRangeFieldFromPos = (pos: number): DateRangeField => {
+  if (pos <= 9) {
+    return `start-${getDateSegmentFromPos(pos)}`;
+  }
+  if (pos <= 12) {
+    return pos <= 10 ? "start-year" : "end-month";
+  }
+  return `end-${getDateSegmentFromPos(pos - DATE_RANGE_END_OFFSET)}`;
+};
+
 /** Fixed-width `MM/DD/YYYY` display for segmented keyboard editing. */
 export const formatSegmentedDateDisplay = ({
   month,
@@ -64,3 +109,10 @@ export const formatSegmentedDateDisplay = ({
         : "yyyy";
   return `${monthText}/${dayText}/${yearText}`;
 };
+
+/** Fixed-width `MM/DD/YYYY – MM/DD/YYYY` display for segmented keyboard editing. */
+export const formatSegmentedDateRangeDisplay = (
+  start: SegmentedDateDisplayParts,
+  end: SegmentedDateDisplayParts,
+) =>
+  `${formatSegmentedDateDisplay(start)} – ${formatSegmentedDateDisplay(end)}`;

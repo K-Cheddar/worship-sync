@@ -68,6 +68,39 @@ export const sortPositionsByOrder = (
     return orderA - orderB;
   });
 
+export const sortTeamsByName = (teams: TeamRecord[]): TeamRecord[] =>
+  [...teams].sort((a, b) => a.name.localeCompare(b.name));
+
+export const sortTeamRolesByName = (roles: TeamRole[]): TeamRole[] =>
+  [...roles].sort(
+    (a, b) => a.teamId.localeCompare(b.teamId) || a.name.localeCompare(b.name),
+  );
+
+export const sortIntakeFormsByStartDate = (
+  forms: TeamIntakeForm[],
+): TeamIntakeForm[] =>
+  [...forms].sort(
+    (a, b) =>
+      (b.startDate || "").localeCompare(a.startDate || "") ||
+      a.name.localeCompare(b.name),
+  );
+
+export const sortTeamsDataKey = <K extends TeamsDataKey>(
+  key: K,
+  items: TeamsData[K],
+): TeamsData[K] => {
+  switch (key) {
+    case "teams":
+      return sortTeamsByName(items as TeamRecord[]) as TeamsData[K];
+    case "teamRoles":
+      return sortTeamRolesByName(items as TeamRole[]) as TeamsData[K];
+    case "intakeForms":
+      return sortIntakeFormsByStartDate(items as TeamIntakeForm[]) as TeamsData[K];
+    default:
+      return items;
+  }
+};
+
 /** Positions for multi-team pickers: teams follow the roster list, positions follow each team's Positions tab order. */
 export const orderPositionsByTeamList = (
   positions: TeamPosition[],
@@ -92,13 +125,15 @@ export const orderPositionsByTeamList = (
 export const normalizeTeamsData = (data?: Partial<TeamsData>): TeamsData => ({
   members: (data?.members || []).map(normalizeRosterMember),
   positions: sortPositionsByOrder(data?.positions || []),
-  teams: data?.teams || [],
-  teamRoles: data?.teamRoles || [],
+  teams: sortTeamsByName(data?.teams || []),
+  teamRoles: sortTeamRolesByName(data?.teamRoles || []),
   qualificationAreas: data?.qualificationAreas || [],
   qualificationLevels: data?.qualificationLevels || [],
   services: data?.services || [],
   schedules: data?.schedules || [],
-  intakeForms: (data?.intakeForms || []).map(normalizeIntakeForm),
+  intakeForms: sortIntakeFormsByStartDate(
+    (data?.intakeForms || []).map(normalizeIntakeForm),
+  ),
   intakeSubmissions: (data?.intakeSubmissions || []).map(
     normalizeIntakeSubmission,
   ),
@@ -118,9 +153,13 @@ export const normalizeTeamsDataKey = <K extends TeamsDataKey>(
       ) as TeamsData[K];
     case "positions":
       return sortPositionsByOrder(items as TeamPosition[]) as TeamsData[K];
+    case "teams":
+      return sortTeamsByName(items as TeamRecord[]) as TeamsData[K];
+    case "teamRoles":
+      return sortTeamRolesByName(items as TeamRole[]) as TeamsData[K];
     case "intakeForms":
-      return (items as TeamIntakeForm[]).map(
-        normalizeIntakeForm,
+      return sortIntakeFormsByStartDate(
+        (items as TeamIntakeForm[]).map(normalizeIntakeForm),
       ) as TeamsData[K];
     case "intakeSubmissions":
       return (items as TeamIntakeSubmission[]).map(
@@ -697,11 +736,170 @@ export const formatServiceTiming = (service?: TeamService | null) => {
   return "";
 };
 
+/** The fields that decide which calendar day(s) a service can land on. */
+export type ServiceDayShape = Pick<
+  ServiceTime,
+  "reccurence" | "dayOfWeek" | "daysOfWeek" | "weekday" | "dateTimeISO"
+>;
+
+/** Weekdays (0=Sun) a service can occur on, derived from its recurrence. */
+export const getServiceWeekdays = (service: Partial<ServiceDayShape>): number[] => {
+  switch (service.reccurence) {
+    case "weekly":
+      return service.dayOfWeek == null ? [] : [service.dayOfWeek];
+    case "multi_weekly":
+      return (service.daysOfWeek || []).map((entry) => entry.day);
+    case "monthly":
+      return service.weekday == null ? [] : [service.weekday];
+    case "one_time":
+      return service.dateTimeISO
+        ? [new Date(service.dateTimeISO).getDay()]
+        : [];
+    default:
+      return [];
+  }
+};
+
+/**
+ * Whether two services could ever fall on the same calendar day — the
+ * prerequisite for combining them into one schedule occurrence. Two one-time
+ * services must share the exact date; otherwise a shared weekday is enough (a
+ * weekly Sunday service and a monthly 1st-Sunday service can coincide).
+ */
+export const canServicesShareDay = (
+  a: Partial<ServiceDayShape>,
+  b: Partial<ServiceDayShape>,
+): boolean => {
+  const aDate =
+    a.reccurence === "one_time" ? a.dateTimeISO?.slice(0, 10) : undefined;
+  const bDate =
+    b.reccurence === "one_time" ? b.dateTimeISO?.slice(0, 10) : undefined;
+  if (aDate && bDate) return aDate === bDate;
+  const aWeekdays = new Set(getServiceWeekdays(a));
+  return getServiceWeekdays(b).some((weekday) => aWeekdays.has(weekday));
+};
+
 export const toTeamService = (service: ServiceTime): TeamService => ({
   ...service,
   serviceId: service.id,
   churchId: "",
 });
+
+/**
+ * Work out the serviceGroupId writes needed so `serviceId` ends up combined with
+ * exactly `partnerIds`. Combined services share one set of schedule assignments.
+ *
+ * Returns the shared `groupId` to stamp on the edited service plus `partnerUpdates`
+ * for the *other* services to persist. This resolves the whole resulting state, so
+ * it also handles partners pulled out of a different group: any group left with a
+ * single member afterwards is dissolved (a one-service group is meaningless and
+ * would merge incorrectly). A stable existing id is reused where possible so
+ * re-saving doesn't churn the occurrence ids that assignments hang off of.
+ */
+export const planServiceGroupUpdates = ({
+  services,
+  serviceId,
+  currentGroupId,
+  partnerIds,
+}: {
+  services: TeamService[];
+  serviceId?: string;
+  currentGroupId?: string;
+  partnerIds: string[];
+}): {
+  groupId?: string;
+  partnerUpdates: { id: string; serviceGroupId?: string }[];
+} => {
+  const partnerSet = new Set(partnerIds.filter((id) => id && id !== serviceId));
+
+  // Pick the shared id: reuse the edited service's current group, else a selected
+  // partner's existing group, else a fresh id.
+  const groupId =
+    partnerSet.size === 0
+      ? undefined
+      : currentGroupId ||
+        [...partnerSet]
+          .map(
+            (id) => services.find((service) => service.serviceId === id)?.serviceGroupId,
+          )
+          .find(Boolean) ||
+        generateRandomId();
+
+  // Resolve every service's resulting group: start from the current state, move the
+  // edited service + its partners into `groupId`, and drop former members the
+  // operator unchecked.
+  const finalGroup = new Map<string, string | undefined>();
+  services.forEach((service) =>
+    finalGroup.set(service.serviceId, service.serviceGroupId),
+  );
+  if (serviceId) finalGroup.set(serviceId, groupId);
+  partnerSet.forEach((id) => finalGroup.set(id, groupId));
+  if (currentGroupId) {
+    services.forEach((service) => {
+      if (
+        service.serviceId !== serviceId &&
+        service.serviceGroupId === currentGroupId &&
+        !partnerSet.has(service.serviceId)
+      ) {
+        finalGroup.set(service.serviceId, undefined);
+      }
+    });
+  }
+
+  // Count members per resulting group (including the edited service, which may be a
+  // not-yet-persisted new service), then dissolve any group down to one member.
+  const counts = new Map<string, number>();
+  const bump = (id?: string) => {
+    if (id) counts.set(id, (counts.get(id) || 0) + 1);
+  };
+  finalGroup.forEach((id) => bump(id));
+  if (!serviceId) bump(groupId);
+  finalGroup.forEach((id, key) => {
+    if (id && counts.get(id) === 1) finalGroup.set(key, undefined);
+  });
+  const resultGroupId =
+    groupId && counts.get(groupId) === 1 ? undefined : groupId;
+
+  const partnerUpdates: { id: string; serviceGroupId?: string }[] = [];
+  services.forEach((service) => {
+    if (service.serviceId === serviceId) return;
+    const next = finalGroup.get(service.serviceId);
+    if (next !== service.serviceGroupId) {
+      partnerUpdates.push({ id: service.serviceId, serviceGroupId: next });
+    }
+  });
+
+  return { groupId: resultGroupId, partnerUpdates };
+};
+
+/**
+ * When a service is deleted, dissolve its combined group if fewer than two members
+ * would remain — a one-service group is meaningless and would otherwise leave a
+ * dangling serviceGroupId. Returns the serviceGroupId clears to persist.
+ */
+export const planServiceGroupCleanupOnDelete = ({
+  services,
+  serviceId,
+}: {
+  services: TeamService[];
+  serviceId: string;
+}): { partnerUpdates: { id: string; serviceGroupId?: string }[] } => {
+  const groupId = services.find(
+    (service) => service.serviceId === serviceId,
+  )?.serviceGroupId;
+  if (!groupId) return { partnerUpdates: [] };
+  const remaining = services.filter(
+    (service) =>
+      service.serviceGroupId === groupId && service.serviceId !== serviceId,
+  );
+  if (remaining.length > 1) return { partnerUpdates: [] };
+  return {
+    partnerUpdates: remaining.map((service) => ({
+      id: service.serviceId,
+      serviceGroupId: undefined,
+    })),
+  };
+};
 
 export const createEmptyServiceDraft = (): Partial<ServiceTime> => ({
   name: "",
@@ -731,6 +929,7 @@ export const buildServiceTimeUpdate = (
     shouldShowName: existing?.shouldShowName,
     positionRequirements:
       draft.positionRequirements ?? existing?.positionRequirements,
+    serviceGroupId: draft.serviceGroupId,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     reccurence: recurrence,

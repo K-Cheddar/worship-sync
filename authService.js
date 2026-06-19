@@ -9,6 +9,7 @@ import {
   renderAccountRestoredEmail,
   renderAdminRecoveryRequestEmail,
   renderInviteEmail,
+  renderIntakeSubmissionsDigestEmail,
   renderPairingSetupCodeEmail,
   renderPasswordResetEmail,
   renderSignInCodeEmail,
@@ -21,6 +22,13 @@ import {
 } from "./server/authResponseSanitize.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
+import {
+  collectDigestSubmitterNames,
+  decideDigestAction,
+  isTeamEditorForForm,
+  normalizeIntakeNotificationPreference,
+  selectIntakeNotifyRecipients,
+} from "./server/intakeNotifyRecipients.js";
 import {
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
@@ -166,6 +174,14 @@ const normalizeMembershipPermissions = (permissions, role = "member") => {
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
   };
 };
+// Per-user notification preferences stored on the membership. Kept as a
+// tri-state ("default" resolves to on for editors at send time) so the default
+// can change without rewriting rows. See server/intakeNotifyRecipients.js.
+const normalizeMembershipNotifications = (notifications) => ({
+  intakeSubmissions: normalizeIntakeNotificationPreference(
+    notifications?.intakeSubmissions,
+  ),
+});
 const hasAnyTeamScope = (permissions) =>
   Object.keys(permissions?.teamScopes || {}).length > 0;
 const hasTeamScope = (permissions, teamId, required = "view") => {
@@ -1230,6 +1246,46 @@ const listTrustedHumanDevicesForChurch = async (churchId) => {
   );
 };
 
+// Editors of a form's teams = exactly the requireTeamsEditForTeam rule, read
+// from a stored membership instead of the live session. The decision itself
+// lives in the pure module (isTeamEditorForForm); this adapts the membership.
+const membershipCanEditTeams = (membership, formTeamIds) => {
+  const permissions = normalizeMembershipPermissions(
+    membership.permissions,
+    membership.role,
+  );
+  return isTeamEditorForForm({
+    role: membership.role,
+    teamsPermission: permissions.teams,
+    teamScopes: permissions.teamScopes,
+    formTeamIds,
+  });
+};
+
+// Addresses to notify for a form's submissions: derived from who can edit the
+// form's teams, minus anyone who muted intake notifications. Never a stored
+// recipient list, so it can't drift from actual edit access.
+const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
+  const memberships = (await listMembershipsForChurch(churchId)).filter(
+    (membership) => membership.status === "active",
+  );
+  const candidates = await Promise.all(
+    memberships.map(async (membership) => {
+      if (!membershipCanEditTeams(membership, formTeamIds)) {
+        return { isEditor: false };
+      }
+      const user = await getUserByUid(membership.userId);
+      return {
+        isEditor: true,
+        email: user?.primaryEmail || user?.email || "",
+        preference: normalizeMembershipNotifications(membership.notifications)
+          .intakeSubmissions,
+      };
+    }),
+  );
+  return selectIntakeNotifyRecipients(candidates);
+};
+
 const getTrustedHumanDeviceByFingerprint = async ({
   userId,
   fingerprintHash,
@@ -1607,6 +1663,7 @@ const buildHumanBootstrap = ({
     membership.permissions,
     membership.role,
   ),
+  notifications: normalizeMembershipNotifications(membership.notifications),
   user: {
     uid: user.uid,
     email: user.email,
@@ -2933,8 +2990,149 @@ export const seedActiveHumanBearerForServerTests = async ({
   return { humanApiToken, churchId, membershipId };
 };
 
+// --- Team intake submission digest ----------------------------------------
+// New submissions are coalesced into one email per form so a burst of responses
+// (a freshly-shared form) doesn't spam editors. The throttle is a per-form timer
+// keyed by formId; a `pendingDigestSince` marker persisted on the form doc makes
+// it restart-tolerant — a lost timer is recovered on the next submission (the
+// window is treated as already elapsed and flushed). The only uncovered edge is
+// a restart followed by no further submissions, which degrades to "no email,"
+// never to a wrong or duplicated one. Single-instance only (see Teams arch).
+const INTAKE_DIGEST_WINDOW_MS =
+  Number(process.env.AUTH_INTAKE_DIGEST_WINDOW_MS) || 20 * 60 * 1000;
+const intakeDigestTimers = new Map();
+const intakeDigestInFlight = new Set();
+
+const clearIntakeDigestMarker = (formId) =>
+  setDoc(
+    COLLECTIONS.teamIntakeForms,
+    formId,
+    { pendingDigestSince: null },
+    { merge: true },
+  );
+
+const sendIntakeSubmissionDigestInner = async (formId) => {
+  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  if (!form?.pendingDigestSince) return;
+  const since = form.pendingDigestSince;
+  // Do all the fallible work *before* clearing the marker. If recipient
+  // lookup, the submissions query, or rendering throws, the marker survives
+  // and the batch is retried on the next submission (or restart flush) — a
+  // transient failure degrades to "late," never "lost." Individual send
+  // failures are swallowed below, so one bad address can't block the rest or
+  // strand the marker.
+  const recipients = await listIntakeNotifyRecipients(
+    form.churchId,
+    form.teamIds || [],
+  );
+  if (recipients.length === 0) {
+    await clearIntakeDigestMarker(formId);
+    return;
+  }
+  const allSubmissions = await queryDocs(
+    COLLECTIONS.teamIntakeSubmissions,
+    [{ field: "formId", value: formId }],
+    { limit: 500 },
+  );
+  const submitterNames = collectDigestSubmitterNames(allSubmissions, since);
+  if (submitterNames.length === 0) {
+    await clearIntakeDigestMarker(formId);
+    return;
+  }
+  const church = await getChurchById(form.churchId);
+  const { html, text } = await renderIntakeSubmissionsDigestEmail({
+    churchName: church?.name || "",
+    formName: form.name || "team availability",
+    reviewUrl: `${APP_BASE_URL}/#/teams`,
+    submitterNames,
+  });
+  const subject = `${submitterNames.length} new ${form.name || "intake"} ${
+    submitterNames.length === 1 ? "response" : "responses"
+  }`;
+  // One email per recipient: keeps addresses private and matches sendEmail's
+  // single-`to` contract.
+  await Promise.all(
+    recipients.map((to) =>
+      sendEmail({
+        to,
+        subject,
+        textBody: text,
+        htmlBody: html,
+        tags: { type: "intake_digest" },
+      }).catch((error) =>
+        logAuthEvent("warn", "intake.digest.send-error", {
+          formId,
+          errorMessage: error?.message || "send failed",
+        }),
+      ),
+    ),
+  );
+  // Cleared only after a successful send pass; submissions arriving after this
+  // open a fresh window via scheduleIntakeSubmissionDigest.
+  await clearIntakeDigestMarker(formId);
+};
+
+// Re-entrancy guard: because the marker is held until the send finishes, a
+// submission landing mid-send can hit the "flush-now" path. Bail if a send for
+// this form is already running so we never double-send. (Single-instance, so an
+// in-memory set suffices.) Residual edge: a submission saved between this send's
+// query and its marker-clear isn't included and isn't re-marked — that one
+// notification is delayed to the next batch only if another submission follows,
+// otherwise dropped. A rare, single-item loss, vs. the whole-batch loss this
+// replaced.
+const sendIntakeSubmissionDigest = async (formId) => {
+  intakeDigestTimers.delete(formId);
+  if (intakeDigestInFlight.has(formId)) return;
+  intakeDigestInFlight.add(formId);
+  try {
+    await sendIntakeSubmissionDigestInner(formId);
+  } finally {
+    intakeDigestInFlight.delete(formId);
+  }
+};
+
+const armIntakeDigestTimer = (formId) => {
+  const timer = setTimeout(() => {
+    sendIntakeSubmissionDigest(formId).catch((error) =>
+      logAuthEvent("warn", "intake.digest.error", {
+        formId,
+        errorMessage: error?.message || "digest failed",
+      }),
+    );
+  }, INTAKE_DIGEST_WINDOW_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  intakeDigestTimers.set(formId, timer);
+};
+
+const scheduleIntakeSubmissionDigest = async (formId) => {
+  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  if (!form) return;
+  const action = decideDigestAction({
+    pendingSince: form.pendingDigestSince,
+    hasArmedTimer: intakeDigestTimers.has(formId),
+    nowMs: Date.now(),
+    windowMs: INTAKE_DIGEST_WINDOW_MS,
+  });
+  if (action === "noop") return;
+  if (action === "flush-now") {
+    await sendIntakeSubmissionDigest(formId);
+    return;
+  }
+  if (action === "open-window") {
+    await setDoc(
+      COLLECTIONS.teamIntakeForms,
+      formId,
+      { pendingDigestSince: nowIso() },
+      { merge: true },
+    );
+  }
+  // "open-window" and "arm-timer" both schedule the send.
+  armIntakeDigestTimer(formId);
+};
+
 const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
+  scheduleIntakeSubmissionDigest,
   addSecurityEvent,
   assertCsrf,
   createId,
@@ -4037,6 +4235,41 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message || "Could not update your profile.",
+      });
+    }
+  },
+
+  async updateOwnNotificationPreferences(req, res) {
+    try {
+      await assertCsrf(req);
+      const session = await requireHumanSession(req);
+      const membership = await getMembershipForUser(
+        session.user.uid,
+        session.churchId,
+      );
+      if (!membership) {
+        throw httpError(404, "Membership not found.");
+      }
+      const notifications = normalizeMembershipNotifications({
+        ...membership.notifications,
+        // Only the fields the client sent are overridden; the rest are
+        // preserved from the existing membership.
+        ...(req.body?.intakeSubmissions !== undefined
+          ? { intakeSubmissions: req.body.intakeSubmissions }
+          : {}),
+      });
+      await setDoc(
+        COLLECTIONS.memberships,
+        membership.membershipId,
+        { notifications, updatedAt: nowIso() },
+        { merge: true },
+      );
+      return res.json({ success: true, notifications });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage:
+          error.message || "Could not update your notification settings.",
       });
     }
   },

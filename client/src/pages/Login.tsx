@@ -100,6 +100,9 @@ const Login = () => {
   const [resendCooldownSec, setResendCooldownSec] = useState(0);
   const [isResending, setIsResending] = useState(false);
   const [isStartingDesktopAuth, setIsStartingDesktopAuth] = useState(false);
+  const [activeProviderSignIn, setActiveProviderSignIn] = useState<
+    "google" | "microsoft" | null
+  >(null);
   const [pendingDesktopAuth, setPendingDesktopAuth] =
     useState<PendingDesktopAuthState | null>(() => {
       const stored = getPendingDesktopAuthState();
@@ -263,6 +266,18 @@ const Login = () => {
     []
   );
 
+  const finishingProviderSignInRef = useRef<"google" | "microsoft" | null>(
+    null,
+  );
+  /** True once `login()` sets `loginState` to loading for the current provider attempt. */
+  const providerSignInSeenLoadingRef = useRef(false);
+
+  const clearProviderSignInAttempt = useCallback(() => {
+    setActiveProviderSignIn(null);
+    finishingProviderSignInRef.current = null;
+    providerSignInSeenLoadingRef.current = false;
+  }, []);
+
   useEffect(() => {
     if (pendingDesktopAuth) {
       return;
@@ -271,18 +286,67 @@ const Login = () => {
   }, [pendingDesktopAuth]);
 
   useEffect(() => {
+    if (activeProviderSignIn && context?.loginState === "loading") {
+      providerSignInSeenLoadingRef.current = true;
+    }
+  }, [activeProviderSignIn, context?.loginState]);
+
+  useEffect(() => {
+    if (isElectronRuntime) {
+      if (
+        activeProviderSignIn &&
+        !isStartingDesktopAuth &&
+        !pendingDesktopAuth
+      ) {
+        clearProviderSignInAttempt();
+      }
+      return;
+    }
+
+    if (!activeProviderSignIn) {
+      return;
+    }
+
+    const loginState = context?.loginState;
+    if (loginState === "loading") {
+      return;
+    }
+
+    if (loginState === "success") {
+      setActiveProviderSignIn(null);
+      return;
+    }
+
+    if (
+      providerSignInSeenLoadingRef.current ||
+      Boolean(context?.authError)
+    ) {
+      clearProviderSignInAttempt();
+    }
+  }, [
+    activeProviderSignIn,
+    clearProviderSignInAttempt,
+    context?.authError,
+    context?.loginState,
+    isElectronRuntime,
+    isStartingDesktopAuth,
+    pendingDesktopAuth,
+  ]);
+
+  useEffect(() => {
     const pendingId = context?.pendingEmailVerificationId;
     const clearPending = context?.clearPendingEmailVerification;
     if (!pendingId || !clearPending) {
       return;
     }
     context?.clearAuthError();
+    clearProviderSignInAttempt();
     setPendingAuthId(pendingId);
     setMode("code");
     setFieldErrors({});
     setInfoBanner("");
     clearPending();
-  }, [context]);
+  }, [clearProviderSignInAttempt, context]);
 
   useEffect(() => {
     const codeParam = searchParams.get("code");
@@ -322,7 +386,8 @@ const Login = () => {
   const clearPendingDesktopAuth = useCallback(() => {
     setPendingDesktopAuth(null);
     setPendingDesktopAuthState(null);
-  }, []);
+    clearProviderSignInAttempt();
+  }, [clearProviderSignInAttempt]);
 
   const openDesktopBrowserUrl = useCallback(async (url: string) => {
     if (isElectronRuntime && window.electronAPI?.openExternalUrl) {
@@ -429,6 +494,7 @@ const Login = () => {
         };
         setPendingDesktopAuth(nextPendingAuth);
         setPendingDesktopAuthState(nextPendingAuth);
+        setActiveProviderSignIn(null);
         await openDesktopBrowserUrl(response.browserUrl);
         setInfoBanner("");
       } catch (error) {
@@ -581,7 +647,14 @@ const Login = () => {
     }
   };
 
+  const isProviderSignInLoading = (method: "google" | "microsoft") =>
+    activeProviderSignIn === method ||
+    (showWebSessionNavigatingChrome &&
+      finishingProviderSignInRef.current === method);
+
   const handleProviderSignIn = async (method: "google" | "microsoft") => {
+    setActiveProviderSignIn(method);
+    finishingProviderSignInRef.current = method;
     setInfoBanner("");
     setLocalAuthError("");
     setFieldErrors({});
@@ -591,6 +664,7 @@ const Login = () => {
     }
     const response = await context?.login({ method });
     if (response?.requiresEmailCode && response.pendingAuthId) {
+      clearProviderSignInAttempt();
       setPendingAuthId(response.pendingAuthId);
       setMode("code");
       setInfoBanner("");
@@ -980,7 +1054,10 @@ const Login = () => {
                         iconSize="sm"
                         gap="gap-2"
                         className="w-full justify-center"
-                        disabled={isAuthActionDisabled}
+                        isLoading={isProviderSignInLoading("google")}
+                        disabled={
+                          isAuthActionDisabled || activeProviderSignIn !== null
+                        }
                         onClick={() => void handleProviderSignIn("google")}
                       >
                         Continue with Google
@@ -1000,7 +1077,10 @@ const Login = () => {
                         iconSize="sm"
                         gap="gap-2"
                         className="w-full justify-center"
-                        disabled={isAuthActionDisabled}
+                        isLoading={isProviderSignInLoading("microsoft")}
+                        disabled={
+                          isAuthActionDisabled || activeProviderSignIn !== null
+                        }
                         onClick={() => void handleProviderSignIn("microsoft")}
                       >
                         Continue with Microsoft

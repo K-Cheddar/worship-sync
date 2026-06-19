@@ -27,6 +27,8 @@ import {
 } from "../teamsUtils";
 import {
   buildScheduleDraft,
+  rekeyAssignmentsByServiceDate,
+  rekeyAttendanceByServiceDate,
   remapAssignmentsToOccurrences,
   SCHEDULE_DRAFT_PERSIST_DELAY_MS,
   type ScheduleEditFormProps,
@@ -169,28 +171,30 @@ const ScheduleEditForm = ({
         startDate: currentDraft.startDate || "",
         endDate: currentDraft.endDate || "",
       });
-      const occurrenceIds = new Set(occurrences.map((occurrence) => occurrence.occurrenceId));
       // Creating a schedule (including a copy): remap the draft's assignments
       // onto the freshly generated occurrences by service + chronological index,
       // so a copied schedule keeps its people even when the date range shifts.
       // For a blank new schedule this is a no-op (no source occurrences). Editing
-      // an existing schedule keeps the original date-keyed filter below.
+      // an existing schedule re-keys by (service, date) so assignments survive the
+      // occurrence-id change when services are combined/un-combined after the fact.
       const assignments = selectedSchedule
-        ? Object.fromEntries(
-          Object.entries(currentDraft.assignments || {}).filter(([occurrenceId]) =>
-            occurrenceIds.has(occurrenceId),
-          ),
-        )
+        ? rekeyAssignmentsByServiceDate({
+          sourceOccurrences: currentDraft.occurrences || [],
+          targetOccurrences: occurrences,
+          assignments: currentDraft.assignments || {},
+        })
         : remapAssignmentsToOccurrences({
           sourceOccurrences: currentDraft.occurrences || [],
           targetOccurrences: occurrences,
           assignments: currentDraft.assignments || {},
         });
-      const attendance = Object.fromEntries(
-        Object.entries(currentDraft.attendance || {}).filter(([occurrenceId]) =>
-          occurrenceIds.has(occurrenceId),
-        ),
-      );
+      const attendance = selectedSchedule
+        ? rekeyAttendanceByServiceDate({
+          sourceOccurrences: currentDraft.occurrences || [],
+          targetOccurrences: occurrences,
+          attendance: currentDraft.attendance || {},
+        })
+        : {};
       const payload = {
         ...currentDraft,
         occurrences,

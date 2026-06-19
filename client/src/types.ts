@@ -456,6 +456,10 @@ export type ServiceTime = {
   shouldShowName?: boolean;
   // which team positions (and how many) this service needs filled in schedules
   positionRequirements?: PositionRequirement[];
+  // services sharing a non-empty serviceGroupId are "combined": when they fall on
+  // the same date they merge into one schedule occurrence with a single shared set
+  // of assignment cells (e.g. back-to-back 9am + 11am Sunday services).
+  serviceGroupId?: string;
   createdAt?: string;
   updatedAt?: string;
 };
