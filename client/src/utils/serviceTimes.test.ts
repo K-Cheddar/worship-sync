@@ -1,10 +1,12 @@
 import {
+  compareServicesByScheduleOrder,
   getClosestUpcomingService,
   getDisplayedUpcomingService,
   getEffectiveTargetTime,
   getMostRecentTargetTime,
   getNextOccurrenceForService,
   getUpcomingServiceRefreshDelay,
+  sortServicesByScheduleOrder,
 } from "./serviceTimes";
 import type { ServiceTime } from "../types";
 
@@ -17,6 +19,60 @@ const createService = (overrides: Partial<ServiceTime>): ServiceTime => ({
 });
 
 describe("serviceTimes", () => {
+  describe("sortServicesByScheduleOrder", () => {
+    it("orders services by weekday and time instead of creation order", () => {
+      const services: ServiceTime[] = [
+        createService({
+          id: "wednesday",
+          name: "Wednesday",
+          reccurence: "weekly",
+          dayOfWeek: 3,
+          time: "19:00",
+        }),
+        createService({
+          id: "sunday-late",
+          name: "Sunday Late",
+          reccurence: "weekly",
+          dayOfWeek: 0,
+          time: "11:00",
+        }),
+        createService({
+          id: "sunday-early",
+          name: "Sunday Early",
+          reccurence: "weekly",
+          dayOfWeek: 0,
+          time: "09:00",
+        }),
+      ];
+
+      expect(
+        sortServicesByScheduleOrder(services).map((service) => service.id),
+      ).toEqual(["sunday-early", "sunday-late", "wednesday"]);
+    });
+
+    it("sorts one-time services by date after recurring services", () => {
+      const services: ServiceTime[] = [
+        createService({
+          id: "retreat",
+          name: "Retreat",
+          reccurence: "one_time",
+          dateTimeISO: "2026-08-01T10:00:00.000Z",
+        }),
+        createService({
+          id: "sunday",
+          name: "Sunday",
+          reccurence: "weekly",
+          dayOfWeek: 0,
+          time: "10:00",
+        }),
+      ];
+
+      expect(
+        compareServicesByScheduleOrder(services[1], services[0]),
+      ).toBeLessThan(0);
+    });
+  });
+
   describe("getNextOccurrenceForService", () => {
     it("returns future one-time service date and null for past", () => {
       const now = new Date(2026, 0, 10, 9, 0, 0);

@@ -4,7 +4,7 @@ import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
-import DatePicker from "@/components/ui/DatePicker";
+import DateRangePicker from "@/components/ui/DateRangePicker";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -656,18 +656,13 @@ const IntakeManager = ({
           {editing.submissionCount || 0}
         </p>
       ) : null}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <DatePicker
-          label="Start date"
-          value={draft.startDate}
-          onChange={(startDate) => updateDraftDates({ startDate: String(startDate) })}
-        />
-        <DatePicker
-          label="End date"
-          value={draft.endDate}
-          onChange={(endDate) => updateDraftDates({ endDate: String(endDate) })}
-        />
-      </div>
+      <DateRangePicker
+        label="Date range"
+        value={{ startDate: draft.startDate, endDate: draft.endDate }}
+        onChange={({ startDate, endDate }) =>
+          updateDraftDates({ startDate, endDate })
+        }
+      />
       <Checkbox
         label="Open for submissions"
         checked={draft.active}

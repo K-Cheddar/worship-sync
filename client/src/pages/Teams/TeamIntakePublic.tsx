@@ -281,7 +281,7 @@ const TeamIntakePublic = () => {
 
           <BlockoutDatesField
             label="Blockout dates"
-            description="Add any days you're away or can't serve — a single day or a range. We won't schedule you on these dates."
+            description={`Add days you're away or can't serve within ${formatPlainDateRangeLabel(preview.form.startDate, preview.form.endDate)}.`}
             value={payload.blockoutRanges}
             min={preview.form.startDate}
             max={preview.form.endDate}

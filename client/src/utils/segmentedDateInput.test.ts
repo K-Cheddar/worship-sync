@@ -2,6 +2,9 @@ import {
   buildDateFromParts,
   daysInMonth,
   formatSegmentedDateDisplay,
+  formatSegmentedDateRangeDisplay,
+  getDateRangeFieldFromPos,
+  getDateRangeFieldRange,
   getDateSegmentFromPos,
 } from "./segmentedDateInput";
 
@@ -56,6 +59,34 @@ describe("segmentedDateInput", () => {
     it("returns the correct length for February in a leap year", () => {
       expect(daysInMonth(2, 2024)).toBe(29);
       expect(daysInMonth(2, 2025)).toBe(28);
+    });
+  });
+
+  describe("getDateRangeFieldFromPos", () => {
+    it("maps caret positions to start and end date fields", () => {
+      expect(getDateRangeFieldFromPos(0)).toBe("start-month");
+      expect(getDateRangeFieldFromPos(6)).toBe("start-year");
+      expect(getDateRangeFieldFromPos(10)).toBe("start-year");
+      expect(getDateRangeFieldFromPos(13)).toBe("end-month");
+      expect(getDateRangeFieldFromPos(19)).toBe("end-year");
+    });
+  });
+
+  describe("getDateRangeFieldRange", () => {
+    it("returns selection ranges with the end-date offset applied", () => {
+      expect(getDateRangeFieldRange("start-month")).toEqual([0, 2]);
+      expect(getDateRangeFieldRange("end-day")).toEqual([16, 18]);
+    });
+  });
+
+  describe("formatSegmentedDateRangeDisplay", () => {
+    it("renders placeholders for both endpoints", () => {
+      expect(
+        formatSegmentedDateRangeDisplay(
+          { month: "", day: "", year: "" },
+          { month: "", day: "", year: "" },
+        ),
+      ).toBe("mm/dd/yyyy – mm/dd/yyyy");
     });
   });
 });

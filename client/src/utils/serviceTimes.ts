@@ -1,9 +1,112 @@
 import {
   MonthWeekOrdinal,
   MultiWeeklyDay,
+  RecurrenceType,
   ServiceTime,
   Weekday,
 } from "../types";
+
+type ServiceScheduleSortShape = Pick<
+  ServiceTime,
+  | "name"
+  | "reccurence"
+  | "dayOfWeek"
+  | "time"
+  | "daysOfWeek"
+  | "weekday"
+  | "ordinal"
+  | "dateTimeISO"
+>;
+
+const RECURRENCE_SORT_RANK: Record<RecurrenceType, number> = {
+  weekly: 0,
+  multi_weekly: 1,
+  monthly: 2,
+  one_time: 3,
+};
+
+const parseScheduleTimeToMinutes = (time?: string): number => {
+  if (!time) return 0;
+  const [hh, mm] = time.split(":").map((part) => Number(part));
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return 0;
+  return hh * 60 + mm;
+};
+
+/** Stable week-order key for admin lists: weekday, then time, then name. */
+export const getServiceScheduleSortKey = (
+  service: ServiceScheduleSortShape,
+): [number, number, number, string] => {
+  const recurrence = service.reccurence || "weekly";
+  const rank = RECURRENCE_SORT_RANK[recurrence] ?? 99;
+
+  if (recurrence === "one_time") {
+    const timestamp = service.dateTimeISO
+      ? new Date(service.dateTimeISO).getTime()
+      : Number.MAX_SAFE_INTEGER;
+    return [rank, timestamp, 0, service.name || ""];
+  }
+
+  if (recurrence === "weekly") {
+    return [
+      rank,
+      service.dayOfWeek ?? 7,
+      parseScheduleTimeToMinutes(service.time),
+      service.name || "",
+    ];
+  }
+
+  if (recurrence === "multi_weekly") {
+    const days = service.daysOfWeek || [];
+    if (days.length === 0) {
+      return [rank, 7, 0, service.name || ""];
+    }
+    const earliest = [...days].sort(
+      (a, b) =>
+        a.day - b.day ||
+        parseScheduleTimeToMinutes(a.time) - parseScheduleTimeToMinutes(b.time),
+    )[0];
+    return [
+      rank,
+      earliest.day,
+      parseScheduleTimeToMinutes(earliest.time),
+      service.name || "",
+    ];
+  }
+
+  if (recurrence === "monthly") {
+    const ordinal = service.ordinal ?? 99;
+    return [
+      rank,
+      service.weekday ?? 7,
+      ordinal * 1440 + parseScheduleTimeToMinutes(service.time),
+      service.name || "",
+    ];
+  }
+
+  return [99, 0, 0, service.name || ""];
+};
+
+export const compareServicesByScheduleOrder = (
+  a: ServiceScheduleSortShape,
+  b: ServiceScheduleSortShape,
+): number => {
+  const keyA = getServiceScheduleSortKey(a);
+  const keyB = getServiceScheduleSortKey(b);
+  for (let index = 0; index < keyA.length; index += 1) {
+    const left = keyA[index];
+    const right = keyB[index];
+    if (left === right) continue;
+    if (typeof left === "string" && typeof right === "string") {
+      return left.localeCompare(right);
+    }
+    return Number(left) - Number(right);
+  }
+  return 0;
+};
+
+export const sortServicesByScheduleOrder = <T extends ServiceScheduleSortShape>(
+  services: T[],
+): T[] => [...services].sort(compareServicesByScheduleOrder);
 
 export type DisplayedUpcomingServiceOptions = {
   /**

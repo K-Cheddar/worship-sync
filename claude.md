@@ -6,4 +6,4 @@ Before doing substantive work here, read **`AGENTS.md`** in full. It defines pro
 
 If anything in other docs or chat conflicts with **`AGENTS.md`**, follow **`AGENTS.md`**.
 
-Workspace rules under `.cursor/rules/` may add project conventions; align them with **`AGENTS.md`** when both apply.
+Workspace rules under `.cursor/rules/` reference **`AGENTS.md`** via `@AGENTS.md` and do not duplicate its content. Update **`AGENTS.md`** when changing standards.

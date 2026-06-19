@@ -40,14 +40,20 @@ import {
   getDefaultScheduleRange,
   getOccurrenceDate,
   getSharedOccurrenceTiming,
+  occurrenceIdsMatch,
 } from "@/utils/teamScheduleOccurrences";
 import {
   createTeamRosterMember,
   getTeamSchedulePublicLink,
   updateTeam,
+  updateTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAttendance,
 } from "../../../api/auth";
+import {
+  rekeyAssignmentsByServiceDate,
+  rekeyAttendanceByServiceDate,
+} from "./scheduleDraftUtils";
 import { buildScheduleExportModel } from "./scheduleExport";
 import SchedulePdfExportButton from "./SchedulePdfExportButton";
 import { SCHEDULE_EXPORT_LAYOUTS } from "./scheduleExportPdf";
@@ -240,6 +246,83 @@ const ScheduleTab = ({
       })
       .filter(Boolean) as TeamScheduleOccurrence[];
   }, [data.services, selectedSchedule, fallbackStartsAt]);
+  // What occurrences this schedule's services + date range would produce right
+  // now. Compared against the stored shape to detect grouping/timing drift.
+  const regeneratedOccurrences = useMemo(() => {
+    if (!selectedSchedule?.startDate || !selectedSchedule?.endDate) return null;
+    return generateScheduleOccurrences({
+      services: data.services,
+      serviceIds: selectedSchedule.serviceIds || [],
+      startDate: selectedSchedule.startDate,
+      endDate: selectedSchedule.endDate,
+    });
+  }, [data.services, selectedSchedule]);
+  // A saved schedule keeps its stored occurrence shape (so the grid stays stable);
+  // if the services changed since — combined/un-combined, or a time/recurrence
+  // edit — the stored occurrence ids drift from what we'd generate now, and the
+  // grid stays on the old shape until a re-save re-keys it.
+  const occurrencesStale = useMemo(() => {
+    if (!canEdit || !selectedSchedule) return false;
+    if (selectedSchedule.scheduleId.startsWith("local-")) return false;
+    const stored = selectedSchedule.occurrences || [];
+    if (stored.length === 0 || !regeneratedOccurrences) return false;
+    return !occurrenceIdsMatch(stored, regeneratedOccurrences);
+  }, [canEdit, regeneratedOccurrences, selectedSchedule]);
+  const [applyingGrouping, setApplyingGrouping] = useState(false);
+  // Re-generate occurrences and re-key assignments/attendance onto them, then
+  // persist — the one-click path behind the "schedule out of date" nudge.
+  const refreshScheduleOccurrences = useCallback(async () => {
+    if (!canEdit || !selectedSchedule || !regeneratedOccurrences) return;
+    const sourceOccurrences = selectedSchedule.occurrences || [];
+    const assignments = rekeyAssignmentsByServiceDate({
+      sourceOccurrences,
+      targetOccurrences: regeneratedOccurrences,
+      assignments: selectedSchedule.assignments || {},
+    });
+    const attendance = rekeyAttendanceByServiceDate({
+      sourceOccurrences,
+      targetOccurrences: regeneratedOccurrences,
+      attendance: selectedSchedule.attendance || {},
+    });
+    setApplyingGrouping(true);
+    onScheduleSaved({
+      ...selectedSchedule,
+      occurrences: regeneratedOccurrences,
+      assignments,
+      attendance,
+    });
+    try {
+      const response = await updateTeamSchedule(
+        churchId,
+        selectedSchedule.scheduleId,
+        {
+          name: selectedSchedule.name,
+          description: selectedSchedule.description || "",
+          teamId: selectedSchedule.teamId,
+          startDate: selectedSchedule.startDate || "",
+          endDate: selectedSchedule.endDate || "",
+          serviceIds: selectedSchedule.serviceIds || [],
+          occurrences: regeneratedOccurrences,
+          assignments,
+          attendance,
+        },
+      );
+      onScheduleSaved(response.schedule);
+      showToast("Schedule updated to match its services.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not update this schedule.");
+      onScheduleSaved(selectedSchedule);
+    } finally {
+      setApplyingGrouping(false);
+    }
+  }, [
+    canEdit,
+    churchId,
+    onScheduleSaved,
+    regeneratedOccurrences,
+    selectedSchedule,
+    showToast,
+  ]);
   const requirementsByOccurrence = useMemo(() => {
     const map = new Map<string, PositionRequirement[]>();
     scheduleOccurrences.forEach((occurrence) => {
@@ -2154,6 +2237,24 @@ const ScheduleTab = ({
                 </div>
               ) : null}
             </div>
+
+            {occurrencesStale && !showForm ? (
+              <div className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-amber-100">
+                  This schedule no longer matches its services (grouping or timing
+                  changed). Refresh it to update the rows — assignments are kept where
+                  the service and date still line up.
+                </p>
+                <Button
+                  variant="secondary"
+                  iconSize="sm"
+                  disabled={applyingGrouping}
+                  onClick={() => void refreshScheduleOccurrences()}
+                >
+                  {applyingGrouping ? "Refreshing..." : "Refresh schedule"}
+                </Button>
+              </div>
+            ) : null}
 
             <ScheduleAssignmentProvider handlers={assignmentHandlers}>
               <div className="mt-4 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch">

@@ -1,10 +1,13 @@
 import type {
   TeamSchedule,
   TeamScheduleAssignments,
+  TeamScheduleAttendance,
   TeamScheduleOccurrence,
 } from "../../../api/authTypes";
 import {
   buildScheduleCopyDraft,
+  rekeyAssignmentsByServiceDate,
+  rekeyAttendanceByServiceDate,
   remapAssignmentsToOccurrences,
 } from "./scheduleDraftUtils";
 
@@ -15,6 +18,19 @@ const occurrence = (
   occurrenceId: `${serviceId}@${startsAt}`,
   serviceId,
   name: serviceId,
+  startsAt,
+});
+
+const combinedOccurrence = (
+  groupId: string,
+  serviceIds: string[],
+  startsAt: string,
+): TeamScheduleOccurrence => ({
+  occurrenceId: `group:${groupId}@${startsAt.slice(0, 10)}`,
+  serviceId: serviceIds[0],
+  groupId,
+  serviceIds,
+  name: serviceIds.join(" & "),
   startsAt,
 });
 
@@ -135,6 +151,142 @@ describe("remapAssignmentsToOccurrences", () => {
       [aFeb.occurrenceId]: { keys: cell("a") },
       [bFeb.occurrenceId]: { keys: cell("b") },
     });
+  });
+});
+
+describe("rekeyAssignmentsByServiceDate", () => {
+  const first = occurrence("first", "2026-07-05T09:00:00.000Z");
+  const second = occurrence("second", "2026-07-05T11:00:00.000Z");
+  const combined = combinedOccurrence(
+    "sunday-am",
+    ["first", "second"],
+    "2026-07-05T09:00:00.000Z",
+  );
+
+  it("preserves and merges assignments when services become combined", () => {
+    const assignments: TeamScheduleAssignments = {
+      [first.occurrenceId]: { "vocals::0": cell("kev"), "drums::0": cell("sam") },
+      [second.occurrenceId]: { "keys::0": cell("lee") },
+    };
+
+    expect(
+      rekeyAssignmentsByServiceDate({
+        sourceOccurrences: [first, second],
+        targetOccurrences: [combined],
+        assignments,
+      }),
+    ).toEqual({
+      [combined.occurrenceId]: {
+        "vocals::0": cell("kev"),
+        "drums::0": cell("sam"),
+        "keys::0": cell("lee"),
+      },
+    });
+  });
+
+  it("lets the earliest service win a contested cell on merge", () => {
+    const assignments: TeamScheduleAssignments = {
+      [first.occurrenceId]: { "vocals::0": cell("early") },
+      [second.occurrenceId]: { "vocals::0": cell("late") },
+    };
+
+    expect(
+      rekeyAssignmentsByServiceDate({
+        sourceOccurrences: [second, first],
+        targetOccurrences: [combined],
+        assignments,
+      }),
+    ).toEqual({
+      [combined.occurrenceId]: { "vocals::0": cell("early") },
+    });
+  });
+
+  it("fans a combined occurrence back out when services are un-combined", () => {
+    const assignments: TeamScheduleAssignments = {
+      [combined.occurrenceId]: { "vocals::0": cell("kev") },
+    };
+
+    expect(
+      rekeyAssignmentsByServiceDate({
+        sourceOccurrences: [combined],
+        targetOccurrences: [first, second],
+        assignments,
+      }),
+    ).toEqual({
+      [first.occurrenceId]: { "vocals::0": cell("kev") },
+      [second.occurrenceId]: { "vocals::0": cell("kev") },
+    });
+  });
+
+  it("is an identity re-key when occurrence ids are unchanged", () => {
+    const assignments: TeamScheduleAssignments = {
+      [combined.occurrenceId]: { "vocals::0": cell("kev") },
+    };
+
+    expect(
+      rekeyAssignmentsByServiceDate({
+        sourceOccurrences: [combined],
+        targetOccurrences: [combined],
+        assignments,
+      }),
+    ).toEqual(assignments);
+  });
+});
+
+describe("rekeyAttendanceByServiceDate", () => {
+  const first = occurrence("first", "2026-07-05T09:00:00.000Z");
+  const second = occurrence("second", "2026-07-05T11:00:00.000Z");
+  const combined = combinedOccurrence(
+    "sunday-am",
+    ["first", "second"],
+    "2026-07-05T09:00:00.000Z",
+  );
+
+  it("merges per-service attendance onto the combined occurrence", () => {
+    const attendance: TeamScheduleAttendance = {
+      [first.occurrenceId]: { m1: { status: "present" } },
+      [second.occurrenceId]: { m2: { status: "absent" } },
+    };
+
+    expect(
+      rekeyAttendanceByServiceDate({
+        sourceOccurrences: [first, second],
+        targetOccurrences: [combined],
+        attendance,
+      }),
+    ).toEqual({
+      [combined.occurrenceId]: {
+        m1: { status: "present" },
+        m2: { status: "absent" },
+      },
+    });
+  });
+
+  it("lets the earliest service win a member conflict", () => {
+    const attendance: TeamScheduleAttendance = {
+      [first.occurrenceId]: { m1: { status: "present" } },
+      [second.occurrenceId]: { m1: { status: "absent" } },
+    };
+
+    expect(
+      rekeyAttendanceByServiceDate({
+        sourceOccurrences: [second, first],
+        targetOccurrences: [combined],
+        attendance,
+      }),
+    ).toEqual({
+      [combined.occurrenceId]: { m1: { status: "present" } },
+    });
+  });
+
+  it("returns an empty map when there is no attendance", () => {
+    expect(
+      rekeyAttendanceByServiceDate({
+        sourceOccurrences: [combined],
+        targetOccurrences: [first, second],
+        attendance: {},
+      }),
+    ).toEqual({});
   });
 });
 

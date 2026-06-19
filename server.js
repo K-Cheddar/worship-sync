@@ -643,6 +643,10 @@ app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
 app.post("/api/auth/profile", authHandlers.updateOwnProfile);
+app.post(
+  "/api/auth/notification-preferences",
+  authHandlers.updateOwnNotificationPreferences,
+);
 app.get("/api/devices/human", authHandlers.listTrustedHumanDevices);
 app.post(
   "/api/devices/human/:deviceId/revoke",

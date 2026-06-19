@@ -6,6 +6,7 @@ import {
   generateScheduleOccurrences,
   getOccurrenceDate,
   getSharedOccurrenceTiming,
+  occurrenceIdsMatch,
 } from "./teamScheduleOccurrences";
 
 const service = (overrides: Partial<TeamService>): TeamService => ({
@@ -87,6 +88,110 @@ describe("generateScheduleOccurrences", () => {
       "2026-08-26",
       "2026-09-30",
     ]);
+  });
+
+  it("merges combined same-day services into one occurrence", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "first",
+          name: "First Service",
+          dayOfWeek: 0,
+          time: "09:00",
+          serviceGroupId: "sunday-am",
+          positionRequirements: [{ positionId: "vocals", count: 2 }],
+        }),
+        service({
+          serviceId: "second",
+          name: "Second Service",
+          dayOfWeek: 0,
+          time: "11:00",
+          serviceGroupId: "sunday-am",
+          positionRequirements: [
+            { positionId: "vocals", count: 3 },
+            { positionId: "drums", count: 1 },
+          ],
+        }),
+      ],
+      serviceIds: ["first", "second"],
+      startDate: "2026-07-05",
+      endDate: "2026-07-05",
+    });
+
+    expect(occurrences).toHaveLength(1);
+    const [combined] = occurrences;
+    // Stable group-based id, earliest start, joined names, both services covered.
+    expect(combined.occurrenceId).toBe("group:sunday-am@2026-07-05");
+    expect(combined.groupId).toBe("sunday-am");
+    expect(combined.serviceIds).toEqual(["first", "second"]);
+    expect(combined.name).toBe("First Service & Second Service");
+    expect(combined.startsAt).toBe(occurrences[0].startsAt);
+    expect(new Date(combined.startsAt).getHours()).toBe(9);
+    // Requirements are the union, keeping the larger count per position.
+    expect(combined.positionRequirements).toEqual(
+      expect.arrayContaining([
+        { positionId: "vocals", count: 3 },
+        { positionId: "drums", count: 1 },
+      ]),
+    );
+  });
+
+  it("does not mint a group id when only one combined service is present", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "first",
+          name: "First Service",
+          dayOfWeek: 0,
+          time: "09:00",
+          serviceGroupId: "sunday-am",
+        }),
+        service({
+          serviceId: "second",
+          name: "Second Service",
+          dayOfWeek: 0,
+          time: "11:00",
+          serviceGroupId: "sunday-am",
+        }),
+      ],
+      // Only one of the combined pair is on this schedule — nothing to merge.
+      serviceIds: ["first"],
+      startDate: "2026-07-05",
+      endDate: "2026-07-05",
+    });
+
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0].occurrenceId).not.toContain("group:");
+    expect(occurrences[0].groupId).toBeUndefined();
+  });
+
+  it("keeps ungrouped same-day services as separate occurrences", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "morning",
+          name: "Morning",
+          dayOfWeek: 0,
+          time: "09:00",
+          serviceGroupId: "sunday-am",
+        }),
+        service({
+          serviceId: "evening",
+          name: "Evening",
+          dayOfWeek: 0,
+          time: "18:00",
+        }),
+      ],
+      serviceIds: ["morning", "evening"],
+      startDate: "2026-07-05",
+      endDate: "2026-07-05",
+    });
+
+    expect(occurrences.map((occurrence) => occurrence.name)).toEqual([
+      "Morning",
+      "Evening",
+    ]);
+    expect(occurrences[1].groupId).toBeUndefined();
   });
 
   it("filters one-time services outside the schedule range", () => {
@@ -283,5 +388,38 @@ describe("formatOccurrenceRowLabel", () => {
         sharedTime: null,
       }),
     ).toBe(formatOccurrenceTiming(occurrence));
+  });
+});
+
+describe("occurrenceIdsMatch", () => {
+  const occ = (occurrenceId: string): TeamScheduleOccurrence => ({
+    occurrenceId,
+    serviceId: occurrenceId,
+    name: occurrenceId,
+    startsAt: "2026-07-05T10:00:00.000Z",
+  });
+
+  it("matches the same ids regardless of order", () => {
+    expect(
+      occurrenceIdsMatch(
+        [occ("first@2026-07-05"), occ("second@2026-07-05")],
+        [occ("second@2026-07-05"), occ("first@2026-07-05")],
+      ),
+    ).toBe(true);
+  });
+
+  it("flags drift when grouping changes the id shape", () => {
+    expect(
+      occurrenceIdsMatch(
+        [occ("first@2026-07-05"), occ("second@2026-07-05")],
+        [occ("group:sunday-am@2026-07-05")],
+      ),
+    ).toBe(false);
+  });
+
+  it("flags a differing count", () => {
+    expect(
+      occurrenceIdsMatch([occ("first@2026-07-05")], []),
+    ).toBe(false);
   });
 });

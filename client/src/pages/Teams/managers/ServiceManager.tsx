@@ -30,6 +30,7 @@ import Icon from "../../../components/Icon/Icon";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
 import { sanitizePositionRequirements } from "../schedule/scheduleRequirements";
 import CreatePanel from "../CreatePanel";
+import MultiCheckboxGroup from "../components/MultiCheckboxGroup";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
@@ -37,9 +38,12 @@ import Checkbox from "../../../components/Checkbox/Checkbox";
 import { cn } from "@/utils/cnHelper";
 import {
   buildServiceTimeUpdate,
+  canServicesShareDay,
   createEmptyServiceDraft,
   formatServiceTiming,
   isActive,
+  planServiceGroupCleanupOnDelete,
+  planServiceGroupUpdates,
 } from "../teamsUtils";
 
 type ServiceManagerProps = {
@@ -55,17 +59,31 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState<Partial<ServiceTime>>(createEmptyServiceDraft);
+  // Other services this one is combined with (shares one set of schedule cells).
+  const [combineWith, setCombineWith] = useState<string[]>([]);
 
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
     setDraft(createEmptyServiceDraft());
+    setCombineWith([]);
   };
 
   const startEdit = (service: TeamService) => {
     setEditing(service);
     setShowCreate(true);
     setDraft({ ...service });
+    setCombineWith(
+      service.serviceGroupId
+        ? services
+          .filter(
+            (item) =>
+              item.serviceGroupId === service.serviceGroupId &&
+              item.serviceId !== service.serviceId,
+          )
+          .map((item) => item.serviceId)
+        : [],
+    );
   };
 
   const updateRecurrence = (recurrence: RecurrenceType) => {
@@ -84,8 +102,19 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       showToast("Service name is required.", "neutral");
       return;
     }
+    const { groupId, partnerUpdates } = planServiceGroupUpdates({
+      services,
+      serviceId: editing?.serviceId,
+      currentGroupId: editing?.serviceGroupId,
+      partnerIds: combineWith,
+    });
     const saved = buildServiceTimeUpdate(
-      { ...draft, name, positionRequirements: sanitizePositionRequirements(draft.positionRequirements) },
+      {
+        ...draft,
+        name,
+        positionRequirements: sanitizePositionRequirements(draft.positionRequirements),
+        serviceGroupId: groupId,
+      },
       editing,
     );
     if (editing) {
@@ -93,8 +122,29 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
     } else {
       dispatch(addService(saved));
     }
+    // Stamp the shared group id on partners (and clear it on services that left).
+    partnerUpdates.forEach(({ id, serviceGroupId }) => {
+      dispatch(updateService({ id, changes: { serviceGroupId } }));
+    });
     reset();
   };
+
+  // Services that can be combined with the one being edited: anything that could
+  // fall on the same day (combining only merges same-day occurrences). Already
+  // combined partners stay listed even if the day changed, so they can be removed.
+  const editedServiceDayShape = {
+    reccurence: draft.reccurence || "weekly",
+    dayOfWeek: draft.dayOfWeek,
+    daysOfWeek: draft.daysOfWeek,
+    weekday: draft.weekday,
+    dateTimeISO: draft.dateTimeISO,
+  };
+  const combinableServices = services.filter(
+    (service) =>
+      service.serviceId !== editing?.serviceId &&
+      (canServicesShareDay(editedServiceDayShape, service) ||
+        combineWith.includes(service.serviceId)),
+  );
 
   const activePositions = positions.filter(isActive);
   // Positions are owned by teams, so group the requirement checklist by team. A
@@ -174,7 +224,16 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
             menuLabel="Service actions"
             onDelete={() => {
               if (!canEdit) return;
+              const { partnerUpdates } = planServiceGroupCleanupOnDelete({
+                services,
+                serviceId: editing.serviceId,
+              });
               dispatch(removeService(editing.id));
+              // Dissolve a now-orphaned combined group so no service is left
+              // pointing at a one-member group.
+              partnerUpdates.forEach(({ id, serviceGroupId }) => {
+                dispatch(updateService({ id, changes: { serviceGroupId } }));
+              });
               reset();
             }}
           />
@@ -306,6 +365,22 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
         </div>
       ) : null}
 
+      {combinableServices.length > 0 ? (
+        <MultiCheckboxGroup
+          label="Combined services"
+          description="Combine back-to-back services on the same day so the schedule shows one set of positions for them together — assign someone once and it covers every combined service that day."
+          options={combinableServices.map((service) => ({
+            id: service.serviceId,
+            label: [service.name, formatServiceTiming(service)]
+              .filter(Boolean)
+              .join(" - "),
+            archived: Boolean(service.archivedAt),
+          }))}
+          value={combineWith}
+          onChange={setCombineWith}
+        />
+      ) : null}
+
       <fieldset className="space-y-2">
         <legend className="p-1 text-sm font-semibold">Positions needed</legend>
         <p className="px-1 text-xs text-gray-400">
@@ -333,7 +408,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                   return (
                     <div
                       key={position.positionId}
-                      className="grid min-h-9 items-center gap-2 sm:grid-cols-[1fr_auto]"
+                      className="grid min-h-9 grid-cols-[1fr_auto] items-center gap-2"
                     >
                       <Checkbox
                         checked={needed}

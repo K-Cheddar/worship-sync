@@ -1,4 +1,8 @@
-import type { TeamScheduleOccurrence, TeamService } from "../api/authTypes";
+import type {
+  PositionRequirement,
+  TeamScheduleOccurrence,
+  TeamService,
+} from "../api/authTypes";
 import type { MonthWeekOrdinal, Weekday } from "../types";
 import { formatPlainDate, parsePlainDate } from "./plainDate";
 
@@ -145,6 +149,90 @@ export const formatOccurrenceRowLabel = (
 export const getOccurrenceDate = (occurrence: TeamScheduleOccurrence) =>
   occurrence.startsAt.slice(0, 10);
 
+/** Union of position requirements across a group, keeping the largest count per position. */
+const mergeGroupedRequirements = (
+  services: TeamService[],
+): PositionRequirement[] => {
+  const maxByPosition = new Map<string, PositionRequirement>();
+  for (const service of services) {
+    for (const req of service.positionRequirements || []) {
+      const positionId = String(req?.positionId || "").trim();
+      const count = Math.floor(Number(req?.count));
+      if (!positionId || !Number.isFinite(count) || count < 1) continue;
+      const existing = maxByPosition.get(positionId);
+      // Take the busier service's requirement (and its level) for the shared slot.
+      if (!existing || count > existing.count) {
+        maxByPosition.set(positionId, {
+          positionId,
+          count,
+          ...(req.minLevelId ? { minLevelId: String(req.minLevelId) } : {}),
+        });
+      }
+    }
+  }
+  return [...maxByPosition.values()];
+};
+
+/**
+ * Collapse occurrences of combined services (same `serviceGroupId`) that fall on
+ * the same date into one occurrence, so a person assigned once covers every
+ * service in the group that day. Ungrouped services — even on the same date — are
+ * left untouched. The merged occurrence gets a stable group-based id, the
+ * earliest start (for sorting/labels), the joined service names, and the union of
+ * the grouped services' position requirements (max count per position).
+ */
+const mergeGroupedOccurrences = (
+  occurrences: TeamScheduleOccurrence[],
+  serviceById: Map<string, TeamService>,
+): TeamScheduleOccurrence[] => {
+  const standalone: TeamScheduleOccurrence[] = [];
+  const buckets = new Map<string, TeamScheduleOccurrence[]>();
+  for (const occurrence of occurrences) {
+    const groupId = serviceById.get(occurrence.serviceId)?.serviceGroupId;
+    if (!groupId) {
+      standalone.push(occurrence);
+      continue;
+    }
+    const key = `${groupId}@${getOccurrenceDate(occurrence)}`;
+    const bucket = buckets.get(key) || [];
+    bucket.push(occurrence);
+    buckets.set(key, bucket);
+  }
+
+  const merged = [...buckets.values()].flatMap((bucket) => {
+    // Only one grouped service lands on this date — there's nothing to combine, so
+    // keep its plain per-service occurrence id instead of minting a group id that
+    // would needlessly orphan existing assignments.
+    if (bucket.length === 1) return bucket;
+    const sorted = [...bucket].sort(
+      (a, b) =>
+        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
+        a.name.localeCompare(b.name),
+    );
+    const first = sorted[0];
+    const groupId = serviceById.get(first.serviceId)?.serviceGroupId as string;
+    const serviceIds = sorted.map((occurrence) => occurrence.serviceId);
+    const names = [...new Set(sorted.map((occurrence) => occurrence.name))];
+    const requirements = mergeGroupedRequirements(
+      serviceIds
+        .map((id) => serviceById.get(id))
+        .filter(Boolean) as TeamService[],
+    );
+    const combined: TeamScheduleOccurrence = {
+      occurrenceId: `group:${groupId}@${getOccurrenceDate(first)}`,
+      serviceId: first.serviceId,
+      groupId,
+      serviceIds,
+      name: names.join(" & "),
+      startsAt: first.startsAt,
+      ...(requirements.length ? { positionRequirements: requirements } : {}),
+    };
+    return [combined];
+  });
+
+  return [...standalone, ...merged];
+};
+
 export const generateScheduleOccurrences = ({
   services,
   serviceIds,
@@ -244,11 +332,30 @@ export const generateScheduleOccurrences = ({
     }
   }
 
-  return occurrences.sort(
+  const serviceById = new Map(
+    selectedServices.map((service) => [service.serviceId, service]),
+  );
+  return mergeGroupedOccurrences(occurrences, serviceById).sort(
     (a, b) =>
       new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
       a.name.localeCompare(b.name),
   );
+};
+
+/**
+ * Whether two occurrence lists describe the same set of occurrences by id. Used to
+ * tell when a saved schedule's stored occurrences have drifted from what its
+ * services + date range would generate now (e.g. services were combined or
+ * un-combined after the schedule was saved), so the grid can offer a re-sync.
+ */
+export const occurrenceIdsMatch = (
+  a: TeamScheduleOccurrence[],
+  b: TeamScheduleOccurrence[],
+): boolean => {
+  if (a.length !== b.length) return false;
+  const aIds = [...a.map((occurrence) => occurrence.occurrenceId)].sort();
+  const bIds = [...b.map((occurrence) => occurrence.occurrenceId)].sort();
+  return aIds.every((id, index) => id === bIds[index]);
 };
 
 /** Services that would produce at least one occurrence in the given plain-date range. */

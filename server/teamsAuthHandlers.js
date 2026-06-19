@@ -16,6 +16,7 @@ const TEAM_COLLECTION_QUERY_LIMIT = 5000;
 
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
+  scheduleIntakeSubmissionDigest,
   addSecurityEvent,
   assertCsrf,
   createId,
@@ -912,9 +913,18 @@ export const createTeamsAuthHandlers = ({
           "Service occurrence must reference a selected service.",
         );
       }
+      // Combined occurrences merge several selected services that share a group.
+      const groupId = normalizeShortText(occurrence?.groupId, { max: 160 });
+      const serviceIds = Array.isArray(occurrence?.serviceIds)
+        ? occurrence.serviceIds
+            .map((id) => normalizeShortText(id, { max: 160 }))
+            .filter((id) => serviceIdSet.has(id))
+        : [];
       return {
         occurrenceId,
         serviceId,
+        ...(groupId ? { groupId } : {}),
+        ...(serviceIds.length ? { serviceIds } : {}),
         name: normalizeShortText(occurrence?.name),
         startsAt: assertTeamScheduleDateTime(
           occurrence?.startsAt,
@@ -2856,6 +2866,14 @@ export const createTeamsAuthHandlers = ({
           },
           { merge: false },
         );
+        // Notify editors out-of-band; a failure here must not fail the public
+        // submission (the response is already saved).
+        if (scheduleIntakeSubmissionDigest) {
+          Promise.resolve(scheduleIntakeSubmissionDigest(form.formId)).catch(
+            (error) =>
+              console.error("Could not schedule intake digest", error),
+          );
+        }
         return res.json({ success: true, submissionId });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not submit this form.");

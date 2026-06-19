@@ -1,5 +1,8 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { DBServices, ServiceTime } from "../types";
+import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+
+const sortServiceList = (list: ServiceTime[]) => sortServicesByScheduleOrder(list);
 
 type ServiceTimesState = {
   list: ServiceTime[];
@@ -16,14 +19,16 @@ export const serviceTimesSlice = createSlice({
   initialState,
   reducers: {
     addService: (state, action: PayloadAction<ServiceTime>) => {
-      state.list.push(action.payload);
+      state.list = sortServiceList([...state.list, action.payload]);
     },
     updateService: (
       state,
       action: PayloadAction<{ id: string; changes: Partial<ServiceTime> }>,
     ) => {
-      state.list = state.list.map((s) =>
-        s.id === action.payload.id ? { ...s, ...action.payload.changes } : s,
+      state.list = sortServiceList(
+        state.list.map((s) =>
+          s.id === action.payload.id ? { ...s, ...action.payload.changes } : s,
+        ),
       );
     },
     removeService: (state, action: PayloadAction<string>) => {
@@ -33,11 +38,11 @@ export const serviceTimesSlice = createSlice({
       state.isInitialized = action.payload;
     },
     initiateServices: (state, action: PayloadAction<ServiceTime[]>) => {
-      state.list = action.payload;
+      state.list = sortServiceList(action.payload);
       state.isInitialized = true;
     },
     syncServicesFromRemote: (state, action: PayloadAction<ServiceTime[]>) => {
-      state.list = action.payload;
+      state.list = sortServiceList(action.payload);
       state.isInitialized = true;
     },
     updateServicesFromRemote: (state, action: PayloadAction<DBServices>) => {
@@ -47,7 +52,7 @@ export const serviceTimesSlice = createSlice({
         action.payload.list &&
         (action.payload.list.length > 0 || state.list.length === 0)
       ) {
-        state.list = action.payload.list;
+        state.list = sortServiceList(action.payload.list);
       }
     },
   },

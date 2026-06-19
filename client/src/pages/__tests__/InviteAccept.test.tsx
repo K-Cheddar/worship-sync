@@ -2,20 +2,28 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import InviteAccept from "../InviteAccept";
+import {
+  acceptInvite,
+  createHumanSession,
+  fetchInvitePreview,
+  getAuthBootstrap,
+  logoutSession,
+} from "../../api/auth";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createMockGlobalContext } from "../../test/mocks";
 import * as firebaseApps from "../../firebase/apps";
 
 const navigateMock = jest.fn();
-const acceptInviteMock = jest.fn<any, any[]>();
-const fetchInvitePreviewMock = jest.fn<any, any[]>();
-const createHumanSessionMock = jest.fn<any, any[]>();
-const getAuthBootstrapMock = jest.fn<any, any[]>();
-const logoutSessionMock = jest.fn<any, any[]>(() => Promise.resolve());
 const createUserWithEmailAndPasswordMock = jest.fn<any, any[]>();
 const signOutMock = jest.fn<any, any[]>(() => Promise.resolve());
 const updateProfileMock = jest.fn<any, any[]>(() => Promise.resolve());
 const authenticateHumanWithFirebaseMock = jest.fn();
+
+const acceptInviteMock = jest.mocked(acceptInvite);
+const fetchInvitePreviewMock = jest.mocked(fetchInvitePreview);
+const createHumanSessionMock = jest.mocked(createHumanSession);
+const getAuthBootstrapMock = jest.mocked(getAuthBootstrap);
+const logoutSessionMock = jest.mocked(logoutSession);
 
 type MockFirebaseUser = {
   email: string;
@@ -40,11 +48,11 @@ const setCurrentUser = (user: MockFirebaseUser | null) => {
 };
 
 jest.mock("../../api/auth", () => ({
-  acceptInvite: (...args: unknown[]) => acceptInviteMock(...args),
-  createHumanSession: (...args: unknown[]) => createHumanSessionMock(...args),
-  getAuthBootstrap: (...args: unknown[]) => getAuthBootstrapMock(...args),
-  logoutSession: (...args: unknown[]) => logoutSessionMock(...args),
-  fetchInvitePreview: (...args: unknown[]) => fetchInvitePreviewMock(...args),
+  acceptInvite: jest.fn(),
+  createHumanSession: jest.fn(),
+  getAuthBootstrap: jest.fn(),
+  logoutSession: jest.fn(),
+  fetchInvitePreview: jest.fn(),
 }));
 
 jest.mock("../../firebase/apps", () => ({
@@ -109,7 +117,8 @@ describe("InviteAccept", () => {
     acceptInviteMock.mockReset();
     createHumanSessionMock.mockReset();
     getAuthBootstrapMock.mockReset();
-    logoutSessionMock.mockClear();
+    logoutSessionMock.mockReset();
+    logoutSessionMock.mockResolvedValue(undefined);
     createUserWithEmailAndPasswordMock.mockReset();
     signOutMock.mockClear();
     updateProfileMock.mockClear();
@@ -123,16 +132,26 @@ describe("InviteAccept", () => {
       sessionKind: "human",
     });
     fetchInvitePreviewMock.mockReset();
-    fetchInvitePreviewMock.mockResolvedValue({
-      success: true,
-      churchName: "Test Church",
-    });
+    fetchInvitePreviewMock.mockImplementation(() =>
+      Promise.resolve({
+        success: true,
+        churchName: "Test Church",
+      }),
+    );
   });
 
   it("shows the invited church name in the heading", async () => {
     renderPage();
+
+    await waitFor(() => {
+      expect(fetchInvitePreviewMock).toHaveBeenCalledWith("invite-token");
+    });
     expect(
-      await screen.findByRole("heading", { name: /join test church/i }),
+      await screen.findByRole(
+        "heading",
+        { name: /join test church/i },
+        { timeout: 5000 },
+      ),
     ).toBeInTheDocument();
   });
 

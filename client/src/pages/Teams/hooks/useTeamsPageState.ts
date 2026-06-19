@@ -29,6 +29,7 @@ import {
   isActive,
   scheduleDraftsMatch,
   sortPositionsByOrder,
+  sortTeamsDataKey,
   toTeamService,
   upsertListItem,
 } from "../teamsUtils";
@@ -466,11 +467,14 @@ export const useTeamsPageState = () => {
         const list = current[key];
         return {
           ...current,
-          [key]: upsertListItem(
-            list as Record<string, unknown>[],
-            idField,
-            item as Record<string, unknown>,
-            replaceId,
+          [key]: sortTeamsDataKey(
+            key,
+            upsertListItem(
+              list as Record<string, unknown>[],
+              idField,
+              item as Record<string, unknown>,
+              replaceId,
+            ) as TeamsData[K],
           ),
         };
       });
