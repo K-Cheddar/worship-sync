@@ -4,6 +4,7 @@ import Icon from "../components/Icon/Icon";
 import Menu from "../components/Menu/Menu";
 import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../hooks/useElectronWindows";
+import { useIdentifyOnHover } from "../hooks/useIdentifyOnHover";
 import { buildBoardDisplayRoute, buildBoardDisplayUrl } from "./boardUtils";
 import { getDisplayLabel } from "../utils/displayUtils";
 import { isElectronDisplayWindowOpen } from "../utils/isElectronDisplayWindowOpen";
@@ -33,7 +34,18 @@ export const BoardControllerMenu = ({
     focusWindow,
     moveWindowToDisplay,
     setDisplayPreference,
+    identifyDisplay,
+    identifyDisplayForWindow,
+    hideIdentifyDisplay,
+    cancelIdentifyDisplay,
   } = useElectronWindows();
+  const {
+    getHandlers: getIdentifyHoverHandlers,
+    cancel: cancelIdentifyHover,
+  } = useIdentifyOnHover({
+    hide: hideIdentifyDisplay,
+    cancel: cancelIdentifyDisplay,
+  });
 
   const boardWindowOpen = isElectronDisplayWindowOpen(
     isElectron,
@@ -87,18 +99,24 @@ export const BoardControllerMenu = ({
     {
       text: "Last Used Display",
       onClick: () => openWindowOnLastUsedDisplay(windowType),
+      ...getIdentifyHoverHandlers((generation) => {
+        void identifyDisplayForWindow?.(windowType, generation);
+      }),
     },
     ...displays.map((display, index) => ({
       text: getDisplayLabel(display, index),
       onClick: () => openWindowOnDisplay(windowType, display.id),
+      ...getIdentifyHoverHandlers((generation) => {
+        void identifyDisplay?.(display.id, generation);
+      }),
     })),
   ];
 
   const menuItems: MenuItemType[] = [
     {
       element: (
-        <div className="flex items-center gap-2">
-          <Home className="size-4 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Home} color="#d1d5dc" />
           Home
         </div>
       ),
@@ -108,8 +126,8 @@ export const BoardControllerMenu = ({
       ? {
         text: boardWindowOpen ? "Close Board" : "Open Board",
         element: (
-          <div className="flex items-center gap-2">
-            <Presentation className="size-4 text-gray-300" />
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={Presentation} color="#d1d5dc" />
             {boardWindowOpen ? "Close Board" : "Open Board"}
           </div>
         ),
@@ -132,8 +150,8 @@ export const BoardControllerMenu = ({
       : {
         text: "Open Board",
         element: (
-          <div className="flex items-center gap-2 opacity-60">
-            <Presentation className="size-4 text-gray-300" />
+          <div className="flex items-center gap-2 opacity-60 max-md:min-h-12">
+            <Icon svg={Presentation} color="#d1d5dc" />
             Open Board
           </div>
         ),
@@ -147,6 +165,9 @@ export const BoardControllerMenu = ({
       <Menu
         menuItems={menuItems}
         align="start"
+        onOpenChange={(open) => {
+          if (!open) cancelIdentifyHover();
+        }}
         TriggeringButton={
           <Button
             variant="tertiary"

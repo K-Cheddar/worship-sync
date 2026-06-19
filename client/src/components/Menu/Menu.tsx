@@ -20,6 +20,8 @@ interface MenuProps extends ComponentPropsWithoutRef<"ul"> {
   menuItems: MenuItemType[];
   align?: "start" | "center" | "end";
   contentClassName?: string;
+  /** Called when the menu opens/closes, e.g. to clear a display "identify" glow on close. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 const Menu = ({
@@ -27,10 +29,11 @@ const Menu = ({
   TriggeringButton,
   align = "end",
   contentClassName,
+  onOpenChange,
   ...rest
 }: MenuProps) => {
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{TriggeringButton}</DropdownMenuTrigger>
       <DropdownMenuContent
         className={contentClassName ?? rest.className}
@@ -82,6 +85,10 @@ const Menu = ({
                         onSelect={() => {
                           sub.onClick?.();
                         }}
+                        onMouseEnter={sub.onMouseEnter}
+                        onMouseLeave={sub.onMouseLeave}
+                        onFocus={sub.onFocus}
+                        onBlur={sub.onBlur}
                       >
                         {sub.text}
                       </DropdownMenuItem>

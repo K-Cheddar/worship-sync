@@ -6,6 +6,7 @@ import {
   CircleAlert,
   Home,
   Menu as MenuIcon,
+  MessagesSquare,
   Monitor,
   SquarePen,
   Presentation,
@@ -15,11 +16,19 @@ import {
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useContext, useRef } from "react";
 import { useAboutChangelogMenu } from "../../../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
+import { useIdentifyOnHover } from "../../../hooks/useIdentifyOnHover";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
+import {
+  buildBoardDisplayUrl,
+  setStoredBoardDisplayAliasId,
+} from "../../../boards/boardUtils";
+import { useStoredBoardDisplayAlias } from "../../../boards/useStoredBoardDisplayAlias";
+import { getBoardAliases } from "../../../boards/api";
+import { MAX_INITIAL_SESSION_RETRIES } from "../../../constants";
 import type { WindowType } from "../../../types/electron";
 import { Slider } from "../../../components/ui/Slider";
 import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
@@ -50,7 +59,18 @@ const ToolbarMenu = ({
     focusWindow,
     moveWindowToDisplay,
     setDisplayPreference,
+    identifyDisplay,
+    identifyDisplayForWindow,
+    hideIdentifyDisplay,
+    cancelIdentifyDisplay,
   } = useElectronWindows();
+  const {
+    getHandlers: getIdentifyHoverHandlers,
+    cancel: cancelIdentifyHover,
+  } = useIdentifyOnHover({
+    hide: hideIdentifyDisplay,
+    cancel: cancelIdentifyDisplay,
+  });
 
   const monitorMenuOpen = isElectronDisplayWindowOpen(
     isElectron,
@@ -62,6 +82,91 @@ const ToolbarMenu = ({
     windowStates,
     "projector",
   );
+  const boardMenuOpen = isElectronDisplayWindowOpen(
+    isElectron,
+    windowStates,
+    "board",
+  );
+
+  // Whether the operator can open presentation surfaces at all (mirrors the gate
+  // on the monitor/projector/board menu items below). Used to avoid fetching
+  // board data for viewers/guests who can't open a board anyway.
+  const canManageDisplays =
+    variant !== "overlay" &&
+    access !== "view" &&
+    access !== "music" &&
+    !isGuest;
+
+  // The board display renders one discussion board, identified by an alias id in
+  // localStorage (kept in step across tabs/windows by useStoredBoardDisplayAlias).
+  // That id used to be seeded only by visiting the Board Controller page. To let
+  // the operator open the board straight from here, we fetch the church's boards
+  // and resolve a default for enabling the menu item: the remembered board if it
+  // still exists, otherwise the first one. Resolution is pure — it never writes
+  // storage. The write happens only when the operator explicitly opens the board
+  // (see openWindowOnLastUsedDisplay / openWindowOnDisplay), so resolving on
+  // mount can never silently re-point an open board display.
+  const storedBoardAliasId = useStoredBoardDisplayAlias();
+  const [boardAliases, setBoardAliases] = useState<
+    { aliasId: string }[] | null
+  >(null);
+  const boardAliasesLoadedRef = useRef(false);
+
+  // Until the church's boards have loaded, trust the stored id (it was validated
+  // when written). Once loaded, keep it only if it still exists, else fall back
+  // to the first board. Empty means there is nothing to show → item disabled.
+  const resolvedBoardAliasId =
+    boardAliases === null
+      ? storedBoardAliasId
+      : storedBoardAliasId &&
+          boardAliases.some((alias) => alias.aliasId === storedBoardAliasId)
+        ? storedBoardAliasId
+        : (boardAliases[0]?.aliasId ?? "");
+
+  useEffect(() => {
+    if (!canManageDisplays) return;
+    let cancelled = false;
+    let attempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const load = async () => {
+      try {
+        const { aliases } = await getBoardAliases();
+        if (cancelled) return;
+        attempt = 0;
+        boardAliasesLoadedRef.current = true;
+        setBoardAliases(aliases);
+      } catch (error) {
+        if (cancelled) return;
+        // Transient failures (flaky booth network) shouldn't permanently wedge
+        // the resolver; retry with backoff. A known-good stored alias stays
+        // usable meanwhile because resolution falls back to it until we load.
+        console.error("Could not load discussion boards:", error);
+        if (attempt >= MAX_INITIAL_SESSION_RETRIES) return;
+        const delay = Math.min(30000, 5000 * 2 ** attempt);
+        attempt += 1;
+        retryTimer = setTimeout(() => void load(), delay);
+      }
+    };
+
+    const handleFocus = () => {
+      // If we never managed to learn the church's boards, try again when the
+      // operator returns to the window (covers exhausted retries).
+      if (boardAliasesLoadedRef.current) return;
+      attempt = 0;
+      if (retryTimer) clearTimeout(retryTimer);
+      void load();
+    };
+
+    void load();
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [canManageDisplays]);
 
   useEffect(() => {
     // Base font size from index.css (92.5%)
@@ -101,10 +206,22 @@ const ToolbarMenu = ({
     navigate("/");
   };
 
+  // Persist the resolved board so the display window reads the right one. Done
+  // here — at the moment of an explicit open — rather than during resolution, so
+  // merely rendering the menu never re-points an already-open board display.
+  const seedBoardDisplayAlias = (windowType: WindowType) => {
+    if (windowType === "board" && resolvedBoardAliasId) {
+      setStoredBoardDisplayAliasId(resolvedBoardAliasId);
+    }
+  };
+
   const openWindowOnLastUsedDisplay = async (windowType: WindowType) => {
+    seedBoardDisplayAlias(windowType);
     try {
       if (isElectron) {
         await openWindow(windowType);
+      } else if (windowType === "board") {
+        window.open(buildBoardDisplayUrl(), "_board", "width=1280,height=720");
       } else {
         const webRoute = windowType === "monitor" ? "#/monitor" : "#/projector";
         const webTarget = windowType === "monitor" ? "_monitor" : "_projector";
@@ -116,6 +233,7 @@ const ToolbarMenu = ({
   };
 
   const openWindowOnDisplay = async (windowType: WindowType, displayId: number) => {
+    seedBoardDisplayAlias(windowType);
     try {
       if (!isElectron) {
         await openWindowOnLastUsedDisplay(windowType);
@@ -140,10 +258,16 @@ const ToolbarMenu = ({
     {
       text: "Last Used Display",
       onClick: () => openWindowOnLastUsedDisplay(windowType),
+      ...getIdentifyHoverHandlers((generation) => {
+        void identifyDisplayForWindow?.(windowType, generation);
+      }),
     },
     ...displays.map((display, index) => ({
       text: getDisplayLabel(display, index),
       onClick: () => openWindowOnDisplay(windowType, display.id),
+      ...getIdentifyHoverHandlers((generation) => {
+        void identifyDisplay?.(display.id, generation);
+      }),
     })),
   ];
 
@@ -236,6 +360,37 @@ const ToolbarMenu = ({
                 },
               }),
         },
+        {
+          text: boardMenuOpen ? "Close Discussion Board" : "Open Discussion Board",
+          element: (
+            <div
+              className={`flex items-center gap-2 max-md:min-h-12${!boardMenuOpen && !resolvedBoardAliasId ? " opacity-60" : ""
+                }`}
+            >
+              <Icon svg={MessagesSquare} color="#d1d5dc" />
+              {boardMenuOpen ? "Close Discussion Board" : "Open Discussion Board"}
+            </div>
+          ),
+          ...(boardMenuOpen
+            ? {
+              onClick: async () => {
+                await closeWindow("board");
+              },
+            }
+            : !resolvedBoardAliasId
+              ? {
+                disabled: true,
+              }
+              : isElectron && displays.length > 0
+                ? {
+                  subItems: buildDisplaySubItems("board"),
+                }
+                : {
+                  onClick: async () => {
+                    await openWindowOnLastUsedDisplay("board");
+                  },
+                }),
+        },
       ]),
 
     ...aboutChangelogMenuItems,
@@ -302,6 +457,9 @@ const ToolbarMenu = ({
       <Menu
         menuItems={menuItems}
         align="start"
+        onOpenChange={(open) => {
+          if (!open) cancelIdentifyHover();
+        }}
         TriggeringButton={
           <Button
             variant="tertiary"
