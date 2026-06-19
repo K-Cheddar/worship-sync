@@ -114,6 +114,43 @@ export const useElectronWindows = () => {
     [refreshWindowStates],
   );
 
+  const identifyDisplay = useCallback(
+    async (displayId: number, generation: number) => {
+      if (window.electronAPI?.identifyDisplay) {
+        return await window.electronAPI.identifyDisplay(displayId, generation);
+      }
+      return false;
+    },
+    [],
+  );
+
+  const identifyDisplayForWindow = useCallback(
+    async (windowType: WindowType, generation: number) => {
+      if (window.electronAPI?.identifyDisplayForWindow) {
+        return await window.electronAPI.identifyDisplayForWindow(
+          windowType,
+          generation,
+        );
+      }
+      return false;
+    },
+    [],
+  );
+
+  const hideIdentifyDisplay = useCallback(async () => {
+    if (window.electronAPI?.hideIdentifyDisplay) {
+      return await window.electronAPI.hideIdentifyDisplay();
+    }
+    return false;
+  }, []);
+
+  const cancelIdentifyDisplay = useCallback(async (generation: number) => {
+    if (window.electronAPI?.cancelIdentifyDisplay) {
+      return await window.electronAPI.cancelIdentifyDisplay(generation);
+    }
+    return false;
+  }, []);
+
   const setDisplayPreference = useCallback(
     async (windowType: WindowType, displayId: number) => {
       if (window.electronAPI) {
@@ -142,5 +179,9 @@ export const useElectronWindows = () => {
     toggleWindowFullscreen,
     moveWindowToDisplay,
     setDisplayPreference,
+    identifyDisplay,
+    identifyDisplayForWindow,
+    hideIdentifyDisplay,
+    cancelIdentifyDisplay,
   };
 };

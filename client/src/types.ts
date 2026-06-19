@@ -28,6 +28,11 @@ export type ServiceItem = {
 export type MenuSubItemType = {
   text: string;
   onClick?: () => void;
+  /** Pointer/keyboard focus handlers, e.g. to flash a display "identify" glow on hover. */
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
 };
 
 export type MenuItemType = {

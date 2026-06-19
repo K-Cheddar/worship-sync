@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setDisplayPreference: (windowType: WindowType, displayId: number) =>
     ipcRenderer.invoke("set-display-preference", windowType, displayId),
   getDisplays: () => ipcRenderer.invoke("get-displays"),
+  identifyDisplay: (displayId: number, generation: number) =>
+    ipcRenderer.invoke("identify-display", displayId, generation),
+  identifyDisplayForWindow: (windowType: WindowType, generation: number) =>
+    ipcRenderer.invoke("identify-display-for-window", windowType, generation),
+  hideIdentifyDisplay: () => ipcRenderer.invoke("hide-identify-display"),
+  cancelIdentifyDisplay: (generation: number) =>
+    ipcRenderer.invoke("cancel-identify-display", generation),
   getWindowStates: () => ipcRenderer.invoke("get-window-states"),
   refreshDisplayWindows: () =>
     ipcRenderer.invoke("refresh-display-windows") as Promise<number>,

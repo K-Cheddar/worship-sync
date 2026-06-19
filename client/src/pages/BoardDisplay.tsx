@@ -1,43 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import BoardPresentationScreen from "../boards/BoardPresentationScreen";
-import {
-  BOARD_DISPLAY_ALIAS_CHANNEL_NAME,
-  BOARD_DISPLAY_ALIAS_STORAGE_KEY,
-  getStoredBoardDisplayAliasId,
-} from "../boards/boardUtils";
+import { useStoredBoardDisplayAlias } from "../boards/useStoredBoardDisplayAlias";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 
 const BoardDisplay = () => {
-  const [aliasId, setAliasId] = useState(() => getStoredBoardDisplayAliasId());
-
-  useEffect(() => {
-    const syncAliasId = () => {
-      setAliasId(getStoredBoardDisplayAliasId());
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === BOARD_DISPLAY_ALIAS_STORAGE_KEY) {
-        syncAliasId();
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-    window.addEventListener("focus", syncAliasId);
-
-    let channel: BroadcastChannel | null = null;
-    if (typeof BroadcastChannel !== "undefined") {
-      channel = new BroadcastChannel(BOARD_DISPLAY_ALIAS_CHANNEL_NAME);
-      channel.onmessage = () => {
-        syncAliasId();
-      };
-    }
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-      window.removeEventListener("focus", syncAliasId);
-      channel?.close();
-    };
-  }, []);
+  const aliasId = useStoredBoardDisplayAlias();
 
   useEffect(() => {
     const keepScreenOn = async () => {

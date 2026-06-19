@@ -61,6 +61,23 @@ export interface ElectronAPI {
     displayId: number,
   ) => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
+  /**
+   * Flash a click-through "identify" glow on the given display (e.g. on menu hover).
+   * `generation` is the menu-session token used to reject stale shows after close.
+   */
+  identifyDisplay: (displayId: number, generation: number) => Promise<boolean>;
+  /** Flash the identify glow on the display "Last Used Display" would open this window onto. */
+  identifyDisplayForWindow: (
+    windowType: WindowType,
+    generation: number,
+  ) => Promise<boolean>;
+  /** Soft, debounced hide of the identify glow (e.g. on row leave). */
+  hideIdentifyDisplay: () => Promise<boolean>;
+  /**
+   * Authoritative hide on menu close/unmount: hides immediately and raises the
+   * generation floor so any in-flight {@link identifyDisplay} is rejected.
+   */
+  cancelIdentifyDisplay: (generation: number) => Promise<boolean>;
   getWindowStates: () => Promise<WindowStatesInfo>;
   /** Reload open projector/monitor/board windows (e.g. after sign-in). */
   refreshDisplayWindows: () => Promise<number>;
