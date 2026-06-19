@@ -1,3 +1,11 @@
+# [2.15.0](https://github.com/K-Cheddar/worship-sync/compare/v2.14.0...v2.15.0) (2026-06-19)
+
+
+### Features
+
+* Hovering over displays now visually highlights which display it is ([dda9eb6](https://github.com/K-Cheddar/worship-sync/commit/dda9eb616132f7488528d93ae8f7f0adc6ac8679))
+* You can now open The Discussion Board Display from the Presentation Controller ([c602224](https://github.com/K-Cheddar/worship-sync/commit/c60222417bd6e0355a9c04de79fb9716d1023ddb))
+
 # [2.14.0](https://github.com/K-Cheddar/worship-sync/compare/v2.13.0...v2.14.0) (2026-06-19)
 
 
