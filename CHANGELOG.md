@@ -1,3 +1,10 @@
+# [2.14.0](https://github.com/K-Cheddar/worship-sync/compare/v2.13.0...v2.14.0) (2026-06-19)
+
+
+### Features
+
+* Item Buttons use space more efficiently ([e73bbf0](https://github.com/K-Cheddar/worship-sync/commit/e73bbf06ff714e531edba6243972f278f2f59c94))
+
 # [2.13.0](https://github.com/K-Cheddar/worship-sync/compare/v2.12.1...v2.13.0) (2026-06-19)
 
 
