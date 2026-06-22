@@ -1,3 +1,11 @@
+# [2.16.0](https://github.com/K-Cheddar/worship-sync/compare/v2.15.0...v2.16.0) (2026-06-22)
+
+
+### Features
+
+* Add discussion board toggle to show on monitor display ([025a771](https://github.com/K-Cheddar/worship-sync/commit/025a771abd1aaf8d93c860af84c60b44a26e1b8f))
+* Adding external search to songs ([507e454](https://github.com/K-Cheddar/worship-sync/commit/507e4545144fbed7e6839c2e82935e71b751603a))
+
 # [2.15.0](https://github.com/K-Cheddar/worship-sync/compare/v2.14.0...v2.15.0) (2026-06-19)
 
 
