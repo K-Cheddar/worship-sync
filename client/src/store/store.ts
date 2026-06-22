@@ -10,6 +10,7 @@ import undoable, { ActionCreators } from "redux-undo";
 import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
+  setMonitorBoardAliasIdFromRemote,
   updateBibleDisplayInfoFromRemote,
   updateMonitor,
   updateMonitorFromRemote,
@@ -358,11 +359,17 @@ const getOverlaySelectionForUndoRedo = (
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
 export const writePresentationSnapshotToFirebase = (state: RootState) => {
   if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
-  const { projectorInfo, monitorInfo, streamInfo, streamItemContentBlocked } =
-    state.presentation;
+  const {
+    projectorInfo,
+    monitorInfo,
+    streamInfo,
+    streamItemContentBlocked,
+    monitorBoardAliasId,
+  } = state.presentation;
   const presentationUpdate = {
     projectorInfo,
     monitorInfo,
+    monitorBoardAliasId,
     streamInfo: {
       displayType: streamInfo.displayType,
       time: streamInfo.time,
@@ -383,6 +390,10 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
 
   localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
   localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+  localStorage.setItem(
+    "monitorBoardAliasId",
+    JSON.stringify(monitorBoardAliasId),
+  );
   localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
   localStorage.setItem(
     "stream_bibleInfo",
@@ -1991,6 +2002,7 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote,
       presentationSlice.actions.updateBoardPostStreamInfoFromRemote,
       presentationSlice.actions.setStreamItemContentBlockedFromRemote,
+      presentationSlice.actions.setMonitorBoardAliasIdFromRemote,
     );
     return (
       (currentState as RootState).presentation !==
@@ -2313,6 +2325,19 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
     listenerApi.dispatch(
       setStreamItemContentBlockedFromRemote(action.payload as boolean),
+    );
+  },
+});
+
+// handle updating monitor board mode from remote (controller swapping the stage
+// monitor between presentation content and a discussion board)
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "debouncedUpdateMonitorBoardAliasId",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      setMonitorBoardAliasIdFromRemote(action.payload as string),
     );
   },
 });

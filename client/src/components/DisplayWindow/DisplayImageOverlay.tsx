@@ -210,6 +210,7 @@ const DisplayImageOverlay = forwardRef<
           needsPadding={needsPadding}
           overlayType="image"
           shouldFillContainer={shouldFillContainer}
+          initialHidden={shouldAnimate}
         />
         {!shouldFillContainer && prevNeedsPadding && (
           <SharedOverlay

@@ -49,11 +49,15 @@ const OverlayStatusBadge = ({ matched }: { matched: boolean }) =>
 
 const OverlayPlanActionBadge = ({
   action,
+  placementOnly,
 }: {
   action: OverlaySyncPlanItem["action"];
+  placementOnly?: boolean;
 }) => {
   const tone =
-    action === "update"
+    placementOnly
+      ? "bg-zinc-800 text-zinc-300"
+      : action === "update"
       ? "bg-green-900/50 text-green-300"
       : action === "clone"
         ? "bg-cyan-900/50 text-cyan-300"
@@ -61,7 +65,9 @@ const OverlayPlanActionBadge = ({
           ? "bg-blue-900/40 text-blue-300"
           : "bg-red-900/40 text-red-300";
   const label =
-    action === "update"
+    placementOnly
+      ? "Found existing"
+      : action === "update"
       ? "Update existing"
       : action === "clone"
         ? "Copy participant"
@@ -99,6 +105,8 @@ const OverlaySummaryPanel = ({
   onExpandedChange: (expanded: boolean) => void;
 }) => {
   const updateCount = items.filter((item) => item.action === "update").length;
+  const foundCount = items.filter((item) => item.placementOnly).length;
+  const fieldUpdateCount = updateCount - foundCount;
   const cloneCount = items.filter((item) => item.action === "clone").length;
   const createCount = items.filter((item) => item.action === "create").length;
   const skipCount = items.filter((item) => item.action === "skip").length;
@@ -123,8 +131,13 @@ const OverlaySummaryPanel = ({
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <span className="rounded-full bg-green-900/40 px-2 py-1 text-green-300">
-              {updateCount} update{updateCount === 1 ? "" : "s"}
+              {fieldUpdateCount} update{fieldUpdateCount === 1 ? "" : "s"}
             </span>
+            {foundCount > 0 ? (
+              <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-300">
+                {foundCount} found
+              </span>
+            ) : null}
             <span className="rounded-full bg-cyan-900/40 px-2 py-1 text-cyan-300">
               {cloneCount} clone{cloneCount === 1 ? "" : "s"}
             </span>
@@ -153,7 +166,10 @@ const OverlaySummaryPanel = ({
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <OverlayPlanActionBadge action={item.action} />
+                      <OverlayPlanActionBadge
+                        action={item.action}
+                        placementOnly={item.placementOnly}
+                      />
                       <OverlayFieldSummary label="Name" value={item.patch.name} />
                       <OverlayFieldSummary label="Title" value={item.patch.title} />
                       <OverlayFieldSummary label="Event" value={item.patch.event} />

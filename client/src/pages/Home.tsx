@@ -119,6 +119,12 @@ const standaloneDisplays: CardLink[] = [
     to: "/projector",
     icon: Projector,
   },
+  {
+    title: "Discussion Board",
+    description: "Open the discussion board view, move to the desired display, then enter fullscreen when you are ready to show it.",
+    to: "/boards/display",
+    icon: MessagesSquare,
+  },
 ];
 
 const obsDisplays: CardLink[] = [

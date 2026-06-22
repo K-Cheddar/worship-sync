@@ -22,11 +22,13 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import QuickLink from "../../components/QuickLink/QuickLink";
 import cn from "classnames";
-import { MonitorUp, MonitorX } from "lucide-react";
+import { ChevronDown, MonitorUp, MonitorX } from "lucide-react";
 import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
 import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
+import BoardMonitorPreview from "./BoardMonitorPreview";
+import { useStoredBoardDisplayAlias } from "../../boards/useStoredBoardDisplayAlias";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
 const OVERLAY_STREAM_QUICK_LINKS_VISIBLE = 10;
@@ -88,9 +90,17 @@ const TransmitHandler = ({
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
+  // Discussion board → monitor: only relevant on the main controller, and only
+  // when the church actually has a board (the alias is auto-seeded once one
+  // exists). Collapsed by default so it stays out of the way until needed.
+  const boardAliasId = useStoredBoardDisplayAlias();
+  const [isBoardSectionOpen, setIsBoardSectionOpen] = useState(false);
+
   const showProjector = visibleScreens.includes("projector");
   const showMonitor = visibleScreens.includes("monitor");
   const showStream = visibleScreens.includes("stream");
+  const showBoardSection =
+    variant === "default" && showMonitor && Boolean(boardAliasId);
   const showBulkControls =
     showProjector && showMonitor && showStream;
   const showFocusedStreamControls =
@@ -272,6 +282,47 @@ const TransmitHandler = ({
                 isMobile={isMobile}
                 previewScale={previewScale}
               />
+            )}
+            {showBoardSection && (
+              <div className="relative overflow-hidden rounded-sm border border-white/12 bg-black/30">
+                <button
+                  type="button"
+                  onClick={() => setIsBoardSectionOpen((open) => !open)}
+                  className={cn(
+                    "flex w-full cursor-pointer items-center justify-between gap-2 bg-black/25 px-2 py-1 text-xs font-semibold transition-colors",
+                    isBoardSectionOpen && "border-b border-white/10",
+                    "hover:bg-black/40 active:bg-black/50",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500/60"
+                  )}
+                  aria-expanded={isBoardSectionOpen}
+                  aria-controls="discussion-board-panel"
+                >
+                  <span className="truncate min-w-0 text-left">Discussion Board</span>
+                  <ChevronDown
+                    className={cn(
+                      "size-3.5 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none",
+                      isBoardSectionOpen ? "rotate-180" : "rotate-0"
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                <div
+                  id="discussion-board-panel"
+                  className={cn(
+                    "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+                    isBoardSectionOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                  )}
+                >
+                  <div
+                    className="min-h-0 overflow-hidden"
+                    inert={isBoardSectionOpen ? undefined : true}
+                  >
+                    <div className="px-2 pb-2">
+                      <BoardMonitorPreview isOpen={isBoardSectionOpen} />
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
             {showStream && (
               <>

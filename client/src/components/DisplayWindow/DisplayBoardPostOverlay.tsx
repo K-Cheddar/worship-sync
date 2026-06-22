@@ -115,6 +115,7 @@ const DisplayBoardPostOverlay = ({
     info: BoardPostStreamInfo | undefined,
     ref: React.RefObject<HTMLDivElement | null>,
     text: string,
+    initialHidden = false,
   ) => {
     if (!text) return null;
 
@@ -128,7 +129,10 @@ const DisplayBoardPostOverlay = ({
         <div
           ref={ref}
           className="max-w-[75%] w-fit rounded-[2%/8%] px-[1.5%] py-[1.5%]"
-          style={{ backgroundColor: bgColor }}
+          style={{
+            backgroundColor: bgColor,
+            ...(initialHidden && { opacity: 0 }),
+          }}
         >
           <p
             className="mb-[0.5em] font-semibold leading-tight"
@@ -152,7 +156,7 @@ const DisplayBoardPostOverlay = ({
 
   return (
     <>
-      {renderCard(boardPostStreamInfo, cardRef, currentText)}
+      {renderCard(boardPostStreamInfo, cardRef, currentText, shouldAnimate)}
       {renderCard(prevBoardPostStreamInfo, prevCardRef, prevText)}
     </>
   );

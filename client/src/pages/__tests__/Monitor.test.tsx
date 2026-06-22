@@ -1,4 +1,4 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import Monitor from "../Monitor";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -14,6 +14,7 @@ const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
 const onValueErrorCallbacks = new Map<string, (error: unknown) => void>();
 let fullscreenPresentationProps: any = null;
+let monitorBoardViewProps: any = null;
 
 const refMock = jest.fn(
   (_db: unknown, path: string) =>
@@ -47,12 +48,26 @@ const mockState = {
       slide: { boxes: [{ words: "Previous" }] },
       timerId: "timer-2",
     },
+    monitorBoardAliasId: "",
   },
   timers: {
     timers: [
       { id: "timer-1", name: "Current Timer" },
       { id: "timer-2", name: "Previous Timer" },
     ],
+  },
+  undoable: {
+    present: {
+      preferences: {
+        monitorSettings: {
+          showClock: true,
+          showTimer: true,
+          clockFontSize: 75,
+          timerFontSize: 75,
+          timerId: "timer-1",
+        },
+      },
+    },
   },
 };
 
@@ -86,6 +101,14 @@ jest.mock("../../containers/FullscreenPresentation", () => ({
   },
 }));
 
+jest.mock("../../components/DisplayWindow/MonitorBoardView", () => ({
+  __esModule: true,
+  default: (props: any) => {
+    monitorBoardViewProps = props;
+    return <div data-testid="monitor-board-view-mock" />;
+  },
+}));
+
 describe("Monitor page", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
@@ -94,6 +117,8 @@ describe("Monitor page", () => {
     refMock.mockClear();
     onValueMock.mockClear();
     fullscreenPresentationProps = null;
+    monitorBoardViewProps = null;
+    mockState.presentation.monitorBoardAliasId = "";
     Object.defineProperty(window.navigator, "wakeLock", {
       configurable: true,
       value: { request: jest.fn().mockResolvedValue(undefined) },
@@ -269,5 +294,30 @@ describe("Monitor page", () => {
     expect(fullscreenPresentationProps.prevTimerInfo).toEqual(
       mockState.timers.timers[1]
     );
+  });
+
+  it("renders the discussion board view (not the presentation) when board mode is on", () => {
+    mockState.presentation.monitorBoardAliasId = "board-alias-1";
+
+    render(
+      <GlobalInfoContext.Provider value={{} as any}>
+        <Monitor />
+      </GlobalInfoContext.Provider>
+    );
+
+    expect(screen.getByTestId("monitor-board-view-mock")).toBeInTheDocument();
+    expect(screen.queryByTestId("fullscreen-presentation-mock")).toBeNull();
+    expect(monitorBoardViewProps.aliasId).toBe("board-alias-1");
+  });
+
+  it("renders the presentation (not the board) when board mode is off", () => {
+    render(
+      <GlobalInfoContext.Provider value={{} as any}>
+        <Monitor />
+      </GlobalInfoContext.Provider>
+    );
+
+    expect(screen.getByTestId("fullscreen-presentation-mock")).toBeInTheDocument();
+    expect(screen.queryByTestId("monitor-board-view-mock")).toBeNull();
   });
 });

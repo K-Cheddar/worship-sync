@@ -329,6 +329,7 @@ const DisplayParticipantOverlay = forwardRef<
           needsPadding={needsPadding}
           overlayType="participant"
           shouldFillContainer={shouldFillContainer}
+          initialHidden={shouldAnimate}
         />
         {!shouldFillContainer && prevParticipantData.length > 0 && (
           <SharedOverlay

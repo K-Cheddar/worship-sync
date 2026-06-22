@@ -13,6 +13,7 @@ import {
 } from "../store/overlaySlice";
 import {
   addExistingOverlayToList,
+  updateList as updateOverlayList,
   updateOverlayInList,
 } from "../store/overlaysSlice";
 import {
@@ -22,6 +23,7 @@ import {
   persistNewParticipantOverlay,
   persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
+import { moveOverlayAfterServicePlanningAnchor } from "../integrations/servicePlanning/servicePlanningOverlayOrder";
 import generateRandomId from "../utils/generateRandomId";
 import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
@@ -59,6 +61,21 @@ export const useServicePlanningSync = () => {
     [dispatch, store],
   );
 
+  const placeNewOverlayAfterAnchor = useCallback(
+    (overlayId: string, insertAfterId?: string): boolean => {
+      const list = store.getState().undoable.present.overlays.list;
+      const next = moveOverlayAfterServicePlanningAnchor(
+        list,
+        overlayId,
+        insertAfterId,
+      );
+      if (next === list) return false;
+      dispatch(updateOverlayList(next));
+      return true;
+    },
+    [dispatch, store],
+  );
+
   const runServicePlanningSync = useCallback(
     async (url: string): Promise<ServicePlanningSyncResult> => {
       if (!url?.trim()) {
@@ -84,6 +101,7 @@ export const useServicePlanningSync = () => {
       const reasons: string[] = [];
       /** One overlay per candidate per sync; avoids two Co-Host roles updating the same row. */
       const usedOverlayIds = new Set<string>();
+      let overlayAnchorId: string | undefined;
 
       for (const block of mapped) {
         for (const cand of block.candidates) {
@@ -113,6 +131,8 @@ export const useServicePlanningSync = () => {
                   insertAfterId: template.id,
                 }),
               );
+              placeNewOverlayAfterAnchor(newId, overlayAnchorId);
+              overlayAnchorId = newId;
               usedOverlayIds.add(newId);
               await persistNewParticipantOverlayClone(
                 db,
@@ -128,6 +148,8 @@ export const useServicePlanningSync = () => {
             const newId = generateRandomId();
             const newOverlay = buildNewParticipantOverlay(cand.patch, newId);
             dispatch(addExistingOverlayToList({ overlay: newOverlay }));
+            placeNewOverlayAfterAnchor(newId, overlayAnchorId);
+            overlayAnchorId = newId;
             usedOverlayIds.add(newId);
             await persistNewParticipantOverlay(db, newOverlay);
             updated += 1;
@@ -165,6 +187,7 @@ export const useServicePlanningSync = () => {
             );
           }
 
+          overlayAnchorId = target.id;
           usedOverlayIds.add(target.id);
           updated += 1;
         }
@@ -178,6 +201,7 @@ export const useServicePlanningSync = () => {
       db,
       dispatch,
       applyPersistedOverlayUpdate,
+      placeNewOverlayAfterAnchor,
       store,
     ],
   );

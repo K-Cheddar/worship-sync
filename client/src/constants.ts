@@ -34,10 +34,20 @@ export const DEFAULT_TITLE_FONT_PX = 150;
 /** Step for +/- font size toolbar buttons (px for slide boxes; formatted-text display scale). */
 export const FONT_SIZE_BUTTON_STEP = 1;
 
-/** Slide Tools font size presets (px): 50–250 in 5px steps. */
+/** Slide Tools font size field bounds (px). */
+export const MIN_SLIDE_FONT_PX = 25;
+export const MAX_SLIDE_FONT_PX = 500;
+
+/** Slide Tools font size presets (px): 50–500 in 5px steps. */
+export const FONT_SIZE_PRESET_MIN_PX = 50;
+export const FONT_SIZE_PRESET_STEP_PX = 5;
 export const FONT_SIZE_PRESETS: readonly number[] = Array.from(
-  { length: (250 - 50) / 5 + 1 },
-  (_, i) => 50 + i * 5,
+  {
+    length:
+      (MAX_SLIDE_FONT_PX - FONT_SIZE_PRESET_MIN_PX) / FONT_SIZE_PRESET_STEP_PX +
+      1,
+  },
+  (_, i) => FONT_SIZE_PRESET_MIN_PX + i * FONT_SIZE_PRESET_STEP_PX,
 );
 
 // ============================================================================

@@ -213,6 +213,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           needsPadding={needsPadding}
           overlayType="stick-to-bottom"
           shouldFillContainer={shouldFillContainer}
+          initialHidden={shouldAnimate}
         />
         {!shouldFillContainer && prevStbData.length > 0 && (
           <SharedOverlay

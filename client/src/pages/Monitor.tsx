@@ -1,7 +1,9 @@
 import { useSelector, useDispatch, useFirebaseValueWithRetry } from "../hooks";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
-import { useContext, useEffect, useCallback } from "react";
+import { useContext, useEffect, useCallback, useState } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
+import MonitorBoardView from "../components/DisplayWindow/MonitorBoardView";
+import { REFERENCE_HEIGHT } from "../constants";
 import {
   setMonitorClockFontSize,
   setMonitorShowTimer,
@@ -83,6 +85,33 @@ const Monitor = () => {
   }, []);
 
   useCloseOnEscape(closeWindow);
+
+  // When the controller swaps the monitor to a discussion board, show the board
+  // here with the clock/timer band composited on top so a countdown stays visible.
+  const monitorBoardAliasId = useSelector(
+    (state) => state.presentation.monitorBoardAliasId
+  );
+  const [viewportHeight, setViewportHeight] = useState(() =>
+    typeof window !== "undefined" ? window.innerHeight : REFERENCE_HEIGHT
+  );
+  useEffect(() => {
+    const onResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  if (monitorBoardAliasId) {
+    return (
+      <div className="h-dvh w-dvw bg-black">
+        <MonitorBoardView
+          aliasId={monitorBoardAliasId}
+          scale={viewportHeight / REFERENCE_HEIGHT}
+          missingAliasTitle="No discussion board selected."
+          missingAliasDescription="Choose a board in moderation, then turn on Show on Monitor."
+        />
+      </div>
+    );
+  }
 
   return (
     <FullscreenPresentation

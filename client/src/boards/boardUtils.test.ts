@@ -1,4 +1,5 @@
 import {
+  buildBoardPresentationClampFontSize,
   buildBoardPublicUrl,
   buildWorshipSyncModeratorBoardPostAuthorId,
   filterHighlightedBoardPosts,
@@ -10,7 +11,9 @@ import {
   getBoardPostRange,
   getBoardPostsForAttendeeView,
   isBoardAuthorInUse,
+  boardHasOnlyPreviousDayPosts,
   isBoardPostOwnedByParticipant,
+  isRestreamChatFromPreviousDay,
   isTimestampFromPreviousLocalDay,
   isWorshipSyncModeratorBoardPost,
   normalizeAliasId,
@@ -35,6 +38,17 @@ const createPost = (overrides: Partial<DBBoardPost>): DBBoardPost => ({
 });
 
 describe("boardUtils", () => {
+  it("builds presentation font sizes from layout width instead of viewport vw", () => {
+    expect(
+      buildBoardPresentationClampFontSize(1, {
+        minRem: 2.25,
+        vwPercent: 3,
+        maxRem: 5,
+        layoutWidthPx: 1280,
+      }),
+    ).toBe("clamp(2.25rem, 38.4px, 5rem)");
+  });
+
   it("builds board public URLs from the current window location in the browser", () => {
     expect(buildBoardPublicUrl("sunday", "board")).toBe(
       `${window.location.origin}${window.location.pathname}${window.location.search}#/boards/sunday`,
@@ -60,18 +74,22 @@ describe("boardUtils", () => {
   });
 
   it("detects WorshipSync moderator posts by author id prefix", () => {
-    expect(isWorshipSyncModeratorBoardPost({ authorId: "worshipsync:abc" })).toBe(
-      true,
-    );
+    expect(
+      isWorshipSyncModeratorBoardPost({ authorId: "worshipsync:abc" }),
+    ).toBe(true);
     expect(
       isWorshipSyncModeratorBoardPost({ authorId: " worshipsync:abc " }),
     ).toBe(true);
-    expect(isWorshipSyncModeratorBoardPost({ authorId: "device-1" })).toBe(false);
+    expect(isWorshipSyncModeratorBoardPost({ authorId: "device-1" })).toBe(
+      false,
+    );
     expect(isWorshipSyncModeratorBoardPost({})).toBe(false);
   });
 
   it("builds WorshipSync moderator author ids", () => {
-    expect(buildWorshipSyncModeratorBoardPostAuthorId(" u1 ")).toBe("worshipsync:u1");
+    expect(buildWorshipSyncModeratorBoardPostAuthorId(" u1 ")).toBe(
+      "worshipsync:u1",
+    );
   });
 
   it("generates anonymous church-themed display names within author limits", () => {
@@ -258,5 +276,85 @@ describe("isTimestampFromPreviousLocalDay", () => {
   it("returns false for missing or invalid timestamps", () => {
     expect(isTimestampFromPreviousLocalDay(undefined, now)).toBe(false);
     expect(isTimestampFromPreviousLocalDay(Number.NaN, now)).toBe(false);
+  });
+});
+
+describe("boardHasOnlyPreviousDayPosts", () => {
+  const now = new Date(2026, 5, 14, 10, 0, 0).getTime();
+  const yesterday = new Date(2026, 5, 13, 18, 0, 0).getTime();
+  const lastWeek = new Date(2026, 5, 7, 18, 0, 0).getTime();
+  const today = new Date(2026, 5, 14, 9, 30, 0).getTime();
+
+  it("returns false when the board has no posts (nothing to roll)", () => {
+    expect(boardHasOnlyPreviousDayPosts([], now)).toBe(false);
+  });
+
+  it("returns true when every post is from an earlier day", () => {
+    const posts = [{ timestamp: lastWeek }, { timestamp: yesterday }];
+    expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(true);
+  });
+
+  it("returns false when any post is from today (active session)", () => {
+    const posts = [{ timestamp: yesterday }, { timestamp: today }];
+    expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(false);
+  });
+
+  it("returns false when all posts are from today", () => {
+    const posts = [{ timestamp: today }, { timestamp: today + 1000 }];
+    expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(false);
+  });
+});
+
+describe("isRestreamChatFromPreviousDay", () => {
+  const now = new Date(2026, 5, 14, 10, 0, 0).getTime();
+  const yesterday = new Date(2026, 5, 13, 20, 0, 0).getTime();
+  const today = new Date(2026, 5, 14, 9, 0, 0).getTime();
+
+  const base = {
+    enabled: true,
+    messageCount: 5,
+    lastMessageAt: yesterday,
+    lastEventAt: yesterday,
+  };
+
+  it("returns true for an enabled session whose last message was an earlier day", () => {
+    expect(isRestreamChatFromPreviousDay(base, now)).toBe(true);
+  });
+
+  it("returns false when the last message is from today (active chat)", () => {
+    expect(
+      isRestreamChatFromPreviousDay(
+        { ...base, lastMessageAt: today, lastEventAt: today },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when there are no messages", () => {
+    expect(
+      isRestreamChatFromPreviousDay({ ...base, messageCount: 0 }, now),
+    ).toBe(false);
+  });
+
+  it("returns false when the session is disabled", () => {
+    expect(
+      isRestreamChatFromPreviousDay({ ...base, enabled: false }, now),
+    ).toBe(false);
+  });
+
+  it("returns false for a null session or missing activity timestamp", () => {
+    expect(isRestreamChatFromPreviousDay(null, now)).toBe(false);
+    expect(
+      isRestreamChatFromPreviousDay({ enabled: true, messageCount: 3 }, now),
+    ).toBe(false);
+  });
+
+  it("falls back to lastEventAt when lastMessageAt is absent", () => {
+    expect(
+      isRestreamChatFromPreviousDay(
+        { enabled: true, messageCount: 2, lastEventAt: yesterday },
+        now,
+      ),
+    ).toBe(true);
   });
 });

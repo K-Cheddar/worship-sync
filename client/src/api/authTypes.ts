@@ -511,10 +511,17 @@ export type DesktopAuthStartResponse = {
   pollIntervalMs: number;
 };
 
+export type EmailCodeChallengeFields = {
+  requiresEmailCode?: boolean;
+  pendingAuthId?: string;
+  verificationEmail?: string;
+};
+
 export type DesktopAuthCompleteResponse = {
   success: boolean;
   status: DesktopAuthStatus;
   pendingAuthId?: string | null;
+  verificationEmail?: string | null;
   exchangeCode?: string | null;
 };
 
@@ -522,6 +529,7 @@ export type DesktopAuthStatusResponse = {
   success: boolean;
   status: DesktopAuthStatus;
   pendingAuthId?: string | null;
+  verificationEmail?: string | null;
   exchangeCode?: string | null;
   exchangeCodeExpiresAt?: string | null;
 };

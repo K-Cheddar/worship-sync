@@ -1,5 +1,6 @@
 import type { OverlayInfo } from "../../types";
 import {
+  DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
   buildClonedParticipantOverlay,
   buildNewParticipantOverlay,
   findParticipantTemplateForSync,
@@ -45,6 +46,37 @@ describe("buildClonedParticipantOverlay", () => {
     expect(built.event).toBe("Sabbath School Co-Host");
     expect(built.formatting?.participantOverlayPosition).toBe("left");
   });
+
+  it("clears stale template titles when the service plan has no matching title", () => {
+    const template = p("t", "Sabbath School", "Old");
+    template.title = "Stale Title";
+
+    const built = buildClonedParticipantOverlay(
+      template,
+      { name: "New Name", event: "Sabbath School", title: undefined },
+      "new-id",
+    );
+
+    expect(built.title).toBe("");
+  });
+
+  it("keeps the template duration and falls back to the Service Planning default", () => {
+    expect(
+      buildClonedParticipantOverlay(
+        { ...p("t", "Sabbath School"), duration: 12 },
+        { name: "New Name", event: "Sabbath School" },
+        "new-id",
+      ).duration,
+    ).toBe(12);
+
+    expect(
+      buildClonedParticipantOverlay(
+        p("t", "Sabbath School"),
+        { name: "New Name", event: "Sabbath School" },
+        "new-id",
+      ).duration,
+    ).toBe(DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION);
+  });
 });
 
 describe("buildNewParticipantOverlay", () => {
@@ -61,6 +93,7 @@ describe("buildNewParticipantOverlay", () => {
         name: "Jane Doe",
         title: "Speaker",
         event: "Sermon",
+        duration: DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
         heading: "",
         subHeading: "",
         url: "",

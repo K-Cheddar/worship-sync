@@ -68,6 +68,25 @@ export const normalizeBoardPresentationFontScale = (value?: number): number => {
   return Math.round(clamped * 10) / 10;
 };
 
+/** Build responsive board post typography from a known layout width (not viewport `vw`). */
+export const buildBoardPresentationClampFontSize = (
+  presentationFontScale: number,
+  {
+    minRem,
+    vwPercent,
+    maxRem,
+    layoutWidthPx,
+  }: {
+    minRem: number;
+    vwPercent: number;
+    maxRem: number;
+    layoutWidthPx: number;
+  },
+): string => {
+  const preferredPx = (vwPercent * presentationFontScale * layoutWidthPx) / 100;
+  return `clamp(${minRem * presentationFontScale}rem, ${preferredPx}px, ${maxRem * presentationFontScale}rem)`;
+};
+
 /**
  * Same rules as server `isBoardAuthorInUse`: same display name is allowed only when
  * both the new participant and an existing post share the same author id.
@@ -329,6 +348,48 @@ export const isTimestampFromPreviousLocalDay = (
     today.getDate(),
   ).getTime();
   return thenStartOfDay < todayStartOfDay;
+};
+
+/**
+ * True when a board still holds posts and every one of them is from an earlier
+ * local day — i.e. leftover content from a previous gathering with no activity
+ * today. A single post from today means the session is in active use, so this
+ * returns false and we never offer to roll it. Drives the "start fresh session"
+ * prompt; we key on post activity, never on the board's creation date, because a
+ * board created earlier can be filled with today's live posts.
+ */
+export const boardHasOnlyPreviousDayPosts = (
+  posts: Pick<DBBoardPost, "timestamp">[],
+  now: number = Date.now(),
+): boolean =>
+  posts.length > 0 &&
+  posts.every((post) => isTimestampFromPreviousLocalDay(post.timestamp, now));
+
+/**
+ * True when a Restream session still has chat whose most recent activity was on
+ * an earlier local day. Keyed on the last message/event time, never the session
+ * start time, so a session that started earlier but is receiving today's chat is
+ * treated as active. Drives the (permanent) "clear Restream chat" prompt.
+ */
+export const isRestreamChatFromPreviousDay = (
+  session:
+    | {
+        enabled?: boolean;
+        messageCount?: number;
+        lastMessageAt?: number;
+        lastEventAt?: number;
+      }
+    | null
+    | undefined,
+  now: number = Date.now(),
+): boolean => {
+  if (!session?.enabled) return false;
+  if ((session.messageCount ?? 0) <= 0) return false;
+  const lastActivityAt = session.lastMessageAt ?? session.lastEventAt;
+  return (
+    typeof lastActivityAt === "number" &&
+    isTimestampFromPreviousLocalDay(lastActivityAt, now)
+  );
 };
 
 const CHURCH_ADJECTIVES = [

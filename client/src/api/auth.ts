@@ -10,6 +10,7 @@ import type {
   ChurchBranding,
   ChurchInviteRow,
   ChurchMemberRow,
+  EmailCodeChallengeFields,
   MemberNotifications,
   MemberPermissions,
   NotificationPreference,
@@ -129,13 +130,13 @@ export const getAuthBootstrap = async ({
   );
 
 export const createHumanSession = async (body: JsonBody) =>
-  apiFetch<{
-    success: boolean;
-    bootstrap?: AuthBootstrap;
-    humanApiToken?: string;
-    requiresEmailCode?: boolean;
-    pendingAuthId?: string;
-  }>("api/auth/session", {
+  apiFetch<
+    {
+      success: boolean;
+      bootstrap?: AuthBootstrap;
+      humanApiToken?: string;
+    } & EmailCodeChallengeFields
+  >("api/auth/session", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -186,13 +187,22 @@ export const exchangeDesktopAuth = async (body: {
   });
 
 export const resendEmailCode = async (body: JsonBody) =>
+  apiFetch<
+    {
+      success: boolean;
+      bootstrap?: AuthBootstrap;
+      humanApiToken?: string;
+    } & EmailCodeChallengeFields
+  >("api/auth/resend-email-code", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const getEmailCodeHint = async (body: { pendingAuthId: string }) =>
   apiFetch<{
     success: boolean;
-    bootstrap?: AuthBootstrap;
-    humanApiToken?: string;
-    requiresEmailCode?: boolean;
-    pendingAuthId?: string;
-  }>("api/auth/resend-email-code", {
+    verificationEmail: string;
+  }>("api/auth/email-code-hint", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -213,6 +223,7 @@ export const createChurchAccount = async (body: JsonBody) =>
     churchId: string;
     requiresEmailCode: boolean;
     pendingAuthId: string;
+    verificationEmail?: string;
   }>("api/auth/churches/create", {
     method: "POST",
     body: JSON.stringify(body),
