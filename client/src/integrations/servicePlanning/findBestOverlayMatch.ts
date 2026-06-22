@@ -64,7 +64,9 @@ export const findBestOverlayMatch = (
 };
 
 /**
- * Prefer matching `overlay.event` to the planned target event (split roles), then fall back to planning element type.
+ * Prefer exact `overlay.event` matches for planned target events (split roles).
+ * When Service Planning has an explicit event slot, fuzzy fallback can mutate
+ * the wrong weekly overlay, so missing exact slots should clone/create instead.
  * `excludeIds`: overlays already assigned earlier in the same sync run so duplicate role strings (e.g. two Co-Host slots)
  * map to separate overlays instead of overwriting the same row.
  */
@@ -82,22 +84,12 @@ export const findOverlayForServicePlanningCandidate = (
 
   if (targetEvent?.trim()) {
     const te = targetEvent.toLowerCase().replace(/\s+/g, " ").trim();
-    const exact = pool.find((o) => (o.event || "").toLowerCase().replace(/\s+/g, " ").trim() === te);
-    if (exact) return exact;
-
-    let best: OverlayInfo | null = null;
-    let bestScore = 0;
-    for (const o of pool) {
-      const s = scoreOverlayEventMatch(te, o.event);
-      if (s < MIN_SCORE) continue;
-      const el = (o.event || "").trim().length;
-      const bestLen = (best?.event || "").trim().length;
-      if (!best || s > bestScore || (s === bestScore && el > bestLen)) {
-        bestScore = s;
-        best = o;
-      }
-    }
-    if (best) return best;
+    return (
+      pool.find(
+        (o) =>
+          (o.event || "").toLowerCase().replace(/\s+/g, " ").trim() === te,
+      ) ?? null
+    );
   }
 
   return findBestOverlayMatch(planningElementType, pool)?.overlay ?? null;

@@ -83,7 +83,14 @@ export const searchLrclibTracks = async (
 export const resolveLrclibImport = async (
   query: LrclibImportQuery,
 ): Promise<LrclibImportResolution> => {
-  const match = await getLrclibTrack(query);
+  let match: NormalizedLrclibTrack | null = null;
+
+  try {
+    match = await getLrclibTrack(query);
+  } catch (error) {
+    console.warn("Exact lyrics lookup failed; falling back to search.", error);
+  }
+
   if (match) {
     return {
       match,

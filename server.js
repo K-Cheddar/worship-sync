@@ -48,10 +48,7 @@ import {
   createRestreamService,
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
-import {
-  addTeamsSseClient,
-  removeTeamsSseClient,
-} from "./server/teamsSse.js";
+import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -639,6 +636,7 @@ app.post("/api/auth/desktop/complete", authHandlers.completeDesktopAuth);
 app.post("/api/auth/desktop/status", authHandlers.getDesktopAuthStatus);
 app.post("/api/auth/desktop/exchange", authHandlers.exchangeDesktopAuth);
 app.post("/api/auth/resend-email-code", authHandlers.resendEmailCode);
+app.post("/api/auth/email-code-hint", authHandlers.getEmailCodeHint);
 app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
@@ -701,7 +699,10 @@ app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/delete",
   authHandlers.deleteTeamRosterMember,
 );
-app.post("/api/churches/:churchId/team-positions", authHandlers.createTeamPosition);
+app.post(
+  "/api/churches/:churchId/team-positions",
+  authHandlers.createTeamPosition,
+);
 // Registered before the :positionId route so "reorder" is not read as a positionId.
 app.post(
   "/api/churches/:churchId/team-positions/reorder",
@@ -1934,7 +1935,14 @@ app.get("/api/lrclib/get", async (req, res) => {
       return res.status(400).json({ error: "Invalid lyrics lookup query" });
     }
 
-    console.error("Error fetching exact lyrics match:", error.message);
+    console.error("Error fetching exact lyrics match:", {
+      message: error.message,
+      status: error.response?.status,
+      code: error.code,
+      trackName: params.track_name,
+      artistName: params.artist_name,
+      albumName: params.album_name,
+    });
     res.status(502).json({ error: "Could not fetch lyrics." });
   }
 });
@@ -1957,7 +1965,14 @@ app.get("/api/lrclib/search", async (req, res) => {
 
     res.json(await searchLrclibTracks(params));
   } catch (error) {
-    console.error("Error searching LRCLIB:", error.message);
+    console.error("Error searching LRCLIB:", {
+      message: error.message,
+      status: error.response?.status,
+      code: error.code,
+      trackName: params.track_name,
+      artistName: params.artist_name,
+      albumName: params.album_name,
+    });
     res.status(502).json({ error: "Could not search LRCLIB" });
   }
 });

@@ -59,6 +59,7 @@ import {
 } from "../api/auth";
 import type {
   ChurchBranding,
+  EmailCodeChallengeFields,
   MemberPermissions,
   NotificationPreference,
 } from "../api/authTypes";
@@ -321,7 +322,7 @@ type GlobalInfoContextType = {
     method: HumanAuthMethod;
     email?: string;
     password?: string;
-  }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
+  }) => Promise<EmailCodeChallengeFields>;
   completeDesktopExchange: ({
     desktopAuthId,
     desktopAuthSecret,
@@ -344,7 +345,7 @@ type GlobalInfoContextType = {
     pendingAuthId,
   }: {
     pendingAuthId: string;
-  }) => Promise<{ pendingAuthId?: string }>;
+  }) => Promise<EmailCodeChallengeFields>;
   createChurchAccount: ({
     method,
     churchName,
@@ -357,7 +358,7 @@ type GlobalInfoContextType = {
     adminName: string;
     adminEmail?: string;
     password?: string;
-  }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
+  }) => Promise<EmailCodeChallengeFields>;
   forgotPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   unlinkCurrentWorkstation: () => Promise<void>;
@@ -408,6 +409,7 @@ type GlobalInfoContextType = {
   clearAuthError: () => void;
   /** Set when session restore needs email verification; Login should open the code step. */
   pendingEmailVerificationId: string | null;
+  pendingEmailVerificationEmail: string | null;
   clearPendingEmailVerification: () => void;
   operatorName: string;
   device: AuthBootstrap["device"] | null;
@@ -521,6 +523,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     useState<NotificationPreference>("default");
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
+    useState<string | null>(null);
+  const [pendingEmailVerificationEmail, setPendingEmailVerificationEmail] =
     useState<string | null>(null);
   const [operatorName, setOperatorNameState] = useState("");
   const [device, setDevice] = useState<AuthBootstrap["device"] | null>(null);
@@ -656,6 +660,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_formattedTextDisplayInfo: Unsubscribe | undefined;
     stream_boardPostStreamInfo: Unsubscribe | undefined;
     stream_itemContentBlocked: Unsubscribe | undefined;
+    monitorBoardAliasId: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
     serviceTimes: Unsubscribe | undefined;
   }>({
@@ -670,6 +675,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_formattedTextDisplayInfo: undefined,
     stream_boardPostStreamInfo: undefined,
     stream_itemContentBlocked: undefined,
+    monitorBoardAliasId: undefined,
     timerInfo: undefined,
     serviceTimes: undefined,
   });
@@ -828,6 +834,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       humanApiToken?: string;
     }) => {
       setPendingEmailVerificationId(null);
+      setPendingEmailVerificationEmail(null);
       setPendingEmailCodeSignInMethod(null);
       setLastSignInMethod(method);
       dispatch({ type: "RESET" });
@@ -1116,6 +1123,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.stream_itemContentBlocked,
           updateAction: "debouncedUpdateStreamItemContentBlocked",
         },
+        monitorBoardAliasId: {
+          info: data.monitorBoardAliasId,
+          updateAction: "debouncedUpdateMonitorBoardAliasId",
+        },
         timerInfo: {
           info: data.timerInfo,
           updateAction: "debouncedUpdateTimerInfo",
@@ -1132,9 +1143,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         const obj = updateInfo[_key];
         const { info, updateAction } = obj as updateInfoChildType;
 
-        const isBlockedKey = _key === "stream_itemContentBlocked";
-        if (isBlockedKey ? info === undefined : !info) continue;
-        dispatch({ type: updateAction, payload: isBlockedKey ? Boolean(info) : info });
+        // Some keys must still propagate when falsy (false, or "" to turn board
+        // mode off) — for those, skip only when the value is truly absent.
+        const propagateWhenFalsy =
+          _key === "stream_itemContentBlocked" ||
+          _key === "monitorBoardAliasId";
+        if (propagateWhenFalsy ? info === undefined : !info) continue;
+        const payload =
+          _key === "stream_itemContentBlocked" ? Boolean(info) : info;
+        dispatch({ type: updateAction, payload });
       }
     },
     [dispatch]
@@ -1155,11 +1172,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const applyOfflineBootstrapFallback = useCallback(() => {
     setAuthServerStatus("offline");
     setPendingEmailVerificationId(null);
+    setPendingEmailVerificationEmail(null);
     setLoginState((current) => (current === "loading" ? "idle" : current));
   }, []);
 
   const clearPendingEmailVerification = useCallback(() => {
     setPendingEmailVerificationId(null);
+    setPendingEmailVerificationEmail(null);
   }, []);
 
   const clearAuthError = useCallback(() => {
@@ -1171,6 +1190,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       hasRehydratedTimersRef.current = false;
       hasRehydratedServiceTimesRef.current = false;
       setPendingEmailVerificationId(null);
+      setPendingEmailVerificationEmail(null);
       setLoginState("guest");
       setSessionKind(null);
       setUserId("");
@@ -1210,6 +1230,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       dispatch({ type: "RESET" });
       dispatch(ActionCreators.clearHistory());
       setPendingEmailVerificationId(null);
+      setPendingEmailVerificationEmail(null);
       setAuthError("");
       applyBootstrap(null);
       setFirebaseDb(undefined);
@@ -1232,6 +1253,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setAuthServerRetryCount(0);
     setAuthError("");
     setPendingEmailVerificationId(null);
+    setPendingEmailVerificationEmail(null);
 
     const promise = (async () => {
       try {
@@ -1316,6 +1338,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               ),
             );
             setPendingEmailVerificationId(restoredSession.pendingAuthId);
+            setPendingEmailVerificationEmail(
+              restoredSession.verificationEmail?.trim() || null,
+            );
           } else if (restoredSession.requiresEmailCode) {
             setAuthError(AUTH_VERIFY_DEVICE_MESSAGE);
           } else if (restoredSession.requiresEmailCode === false) {
@@ -1990,10 +2015,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       if (response.requiresEmailCode && response.pendingAuthId) {
         setPendingEmailCodeSignInMethod(method);
         setPendingEmailVerificationId(response.pendingAuthId);
+        setPendingEmailVerificationEmail(
+          response.verificationEmail?.trim() || null,
+        );
         setLoginState("idle");
         return {
           requiresEmailCode: true,
           pendingAuthId: response.pendingAuthId,
+          verificationEmail: response.verificationEmail,
         };
       }
 
@@ -2198,7 +2227,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         if (response.requiresEmailCode && response.pendingAuthId) {
-          return { pendingAuthId: response.pendingAuthId };
+          return {
+            pendingAuthId: response.pendingAuthId,
+            verificationEmail: response.verificationEmail,
+          };
         }
 
         setAuthError("Could not resend the code. Try again.");
@@ -2278,6 +2310,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       return {
         requiresEmailCode: response.requiresEmailCode,
         pendingAuthId: response.pendingAuthId,
+        verificationEmail: response.verificationEmail,
       };
     } catch (error) {
       if (createdPasswordUser && auth.currentUser) {
@@ -2399,6 +2432,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
     await signOutFirebaseAuth(getSharedDataAuth());
     setPendingEmailVerificationId(null);
+    setPendingEmailVerificationEmail(null);
     setPendingEmailCodeSignInMethod(null);
     clearPendingLinkState();
     setAccess("full");
@@ -2481,6 +2515,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       authError,
       clearAuthError,
       pendingEmailVerificationId,
+      pendingEmailVerificationEmail,
       clearPendingEmailVerification,
       operatorName,
       device,
@@ -2541,6 +2576,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       authError,
       clearAuthError,
       pendingEmailVerificationId,
+      pendingEmailVerificationEmail,
       clearPendingEmailVerification,
       operatorName,
       device,

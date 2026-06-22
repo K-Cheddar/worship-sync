@@ -22,11 +22,22 @@ interface SharedOverlayProps {
   overlayType: OverlayType;
   /** When true, overlay fills its container (e.g. for preview outside display window). */
   shouldFillContainer?: boolean;
+  /** Hide on first paint until GSAP enter runs (current overlay only). */
+  initialHidden?: boolean;
 }
 
 const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
   (
-    { width, styles, overlayInfo, needsPadding, isPrev = false, overlayType, shouldFillContainer = false },
+    {
+      width,
+      styles,
+      overlayInfo,
+      needsPadding,
+      isPrev = false,
+      overlayType,
+      shouldFillContainer = false,
+      initialHidden = false,
+    },
     ref
   ) => {
     const overlayImageUrl =
@@ -344,6 +355,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           display: styles.display || "flex",
           flexDirection: styles.flexDirection || "column",
           ...(isPrev && { overflow: "hidden" }),
+          ...(initialHidden && { opacity: 0 }),
         }}
       >
         {renderChildren()}

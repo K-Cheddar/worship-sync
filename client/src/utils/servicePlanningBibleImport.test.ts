@@ -71,7 +71,7 @@ describe("createBibleItemFromParsedReference", () => {
     );
   });
 
-  it("uses cached local Bible chapters before fetching remotely", async () => {
+  it("reuses cached Bible Gateway chapters before fetching remotely", async () => {
     const bibleDb = {
       get: jest.fn().mockResolvedValue({
         _id: "niv-Psalms-78",
@@ -83,7 +83,7 @@ describe("createBibleItemFromParsedReference", () => {
           { name: "2", index: 1, text: "Cached verse 2" },
         ],
         lastUpdated: new Date().toISOString(),
-        isFromBibleGateway: false,
+        isFromBibleGateway: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }),
@@ -119,6 +119,72 @@ describe("createBibleItemFromParsedReference", () => {
         verses: [
           { name: "1", index: 0, text: "Cached verse 1" },
           { name: "2", index: 1, text: "Cached verse 2" },
+        ],
+      }),
+    );
+  });
+
+  it("ignores seeded (non-Bible-Gateway) cache and fetches the requested version", async () => {
+    // The seeded bibleDb ships public-domain KJV text under every version key,
+    // so trusting it would mislabel the verses (e.g. NKJV item with KJV text).
+    const bibleDb = {
+      get: jest.fn().mockResolvedValue({
+        _id: "nkjv-John-3",
+        book: "John",
+        chapter: "3",
+        version: "nkjv",
+        verses: [
+          { name: "1", index: 0, text: "Seed KJV verse 1" },
+          { name: "2", index: 1, text: "Seed KJV verse 2" },
+        ],
+        lastUpdated: new Date().toISOString(),
+        isFromBibleGateway: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      put: jest.fn().mockResolvedValue(undefined),
+    };
+    mockedGetVersesApi.mockResolvedValue({
+      name: "3",
+      index: 2,
+      verses: [
+        { name: "1", index: 0, text: "Live NKJV verse 1" },
+        { name: "2", index: 1, text: "Live NKJV verse 2" },
+      ],
+    });
+    mockedCreateNewBible.mockResolvedValue({
+      _id: "john-3",
+      name: "John 3:1-2 NKJV",
+      type: "bible",
+      background: "#000",
+    } as any);
+
+    await createBibleItemFromParsedReference({
+      parsedRef: {
+        book: "John",
+        chapter: "3",
+        verseRange: "1-2",
+        version: "NKJV",
+      },
+      name: "John 3:1-2 NKJV",
+      db: undefined,
+      bibleDb,
+      allItems: [],
+      background: "#000",
+      brightness: 60,
+      fontMode: "separate",
+    });
+
+    expect(mockedGetVersesApi).toHaveBeenCalledWith({
+      book: "John",
+      chapter: 2,
+      version: "nkjv",
+    });
+    expect(mockedCreateNewBible).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verses: [
+          { name: "1", index: 0, text: "Live NKJV verse 1" },
+          { name: "2", index: 1, text: "Live NKJV verse 2" },
         ],
       }),
     );

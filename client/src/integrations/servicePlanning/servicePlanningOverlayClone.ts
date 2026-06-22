@@ -3,6 +3,8 @@ import type { ServicePlanningFieldPatch } from "./mapServicePlanningToOverlays";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
 
+export const DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION = 7;
+
 /** Participant overlay with the same event label as the sync target. */
 export const findParticipantTemplateForSync = (
   list: OverlayInfo[],
@@ -27,13 +29,10 @@ export const buildClonedParticipantOverlay = (
     ...template,
     id: newId,
     name: patch.name ?? "",
+    title: patch.title ?? "",
     event: patch.event ?? template.event,
+    duration: template.duration ?? DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
   };
-  if (patch.title !== undefined) {
-    next.title = patch.title;
-  } else {
-    next.title = template.title;
-  }
   next.heading = "";
   next.subHeading = "";
   next.url = "";
@@ -51,6 +50,7 @@ export const buildNewParticipantOverlay = (
   name: patch.name ?? "",
   title: patch.title ?? "",
   event: patch.event ?? "",
+  duration: DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
   heading: "",
   subHeading: "",
   url: "",
@@ -85,9 +85,11 @@ export const persistNewParticipantOverlayClone = async (
         id: newId,
         docType: "overlay",
         name: patch.name ?? "",
-        title:
-          patch.title !== undefined ? patch.title : (rest as OverlayInfo).title,
+        title: patch.title ?? "",
         event: patch.event ?? (rest as OverlayInfo).event,
+        duration:
+          (rest as OverlayInfo).duration ??
+          DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
         createdAt: now,
         updatedAt: now,
       } as DBOverlay,

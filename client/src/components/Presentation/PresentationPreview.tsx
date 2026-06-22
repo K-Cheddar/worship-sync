@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import Toggle from "../Toggle/Toggle";
 import QuickLink from "../QuickLink/QuickLink";
@@ -41,6 +41,9 @@ type PresentationPreviewProps = {
   streamItemContentBlocked?: boolean;
   /** Multiplier for DisplayWindow width (vw). Default 1; use 2 for double-size previews. */
   previewScale?: number;
+  /** Replaces the live DisplayWindow preview (keeps the card header/controls). Used
+   * by the monitor preview to show the discussion board while it's on the monitor. */
+  previewOverride?: ReactNode;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
@@ -62,6 +65,7 @@ const PresentationPreview = ({
   showMonitorClockTimer = false,
   streamItemContentBlocked = false,
   previewScale = 1,
+  previewOverride,
 }: PresentationPreviewProps) => {
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
@@ -321,7 +325,7 @@ const PresentationPreview = ({
                 info.displayType === "stream" && "bg-gray-500/35"
               )}
             >
-              <DisplayWindow {...displayWindowProps} />
+              {previewOverride ?? <DisplayWindow {...displayWindowProps} />}
             </div>
           </div>
           {!hideQuickLinks && filteredQuickLinks.length > 0 && (

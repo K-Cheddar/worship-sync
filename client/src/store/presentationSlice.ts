@@ -26,6 +26,13 @@ type PresentationState = {
   isMonitorTransmitting: boolean;
   isStreamTransmitting: boolean;
   streamItemContentBlocked: boolean;
+  /**
+   * Alias id of the discussion board the stage monitor should show instead of
+   * presentation content. Empty string = normal presentation. Carries the alias
+   * (not just a flag) so the monitor resolves the right board even on a separate
+   * machine where localStorage isn't shared with the controller.
+   */
+  monitorBoardAliasId: string;
   prevProjectorInfo: Presentation;
   prevMonitorInfo: Presentation;
   prevStreamInfo: Presentation;
@@ -39,6 +46,7 @@ const initialState: PresentationState = {
   isMonitorTransmitting: false,
   isStreamTransmitting: false,
   streamItemContentBlocked: false,
+  monitorBoardAliasId: "",
   prevProjectorInfo: {
     type: "",
     name: "",
@@ -550,6 +558,19 @@ export const presentationSlice = createSlice({
     ) => {
       applyStreamOverlayOnlyToggle(state, action.payload);
     },
+    /**
+     * Swap the stage monitor between presentation content and a discussion board.
+     * Pass the board's alias id to show it, or "" to return to presentation.
+     */
+    setMonitorBoardAliasId: (state, action: PayloadAction<string>) => {
+      state.monitorBoardAliasId = action.payload;
+    },
+    setMonitorBoardAliasIdFromRemote: (
+      state,
+      action: PayloadAction<string>,
+    ) => {
+      state.monitorBoardAliasId = action.payload;
+    },
     /** Overlay operator: remove all stream overlays; slide/bible/formatted unchanged. */
     clearStreamOverlaysOnly: (state) => {
       if (!hasActiveStreamOverlay(state.streamInfo)) return;
@@ -1036,6 +1057,9 @@ export const presentationSlice = createSlice({
       };
     },
     clearMonitor: (state) => {
+      // Clearing the monitor returns it to a blank presentation surface, so leave
+      // discussion-board mode too.
+      state.monitorBoardAliasId = "";
       // set previous info for fading out
       state.prevMonitorInfo.slide = state.monitorInfo.slide;
       state.prevMonitorInfo.name = state.monitorInfo.name;
@@ -1109,6 +1133,7 @@ export const presentationSlice = createSlice({
     },
     clearAll: (state) => {
       state.streamItemContentBlocked = false;
+      state.monitorBoardAliasId = "";
       // set previous info for fading out
       state.prevProjectorInfo.slide = state.projectorInfo.slide;
       state.prevProjectorInfo.name = state.projectorInfo.name;
@@ -1353,6 +1378,8 @@ export const {
   setTransmitToAll,
   setStreamItemContentBlocked,
   setStreamItemContentBlockedFromRemote,
+  setMonitorBoardAliasId,
+  setMonitorBoardAliasIdFromRemote,
   clearStreamOverlaysOnly,
   updateParticipantOverlayInfo,
   updateStbOverlayInfo,

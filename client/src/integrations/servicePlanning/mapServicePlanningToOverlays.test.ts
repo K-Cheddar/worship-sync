@@ -442,6 +442,24 @@ describe("mapServicePlanningRows", () => {
     expect(second?.id).toBe("cohostB");
   });
 
+  it("findOverlayForServicePlanningCandidate does not use fuzzy fallback for explicit event slots", () => {
+    const list: OverlayInfo[] = [
+      {
+        id: "generic",
+        type: "participant",
+        event: "Sabbath School",
+      },
+    ];
+
+    const hit = findOverlayForServicePlanningCandidate(
+      "Sabbath School Lesson Study",
+      "Sabbath School Host",
+      list,
+    );
+
+    expect(hit).toBeNull();
+  });
+
   it("split: suffix list as RTDB object still maps Host to first token", () => {
     const row: EventData = {
       elementType: "Sabbath School Lesson Study",

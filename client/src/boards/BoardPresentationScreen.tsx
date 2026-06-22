@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import { cn } from "@/utils/cnHelper";
+import { REFERENCE_WIDTH } from "../constants";
 import { useBoardPresentationData } from "./useBoardPresentationData";
 import { useBoardEventStream } from "./useBoardEventStream";
 import {
+  buildBoardPresentationClampFontSize,
   formatBoardTimestamp,
   getBoardAuthorNameColorClass,
   normalizeBoardPresentationFontScale,
@@ -14,12 +16,18 @@ type BoardPresentationScreenProps = {
   aliasId: string;
   missingAliasTitle?: string;
   missingAliasDescription?: string;
+  /**
+   * Fill the parent (h-full) instead of the viewport (h-dvh). Use when embedding
+   * the board inside another surface — the monitor's board mode or a preview tile.
+   */
+  fillParent?: boolean;
 };
 
 const BoardPresentationScreen = ({
   aliasId,
   missingAliasTitle = "No discussion board selected.",
   missingAliasDescription = "Select a discussion board before opening this screen.",
+  fillParent = false,
 }: BoardPresentationScreenProps) => {
   const {
     alias,
@@ -33,7 +41,28 @@ const BoardPresentationScreen = ({
     retryNow,
     updateAlias,
   } = useBoardPresentationData(aliasId);
+  const mainRef = useRef<HTMLElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : REFERENCE_WIDTH,
+  );
+
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const nextWidth = el.clientWidth;
+      if (nextWidth > 0) {
+        setLayoutWidth(nextWidth);
+      }
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useBoardEventStream(aliasId, (event) => {
     if (event.type === "connected") return;
@@ -70,13 +99,34 @@ const BoardPresentationScreen = ({
   const presentationFontScale = normalizeBoardPresentationFontScale(
     alias?.presentationFontScale,
   );
+  const postMetaFontSize = buildBoardPresentationClampFontSize(
+    presentationFontScale,
+    {
+      minRem: 0.95,
+      vwPercent: 1.1,
+      maxRem: 1.125,
+      layoutWidthPx: layoutWidth,
+    },
+  );
+  const postBodyFontSize = buildBoardPresentationClampFontSize(
+    presentationFontScale,
+    {
+      minRem: 2.25,
+      vwPercent: 3,
+      maxRem: 5,
+      layoutWidthPx: layoutWidth,
+    },
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
   }, [highlightedItems]);
 
   return (
-    <main className="h-dvh overflow-hidden bg-[linear-gradient(160deg,#111827_0%,#0f172a_45%,#020617_100%)] text-white">
+    <main
+      ref={mainRef}
+      className={`${fillParent ? "h-full" : "h-dvh"} overflow-hidden bg-[linear-gradient(160deg,#111827_0%,#0f172a_45%,#020617_100%)] text-white`}
+    >
       <div className="flex h-full flex-col px-8 py-8">
         <header className="shrink-0">
           <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-200/80">
@@ -153,9 +203,7 @@ const BoardPresentationScreen = ({
                 >
                   <div
                     className="flex flex-wrap items-center gap-3 text-cyan-100/80"
-                    style={{
-                      fontSize: `clamp(${0.95 * presentationFontScale}rem, ${1.1 * presentationFontScale}vw, ${1.125 * presentationFontScale}rem)`,
-                    }}
+                    style={{ fontSize: postMetaFontSize }}
                   >
                     <span
                       className={cn(
@@ -172,9 +220,7 @@ const BoardPresentationScreen = ({
                   </div>
                   <p
                     className="mt-5 whitespace-pre-wrap font-medium leading-tight text-white"
-                    style={{
-                      fontSize: `clamp(${2.25 * presentationFontScale}rem, ${3 * presentationFontScale}vw, ${5 * presentationFontScale}rem)`,
-                    }}
+                    style={{ fontSize: postBodyFontSize }}
                   >
                     {item.text}
                   </p>

@@ -2,6 +2,7 @@ import {
   dedupeOutlineCandidatesForPreview,
   getChangedOverlayPatch,
   getRepeatedOverlayDedupeKey,
+  overlayPlanHasExecutableChange,
 } from "./useServicePlanningImport";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import type { OverlayInfo } from "../types";
@@ -72,6 +73,16 @@ describe("getChangedOverlayPatch", () => {
       }),
     ).toEqual({ title: "Speaker" });
   });
+
+  it("clears an existing title when the service plan has no matching title", () => {
+    expect(
+      getChangedOverlayPatch(overlay, {
+        name: "Avery",
+        title: undefined,
+        event: "Welcome",
+      }),
+    ).toEqual({ title: undefined });
+  });
 });
 
 describe("getRepeatedOverlayDedupeKey", () => {
@@ -113,5 +124,80 @@ describe("getRepeatedOverlayDedupeKey", () => {
         },
       ),
     ).toBeNull();
+  });
+});
+
+describe("overlayPlanHasExecutableChange", () => {
+  it("does not treat existing-overlay placement as executable by itself", () => {
+    const overlays: OverlayInfo[] = [
+      { id: "welcome", type: "participant", event: "Welcome", name: "Avery" },
+      {
+        id: "sabbath",
+        type: "participant",
+        event: "Sabbath School",
+        name: "Taylor",
+      },
+    ];
+
+    expect(
+      overlayPlanHasExecutableChange(
+        [
+          {
+            sectionName: "",
+            sourceRowIndex: 0,
+            elementType: "Sabbath School",
+            title: "",
+            ledBy: "",
+            personIndex: 0,
+            rawNameToken: "Taylor",
+            action: "update",
+            placementOnly: true,
+            targetOverlayId: "sabbath",
+            patch: {
+              name: "Taylor",
+              event: "Sabbath School",
+              title: undefined,
+            },
+          },
+        ],
+        overlays,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat an already positioned overlay as executable by itself", () => {
+    const overlays: OverlayInfo[] = [
+      {
+        id: "sabbath",
+        type: "participant",
+        event: "Sabbath School",
+        name: "Taylor",
+      },
+    ];
+
+    expect(
+      overlayPlanHasExecutableChange(
+        [
+          {
+            sectionName: "",
+            sourceRowIndex: 0,
+            elementType: "Sabbath School",
+            title: "",
+            ledBy: "",
+            personIndex: 0,
+            rawNameToken: "Taylor",
+            action: "update",
+            placementOnly: true,
+            targetOverlayId: "sabbath",
+            patch: {
+              name: "Taylor",
+              event: "Sabbath School",
+              title: undefined,
+            },
+          },
+        ],
+        overlays,
+      ),
+    ).toBe(false);
   });
 });

@@ -44,8 +44,9 @@ import {
   getBoardLabel,
   normalizeBoardPresentationFontScale,
   getBoardPostRange,
+  boardHasOnlyPreviousDayPosts,
   isCurrentBoardView,
-  isTimestampFromPreviousLocalDay,
+  isRestreamChatFromPreviousDay,
   isWorshipSyncModeratorBoardPost,
   setStoredBoardDisplayAliasId,
   sortBoardPostsAscending,
@@ -152,20 +153,38 @@ const getBoardPosts = async (
   );
 };
 
+const SessionResetToastAction = ({
+  keepLabel,
+  confirmLabel,
+  onKeep,
+  onConfirm,
+}: {
+  keepLabel: string;
+  confirmLabel: string;
+  onKeep: () => void;
+  onConfirm: () => void;
+}) => (
+  <div className="mt-3 flex justify-center gap-2">
+    <Button variant="primary" className="text-sm" onClick={onKeep}>
+      {keepLabel}
+    </Button>
+    <Button variant="cta" className="text-sm" onClick={onConfirm}>
+      {confirmLabel}
+    </Button>
+  </div>
+);
+
 export const BoardControllerContent = () => {
   const { db, status, pullFromRemote } = useBoardSync() || {};
   const { database, loginState, churchId, userId } =
     useContext(GlobalInfoContext) || {};
-  const { showToast } = useToast();
+  const { showToast, removeToast } = useToast();
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
   );
   const restreamSession = useRestreamSession(churchId || "");
-  const {
-    isLoading: isRestreamLoading,
-    session: restreamSessionData,
-    reload: reloadRestreamSession,
-  } = restreamSession;
+  const { session: restreamSessionData, reload: reloadRestreamSession } =
+    restreamSession;
   const visibleRestreamMessageCount = useMemo(
     () =>
       filterRestreamMessagesForDisplay(restreamSession.messages).length,
@@ -188,14 +207,17 @@ export const BoardControllerContent = () => {
   );
   const [manageBoardsOpen, setManageBoardsOpen] = useState(false);
   const [boardToolsOpen, setBoardToolsOpen] = useState(false);
+  const [restreamResetConfirmOpen, setRestreamResetConfirmOpen] =
+    useState(false);
   const loadRequestIdRef = useRef(0);
   const boardIdToViewRef = useRef("");
   const selectedBoardIdRef = useRef("");
   const selectedAliasIdRef = useRef("");
-  // Board ids we've already evaluated for the new-day auto-reset, so a session
-  // is only ever rolled once at open time (never mid-use if midnight passes).
-  const autoRolledBoardIdsRef = useRef<Set<string>>(new Set());
-  const autoRolledRestreamSessionIdsRef = useRef<Set<string>>(new Set());
+  // Board ids / Restream session ids we've already prompted about, so the
+  // "start fresh session" / "clear Restream chat" toast appears once per stale
+  // session rather than on every re-render or background sync.
+  const promptedFreshSessionBoardIdsRef = useRef<Set<string>>(new Set());
+  const promptedRestreamResetSessionIdsRef = useRef<Set<string>>(new Set());
 
   const isXlUp = useMediaQuery("(min-width: 1280px)");
   const isMobileStack = !isXlUp;
@@ -383,77 +405,6 @@ export const BoardControllerContent = () => {
     ];
   }, [selectedAlias]);
 
-  // Auto-start a fresh discussion board session when the operator opens the
-  // controller on a new day and the current session (from an earlier day) still
-  // holds posts. Evaluated once per board at open time so a service running past
-  // midnight is never interrupted; old sessions and posts stay in the history.
-  useEffect(() => {
-    if (isLoading || !selectedAlias || !currentBoard || !isViewingCurrent) {
-      return;
-    }
-    const staleBoardId = currentBoard.id;
-    if (autoRolledBoardIdsRef.current.has(staleBoardId)) return;
-    autoRolledBoardIdsRef.current.add(staleBoardId);
-
-    if (posts.length === 0) return;
-    if (!isTimestampFromPreviousLocalDay(currentBoard.createdAt)) return;
-
-    const aliasId = selectedAlias.aliasId;
-    void (async () => {
-      try {
-        await hardResetBoardAlias(aliasId);
-        setSelectedBoardId("");
-        pullFromRemote?.();
-        showToast("Started a fresh session for today.", "success");
-      } catch (error) {
-        // Leave the existing session in place; the operator can still start one
-        // manually from Board tools. Allow a retry if this board reappears.
-        autoRolledBoardIdsRef.current.delete(staleBoardId);
-        console.warn("Could not auto-start a new board session:", error);
-      }
-    })();
-  }, [
-    isLoading,
-    selectedAlias,
-    currentBoard,
-    posts.length,
-    isViewingCurrent,
-    pullFromRemote,
-    showToast,
-  ]);
-
-  // Clear earlier Restream chat the first time we see an enabled session from a
-  // previous local day that still has messages. Evaluated once per session id
-  // so live chat is never wiped mid-service when the date changes while open.
-  useEffect(() => {
-    if (!churchId || isRestreamLoading) return;
-    const session = restreamSessionData;
-    if (!session?.enabled || !session.sessionId) return;
-    const staleSessionId = session.sessionId;
-    if (autoRolledRestreamSessionIdsRef.current.has(staleSessionId)) return;
-    autoRolledRestreamSessionIdsRef.current.add(staleSessionId);
-
-    if (session.messageCount <= 0) return;
-    if (!isTimestampFromPreviousLocalDay(session.startedAt)) return;
-
-    void (async () => {
-      try {
-        await resetRestreamSession(churchId);
-        await reloadRestreamSession();
-        showToast("Cleared earlier Restream chat.", "success");
-      } catch (error) {
-        autoRolledRestreamSessionIdsRef.current.delete(staleSessionId);
-        console.warn("Could not auto-reset the Restream session:", error);
-      }
-    })();
-  }, [
-    churchId,
-    isRestreamLoading,
-    restreamSessionData,
-    reloadRestreamSession,
-    showToast,
-  ]);
-
   const handleCopy = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -489,6 +440,102 @@ export const BoardControllerContent = () => {
     },
     [pullFromRemote, showToast],
   );
+
+  const handleStartFreshSession = useCallback(() => {
+    if (!selectedAlias) return;
+    const aliasId = selectedAlias.aliasId;
+    void runAction(async () => {
+      await hardResetBoardAlias(aliasId);
+      setSelectedBoardId("");
+      showToast("Started a fresh session for today.", "success");
+    });
+  }, [selectedAlias, runAction, showToast]);
+
+  const handleConfirmRestreamReset = useCallback(async () => {
+    if (!churchId) return;
+    try {
+      await resetRestreamSession(churchId);
+      await reloadRestreamSession();
+      setRestreamResetConfirmOpen(false);
+      showToast("Cleared earlier Restream chat.", "success");
+    } catch (error) {
+      showToast(
+        error instanceof Error
+          ? error.message
+          : "Could not clear the Restream chat.",
+        "error",
+      );
+    }
+  }, [churchId, reloadRestreamSession, showToast]);
+
+  // Prompt (never force) a fresh board session when the current board only holds
+  // posts from an earlier day — leftover content with no activity today. Keyed on
+  // post activity, not the board's creation date, so a session created earlier
+  // but actively collecting today's posts is never flagged. Start-new-session
+  // archives posts to history, so this stays a one-tap toast.
+  useEffect(() => {
+    if (isLoading || !isViewingCurrent || !currentBoard) return;
+    if (!boardHasOnlyPreviousDayPosts(posts)) return;
+    const staleBoardId = currentBoard.id;
+    if (promptedFreshSessionBoardIdsRef.current.has(staleBoardId)) return;
+    promptedFreshSessionBoardIdsRef.current.add(staleBoardId);
+
+    showToast({
+      message:
+        "This board only has posts from an earlier day. Start a fresh session for today?",
+      variant: "info",
+      duration: 15000,
+      showCloseButton: false,
+      children: (toastId) => (
+        <SessionResetToastAction
+          keepLabel="Keep this session"
+          confirmLabel="Start fresh session"
+          onKeep={() => removeToast(toastId)}
+          onConfirm={() => {
+            removeToast(toastId);
+            handleStartFreshSession();
+          }}
+        />
+      ),
+    });
+  }, [
+    isLoading,
+    isViewingCurrent,
+    currentBoard,
+    posts,
+    showToast,
+    removeToast,
+    handleStartFreshSession,
+  ]);
+
+  // Prompt (never force) clearing Restream chat when its most recent activity was
+  // on an earlier day. Clearing Restream chat is permanent, so confirming opens a
+  // confirm dialog rather than clearing straight from the toast.
+  useEffect(() => {
+    if (!isRestreamChatFromPreviousDay(restreamSessionData)) return;
+    const staleSessionId = restreamSessionData?.sessionId ?? "";
+    if (!staleSessionId) return;
+    if (promptedRestreamResetSessionIdsRef.current.has(staleSessionId)) return;
+    promptedRestreamResetSessionIdsRef.current.add(staleSessionId);
+
+    showToast({
+      message: "Restream chat is from an earlier day. Clear it for today?",
+      variant: "info",
+      duration: 15000,
+      showCloseButton: false,
+      children: (toastId) => (
+        <SessionResetToastAction
+          keepLabel="Keep chat"
+          confirmLabel="Clear Restream chat"
+          onKeep={() => removeToast(toastId)}
+          onConfirm={() => {
+            removeToast(toastId);
+            setRestreamResetConfirmOpen(true);
+          }}
+        />
+      ),
+    });
+  }, [restreamSessionData, showToast, removeToast]);
 
   const runPostAction = useCallback(
     async (
@@ -788,6 +835,20 @@ export const BoardControllerContent = () => {
           warningMessage="This removes the board, its sessions, and all posts."
           confirmText="Delete board"
           isConfirming={isActing}
+        />
+      )}
+
+      {restreamResetConfirmOpen && (
+        <DeleteModal
+          isOpen
+          onClose={() => setRestreamResetConfirmOpen(false)}
+          onConfirm={() => void handleConfirmRestreamReset()}
+          itemName="earlier Restream chat"
+          title="Clear Restream chat"
+          message="Are you sure you want to clear"
+          warningMessage="This permanently removes the earlier Restream chat. Discussion board posts stay the same."
+          confirmText="Clear chat"
+          isConfirming={false}
         />
       )}
 

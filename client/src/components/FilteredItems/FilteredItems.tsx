@@ -1,14 +1,14 @@
 import React, {
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useDispatch } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FilePlus, WholeWord } from "lucide-react";
+import { FilePlus, Search, WholeWord } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import Button from "../Button/Button";
 import Spinner from "../Spinner/Spinner";
@@ -31,10 +31,35 @@ import {
   updateWordMatches,
 } from "../../utils/generalUtils";
 import { computeSongSearchEnrichment } from "../../utils/songSearchUtils";
+import {
+  createSongMetadataFromLrclib,
+  getImportableLyricsFromTrack,
+  type NormalizedLrclibTrack,
+} from "../../utils/lrclib";
+import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
 import { ref, get, set } from "firebase/database";
 import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
 import { getChurchDataPath } from "../../utils/firebasePaths";
+import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
+import { cn } from "../../utils/cnHelper";
+import { searchLrclibTracks } from "../../api/lrclib";
+import ExternalLyricsResultItem from "./ExternalLyricsResultItem";
+import ViewExternalLyricsDrawer from "./ViewExternalLyricsDrawer";
+import {
+  EXTERNAL_SECTION_FOOTER_HEIGHT,
+  EXTERNAL_SECTION_HEADER_HEIGHT,
+  getExternalSectionClassName,
+  getExternalSectionPosition,
+} from "./externalResultsSection";
+import {
+  COLLAPSED_FILTERED_ITEM_ROW_HEIGHT,
+  estimateFilteredItemRowHeight,
+  EXTERNAL_RESULT_ROW_HEIGHT,
+  EXTERNAL_STATUS_ROW_HEIGHT,
+  FILTERED_ITEM_ROW_GAP,
+  getLibraryItemVirtualKey,
+} from "./filteredItemsVirtualRowHeight";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -55,6 +80,18 @@ export type filteredItemsListType = ServiceItem & {
   showWords?: boolean;
 };
 
+type FilteredItemsVirtualRow =
+  | { kind: "external-section-header" }
+  | { kind: "external-section-footer" }
+  | { kind: "external-loading" }
+  | { kind: "external-error"; message: string }
+  | { kind: "external-empty" }
+  | { kind: "external"; candidate: NormalizedLrclibTrack }
+  | { kind: "library"; item: filteredItemsListType; libraryIndex: number };
+
+const getExternalCandidateKey = (candidate: NormalizedLrclibTrack) =>
+  `${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName}:${candidate.artistName}`;
+
 const FilteredItems = ({
   list,
   type,
@@ -67,11 +104,35 @@ const FilteredItems = ({
   pinnedTopContent,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   const listOfType = useMemo(() => {
     return list.filter((item) => item.type === type);
   }, [list, type]);
+
+  const docsById = useMemo(() => {
+    const byId = new Map<string, DBItem>();
+    for (const doc of allDocs) {
+      byId.set(doc._id, doc);
+    }
+    return byId;
+  }, [allDocs]);
+
+  const freeDocsByName = useMemo(() => {
+    const byName = new Map<string, DBItem>();
+    if (type !== "free") {
+      return byName;
+    }
+    for (const doc of allDocs) {
+      const key = doc.name.toLowerCase();
+      // Preserve the previous `find` semantics: first match by name wins.
+      if (!byName.has(key)) {
+        byName.set(key, doc);
+      }
+    }
+    return byName;
+  }, [allDocs, type]);
 
   const songArtistById = useMemo(() => {
     const byId = new Map<string, string>();
@@ -96,38 +157,117 @@ const FilteredItems = ({
 
   const [showWords, setShowWords] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
+  const [isExternalSearchLoading, setIsExternalSearchLoading] = useState(false);
+  const [externalSearchQuery, setExternalSearchQuery] = useState("");
+  const [externalSearchResults, setExternalSearchResults] = useState<
+    NormalizedLrclibTrack[]
+  >([]);
+  const [externalSearchError, setExternalSearchError] = useState("");
   const [viewSectionsSongId, setViewSectionsSongId] = useState<string | null>(
     null,
   );
+  const [viewExternalLyricsCandidate, setViewExternalLyricsCandidate] =
+    useState<NormalizedLrclibTrack | null>(null);
+  const externalSearchCacheRef = useRef(new Map<string, NormalizedLrclibTrack[]>());
 
-  const filteredListRef = useRef(filteredList);
-  filteredListRef.current = filteredList;
+  const displayRows = useMemo<FilteredItemsVirtualRow[]>(() => {
+    const rows: FilteredItemsVirtualRow[] = [];
+
+    if (type === "song" && externalSearchQuery) {
+      if (isExternalSearchLoading) {
+        rows.push({ kind: "external-loading" });
+      } else {
+        rows.push({ kind: "external-section-header" });
+        if (externalSearchError) {
+          rows.push({ kind: "external-error", message: externalSearchError });
+        } else if (externalSearchResults.length === 0) {
+          rows.push({ kind: "external-empty" });
+        } else {
+          for (const candidate of externalSearchResults) {
+            rows.push({ kind: "external", candidate });
+          }
+        }
+
+        if (filteredList.length > 0) {
+          rows.push({ kind: "external-section-footer" });
+        }
+      }
+    }
+
+    filteredList.forEach((item, libraryIndex) => {
+      rows.push({ kind: "library", item, libraryIndex });
+    });
+
+    return rows;
+  }, [
+    type,
+    externalSearchQuery,
+    isExternalSearchLoading,
+    externalSearchError,
+    externalSearchResults,
+    filteredList,
+  ]);
+
+  const displayRowKinds = useMemo(
+    () => displayRows.map((row) => row.kind),
+    [displayRows],
+  );
+
+  const displayRowsRef = useRef(displayRows);
+  displayRowsRef.current = displayRows;
+
   const showWordsRef = useRef(showWords);
   showWordsRef.current = showWords;
+  const songArtistByIdRef = useRef(songArtistById);
+  songArtistByIdRef.current = songArtistById;
 
   const virtualizer = useVirtualizer({
-    count: filteredList.length,
+    count: displayRows.length,
     getScrollElement: () => listScrollRef.current,
-    getItemKey: (index) => filteredListRef.current[index]?._id ?? index,
-    estimateSize: (index) => {
-      const item = filteredListRef.current[index];
-      if (!item?.matchedWords) return 60;
-      const isExpanded = item.showWords ?? showWordsRef.current;
-      return isExpanded ? 180 : 60;
+    getItemKey: (index) => {
+      const row = displayRowsRef.current[index];
+      if (!row) return index;
+      if (row.kind === "external-section-header") {
+        return `external-section-header:${externalSearchQuery}`;
+      }
+      if (row.kind === "external-section-footer") {
+        return `external-section-footer:${externalSearchQuery}`;
+      }
+      if (row.kind === "external-loading") return "external-loading";
+      if (row.kind === "external-error") return "external-error";
+      if (row.kind === "external-empty") return "external-empty";
+      if (row.kind === "external") return getExternalCandidateKey(row.candidate);
+      return getLibraryItemVirtualKey(row.item, showWordsRef.current);
     },
+    estimateSize: (index) => {
+      const row = displayRowsRef.current[index];
+      if (!row) return COLLAPSED_FILTERED_ITEM_ROW_HEIGHT;
+      if (row.kind === "external-section-header") {
+        return EXTERNAL_SECTION_HEADER_HEIGHT;
+      }
+      if (row.kind === "external-section-footer") {
+        return EXTERNAL_SECTION_FOOTER_HEIGHT;
+      }
+      if (
+        row.kind === "external-loading" ||
+        row.kind === "external-error" ||
+        row.kind === "external-empty"
+      ) {
+        return EXTERNAL_STATUS_ROW_HEIGHT;
+      }
+      if (row.kind === "external") {
+        return EXTERNAL_RESULT_ROW_HEIGHT;
+      }
+      return estimateFilteredItemRowHeight(
+        row.item,
+        showWordsRef.current,
+        Boolean(songArtistByIdRef.current.get(row.item._id)),
+      );
+    },
+    gap: FILTERED_ITEM_ROW_GAP,
     overscan: 5,
+    initialRect: { width: 0, height: 600 },
   });
-
-  const virtualizerRef = useRef(virtualizer);
-  virtualizerRef.current = virtualizer;
-
-  const listLayoutKey = useMemo(
-    () =>
-      filteredList
-        .map((item) => `${item._id}:${item.showWords ?? showWords}`)
-        .join("|"),
-    [filteredList, showWords],
-  );
 
   const viewSongDoc = useMemo(() => {
     if (!viewSectionsSongId || type !== "song") return null;
@@ -141,26 +281,25 @@ const FilteredItems = ({
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateLibrary = access !== "view";
 
-  // Memoize the search function
+  // Memoize the search function. Runs synchronously on every debounced
+  // keystroke, so it stays O(n): doc lookups go through `docsById` /
+  // `freeDocsByName` instead of an `allDocs.find` per item.
   const searchItems = useMemo(() => {
-    return async (searchValue: string) => {
-      const cleanSearchValue = searchValue
+    return (rawSearchValue: string): filteredItemsListType[] => {
+      const cleanSearchValue = rawSearchValue
         .replace(punctuationRegex, "")
         .toLowerCase()
         .trim();
 
-      if (cleanSearchValue.trim() === "") {
+      if (cleanSearchValue === "") {
         return listOfType;
       }
 
-      const searchPromises = listOfType.map(async (item) => {
+      const results = listOfType.map((item) => {
         if (type === "song") {
-          const doc = allDocs.find((song) => song._id === item._id);
+          const doc = docsById.get(item._id);
           if (doc?.type === "song") {
-            const enriched = computeSongSearchEnrichment(
-              doc,
-              cleanSearchValue,
-            );
+            const enriched = computeSongSearchEnrichment(doc, cleanSearchValue);
             return {
               ...item,
               matchRank: enriched.matchRank,
@@ -177,14 +316,11 @@ const FilteredItems = ({
           searchValue: cleanSearchValue,
           allowPartial: true,
         });
-        const matchedWords = "";
         const wordMatches = [];
         let hasLyricMatch = false;
 
         if (type === "free") {
-          const slides =
-            allDocs.find((free) => free.name.toLowerCase() === name)?.slides ||
-            [];
+          const slides = freeDocsByName.get(name)?.slides || [];
 
           for (const slide of slides) {
             for (const box of slide.boxes) {
@@ -204,7 +340,7 @@ const FilteredItems = ({
         }
 
         const { updatedMatchedWords, updatedMatch } = updateWordMatches({
-          matchedWords,
+          matchedWords: "",
           match,
           wordMatches,
         });
@@ -217,14 +353,13 @@ const FilteredItems = ({
         };
       });
 
-      const results = await Promise.all(searchPromises);
       return results
         .filter((item) => item.matchRank > 0)
         .sort(
           (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name)
         );
     };
-  }, [listOfType, allDocs, type]);
+  }, [listOfType, docsById, freeDocsByName, type]);
 
   // Debounced search effect
   useEffect(() => {
@@ -237,30 +372,11 @@ const FilteredItems = ({
 
   // Search effect
   useEffect(() => {
-    const performSearch = async () => {
-      const results = await searchItems(debouncedSearchValue);
-      setFilteredList(results);
-      setIsSearchLoading(false);
-      listScrollRef.current?.scrollTo({ top: 0 });
-    };
-
-    performSearch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const results = searchItems(debouncedSearchValue);
+    setFilteredList(results);
+    setIsSearchLoading(false);
+    listScrollRef.current?.scrollTo?.({ top: 0 });
   }, [debouncedSearchValue, searchItems]);
-
-  // Item heights change when lyrics expand/collapse, but that does not resize the
-  // scroll container — only a window resize would otherwise re-measure. Re-read
-  // visible row sizes after the DOM reflects the latest list + showWords state.
-  useLayoutEffect(() => {
-    const scrollEl = listScrollRef.current;
-    if (!scrollEl) return;
-
-    const instance = virtualizerRef.current;
-    instance.measure();
-    scrollEl.querySelectorAll("[data-index]").forEach((node) => {
-      instance.measureElement(node as HTMLDivElement);
-    });
-  }, [listLayoutKey, filteredList.length]);
 
   const deleteItem = async (item: ServiceItem) => {
     setItemToBeDeleted(null);
@@ -342,6 +458,189 @@ const FilteredItems = ({
     }
   };
 
+  const normalizedExternalSearchValue = searchValue.trim();
+
+  useEffect(() => {
+    setExternalSearchQuery("");
+    setExternalSearchResults([]);
+    setExternalSearchError("");
+  }, [searchValue]);
+
+  const createSongFromExternalResult = (candidate: NormalizedLrclibTrack) => {
+    dispatch(
+      setCreateItem({
+        ...initialCreateItemState,
+        name: candidate.trackName,
+        type: "song",
+        text: getImportableLyricsFromTrack(candidate),
+        songArtist: candidate.artistName,
+        songAlbum: candidate.albumName || "",
+        songMetadata: createSongMetadataFromLrclib(candidate),
+        lyricsImportCandidates: [],
+        lyricsImportError: "",
+      }),
+    );
+    navigate("/controller/create");
+  };
+
+  const renderDisplayRow = (row: FilteredItemsVirtualRow, rowIndex: number) => {
+    const sectionPosition = getExternalSectionPosition(rowIndex, displayRowKinds);
+
+    if (row.kind === "external-section-header") {
+      return (
+        <div
+          role="listitem"
+          className={cn(
+            "px-4 py-2 text-center",
+            alternatingAdminListRowBg(rowIndex),
+            getExternalSectionClassName(sectionPosition),
+          )}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200/80">
+            External lyrics
+          </p>
+          <p className="text-sm text-gray-400">
+            Matching &ldquo;{externalSearchQuery}&rdquo;
+          </p>
+        </div>
+      );
+    }
+
+    if (row.kind === "external-section-footer") {
+      return (
+        <div
+          role="separator"
+          aria-label="End of search results"
+          className="mb-3 flex items-center gap-3 px-3 py-2"
+        >
+          <div className="h-px flex-1 bg-cyan-500/25" />
+          <span className="shrink-0 text-xs text-gray-400">End of search results</span>
+          <div className="h-px flex-1 bg-cyan-500/25" />
+        </div>
+      );
+    }
+
+    if (row.kind === "external-loading") {
+      return (
+        <div
+          role="listitem"
+          className={cn(
+            "flex items-center justify-center gap-2 px-4 py-6 text-sm text-gray-300",
+            alternatingAdminListRowBg(rowIndex),
+            getExternalSectionClassName(sectionPosition),
+          )}
+        >
+          <Spinner />
+          <span>Searching external lyrics...</span>
+        </div>
+      );
+    }
+
+    if (row.kind === "external-error") {
+      return (
+        <p
+          role="listitem"
+          className={cn(
+            "px-4 py-3 text-sm text-red-300",
+            alternatingAdminListRowBg(rowIndex),
+            getExternalSectionClassName(sectionPosition),
+          )}
+        >
+          {row.message}
+        </p>
+      );
+    }
+
+    if (row.kind === "external-empty") {
+      return (
+        <p
+          role="listitem"
+          className={cn(
+            "px-4 py-3 text-sm text-gray-400",
+            alternatingAdminListRowBg(rowIndex),
+            getExternalSectionClassName(sectionPosition),
+          )}
+        >
+          No external matches found.
+        </p>
+      );
+    }
+
+    if (row.kind === "external") {
+      return (
+        <ExternalLyricsResultItem
+          index={rowIndex}
+          candidate={row.candidate}
+          searchValue={normalizedExternalSearchValue}
+          sectionPosition={sectionPosition}
+          onCreateSong={createSongFromExternalResult}
+          onViewLyrics={setViewExternalLyricsCandidate}
+        />
+      );
+    }
+
+    return renderFilteredItem(row.item, rowIndex, row.libraryIndex);
+  };
+
+  const renderFilteredItem = (
+    item: filteredItemsListType,
+    rowIndex: number,
+    libraryIndex: number,
+  ) => (
+    <FilteredItem
+      key={item._id}
+      item={item}
+      index={rowIndex}
+      showWords={item.showWords ?? showWords}
+      updateShowWords={updateShowWords}
+      addItemToList={(_item) => dispatch(addItemToItemList(_item))}
+      setItemToBeDeleted={setItemToBeDeleted}
+      searchValue={searchValue}
+      artistName={songArtistById.get(item._id)}
+      canMutateLibrary={canMutateLibrary}
+      onViewSongSections={
+        type === "song" ? () => setViewSectionsSongId(item._id) : undefined
+      }
+      libraryIndex={libraryIndex}
+    />
+  );
+
+  const searchExternalLyrics = async () => {
+    if (!normalizedExternalSearchValue) {
+      setExternalSearchError("Enter lyrics to search first.");
+      return;
+    }
+
+    const cacheKey = normalizedExternalSearchValue.toLowerCase();
+    const cachedResults = externalSearchCacheRef.current.get(cacheKey);
+
+    setExternalSearchError("");
+    setExternalSearchQuery(normalizedExternalSearchValue);
+
+    if (cachedResults) {
+      setExternalSearchResults(cachedResults);
+      setIsExternalSearchLoading(false);
+      return;
+    }
+
+    setIsExternalSearchLoading(true);
+    setExternalSearchResults([]);
+
+    try {
+      const results = await searchLrclibTracks({
+        trackName: normalizedExternalSearchValue,
+      });
+      externalSearchCacheRef.current.set(cacheKey, results);
+      setExternalSearchResults(results);
+    } catch (error) {
+      console.error("External lyrics search failed:", error);
+      setExternalSearchResults([]);
+      setExternalSearchError("Could not search external lyrics right now.");
+    } finally {
+      setIsExternalSearchLoading(false);
+    }
+  };
+
   return (
     <div className="flex h-full w-full max-w-none flex-col items-stretch px-2 py-4">
       <DeleteModal
@@ -356,6 +655,13 @@ const FilteredItems = ({
         isMobile={isMobile}
         searchHighlight={searchValue}
         onClose={() => setViewSectionsSongId(null)}
+      />
+      <ViewExternalLyricsDrawer
+        candidate={viewExternalLyricsCandidate}
+        isOpen={Boolean(viewExternalLyricsCandidate)}
+        isMobile={isMobile}
+        searchHighlight={normalizedExternalSearchValue}
+        onClose={() => setViewExternalLyricsCandidate(null)}
       />
       <h2 className="mb-2 w-full text-center text-2xl">{heading}</h2>
       {isLoading && (
@@ -380,19 +686,33 @@ const FilteredItems = ({
         </Button>
       </div>
       {canMutateLibrary && (
-        <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
-          <p>Can't find what you're looking for?</p>
-          <Button
-            variant="secondary"
-            className="relative"
-            svg={FilePlus}
-            color="#84cc16"
-            component="link"
-            to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
-          >
-            Create a new {label}
-          </Button>
-        </section>
+        <div className="mb-2 flex flex-col gap-3">
+          <section className="text-sm flex flex-wrap gap-2 items-center justify-center">
+            <p>Can't find what you're looking for?</p>
+            <Button
+              variant="secondary"
+              className="relative"
+              svg={FilePlus}
+              color="#84cc16"
+              component="link"
+              to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+            >
+              Create a new {label}
+            </Button>
+            {type === "song" && (
+              <Button
+                variant="tertiary"
+                className="relative"
+                svg={Search}
+                color="#22d3ee"
+                onClick={searchExternalLyrics}
+                disabled={!normalizedExternalSearchValue || isExternalSearchLoading}
+              >
+                {isExternalSearchLoading ? "Searching..." : "Search external lyrics"}
+              </Button>
+            )}
+          </section>
+        </div>
       )}
       {pinnedTopContent && (
         <div className="mb-2 px-1 sm:px-2">{pinnedTopContent}</div>
@@ -413,34 +733,18 @@ const FilteredItems = ({
             style={{ height: virtualizer.getTotalSize() }}
           >
             {virtualizer.getVirtualItems().map((virtualItem) => {
-              const item = filteredList[virtualItem.index];
+              const row = displayRows[virtualItem.index];
               return (
                 <div
                   key={virtualItem.key}
                   data-index={virtualItem.index}
                   ref={virtualizer.measureElement}
-                  className="absolute left-0 top-0 w-full pb-2"
+                  className="absolute left-0 top-0 w-full"
                   style={{
                     transform: `translateY(${virtualItem.start}px)`,
                   }}
                 >
-                  <FilteredItem
-                    key={item._id}
-                    item={item}
-                    index={virtualItem.index}
-                    showWords={item.showWords ?? showWords}
-                    updateShowWords={updateShowWords}
-                    addItemToList={(_item) => dispatch(addItemToItemList(_item))}
-                    setItemToBeDeleted={setItemToBeDeleted}
-                    searchValue={searchValue}
-                    artistName={songArtistById.get(item._id)}
-                    canMutateLibrary={canMutateLibrary}
-                    onViewSongSections={
-                      type === "song"
-                        ? () => setViewSectionsSongId(item._id)
-                        : undefined
-                    }
-                  />
+                  {row ? renderDisplayRow(row, virtualItem.index) : null}
                 </div>
               );
             })}

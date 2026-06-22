@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle, Eye, EyeOff, LoaderCircle } from "lucide-react";
@@ -20,6 +21,7 @@ import VerificationCodeInput from "../components/VerificationCodeInput/Verificat
 import {
   completeDesktopAuth,
   getDesktopAuthStatus,
+  getEmailCodeHint,
   startDesktopAuth,
 } from "../api/auth";
 import type { DesktopAuthProvider } from "../api/authTypes";
@@ -65,6 +67,19 @@ const HOSTED_DESKTOP_SSO_SESSION_KEY = "ws-hosted-desktop-sso";
 const FORGOT_PASSWORD_EMAIL_HELPER =
   "If an account exists for that email, you will receive a reset link shortly.";
 
+const renderVerificationCodeSubtext = (email: string): ReactNode => {
+  if (!email) {
+    return "We sent a six-digit code to your email. Enter it below to trust this device.";
+  }
+  return (
+    <>
+      We sent a six-digit code to{" "}
+      <span className="font-medium text-gray-100">{email}</span>. Enter it below
+      to trust this device.
+    </>
+  );
+};
+
 const LastUsedBadge = ({ show }: { show: boolean }) => {
   if (!show) return null;
   return (
@@ -93,6 +108,7 @@ const Login = () => {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [pendingAuthId, setPendingAuthId] = useState("");
+  const [verificationEmail, setVerificationEmail] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
   const [infoBanner, setInfoBanner] = useState("");
@@ -241,6 +257,23 @@ const Login = () => {
   const desktopAuthPollInFlightRef = useRef(false);
   const desktopBrowserAutoStartRef = useRef(false);
 
+  const openVerificationCodeStep = useCallback(
+    ({
+      pendingId,
+      verificationEmail: nextVerificationEmail,
+    }: {
+      pendingId: string;
+      verificationEmail?: string;
+    }) => {
+      setPendingAuthId(pendingId);
+      setVerificationEmail(nextVerificationEmail?.trim() || "");
+      setMode("code");
+      setFieldErrors({});
+      setInfoBanner("");
+    },
+    [],
+  );
+
   useLayoutEffect(() => {
     if (mode !== "code") {
       setResendCooldownSec(0);
@@ -341,12 +374,12 @@ const Login = () => {
     }
     context?.clearAuthError();
     clearProviderSignInAttempt();
-    setPendingAuthId(pendingId);
-    setMode("code");
-    setFieldErrors({});
-    setInfoBanner("");
+    openVerificationCodeStep({
+      pendingId: pendingId,
+      verificationEmail: context?.pendingEmailVerificationEmail || undefined,
+    });
     clearPending();
-  }, [clearProviderSignInAttempt, context]);
+  }, [clearProviderSignInAttempt, context, openVerificationCodeStep]);
 
   useEffect(() => {
     const codeParam = searchParams.get("code");
@@ -379,6 +412,32 @@ const Login = () => {
       { replace: true }
     );
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (
+      mode !== "code" ||
+      !pendingAuthId ||
+      verificationEmail ||
+      !isAuthServerOnline
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    void getEmailCodeHint({ pendingAuthId })
+      .then((response) => {
+        if (!cancelled && response.verificationEmail) {
+          setVerificationEmail(response.verificationEmail);
+        }
+      })
+      .catch(() => {
+        // Keep generic copy when the hint is unavailable.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, pendingAuthId, verificationEmail, isAuthServerOnline]);
 
   const guestDestination =
     getAuthRedirectPathnameFromState(location.state) ?? "/controller";
@@ -422,9 +481,10 @@ const Login = () => {
       ) {
         context?.clearAuthError();
         setPendingEmailCodeSignInMethod(pendingDesktopAuth.provider);
-        setPendingAuthId(response.pendingAuthId);
-        setMode("code");
-        setInfoBanner("");
+        openVerificationCodeStep({
+          pendingId: response.pendingAuthId,
+          verificationEmail: response.verificationEmail || undefined,
+        });
         setLocalAuthError("");
         setPendingDesktopEmailResendState({
           desktopAuthId: pendingDesktopAuth.desktopAuthId,
@@ -465,7 +525,7 @@ const Login = () => {
     } finally {
       desktopAuthPollInFlightRef.current = false;
     }
-  }, [clearPendingDesktopAuth, context, pendingDesktopAuth]);
+  }, [clearPendingDesktopAuth, context, openVerificationCodeStep, pendingDesktopAuth]);
 
   const handleElectronProviderSignIn = useCallback(
     async (method: DesktopAuthProvider) => {
@@ -641,9 +701,10 @@ const Login = () => {
       password,
     });
     if (response?.requiresEmailCode && response.pendingAuthId) {
-      setPendingAuthId(response.pendingAuthId);
-      setMode("code");
-      setInfoBanner("");
+      openVerificationCodeStep({
+        pendingId: response.pendingAuthId,
+        verificationEmail: response.verificationEmail || trimmedEmail,
+      });
     }
   };
 
@@ -665,9 +726,10 @@ const Login = () => {
     const response = await context?.login({ method });
     if (response?.requiresEmailCode && response.pendingAuthId) {
       clearProviderSignInAttempt();
-      setPendingAuthId(response.pendingAuthId);
-      setMode("code");
-      setInfoBanner("");
+      openVerificationCodeStep({
+        pendingId: response.pendingAuthId,
+        verificationEmail: response.verificationEmail,
+      });
     }
   };
 
@@ -695,6 +757,7 @@ const Login = () => {
       }
       setCode("");
       setPendingAuthId("");
+      setVerificationEmail("");
     } finally {
       if (emailCodeVerificationInFlight === dedupeKey) {
         emailCodeVerificationInFlight = null;
@@ -737,10 +800,17 @@ const Login = () => {
       const result = await context?.resendEmailCode({ pendingAuthId });
       if (result?.pendingAuthId) {
         setPendingAuthId(result.pendingAuthId);
+        if (result.verificationEmail) {
+          setVerificationEmail(result.verificationEmail);
+        }
         setCode("");
         setResendCooldownSec(RESEND_COOLDOWN_SEC);
         setFieldErrors({});
-        setInfoBanner("We sent a new code to your email.");
+        setInfoBanner(
+          result.verificationEmail
+            ? `We sent a new code to ${result.verificationEmail}.`
+            : "We sent a new code to your email.",
+        );
       }
     } finally {
       setIsResending(false);
@@ -782,6 +852,7 @@ const Login = () => {
     setForgotPasswordHasSubmit(false);
     setForgotPasswordEmailSent(false);
     setCode("");
+    setVerificationEmail("");
     setPendingEmailCodeSignInMethod(null);
     setPendingDesktopEmailResendState(null);
     clearPendingDesktopAuth();
@@ -897,7 +968,7 @@ const Login = () => {
     return "Sign in";
   })();
 
-  const loginSubtext = (() => {
+  const loginSubtext: ReactNode = (() => {
     if (showWebSessionNavigatingChrome) {
       return "Hang tight—this screen will switch in a moment.";
     }
@@ -911,7 +982,7 @@ const Login = () => {
       return "";
     }
     if (mode === "code") {
-      return "We sent a six-digit code to your email. Enter it below to trust this device.";
+      return renderVerificationCodeSubtext(verificationEmail);
     }
     if (mode === "forgotPassword") {
       if (forgotPasswordEmailSent) {

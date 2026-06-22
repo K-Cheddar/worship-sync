@@ -41,6 +41,7 @@ export type OverlaySyncPlanItem = {
   personIndex: number;
   rawNameToken: string;
   action: "update" | "clone" | "create" | "skip";
+  placementOnly?: boolean;
   targetOverlayId?: string;
   targetOverlayName?: string;
   targetOverlayEvent?: string;

@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import BoardPresent from "./BoardPresent";
 import { getBoardAlias, getBoardDisplayItems } from "../boards/api";
 import { useBoardEventStream } from "../boards/useBoardEventStream";
+import { buildBoardPresentationClampFontSize } from "../boards/boardUtils";
 
 jest.mock("../boards/api", () => ({
   getBoardAlias: jest.fn(),
@@ -150,7 +151,12 @@ describe("BoardPresent", () => {
     });
 
     expect(postText).toHaveStyle({
-      fontSize: "clamp(3.375rem, 4.5vw, 7.5rem)",
+      fontSize: buildBoardPresentationClampFontSize(1.5, {
+        minRem: 2.25,
+        vwPercent: 3,
+        maxRem: 5,
+        layoutWidthPx: window.innerWidth,
+      }),
     });
     expect(mockGetBoardDisplayItems).toHaveBeenCalledTimes(initialCalls);
   });

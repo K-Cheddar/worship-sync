@@ -1836,6 +1836,24 @@ const destroySession = (req) =>
     req.session.destroy(() => resolve());
   });
 
+const resolveVerificationEmail = (user) =>
+  String(user?.primaryEmail || user?.email || "").trim() || null;
+
+const getVerificationEmailForChallenge = async (pendingAuthId) => {
+  const challenge = await getEmailChallenge(pendingAuthId);
+  if (!challenge) {
+    return null;
+  }
+  if (challenge.lockedAt) {
+    return null;
+  }
+  if (new Date(challenge.expiresAt).getTime() < Date.now()) {
+    return null;
+  }
+  const user = await getUserByUid(challenge.userId);
+  return user ? resolveVerificationEmail(user) : null;
+};
+
 const createEmailChallenge = async ({
   user,
   church,
@@ -1882,7 +1900,11 @@ const createEmailChallenge = async ({
     userId: user.uid,
     label: deviceLabel || null,
   });
-  return { requiresEmailCode: true, pendingAuthId };
+  return {
+    requiresEmailCode: true,
+    pendingAuthId,
+    verificationEmail: resolveVerificationEmail(user),
+  };
 };
 
 const getEmailChallenge = async (pendingAuthId) => {
@@ -1989,6 +2011,7 @@ const resolveHumanSignInDecision = async ({
     return {
       type: "requires_email_code",
       pendingAuthId: existingChallenge.id,
+      verificationEmail: resolveVerificationEmail(user),
     };
   }
 
@@ -2007,6 +2030,7 @@ const resolveHumanSignInDecision = async ({
   return {
     type: "requires_email_code",
     pendingAuthId: pending.pendingAuthId,
+    verificationEmail: pending.verificationEmail,
   };
 };
 
@@ -2990,6 +3014,83 @@ export const seedActiveHumanBearerForServerTests = async ({
   return { humanApiToken, churchId, membershipId };
 };
 
+/**
+ * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
+ * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
+ */
+export const seedEmailCodeChallengeForServerTests = async ({
+  pendingAuthId = createId("pending"),
+  userId = "user_email_code_hint_test",
+  email = "operator@example.com",
+  primaryEmail,
+  churchId = "church_email_code_hint_test",
+  expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+  lockedAt = null,
+  includeUser = true,
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedEmailCodeChallengeForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedEmailCodeChallengeForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedEmail = normalizeEmail(email);
+  const resolvedPrimaryEmail = normalizeEmail(primaryEmail || email);
+  const membershipId = membershipIdFor({ churchId, userId });
+
+  if (includeUser) {
+    await setDoc(
+      COLLECTIONS.users,
+      userId,
+      {
+        uid: userId,
+        email: normalizedEmail,
+        primaryEmail: resolvedPrimaryEmail,
+        normalizedEmail,
+        displayName: "Email code hint test user",
+        linkedMethods: ["password"],
+        createdAt: nowIso(),
+        lastLoginAt: nowIso(),
+        migrationSource: "server-test",
+      },
+      { merge: false },
+    );
+  }
+
+  await setDoc(
+    COLLECTIONS.emailCodeChallenges,
+    pendingAuthId,
+    {
+      userId,
+      churchId,
+      membershipId,
+      fingerprintHash: "test-fingerprint",
+      deviceLabel: "",
+      platformType: "",
+      codeHash: hashValue("123456"),
+      failedAttempts: lockedAt ? EMAIL_CODE_MAX_ATTEMPTS : 0,
+      lockedAt,
+      lastFailedAt: lockedAt ? nowIso() : null,
+      createdAt: nowIso(),
+      expiresAt,
+    },
+    { merge: false },
+  );
+
+  const user = includeUser
+    ? { email: normalizedEmail, primaryEmail: resolvedPrimaryEmail }
+    : null;
+
+  return {
+    pendingAuthId,
+    verificationEmail: user ? resolveVerificationEmail(user) : null,
+  };
+};
+
 // --- Team intake submission digest ----------------------------------------
 // New submissions are coalesced into one email per form so a burst of responses
 // (a freshly-shared form) doesn't spam editors. The throttle is a per-form timer
@@ -3420,6 +3521,7 @@ export const authHandlers = {
           success: true,
           requiresEmailCode: true,
           pendingAuthId: signInDecision.pendingAuthId,
+          verificationEmail: signInDecision.verificationEmail,
         });
       }
 
@@ -3616,6 +3718,7 @@ export const authHandlers = {
           success: true,
           status: DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE,
           pendingAuthId: signInDecision.pendingAuthId,
+          verificationEmail: signInDecision.verificationEmail,
         });
       }
 
@@ -3692,10 +3795,12 @@ export const authHandlers = {
       }
 
       if (request.status === DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE) {
+        const user = request.userId ? await getUserByUid(request.userId) : null;
         return res.json({
           success: true,
           status: DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE,
           pendingAuthId: request.pendingAuthId || null,
+          verificationEmail: user ? resolveVerificationEmail(user) : null,
         });
       }
 
@@ -3819,6 +3924,39 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message || "Could not finish desktop sign-in",
+      });
+    }
+  },
+
+  async getEmailCodeHint(req, res) {
+    try {
+      enforceRateLimit({
+        scope: "email-code-hint",
+        key: `${getClientIp(req)}:${req.body?.pendingAuthId || "unknown"}`,
+        limit: 20,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
+
+      const pendingAuthId = String(req.body?.pendingAuthId || "").trim();
+      if (!pendingAuthId) {
+        throw httpError(400, "Pending sign-in is required.");
+      }
+
+      const verificationEmail =
+        await getVerificationEmailForChallenge(pendingAuthId);
+      if (!verificationEmail) {
+        throw httpError(400, "Please sign in again.");
+      }
+
+      return res.json({ success: true, verificationEmail });
+    } catch (error) {
+      logAuthEvent("warn", "auth.email-code-hint.error", {
+        message: error.message,
+      });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not load verification details",
       });
     }
   },

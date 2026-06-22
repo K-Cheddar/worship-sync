@@ -26,6 +26,7 @@ import {
 } from "../store/overlaySlice";
 import {
   addExistingOverlayToList,
+  updateList as updateOverlayList,
   updateOverlayInList,
 } from "../store/overlaysSlice";
 import { addItemToAllItemsList } from "../store/allItemsSlice";
@@ -36,6 +37,7 @@ import {
   persistNewParticipantOverlay,
   persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
+import { moveOverlayAfterServicePlanningAnchor } from "../integrations/servicePlanning/servicePlanningOverlayOrder";
 import generateRandomId from "../utils/generateRandomId";
 import { setActiveItemInList, updateItemList } from "../store/itemListSlice";
 import type { OverlayInfo, ServiceItem } from "../types";
@@ -89,8 +91,8 @@ export type ServicePlanningOverlayStepExecutionResult = {
   /**
    * Id of the overlay this step ended up touching (updated/cloned/created), or
    * undefined when nothing resolved. The runner threads this forward as the
-   * insertion anchor for the next step so newly synced overlays land in plan
-   * order instead of after their template (clones) or at the end (creates).
+   * insertion anchor for the next step so new overlays can land near the
+   * weekly overlays they belong with without moving existing rows.
    */
   resultOverlayId?: string;
 };
@@ -341,7 +343,8 @@ export const useServicePlanningImport = () => {
               target,
               candidate.patch,
             );
-            if (Object.keys(changedPatch).length === 0) {
+            const hasFieldChanges = Object.keys(changedPatch).length > 0;
+            if (!hasFieldChanges) {
               overlayPlan.push({
                 sectionName,
                 sourceRowIndex,
@@ -350,12 +353,13 @@ export const useServicePlanningImport = () => {
                 ledBy: block.source.ledBy,
                 personIndex: candidate.personIndex,
                 rawNameToken: candidate.rawNameToken,
-                action: "skip",
+                action: "update",
+                placementOnly: true,
                 targetOverlayId: target.id,
                 targetOverlayName: target.name || undefined,
                 targetOverlayEvent: target.event || undefined,
                 patch: { ...candidate.patch },
-                reason: `Overlay for "${candidate.patch.event || block.source.elementType}" is already up to date.`,
+                reason: "Existing overlay is already up to date.",
               });
               if (repeatedOverlayKey) {
                 repeatedOverlayKeys.add(repeatedOverlayKey);
@@ -587,6 +591,21 @@ export const useServicePlanningImport = () => {
     [dispatch, store],
   );
 
+  const placeNewOverlayAfterAnchor = useCallback(
+    (overlayId: string, insertAfterId?: string): boolean => {
+      const list = store.getState().undoable.present.overlays.list;
+      const next = moveOverlayAfterServicePlanningAnchor(
+        list,
+        overlayId,
+        insertAfterId,
+      );
+      if (next === list) return false;
+      dispatch(updateOverlayList(next));
+      return true;
+    },
+    [dispatch, store],
+  );
+
   const runOverlaySync = useCallback(
     async (
       overlayCandidates: ServicePlanningMappedRow[],
@@ -595,6 +614,7 @@ export const useServicePlanningImport = () => {
       let skipped = 0;
       const reasons: string[] = [];
       const usedOverlayIds = new Set<string>();
+      let overlayAnchorId: string | undefined;
 
       for (const block of overlayCandidates) {
         for (const cand of block.candidates) {
@@ -624,6 +644,8 @@ export const useServicePlanningImport = () => {
                   insertAfterId: template.id,
                 }),
               );
+              placeNewOverlayAfterAnchor(newId, overlayAnchorId);
+              overlayAnchorId = newId;
               usedOverlayIds.add(newId);
               await persistNewParticipantOverlayClone(
                 db,
@@ -639,6 +661,8 @@ export const useServicePlanningImport = () => {
             const newId = generateRandomId();
             const newOverlay = buildNewParticipantOverlay(cand.patch, newId);
             dispatch(addExistingOverlayToList({ overlay: newOverlay }));
+            placeNewOverlayAfterAnchor(newId, overlayAnchorId);
+            overlayAnchorId = newId;
             usedOverlayIds.add(newId);
             await persistNewParticipantOverlay(db, newOverlay);
             updated += 1;
@@ -650,6 +674,7 @@ export const useServicePlanningImport = () => {
 
           const next = getChangedOverlayPatch(target, cand.patch);
           if (Object.keys(next).length === 0) {
+            overlayAnchorId = target.id;
             usedOverlayIds.add(target.id);
             skipped += 1;
             reasons.push(
@@ -685,6 +710,7 @@ export const useServicePlanningImport = () => {
             );
           }
 
+          overlayAnchorId = target.id;
           usedOverlayIds.add(target.id);
           updated += 1;
         }
@@ -692,7 +718,7 @@ export const useServicePlanningImport = () => {
 
       return { updated, skipped, reasons };
     },
-    [applyPersistedOverlayUpdate, db, dispatch, store],
+    [applyPersistedOverlayUpdate, db, dispatch, placeNewOverlayAfterAnchor, store],
   );
 
   const runOutlineInsert = useCallback(
@@ -972,7 +998,6 @@ export const useServicePlanningImport = () => {
             reasons: [
               `Overlay for "${step.patch.event || step.elementType}" is already up to date.`,
             ],
-            // Existing overlay stays in place but anchors the next insertion.
             resultOverlayId: target.id,
           };
         }
@@ -1100,6 +1125,7 @@ export const useServicePlanningImport = () => {
             insertAfterId: anchorOverlayId ?? template.id,
           }),
         );
+        placeNewOverlayAfterAnchor(newId, anchorOverlayId);
         dispatch(selectOverlay(built));
 
         return {
@@ -1121,6 +1147,7 @@ export const useServicePlanningImport = () => {
           insertAfterId: anchorOverlayId,
         }),
       );
+      placeNewOverlayAfterAnchor(newId, anchorOverlayId);
       dispatch(selectOverlay(newOverlay));
 
       return {
@@ -1132,7 +1159,7 @@ export const useServicePlanningImport = () => {
         resultOverlayId: newId,
       };
     },
-    [applyPersistedOverlayUpdate, db, dispatch, store],
+    [applyPersistedOverlayUpdate, db, dispatch, placeNewOverlayAfterAnchor, store],
   );
 
   return {

@@ -56,6 +56,8 @@ import {
   DEFAULT_FONT_PX,
   FONT_SIZE_BUTTON_STEP,
   FONT_SIZE_PRESETS,
+  MAX_SLIDE_FONT_PX,
+  MIN_SLIDE_FONT_PX,
 } from "../../../constants";
 import {
   DropdownMenu,
@@ -70,13 +72,13 @@ import {
 import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
 import { cn } from "../../../utils/cnHelper";
 
-const MIN_FONT_PX = 25;
-const MAX_FONT_PX = 500;
 /** Radix aligns the menu to the chevron trigger; Input places it at `right-1.5` (6px) inset from the field edge. Negative offset shifts the menu toward the end (right) to match the input box. */
 const FONT_PRESET_MENU_ALIGN_OFFSET_PX = -6;
 
 function clampFontSize(n: number): number {
-  return Math.round(Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, n)));
+  return Math.round(
+    Math.max(MIN_SLIDE_FONT_PX, Math.min(MAX_SLIDE_FONT_PX, n)),
+  );
 }
 
 function nearestPresetFontSize(px: number): number {
@@ -151,8 +153,8 @@ const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
       inputTextSize="text-sm"
       hideLabel
       data-ignore-undo="true"
-      min={MIN_FONT_PX}
-      max={MAX_FONT_PX}
+      min={MIN_SLIDE_FONT_PX}
+      max={MAX_SLIDE_FONT_PX}
       numericArrowStep={FONT_SIZE_BUTTON_STEP}
       numericArrowEmptyBase={DEFAULT_FONT_PX}
       endAdornment={

@@ -119,6 +119,83 @@ describe("lrclib api", () => {
     });
   });
 
+  it("falls back to search when the exact lookup has a transient server error", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: 13,
+            track_name: "Great Is Thy Faithfulness",
+            artist_name: "Traditional",
+            plainLyrics: "Great is thy faithfulness",
+            syncedLyrics: null,
+          },
+        ],
+      });
+
+    const result = await resolveLrclibImport({
+      trackName: "Great Is Thy Faithfulness",
+      artistName: "Traditional",
+    });
+
+    expect(result).toEqual({
+      match: null,
+      candidates: [
+        {
+          lrclibId: 13,
+          source: "lrclib",
+          trackName: "Great Is Thy Faithfulness",
+          artistName: "Traditional",
+          plainLyrics: "Great is thy faithfulness",
+          syncedLyrics: null,
+        },
+      ],
+    });
+  });
+
+  it("falls back to search when the exact lookup throws", async () => {
+    (global.fetch as jest.Mock)
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: 14,
+            track_name: "Be Thou My Vision",
+            artist_name: "Traditional",
+            plainLyrics: "Be thou my vision",
+            syncedLyrics: null,
+          },
+        ],
+      });
+
+    const result = await resolveLrclibImport({
+      trackName: "Be Thou My Vision",
+      artistName: "Traditional",
+    });
+
+    expect(result).toEqual({
+      match: null,
+      candidates: [
+        {
+          lrclibId: 14,
+          source: "lrclib",
+          trackName: "Be Thou My Vision",
+          artistName: "Traditional",
+          plainLyrics: "Be thou my vision",
+          syncedLyrics: null,
+        },
+      ],
+    });
+  });
+
   it("skips exact lookup and goes straight to search when artist is missing", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,

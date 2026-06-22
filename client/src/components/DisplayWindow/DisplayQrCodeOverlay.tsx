@@ -207,6 +207,7 @@ const DisplayQRCodeOverlay = forwardRef<
           needsPadding={needsPadding}
           overlayType="qr-code"
           shouldFillContainer={shouldFillContainer}
+          initialHidden={shouldAnimate}
         />
         {!shouldFillContainer && prevNeedsPadding && (
           <SharedOverlay

@@ -32,6 +32,20 @@ const BIBLE_BOOK_ALIASES: Record<string, string> = {
 const normalizeBibleImportVersion = (value?: string) =>
   String(value || DEFAULT_BIBLE_IMPORT_VERSION).trim().toLowerCase();
 
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
+// Mirror the trust rule used by the main Bible verse selector (Bible.tsx):
+// only reuse a cached chapter when it was genuinely fetched from Bible Gateway
+// and is still fresh. The seeded `bibleDb` ships public-domain KJV text under
+// every version key (NKJV etc. are copyrighted), so trusting the seed here
+// would create items whose text doesn't match their labeled version.
+const isFreshBibleGatewayChapter = (chapter: DBBibleChapter): boolean => {
+  if (!chapter.isFromBibleGateway) return false;
+  const lastUpdated = new Date(chapter.lastUpdated).getTime();
+  if (Number.isNaN(lastUpdated)) return false;
+  return Date.now() - lastUpdated < ONE_YEAR_MS;
+};
+
 const resolveCanonicalBibleBookName = (book: string): string => {
   const normalizedBookName = normalizeBibleBookName(book);
   const aliasMatch = BIBLE_BOOK_ALIASES[normalizedBookName];
@@ -106,7 +120,7 @@ export const loadBibleChapterVerses = async ({
       chapterDoc = null;
     }
 
-    if (chapterDoc?.verses?.length) {
+    if (chapterDoc?.verses?.length && isFreshBibleGatewayChapter(chapterDoc)) {
       return chapterDoc.verses;
     }
   }
