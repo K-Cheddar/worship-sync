@@ -9,6 +9,8 @@ import HighlightWords from "./HighlightWords";
 
 type FilteredItemProps = {
   index: number;
+  /** Index in the filtered library list — used for per-item show/hide lyrics. */
+  libraryIndex?: number;
   item: filteredItemsListType;
   addItemToList: (item: ServiceItem) => void;
   setItemToBeDeleted: (item: ServiceItem) => void;
@@ -25,6 +27,7 @@ type FilteredItemProps = {
 
 const FilteredItem = ({
   index,
+  libraryIndex,
   item,
   addItemToList,
   setItemToBeDeleted,
@@ -38,7 +41,7 @@ const FilteredItem = ({
   const [justAdded, setJustAdded] = useState(false);
 
   const _updateShowWords = () => {
-    updateShowWords(!showWords, index);
+    updateShowWords(!showWords, libraryIndex ?? index);
   };
 
   const addItem = (item: ServiceItem) => {
@@ -62,7 +65,7 @@ const FilteredItem = ({
     <div
       role="listitem"
       className={cn(
-        "flex flex-col overflow-hidden rounded-lg border border-white/5 transition-colors",
+        "flex min-h-0 flex-col overflow-hidden rounded-lg border border-white/5 transition-colors",
         alternatingAdminListRowBg(index),
         "hover:border-white/20",
       )}
@@ -139,18 +142,13 @@ const FilteredItem = ({
           )}
         </div>
       </div>
-      <div>
+      {showWordsSection ? (
         <HighlightWords
           searchValue={searchValue}
-          string={matchedWords || ""}
-          className={cn(
-            "px-4 text-sm text-gray-300 transition-all",
-            showWordsSection
-              ? "max-h-32 overflow-y-auto border-t-2 border-white/10 py-2"
-              : "max-h-0 overflow-hidden",
-          )}
+          string={matchedWords}
+          className="max-h-32 overflow-y-auto border-t-2 border-white/10 px-4 py-2 text-sm text-gray-300"
         />
-      </div>
+      ) : null}
     </div>
   );
 };

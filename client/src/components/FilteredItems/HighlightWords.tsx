@@ -12,6 +12,8 @@ type HighlightWordsProps = {
   highlightWordColor?: string;
   nonHighlightWordColor?: string;
   allowPartial?: boolean;
+  /** Keep lyric line breaks instead of flattening into one paragraph. */
+  preserveLineBreaks?: boolean;
 };
 
 const HighlightWords = ({
@@ -21,6 +23,7 @@ const HighlightWords = ({
   highlightWordColor = "text-orange-400",
   nonHighlightWordColor = "text-gray-300",
   allowPartial = false,
+  preserveLineBreaks = false,
 }: HighlightWordsProps) => {
   const searchWords = useMemo(
     () =>
@@ -32,10 +35,19 @@ const HighlightWords = ({
     [searchValue],
   );
 
-  const words = useMemo(
-    () => string.replaceAll("\n", " ").split(" "),
-    [string],
-  );
+  const words = useMemo(() => {
+    if (preserveLineBreaks) {
+      return [];
+    }
+    return string.replaceAll("\n", " ").split(" ");
+  }, [string, preserveLineBreaks]);
+
+  const lines = useMemo(() => {
+    if (!preserveLineBreaks) {
+      return [];
+    }
+    return string.split(/\r?\n/);
+  }, [string, preserveLineBreaks]);
 
   const getHighlightClass = (word: string, index: number) => {
     const cleanWord = word.replace(punctuationRegex, "").toLowerCase();
@@ -70,25 +82,48 @@ const HighlightWords = ({
     return nonHighlightWordColor;
   };
 
+  const renderWord = (word: string, index: number) => {
+    const highlightClass = getHighlightClass(word, index);
+    const isHighlighted = highlightClass.includes(highlightWordColor);
+
+    return (
+      <span
+        key={`${index}-${word}`}
+        className={cn(
+          highlightClass,
+          isHighlighted && "transition-colors duration-200",
+          "hover:opacity-80",
+        )}
+      >
+        {word}
+      </span>
+    );
+  };
+
+  if (preserveLineBreaks) {
+    return (
+      <div className={cn("flex flex-col gap-1", className)}>
+        {lines.map((line, lineIndex) =>
+          line.trim() === "" ? (
+            <div key={`blank-${lineIndex}`} className="h-3" aria-hidden />
+          ) : (
+            <p
+              key={`line-${lineIndex}`}
+              className="flex flex-wrap gap-[0.25rem]"
+            >
+              {line.split(" ").filter(Boolean).map((word, wordIndex) =>
+                renderWord(word, wordIndex),
+              )}
+            </p>
+          ),
+        )}
+      </div>
+    );
+  }
+
   return (
     <p className={cn("flex gap-[0.25rem] flex-wrap", className)}>
-      {words.map((word, i) => {
-        const highlightClass = getHighlightClass(word, i);
-        const isHighlighted = highlightClass.includes(highlightWordColor);
-
-        return (
-          <span
-            key={i}
-            className={cn(
-              highlightClass,
-              isHighlighted && "transition-colors duration-200",
-              "hover:opacity-80",
-            )}
-          >
-            {word}
-          </span>
-        );
-      })}
+      {words.map((word, i) => renderWord(word, i))}
     </p>
   );
 };
