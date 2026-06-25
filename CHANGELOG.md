@@ -1,3 +1,10 @@
+## [2.16.1](https://github.com/K-Cheddar/worship-sync/compare/v2.16.0...v2.16.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* Improve suggestions from history ([09c3cb4](https://github.com/K-Cheddar/worship-sync/commit/09c3cb48c200e6a63686e3109959d3fdd9ab9c88))
+
 # [2.16.0](https://github.com/K-Cheddar/worship-sync/compare/v2.15.0...v2.16.0) (2026-06-22)
 
 
