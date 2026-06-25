@@ -1,3 +1,5 @@
+import { buildTieredFontSizePresets } from "./utils/fontSizePresets";
+
 // ============================================================================
 // Connection & Retry Constants
 // ============================================================================
@@ -38,16 +40,19 @@ export const FONT_SIZE_BUTTON_STEP = 1;
 export const MIN_SLIDE_FONT_PX = 25;
 export const MAX_SLIDE_FONT_PX = 500;
 
-/** Slide Tools font size presets (px): 50–500 in 5px steps. */
+/** Lowest value in the Slide Tools font size preset dropdown (px). */
 export const FONT_SIZE_PRESET_MIN_PX = 50;
-export const FONT_SIZE_PRESET_STEP_PX = 5;
-export const FONT_SIZE_PRESETS: readonly number[] = Array.from(
-  {
-    length:
-      (MAX_SLIDE_FONT_PX - FONT_SIZE_PRESET_MIN_PX) / FONT_SIZE_PRESET_STEP_PX +
-      1,
-  },
-  (_, i) => FONT_SIZE_PRESET_MIN_PX + i * FONT_SIZE_PRESET_STEP_PX,
+
+/** Tiered Slide Tools font size presets: finer steps at low sizes, coarser at high sizes. */
+export const SLIDE_FONT_SIZE_PRESET_TIERS = [
+  { from: FONT_SIZE_PRESET_MIN_PX, to: 150, step: 5 },
+  { from: 150, to: 300, step: 10 },
+  { from: 300, to: MAX_SLIDE_FONT_PX, step: 25 },
+] as const;
+
+export const FONT_SIZE_PRESETS: readonly number[] = buildTieredFontSizePresets(
+  SLIDE_FONT_SIZE_PRESET_TIERS,
+  MAX_SLIDE_FONT_PX,
 );
 
 // ============================================================================

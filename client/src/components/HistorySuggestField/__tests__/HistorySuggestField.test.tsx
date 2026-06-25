@@ -44,6 +44,8 @@ jest.mock("../../ui/Popover", () => {
       align: _align,
       sideOffset: _sideOffset,
       onOpenAutoFocus: _onOpenAutoFocus,
+      onEscapeKeyDown: _onEscapeKeyDown,
+      onInteractOutside: _onInteractOutside,
       className: _className,
       ...rest
     }: {
@@ -51,6 +53,8 @@ jest.mock("../../ui/Popover", () => {
       align?: string;
       sideOffset?: number;
       onOpenAutoFocus?: (e: Event) => void;
+      onEscapeKeyDown?: (e: Event) => void;
+      onInteractOutside?: (e: Event) => void;
       className?: string;
       [key: string]: unknown;
     }) => <MockContent data-history-suggest-content {...rest}>{children}</MockContent>,
@@ -197,6 +201,94 @@ describe("HistorySuggestField", () => {
         "Molly",
         "Zara",
       ]);
+    });
+
+    it("clears the field via the X button and shows suggestions", () => {
+      const Wrapper = () => {
+        const [value, setValue] = useState("Alice");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={historyValues}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      const input = screen.getByRole("textbox", { name: /Name/i });
+      expect(input).toHaveValue("Alice");
+      const clearBtn = screen.getByRole("button", { name: /clear/i });
+      fireEvent.click(clearBtn);
+      expect(input).toHaveValue("");
+      expect(screen.getByText("Bob")).toBeInTheDocument();
+    });
+
+    it("does not render a clear button when the field is empty", () => {
+      const Wrapper = () => {
+        const [value, setValue] = useState("");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={historyValues}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      expect(
+        screen.queryByRole("button", { name: /clear/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("re-shows the full list after clearing a focused field", () => {
+      const Wrapper = () => {
+        const [value, setValue] = useState("");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={historyValues}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      const input = screen.getByRole("textbox", { name: /Name/i });
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: "Al" } });
+      expect(screen.queryByText("Bob")).not.toBeInTheDocument();
+      // Clearing the value while still focused should bring back every suggestion.
+      fireEvent.change(input, { target: { value: "" } });
+      expect(screen.getByText("Alice")).toBeInTheDocument();
+      expect(screen.getByText("Bob")).toBeInTheDocument();
+    });
+
+    it("re-opens suggestions when typing after applying one", () => {
+      const Wrapper = () => {
+        const [value, setValue] = useState("");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={historyValues}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      const input = screen.getByRole("textbox", { name: /Name/i });
+      fireEvent.focus(input);
+      fireEvent.mouseDown(screen.getByText("Alice"));
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      // The field still holds focus, so typing should recompute and show the list.
+      fireEvent.change(input, { target: { value: "B" } });
+      expect(screen.getByText("Bob")).toBeInTheDocument();
     });
 
     it("ranks prefix and word-start matches before substring matches", () => {

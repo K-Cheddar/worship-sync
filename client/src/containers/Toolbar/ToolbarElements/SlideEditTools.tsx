@@ -70,6 +70,7 @@ import {
   itemHasCleanableNewlines,
 } from "../../../utils/itemNewlineCleanup";
 import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
+import { nearestFontSizePreset } from "../../../utils/fontSizePresets";
 import { cn } from "../../../utils/cnHelper";
 
 /** Radix aligns the menu to the chevron trigger; Input places it at `right-1.5` (6px) inset from the field edge. Negative offset shifts the menu toward the end (right) to match the input box. */
@@ -82,17 +83,7 @@ function clampFontSize(n: number): number {
 }
 
 function nearestPresetFontSize(px: number): number {
-  const clamped = clampFontSize(px);
-  let best = FONT_SIZE_PRESETS[0]!;
-  let bestDist = Infinity;
-  for (const p of FONT_SIZE_PRESETS) {
-    const d = Math.abs(p - clamped);
-    if (d < bestDist) {
-      bestDist = d;
-      best = p;
-    }
-  }
-  return best;
+  return nearestFontSizePreset(clampFontSize(px), FONT_SIZE_PRESETS);
 }
 
 type SlideToolbarFontSizeFieldProps = {
