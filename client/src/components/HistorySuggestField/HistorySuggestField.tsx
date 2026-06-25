@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import TextArea from "../TextArea/TextArea";
 import Input from "../Input/Input";
 import Button from "../Button/Button";
@@ -97,47 +97,12 @@ const HistorySuggestField = ({
   const effectiveHideLabel = hideLabel ?? (multiline ? true : false);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const blurCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
   const [isFocused, setIsFocused] = useState(false);
-  const allowCloseRef = useRef(false);
 
   const showDropdown = suggestions.length > 0 && isFocused;
-
-  const scheduleBlurClose = useCallback(() => {
-    if (blurCloseTimeoutRef.current) clearTimeout(blurCloseTimeoutRef.current);
-    blurCloseTimeoutRef.current = setTimeout(() => {
-      blurCloseTimeoutRef.current = null;
-      setIsFocused(false);
-    }, 150);
-  }, []);
-
-  const cancelBlurClose = useCallback(() => {
-    if (blurCloseTimeoutRef.current) {
-      clearTimeout(blurCloseTimeoutRef.current);
-      blurCloseTimeoutRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!showDropdown) {
-      allowCloseRef.current = false;
-      return;
-    }
-    allowCloseRef.current = false;
-    const id = setTimeout(() => {
-      allowCloseRef.current = true;
-    }, 150);
-    return () => clearTimeout(id);
-  }, [showDropdown]);
-
-  useEffect(
-    () => () => {
-      if (blurCloseTimeoutRef.current) clearTimeout(blurCloseTimeoutRef.current);
-    },
-    []
-  );
 
   const updateSuggestions = useCallback(
     (nextValue: string) => {
@@ -188,7 +153,6 @@ const HistorySuggestField = ({
 
   const applySuggestion = useCallback(
     (suggestion: string) => {
-      cancelBlurClose();
       if (multiline) {
         const currentValue = textAreaRef.current?.value ?? value;
         const caret = textAreaRef.current?.selectionStart ?? currentValue.length;
@@ -199,11 +163,12 @@ const HistorySuggestField = ({
       } else {
         onChange(suggestion);
       }
+      // Clear the list to close the dropdown, but keep `isFocused` intact so
+      // that typing again immediately re-opens suggestions without a refocus.
       setSuggestions([]);
       setActiveSuggestionIndex(null);
-      setIsFocused(false);
     },
-    [cancelBlurClose, multiline, onChange, value]
+    [multiline, onChange, value]
   );
 
   const handleKeyDown = useCallback(
@@ -240,10 +205,20 @@ const HistorySuggestField = ({
     [onChange, updateSuggestions]
   );
 
-  const handleFieldBlur = useCallback(() => {
-    scheduleBlurClose();
-    onFieldBlur?.();
-  }, [scheduleBlurClose, onFieldBlur]);
+  const handleFocus = useCallback(() => {
+    setIsFocused(true);
+    updateSuggestions(value);
+  }, [updateSuggestions, value]);
+
+  const clearValue = useCallback(() => {
+    onChange("");
+    // Keep the field focused so the suggestion list stays open, then recompute
+    // against the now-empty value (shows the full history).
+    const field = multiline ? textAreaRef.current : inputRef.current;
+    field?.focus();
+    setIsFocused(true);
+    updateSuggestions("");
+  }, [onChange, updateSuggestions, multiline]);
 
   const commonFieldProps = {
     value,
@@ -282,11 +257,14 @@ const HistorySuggestField = ({
     <Popover
       open={showDropdown}
       onOpenChange={(open) => {
-        if (!open && allowCloseRef.current) setIsFocused(false);
+        // Radix only asks us to close here for genuine outside interactions
+        // (interactions on the field itself and Escape are handled below and
+        // never reach this callback). Treat that as the field losing focus.
+        if (!open) setIsFocused(false);
       }}
     >
       <PopoverAnchor asChild>
-        <div className="relative flex flex-col gap-1">
+        <div ref={anchorRef} className="relative flex flex-col gap-1">
           {multiline ? (
             <TextArea
               ref={textAreaRef}
@@ -297,12 +275,8 @@ const HistorySuggestField = ({
               }
               autoResize={autoResize}
               onKeyDown={handleKeyDown}
-              onFocus={() => {
-                cancelBlurClose();
-                setIsFocused(true);
-                updateSuggestions(value);
-              }}
-              onBlur={handleFieldBlur}
+              onFocus={handleFocus}
+              onBlur={onFieldBlur}
               onClick={() => updateSuggestions(value)}
               onSelect={() => updateSuggestions(value)}
             />
@@ -315,14 +289,13 @@ const HistorySuggestField = ({
                 ((value: string | number) => void)
               }
               onKeyDown={handleKeyDown}
-              onFocus={() => {
-                cancelBlurClose();
-                setIsFocused(true);
-                updateSuggestions(value);
-              }}
-              onBlur={handleFieldBlur}
+              onFocus={handleFocus}
+              onBlur={onFieldBlur}
               onClick={() => updateSuggestions(value)}
               onSelect={() => updateSuggestions(value)}
+              svg={!disabled && value ? X : undefined}
+              svgAction={clearValue}
+              svgActionAriaLabel="Clear"
             />
           )}
         </div>
@@ -333,6 +306,17 @@ const HistorySuggestField = ({
         className="max-h-40 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-0 py-1 shadow-lg text-left text-xs w-(--radix-popover-trigger-width)"
         data-history-suggest-content
         onOpenAutoFocus={(e) => e.preventDefault()}
+        // Keep focus in the field; Escape is handled by the field's keydown so
+        // suggestions can re-open on the next keystroke without a refocus.
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        // Interactions on the field (click to place the caret, select-all, etc.)
+        // must NOT dismiss the dropdown — only true outside interactions should.
+        onInteractOutside={(e) => {
+          const target = e.detail.originalEvent.target as Node | null;
+          if (target && anchorRef.current?.contains(target)) {
+            e.preventDefault();
+          }
+        }}
       >
         <ul role="listbox" aria-label="Suggestions">
           {suggestions.map((s, index) => (
