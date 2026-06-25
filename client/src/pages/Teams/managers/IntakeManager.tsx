@@ -33,8 +33,8 @@ import { DEFAULT_INTAKE_FORM_COPY } from "../intakeFormCopy";
 import { emptyData } from "../teamsConstants";
 import {
   buildTeamIntakePublicUrl,
+  buildIntakeAvailabilityServiceOptions,
   formatPlainDateRangeLabel,
-  formatServiceTiming,
   formatShortOccurrenceDate,
   isActive,
   memberName,
@@ -267,6 +267,22 @@ const IntakeManager = ({
         : [],
     [draft.endDate, draft.startDate, services],
   );
+
+  const availabilityServiceOptions = useMemo(
+    () => buildIntakeAvailabilityServiceOptions(applicableServices),
+    [applicableServices],
+  );
+
+  const selectedAvailabilityServiceOptionIds = useMemo(() => {
+    const selectedServiceIds = new Set(
+      draft.availabilityServices.map((item) => item.serviceId),
+    );
+    return availabilityServiceOptions
+      .filter((option) =>
+        option.serviceIds.every((serviceId) => selectedServiceIds.has(serviceId)),
+      )
+      .map((option) => option.id);
+  }, [availabilityServiceOptions, draft.availabilityServices]);
 
   const pruneAvailabilityServices = (
     availabilityServices: TeamIntakeFormPayload["availabilityServices"],
@@ -683,14 +699,17 @@ const IntakeManager = ({
       />
       <EntityMultiSelect
         label="Show services for availability"
-        description="Select services that fall within this form's date range. People will mark availability for each date on the public form."
-        options={applicableServices.map((service) => ({
-          id: service.serviceId,
-          label: service.name,
-          sublabel: formatServiceTiming(service),
+        description="Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."
+        options={availabilityServiceOptions.map((option) => ({
+          id: option.id,
+          label: option.label,
+          sublabel: option.sublabel,
         }))}
-        value={draft.availabilityServices.map((item) => item.serviceId)}
-        onChange={(serviceIds) =>
+        value={selectedAvailabilityServiceOptionIds}
+        onChange={(optionIds) => {
+          const serviceIds = availabilityServiceOptions
+            .filter((option) => optionIds.includes(option.id))
+            .flatMap((option) => option.serviceIds);
           setDraft((current) => ({
             ...current,
             availabilityServices: serviceIds.map((serviceId) => {
@@ -700,8 +719,8 @@ const IntakeManager = ({
                 name: service?.name || "",
               };
             }),
-          }))
-        }
+          }));
+        }}
         emptyText={
           draft.startDate && draft.endDate
             ? "No services fall in this date range."

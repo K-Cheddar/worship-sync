@@ -95,7 +95,9 @@ export const sortTeamsDataKey = <K extends TeamsDataKey>(
     case "teamRoles":
       return sortTeamRolesByName(items as TeamRole[]) as TeamsData[K];
     case "intakeForms":
-      return sortIntakeFormsByStartDate(items as TeamIntakeForm[]) as TeamsData[K];
+      return sortIntakeFormsByStartDate(
+        items as TeamIntakeForm[],
+      ) as TeamsData[K];
     default:
       return items;
   }
@@ -180,13 +182,21 @@ export const buildTeamSchedulePublicUrl = (token: string): string =>
     `/teams/schedule/${encodeURIComponent(String(token || "").trim())}`,
   );
 
-export const formatShortOccurrenceDate = (startsAt: string) =>
-  new Date(startsAt).toLocaleDateString(undefined, {
+export const formatShortOccurrenceDate = (startsAt: string) => {
+  const date = new Date(startsAt);
+  const dateStr = date.toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
     year: "numeric",
   });
+  const timeStr = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return `${dateStr} @ ${timeStr}`;
+};
 
 export const readEntityId = <T extends Record<string, unknown>>(
   item: T,
@@ -736,6 +746,67 @@ export const formatServiceTiming = (service?: TeamService | null) => {
   return "";
 };
 
+export type IntakeAvailabilityServiceOption = {
+  id: string;
+  label: string;
+  sublabel?: string;
+  serviceIds: string[];
+};
+
+export const buildIntakeAvailabilityServiceOptions = (
+  services: TeamService[],
+): IntakeAvailabilityServiceOption[] => {
+  const seenGroupIds = new Set<string>();
+
+  return services.flatMap((service) => {
+    const groupId = service.serviceGroupId;
+    if (!groupId) {
+      return [
+        {
+          id: service.serviceId,
+          label: service.name,
+          sublabel: formatServiceTiming(service),
+          serviceIds: [service.serviceId],
+        },
+      ];
+    }
+
+    if (seenGroupIds.has(groupId)) return [];
+    seenGroupIds.add(groupId);
+
+    const groupServices = services.filter(
+      (item) => item.serviceGroupId === groupId,
+    );
+    if (groupServices.length < 2) {
+      return [
+        {
+          id: service.serviceId,
+          label: service.name,
+          sublabel: formatServiceTiming(service),
+          serviceIds: [service.serviceId],
+        },
+      ];
+    }
+
+    const timingLabels = [
+      ...new Set(
+        groupServices
+          .map((item) => formatServiceTiming(item))
+          .filter((label): label is string => Boolean(label)),
+      ),
+    ];
+
+    return [
+      {
+        id: `group:${groupId}`,
+        label: groupServices.map((item) => item.name).join(" & "),
+        sublabel: timingLabels.join(" + "),
+        serviceIds: groupServices.map((item) => item.serviceId),
+      },
+    ];
+  });
+};
+
 /** The fields that decide which calendar day(s) a service can land on. */
 export type ServiceDayShape = Pick<
   ServiceTime,
@@ -743,7 +814,9 @@ export type ServiceDayShape = Pick<
 >;
 
 /** Weekdays (0=Sun) a service can occur on, derived from its recurrence. */
-export const getServiceWeekdays = (service: Partial<ServiceDayShape>): number[] => {
+export const getServiceWeekdays = (
+  service: Partial<ServiceDayShape>,
+): number[] => {
   switch (service.reccurence) {
     case "weekly":
       return service.dayOfWeek == null ? [] : [service.dayOfWeek];
@@ -820,7 +893,9 @@ export const planServiceGroupUpdates = ({
       : currentGroupId ||
         [...partnerSet]
           .map(
-            (id) => services.find((service) => service.serviceId === id)?.serviceGroupId,
+            (id) =>
+              services.find((service) => service.serviceId === id)
+                ?.serviceGroupId,
           )
           .find(Boolean) ||
         generateRandomId();

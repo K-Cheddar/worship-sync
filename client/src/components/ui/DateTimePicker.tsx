@@ -20,6 +20,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import Calendar from "@/components/ui/Calendar";
+import { DATE_PICKER_POPOVER_CONTENT_CLASS } from "@/components/ui/datePickerAccessibility";
 import { Listbox } from "@/components/TimePicker/ListBox";
 import type { Meridiem } from "@/components/TimePicker/types";
 
@@ -722,7 +723,7 @@ const DateTimePicker = ({
         {!disabled ? (
           <PopoverContent
             align="start"
-            className="w-auto rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+            className={DATE_PICKER_POPOVER_CONTENT_CLASS}
             onOpenAutoFocus={(e) => e.preventDefault()}
             portal={portal}
           >
