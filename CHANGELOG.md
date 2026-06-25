@@ -1,3 +1,10 @@
+## [2.16.2](https://github.com/K-Cheddar/worship-sync/compare/v2.16.1...v2.16.2) (2026-06-25)
+
+
+### Bug Fixes
+
+* improve calendar sizing, service grouping, and include time in intake form ([462e945](https://github.com/K-Cheddar/worship-sync/commit/462e94518ac90953190d2c188c76dff29326651b))
+
 ## [2.16.1](https://github.com/K-Cheddar/worship-sync/compare/v2.16.0...v2.16.1) (2026-06-25)
 
 
