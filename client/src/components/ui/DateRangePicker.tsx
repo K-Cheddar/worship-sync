@@ -16,6 +16,7 @@ import Calendar from "@/components/ui/Calendar";
 import DateFieldCalendarTrigger from "@/components/ui/DateFieldCalendarTrigger";
 import {
   DATE_PICKER_POPOVER_KEYSHORTCUT,
+  DATE_PICKER_POPOVER_CONTENT_CLASS,
   openCalendarOnAltArrowDown,
 } from "@/components/ui/datePickerAccessibility";
 import { parsePlainDate } from "@/utils/plainDate";
@@ -176,7 +177,7 @@ const DateRangePicker = ({
         </PopoverAnchor>
         <PopoverContent
           align="start"
-          className="w-auto rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+          className={DATE_PICKER_POPOVER_CONTENT_CLASS}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <Calendar

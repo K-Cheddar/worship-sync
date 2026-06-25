@@ -34,6 +34,8 @@ type CreatePanelProps = {
   asideHeaderActions?: ReactNode;
   /** Aside panel body (e.g. filter controls). */
   aside?: ReactNode;
+  /** Apply/cancel actions pinned below the aside scroll area. */
+  asideFooter?: ReactNode;
   /** Optional id for the aside region (for aria-controls). */
   asideId?: string;
   /** Optional actions in the top-right of the open form panel (e.g. archive/delete menu). */
@@ -65,6 +67,7 @@ const CreatePanel = ({
   asideTitle = "",
   asideHeaderActions,
   aside,
+  asideFooter,
   asideId,
   formHeaderActions,
   formFooter,
@@ -189,11 +192,12 @@ const CreatePanel = ({
               className={cn(
                 "scrollbar-variable mt-4 min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto",
                 panelFormScrollPaddingClassName,
-                "pb-4",
+                !asideFooter && "pb-4",
               )}
             >
               {aside}
             </div>
+            {asideFooter}
           </section>
         </div>
         <div

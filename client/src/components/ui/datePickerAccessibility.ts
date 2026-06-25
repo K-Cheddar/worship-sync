@@ -15,3 +15,7 @@ export const openCalendarOnAltArrowDown = (
 };
 
 export const DATE_PICKER_POPOVER_KEYSHORTCUT = "Alt+ArrowDown";
+
+/** Shared popover shell for date, range, and date-time pickers. */
+export const DATE_PICKER_POPOVER_CONTENT_CLASS =
+  "w-auto max-lg:min-w-[min(100vw-2rem,22.5rem)] rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl";

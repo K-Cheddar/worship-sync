@@ -30,32 +30,37 @@ const Calendar = ({
       captionLayout={captionLayout}
       startMonth={startMonth}
       endMonth={endMonth}
-      className={cn("p-3 text-sm text-gray-100", className)}
+      className={cn(
+        "p-3 text-sm text-gray-100 max-lg:p-4 max-lg:text-base",
+        className,
+      )}
       classNames={{
         months: "flex flex-col gap-4",
         month: "relative flex flex-col gap-4",
-        month_caption: "flex h-9 items-center justify-center px-9",
-        caption_label: "text-sm font-semibold text-white",
-        dropdowns: "flex items-center justify-center gap-2",
+        month_caption:
+          "flex h-9 max-lg:h-11 items-center justify-center px-9 max-lg:px-11",
+        caption_label: "text-sm max-lg:text-base font-semibold text-white",
+        dropdowns: "flex items-center justify-center gap-2 max-lg:gap-3",
         dropdown_root: "relative",
         dropdown:
-          "cursor-pointer rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm font-medium text-gray-100 outline-none hover:border-gray-600 focus-visible:ring-2 focus-visible:ring-cyan-500/40",
+          "cursor-pointer rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm max-lg:px-3 max-lg:py-2 max-lg:text-base font-medium text-gray-100 outline-none hover:border-gray-600 focus-visible:ring-2 focus-visible:ring-cyan-500/40",
         nav: "absolute inset-x-0 top-0 z-10 flex items-center justify-between",
         button_previous: cn(
-          "inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-700",
+          "inline-flex h-7 w-7 max-lg:h-9 max-lg:w-9 items-center justify-center rounded-md border border-gray-700",
           "text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40",
         ),
         button_next: cn(
-          "inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-700",
+          "inline-flex h-7 w-7 max-lg:h-9 max-lg:w-9 items-center justify-center rounded-md border border-gray-700",
           "text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40",
         ),
         month_grid: "w-full border-collapse",
-        weekdays: "flex",
-        weekday: "w-9 text-xs font-medium text-gray-400",
-        week: "flex w-full mt-1",
-        day: "h-9 w-9 p-0 text-center",
+        weekdays: "flex w-full",
+        weekday:
+          "w-9 max-lg:flex-1 max-lg:w-auto text-xs max-lg:text-sm font-medium text-gray-400",
+        week: "flex w-full mt-1 max-lg:gap-0.5",
+        day: "h-9 w-9 max-lg:h-auto max-lg:w-auto max-lg:min-w-0 max-lg:flex-1 p-0 text-center",
         day_button: cn(
-          "inline-flex h-9 w-9 items-center justify-center rounded-md font-normal",
+          "inline-flex h-9 w-9 max-lg:h-10 max-lg:w-full max-lg:min-h-10 items-center justify-center rounded-md font-normal max-lg:text-base",
           "text-gray-100 hover:bg-gray-800 aria-selected:opacity-100",
         ),
         selected: cn(
@@ -82,14 +87,14 @@ const Calendar = ({
       components={{
         Chevron: ({ orientation }) => {
           const Comp = orientation === "left" ? ChevronLeft : ChevronRight;
-          return <Comp className="h-4 w-4" />;
+          return <Comp className="h-4 w-4 max-lg:h-5 max-lg:w-5" />;
         },
         Dropdown: ({ options, value, onChange, "aria-label": ariaLabel }) => (
           <select
             aria-label={ariaLabel}
             value={value}
             onChange={onChange}
-            className="cursor-pointer rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm font-medium text-gray-100 outline-none hover:border-gray-600 focus-visible:ring-2 focus-visible:ring-cyan-500/40"
+            className="cursor-pointer rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm max-lg:px-3 max-lg:py-2 max-lg:text-base font-medium text-gray-100 outline-none hover:border-gray-600 focus-visible:ring-2 focus-visible:ring-cyan-500/40"
           >
             {options?.map((option) => (
               <option key={option.value} value={option.value} disabled={option.disabled}>

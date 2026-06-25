@@ -104,6 +104,7 @@ const MemberManager = ({
   const [saving, setSaving] = useState(false);
   const [listQuery, setListQuery] = useState("");
   const [listFilters, setListFilters] = useState(emptyMemberListFilters);
+  const [draftListFilters, setDraftListFilters] = useState(emptyMemberListFilters);
   const [showFilters, setShowFilters] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
@@ -149,14 +150,37 @@ const MemberManager = ({
     setShowFilters(false);
   }, [showCreate]);
 
+  const cancelFilters = useCallback(() => {
+    setDraftListFilters(listFilters);
+    setShowFilters(false);
+  }, [listFilters]);
+
+  const applyFilters = useCallback(() => {
+    setListFilters(draftListFilters);
+    setShowFilters(false);
+  }, [draftListFilters]);
+
+  const handleFiltersOpenChange = useCallback(
+    (next: boolean) => {
+      if (showCreate && next) return;
+      if (next) {
+        setDraftListFilters(listFilters);
+        setShowFilters(true);
+        return;
+      }
+      cancelFilters();
+    },
+    [cancelFilters, listFilters, showCreate],
+  );
+
   useEffect(() => {
     if (!showFilters) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setShowFilters(false);
+      if (event.key === "Escape") cancelFilters();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [showFilters]);
+  }, [cancelFilters, showFilters]);
 
   const positionNameById = useMemo(
     () => new Map(positions.map((position) => [position.positionId, position.name])),
@@ -362,10 +386,7 @@ const MemberManager = ({
               filters={listFilters}
               filtersOpen={showFilters}
               filtersDisabled={showCreate}
-              onFiltersOpenChange={(next) => {
-                if (showCreate && next) return;
-                setShowFilters(next);
-              }}
+              onFiltersOpenChange={handleFiltersOpenChange}
             />
           ) : null
         }
@@ -381,14 +402,22 @@ const MemberManager = ({
             padding="p-0.5"
             className="shrink-0 text-gray-400 hover:text-white"
             aria-label="Close filters"
-            onClick={() => setShowFilters(false)}
+            onClick={cancelFilters}
           />
         }
         aside={
           <MemberFilterPanel
             data={data}
-            value={listFilters}
-            onChange={setListFilters}
+            value={draftListFilters}
+            onChange={setDraftListFilters}
+          />
+        }
+        asideFooter={
+          <FormActionButtons
+            pinFooter
+            saveLabel="Apply"
+            onSave={applyFilters}
+            onCancel={cancelFilters}
           />
         }
         list={
