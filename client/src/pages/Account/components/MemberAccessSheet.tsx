@@ -71,7 +71,7 @@ const MemberAccessSheet = () => {
     () =>
       isMemberTarget &&
       [...selectedTeamScopeIds].sort().join("|") !==
-        [...currentTeamScopeIds].sort().join("|"),
+      [...currentTeamScopeIds].sort().join("|"),
     [isMemberTarget, selectedTeamScopeIds, currentTeamScopeIds],
   );
   const inviteAccessChanged = useMemo(
