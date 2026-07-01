@@ -1,3 +1,10 @@
+## [2.16.5](https://github.com/K-Cheddar/worship-sync/compare/v2.16.4...v2.16.5) (2026-07-01)
+
+
+### Bug Fixes
+
+* minor adjustments for public view ([fb2b41a](https://github.com/K-Cheddar/worship-sync/commit/fb2b41ae444289cf82a573ee93a2bbb691b2b27f))
+
 ## [2.16.4](https://github.com/K-Cheddar/worship-sync/compare/v2.16.3...v2.16.4) (2026-07-01)
 
 
