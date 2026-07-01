@@ -130,8 +130,8 @@ const MemberAccessSheet = () => {
   const isSaving = Boolean(memberActionLoading[saveAccessKey]);
   const showPerTeamSection =
     selectedTeamsAccess !== "edit" &&
-    selectedInviteAccess !== "admin" &&
-    teams.length > 0;
+    teams.length > 0 &&
+    (isMemberTarget || selectedInviteAccess !== "admin");
   const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
 
   const headerTitle = isMemberTarget
