@@ -1,7 +1,21 @@
 import type { ReactNode } from "react";
 import { lineTabsListShellClassName } from "../../components/ui/tabs";
 import { cn } from "../../utils/cnHelper";
-import { panelClassName } from "./teamsStyles";
+import {
+  panelClassName,
+  panelHeaderPaddingClassName,
+  panelScrollPaddingClassName,
+  panelShellClassName,
+  scheduleGridScrollClassName,
+  scheduleTabRootClassName,
+  scheduleWorkspaceBodyRowClassName,
+  scheduleWorkspaceMainColumnClassName,
+  scheduleWorkspacePanelClassName,
+  scheduleWorkspaceTabsClassName,
+  teamsCreatePanelRowClassName,
+  teamsManagerPageRootClassName,
+  teamsPanelMaxHeightClassName,
+} from "./teamsStyles";
 
 const skeletonBar = "animate-pulse rounded bg-white/10";
 
@@ -13,7 +27,7 @@ const SkeletonStatus = ({
   children: ReactNode;
 }) => (
   <div
-    className="space-y-4"
+    className={teamsManagerPageRootClassName}
     role="status"
     aria-live="polite"
     aria-busy="true"
@@ -88,16 +102,29 @@ const SkeletonManagerPanel = ({
   withNote?: boolean;
   withExtraAction?: boolean;
 }) => (
-  <section className={panelClassName}>
-    <SkeletonPanelHeader />
-    <SkeletonDescription />
+  <section
+    className={cn(
+      panelShellClassName,
+      "flex flex-col",
+      teamsPanelMaxHeightClassName,
+    )}
+  >
+    <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
+      <SkeletonPanelHeader />
+      <SkeletonDescription />
+    </div>
     {withTeamSelect ? (
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 shrink-0 space-y-2 px-4">
         <div className={cn(skeletonBar, "h-3 w-12")} />
         <div className={cn(skeletonBar, "h-10 w-full max-w-xs")} />
       </div>
     ) : null}
-    <div className="mt-4 space-y-2">
+    <div
+      className={cn(
+        "scrollbar-variable mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto",
+        panelScrollPaddingClassName,
+      )}
+    >
       {withSearch ? <div className={cn(skeletonBar, "h-10 w-full max-w-sm")} /> : null}
       <SkeletonEntityRows
         count={rowCount}
@@ -154,7 +181,7 @@ const SkeletonScheduleTabs = () => (
 );
 
 const SkeletonScheduleGrid = () => (
-  <div className="overflow-auto rounded-lg border border-gray-800">
+  <div className={scheduleGridScrollClassName}>
     <div className="min-w-lg">
       <div className="flex border-b border-gray-800 bg-gray-950 p-2">
         <div className={cn(skeletonBar, "h-8 w-24 shrink-0")} />
@@ -210,10 +237,10 @@ const SkeletonScheduleMembersPanel = () => (
 );
 
 const SkeletonScheduleWorkspace = () => (
-  <>
+  <div className={scheduleWorkspaceTabsClassName}>
     <SkeletonScheduleTabs />
-    <section className={cn(panelClassName, "mt-4")}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <div className={cn(skeletonBar, "h-5 w-5 shrink-0 rounded")} />
@@ -227,24 +254,26 @@ const SkeletonScheduleWorkspace = () => (
           <div className={cn(skeletonBar, "h-9 w-36")} />
         </div>
       </div>
-      <div className="mt-4 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch">
-        <div className="min-w-0 flex-1">
+      <div className={scheduleWorkspaceBodyRowClassName}>
+        <div className={scheduleWorkspaceMainColumnClassName}>
           <SkeletonScheduleGrid />
         </div>
         <SkeletonScheduleMembersPanel />
       </div>
     </section>
-  </>
+  </div>
 );
 
 export const TeamsSchedulesPageSkeleton = () => (
   <SkeletonStatus label="Loading schedules">
-    <section className={panelClassName}>
-      <SkeletonPanelHeader withButton={false} />
-      <SkeletonDescription />
-      <SkeletonScheduleSelectRow />
-    </section>
-    <SkeletonScheduleWorkspace />
+    <div className={scheduleTabRootClassName}>
+      <section className={cn(panelClassName, "shrink-0")}>
+        <SkeletonPanelHeader withButton={false} />
+        <SkeletonDescription />
+        <SkeletonScheduleSelectRow />
+      </section>
+      <SkeletonScheduleWorkspace />
+    </div>
   </SkeletonStatus>
 );
 
@@ -286,18 +315,35 @@ export const TeamsServicesPageSkeleton = () => (
 
 export const TeamsFormsPageSkeleton = () => (
   <SkeletonStatus label="Loading forms">
-    <SkeletonManagerPanel
-      withSearch={false}
-      rowCount={3}
-      withNote
-      withExtraAction
-    />
-    <section className={panelClassName}>
-      <div className={cn(skeletonBar, "h-6 w-32")} />
-      <div className="mt-3">
-        <SkeletonSubmissionCards />
+    <div className={teamsCreatePanelRowClassName}>
+      <div className="flex min-h-0 flex-1 flex-col lg:min-w-0 lg:max-w-2xl lg:flex-1">
+        <SkeletonManagerPanel
+          withSearch={false}
+          rowCount={3}
+          withNote
+          withExtraAction
+        />
       </div>
-    </section>
+      <section
+        className={cn(
+          panelShellClassName,
+          "flex min-h-0 flex-1 flex-col overflow-hidden",
+          teamsPanelMaxHeightClassName,
+        )}
+      >
+        <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
+          <div className={cn(skeletonBar, "h-6 w-32")} />
+        </div>
+        <div
+          className={cn(
+            "scrollbar-variable mt-4 min-h-0 flex-1 overflow-y-auto",
+            panelScrollPaddingClassName,
+          )}
+        >
+          <SkeletonSubmissionCards />
+        </div>
+      </section>
+    </div>
   </SkeletonStatus>
 );
 

@@ -12,9 +12,16 @@ export const panelScrollPaddingClassName = "px-4 pb-4";
 /** Form scroll body: bottom inset comes from the sticky footer instead. */
 export const panelFormScrollPaddingClassName = "px-4 pb-0";
 
+/** Teams outlet scroll region: page scroll on mobile, height-constrained panels on desktop. */
+export const teamsSectionScrollClassName =
+  "teams-section-scroll scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-3 sm:p-5 lg:overflow-hidden";
+
+/** Manager page root fills the Teams outlet column. */
+export const teamsManagerPageRootClassName = "flex min-h-0 flex-1 flex-col";
+
 /** Side-by-side list + edit form row inside Teams managers. */
 export const teamsCreatePanelRowClassName =
-  "flex w-full min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch";
+  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch";
 
 /** List column when the edit form is open: shares space instead of a fixed max width. */
 export const teamsCreatePanelListOpenClassName =
@@ -26,9 +33,37 @@ export const teamsCreatePanelListClosedClassName = "lg:mx-auto lg:max-w-3xl";
 /** Edit form column beside the list. */
 export const teamsCreatePanelFormClassName = "lg:min-w-0 lg:flex-1 lg:max-w-xl";
 
-/** Max height for Teams list/form panels that scroll internally within the content area. */
+/** Teams list/form panels that scroll internally and fill the content column. */
 export const teamsPanelMaxHeightClassName =
-  "lg:max-h-[min(48rem,calc(100dvh-14rem))]";
+  "min-h-0 flex-1 max-lg:max-h-[min(48rem,calc(100dvh-14rem))] lg:min-h-0 lg:flex-1";
+
+/** Schedule tab fills the Teams outlet and stacks the selector above the workspace. */
+export const scheduleTabRootClassName =
+  "flex flex-col gap-4 max-lg:flex-none lg:min-h-0 lg:flex-1";
+
+/** Schedule workspace tabs fill remaining height below the selector. */
+export const scheduleWorkspaceTabsClassName =
+  "flex w-full flex-col gap-0 max-lg:flex-none lg:min-h-0 lg:flex-1";
+
+/** Team schedule panel grows below title/actions with internal scroll regions. */
+export const scheduleWorkspacePanelClassName =
+  "mt-4 flex flex-col overflow-hidden max-lg:flex-none lg:min-h-0 lg:flex-1";
+
+/** Grid + members row inside the team schedule panel. */
+export const scheduleWorkspaceBodyRowClassName =
+  "mt-4 flex flex-col gap-4 max-lg:flex-none lg:min-h-0 lg:flex-1 lg:flex-row lg:items-stretch";
+
+/** Main column for schedule grid or attendance content. */
+export const scheduleWorkspaceMainColumnClassName =
+  "flex min-w-0 flex-col max-lg:flex-none lg:min-h-0 lg:flex-1";
+
+/** TabsContent body that grows inside the schedule workspace. */
+export const scheduleWorkspaceTabContentClassName =
+  "flex flex-col outline-none max-lg:flex-none lg:min-h-0 lg:flex-1";
+
+/** Schedule grid scroll container. */
+export const scheduleGridScrollClassName =
+  "scrollbar-variable overflow-auto rounded-lg border border-gray-800 max-lg:max-h-none lg:min-h-0 lg:flex-1";
 
 /** Create/edit panel fills the Teams content column on mobile. */
 export const teamsCreatePanelOpenMobileClassName =

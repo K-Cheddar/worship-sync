@@ -25,6 +25,7 @@ import type {
 import { generateScheduleOccurrences, filterServicesWithOccurrencesInRange } from "../../../utils/teamScheduleOccurrences";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import CreatePanel from "../CreatePanel";
+import { teamsManagerPageRootClassName } from "../teamsStyles";
 import EntityMultiSelect from "../EntityMultiSelect";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityRow from "../components/EntityRow";
@@ -166,6 +167,7 @@ const IntakeManager = ({
   const [saving, setSaving] = useState(false);
   const [lastCreatedPublicUrl, setLastCreatedPublicUrl] = useState("");
   const [selectedMemberBySubmission, setSelectedMemberBySubmission] = useState<Record<string, string>>({});
+  const [submissionUpdatingKey, setSubmissionUpdatingKey] = useState("");
   const [statusFilter, setStatusFilter] = useState<SubmissionStatusFilter>(
     "needs_action",
   );
@@ -457,6 +459,11 @@ const IntakeManager = ({
     }
   };
 
+  const submissionActionKey = (
+    submissionId: string,
+    kind: "link" | "create" | "dismiss" | "restore",
+  ) => `${submissionId}:${kind}`;
+
   const updateSubmission = async (
     submission: TeamIntakeSubmission,
     action: "new" | "applied" | "dismissed",
@@ -464,6 +471,16 @@ const IntakeManager = ({
     createMember = false,
   ) => {
     if (!canEdit) return;
+    const updatingKey =
+      action === "applied"
+        ? submissionActionKey(
+          submission.submissionId,
+          createMember ? "create" : "link",
+        )
+        : action === "dismissed"
+          ? submissionActionKey(submission.submissionId, "dismiss")
+          : submissionActionKey(submission.submissionId, "restore");
+    setSubmissionUpdatingKey(updatingKey);
     try {
       const response = await applyTeamIntakeSubmission(churchId, submission.submissionId, {
         action,
@@ -484,6 +501,8 @@ const IntakeManager = ({
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update this submission.");
+    } finally {
+      setSubmissionUpdatingKey("");
     }
   };
 
@@ -501,6 +520,9 @@ const IntakeManager = ({
       "";
     const canLinkSubmission = submission.status !== "applied";
     const needsAction = submission.status === "new";
+    const isUpdatingThisSubmission = submissionUpdatingKey.startsWith(
+      `${submission.submissionId}:`,
+    );
     const linkedMember = submission.appliedMemberId
       ? members.find((member) => member.memberId === submission.appliedMemberId)
       : undefined;
@@ -569,7 +591,11 @@ const IntakeManager = ({
                     svg={Check}
                     iconSize="sm"
                     padding="px-2 py-1"
-                    disabled={!selectedMemberId}
+                    disabled={!selectedMemberId || isUpdatingThisSubmission}
+                    isLoading={
+                      submissionUpdatingKey ===
+                      submissionActionKey(submission.submissionId, "link")
+                    }
                     onClick={() =>
                       void updateSubmission(submission, "applied", selectedMemberId)
                     }
@@ -581,6 +607,11 @@ const IntakeManager = ({
                     svg={Plus}
                     iconSize="sm"
                     padding="px-2 py-1"
+                    disabled={isUpdatingThisSubmission}
+                    isLoading={
+                      submissionUpdatingKey ===
+                      submissionActionKey(submission.submissionId, "create")
+                    }
                     onClick={() =>
                       void updateSubmission(submission, "applied", undefined, true)
                     }
@@ -592,6 +623,11 @@ const IntakeManager = ({
               <Button
                 variant="textLink"
                 padding="px-1 py-0.5"
+                disabled={isUpdatingThisSubmission}
+                isLoading={
+                  submissionUpdatingKey ===
+                  submissionActionKey(submission.submissionId, "dismiss")
+                }
                 onClick={() => void updateSubmission(submission, "dismissed")}
               >
                 Dismiss
@@ -604,6 +640,11 @@ const IntakeManager = ({
               svg={Undo2}
               iconSize="sm"
               padding="px-2 py-1"
+              disabled={isUpdatingThisSubmission}
+              isLoading={
+                submissionUpdatingKey ===
+                submissionActionKey(submission.submissionId, "restore")
+              }
               onClick={() => void updateSubmission(submission, "new")}
             >
               Restore
@@ -868,7 +909,7 @@ const IntakeManager = ({
   );
 
   return (
-    <div className="space-y-4">
+    <div className={teamsManagerPageRootClassName}>
       <CreatePanel
         open={panelOpen}
         onOpenCreate={openCreate}

@@ -806,6 +806,10 @@ app.post(
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.post(
+  "/api/churches/:churchId/invites/:inviteId/access",
+  authHandlers.updateInviteAccess,
+);
+app.post(
   "/api/churches/:churchId/invites/:inviteId/revoke",
   authHandlers.revokeChurchInvite,
 );

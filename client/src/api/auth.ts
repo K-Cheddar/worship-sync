@@ -896,6 +896,19 @@ export const createAdminInvite = async (churchId: string, body: JsonBody) =>
     },
   );
 
+export const updateChurchInviteAccess = async (
+  churchId: string,
+  inviteId: string,
+  body: JsonBody,
+) =>
+  apiFetch<{ success: boolean; invite: ChurchInviteRow }>(
+    `api/churches/${churchId}/invites/${encodeURIComponent(inviteId)}/access`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
 export const revokeChurchInvite = async (churchId: string, inviteId: string) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/invites/${encodeURIComponent(inviteId)}/revoke`,

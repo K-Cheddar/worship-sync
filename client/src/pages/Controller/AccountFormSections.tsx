@@ -16,6 +16,7 @@ import {
   Save,
   Send,
   Upload,
+  UserRoundCog,
   X,
 } from "lucide-react";
 import { Cloudinary } from "@cloudinary/url-gen";
@@ -40,10 +41,13 @@ import type {
   ChurchBrandColor,
   ChurchBranding,
   ChurchLogoAsset,
-  MemberPermissions,
-  TeamsPermission,
 } from "../../api/authTypes";
-import { teamsPageAccessOptions } from "../Account/accountTeamsAccess";
+import {
+  getInviteAccessSummaryLabel,
+  inviteAccessOptions,
+  resolveInviteAccessPayload,
+} from "../Account/accountInviteAccess";
+import { useAccountPage } from "../Account/AccountPageContext";
 import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
@@ -222,8 +226,6 @@ const cleanupLogoAssets = async (assets: Array<ChurchLogoAsset | null>) => {
   );
 };
 
-type InviteAccessOption = "admin" | "full" | "music" | "view";
-type TeamsAccessOption = TeamsPermission;
 type WorkstationAccessOption = "full" | "music" | "view";
 type DisplaySurfaceOption =
   | "projector"
@@ -232,23 +234,6 @@ type DisplaySurfaceOption =
   | "stream"
   | "stream-info"
   | "credits";
-
-const inviteOptions: {
-  value: InviteAccessOption;
-  label: string;
-  role: string;
-  appAccess: string;
-}[] = [
-    { value: "full", label: "Full access", role: "member", appAccess: "full" },
-    { value: "music", label: "Music access", role: "member", appAccess: "music" },
-    { value: "view", label: "View access", role: "member", appAccess: "view" },
-    { value: "admin", label: "Admin", role: "admin", appAccess: "full" },
-  ];
-
-const inviteSelectOptions = inviteOptions.map(({ value, label }) => ({
-  value,
-  label,
-}));
 
 const workstationAccessOptions: {
   value: WorkstationAccessOption;
@@ -491,21 +476,23 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
 }: InvitePeopleFormProps) {
   const { showToast } = useToast();
   const { showApiError } = useApiErrorToast();
+  const {
+    inviteAccessDraft,
+    openInviteDraftAccessSheet,
+    resetInviteAccessDraft,
+  } = useAccountPage();
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteAccess, setInviteAccess] = useState<InviteAccessOption>("full");
-  const [inviteTeamsAccess, setInviteTeamsAccess] =
-    useState<TeamsAccessOption>("none");
   const [inviteEmailError, setInviteEmailError] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const accessSummary = getInviteAccessSummaryLabel(inviteAccessDraft);
 
   const handleSend = useCallback(async () => {
     const email = inviteEmail.trim();
+    const invitePayload = resolveInviteAccessPayload(inviteAccessDraft);
     const selectedInviteOption =
-      inviteOptions.find((option) => option.value === inviteAccess) ||
-      inviteOptions[0];
-    const permissions: MemberPermissions = {
-      teams: inviteAccess === "admin" ? "edit" : inviteTeamsAccess,
-    };
+      inviteAccessOptions.find(
+        (option) => option.value === inviteAccessDraft.access,
+      ) || inviteAccessOptions[0];
     if (!email) {
       setInviteEmailError("Enter an email before sending the invite");
       return;
@@ -515,11 +502,12 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     try {
       const response = await createAdminInvite(churchId, {
         email,
-        role: selectedInviteOption.role,
-        appAccess: selectedInviteOption.appAccess,
-        permissions,
+        role: invitePayload.role,
+        appAccess: invitePayload.appAccess,
+        permissions: invitePayload.permissions,
       });
       setInviteEmail("");
+      resetInviteAccessDraft();
       await onInvited();
       showToast(
         `Invite created for ${response.invite.email} with ${selectedInviteOption.label.toLowerCase()}.`,
@@ -535,10 +523,10 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     }
   }, [
     churchId,
-    inviteAccess,
+    inviteAccessDraft,
     inviteEmail,
-    inviteTeamsAccess,
     onInvited,
+    resetInviteAccessDraft,
     showApiError,
     showToast,
   ]);
@@ -547,62 +535,48 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
       <h3 className="text-lg font-semibold">Invite people</h3>
       <p className="mt-1 text-sm text-gray-400">
-        Send an email invite and pick an access level first.
+        Send an email invite, configure access, then send.
       </p>
-      <div className="mt-4 flex flex-row flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1 basis-[min(100%,14rem)] md:flex-2 md:basis-0">
-          <Input
-            id="invite-email"
-            label="Email"
-            value={inviteEmail}
-            inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
-            errorText={inviteEmailError}
-            onChange={(value) => {
-              setInviteEmail(String(value));
-              setInviteEmailError("");
-            }}
-          />
+      <div className="mt-4 space-y-4">
+        <div className="flex flex-row flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1 basis-[min(100%,14rem)] md:flex-2 md:basis-0">
+            <Input
+              id="invite-email"
+              label="Email"
+              value={inviteEmail}
+              inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
+              errorText={inviteEmailError}
+              onChange={(value) => {
+                setInviteEmail(String(value));
+                setInviteEmailError("");
+              }}
+            />
+          </div>
+          <Button
+            className="shrink-0"
+            type="button"
+            variant="tertiary"
+            svg={UserRoundCog}
+            iconSize="sm"
+            onClick={openInviteDraftAccessSheet}
+          >
+            Configure access
+          </Button>
+          <Button
+            className="shrink-0"
+            variant="cta"
+            svg={Send}
+            iconSize="sm"
+            isLoading={isSending}
+            disabled={isSending}
+            onClick={() => void handleSend()}
+          >
+            {isSending ? "Sending invite..." : "Send invite"}
+          </Button>
         </div>
-        <div className="min-w-0 flex-1 basis-[min(100%,10rem)] md:basis-0">
-          <Select
-            className="w-full"
-            id="invite-access"
-            label="Access"
-            labelClassName="text-gray-200"
-            value={inviteAccess}
-            onChange={(value) =>
-              setInviteAccess(value as InviteAccessOption)
-            }
-            options={inviteSelectOptions}
-            selectClassName={cn("mt-1 w-full", ACCOUNT_CONTROL_SELECT_CLASSNAME)}
-          />
-        </div>
-        <div className="min-w-0 flex-1 basis-[min(100%,10rem)] md:basis-0">
-          <Select
-            className="w-full"
-            id="invite-teams-access"
-            label="Global Teams access"
-            labelClassName="text-gray-200"
-            value={inviteAccess === "admin" ? "edit" : inviteTeamsAccess}
-            onChange={(value) =>
-              setInviteTeamsAccess(value as TeamsAccessOption)
-            }
-            options={teamsPageAccessOptions}
-            disabled={inviteAccess === "admin"}
-            selectClassName={cn("mt-1 w-full", ACCOUNT_CONTROL_SELECT_CLASSNAME)}
-          />
-        </div>
-        <Button
-          className="shrink-0"
-          variant="cta"
-          svg={Send}
-          iconSize="sm"
-          isLoading={isSending}
-          disabled={isSending}
-          onClick={() => void handleSend()}
-        >
-          {isSending ? "Sending invite..." : "Send invite"}
-        </Button>
+        <p className="text-sm text-gray-300">
+          Access: <span className="text-gray-100">{accessSummary}</span>
+        </p>
       </div>
     </section>
   );

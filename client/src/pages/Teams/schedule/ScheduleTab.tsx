@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   Clipboard,
   ClipboardList,
+  ClipboardPaste,
   Copy,
   Link2,
   Plus,
@@ -76,7 +77,7 @@ import type {
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
-import { panelClassName, panelHeaderPaddingClassName, panelShellClassName } from "../teamsStyles";
+import { panelClassName, panelHeaderPaddingClassName, panelShellClassName, scheduleGridScrollClassName, scheduleTabRootClassName, scheduleWorkspaceBodyRowClassName, scheduleWorkspaceMainColumnClassName, scheduleWorkspacePanelClassName, scheduleWorkspaceTabContentClassName, scheduleWorkspaceTabsClassName } from "../teamsStyles";
 import type {
   PendingCellAssignment,
   TeamsData,
@@ -111,6 +112,8 @@ import {
   type ScheduleAssignmentHandlers,
 } from "./ScheduleAssignmentContext";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
+import SchedulePasteRowDialog from "./SchedulePasteRowDialog";
+import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
 import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
 import {
@@ -150,6 +153,11 @@ import {
   toSchedulePositionColumnMinCh,
 } from "./scheduleUtils";
 import type { TeamSchedulePayload } from "../../../api/auth";
+
+// Temporarily hidden. The "Paste from Excel" row-import flow is built, tested, and
+// wired, but held back from operators for now. Flip to true to re-enable the
+// toolbar entry point (see SchedulePasteRowDialog + schedulePasteRow).
+const SHOW_PASTE_FROM_EXCEL = false;
 
 const ScheduleTab = ({
   data,
@@ -394,6 +402,7 @@ const ScheduleTab = ({
     });
   }, []);
   const [copyingLink, setCopyingLink] = useState(false);
+  const [pasteRowOpen, setPasteRowOpen] = useState(false);
   const [scheduleLayout, setScheduleLayout] = useState(readTeamScheduleAdminLayout);
   const [scheduleWorkspaceTab, setScheduleWorkspaceTab] = useState<
     "schedule" | "attendance"
@@ -1039,6 +1048,75 @@ const ScheduleTab = ({
     });
   };
 
+  // Fill a whole occurrence row at once from a pasted Excel row. Re-validates
+  // every entry against the current schedule (eligibility, blockout, already
+  // assigned) and dedupes within the batch, applies them as one optimistic
+  // update, then persists each cell through the same serialized queue as manual
+  // assignment. On failure the row rolls back and a refresh reconciles.
+  const commitRowAssignments = async (
+    occurrenceId: string,
+    entries: RowPasteApplyEntry[],
+  ) => {
+    if (!canEdit || !selectedSchedule || entries.length === 0) return;
+    const previousSchedule = selectedSchedule;
+    const occurrence = scheduleOccurrences.find(
+      (item) => item.occurrenceId === occurrenceId,
+    );
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+
+    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    const targetRow = { ...(nextAssignments[occurrenceId] || {}) };
+    const applied: RowPasteApplyEntry[] = [];
+    const usedMemberIds = new Set<string>();
+    for (const entry of entries) {
+      if (usedMemberIds.has(entry.memberId)) continue;
+      if (getAssignmentIssue(entry.memberId, occurrenceId, entry.positionId)) continue;
+      const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+      const nextCell = serializeAssignmentCell({
+        primaryMemberId: entry.memberId,
+        shadows: cell.shadows,
+      });
+      if (!nextCell) continue;
+      targetRow[entry.columnKey] = nextCell;
+      usedMemberIds.add(entry.memberId);
+      applied.push(entry);
+    }
+    if (applied.length === 0) {
+      showToast("Those slots changed — nothing to paste.", "neutral");
+      return;
+    }
+    if (Object.keys(targetRow).length > 0) {
+      nextAssignments[occurrenceId] = targetRow;
+    } else {
+      delete nextAssignments[occurrenceId];
+    }
+
+    const mutationSeq = ++scheduleMutationSeqRef.current;
+    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+
+    await enqueueAssignmentSave(async () => {
+      try {
+        for (const entry of applied) {
+          await updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+            serviceId: occurrenceId,
+            positionSlotKey: entry.columnKey,
+            memberId: entry.memberId,
+            serviceDate,
+          });
+        }
+        showToast(
+          `Assigned ${applied.length} ${applied.length === 1 ? "person" : "people"} from your pasted row.`,
+          "success",
+        );
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not paste this row.");
+      }
+    });
+  };
+
   // Create a brand-new roster member straight from a schedule cell: make the
   // person, add them to this team (so they're eligible), then assign them to the
   // cell. Keeps the scheduler in flow instead of bouncing to the Members tab.
@@ -1293,6 +1371,27 @@ const ScheduleTab = ({
     });
     return map;
   }, [occurrencesByService]);
+
+  const pasteRowOccurrenceOptions = useMemo(
+    () =>
+      scheduleOccurrences.map((occurrence) => ({
+        occurrenceId: occurrence.occurrenceId,
+        label: `${occurrence.name} — ${formatOccurrenceRowLabel(
+          occurrence,
+          occurrenceTimingById.get(occurrence.occurrenceId) || {
+            sharedWeekday: null,
+            sharedTime: null,
+          },
+        )}`,
+      })),
+    [scheduleOccurrences, occurrenceTimingById],
+  );
+
+  const getIssueForOccurrence = useCallback(
+    (occurrenceId: string, memberId: string, positionId: string) =>
+      getAssignmentIssue(memberId, occurrenceId, positionId),
+    [getAssignmentIssue],
+  );
 
   const attendanceRows = useMemo(
     () =>
@@ -2097,8 +2196,8 @@ const ScheduleTab = ({
     ) : null;
 
   return (
-    <div className="space-y-4">
-      <section className={panelShellClassName}>
+    <div className={scheduleTabRootClassName}>
+      <section className={cn(panelShellClassName, !showForm && "shrink-0")}>
         <div className={cn(panelHeaderPaddingClassName, showForm ? "pb-0" : "pb-4")}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Schedules</h2>
@@ -2184,11 +2283,11 @@ const ScheduleTab = ({
         <Tabs
           value={scheduleWorkspaceTab}
           onValueChange={handleScheduleWorkspaceTabChange}
-          className="w-full gap-0"
+          className={scheduleWorkspaceTabsClassName}
         >
           <TabsList
             variant="line"
-            className={lineTabsListShellClassName}
+            className={cn(lineTabsListShellClassName, "shrink-0")}
             aria-label="Schedule workspace"
           >
             <TabsTrigger value="schedule" className={lineTabsTriggerClassName}>
@@ -2199,8 +2298,8 @@ const ScheduleTab = ({
             </TabsTrigger>
           </TabsList>
 
-          <section className={cn(panelClassName, "mt-4")}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
+            <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-lg font-semibold">
                   <Icon svg={CalendarDays} size="md" className="text-cyan-200" />
@@ -2223,6 +2322,16 @@ const ScheduleTab = ({
                     model={scheduleExportModel}
                     layout={scheduleLayout}
                   />
+                  {canEdit && SHOW_PASTE_FROM_EXCEL ? (
+                    <Button
+                      variant="tertiary"
+                      svg={ClipboardPaste}
+                      iconSize="sm"
+                      onClick={() => setPasteRowOpen(true)}
+                    >
+                      Paste from Excel
+                    </Button>
+                  ) : null}
                   {canEdit ? (
                     <Button
                       variant="tertiary"
@@ -2239,7 +2348,7 @@ const ScheduleTab = ({
             </div>
 
             {occurrencesStale && !showForm ? (
-              <div className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-amber-100">
                   This schedule no longer matches its services (grouping or timing
                   changed). Refresh it to update the rows — assignments are kept where
@@ -2257,11 +2366,11 @@ const ScheduleTab = ({
             ) : null}
 
             <ScheduleAssignmentProvider handlers={assignmentHandlers}>
-              <div className="mt-4 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch">
-                <div className="min-w-0 flex-1">
-                  <TabsContent value="schedule" className="outline-none">
+              <div className={scheduleWorkspaceBodyRowClassName}>
+                <div className={scheduleWorkspaceMainColumnClassName}>
+                  <TabsContent value="schedule" className={scheduleWorkspaceTabContentClassName}>
                     {scheduleLayout === "transpose" ? (
-                      <div className={cn("overflow-auto rounded-lg border border-gray-800")}>
+                      <div className={scheduleGridScrollClassName}>
                         <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
                           <thead>
                             <tr>
@@ -2378,7 +2487,7 @@ const ScheduleTab = ({
                         </table>
                       </div>
                     ) : (
-                      <div className={cn("overflow-auto rounded-lg border border-gray-800")}>
+                      <div className={scheduleGridScrollClassName}>
                         <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
                           <colgroup>
                             <col style={{ minWidth: `${scheduleDateColumnMinCh}ch` }} />
@@ -2474,8 +2583,10 @@ const ScheduleTab = ({
                       </div>
                     )}
                   </TabsContent>
-                  <TabsContent value="attendance" className="outline-none">
-                    {attendanceWorkspacePanel}
+                  <TabsContent value="attendance" className={scheduleWorkspaceTabContentClassName}>
+                    <div className="scrollbar-variable overflow-y-auto max-lg:flex-none lg:min-h-0 lg:flex-1">
+                      {attendanceWorkspacePanel}
+                    </div>
                   </TabsContent>
                 </div>
                 <ScheduleAssignmentPicker
@@ -2549,6 +2660,23 @@ const ScheduleTab = ({
                 />
               </div>
             </ScheduleAssignmentProvider>
+            {canEdit ? (
+              <SchedulePasteRowDialog
+                open={pasteRowOpen}
+                onOpenChange={setPasteRowOpen}
+                occurrences={pasteRowOccurrenceOptions}
+                columns={scheduleColumns}
+                members={activeTeamMembers}
+                duplicateFirstNames={duplicateScheduleFirstNames}
+                defaultOccurrenceId={
+                  activeSlot?.occurrenceId || detailOccurrenceId || undefined
+                }
+                getIssueForOccurrence={getIssueForOccurrence}
+                onApply={(occurrenceId, entries) =>
+                  void commitRowAssignments(occurrenceId, entries)
+                }
+              />
+            ) : null}
           </section>
         </Tabs>
       ) : (

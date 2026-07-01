@@ -270,7 +270,7 @@ const ScheduleMembersPanel = ({
     <aside
       data-schedule-members-panel
       className={cn(
-        "relative flex shrink-0 flex-col self-stretch rounded-lg border bg-gray-950/60 transition-[width,border-color] duration-300 ease-in-out lg:sticky lg:top-4 lg:min-h-0",
+        "relative flex min-h-0 shrink-0 flex-col self-stretch rounded-lg border bg-gray-950/60 transition-[width,border-color] duration-300 ease-in-out",
         open ? "w-full lg:w-80" : "w-10",
         isAssignMode ? "border-orange-400/40" : "border-gray-700",
       )}
@@ -292,7 +292,7 @@ const ScheduleMembersPanel = ({
       {open ? (
         <div
           ref={panelRef}
-          className="relative flex h-full min-h-0 w-full flex-col overflow-hidden p-3"
+          className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg p-3"
         >
           {isAssignMode && slotContext ? (
             <ScheduleSlotContextHeader
@@ -334,7 +334,7 @@ const ScheduleMembersPanel = ({
             </div>
           ) : null}
 
-          <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+          <div className="scrollbar-variable mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {isAssignMode ? renderAssignList() : renderBrowseList()}
           </div>
         </div>

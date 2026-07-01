@@ -3,7 +3,19 @@ import { Plus } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
 import Button from "../../components/Button/Button";
-import { panelClassName, panelFormScrollPaddingClassName, panelHeaderPaddingClassName, panelScrollPaddingClassName, panelShellClassName, teamsCreatePanelFormClassName, teamsCreatePanelFormOpenMobileClassName, teamsCreatePanelListClosedClassName, teamsCreatePanelListOpenClassName, teamsCreatePanelOpenMobileClassName, teamsCreatePanelRowClassName, teamsPanelMaxHeightClassName } from "./teamsStyles";
+import {
+  panelFormScrollPaddingClassName,
+  panelHeaderPaddingClassName,
+  panelScrollPaddingClassName,
+  panelShellClassName,
+  teamsCreatePanelFormClassName,
+  teamsCreatePanelFormOpenMobileClassName,
+  teamsCreatePanelListClosedClassName,
+  teamsCreatePanelListOpenClassName,
+  teamsCreatePanelOpenMobileClassName,
+  teamsCreatePanelRowClassName,
+  teamsPanelMaxHeightClassName,
+} from "./teamsStyles";
 
 type CreatePanelProps = {
   /** Whether the create/edit form is revealed. */
@@ -61,7 +73,7 @@ const CreatePanel = ({
   createLabel,
   description,
   listToolbar,
-  scrollableList = false,
+  scrollableList = true,
   list,
   asideOpen = false,
   asideTitle = "",
@@ -80,6 +92,7 @@ const CreatePanel = ({
   const panelOpenOnMobile = open || asideOpen;
   const listHiddenOnMobile = formOpenOnMobile || asideOpenOnMobile;
   const listSharesSpace = open || asideOpen;
+  const useScrollableList = scrollableList;
 
   useEffect(() => {
     if (!open) return;
@@ -101,7 +114,12 @@ const CreatePanel = ({
   }, [asideOpen]);
 
   return (
-    <div className={cn("space-y-4", panelOpenOnMobile && teamsCreatePanelOpenMobileClassName)}>
+    <div
+      className={cn(
+        "flex min-h-0 flex-1 flex-col",
+        panelOpenOnMobile && teamsCreatePanelOpenMobileClassName,
+      )}
+    >
       <div
         className={cn(
           teamsCreatePanelRowClassName,
@@ -110,7 +128,7 @@ const CreatePanel = ({
       >
         <div
           className={cn(
-            "w-full min-w-0 space-y-3",
+            "flex w-full min-w-0 min-h-0 flex-1 flex-col",
             listSharesSpace
               ? teamsCreatePanelListOpenClassName
               : teamsCreatePanelListClosedClassName,
@@ -119,11 +137,12 @@ const CreatePanel = ({
         >
           <section
             className={cn(
-              scrollableList ? panelShellClassName : panelClassName,
-              scrollableList && cn("flex flex-col", teamsPanelMaxHeightClassName),
+              panelShellClassName,
+              "flex flex-col",
+              teamsPanelMaxHeightClassName,
             )}
           >
-            <div className={cn(scrollableList && cn("shrink-0", panelHeaderPaddingClassName))}>
+            <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">{sectionTitle}</h2>
                 {!open && canEdit ? (
@@ -137,17 +156,17 @@ const CreatePanel = ({
               ) : null}
             </div>
             {listToolbar ? (
-              <div className={cn("mt-4 shrink-0", scrollableList && "px-4")}>{listToolbar}</div>
+              <div className="mt-4 shrink-0 px-4">{listToolbar}</div>
             ) : null}
             <div
               className={cn(
                 "space-y-2",
-                scrollableList
+                useScrollableList
                   ? cn(
                     "scrollbar-variable mt-4 min-h-0 flex-1 overflow-y-auto",
                     panelScrollPaddingClassName,
                   )
-                  : "mt-4",
+                  : "mt-4 px-4 pb-4 lg:scrollbar-variable lg:min-h-0 lg:flex-1 lg:overflow-y-auto",
               )}
             >
               {list}

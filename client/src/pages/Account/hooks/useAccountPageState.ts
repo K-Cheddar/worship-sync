@@ -20,9 +20,11 @@ import { useToast } from "../../../context/toastContext";
 import { useApiErrorToast } from "../../../hooks/useApiErrorToast";
 import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
 import type {
+  AccessSheetTarget,
   AccountDestructiveConfirm,
   DisplayDevice,
   HumanDevice,
+  InviteAccessDraft,
   InviteRecord,
   Member,
   MemberAccessOption,
@@ -37,26 +39,22 @@ import {
   formatTrustedDeviceTitle,
   toMemberAccessOption,
 } from "../accountUtils";
-import { teamsPageAccessOptions } from "../accountTeamsAccess";
+import {
+  buildTeamScopesPermissions,
+  getEditableTeamScopeIds,
+  teamsPageAccessOptions,
+  toTeamsAccessOption,
+} from "../accountTeamsAccess";
+import {
+  DEFAULT_INVITE_ACCESS_DRAFT,
+  inviteAccessDraftFromInvite,
+} from "../accountInviteAccess";
 
-type TeamsAccessOption = TeamsPermission;
-
-const toTeamsAccessOption = (
-  permissions: Member["permissions"],
-  role?: string,
-): TeamsAccessOption => {
-  if (role === "admin") return "edit";
-  return permissions?.teams || "none";
+export {
+  buildTeamScopesPermissions,
+  getEditableTeamScopeIds,
+  toTeamsAccessOption,
 };
-
-const getEditableTeamScopeIds = (permissions?: Member["permissions"]) =>
-  Object.entries(permissions?.teamScopes || {})
-    .filter(([, permission]) => permission === "edit")
-    .map(([teamId]) => teamId)
-    .sort();
-
-const buildTeamScopesPermissions = (teamIds: string[]) =>
-  Object.fromEntries(teamIds.map((teamId) => [teamId, "edit" as const]));
 
 export const useAccountPageState = () => {
   const context = useContext(GlobalInfoContext);
@@ -87,11 +85,19 @@ export const useAccountPageState = () => {
     Record<string, MemberAccessOption>
   >({});
   const [memberTeamsAccessDrafts, setMemberTeamsAccessDrafts] = useState<
-    Record<string, TeamsAccessOption>
+    Record<string, TeamsPermission>
   >({});
   const [memberTeamScopeDrafts, setMemberTeamScopeDrafts] = useState<
     Record<string, string[]>
   >({});
+  const [inviteAccessDraft, setInviteAccessDraft] = useState<InviteAccessDraft>(
+    DEFAULT_INVITE_ACCESS_DRAFT,
+  );
+  const [invitePendingAccessDrafts, setInvitePendingAccessDrafts] = useState<
+    Record<string, InviteAccessDraft>
+  >({});
+  const [accessSheetTarget, setAccessSheetTarget] =
+    useState<AccessSheetTarget | null>(null);
   const [loading, setLoading] = useState(canManage);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [workstationPairingResetSignal, setWorkstationPairingResetSignal] =
@@ -390,7 +396,7 @@ export const useAccountPageState = () => {
   );
 
   const getMemberTeamsAccessValue = useCallback(
-    (member: Member): TeamsAccessOption =>
+    (member: Member) =>
       memberTeamsAccessDrafts[member.membershipId] ||
       toTeamsAccessOption(member.permissions, member.role),
     [memberTeamsAccessDrafts],
@@ -402,6 +408,33 @@ export const useAccountPageState = () => {
       getEditableTeamScopeIds(member.permissions),
     [memberTeamScopeDrafts],
   );
+
+  const getInvitePendingAccessValue = useCallback(
+    (invite: InviteRecord): InviteAccessDraft =>
+      invitePendingAccessDrafts[invite.inviteId] ||
+      inviteAccessDraftFromInvite(invite),
+    [invitePendingAccessDrafts],
+  );
+
+  const openMemberAccessSheet = useCallback((member: Member) => {
+    setAccessSheetTarget({ kind: "member", member });
+  }, []);
+
+  const openInviteDraftAccessSheet = useCallback(() => {
+    setAccessSheetTarget({ kind: "invite-draft" });
+  }, []);
+
+  const openInviteAccessSheet = useCallback((invite: InviteRecord) => {
+    setAccessSheetTarget({ kind: "invite", invite });
+  }, []);
+
+  const closeAccessSheet = useCallback(() => {
+    setAccessSheetTarget(null);
+  }, []);
+
+  const resetInviteAccessDraft = useCallback(() => {
+    setInviteAccessDraft(DEFAULT_INVITE_ACCESS_DRAFT);
+  }, []);
 
   return {
     context,
@@ -427,6 +460,8 @@ export const useAccountPageState = () => {
     destructiveConfirm,
     destructiveConfirmRunning,
     destructiveModalProps,
+    accessSheetTarget,
+    inviteAccessDraft,
     workstationPairingResetSignal,
     displayPairingResetSignal,
     showRevokedDevices,
@@ -441,6 +476,14 @@ export const useAccountPageState = () => {
     setMemberAccessDrafts,
     setMemberTeamsAccessDrafts,
     setMemberTeamScopeDrafts,
+    setInviteAccessDraft,
+    setInvitePendingAccessDrafts,
+    setAccessSheetTarget,
+    openMemberAccessSheet,
+    openInviteDraftAccessSheet,
+    openInviteAccessSheet,
+    closeAccessSheet,
+    resetInviteAccessDraft,
     refresh,
     runAction,
     runMemberAction,
@@ -449,6 +492,7 @@ export const useAccountPageState = () => {
     getMemberAccessValue,
     getMemberTeamsAccessValue,
     getMemberTeamScopeValue,
+    getInvitePendingAccessValue,
     toTeamsAccessOption,
     buildTeamScopesPermissions,
     getEditableTeamScopeIds,

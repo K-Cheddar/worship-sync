@@ -23,6 +23,7 @@ import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
+import { teamsSectionScrollClassName } from "./teamsStyles";
 import { getActiveTeamsNavSection, teamsNavSections } from "./teamsNavSections";
 
 const TeamsSchedulesPage = lazy(() => import("./pages/TeamsSchedulesPage"));
@@ -132,12 +133,14 @@ const TeamsLayout = () => {
             <TeamsSidebarNav />
           </aside>
 
-          <div className="teams-section-scroll scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-3 sm:p-5">
-            {loading ? (
-              getTeamsSectionSkeleton(activeSection.routePath)
-            ) : (
-              <Outlet />
-            )}
+          <div className={teamsSectionScrollClassName}>
+            <div className="flex min-h-0 flex-1 flex-col">
+              {loading ? (
+                getTeamsSectionSkeleton(activeSection.routePath)
+              ) : (
+                <Outlet />
+              )}
+            </div>
           </div>
         </section>
       </div>

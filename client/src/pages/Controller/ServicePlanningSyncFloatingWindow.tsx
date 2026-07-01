@@ -622,11 +622,15 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
               <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
                 <PopoverAnchor asChild>
-                  <div>
+                  <div className="w-full">
                     <ActionBar items={actionBarItemDefs} className="mt-2" disablePortal />
                   </div>
                 </PopoverAnchor>
-                <PopoverContent portal={false} align="end" className="w-80 bg-gray-800 border-gray-700 text-white">
+                <PopoverContent
+                  portal={false}
+                  align="start"
+                  className="w-(--radix-popover-trigger-width) bg-gray-800 border-gray-700 text-white"
+                >
                   <div className="flex flex-col gap-3">
                     <p className="text-sm font-semibold">Load Service Plan</p>
                     <Input
