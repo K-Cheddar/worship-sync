@@ -8,7 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronRight, Plus, Star, TriangleAlert } from "lucide-react";
+import { ChevronRight, Plus, TriangleAlert } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
@@ -27,17 +27,10 @@ import MemberAssignmentSubmenu, {
 import { splitTypedMemberName, shouldShowScheduleMemberPositionGroupDivider } from "./scheduleMemberPickerUtils";
 import ScheduleMemberPositionGroupDivider from "./ScheduleMemberPositionGroupDivider";
 import { useScheduleMemberPicker } from "./useScheduleMemberPicker";
+import { WantsThisIcon } from "./WantsThisIndicator";
 
 type MemberAssignmentAction = "replace" | TeamScheduleShadowKind;
 type PickerMenuView = "members" | "assignmentActions" | "createMember";
-
-/** Marks a member who asked for this position via intake (soft preference). */
-const WantsThisBadge = () => (
-  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
-    <Star className="h-3 w-3 fill-current" aria-hidden />
-    Wants this
-  </span>
-);
 
 /**
  * Non-blocking caution (e.g. the member marked this service unavailable on
@@ -330,7 +323,7 @@ const ScheduleAssignmentPicker = memo(({
             onKeyDown={handleInputKeyDown}
           />
         </div>
-        <div className="max-h-56 overflow-x-hidden overflow-y-auto">
+        <div className="scrollbar-variable max-h-56 overflow-x-hidden overflow-y-auto">
           {pendingSubmenu && menuView === "assignmentActions" ? (
             <MemberAssignmentSubmenu
               title={pendingSubmenu.title}
@@ -464,7 +457,7 @@ const ScheduleAssignmentPicker = memo(({
                           >
                             <span className="min-w-0 flex-1 truncate font-medium">{memberLabel}</span>
                             {row.warning ? <WarningBadge label={row.warning} /> : null}
-                            {row.desiresPosition ? <WantsThisBadge /> : null}
+                            {row.desiresPosition ? <WantsThisIcon /> : null}
                             <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
                           </button>
                         </div>
@@ -491,7 +484,7 @@ const ScheduleAssignmentPicker = memo(({
                         >
                           <span className="min-w-0 flex-1 truncate">{memberLabel}</span>
                           {row.warning ? <WarningBadge label={row.warning} /> : null}
-                          {row.desiresPosition ? <WantsThisBadge /> : null}
+                          {row.desiresPosition ? <WantsThisIcon /> : null}
                         </button>
                       </div>
                     );

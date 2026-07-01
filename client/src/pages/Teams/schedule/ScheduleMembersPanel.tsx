@@ -251,6 +251,7 @@ const ScheduleMembersPanel = ({
             subtitle={row.eligible ? baseSubtitle : row.issue}
             issue={row.eligible ? undefined : row.issue}
             warning={row.eligible ? row.warning || undefined : undefined}
+            desiresPosition={row.desiresPosition}
             assignmentCount={scheduleAssignmentCounts.get(row.member.memberId) || 0}
             disabled={!row.eligible}
             expanded={expandedMemberIdSet.has(row.member.memberId)}
