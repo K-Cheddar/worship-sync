@@ -1,3 +1,10 @@
+## [2.16.3](https://github.com/K-Cheddar/worship-sync/compare/v2.16.2...v2.16.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* Improve UI for teams ([a56141a](https://github.com/K-Cheddar/worship-sync/commit/a56141a774b236b72d5400935ab1d7eb07bbec75))
+
 ## [2.16.2](https://github.com/K-Cheddar/worship-sync/compare/v2.16.1...v2.16.2) (2026-06-25)
 
 
