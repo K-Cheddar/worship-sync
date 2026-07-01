@@ -4733,6 +4733,66 @@ export const authHandlers = {
     }
   },
 
+  async updateInviteAccess(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const inviteId = String(req.params.inviteId || "").trim();
+      if (!inviteId) {
+        throw httpError(400, "Invite id is required.");
+      }
+      const invite = await getDoc(COLLECTIONS.invites, inviteId);
+      if (!invite || invite.churchId !== req.params.churchId) {
+        throw httpError(404, "Invite not found.");
+      }
+      if (invite.status !== "pending") {
+        throw httpError(400, "Only pending invites can be updated.");
+      }
+      const role = req.body?.role === "admin" ? "admin" : "member";
+      const appAccess = normalizeAppAccess(req.body?.appAccess, "");
+      if (!appAccess) {
+        throw httpError(400, "Choose a valid access level.");
+      }
+      if (role === "admin" && appAccess !== "full") {
+        throw httpError(400, "Admins must keep full access.");
+      }
+      const permissions = normalizeMembershipPermissions(
+        req.body?.permissions,
+        role,
+      );
+      const updatedInvite = {
+        ...invite,
+        role,
+        appAccess,
+        permissions,
+      };
+      await setDoc(
+        COLLECTIONS.invites,
+        inviteId,
+        { role, appAccess, permissions },
+        { merge: true },
+      );
+      await addSecurityEvent({
+        type: "invite_access_updated",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        inviteId,
+        email: invite.email || null,
+        appAccess,
+        permissions,
+      });
+      return res.json({
+        success: true,
+        invite: sanitizeInviteForClient(updatedInvite),
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
   async revokeChurchInvite(req, res) {
     try {
       await assertCsrf(req);

@@ -1,4 +1,4 @@
-import type { MemberPermissions } from "../../api/authTypes";
+import type { MemberPermissions, TeamsPermission } from "../../api/authTypes";
 
 export type Member = {
   membershipId: string;
@@ -44,6 +44,19 @@ export type DisplayDevice = {
 };
 
 export type MemberAccessOption = "full" | "music" | "view";
+
+export type InviteAccessOption = "admin" | MemberAccessOption;
+
+export type InviteAccessDraft = {
+  access: InviteAccessOption;
+  teamsAccess: TeamsPermission;
+  teamScopeIds: string[];
+};
+
+export type AccessSheetTarget =
+  | { kind: "member"; member: Member }
+  | { kind: "invite-draft" }
+  | { kind: "invite"; invite: InviteRecord };
 
 export type InviteRecord = {
   inviteId: string;

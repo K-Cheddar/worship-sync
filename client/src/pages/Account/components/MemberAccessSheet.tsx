@@ -2,61 +2,62 @@ import { Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer";
 import Select from "../../../components/Select/Select";
-import { updateChurchMemberAccess } from "../../../api/auth";
+import {
+  updateChurchInviteAccess,
+  updateChurchMemberAccess,
+} from "../../../api/auth";
 import type { TeamsPermission } from "../../../api/authTypes";
 import { ACCOUNT_CONTROL_SELECT_CLASSNAME } from "../../Controller/AccountFormSections";
 import { useAccountPage } from "../AccountPageContext";
+import {
+  inviteAccessDraftFromInvite,
+  inviteAccessSelectOptions,
+  resolveInviteAccessPayload,
+  scopedTeamsHelperText,
+} from "../accountInviteAccess";
 import { memberAccessOptions, toMemberAccessOption } from "../accountUtils";
 import { teamsPageAccessOptions } from "../accountTeamsAccess";
-import type { Member, MemberAccessOption } from "../accountTypes";
+import type {
+  AccessSheetTarget,
+  InviteAccessDraft,
+  InviteAccessOption,
+  MemberAccessOption,
+} from "../accountTypes";
 import { cn } from "@/utils/cnHelper";
 
-type MemberAccessSheetProps = {
-  member: Member | null;
-  isOpen: boolean;
-  onClose: () => void;
-};
-
-const scopedTeamsHelperText = (
-  teamsAccess: TeamsPermission,
-  hasScopedTeams: boolean,
-) => {
-  if (teamsAccess === "none" && hasScopedTeams) {
-    return "This person can open Teams only for checked teams. Global Teams access stays off.";
-  }
-  if (teamsAccess === "view" && hasScopedTeams) {
-    return "They can view every team, and edit only the checked teams below.";
-  }
-  if (teamsAccess === "none") {
-    return "Check teams below to grant per-team edit access without enabling global Teams access.";
-  }
-  return "Optional. Add edit access for specific teams without changing global access above.";
-};
-
-const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) => {
+const MemberAccessSheet = () => {
   const {
     churchId,
     teams,
     memberActionLoading,
+    accessSheetTarget,
+    inviteAccessDraft,
     setMemberAccessDrafts,
     setMemberTeamsAccessDrafts,
     setMemberTeamScopeDrafts,
+    setInviteAccessDraft,
+    setInvitePendingAccessDrafts,
     runMemberAction,
     showStatus,
     refresh,
+    closeAccessSheet,
     getMemberAccessValue,
     getMemberTeamsAccessValue,
     getMemberTeamScopeValue,
+    getInvitePendingAccessValue,
     toTeamsAccessOption,
     buildTeamScopesPermissions,
     getEditableTeamScopeIds,
   } = useAccountPage();
 
-  if (!member) {
+  const target = accessSheetTarget;
+  const isOpen = target !== null;
+
+  if (!target) {
     return (
       <Drawer
-        isOpen={isOpen}
-        onClose={onClose}
+        isOpen={false}
+        onClose={closeAccessSheet}
         title="Edit access"
         position="right"
         size="lg"
@@ -67,81 +68,245 @@ const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) 
     );
   }
 
-  const memberUser = member.user;
+  const isMemberTarget = target.kind === "member";
+  const isInviteDraftTarget = target.kind === "invite-draft";
+  const isInviteTarget = target.kind === "invite";
+  const member = isMemberTarget ? target.member : null;
+  const invite = isInviteTarget ? target.invite : null;
+
+  const memberUser = member?.user;
   const memberEmail = memberUser?.primaryEmail || memberUser?.email || "";
   const memberLabel = memberUser?.displayName || memberEmail || "Unknown user";
-  const targetUserId = memberUser?.uid || member.userId;
-  const currentAccess = toMemberAccessOption(member.appAccess);
-  const selectedAccess = getMemberAccessValue(member);
-  const currentTeamsAccess = toTeamsAccessOption(member.permissions, member.role);
-  const selectedTeamsAccess = getMemberTeamsAccessValue(member);
-  const currentTeamScopeIds = getEditableTeamScopeIds(member.permissions);
-  const selectedTeamScopeIds = getMemberTeamScopeValue(member);
-  const accessChanged = selectedAccess !== currentAccess;
-  const teamsAccessChanged = selectedTeamsAccess !== currentTeamsAccess;
-  const teamScopesChanged =
-    [...selectedTeamScopeIds].sort().join("|") !== currentTeamScopeIds.join("|");
-  const hasChanges = accessChanged || teamsAccessChanged || teamScopesChanged;
-  const saveAccessKey = `save-access:${member.membershipId}`;
-  const isSaving = Boolean(memberActionLoading[saveAccessKey]);
-  const showPerTeamSection = selectedTeamsAccess !== "edit" && teams.length > 0;
+  const targetUserId = memberUser?.uid || member?.userId || "";
+  const inviteDraft = invite ? getInvitePendingAccessValue(invite) : inviteAccessDraft;
 
-  const clearDrafts = () => {
+  const selectedMemberAccess = member ? getMemberAccessValue(member) : "full";
+  const selectedInviteAccess = inviteDraft.access;
+  const selectedAccess = isMemberTarget ? selectedMemberAccess : selectedInviteAccess;
+  const currentMemberAccess = member
+    ? toMemberAccessOption(member.appAccess)
+    : "full";
+  const currentTeamsAccess = member
+    ? toTeamsAccessOption(member.permissions, member.role)
+    : inviteDraft.teamsAccess;
+  const selectedTeamsAccess = member
+    ? getMemberTeamsAccessValue(member)
+    : inviteDraft.teamsAccess;
+  const currentTeamScopeIds = member
+    ? getEditableTeamScopeIds(member.permissions)
+    : inviteDraft.teamScopeIds;
+  const selectedTeamScopeIds = member
+    ? getMemberTeamScopeValue(member)
+    : inviteDraft.teamScopeIds;
+
+  const inviteBaseline = invite ? inviteAccessDraftFromInvite(invite) : null;
+
+  const memberAccessChanged =
+    isMemberTarget && selectedMemberAccess !== currentMemberAccess;
+  const memberTeamsAccessChanged =
+    isMemberTarget && selectedTeamsAccess !== currentTeamsAccess;
+  const memberTeamScopesChanged =
+    isMemberTarget &&
+    [...selectedTeamScopeIds].sort().join("|") !==
+    [...currentTeamScopeIds].sort().join("|");
+  const inviteAccessChanged =
+    isInviteTarget &&
+    inviteBaseline !== null &&
+    JSON.stringify(inviteDraft) !== JSON.stringify(inviteBaseline);
+
+  const hasChanges = isInviteDraftTarget
+    ? true
+    : isMemberTarget
+      ? memberAccessChanged ||
+      memberTeamsAccessChanged ||
+      memberTeamScopesChanged
+      : inviteAccessChanged;
+
+  const saveAccessKey = member
+    ? `save-access:${member.membershipId}`
+    : invite
+      ? `save-invite-access:${invite.inviteId}`
+      : "save-invite-draft";
+  const isSaving = Boolean(memberActionLoading[saveAccessKey]);
+  const showPerTeamSection =
+    selectedTeamsAccess !== "edit" &&
+    selectedInviteAccess !== "admin" &&
+    teams.length > 0;
+  const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
+
+  const headerTitle = isMemberTarget
+    ? memberLabel
+    : isInviteTarget
+      ? invite?.email || "Pending invite"
+      : "New invite";
+  const headerEmail = isMemberTarget ? memberEmail : "";
+  const headerDescription = isMemberTarget
+    ? "Set WorshipSync app access and Teams permissions for this member."
+    : isInviteTarget
+      ? "Update access before this invite is accepted."
+      : "Choose app access and Teams permissions for the new invite.";
+
+  const clearMemberDrafts = (membershipId: string) => {
     setMemberAccessDrafts((prev) => {
       const next = { ...prev };
-      delete next[member.membershipId];
+      delete next[membershipId];
       return next;
     });
     setMemberTeamsAccessDrafts((prev) => {
       const next = { ...prev };
-      delete next[member.membershipId];
+      delete next[membershipId];
       return next;
     });
     setMemberTeamScopeDrafts((prev) => {
       const next = { ...prev };
-      delete next[member.membershipId];
+      delete next[membershipId];
       return next;
     });
   };
 
   const handleClose = () => {
-    clearDrafts();
-    onClose();
+    if (member) {
+      clearMemberDrafts(member.membershipId);
+    }
+    if (invite) {
+      setInvitePendingAccessDrafts((prev) => {
+        const next = { ...prev };
+        delete next[invite.inviteId];
+        return next;
+      });
+    }
+    closeAccessSheet();
+  };
+
+  const updateInviteDraft = (patch: Partial<InviteAccessDraft>) => {
+    if (isInviteDraftTarget) {
+      setInviteAccessDraft((prev) => ({ ...prev, ...patch }));
+      return;
+    }
+    if (invite) {
+      setInvitePendingAccessDrafts((prev) => ({
+        ...prev,
+        [invite.inviteId]: {
+          ...(prev[invite.inviteId] || getInvitePendingAccessValue(invite)),
+          ...patch,
+        },
+      }));
+    }
   };
 
   const handleSave = () => {
-    if (!targetUserId) {
+    if (isInviteDraftTarget) {
+      closeAccessSheet();
       return;
     }
 
-    void runMemberAction(saveAccessKey, async () => {
-      await updateChurchMemberAccess(churchId, targetUserId, selectedAccess, {
-        teams: selectedTeamsAccess,
-        teamScopes:
-          selectedTeamsAccess === "edit"
-            ? {}
-            : buildTeamScopesPermissions(selectedTeamScopeIds),
+    if (isMemberTarget) {
+      if (!targetUserId) {
+        return;
+      }
+      void runMemberAction(saveAccessKey, async () => {
+        await updateChurchMemberAccess(churchId, targetUserId, selectedMemberAccess, {
+          teams: selectedTeamsAccess,
+          teamScopes:
+            selectedTeamsAccess === "edit"
+              ? {}
+              : buildTeamScopesPermissions(selectedTeamScopeIds),
+        });
+        clearMemberDrafts(member!.membershipId);
+        showStatus(`Updated access for ${memberLabel}.`);
+        await refresh();
+        closeAccessSheet();
       });
-      clearDrafts();
-      showStatus(`Updated access for ${memberLabel}.`);
-      await refresh();
-      onClose();
+      return;
+    }
+
+    if (invite) {
+      void runMemberAction(saveAccessKey, async () => {
+        await updateChurchInviteAccess(
+          churchId,
+          invite.inviteId,
+          resolveInviteAccessPayload(inviteDraft),
+        );
+        setInvitePendingAccessDrafts((prev) => {
+          const next = { ...prev };
+          delete next[invite.inviteId];
+          return next;
+        });
+        showStatus(`Updated access for ${invite.email}.`);
+        await refresh();
+        closeAccessSheet();
+      });
+    }
+  };
+
+  const handleAppAccessChange = (value: string) => {
+    if (isMemberTarget && member) {
+      setMemberAccessDrafts((prev) => ({
+        ...prev,
+        [member.membershipId]: value as MemberAccessOption,
+      }));
+      return;
+    }
+
+    const nextAccess = value as InviteAccessOption;
+    updateInviteDraft({
+      access: nextAccess,
+      ...(nextAccess === "admin"
+        ? { teamsAccess: "edit" as TeamsPermission, teamScopeIds: [] }
+        : {}),
     });
   };
 
   const handleTeamsAccessChange = (value: TeamsPermission) => {
-    setMemberTeamsAccessDrafts((prev) => ({
-      ...prev,
-      [member.membershipId]: value,
-    }));
-    if (value === "edit") {
-      setMemberTeamScopeDrafts((prev) => {
-        const next = { ...prev };
-        delete next[member.membershipId];
-        return next;
-      });
+    if (isMemberTarget && member) {
+      setMemberTeamsAccessDrafts((prev) => ({
+        ...prev,
+        [member.membershipId]: value,
+      }));
+      if (value === "edit") {
+        setMemberTeamScopeDrafts((prev) => {
+          const next = { ...prev };
+          delete next[member.membershipId];
+          return next;
+        });
+      }
+      return;
     }
+
+    updateInviteDraft({
+      teamsAccess: value,
+      ...(value === "edit" ? { teamScopeIds: [] } : {}),
+    });
   };
+
+  const handleTeamScopeToggle = (
+    teamId: string,
+    checked: boolean,
+    baselineTeamScopeIds: string[],
+  ) => {
+    if (isMemberTarget && member) {
+      setMemberTeamScopeDrafts((prev) => {
+        const current = prev[member.membershipId] || baselineTeamScopeIds;
+        const next = checked
+          ? Array.from(new Set([...current, teamId]))
+          : current.filter((id) => id !== teamId);
+        return {
+          ...prev,
+          [member.membershipId]: next,
+        };
+      });
+      return;
+    }
+
+    updateInviteDraft({
+      teamScopeIds: checked
+        ? Array.from(new Set([...selectedTeamScopeIds, teamId]))
+        : selectedTeamScopeIds.filter((id) => id !== teamId),
+    });
+  };
+
+  const appAccessFieldId = getAppAccessFieldId(target);
+  const teamsAccessFieldId = getTeamsAccessFieldId(target);
 
   return (
     <Drawer
@@ -156,13 +321,11 @@ const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) 
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="space-y-1 border-b border-gray-700 px-5 py-4">
-          <p className="text-base font-semibold text-white">{memberLabel}</p>
-          {memberEmail ? (
-            <p className="text-sm text-gray-400">{memberEmail}</p>
+          <p className="text-base font-semibold text-white">{headerTitle}</p>
+          {headerEmail ? (
+            <p className="text-sm text-gray-400">{headerEmail}</p>
           ) : null}
-          <p className="text-sm text-gray-300">
-            Set WorshipSync app access and Teams permissions for this member.
-          </p>
+          <p className="text-sm text-gray-300">{headerDescription}</p>
         </div>
 
         <div className="scrollbar-variable min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
@@ -174,17 +337,14 @@ const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) 
               </p>
             </div>
             <Select
-              id={`member-access-sheet-${member.membershipId}`}
+              id={appAccessFieldId}
               label="Access level"
               value={selectedAccess}
-              options={memberAccessOptions}
-              selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              onChange={(value) =>
-                setMemberAccessDrafts((prev) => ({
-                  ...prev,
-                  [member.membershipId]: value as MemberAccessOption,
-                }))
+              options={
+                isMemberTarget ? memberAccessOptions : inviteAccessSelectOptions
               }
+              selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+              onChange={handleAppAccessChange}
             />
           </section>
 
@@ -198,17 +358,18 @@ const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) 
             </div>
 
             <Select
-              id={`member-teams-access-sheet-${member.membershipId}`}
+              id={teamsAccessFieldId}
               label="Global Teams access"
-              value={selectedTeamsAccess}
+              value={isAdminInviteAccess ? "edit" : selectedTeamsAccess}
               options={teamsPageAccessOptions}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+              disabled={isAdminInviteAccess}
               onChange={(value) =>
                 handleTeamsAccessChange(value as TeamsPermission)
               }
             />
 
-            {selectedTeamsAccess === "edit" ? (
+            {selectedTeamsAccess === "edit" || isAdminInviteAccess ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
                 Edit all teams includes every team. Per-team rules are not used.
               </p>
@@ -242,19 +403,13 @@ const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) 
                           type="checkbox"
                           className="h-4 w-4 accent-cyan-500"
                           checked={checked}
-                          onChange={(event) => {
-                            setMemberTeamScopeDrafts((prev) => {
-                              const current =
-                                prev[member.membershipId] || currentTeamScopeIds;
-                              const next = event.target.checked
-                                ? Array.from(new Set([...current, team.teamId]))
-                                : current.filter((teamId) => teamId !== team.teamId);
-                              return {
-                                ...prev,
-                                [member.membershipId]: next,
-                              };
-                            });
-                          }}
+                          onChange={(event) =>
+                            handleTeamScopeToggle(
+                              team.teamId,
+                              event.target.checked,
+                              currentTeamScopeIds,
+                            )
+                          }
                         />
                         <span>{team.name}</span>
                       </label>
@@ -279,12 +434,32 @@ const MemberAccessSheet = ({ member, isOpen, onClose }: MemberAccessSheetProps) 
             disabled={isSaving || !hasChanges}
             onClick={handleSave}
           >
-            Save access
+            {isInviteDraftTarget ? "Apply access" : "Save access"}
           </Button>
         </div>
       </div>
     </Drawer>
   );
+};
+
+const getAppAccessFieldId = (target: AccessSheetTarget) => {
+  if (target.kind === "member") {
+    return `member-access-sheet-${target.member.membershipId}`;
+  }
+  if (target.kind === "invite") {
+    return `invite-access-sheet-${target.invite.inviteId}`;
+  }
+  return "invite-draft-access-sheet";
+};
+
+const getTeamsAccessFieldId = (target: AccessSheetTarget) => {
+  if (target.kind === "member") {
+    return `member-teams-access-sheet-${target.member.membershipId}`;
+  }
+  if (target.kind === "invite") {
+    return `invite-teams-access-sheet-${target.invite.inviteId}`;
+  }
+  return "invite-draft-teams-access-sheet";
 };
 
 export default MemberAccessSheet;

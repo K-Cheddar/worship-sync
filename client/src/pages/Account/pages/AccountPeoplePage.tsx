@@ -1,10 +1,8 @@
-import { useState } from "react";
 import { Ban, UserRoundCog } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { InvitePeopleForm } from "../../Controller/AccountFormSections";
 import { useAccountPage } from "../AccountPageContext";
 import { AccountPeoplePageSkeleton } from "../accountPageSkeletons";
-import type { Member } from "../accountTypes";
 import { cn } from "@/utils/cnHelper";
 import { alternatingAdminListRowBg } from "../../../utils/listRowStripes";
 import MemberAccessSheet from "../components/MemberAccessSheet";
@@ -25,8 +23,9 @@ const AccountPeoplePage = () => {
     setDestructiveConfirm,
     toTeamsAccessOption,
     getEditableTeamScopeIds,
+    openMemberAccessSheet,
+    openInviteAccessSheet,
   } = accountPage;
-  const [accessSheetMember, setAccessSheetMember] = useState<Member | null>(null);
 
   if (loading) {
     return <AccountPeoplePageSkeleton />;
@@ -40,7 +39,7 @@ const AccountPeoplePage = () => {
         <h3 className="text-lg font-semibold">Pending invites</h3>
         <p className="mt-1 text-sm text-gray-400">
           Waiting to be accepted. Unused invites expire on their own. You can
-          revoke an invite if the link should stop working.
+          edit access or revoke an invite if the link should stop working.
         </p>
         <div className="mt-4 space-y-2">
           {sortedInvites.length === 0 && (
@@ -80,22 +79,34 @@ const AccountPeoplePage = () => {
                   </p>
                   <p className="text-sm text-gray-400">Expires {expiresLabel}</p>
                 </div>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="shrink-0 self-start sm:self-center"
-                  aria-label={`Revoke invite for ${invite.email}`}
-                  isLoading={isRevokeInviteConfirming}
-                  disabled={destructiveConfirmRunning}
-                  onClick={() =>
-                    setDestructiveConfirm({
-                      kind: "revokeInvite",
-                      invite,
-                    })
-                  }
-                >
-                  Revoke
-                </Button>
+                <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={UserRoundCog}
+                    iconSize="sm"
+                    aria-label={`Edit access for ${invite.email}`}
+                    onClick={() => openInviteAccessSheet(invite)}
+                  >
+                    Edit access
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="shrink-0"
+                    aria-label={`Revoke invite for ${invite.email}`}
+                    isLoading={isRevokeInviteConfirming}
+                    disabled={destructiveConfirmRunning}
+                    onClick={() =>
+                      setDestructiveConfirm({
+                        kind: "revokeInvite",
+                        invite,
+                      })
+                    }
+                  >
+                    Revoke
+                  </Button>
+                </div>
               </div>
             );
           })}
@@ -185,7 +196,7 @@ const AccountPeoplePage = () => {
                           svg={UserRoundCog}
                           iconSize="sm"
                           aria-label={`Edit access for ${memberLabel}`}
-                          onClick={() => setAccessSheetMember(member)}
+                          onClick={() => openMemberAccessSheet(member)}
                         >
                           Edit access
                         </Button>
@@ -255,11 +266,7 @@ const AccountPeoplePage = () => {
         </div>
       </section>
 
-      <MemberAccessSheet
-        member={accessSheetMember}
-        isOpen={accessSheetMember !== null}
-        onClose={() => setAccessSheetMember(null)}
-      />
+      <MemberAccessSheet />
     </>
   );
 };

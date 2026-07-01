@@ -1,4 +1,8 @@
-import type { TeamsPermission, TeamRecord } from "../../api/authTypes";
+import type {
+  MemberPermissions,
+  TeamsPermission,
+  TeamRecord,
+} from "../../api/authTypes";
 
 export type TeamsPageAccessOption = TeamsPermission;
 
@@ -19,6 +23,25 @@ const teamsPageAccessLabels: Record<TeamsPageAccessOption, string> = {
 
 export const getTeamsPageAccessLabel = (access: TeamsPageAccessOption) =>
   teamsPageAccessLabels[access];
+
+export const toTeamsAccessOption = (
+  permissions?: MemberPermissions,
+  role?: string,
+): TeamsPermission => {
+  if (role === "admin") {
+    return "edit";
+  }
+  return permissions?.teams || "none";
+};
+
+export const getEditableTeamScopeIds = (permissions?: MemberPermissions) =>
+  Object.entries(permissions?.teamScopes || {})
+    .filter(([, permission]) => permission === "edit")
+    .map(([teamId]) => teamId)
+    .sort();
+
+export const buildTeamScopesPermissions = (teamIds: string[]) =>
+  Object.fromEntries(teamIds.map((teamId) => [teamId, "edit" as const]));
 
 export const getScopedEditTeamNames = (
   scopedTeamIds: string[],

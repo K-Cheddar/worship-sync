@@ -685,9 +685,13 @@ const MemberManager = ({
                     selectClassName="w-full"
                   />
                   <Button
+                    type="button"
                     variant="tertiary"
-                    aria-label="Remove qualification"
                     svg={X}
+                    iconSize="sm"
+                    padding="p-0"
+                    className="shrink-0 self-center text-gray-400 hover:text-white"
+                    aria-label="Remove qualification"
                     onClick={() =>
                       setDraft((current) => ({
                         ...current,
@@ -778,7 +782,21 @@ const MemberManager = ({
               <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                 <DatePicker label="Start date" hideLabel value={range.startDate} onChange={(startDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, startDate } : item) }))} />
                 <DatePicker label="End date" hideLabel value={range.endDate} onChange={(endDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, endDate } : item) }))} />
-                <Button variant="tertiary" aria-label="Remove blockout date" svg={X} onClick={() => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.filter((_, i) => i !== index) }))} />
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={X}
+                  iconSize="sm"
+                  padding="p-0"
+                  className="shrink-0 self-center text-gray-400 hover:text-white"
+                  aria-label="Remove blockout date"
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      blockoutDates: d.blockoutDates.filter((_, i) => i !== index),
+                    }))
+                  }
+                />
               </div>
               <Input hideLabel label="Notes" placeholder="Notes (optional)" value={range.notes || ""} onChange={(notes) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, notes: String(notes) } : item) }))} />
             </div>
