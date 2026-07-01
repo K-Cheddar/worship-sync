@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer";
@@ -53,6 +54,34 @@ const MemberAccessSheet = () => {
   const target = accessSheetTarget;
   const isOpen = target !== null;
 
+  const isMemberTarget = target?.kind === "member";
+  const isInviteTarget = target?.kind === "invite";
+  const member = isMemberTarget && target ? target.member : null;
+  const invite = isInviteTarget && target ? target.invite : null;
+  const inviteDraft = invite ? getInvitePendingAccessValue(invite) : inviteAccessDraft;
+  const selectedTeamScopeIds = member
+    ? getMemberTeamScopeValue(member)
+    : inviteDraft.teamScopeIds;
+  const currentTeamScopeIds = member
+    ? getEditableTeamScopeIds(member.permissions)
+    : inviteDraft.teamScopeIds;
+  const inviteBaseline = invite ? inviteAccessDraftFromInvite(invite) : null;
+
+  const memberTeamScopesChanged = useMemo(
+    () =>
+      isMemberTarget &&
+      [...selectedTeamScopeIds].sort().join("|") !==
+      [...currentTeamScopeIds].sort().join("|"),
+    [isMemberTarget, selectedTeamScopeIds, currentTeamScopeIds],
+  );
+  const inviteAccessChanged = useMemo(
+    () =>
+      isInviteTarget &&
+      inviteBaseline !== null &&
+      JSON.stringify(inviteDraft) !== JSON.stringify(inviteBaseline),
+    [isInviteTarget, inviteDraft, inviteBaseline],
+  );
+
   if (!target) {
     return (
       <Drawer
@@ -68,17 +97,12 @@ const MemberAccessSheet = () => {
     );
   }
 
-  const isMemberTarget = target.kind === "member";
   const isInviteDraftTarget = target.kind === "invite-draft";
-  const isInviteTarget = target.kind === "invite";
-  const member = isMemberTarget ? target.member : null;
-  const invite = isInviteTarget ? target.invite : null;
 
   const memberUser = member?.user;
   const memberEmail = memberUser?.primaryEmail || memberUser?.email || "";
   const memberLabel = memberUser?.displayName || memberEmail || "Unknown user";
   const targetUserId = memberUser?.uid || member?.userId || "";
-  const inviteDraft = invite ? getInvitePendingAccessValue(invite) : inviteAccessDraft;
 
   const selectedMemberAccess = member ? getMemberAccessValue(member) : "full";
   const selectedInviteAccess = inviteDraft.access;
@@ -92,27 +116,11 @@ const MemberAccessSheet = () => {
   const selectedTeamsAccess = member
     ? getMemberTeamsAccessValue(member)
     : inviteDraft.teamsAccess;
-  const currentTeamScopeIds = member
-    ? getEditableTeamScopeIds(member.permissions)
-    : inviteDraft.teamScopeIds;
-  const selectedTeamScopeIds = member
-    ? getMemberTeamScopeValue(member)
-    : inviteDraft.teamScopeIds;
-
-  const inviteBaseline = invite ? inviteAccessDraftFromInvite(invite) : null;
 
   const memberAccessChanged =
     isMemberTarget && selectedMemberAccess !== currentMemberAccess;
   const memberTeamsAccessChanged =
     isMemberTarget && selectedTeamsAccess !== currentTeamsAccess;
-  const memberTeamScopesChanged =
-    isMemberTarget &&
-    [...selectedTeamScopeIds].sort().join("|") !==
-    [...currentTeamScopeIds].sort().join("|");
-  const inviteAccessChanged =
-    isInviteTarget &&
-    inviteBaseline !== null &&
-    JSON.stringify(inviteDraft) !== JSON.stringify(inviteBaseline);
 
   const hasChanges = isInviteDraftTarget
     ? true
@@ -130,8 +138,8 @@ const MemberAccessSheet = () => {
   const isSaving = Boolean(memberActionLoading[saveAccessKey]);
   const showPerTeamSection =
     selectedTeamsAccess !== "edit" &&
-    selectedInviteAccess !== "admin" &&
-    teams.length > 0;
+    teams.length > 0 &&
+    (isMemberTarget || selectedInviteAccess !== "admin");
   const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
 
   const headerTitle = isMemberTarget

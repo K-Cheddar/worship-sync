@@ -220,6 +220,61 @@ const logAuthEvent = (level, event, details = {}) => {
   logger(line);
 };
 
+const respondInviteAccessError = (res, error) => {
+  const statusCode =
+    Number.isInteger(error?.statusCode) && error.statusCode >= 400
+      ? error.statusCode
+      : 500;
+  if (statusCode >= 500) {
+    logAuthEvent("error", "invite.access.update.error", {
+      message: error.message,
+    });
+  }
+  return res.status(statusCode).json({
+    success: false,
+    errorMessage:
+      statusCode < 500 && error?.message
+        ? error.message
+        : "Could not update invite access. Try again in a moment.",
+  });
+};
+
+const validateUpdateInviteAccessPayload = (body) => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw httpError(400, "Invalid request body.");
+  }
+  const role =
+    body.role === "admin"
+      ? "admin"
+      : body.role === "member"
+        ? "member"
+        : null;
+  if (!role) {
+    throw httpError(400, "Choose a valid role.");
+  }
+  const appAccess = normalizeAppAccess(body.appAccess, "");
+  if (!appAccess) {
+    throw httpError(400, "Choose a valid access level.");
+  }
+  if (role === "admin" && appAccess !== "full") {
+    throw httpError(400, "Admins must keep full access.");
+  }
+  const permissions = body.permissions;
+  if (
+    permissions !== undefined &&
+    (typeof permissions !== "object" ||
+      Array.isArray(permissions) ||
+      permissions === null)
+  ) {
+    throw httpError(400, "Invalid permissions.");
+  }
+  return {
+    role,
+    appAccess,
+    permissions: normalizeMembershipPermissions(permissions, role),
+  };
+};
+
 /** Service account keys in .env are often one line with literal \n — normalize for PEM parsing. */
 const normalizeFirebasePrivateKey = (raw) => {
   if (raw == null || String(raw).trim() === "") {
@@ -4748,18 +4803,8 @@ export const authHandlers = {
       if (invite.status !== "pending") {
         throw httpError(400, "Only pending invites can be updated.");
       }
-      const role = req.body?.role === "admin" ? "admin" : "member";
-      const appAccess = normalizeAppAccess(req.body?.appAccess, "");
-      if (!appAccess) {
-        throw httpError(400, "Choose a valid access level.");
-      }
-      if (role === "admin" && appAccess !== "full") {
-        throw httpError(400, "Admins must keep full access.");
-      }
-      const permissions = normalizeMembershipPermissions(
-        req.body?.permissions,
-        role,
-      );
+      const { role, appAccess, permissions } =
+        validateUpdateInviteAccessPayload(req.body);
       const updatedInvite = {
         ...invite,
         role,
@@ -4786,10 +4831,7 @@ export const authHandlers = {
         invite: sanitizeInviteForClient(updatedInvite),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
-        errorMessage: error.message,
-      });
+      return respondInviteAccessError(res, error);
     }
   },
 
