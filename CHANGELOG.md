@@ -1,3 +1,14 @@
+## [2.16.4](https://github.com/K-Cheddar/worship-sync/compare/v2.16.3...v2.16.4) (2026-07-01)
+
+
+### Bug Fixes
+
+* MemberAccessSheet repeats deep comparisons ([00b1f60](https://github.com/K-Cheddar/worship-sync/commit/00b1f60d4aecf8cec0f3b33c0e5634d1634a6292))
+* Minor ui fixes ([eb23168](https://github.com/K-Cheddar/worship-sync/commit/eb231681990aaf2c39cb2303c45c5cf86971ca7b))
+* Per-team section hidden ([8d37e3d](https://github.com/K-Cheddar/worship-sync/commit/8d37e3dc8056e08d208a1084b74647b9da2ea83f))
+* updateInviteAccess leaks error.message ([f6414c1](https://github.com/K-Cheddar/worship-sync/commit/f6414c161193dad69fbd539923e48390bd2320b3))
+* updateInviteAccess missing request schema ([4ef95f3](https://github.com/K-Cheddar/worship-sync/commit/4ef95f3100c89224eaf9b5d832b95e2b3ef73e24))
+
 ## [2.16.3](https://github.com/K-Cheddar/worship-sync/compare/v2.16.2...v2.16.3) (2026-07-01)
 
 
