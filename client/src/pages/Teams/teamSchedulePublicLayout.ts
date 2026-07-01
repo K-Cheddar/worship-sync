@@ -10,9 +10,9 @@ export const readTeamSchedulePublicLayout = (): ScheduleExportLayout => {
     const stored = localStorage.getItem(
       TEAM_SCHEDULE_PUBLIC_LAYOUT_STORAGE_KEY,
     ) as ScheduleExportLayout | null;
-    return stored && VALID_LAYOUTS.includes(stored) ? stored : "grid";
+    return stored && VALID_LAYOUTS.includes(stored) ? stored : "byDate";
   } catch {
-    return "grid";
+    return "byDate";
   }
 };
 

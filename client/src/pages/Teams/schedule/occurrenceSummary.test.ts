@@ -22,7 +22,11 @@ const position = (
   ...(groupId ? { groupId } : {}),
 });
 
-const member = (memberId: string, firstName: string, lastName = "X"): TeamRosterMember => ({
+const member = (
+  memberId: string,
+  firstName: string,
+  lastName = "X",
+): TeamRosterMember => ({
   memberId,
   churchId: "church-1",
   firstName,
@@ -85,7 +89,10 @@ describe("buildOccurrenceSummaryGroups", () => {
 
     // Camera group (Director + Camera Crew) then a solo Producer group.
     expect(groups).toHaveLength(2);
-    expect(groups[0].positions.map((p) => p.name)).toEqual(["Director", "Camera Crew"]);
+    expect(groups[0].positions.map((p) => p.name)).toEqual([
+      "Director",
+      "Camera Crew",
+    ]);
     expect(groups[1].positions.map((p) => p.name)).toEqual(["Producer"]);
 
     const crew = groups[0].positions[1];
@@ -138,7 +145,7 @@ describe("buildOccurrenceSummaryGroups", () => {
 });
 
 describe("formatOccurrenceMessage", () => {
-  it("renders a WhatsApp-friendly message with grouped, blank-separated lines", () => {
+  it("renders a WhatsApp-friendly message with one blank line after the title", () => {
     const assignmentsRow = {
       [makeSlotKey("director", 0)]: cell("m-dir"),
       [makeSlotKey("crew", 0)]: cell("m-a"),
@@ -163,7 +170,6 @@ describe("formatOccurrenceMessage", () => {
         "",
         "Director: Jahlani",
         "Camera Crew: Kevin, David",
-        "",
         "Producer: TBD",
       ].join("\n"),
     );

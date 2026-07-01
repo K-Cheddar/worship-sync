@@ -55,9 +55,9 @@ const PUBLIC_SCHEDULE_LAYOUT_OPTIONS: {
   value: ScheduleExportLayout;
   label: string;
 }[] = [
-    { value: "grid", label: "Grid" },
-    { value: "transpose", label: "By position" },
     { value: "byDate", label: "By date" },
+    { value: "transpose", label: "By position" },
+    { value: "grid", label: "Grid" },
   ];
 
 const noDuplicates = new Set<string>();
@@ -431,7 +431,7 @@ const TeamSchedulePublic = () => {
             "space-y-4",
           )}
         >
-          <div className="flex flex-wrap items-end gap-2">
+          <div className="flex w-full flex-wrap items-end gap-2">
             <SearchableSelect
               className="min-w-56"
               variant={isDark ? "board-attendee" : "light"}
@@ -450,7 +450,9 @@ const TeamSchedulePublic = () => {
                 })),
               ]}
             />
-            <SchedulePdfExportButton model={model} layout={layout} />
+            <div className="ml-auto shrink-0">
+              <SchedulePdfExportButton model={model} layout={layout} />
+            </div>
           </div>
 
           <SegmentedControl

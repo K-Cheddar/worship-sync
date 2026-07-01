@@ -9,8 +9,8 @@ describe("teamSchedulePublicLayout", () => {
     localStorage.clear();
   });
 
-  it("defaults to grid when nothing is stored", () => {
-    expect(readTeamSchedulePublicLayout()).toBe("grid");
+  it("defaults to byDate when nothing is stored", () => {
+    expect(readTeamSchedulePublicLayout()).toBe("byDate");
   });
 
   it("reads and writes a valid layout preference", () => {
@@ -21,8 +21,8 @@ describe("teamSchedulePublicLayout", () => {
     expect(readTeamSchedulePublicLayout()).toBe("byDate");
   });
 
-  it("falls back to grid for unknown stored values", () => {
+  it("falls back to byDate for unknown stored values", () => {
     localStorage.setItem(TEAM_SCHEDULE_PUBLIC_LAYOUT_STORAGE_KEY, "spiral");
-    expect(readTeamSchedulePublicLayout()).toBe("grid");
+    expect(readTeamSchedulePublicLayout()).toBe("byDate");
   });
 });
