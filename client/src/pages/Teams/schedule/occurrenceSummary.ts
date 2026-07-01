@@ -35,7 +35,7 @@ export type OccurrenceSummaryPosition = {
 /**
  * Positions clustered for display/export. Positions that share a `groupId`
  * (e.g. several camera roles) stay together; ungrouped positions each stand
- * alone. A blank line separates groups in the copied message.
+ * alone.
  */
 export type OccurrenceSummaryGroup = {
   key: string;
@@ -62,7 +62,9 @@ export const buildOccurrenceSummaryGroups = ({
   members: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
 }): OccurrenceSummaryGroup[] => {
-  const memberById = new Map(members.map((member) => [member.memberId, member]));
+  const memberById = new Map(
+    members.map((member) => [member.memberId, member]),
+  );
   const nameOf = (memberId: string) =>
     scheduleMemberName(memberById.get(memberId), duplicateFirstNames);
 
@@ -80,10 +82,18 @@ export const buildOccurrenceSummaryGroups = ({
       const cell = assignmentsRow?.[makeSlotKey(column.positionId, slot)];
       const primaryId = getCellPrimaryMemberId(cell);
       if (primaryId) {
-        primaries.push({ memberId: primaryId, name: nameOf(primaryId), kind: "primary" });
+        primaries.push({
+          memberId: primaryId,
+          name: nameOf(primaryId),
+          kind: "primary",
+        });
       }
       getCellShadowAssignments(cell).forEach((shadow) => {
-        shadows.push({ memberId: shadow.memberId, name: nameOf(shadow.memberId), kind: shadow.kind });
+        shadows.push({
+          memberId: shadow.memberId,
+          name: nameOf(shadow.memberId),
+          kind: shadow.kind,
+        });
       });
     }
 
@@ -98,7 +108,9 @@ export const buildOccurrenceSummaryGroups = ({
 
   const groups: OccurrenceSummaryGroup[] = [];
   positions.forEach((position) => {
-    const key = position.groupId ? `group:${position.groupId}` : `solo:${position.positionId}`;
+    const key = position.groupId
+      ? `group:${position.groupId}`
+      : `solo:${position.positionId}`;
     const last = groups[groups.length - 1];
     // Only merge into the previous block when both share a real group id.
     if (last && last.key === key && position.groupId) {
@@ -116,7 +128,9 @@ export const formatSummaryMemberToken = (member: OccurrenceSummaryMember) =>
     ? member.name
     : `${member.name} (${shadowKindLabel(member.kind).toLowerCase()})`;
 
-export const formatOccurrencePositionLine = (position: OccurrenceSummaryPosition) => {
+export const formatOccurrencePositionLine = (
+  position: OccurrenceSummaryPosition,
+) => {
   const tokens = position.members.map(formatSummaryMemberToken);
   return `${position.name}: ${tokens.length ? tokens.join(", ") : OCCURRENCE_EMPTY_SLOT_LABEL}`;
 };
@@ -129,8 +143,8 @@ export const formatOccurrenceDateLabel = (startsAt: string) =>
   });
 
 /**
- * Render the WhatsApp-friendly schedule message: a title line, then one line
- * per position, with a blank line between position groups.
+ * Render the WhatsApp-friendly schedule message: a title line, a blank line,
+ * then one line per position.
  */
 export const formatOccurrenceMessage = ({
   startsAt,
@@ -139,9 +153,11 @@ export const formatOccurrenceMessage = ({
   startsAt: string;
   groups: OccurrenceSummaryGroup[];
 }): string => {
-  const lines: string[] = [`Schedule for ${formatOccurrenceDateLabel(startsAt)}`];
+  const lines: string[] = [
+    `Schedule for ${formatOccurrenceDateLabel(startsAt)}`,
+    "",
+  ];
   groups.forEach((group) => {
-    lines.push("");
     group.positions.forEach((position) => {
       lines.push(formatOccurrencePositionLine(position));
     });
