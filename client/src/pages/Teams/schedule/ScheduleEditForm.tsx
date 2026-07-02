@@ -19,12 +19,20 @@ import { useToast } from "../../../context/toastContext";
 import useDebouncedEffect from "../../../hooks/useDebouncedEffect";
 import generateRandomId from "../../../utils/generateRandomId";
 import MultiCheckboxGroup from "../components/MultiCheckboxGroup";
-import { inputStackClassName } from "../teamsStyles";
+import {
+  inputStackClassName,
+  panelFormScrollPaddingClassName,
+  panelHeaderPaddingClassName,
+  panelShellClassName,
+  teamsPanelMaxHeightClassName,
+} from "../teamsStyles";
+import { cn } from "@/utils/cnHelper";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
   formatServiceTiming,
   scheduleDraftsMatch,
 } from "../teamsUtils";
+import { formatScheduleSaveToast } from "../teamsSaveToasts";
 import {
   buildScheduleDraft,
   rekeyAssignmentsByServiceDate,
@@ -201,6 +209,14 @@ const ScheduleEditForm = ({
         assignments,
         attendance,
       };
+      const saveToastMessage = formatScheduleSaveToast(selectedSchedule, payload, {
+        teamNameById: new Map(
+          activeTeams.map((team) => [team.teamId, team.name]),
+        ),
+        serviceNameById: new Map(
+          services.map((service) => [service.serviceId, service.name]),
+        ),
+      });
       const localScheduleId =
         selectedSchedule?.scheduleId || `local-schedule-${generateRandomId()}`;
       const optimisticSchedule: TeamSchedule = {
@@ -231,6 +247,7 @@ const ScheduleEditForm = ({
         );
       }
       setSelectedScheduleId(response.schedule.scheduleId);
+      showToast(saveToastMessage, "success");
       onCancel();
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this schedule.");
@@ -264,109 +281,128 @@ const ScheduleEditForm = ({
 
   return (
     <>
-      <div className="mt-4 flex items-start justify-between gap-3">
-        <h3 className="text-lg font-semibold">
-          {selectedSchedule ? "Edit schedule" : "New schedule"}
-        </h3>
-        {canEdit && selectedSchedule ? (
-          <EntityFormDangerActions
-            archived={Boolean(selectedSchedule.archivedAt)}
-            canEdit={canEdit}
-            archiveLabel="Archive schedule"
-            deleteLabel="Delete schedule"
-            menuLabel="Schedule actions"
-            onArchive={
-              selectedSchedule.archivedAt
-                ? undefined
-                : async () => {
-                  if (!canEdit) return;
-                  const archivedSchedule = {
-                    ...selectedSchedule,
-                    archivedAt: new Date().toISOString(),
-                  };
-                  onScheduleSaved(archivedSchedule);
-                  try {
-                    await archiveTeamSchedule(churchId, selectedSchedule.scheduleId);
-                  } catch (error) {
-                    showApiErrorToast(showToast, error, "Could not archive this schedule.");
-                    onScheduleSaved(selectedSchedule);
+      <section
+        className={cn(
+          panelShellClassName,
+          "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
+          teamsPanelMaxHeightClassName,
+        )}
+      >
+        <div
+          className={cn(
+            "flex shrink-0 items-start justify-between gap-3",
+            panelHeaderPaddingClassName,
+          )}
+        >
+          <h2 className="text-lg font-semibold">
+            {selectedSchedule ? "Edit schedule" : "New schedule"}
+          </h2>
+          {canEdit && selectedSchedule ? (
+            <EntityFormDangerActions
+              archived={Boolean(selectedSchedule.archivedAt)}
+              canEdit={canEdit}
+              archiveLabel="Archive schedule"
+              deleteLabel="Delete schedule"
+              menuLabel="Schedule actions"
+              onArchive={
+                selectedSchedule.archivedAt
+                  ? undefined
+                  : async () => {
+                    if (!canEdit) return;
+                    const archivedSchedule = {
+                      ...selectedSchedule,
+                      archivedAt: new Date().toISOString(),
+                    };
+                    onScheduleSaved(archivedSchedule);
+                    try {
+                      await archiveTeamSchedule(churchId, selectedSchedule.scheduleId);
+                    } catch (error) {
+                      showApiErrorToast(showToast, error, "Could not archive this schedule.");
+                      onScheduleSaved(selectedSchedule);
+                    }
                   }
-                }
-            }
-            onDelete={() => setDeletingSchedule(true)}
-          />
-        ) : null}
-      </div>
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <Input
-          className={inputStackClassName}
-          label="Name"
-          value={draft.name}
-          onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
-        />
-        <Select
-          className={inputStackClassName}
-          label="Team"
-          value={draft.teamId}
-          onChange={(teamId) => setDraft((current) => ({ ...current, teamId }))}
-          options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
-        />
-        <TextArea
-          className="lg:col-span-2"
-          label="Description"
-          value={draft.description || ""}
-          textareaClassName="min-h-20"
-          onChange={(description) => setDraft((current) => ({ ...current, description }))}
-        />
-        <div className="grid gap-3 sm:grid-cols-2 lg:col-span-2">
-          <DatePicker
-            label="Start date"
-            value={draft.startDate || ""}
-            onChange={(startDate) => setDraft((current) => ({ ...current, startDate }))}
-          />
-          <DatePicker
-            label="End date"
-            value={draft.endDate || ""}
-            onChange={(endDate) => setDraft((current) => ({ ...current, endDate }))}
-          />
-        </div>
-        <div className="lg:col-span-2">
-          <MultiCheckboxGroup
-            label="Services"
-            options={services.map((service) => ({
-              id: service.serviceId,
-              label: [service.name, formatServiceTiming(service)].filter(Boolean).join(" - "),
-              archived: Boolean(service.archivedAt),
-            }))}
-            value={draft.serviceIds}
-            onChange={(serviceIds) => setDraft((current) => ({ ...current, serviceIds }))}
-          />
-          <p className="mt-2 text-xs text-gray-400">
-            {draftOccurrences.length} service occurrences will appear in the grid for this range.
-          </p>
-          {isCopy ? (
-            <p className="mt-1 text-xs text-gray-400">
-              Set the new date range and the assignments will move to the matching
-              services. Attendance starts fresh.
-            </p>
+              }
+              onDelete={() => setDeletingSchedule(true)}
+            />
           ) : null}
         </div>
-        <div className="space-y-2 lg:col-span-2">
-          <FormActionButtons
-            saveLabel="Save schedule"
-            onSave={() => void saveSchedule()}
-            onCancel={onCancel}
-            disabled={
-              !canEdit ||
-              !draft.name.trim() ||
-              !draft.teamId ||
-              draft.serviceIds.length === 0 ||
-              draftOccurrences.length === 0
-            }
-            isLoading={saving}
-          />
+        <div
+          className={cn(
+            "scrollbar-variable mt-4 min-h-0 flex-1 overflow-x-hidden overflow-y-auto",
+            panelFormScrollPaddingClassName,
+          )}
+        >
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Input
+              className={inputStackClassName}
+              label="Name"
+              value={draft.name}
+              onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
+            />
+            <Select
+              className={inputStackClassName}
+              label="Team"
+              value={draft.teamId}
+              onChange={(teamId) => setDraft((current) => ({ ...current, teamId }))}
+              options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
+            />
+            <TextArea
+              className="lg:col-span-2"
+              label="Description"
+              value={draft.description || ""}
+              textareaClassName="min-h-20"
+              onChange={(description) => setDraft((current) => ({ ...current, description }))}
+            />
+            <div className="grid gap-3 sm:grid-cols-2 lg:col-span-2">
+              <DatePicker
+                label="Start date"
+                value={draft.startDate || ""}
+                onChange={(startDate) => setDraft((current) => ({ ...current, startDate }))}
+              />
+              <DatePicker
+                label="End date"
+                value={draft.endDate || ""}
+                onChange={(endDate) => setDraft((current) => ({ ...current, endDate }))}
+              />
+            </div>
+            <div className="lg:col-span-2">
+              <MultiCheckboxGroup
+                label="Services"
+                options={services.map((service) => ({
+                  id: service.serviceId,
+                  label: [service.name, formatServiceTiming(service)].filter(Boolean).join(" - "),
+                  archived: Boolean(service.archivedAt),
+                }))}
+                value={draft.serviceIds}
+                onChange={(serviceIds) => setDraft((current) => ({ ...current, serviceIds }))}
+              />
+              <p className="mt-2 text-xs text-gray-400">
+                {draftOccurrences.length} service occurrences will appear in the grid for this range.
+              </p>
+              {isCopy ? (
+                <p className="mt-1 text-xs text-gray-400">
+                  Set the new date range and the assignments will move to the matching
+                  services. Attendance starts fresh.
+                </p>
+              ) : null}
+            </div>
+          </div>
         </div>
-      </div>
+        <FormActionButtons
+          pinFooter
+          saveLabel="Save schedule"
+          onSave={() => void saveSchedule()}
+          onCancel={onCancel}
+          disabled={
+            !canEdit ||
+            !draft.name.trim() ||
+            !draft.teamId ||
+            draft.serviceIds.length === 0 ||
+            draftOccurrences.length === 0
+          }
+          isLoading={saving}
+        />
+      </section>
       <DeleteModal
         isOpen={deletingSchedule}
         onClose={() => setDeletingSchedule(false)}

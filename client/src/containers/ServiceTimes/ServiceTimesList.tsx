@@ -4,6 +4,7 @@ import ServiceItem from "./ServiceItem";
 import TimeAdjuster from "./TimeAdjuster";
 import NextServiceLiveCountdown from "./NextServiceLiveCountdown";
 import { getEffectiveTargetTime } from "../../utils/serviceTimes";
+import { serverDate } from "../../utils/serverTime";
 
 type Props = {
   services: ServiceTime[];
@@ -21,7 +22,7 @@ const ServiceTimesList = ({
   upcomingServiceTimeText,
 }: Props) => {
   const otherServices = useMemo(() => {
-    const now = new Date();
+    const now = serverDate();
     return services
       .filter((s) => s.id !== upcomingService?.service.id)
       .sort((a, b) => {

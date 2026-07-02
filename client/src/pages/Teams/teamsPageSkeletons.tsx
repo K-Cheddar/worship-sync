@@ -7,6 +7,7 @@ import {
   panelScrollPaddingClassName,
   panelShellClassName,
   scheduleGridScrollClassName,
+  scheduleGridFrameClassName,
   scheduleTabRootClassName,
   scheduleWorkspaceBodyRowClassName,
   scheduleWorkspaceMainColumnClassName,
@@ -182,7 +183,7 @@ const SkeletonScheduleTabs = () => (
 
 const SkeletonScheduleGrid = () => (
   <div className={scheduleGridScrollClassName}>
-    <div className="min-w-lg">
+    <div className={cn(scheduleGridFrameClassName, "min-w-lg")}>
       <div className="flex border-b border-gray-800 bg-gray-950 p-2">
         <div className={cn(skeletonBar, "h-8 w-24 shrink-0")} />
         <div className={cn(skeletonBar, "ml-2 h-8 flex-1")} />

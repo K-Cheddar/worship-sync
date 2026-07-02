@@ -17,6 +17,8 @@ import ScheduleAssignmentCell from "./ScheduleAssignmentCell";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 import {
   scheduleCellPaddingClassName,
+  scheduleCellRemoveButtonTouchClassName,
+  scheduleCellRemoveButtonVisibilityClassName,
   scheduleGridLeftBorderClassName,
 } from "./scheduleUtils";
 
@@ -117,7 +119,7 @@ const ScheduleGridCell = memo(({
       highlighted={isMemberHighlighted}
       axisHighlightClassName={axisHighlightClassName}
     >
-      <div className="relative space-y-2">
+      <div className="group relative space-y-2">
         <div className="flex min-w-0 items-stretch gap-1">
           <button
             type="button"
@@ -145,7 +147,12 @@ const ScheduleGridCell = memo(({
               svg={X}
               iconSize="sm"
               padding="p-0"
-              className="shrink-0 self-center text-gray-400 hover:text-white"
+              className={cn(
+                "shrink-0 self-center text-gray-400 transition-opacity hover:text-white",
+                scheduleCellRemoveButtonVisibilityClassName,
+                scheduleCellRemoveButtonTouchClassName,
+                isActiveSlot && "opacity-100",
+              )}
               aria-label={`Remove ${memberName(assignedMember)} from ${columnLabel}`}
               onClick={handleRemoveAssignment}
             />
@@ -173,7 +180,12 @@ const ScheduleGridCell = memo(({
                       svg={X}
                       iconSize="sm"
                       padding="p-0"
-                      className="shrink-0 text-amber-100 hover:text-white"
+                      className={cn(
+                        "shrink-0 text-amber-100 transition-opacity hover:text-white",
+                        scheduleCellRemoveButtonVisibilityClassName,
+                        scheduleCellRemoveButtonTouchClassName,
+                        isActiveSlot && "opacity-100",
+                      )}
                       aria-label={`Remove ${shadowKindLabel(shadow.kind).toLowerCase()} ${memberName(member)}`}
                       onClick={() =>
                         void handlersRef?.current?.commitShadowAssignment({

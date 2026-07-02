@@ -57,6 +57,7 @@ import {
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
+import { registerAuthRecoveryHandler } from "../api/authErrorBus";
 import type {
   ChurchBranding,
   EmailCodeChallengeFields,
@@ -694,6 +695,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     storageListenerCleanupRef.current = undefined;
   }, []);
   const refreshAuthBootstrapPromiseRef = useRef<Promise<void> | null>(null);
+  const recoverAuthSessionPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -822,6 +824,57 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
     }
   }, []);
+
+  const recoverAuthSessionForApi = useCallback(async () => {
+    if (recoverAuthSessionPromiseRef.current) {
+      return recoverAuthSessionPromiseRef.current;
+    }
+
+    const promise = (async () => {
+      const persistedUser = await waitForHumanAuthUser();
+      if (!persistedUser) return false;
+
+      try {
+        const idToken = await persistedUser.getIdToken(true);
+        const restoredSession = await createHumanSession(
+          {
+            idToken,
+            deviceId: getOrCreateDeviceId(),
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            deviceLabel: getTrustedDeviceLabel(),
+            requestNewCode: false,
+          },
+          { notifyAuthError: false },
+        );
+
+        if (!restoredSession.bootstrap) return false;
+
+        applyBootstrap(restoredSession.bootstrap);
+        if (isPackagedElectronRenderer() && restoredSession.humanApiToken) {
+          setHumanApiToken(restoredSession.humanApiToken);
+        }
+        setAuthServerStatus("online");
+        setAuthServerRetryCount(0);
+        setAuthError("");
+        return true;
+      } catch (error) {
+        console.error("Silent auth session recovery failed:", error);
+        return false;
+      }
+    })();
+
+    recoverAuthSessionPromiseRef.current = promise;
+    try {
+      return await promise;
+    } finally {
+      recoverAuthSessionPromiseRef.current = null;
+    }
+  }, [applyBootstrap, waitForHumanAuthUser]);
+
+  useEffect(() => {
+    return registerAuthRecoveryHandler(recoverAuthSessionForApi);
+  }, [recoverAuthSessionForApi]);
 
   const finalizeHumanSignIn = useCallback(
     ({

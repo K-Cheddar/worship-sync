@@ -8,6 +8,7 @@ import type { TeamPosition, TeamRosterMember } from "../../../api/authTypes";
 import EntityListSearch from "../components/EntityListSearch";
 import MemberChip from "./MemberChip";
 import ScheduleMembersPositionFilter from "./ScheduleMembersPositionFilter";
+import ScheduleMembersSort from "./ScheduleMembersSort";
 import ScheduleSlotContextHeader from "./ScheduleSlotContextHeader";
 import { useScheduleMemberPicker } from "./useScheduleMemberPicker";
 import {
@@ -15,7 +16,9 @@ import {
   getScheduleMemberPositionNames,
   memberMatchesScheduleQuery,
   scheduleMemberName,
-  sortTeamRosterMembersByScheduleDisplay,
+  sortScheduleMembersForPanel,
+  defaultScheduleMembersSort,
+  type ScheduleMembersSort as ScheduleMembersSortState,
 } from "../teamsUtils";
 import ScheduleMemberPositionGroupDivider from "./ScheduleMemberPositionGroupDivider";
 import { shouldShowScheduleMemberEligibilityGroupDivider, shouldShowScheduleMemberPositionGroupDivider } from "./scheduleMemberPickerUtils";
@@ -86,6 +89,9 @@ const ScheduleMembersPanel = ({
   const searchValue = isAssignMode ? assignmentQuery : membersPanelQuery;
   const onSearchChange = isAssignMode ? onAssignmentQueryChange : onMembersPanelQueryChange;
   const [expandedMemberIds, setExpandedMemberIds] = useState<string[]>([]);
+  const [membersSort, setMembersSort] = useState<ScheduleMembersSortState>(
+    defaultScheduleMembersSort,
+  );
   const expandedMemberIdSet = new Set(expandedMemberIds);
 
   useEffect(() => {
@@ -181,7 +187,7 @@ const ScheduleMembersPanel = ({
     filterByQuery: isAssignMode,
   });
 
-  const browseMembers = sortTeamRosterMembersByScheduleDisplay(
+  const browseMembers = sortScheduleMembersForPanel(
     activeTeamMembers.filter((member) => {
       const matchesPositionFilter =
         memberPositionFilterIds.length === 0 ||
@@ -191,7 +197,9 @@ const ScheduleMembersPanel = ({
       if (!matchesPositionFilter) return false;
       return memberMatchesScheduleQuery(member, membersPanelQuery, duplicateFirstNames);
     }),
+    membersSort,
     duplicateFirstNames,
+    scheduleAssignmentCounts,
   );
 
   const renderBrowseList = () => {
@@ -280,16 +288,21 @@ const ScheduleMembersPanel = ({
       <Button
         type="button"
         variant="tertiary"
-        padding="px-1 py-1"
+        padding="p-0"
         className={cn(
-          "absolute left-0 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
+          "absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border bg-gray-950 shadow-sm",
           isAssignMode ? "border-orange-400/40" : "border-gray-700",
         )}
-        svg={open ? ChevronRight : ChevronLeft}
         aria-expanded={open}
         aria-label={open ? "Hide members" : "Show members"}
         onClick={() => onOpenChange(!open)}
-      />
+      >
+        {open ? (
+          <ChevronRight className="size-4 shrink-0" aria-hidden />
+        ) : (
+          <ChevronLeft className="size-4 shrink-0" aria-hidden />
+        )}
+      </Button>
       {open ? (
         <div
           ref={panelRef}
@@ -321,12 +334,22 @@ const ScheduleMembersPanel = ({
 
           {activeTeamMembers.length > 0 ? (
             <div className="mt-3 flex shrink-0 flex-col gap-2">
-              <ScheduleMembersPositionFilter
-                panelRef={panelRef}
-                positions={schedulePositions}
-                value={memberPositionFilterIds}
-                onChange={onMemberPositionFilterChange}
-              />
+              <div className="flex gap-2">
+                <ScheduleMembersPositionFilter
+                  panelRef={panelRef}
+                  positions={schedulePositions}
+                  value={memberPositionFilterIds}
+                  onChange={onMemberPositionFilterChange}
+                  className="min-w-0 flex-1"
+                />
+                {!isAssignMode ? (
+                  <ScheduleMembersSort
+                    panelRef={panelRef}
+                    value={membersSort}
+                    onChange={setMembersSort}
+                  />
+                ) : null}
+              </div>
               <EntityListSearch
                 label={isAssignMode ? "Search members to assign" : "Members"}
                 value={searchValue}

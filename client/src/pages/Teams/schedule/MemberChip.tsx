@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Highlighter, Info } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
+import { scheduleMemberAssignmentCountLabel } from "../teamsUtils";
 import { WantsThisBadge } from "./WantsThisIndicator";
 
 type MemberChipProps = {
@@ -39,7 +40,7 @@ const MemberChip = ({
   onToggleExpand,
   onSelect,
 }: MemberChipProps) => {
-  const assignmentCountLabel = `assigned ${assignmentCount} ${assignmentCount === 1 ? "time" : "times"} on this schedule`;
+  const assignmentCountLabel = scheduleMemberAssignmentCountLabel(assignmentCount);
   const selectable = Boolean(onSelect);
   const showSecondRow = Boolean(subtitle || desiresPosition);
 
@@ -106,7 +107,8 @@ const MemberChip = ({
                     ? "bg-orange-400/20 text-orange-50"
                     : "text-gray-400",
                 )}
-                aria-hidden
+                title={assignmentCountLabel}
+                aria-label={assignmentCountLabel}
               >
                 {assignmentCount}
               </span>
@@ -133,7 +135,8 @@ const MemberChip = ({
                   ? "border-orange-400/35 bg-orange-400/20 text-orange-50"
                   : "border-gray-600 bg-gray-900/60 text-gray-400",
               )}
-              aria-hidden
+              title={assignmentCountLabel}
+              aria-label={assignmentCountLabel}
             >
               {assignmentCount}
             </span>

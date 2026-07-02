@@ -87,6 +87,7 @@ import {
   servicePlanningImportSlice,
   refreshPreviewSongMatches,
 } from "./servicePlanningImportSlice";
+import { generatedCreditsSlice } from "./generatedCreditsSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
@@ -2618,6 +2619,7 @@ const combinedReducers = combineReducers({
   overlayTemplates: overlayTemplatesSlice.reducer,
   autosaveIndicator: autosaveIndicatorSlice.reducer,
   servicePlanningImport: servicePlanningImportSlice.reducer,
+  generatedCredits: generatedCreditsSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

@@ -97,6 +97,7 @@ import { useGenerateCreditsFromOverlays } from "../../hooks/useGenerateCreditsFr
 import { setOverlayCreditsSettingsDrawerOpen } from "../../store/preferencesSlice";
 import { setServicePlanningFloatingWindowDismissed, setServicePlanningServiceOutline } from "../../store/servicePlanningImportSlice";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
+import GeneratedCreditsFloatingWindow from "./GeneratedCreditsFloatingWindow";
 import { useAboutChangelogMenu } from "../../hooks/useAboutChangelogMenu";
 
 const cleanForRtdb = (obj: object) =>
@@ -849,6 +850,7 @@ const CreditsEditor = ({
       {!embeddedInOverlayController && hasServicePlanningImportSlice && (
         <ServicePlanningSyncFloatingWindow hideOutlineActions />
       )}
+      {!embeddedInOverlayController && <GeneratedCreditsFloatingWindow />}
       {!embeddedInOverlayController && aboutChangelogModals}
     </div>
   );

@@ -1,5 +1,5 @@
 import { TimerInfo } from "../types";
-import { serverNow } from "./serverTime";
+import { serverDate, serverNow } from "./serverTime";
 
 /**
  * Merges local and remote timers, prioritizing timers from the specified host
@@ -53,9 +53,10 @@ export const calculateEndTime = (
       const [hours, minutes] = (timerInfo.countdownTime || "00:00")
         .split(":")
         .map(Number);
-      const targetTime = new Date();
+      const now = serverDate();
+      const targetTime = new Date(now);
       targetTime.setHours(hours, minutes, 0, 0);
-      if (targetTime < new Date()) {
+      if (targetTime < now) {
         targetTime.setDate(targetTime.getDate() + 1);
       }
       return targetTime.toISOString();

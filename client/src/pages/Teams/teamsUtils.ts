@@ -669,6 +669,63 @@ export const countScheduleAssignmentsForMember = (
   }, 0);
 };
 
+export const scheduleMemberAssignmentCountLabel = (count: number) =>
+  `Assigned ${count} ${count === 1 ? "time" : "times"} on this schedule`;
+
+export type ScheduleMembersSortField = "name" | "assignmentCount";
+export type ScheduleMembersSortDirection = "asc" | "desc";
+
+export type ScheduleMembersSort = {
+  field: ScheduleMembersSortField;
+  direction: ScheduleMembersSortDirection;
+};
+
+export const defaultScheduleMembersSort = (): ScheduleMembersSort => ({
+  field: "name",
+  direction: "asc",
+});
+
+export const isDefaultScheduleMembersSort = (sort: ScheduleMembersSort) =>
+  sort.field === "name" && sort.direction === "asc";
+
+export const formatScheduleMembersSortLabel = (sort: ScheduleMembersSort) => {
+  if (sort.field === "name") {
+    return sort.direction === "asc" ? "Name, A to Z" : "Name, Z to A";
+  }
+  return sort.direction === "desc"
+    ? "Times on schedule, most first"
+    : "Times on schedule, least first";
+};
+
+export const sortScheduleMembersForPanel = (
+  members: TeamRosterMember[],
+  sort: ScheduleMembersSort,
+  duplicateFirstNames: Set<string>,
+  assignmentCounts: Map<string, number>,
+) => {
+  const sorted = [...members];
+
+  if (sort.field === "name") {
+    return sorted.sort((a, b) => {
+      const nameDelta = compareTeamRosterMembersByScheduleDisplay(
+        a,
+        b,
+        duplicateFirstNames,
+      );
+      return sort.direction === "asc" ? nameDelta : -nameDelta;
+    });
+  }
+
+  const countDirection = sort.direction === "asc" ? 1 : -1;
+  return sorted.sort((a, b) => {
+    const countDelta =
+      (assignmentCounts.get(a.memberId) || 0) -
+      (assignmentCounts.get(b.memberId) || 0);
+    if (countDelta !== 0) return countDelta * countDirection;
+    return compareTeamRosterMembersByScheduleDisplay(a, b, duplicateFirstNames);
+  });
+};
+
 export const entityMatchesQuery = (
   values: Array<string | undefined | null>,
   query: string,

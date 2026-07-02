@@ -424,9 +424,12 @@ describe("BoardControllerContent", () => {
       await user.click(
         await screen.findByRole("button", { name: /Reset presentation text size/i }),
       );
-      expect(mockUpdateBoardPresentationFontScale).toHaveBeenCalledWith(
-        "sunday",
-        1,
+      // The font-size control debounces the persist into a single write.
+      await waitFor(() =>
+        expect(mockUpdateBoardPresentationFontScale).toHaveBeenCalledWith(
+          "sunday",
+          1,
+        ),
       );
 
       await user.click(

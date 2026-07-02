@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import GlobalInfoProvider from "./globalInfo";
 import { GlobalInfoContext } from "./globalInfo";
 import * as authApi from "../api/auth";
+import { requestAuthRecovery } from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
 import * as environmentUtils from "../utils/environment";
 import {
@@ -51,6 +52,7 @@ const signInWithRedirectMock = jest.fn<any, any[]>(() => Promise.resolve());
 const fetchSignInMethodsForEmailMock = jest.fn<any, any[]>(() => Promise.resolve([]));
 const linkWithCredentialMock = jest.fn<any, any[]>(() => Promise.resolve({}));
 const updateProfileMock = jest.fn<any, any[]>(() => Promise.resolve());
+const reloadMock = jest.fn<any, any[]>(() => Promise.resolve());
 const googleCredentialFromErrorMock = jest.fn<any, any[]>();
 const googleCredentialFactoryMock = jest.fn(
   (idToken?: string | null, accessToken?: string | null) => ({
@@ -178,6 +180,7 @@ jest.mock("firebase/auth", () => ({
   signInWithRedirect: (auth: unknown, provider: unknown) =>
     signInWithRedirectMock(auth, provider),
   signOut: (auth?: unknown) => signOutMock(auth),
+  reload: (user: unknown) => reloadMock(user),
   createUserWithEmailAndPassword: jest.fn(() => Promise.resolve({ user: {} })),
   updateProfile: (user: unknown, profile: unknown) =>
     updateProfileMock(user, profile),
@@ -1128,6 +1131,8 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     fetchSignInMethodsForEmailMock.mockResolvedValue([]);
     linkWithCredentialMock.mockReset();
     linkWithCredentialMock.mockResolvedValue({ success: true });
+    reloadMock.mockReset();
+    reloadMock.mockResolvedValue(undefined);
     googleCredentialFromErrorMock.mockReset();
     microsoftCredentialFromErrorMock.mockReset();
     googleCredentialFactoryMock.mockClear();
@@ -1151,6 +1156,40 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     });
     expect(getPendingLinkState()).toBeNull();
     expect(getPendingLinkCredentialState()).toBeNull();
+  });
+
+  it("silently restores a server session for API retries from a persisted Firebase user", async () => {
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("none");
+    });
+
+    const persistedUser = {
+      uid: "user-restore",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-retry-token")),
+      providerData: [{ providerId: "google.com" }],
+    };
+    mockHumanAuth.currentUser = persistedUser;
+
+    let recovered = false;
+    await act(async () => {
+      recovered = await requestAuthRecovery();
+    });
+
+    expect(recovered).toBe(true);
+    expect(persistedUser.getIdToken).toHaveBeenCalledWith(true);
+    expect(authApi.createHumanSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idToken: "firebase-retry-token",
+        requestNewCode: false,
+      }),
+      { notifyAuthError: false },
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("human");
+    });
+    expect(screen.getByTestId("church-id")).toHaveTextContent("church-1");
   });
 
   it("restores a pending provider link after remount and links on password sign-in", async () => {

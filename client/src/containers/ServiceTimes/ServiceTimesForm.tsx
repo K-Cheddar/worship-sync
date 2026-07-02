@@ -29,6 +29,7 @@ import { ordinals, weekdays } from "./utils";
 import { cn } from "@/utils/cnHelper";
 import StreamPreview from "./StreamPreview";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { serverDate } from "../../utils/serverTime";
 
 const DEFAULT_COLOR = "#ffffff";
 const DEFAULT_BG = "#000000a1";
@@ -153,7 +154,7 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
       timeFontSize: timeSize,
       shouldShowName,
       overrideDateTimeISO: undefined,
-      updatedAt: new Date().toISOString(),
+      updatedAt: serverDate().toISOString(),
     });
   };
 

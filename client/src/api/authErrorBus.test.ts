@@ -1,4 +1,9 @@
-import { notifyAuthError, registerAuthErrorHandler } from "./authErrorBus";
+import {
+  notifyAuthError,
+  registerAuthErrorHandler,
+  registerAuthRecoveryHandler,
+  requestAuthRecovery,
+} from "./authErrorBus";
 
 describe("authErrorBus", () => {
   it("invokes every registered handler on notifyAuthError", () => {
@@ -40,5 +45,31 @@ describe("authErrorBus", () => {
 
     unsub1();
     unsub2();
+  });
+
+  it("returns true when a recovery handler restores the session", async () => {
+    const failing = jest.fn(() => {
+      throw new Error("nope");
+    });
+    const healthy = jest.fn(() => Promise.resolve(true));
+    const unsub1 = registerAuthRecoveryHandler(failing);
+    const unsub2 = registerAuthRecoveryHandler(healthy);
+
+    await expect(requestAuthRecovery()).resolves.toBe(true);
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(healthy).toHaveBeenCalledTimes(1);
+
+    unsub1();
+    unsub2();
+  });
+
+  it("returns false when no recovery handler can restore the session", async () => {
+    const handler = jest.fn(() => false);
+    const unsubscribe = registerAuthRecoveryHandler(handler);
+
+    await expect(requestAuthRecovery()).resolves.toBe(false);
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
   });
 });

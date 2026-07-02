@@ -16,13 +16,19 @@ import {
   ClipboardList,
   ClipboardPaste,
   Copy,
+  LayoutGrid,
   Link2,
+  MoreHorizontal,
   Plus,
+  Printer,
+  Redo2,
   RefreshCw,
+  Undo2,
   UserX,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
-import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
+import Menu from "../../../components/Menu/Menu";
+import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
 import {
@@ -70,6 +76,7 @@ import type {
   TeamRecord,
   TeamRosterMember,
   TeamSchedule,
+  TeamScheduleAssignments,
   TeamScheduleAttendanceStatus,
   TeamScheduleOccurrence,
   TeamScheduleShadowKind,
@@ -77,7 +84,23 @@ import type {
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
-import { panelClassName, panelHeaderPaddingClassName, panelShellClassName, scheduleGridScrollClassName, scheduleTabRootClassName, scheduleWorkspaceBodyRowClassName, scheduleWorkspaceMainColumnClassName, scheduleWorkspacePanelClassName, scheduleWorkspaceTabContentClassName, scheduleWorkspaceTabsClassName } from "../teamsStyles";
+import {
+  panelClassName,
+  panelHeaderPaddingClassName,
+  panelShellClassName,
+  scheduleGridScrollClassName,
+  scheduleGridFrameClassName,
+  scheduleTabRootClassName,
+  scheduleWorkspaceBodyRowClassName,
+  scheduleWorkspaceMainColumnClassName,
+  scheduleWorkspacePanelClassName,
+  scheduleWorkspaceTabContentClassName,
+  scheduleWorkspaceTabsClassName,
+  teamsCreatePanelFormClassName,
+  teamsCreatePanelFormOpenMobileClassName,
+  teamsCreatePanelListClosedClassName,
+  teamsManagerPageRootClassName,
+} from "../teamsStyles";
 import type {
   PendingCellAssignment,
   TeamsData,
@@ -94,6 +117,7 @@ import {
   normalizeAssignmentCell,
   scheduleMemberName,
   serializeAssignmentCell,
+  shadowKindLabel,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
@@ -116,6 +140,14 @@ import SchedulePasteRowDialog from "./SchedulePasteRowDialog";
 import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
 import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
+import {
+  cellsMatch,
+  diffCellToVerbs,
+  type ScheduleAssignmentVerb,
+  type ScheduleCellChange,
+  type ScheduleUndoEntry,
+} from "./scheduleUndo";
+import { useScheduleUndoStack } from "./useScheduleUndoStack";
 import {
   buildOccurrenceSummaryGroups,
   formatOccurrenceMessage,
@@ -173,7 +205,6 @@ const ScheduleTab = ({
   onTeamSaved,
   onScheduleDraftChanged,
   onScheduleDraftFlush,
-  onRefresh,
   trackTeamsSave,
 }: {
   data: TeamsData;
@@ -189,7 +220,6 @@ const ScheduleTab = ({
   onTeamSaved: (team: TeamRecord, replaceId?: string) => void;
   onScheduleDraftChanged: (draftKey: string, draft: TeamSchedulePayload) => void;
   onScheduleDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;
-  onRefresh: () => void;
   // Registers an in-flight schedule save with the page so inbound sync stays
   // gated until it settles (prevents a poll/SSE from reverting pending edits).
   trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
@@ -277,6 +307,33 @@ const ScheduleTab = ({
     return !occurrenceIdsMatch(stored, regeneratedOccurrences);
   }, [canEdit, regeneratedOccurrences, selectedSchedule]);
   const [applyingGrouping, setApplyingGrouping] = useState(false);
+  // Spreadsheet-style undo/redo for the assignment grid. The stack is
+  // session-local and per-schedule (reset when the active schedule changes or an
+  // occurrence-shape change invalidates cell keys). Applying an entry lives in
+  // applyUndoEntry, which reuses the same per-cell save path as manual edits.
+  const {
+    canUndo,
+    canRedo,
+    undoLabel,
+    redoLabel,
+    record: recordUndoEntry,
+    takeUndo,
+    takeRedo,
+    pushUndo,
+    pushRedo,
+    reset: resetUndoHistory,
+  } = useScheduleUndoStack();
+  // Export/share actions live in a toolbar overflow menu; the PDF preview modal is
+  // rendered headless and opened from that menu item.
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const undoShortcut = useMemo(() => {
+    const isMac =
+      typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+    return {
+      undo: isMac ? "⌘Z" : "Ctrl+Z",
+      redo: isMac ? "⌘⇧Z" : "Ctrl+Shift+Z",
+    };
+  }, []);
   // Re-generate occurrences and re-key assignments/attendance onto them, then
   // persist — the one-click path behind the "schedule out of date" nudge.
   const refreshScheduleOccurrences = useCallback(async () => {
@@ -293,6 +350,9 @@ const ScheduleTab = ({
       attendance: selectedSchedule.attendance || {},
     });
     setApplyingGrouping(true);
+    // Re-keying occurrences changes every cell key, so the current undo history no
+    // longer maps onto the grid — drop it rather than let it target stale cells.
+    resetUndoHistory();
     onScheduleSaved({
       ...selectedSchedule,
       occurrences: regeneratedOccurrences,
@@ -328,6 +388,7 @@ const ScheduleTab = ({
     churchId,
     onScheduleSaved,
     regeneratedOccurrences,
+    resetUndoHistory,
     selectedSchedule,
     showToast,
   ]);
@@ -379,6 +440,14 @@ const ScheduleTab = ({
     return counts;
   }, [activeTeamMembers, selectedSchedule?.assignments]);
   const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    if (!showForm) return;
+    const scrollContainer = document.querySelector(".teams-section-scroll");
+    if (scrollContainer instanceof HTMLElement) {
+      scrollContainer.scrollTop = 0;
+    }
+  }, [showForm]);
   const [membersPanelOpen, setMembersPanelOpen] = useState(true);
   const pendingScheduleSlotRestoreRef = useRef<{
     activeSlot: ScheduleFocusedCell;
@@ -483,7 +552,8 @@ const ScheduleTab = ({
     setActiveSlot(null);
     setAssignmentQuery("");
     setPickerAnchorEl(null);
-  }, [selectedScheduleId]);
+    resetUndoHistory();
+  }, [resetUndoHistory, selectedScheduleId]);
 
   const clearActiveSlot = useCallback(() => {
     setActiveSlot(null);
@@ -493,6 +563,176 @@ const ScheduleTab = ({
     setPendingCellAssignment(null);
     setMemberPositionFilterIds([]);
   }, []);
+
+  const positionNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    schedulePositions.forEach((position) => map.set(position.positionId, position.name));
+    return map;
+  }, [schedulePositions]);
+
+  const describeMemberName = useCallback(
+    (memberId: string | null | undefined) => {
+      if (!memberId) return "member";
+      const member = data.members.find((item) => item.memberId === memberId);
+      return member
+        ? scheduleMemberName(member, duplicateScheduleFirstNames)
+        : "member";
+    },
+    [data.members, duplicateScheduleFirstNames],
+  );
+
+  // Push a completed assignment edit onto the undo stack. Cells whose value did
+  // not actually change are dropped so an undo never issues an empty write.
+  const recordAssignmentChange = useCallback(
+    (label: string, changes: ScheduleCellChange[]) => {
+      if (!selectedSchedule) return;
+      const meaningful = changes.filter(
+        (change) => !cellsMatch(change.before, change.after),
+      );
+      if (meaningful.length === 0) return;
+      recordUndoEntry({
+        scheduleId: selectedSchedule.scheduleId,
+        label,
+        changes: meaningful,
+      });
+    },
+    [recordUndoEntry, selectedSchedule],
+  );
+
+  // Re-apply one side of an undo entry against the live grid. Each cell is guarded
+  // against concurrent edits: if a teammate changed a cell since the entry was
+  // recorded, that cell is skipped rather than clobbered. Returns whether any cell
+  // was applied (false ⇒ the entry is stale and should be discarded).
+  const applyUndoEntry = useCallback(
+    (entry: ScheduleUndoEntry, direction: "undo" | "redo") => {
+      if (!canEdit || !selectedSchedule) return false;
+      if (selectedSchedule.scheduleId !== entry.scheduleId) return false;
+      const previousSchedule = selectedSchedule;
+      let nextAssignments: TeamScheduleAssignments = {
+        ...(selectedSchedule.assignments || {}),
+      };
+      const verbs: ScheduleAssignmentVerb[] = [];
+      let applied = 0;
+      let skipped = 0;
+      // Undo restores each cell's "before"; redo re-applies its "after". Process
+      // undo in reverse so a member is cleared from a slot before being restored
+      // to another (mirrors how the forward edit was ordered).
+      const ordered =
+        direction === "undo" ? [...entry.changes].reverse() : entry.changes;
+      for (const change of ordered) {
+        const expected = direction === "undo" ? change.after : change.before;
+        const desired = direction === "undo" ? change.before : change.after;
+        const liveCell = nextAssignments[change.occurrenceId]?.[change.cellKey] ?? "";
+        if (!cellsMatch(liveCell, expected)) {
+          skipped += 1;
+          continue;
+        }
+        const row = { ...(nextAssignments[change.occurrenceId] || {}) };
+        const serialized = serializeAssignmentCell(
+          normalizeAssignmentCell(desired || undefined),
+        );
+        if (serialized) {
+          row[change.cellKey] = serialized;
+        } else {
+          delete row[change.cellKey];
+        }
+        if (Object.keys(row).length > 0) {
+          nextAssignments[change.occurrenceId] = row;
+        } else {
+          const trimmed = { ...nextAssignments };
+          delete trimmed[change.occurrenceId];
+          nextAssignments = trimmed;
+        }
+        verbs.push(
+          ...diffCellToVerbs(liveCell, desired, {
+            serviceId: change.occurrenceId,
+            positionSlotKey: change.cellKey,
+            serviceDate: change.serviceDate,
+          }),
+        );
+        applied += 1;
+      }
+      if (skipped > 0) {
+        showToast(
+          "Some changes were edited by someone else and were left as they are.",
+          "neutral",
+        );
+      }
+      if (applied === 0) return false;
+      const mutationSeq = ++scheduleMutationSeqRef.current;
+      onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+      clearActiveSlot();
+      void enqueueAssignmentSave(async () => {
+        try {
+          for (const verb of verbs) {
+            await updateTeamScheduleAssignment(
+              churchId,
+              previousSchedule.scheduleId,
+              verb,
+            );
+          }
+        } catch (error) {
+          if (scheduleMutationSeqRef.current === mutationSeq) {
+            onScheduleSaved(previousSchedule);
+          }
+          showApiErrorToast(showToast, error, "Could not undo that change.");
+        }
+      });
+      return true;
+    },
+    [
+      canEdit,
+      churchId,
+      clearActiveSlot,
+      enqueueAssignmentSave,
+      onScheduleSaved,
+      selectedSchedule,
+      showToast,
+    ],
+  );
+
+  const handleUndo = useCallback(() => {
+    const entry = takeUndo();
+    if (!entry) return;
+    if (applyUndoEntry(entry, "undo")) pushRedo(entry);
+  }, [applyUndoEntry, pushRedo, takeUndo]);
+
+  const handleRedo = useCallback(() => {
+    const entry = takeRedo();
+    if (!entry) return;
+    if (applyUndoEntry(entry, "redo")) pushUndo(entry);
+  }, [applyUndoEntry, pushUndo, takeRedo]);
+
+  // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
+  // grid, and never while typing in a field (so native field undo still works).
+  useEffect(() => {
+    if (!canEdit || scheduleWorkspaceTab !== "schedule") return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key !== "z" && key !== "y") return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+      event.preventDefault();
+      if (key === "y" || event.shiftKey) {
+        handleRedo();
+      } else {
+        handleUndo();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [canEdit, handleRedo, handleUndo, scheduleWorkspaceTab]);
 
   const activateSlot = useCallback(
     (
@@ -800,11 +1040,43 @@ const ScheduleTab = ({
     } else {
       delete nextAssignments[serviceId];
     }
+
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+    const undoChanges: ScheduleCellChange[] = [];
+    if (sourceServiceId && sourcePositionSlotKey) {
+      const sourceOccurrence = scheduleOccurrences.find(
+        (item) => item.occurrenceId === sourceServiceId,
+      );
+      undoChanges.push({
+        occurrenceId: sourceServiceId,
+        cellKey: sourcePositionSlotKey,
+        serviceDate: sourceOccurrence ? getOccurrenceDate(sourceOccurrence) : "",
+        before:
+          previousSchedule.assignments?.[sourceServiceId]?.[sourcePositionSlotKey] ?? "",
+        after: nextAssignments[sourceServiceId]?.[sourcePositionSlotKey] ?? "",
+      });
+    }
+    undoChanges.push({
+      occurrenceId: serviceId,
+      cellKey,
+      serviceDate,
+      before: previousSchedule.assignments?.[serviceId]?.[cellKey] ?? "",
+      after: nextAssignments[serviceId]?.[cellKey] ?? "",
+    });
+    const positionName = positionNameById.get(basePositionId) || "position";
+    recordAssignmentChange(
+      sourceServiceId
+        ? `move ${describeMemberName(memberId)}`
+        : memberId
+          ? `assign ${describeMemberName(memberId)} to ${positionName}`
+          : `remove ${describeMemberName(targetCell.primaryMemberId)} from ${positionName}`,
+      undoChanges,
+    );
+
     const mutationSeq = ++scheduleMutationSeqRef.current;
     onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
     clearActiveSlot();
 
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
     await enqueueAssignmentSave(async () => {
       try {
         await updateTeamScheduleAssignment(
@@ -1018,13 +1290,27 @@ const ScheduleTab = ({
     } else {
       delete nextAssignments[serviceId];
     }
+
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+    recordAssignmentChange(
+      `${action === "add" ? "add" : "remove"} ${describeMemberName(memberId)} as ${shadowKindLabel(shadowKind).toLowerCase()}`,
+      [
+        {
+          occurrenceId: serviceId,
+          cellKey,
+          serviceDate,
+          before: previousSchedule.assignments?.[serviceId]?.[cellKey] ?? "",
+          after: nextAssignments[serviceId]?.[cellKey] ?? "",
+        },
+      ],
+    );
+
     const mutationSeq = ++scheduleMutationSeqRef.current;
     onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
     if (action === "add") {
       clearActiveSlot();
     }
 
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
     await enqueueAssignmentSave(async () => {
       try {
         await updateTeamScheduleAssignment(
@@ -2195,111 +2481,586 @@ const ScheduleTab = ({
       </div>
     ) : null;
 
+  const scheduleEditForm = (
+    <ScheduleEditForm
+      draftKey={draftKey}
+      persistedDraft={persistedDraft}
+      selectedSchedule={selectedSchedule}
+      defaultTeamId={defaultTeamId}
+      defaultServiceIds={defaultServiceIds}
+      defaultRange={defaultRange}
+      services={data.services}
+      activeTeams={activeTeams}
+      churchId={churchId}
+      canEdit={canEdit}
+      onDraftChange={onScheduleDraftChanged}
+      onDraftFlush={onScheduleDraftFlush}
+      onScheduleSaved={onScheduleSaved}
+      onScheduleRemoved={onScheduleRemoved}
+      setSelectedScheduleId={setSelectedScheduleId}
+      onCancel={() => setShowForm(false)}
+    />
+  );
+
   return (
     <div className={scheduleTabRootClassName}>
-      <section className={cn(panelShellClassName, !showForm && "shrink-0")}>
-        <div className={cn(panelHeaderPaddingClassName, showForm ? "pb-0" : "pb-4")}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">Schedules</h2>
-          </div>
-          <p className="mt-1 text-sm text-gray-400">
-            Assign people to services by position.
-          </p>
-          <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <Select
-                className="min-w-56"
-                label="Open schedule"
-                value={selectedSchedule?.scheduleId || ""}
-                onChange={(scheduleId) => {
-                  setSelectedScheduleId(scheduleId);
-                  setShowForm(false);
-                }}
-                options={schedules.map((schedule) => ({
-                  label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
-                  value: schedule.scheduleId,
-                }))}
-              />
-              {canEdit ? (
-                <Button
-                  variant="secondary"
-                  svg={Plus}
-                  iconSize="sm"
-                  onClick={() => {
-                    setSelectedScheduleId("");
-                    setShowForm(true);
-                  }}
-                >
-                  New schedule
-                </Button>
-              ) : null}
-              {canEdit && selectedSchedule && !showForm ? (
-                <Button variant="tertiary" iconSize="sm" onClick={() => setShowForm(true)}>
-                  Edit schedule
-                </Button>
-              ) : null}
-              {canEdit && selectedSchedule && !showForm ? (
-                <Button
-                  variant="tertiary"
-                  svg={Copy}
-                  iconSize="sm"
-                  onClick={handleCopySchedule}
-                >
-                  Copy schedule
-                </Button>
-              ) : null}
-            </div>
-            <Button variant="tertiary" svg={RefreshCw} iconSize="sm" onClick={onRefresh}>
-              Refresh
-            </Button>
+      {showForm ? (
+        <div
+          className={cn(
+            teamsManagerPageRootClassName,
+            teamsCreatePanelFormOpenMobileClassName,
+          )}
+        >
+          <div
+            className={cn(
+              "w-full min-w-0",
+              teamsCreatePanelFormClassName,
+              "lg:mx-auto",
+            )}
+          >
+            {scheduleEditForm}
           </div>
         </div>
-
-        {showForm ? (
-          <div className="border-t border-gray-700/50 px-4 pb-4">
-            <ScheduleEditForm
-              draftKey={draftKey}
-              persistedDraft={persistedDraft}
-              selectedSchedule={selectedSchedule}
-              defaultTeamId={defaultTeamId}
-              defaultServiceIds={defaultServiceIds}
-              defaultRange={defaultRange}
-              services={data.services}
-              activeTeams={activeTeams}
-              churchId={churchId}
-              canEdit={canEdit}
-              onDraftChange={onScheduleDraftChanged}
-              onDraftFlush={onScheduleDraftFlush}
-              onScheduleSaved={onScheduleSaved}
-              onScheduleRemoved={onScheduleRemoved}
-              setSelectedScheduleId={setSelectedScheduleId}
-              onCancel={() => setShowForm(false)}
-            />
-          </div>
-        ) : null}
-      </section>
-
-      {canShowScheduleWorkspace ? (
-        <Tabs
-          value={scheduleWorkspaceTab}
-          onValueChange={handleScheduleWorkspaceTabChange}
-          className={scheduleWorkspaceTabsClassName}
-        >
-          <TabsList
-            variant="line"
-            className={cn(lineTabsListShellClassName, "shrink-0")}
-            aria-label="Schedule workspace"
+      ) : (
+        <>
+          <section
+            className={cn(
+              panelShellClassName,
+              "w-full shrink-0",
+              teamsCreatePanelListClosedClassName,
+            )}
           >
-            <TabsTrigger value="schedule" className={lineTabsTriggerClassName}>
-              Schedule
-            </TabsTrigger>
-            <TabsTrigger value="attendance" className={lineTabsTriggerClassName}>
-              Attendance
-            </TabsTrigger>
-          </TabsList>
+            <div className={cn(panelHeaderPaddingClassName, "pb-4")}>
+              <h2 className="text-lg font-semibold">Schedules</h2>
+              <p className="mt-1 text-sm text-gray-400">
+                Assign people to services by position.
+              </p>
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                <Select
+                  className="min-w-56"
+                  label="Open schedule"
+                  value={selectedSchedule?.scheduleId || ""}
+                  onChange={(scheduleId) => {
+                    setSelectedScheduleId(scheduleId);
+                    setShowForm(false);
+                  }}
+                  options={schedules.map((schedule) => ({
+                    label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
+                    value: schedule.scheduleId,
+                  }))}
+                />
+                {canEdit ? (
+                  <Button
+                    variant="secondary"
+                    svg={Plus}
+                    iconSize="sm"
+                    onClick={() => {
+                      setSelectedScheduleId("");
+                      setShowForm(true);
+                    }}
+                  >
+                    New schedule
+                  </Button>
+                ) : null}
+                {canEdit && selectedSchedule ? (
+                  <Button variant="tertiary" iconSize="sm" onClick={() => setShowForm(true)}>
+                    Edit schedule
+                  </Button>
+                ) : null}
+                {canEdit && selectedSchedule ? (
+                  <Button
+                    variant="tertiary"
+                    svg={Copy}
+                    iconSize="sm"
+                    onClick={handleCopySchedule}
+                  >
+                    Copy schedule
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </section>
 
-          <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
-            <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+          {canShowScheduleWorkspace ? (
+            <Tabs
+              value={scheduleWorkspaceTab}
+              onValueChange={handleScheduleWorkspaceTabChange}
+              className={scheduleWorkspaceTabsClassName}
+            >
+              <TabsList
+                variant="line"
+                className={cn(lineTabsListShellClassName, "shrink-0")}
+                aria-label="Schedule workspace"
+              >
+                <TabsTrigger value="schedule" className={lineTabsTriggerClassName}>
+                  Schedule
+                </TabsTrigger>
+                <TabsTrigger value="attendance" className={lineTabsTriggerClassName}>
+                  Attendance
+                </TabsTrigger>
+              </TabsList>
+
+              <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
+                <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-lg font-semibold">
+                      <Icon svg={CalendarDays} size="md" className="text-cyan-200" />
+                      Team schedule
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-400">
+                      Schedule members first, then switch to attendance when you are tracking one service.
+                    </p>
+                  </div>
+                  {scheduleWorkspaceTab === "schedule" ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Edit history: the frequent, in-flow controls stay visible. */}
+                      {canEdit ? (
+                        <>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="tertiary"
+                              svg={Undo2}
+                              iconSize="sm"
+                              disabled={!canUndo}
+                              onClick={handleUndo}
+                              aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
+                              title={
+                                undoLabel
+                                  ? `Undo ${undoLabel} (${undoShortcut.undo})`
+                                  : `Nothing to undo (${undoShortcut.undo})`
+                              }
+                            />
+                            <Button
+                              variant="tertiary"
+                              svg={Redo2}
+                              iconSize="sm"
+                              disabled={!canRedo}
+                              onClick={handleRedo}
+                              aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
+                              title={
+                                redoLabel
+                                  ? `Redo ${redoLabel} (${undoShortcut.redo})`
+                                  : `Nothing to redo (${undoShortcut.redo})`
+                              }
+                            />
+                          </div>
+                          {SHOW_PASTE_FROM_EXCEL ? (
+                            <Button
+                              variant="tertiary"
+                              svg={ClipboardPaste}
+                              iconSize="sm"
+                              onClick={() => setPasteRowOpen(true)}
+                            >
+                              Paste from Excel
+                            </Button>
+                          ) : null}
+                          <span
+                            aria-hidden
+                            className="mx-0.5 h-5 w-px self-center bg-gray-700"
+                          />
+                        </>
+                      ) : null}
+
+                      {/* View, export & share: infrequent actions in an overflow menu. */}
+                      <Menu
+                        align="end"
+                        menuItems={[
+                          {
+                            element: (
+                              <span className="flex items-center gap-2">
+                                <LayoutGrid className="h-4 w-4" aria-hidden />
+                                Layout
+                              </span>
+                            ),
+                            subItems: scheduleLayoutOptions.map((option) => ({
+                              text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
+                              onClick: () => setScheduleLayout(option.value),
+                            })),
+                          },
+                          {
+                            element: (
+                              <span className="flex items-center gap-2">
+                                <Printer className="h-4 w-4" aria-hidden />
+                                Save as PDF
+                              </span>
+                            ),
+                            onClick: () => setPdfPreviewOpen(true),
+                            disabled: !scheduleExportModel,
+                          },
+                          ...(canEdit
+                            ? [
+                              {
+                                element: (
+                                  <span className="flex items-center gap-2">
+                                    <Link2 className="h-4 w-4" aria-hidden />
+                                    {copyingLink ? "Copying…" : "Copy view-only link"}
+                                  </span>
+                                ),
+                                onClick: () => void copyPublicLink(),
+                                disabled: copyingLink,
+                                preventClose: copyingLink,
+                              },
+                            ]
+                            : []),
+                        ] as MenuItemType[]}
+                        TriggeringButton={
+                          <Button
+                            variant="tertiary"
+                            svg={MoreHorizontal}
+                            iconSize="sm"
+                            aria-label="More schedule actions"
+                          />
+                        }
+                      />
+                      <SchedulePdfExportButton
+                        model={scheduleExportModel}
+                        layout={scheduleLayout}
+                        hideTrigger
+                        open={pdfPreviewOpen}
+                        onOpenChange={setPdfPreviewOpen}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+
+                {occurrencesStale && !showForm ? (
+                  <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-amber-100">
+                      This schedule no longer matches its services (grouping or timing
+                      changed). Refresh it to update the rows — assignments are kept where
+                      the service and date still line up.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      iconSize="sm"
+                      disabled={applyingGrouping}
+                      onClick={() => void refreshScheduleOccurrences()}
+                    >
+                      {applyingGrouping ? "Refreshing..." : "Refresh schedule"}
+                    </Button>
+                  </div>
+                ) : null}
+
+                <ScheduleAssignmentProvider handlers={assignmentHandlers}>
+                  <div className={scheduleWorkspaceBodyRowClassName}>
+                    <div className={scheduleWorkspaceMainColumnClassName}>
+                      <TabsContent value="schedule" className={scheduleWorkspaceTabContentClassName}>
+                        {scheduleLayout === "transpose" ? (
+                          <div className={scheduleGridScrollClassName}>
+                            <div className={scheduleGridFrameClassName}>
+                              <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
+                                <thead>
+                                  <tr>
+                                    <th
+                                      rowSpan={2}
+                                      className={cn(
+                                        "sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200",
+                                        scheduleGridBottomBorderClassName,
+                                        schedulePositionColumnClassName,
+                                        scheduleCellPaddingClassName,
+                                      )}
+                                    >
+                                      Position
+                                    </th>
+                                    {occurrencesByService.map((group) => (
+                                      <th
+                                        key={group.serviceId}
+                                        colSpan={group.occurrences.length}
+                                        className={cn(
+                                          "border-b bg-gray-950 text-center font-semibold text-white",
+                                          scheduleServiceHeaderBottomBorderClassName,
+                                          scheduleServiceHeaderLeftBorderClassName,
+                                          scheduleCellPaddingClassName,
+                                          serviceHeaderRowTone,
+                                        )}
+                                      >
+                                        <span className="inline-flex items-center gap-x-2">
+                                          <span>{group.serviceName}</span>
+                                          {group.sharedTiming.sharedWeekday ? (
+                                            <span className="font-normal text-gray-300">
+                                              {group.sharedTiming.sharedWeekday}
+                                            </span>
+                                          ) : null}
+                                          {group.sharedTiming.sharedTime ? (
+                                            <span className="font-normal text-gray-300">
+                                              {group.sharedTiming.sharedTime}
+                                            </span>
+                                          ) : null}
+                                        </span>
+                                      </th>
+                                    ))}
+                                  </tr>
+                                  <tr>
+                                    {flatOccurrences.map(({ occurrence, group }) => (
+                                      <th
+                                        key={occurrence.occurrenceId}
+                                        className={cn(
+                                          "sticky top-0 z-10 border-b bg-gray-950 text-gray-200",
+                                          scheduleGridBottomBorderClassName,
+                                          scheduleGridLeftBorderClassName,
+                                          schedulePositionColumnClassName,
+                                          scheduleCellPaddingClassName,
+                                          getAxisHighlightClassName(occurrence.occurrenceId, undefined, {
+                                            surface: "header",
+                                          }),
+                                        )}
+                                      >
+                                        <ScheduleOccurrenceDateButton
+                                          label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
+                                          ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
+                                          className={cn(
+                                            detailOccurrenceId === occurrence.occurrenceId &&
+                                            "border-cyan-300 bg-cyan-500/20 text-white",
+                                          )}
+                                          onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
+                                        />
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {scheduleColumns.map((column, columnIndex) => {
+                                    const PositionIcon = resolvePositionLucideIcon(column.position.icon);
+                                    const rowTone = scheduleRowTone(columnIndex);
+                                    const stickyTone = scheduleStickyRowTone(columnIndex);
+                                    return (
+                                      <tr
+                                        key={column.columnKey}
+                                        className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}
+                                      >
+                                        <th
+                                          className={cn(
+                                            "sticky left-0 z-10 align-middle",
+                                            scheduleGridRightBorderClassName,
+                                            schedulePositionColumnClassName,
+                                            scheduleCellPaddingClassName,
+                                            stickyTone,
+                                            getAxisHighlightClassName(undefined, column.columnKey, {
+                                              rowIndex: columnIndex,
+                                              surface: "sticky",
+                                            }),
+                                          )}
+                                        >
+                                          <span className="inline-flex items-center gap-2">
+                                            {PositionIcon ? (
+                                              <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
+                                            ) : null}
+                                            <span className="font-medium text-white">{column.label}</span>
+                                            {column.position.archivedAt ? (
+                                              <span className="text-xs text-gray-500">(archived)</span>
+                                            ) : null}
+                                          </span>
+                                        </th>
+                                        {flatOccurrences.map(({ occurrence }) => (
+                                          <ScheduleGridCell
+                                            key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
+                                            {...buildGridCellProps(occurrence, column, rowTone)}
+                                          />
+                                        ))}
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={scheduleGridScrollClassName}>
+                            <div className={scheduleGridFrameClassName}>
+                              <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
+                                <colgroup>
+                                  <col style={{ minWidth: `${scheduleDateColumnMinCh}ch` }} />
+                                  {scheduleColumns.map((column) => (
+                                    <col
+                                      key={column.columnKey}
+                                      style={{
+                                        width: `${scheduleColumnMinCh.get(column.columnKey)}ch`,
+                                        minWidth: `${scheduleColumnMinCh.get(column.columnKey)}ch`,
+                                      }}
+                                    />
+                                  ))}
+                                </colgroup>
+                                <thead>
+                                  <tr>
+                                    <th className={cn("sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName)}>
+                                      Date &amp; time
+                                    </th>
+                                    {scheduleColumns.map((column) => {
+                                      const PositionIcon = resolvePositionLucideIcon(column.position.icon);
+                                      return (
+                                        <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
+                                          <span className="inline-flex items-center gap-2">
+                                            {PositionIcon ? <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
+                                            <span>{column.label}</span>
+                                            {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
+                                          </span>
+                                        </th>
+                                      );
+                                    })}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {occurrencesByService.map((group, groupIndex) => {
+                                    const service = data.services.find((item) => item.serviceId === group.serviceId);
+                                    return (
+                                      <Fragment key={group.serviceId}>
+                                        <tr className={cn("border-t", scheduleServiceHeaderTopBorderClassName, serviceHeaderRowTone)}>
+                                          <th colSpan={scheduleColumns.length + 1} className={cn("p-0 text-left align-top", serviceHeaderRowTone)}>
+                                            <div
+                                              className={cn(
+                                                "sticky left-0 z-10 inline-flex w-max max-w-full flex-nowrap items-center gap-x-2 p-2 font-semibold text-white",
+                                              )}
+                                            >
+                                              <span className="shrink-0">{group.serviceName}</span>
+                                              {group.sharedTiming.sharedWeekday ? (
+                                                <span className="shrink-0 font-normal text-gray-300">
+                                                  {group.sharedTiming.sharedWeekday}
+                                                </span>
+                                              ) : null}
+                                              {group.sharedTiming.sharedTime ? (
+                                                <span className="shrink-0 font-normal text-gray-300">
+                                                  {group.sharedTiming.sharedTime}
+                                                </span>
+                                              ) : null}
+                                              {service?.archivedAt ? (
+                                                <span className="shrink-0 text-xs font-normal text-gray-500">Archived</span>
+                                              ) : null}
+                                            </div>
+                                          </th>
+                                        </tr>
+                                        {group.occurrences.map((occurrence, occurrenceIndex) => {
+                                          const rowIndex = occurrenceRowOffsets[groupIndex] + occurrenceIndex;
+                                          const rowTone = scheduleRowTone(rowIndex);
+                                          const stickyTone = scheduleStickyRowTone(rowIndex);
+                                          return (
+                                            <tr key={occurrence.occurrenceId} className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}>
+                                              <th className={cn("sticky left-0 z-10 align-middle", scheduleGridRightBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName, stickyTone, getAxisHighlightClassName(occurrence.occurrenceId, undefined, { rowIndex, surface: "sticky" }))}>
+                                                <ScheduleOccurrenceDateButton
+                                                  label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
+                                                  ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
+                                                  className={cn(
+                                                    detailOccurrenceId === occurrence.occurrenceId &&
+                                                    "border-cyan-300 bg-cyan-500/20 text-white",
+                                                  )}
+                                                  onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
+                                                />
+                                              </th>
+                                              {scheduleColumns.map((column) => (
+                                                <ScheduleGridCell
+                                                  key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
+                                                  {...buildGridCellProps(occurrence, column, rowTone)}
+                                                />
+                                              ))}
+                                            </tr>
+                                          );
+                                        })}
+                                      </Fragment>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </TabsContent>
+                      <TabsContent value="attendance" className={scheduleWorkspaceTabContentClassName}>
+                        <div className="scrollbar-variable overflow-y-auto max-lg:flex-none lg:min-h-0 lg:flex-1">
+                          {attendanceWorkspacePanel}
+                        </div>
+                      </TabsContent>
+                    </div>
+                    <ScheduleAssignmentPicker
+                      open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
+                      anchorEl={pickerAnchorEl}
+                      label={`${activeSlotMeta?.occurrenceName || ""} ${activeSlotMeta?.positionLabel || ""}`}
+                      positionId={activeSlotMeta?.positionId || ""}
+                      positionName={activeSlotMeta?.positionLabel || ""}
+                      members={activeTeamMembers}
+                      assignmentQuery={assignmentQuery}
+                      onAssignmentQueryChange={setAssignmentQuery}
+                      currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
+                      duplicateFirstNames={duplicateScheduleFirstNames}
+                      getIssue={activeSlotGetIssue}
+                      getAssignmentActionIssues={
+                        slotPickerMode === "replace"
+                          ? undefined
+                          : activeSlotGetAssignmentActionIssues
+                      }
+                      getWarning={activeSlotGetWarning}
+                      onSelectMember={handleActiveSlotMemberSelect}
+                      onAssignmentAction={handleActiveSlotAssignmentAction}
+                      onCreateMember={
+                        slotPickerMode === "replace"
+                          ? undefined
+                          : handleActiveSlotCreateMember
+                      }
+                      onClearAssignment={
+                        slotPickerMode === "replace"
+                          ? undefined
+                          : handleActiveSlotClearAssignment
+                      }
+                      pendingSubmenu={pendingPickerSubmenu}
+                      inputRef={pickerInputRef}
+                    />
+                    <ScheduleMembersPanel
+                      panelRef={membersPanelRef}
+                      open={membersPanelOpen}
+                      onOpenChange={setMembersPanelOpen}
+                      mode={canEdit && activeSlot ? "assign" : "browse"}
+                      activeTeamMembers={activeTeamMembers}
+                      schedulePositions={schedulePositions}
+                      scheduleAssignmentCounts={scheduleAssignmentCounts}
+                      duplicateFirstNames={duplicateScheduleFirstNames}
+                      highlightedMemberIdSet={highlightedMemberIdSet}
+                      onToggleHighlight={toggleHighlightedMember}
+                      memberPositionFilterIds={memberPositionFilterIds}
+                      onMemberPositionFilterChange={setMemberPositionFilterIds}
+                      membersPanelQuery={membersPanelQuery}
+                      onMembersPanelQueryChange={setMembersPanelQuery}
+                      assignmentQuery={assignmentQuery}
+                      onAssignmentQueryChange={setAssignmentQuery}
+                      slotContext={
+                        activeSlotMeta
+                          ? {
+                            positionLabel: activeSlotMeta.positionLabel,
+                            occurrenceLabel: activeSlotMeta.occurrenceLabel,
+                            currentAssigneeLabel: activeSlotMeta.currentAssigneeLabel,
+                            positionId: activeSlotMeta.positionId,
+                            currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
+                          }
+                          : undefined
+                      }
+                      onClearSlot={clearActiveSlot}
+                      onSelectMember={canEdit ? handleActiveSlotMemberSelect : () => undefined}
+                      getIssue={activeSlotGetIssue}
+                      getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
+                      getWarning={activeSlotGetWarning}
+                      canEditMember={canEditMember}
+                      onEditMember={handleEditMemberFromPanel}
+                    />
+                  </div>
+                </ScheduleAssignmentProvider>
+                {canEdit ? (
+                  <SchedulePasteRowDialog
+                    open={pasteRowOpen}
+                    onOpenChange={setPasteRowOpen}
+                    occurrences={pasteRowOccurrenceOptions}
+                    columns={scheduleColumns}
+                    members={activeTeamMembers}
+                    duplicateFirstNames={duplicateScheduleFirstNames}
+                    defaultOccurrenceId={
+                      activeSlot?.occurrenceId || detailOccurrenceId || undefined
+                    }
+                    getIssueForOccurrence={getIssueForOccurrence}
+                    onApply={(occurrenceId, entries) =>
+                      void commitRowAssignments(occurrenceId, entries)
+                    }
+                  />
+                ) : null}
+              </section>
+            </Tabs>
+          ) : (
+            <section className={panelClassName}>
               <div>
                 <h2 className="flex items-center gap-2 text-lg font-semibold">
                   <Icon svg={CalendarDays} size="md" className="text-cyan-200" />
@@ -2309,402 +3070,22 @@ const ScheduleTab = ({
                   Schedule members first, then switch to attendance when you are tracking one service.
                 </p>
               </div>
-              {scheduleWorkspaceTab === "schedule" ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <SegmentedControl
-                    ariaLabel="Schedule layout"
-                    variant="admin"
-                    value={scheduleLayout}
-                    onChange={setScheduleLayout}
-                    options={scheduleLayoutOptions}
-                  />
-                  <SchedulePdfExportButton
-                    model={scheduleExportModel}
-                    layout={scheduleLayout}
-                  />
-                  {canEdit && SHOW_PASTE_FROM_EXCEL ? (
-                    <Button
-                      variant="tertiary"
-                      svg={ClipboardPaste}
-                      iconSize="sm"
-                      onClick={() => setPasteRowOpen(true)}
-                    >
-                      Paste from Excel
-                    </Button>
-                  ) : null}
-                  {canEdit ? (
-                    <Button
-                      variant="tertiary"
-                      svg={Link2}
-                      iconSize="sm"
-                      disabled={copyingLink}
-                      onClick={() => void copyPublicLink()}
-                    >
-                      {copyingLink ? "Copying..." : "Copy view-only link"}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
-            {occurrencesStale && !showForm ? (
-              <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-amber-100">
-                  This schedule no longer matches its services (grouping or timing
-                  changed). Refresh it to update the rows — assignments are kept where
-                  the service and date still line up.
-                </p>
-                <Button
-                  variant="secondary"
-                  iconSize="sm"
-                  disabled={applyingGrouping}
-                  onClick={() => void refreshScheduleOccurrences()}
-                >
-                  {applyingGrouping ? "Refreshing..." : "Refresh schedule"}
-                </Button>
+              <div className="mt-4">
+                {!selectedSchedule || !selectedTeam ? (
+                  <p className="rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300">
+                    Create a team, services, and a schedule to start assigning members.
+                  </p>
+                ) : (
+                  <p className="rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300">
+                    This schedule needs at least one service occurrence and one required
+                    position. Set position requirements on a service, or add positions to the team.
+                  </p>
+                )}
               </div>
-            ) : null}
-
-            <ScheduleAssignmentProvider handlers={assignmentHandlers}>
-              <div className={scheduleWorkspaceBodyRowClassName}>
-                <div className={scheduleWorkspaceMainColumnClassName}>
-                  <TabsContent value="schedule" className={scheduleWorkspaceTabContentClassName}>
-                    {scheduleLayout === "transpose" ? (
-                      <div className={scheduleGridScrollClassName}>
-                        <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
-                          <thead>
-                            <tr>
-                              <th
-                                rowSpan={2}
-                                className={cn(
-                                  "sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200",
-                                  scheduleGridBottomBorderClassName,
-                                  schedulePositionColumnClassName,
-                                  scheduleCellPaddingClassName,
-                                )}
-                              >
-                                Position
-                              </th>
-                              {occurrencesByService.map((group) => (
-                                <th
-                                  key={group.serviceId}
-                                  colSpan={group.occurrences.length}
-                                  className={cn(
-                                    "border-b bg-gray-950 text-center font-semibold text-white",
-                                    scheduleServiceHeaderBottomBorderClassName,
-                                    scheduleServiceHeaderLeftBorderClassName,
-                                    scheduleCellPaddingClassName,
-                                    serviceHeaderRowTone,
-                                  )}
-                                >
-                                  <span className="inline-flex items-center gap-x-2">
-                                    <span>{group.serviceName}</span>
-                                    {group.sharedTiming.sharedWeekday ? (
-                                      <span className="font-normal text-gray-300">
-                                        {group.sharedTiming.sharedWeekday}
-                                      </span>
-                                    ) : null}
-                                    {group.sharedTiming.sharedTime ? (
-                                      <span className="font-normal text-gray-300">
-                                        {group.sharedTiming.sharedTime}
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                </th>
-                              ))}
-                            </tr>
-                            <tr>
-                              {flatOccurrences.map(({ occurrence, group }) => (
-                                <th
-                                  key={occurrence.occurrenceId}
-                                  className={cn(
-                                    "sticky top-0 z-10 border-b bg-gray-950 text-gray-200",
-                                    scheduleGridBottomBorderClassName,
-                                    scheduleGridLeftBorderClassName,
-                                    schedulePositionColumnClassName,
-                                    scheduleCellPaddingClassName,
-                                    getAxisHighlightClassName(occurrence.occurrenceId, undefined, {
-                                      surface: "header",
-                                    }),
-                                  )}
-                                >
-                                  <ScheduleOccurrenceDateButton
-                                    label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
-                                    ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
-                                    className={cn(
-                                      detailOccurrenceId === occurrence.occurrenceId &&
-                                      "border-cyan-300 bg-cyan-500/20 text-white",
-                                    )}
-                                    onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
-                                  />
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {scheduleColumns.map((column, columnIndex) => {
-                              const PositionIcon = resolvePositionLucideIcon(column.position.icon);
-                              const rowTone = scheduleRowTone(columnIndex);
-                              const stickyTone = scheduleStickyRowTone(columnIndex);
-                              return (
-                                <tr
-                                  key={column.columnKey}
-                                  className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}
-                                >
-                                  <th
-                                    className={cn(
-                                      "sticky left-0 z-10 align-middle",
-                                      scheduleGridRightBorderClassName,
-                                      schedulePositionColumnClassName,
-                                      scheduleCellPaddingClassName,
-                                      stickyTone,
-                                      getAxisHighlightClassName(undefined, column.columnKey, {
-                                        rowIndex: columnIndex,
-                                        surface: "sticky",
-                                      }),
-                                    )}
-                                  >
-                                    <span className="inline-flex items-center gap-2">
-                                      {PositionIcon ? (
-                                        <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
-                                      ) : null}
-                                      <span className="font-medium text-white">{column.label}</span>
-                                      {column.position.archivedAt ? (
-                                        <span className="text-xs text-gray-500">(archived)</span>
-                                      ) : null}
-                                    </span>
-                                  </th>
-                                  {flatOccurrences.map(({ occurrence }) => (
-                                    <ScheduleGridCell
-                                      key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
-                                      {...buildGridCellProps(occurrence, column, rowTone)}
-                                    />
-                                  ))}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className={scheduleGridScrollClassName}>
-                        <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
-                          <colgroup>
-                            <col style={{ minWidth: `${scheduleDateColumnMinCh}ch` }} />
-                            {scheduleColumns.map((column) => (
-                              <col
-                                key={column.columnKey}
-                                style={{
-                                  width: `${scheduleColumnMinCh.get(column.columnKey)}ch`,
-                                  minWidth: `${scheduleColumnMinCh.get(column.columnKey)}ch`,
-                                }}
-                              />
-                            ))}
-                          </colgroup>
-                          <thead>
-                            <tr>
-                              <th className={cn("sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName)}>
-                                Date &amp; time
-                              </th>
-                              {scheduleColumns.map((column) => {
-                                const PositionIcon = resolvePositionLucideIcon(column.position.icon);
-                                return (
-                                  <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
-                                    <span className="inline-flex items-center gap-2">
-                                      {PositionIcon ? <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
-                                      <span>{column.label}</span>
-                                      {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
-                                    </span>
-                                  </th>
-                                );
-                              })}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {occurrencesByService.map((group, groupIndex) => {
-                              const service = data.services.find((item) => item.serviceId === group.serviceId);
-                              return (
-                                <Fragment key={group.serviceId}>
-                                  <tr className={cn("border-t", scheduleServiceHeaderTopBorderClassName, serviceHeaderRowTone)}>
-                                    <th colSpan={scheduleColumns.length + 1} className={cn("p-0 text-left align-top", serviceHeaderRowTone)}>
-                                      <div
-                                        className={cn(
-                                          "sticky left-0 z-10 inline-flex w-max max-w-full flex-nowrap items-center gap-x-2 p-2 font-semibold text-white",
-                                        )}
-                                      >
-                                        <span className="shrink-0">{group.serviceName}</span>
-                                        {group.sharedTiming.sharedWeekday ? (
-                                          <span className="shrink-0 font-normal text-gray-300">
-                                            {group.sharedTiming.sharedWeekday}
-                                          </span>
-                                        ) : null}
-                                        {group.sharedTiming.sharedTime ? (
-                                          <span className="shrink-0 font-normal text-gray-300">
-                                            {group.sharedTiming.sharedTime}
-                                          </span>
-                                        ) : null}
-                                        {service?.archivedAt ? (
-                                          <span className="shrink-0 text-xs font-normal text-gray-500">Archived</span>
-                                        ) : null}
-                                      </div>
-                                    </th>
-                                  </tr>
-                                  {group.occurrences.map((occurrence, occurrenceIndex) => {
-                                    const rowIndex = occurrenceRowOffsets[groupIndex] + occurrenceIndex;
-                                    const rowTone = scheduleRowTone(rowIndex);
-                                    const stickyTone = scheduleStickyRowTone(rowIndex);
-                                    return (
-                                      <tr key={occurrence.occurrenceId} className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}>
-                                        <th className={cn("sticky left-0 z-10 align-middle", scheduleGridRightBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName, stickyTone, getAxisHighlightClassName(occurrence.occurrenceId, undefined, { rowIndex, surface: "sticky" }))}>
-                                          <ScheduleOccurrenceDateButton
-                                            label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
-                                            ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
-                                            className={cn(
-                                              detailOccurrenceId === occurrence.occurrenceId &&
-                                              "border-cyan-300 bg-cyan-500/20 text-white",
-                                            )}
-                                            onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
-                                          />
-                                        </th>
-                                        {scheduleColumns.map((column) => (
-                                          <ScheduleGridCell
-                                            key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
-                                            {...buildGridCellProps(occurrence, column, rowTone)}
-                                          />
-                                        ))}
-                                      </tr>
-                                    );
-                                  })}
-                                </Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </TabsContent>
-                  <TabsContent value="attendance" className={scheduleWorkspaceTabContentClassName}>
-                    <div className="scrollbar-variable overflow-y-auto max-lg:flex-none lg:min-h-0 lg:flex-1">
-                      {attendanceWorkspacePanel}
-                    </div>
-                  </TabsContent>
-                </div>
-                <ScheduleAssignmentPicker
-                  open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
-                  anchorEl={pickerAnchorEl}
-                  label={`${activeSlotMeta?.occurrenceName || ""} ${activeSlotMeta?.positionLabel || ""}`}
-                  positionId={activeSlotMeta?.positionId || ""}
-                  positionName={activeSlotMeta?.positionLabel || ""}
-                  members={activeTeamMembers}
-                  assignmentQuery={assignmentQuery}
-                  onAssignmentQueryChange={setAssignmentQuery}
-                  currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
-                  duplicateFirstNames={duplicateScheduleFirstNames}
-                  getIssue={activeSlotGetIssue}
-                  getAssignmentActionIssues={
-                    slotPickerMode === "replace"
-                      ? undefined
-                      : activeSlotGetAssignmentActionIssues
-                  }
-                  getWarning={activeSlotGetWarning}
-                  onSelectMember={handleActiveSlotMemberSelect}
-                  onAssignmentAction={handleActiveSlotAssignmentAction}
-                  onCreateMember={
-                    slotPickerMode === "replace"
-                      ? undefined
-                      : handleActiveSlotCreateMember
-                  }
-                  onClearAssignment={
-                    slotPickerMode === "replace"
-                      ? undefined
-                      : handleActiveSlotClearAssignment
-                  }
-                  pendingSubmenu={pendingPickerSubmenu}
-                  inputRef={pickerInputRef}
-                />
-                <ScheduleMembersPanel
-                  panelRef={membersPanelRef}
-                  open={membersPanelOpen}
-                  onOpenChange={setMembersPanelOpen}
-                  mode={canEdit && activeSlot ? "assign" : "browse"}
-                  activeTeamMembers={activeTeamMembers}
-                  schedulePositions={schedulePositions}
-                  scheduleAssignmentCounts={scheduleAssignmentCounts}
-                  duplicateFirstNames={duplicateScheduleFirstNames}
-                  highlightedMemberIdSet={highlightedMemberIdSet}
-                  onToggleHighlight={toggleHighlightedMember}
-                  memberPositionFilterIds={memberPositionFilterIds}
-                  onMemberPositionFilterChange={setMemberPositionFilterIds}
-                  membersPanelQuery={membersPanelQuery}
-                  onMembersPanelQueryChange={setMembersPanelQuery}
-                  assignmentQuery={assignmentQuery}
-                  onAssignmentQueryChange={setAssignmentQuery}
-                  slotContext={
-                    activeSlotMeta
-                      ? {
-                        positionLabel: activeSlotMeta.positionLabel,
-                        occurrenceLabel: activeSlotMeta.occurrenceLabel,
-                        currentAssigneeLabel: activeSlotMeta.currentAssigneeLabel,
-                        positionId: activeSlotMeta.positionId,
-                        currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
-                      }
-                      : undefined
-                  }
-                  onClearSlot={clearActiveSlot}
-                  onSelectMember={canEdit ? handleActiveSlotMemberSelect : () => undefined}
-                  getIssue={activeSlotGetIssue}
-                  getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
-                  getWarning={activeSlotGetWarning}
-                  canEditMember={canEditMember}
-                  onEditMember={handleEditMemberFromPanel}
-                />
-              </div>
-            </ScheduleAssignmentProvider>
-            {canEdit ? (
-              <SchedulePasteRowDialog
-                open={pasteRowOpen}
-                onOpenChange={setPasteRowOpen}
-                occurrences={pasteRowOccurrenceOptions}
-                columns={scheduleColumns}
-                members={activeTeamMembers}
-                duplicateFirstNames={duplicateScheduleFirstNames}
-                defaultOccurrenceId={
-                  activeSlot?.occurrenceId || detailOccurrenceId || undefined
-                }
-                getIssueForOccurrence={getIssueForOccurrence}
-                onApply={(occurrenceId, entries) =>
-                  void commitRowAssignments(occurrenceId, entries)
-                }
-              />
-            ) : null}
-          </section>
-        </Tabs>
-      ) : (
-        <section className={panelClassName}>
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <Icon svg={CalendarDays} size="md" className="text-cyan-200" />
-              Team schedule
-            </h2>
-            <p className="mt-1 text-sm text-gray-400">
-              Schedule members first, then switch to attendance when you are tracking one service.
-            </p>
-          </div>
-          <div className="mt-4">
-            {!selectedSchedule || !selectedTeam ? (
-              <p className="rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300">
-                Create a team, services, and a schedule to start assigning members.
-              </p>
-            ) : (
-              <p className="rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300">
-                This schedule needs at least one service occurrence and one required
-                position. Set position requirements on a service, or add positions to the team.
-              </p>
-            )}
-          </div>
-        </section>
+            </section>
+          )}
+        </>
       )}
-
     </div>
   );
 };

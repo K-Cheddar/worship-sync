@@ -2,7 +2,8 @@ import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useGenerateCreditsFromOverlays } from "./useGenerateCreditsFromOverlays";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import getScheduleFromExcel from "../utils/getScheduleFromExcel";
+import { GlobalInfoContext } from "../context/globalInfo";
+import { getTeamsBootstrap } from "../api/auth";
 import { putCreditDoc } from "../utils/dbUtils";
 import { broadcastCreditsUpdate } from "../store/store";
 
@@ -14,9 +15,8 @@ jest.mock("../hooks", () => ({
     fn(mockState as typeof baseMockState),
 }));
 
-jest.mock("../utils/getScheduleFromExcel", () => ({
-  __esModule: true,
-  default: jest.fn(),
+jest.mock("../api/auth", () => ({
+  getTeamsBootstrap: jest.fn(),
 }));
 
 jest.mock("../utils/dbUtils", () => ({
@@ -54,20 +54,79 @@ let mockState: typeof baseMockState;
 const mockDb = {} as PouchDB.Database;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <ControllerInfoContext.Provider value={{ db: mockDb } as any}>
-    {children}
-  </ControllerInfoContext.Provider>
+  <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+    <ControllerInfoContext.Provider value={{ db: mockDb } as any}>
+      {children}
+    </ControllerInfoContext.Provider>
+  </GlobalInfoContext.Provider>
 );
+
+const teamsBootstrap = {
+  success: true,
+  teams: [
+    {
+      teamId: "team-media",
+      churchId: "church-1",
+      name: "Media Team",
+      memberIds: ["m1", "m2"],
+    },
+  ],
+  positions: [
+    {
+      positionId: "camera",
+      churchId: "church-1",
+      teamId: "team-media",
+      name: "Camera",
+      order: 1,
+    },
+  ],
+  members: [
+    {
+      memberId: "m1",
+      churchId: "church-1",
+      firstName: "Alice",
+      lastName: "Jones",
+      positionIds: ["camera"],
+      blockoutDates: [],
+    },
+    {
+      memberId: "m2",
+      churchId: "church-1",
+      firstName: "Bob",
+      lastName: "Smith",
+      positionIds: ["camera"],
+      blockoutDates: [],
+    },
+  ],
+  schedules: [
+    {
+      scheduleId: "schedule-1",
+      churchId: "church-1",
+      name: "July Media",
+      teamId: "team-media",
+      serviceIds: ["service-1"],
+      occurrences: [
+        {
+          occurrenceId: "occ-1",
+          serviceId: "service-1",
+          name: "Sabbath Worship",
+          startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        },
+      ],
+      assignments: {
+        "occ-1": {
+          "camera::0": { primaryMemberId: "m1" },
+          "camera::1": { primaryMemberId: "m2" },
+        },
+      },
+    },
+  ],
+};
 
 describe("useGenerateCreditsFromOverlays", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
-    (getScheduleFromExcel as jest.Mock).mockResolvedValue([
-      {
-        heading: "Executive Producers",
-        names: "Alice\nBob",
-      },
-    ]);
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(teamsBootstrap);
     (putCreditDoc as jest.Mock).mockImplementation(async () => ({
       _id: "doc",
       id: "c1",
@@ -78,7 +137,7 @@ describe("useGenerateCreditsFromOverlays", () => {
     mockState.undoable.present.credits.list = [
       {
         id: "c1",
-        heading: "Executive Producers",
+        heading: "Camera Operators",
         text: "Old",
         hidden: false,
       },
@@ -95,13 +154,20 @@ describe("useGenerateCreditsFromOverlays", () => {
 
   it("exposes hasOverlays false when overlay list is empty", () => {
     mockState.undoable.present.overlays.list = [];
+    const NoSourceWrapper = ({ children }: { children: React.ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ churchId: "" } as any}>
+        <ControllerInfoContext.Provider value={{ db: mockDb } as any}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    );
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
-      wrapper,
+      wrapper: NoSourceWrapper,
     });
     expect(result.current.hasOverlays).toBe(false);
   });
 
-  it("dispatches updateList with schedule names when schedule matches heading", async () => {
+  it("selects and updates each credit with Teams schedule names when position matches heading", async () => {
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
       wrapper,
     });
@@ -111,17 +177,45 @@ describe("useGenerateCreditsFromOverlays", () => {
     });
 
     expect(mockDispatch).toHaveBeenCalled();
-    const listAction = mockDispatch.mock.calls.find(
-      (c) => c[0]?.type === "credits/updateCreditsList",
+    const startAction = mockDispatch.mock.calls.find(
+      (c) => c[0]?.type === "generatedCredits/startGeneratedCredits",
     );
-    expect(listAction).toBeDefined();
-    expect(listAction![0].payload[0].text).toContain("Alice");
+    expect(startAction).toBeDefined();
+    expect(startAction![0].payload.items).toEqual([
+      {
+        creditId: "c1",
+        creditHeading: "Camera Operators",
+        sourceLabel: "Media schedule: July Media - Sabbath Worship",
+        previousText: "Old",
+        nextText: "Alice\nBob",
+      },
+    ]);
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "credits/selectCredit",
+        payload: "c1",
+      }),
+    );
+    const updateAction = mockDispatch.mock.calls.find(
+      (c) => c[0]?.type === "credits/updateCredit",
+    );
+    expect(updateAction).toBeDefined();
+    expect(updateAction![0].payload.text).toBe("Alice\nBob");
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "generatedCredits/completeGeneratedCreditItem",
+        payload: { creditId: "c1", status: "updated" },
+      }),
+    );
     expect(putCreditDoc).toHaveBeenCalled();
     expect(broadcastCreditsUpdate).toHaveBeenCalled();
   });
 
   it("fills from overlay event mapping when schedule has no row for heading", async () => {
-    (getScheduleFromExcel as jest.Mock).mockResolvedValue([]);
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      schedules: [],
+    });
     mockState.undoable.present.credits.list = [
       {
         id: "c1",
@@ -147,17 +241,82 @@ describe("useGenerateCreditsFromOverlays", () => {
       await result.current.generateFromOverlays();
     });
 
-    const listAction = mockDispatch.mock.calls.find(
-      (c) => c[0]?.type === "credits/updateCreditsList",
+    const updateAction = mockDispatch.mock.calls.find(
+      (c) => c[0]?.type === "credits/updateCredit",
     );
-    expect(listAction![0].payload[0].text.trim()).toBe("Host Name");
+    expect(updateAction![0].payload.text.trim()).toBe("Host Name");
+  });
+
+  it("lists assigned schedule positions that did not match a credit heading", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      positions: [
+        ...teamsBootstrap.positions,
+        {
+          positionId: "stream-audio",
+          churchId: "church-1",
+          teamId: "team-media",
+          name: "Stream Audio",
+          order: 2,
+        },
+      ],
+      members: [
+        ...teamsBootstrap.members,
+        {
+          memberId: "m3",
+          churchId: "church-1",
+          firstName: "Sam",
+          lastName: "Taylor",
+          positionIds: ["stream-audio"],
+          blockoutDates: [],
+        },
+      ],
+      schedules: [
+        {
+          ...teamsBootstrap.schedules[0],
+          assignments: {
+            "occ-1": {
+              "camera::0": { primaryMemberId: "m1" },
+              "stream-audio::0": { primaryMemberId: "m3" },
+            },
+          },
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.generateFromOverlays();
+    });
+
+    const startAction = mockDispatch.mock.calls.find(
+      (c) => c[0]?.type === "generatedCredits/startGeneratedCredits",
+    );
+    expect(startAction![0].payload.items).toEqual([
+      expect.objectContaining({
+        creditId: "c1",
+        creditHeading: "Camera Operators",
+        nextText: "Alice",
+      }),
+      expect.objectContaining({
+        creditHeading: "Stream Audio",
+        nextText: "Sam",
+        sourceLabel: "Media schedule: July Media - Sabbath Worship",
+        status: "missed",
+      }),
+    ]);
   });
 
   it("skips putCreditDoc and broadcast when db is missing", async () => {
     const NoDbWrapper = ({ children }: { children: React.ReactNode }) => (
-      <ControllerInfoContext.Provider value={{ db: undefined } as any}>
-        {children}
-      </ControllerInfoContext.Provider>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+        <ControllerInfoContext.Provider value={{ db: undefined } as any}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
     );
 
     (putCreditDoc as jest.Mock).mockClear();
@@ -175,9 +334,17 @@ describe("useGenerateCreditsFromOverlays", () => {
     expect(broadcastCreditsUpdate).not.toHaveBeenCalled();
   });
 
-  it("clears isGenerating after schedule throws", async () => {
-    (getScheduleFromExcel as jest.Mock).mockRejectedValue(new Error("xlsx missing"));
+  it("continues overlay generation and clears isGenerating after Teams schedule throws", async () => {
+    (getTeamsBootstrap as jest.Mock).mockRejectedValue(new Error("teams unavailable"));
     const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => { });
+    mockState.undoable.present.credits.list = [
+      {
+        id: "c1",
+        heading: "Welcome & Reminders",
+        text: "",
+        hidden: false,
+      },
+    ];
 
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
       wrapper,
@@ -190,6 +357,10 @@ describe("useGenerateCreditsFromOverlays", () => {
     await waitFor(() => {
       expect(result.current.isGenerating).toBe(false);
     });
+    const updateAction = mockDispatch.mock.calls.find(
+      (c) => c[0]?.type === "credits/updateCredit",
+    );
+    expect(updateAction![0].payload.text.trim()).toBe("Welcome Host");
 
     consoleSpy.mockRestore();
   });

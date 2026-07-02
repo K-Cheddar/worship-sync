@@ -45,6 +45,7 @@ import {
   planServiceGroupCleanupOnDelete,
   planServiceGroupUpdates,
 } from "../teamsUtils";
+import { formatServiceSaveToast } from "../teamsSaveToasts";
 
 type ServiceManagerProps = {
   services: TeamService[];
@@ -117,6 +118,12 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       },
       editing,
     );
+    const saveToastMessage = formatServiceSaveToast(
+      editing,
+      saved,
+      combineWith,
+      services,
+    );
     if (editing) {
       dispatch(updateService({ id: editing.id, changes: saved }));
     } else {
@@ -126,6 +133,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
     partnerUpdates.forEach(({ id, serviceGroupId }) => {
       dispatch(updateService({ id, changes: { serviceGroupId } }));
     });
+    showToast(saveToastMessage, "success");
     reset();
   };
 

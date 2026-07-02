@@ -39,6 +39,7 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
+import { formatPositionSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -176,6 +177,7 @@ const PositionManager = ({
       archivedAt: editing?.archivedAt || null,
     };
     onSaved(editing ? { ...editing, ...optimisticPosition } : optimisticPosition);
+    const saveToastMessage = formatPositionSaveToast(editing, payload);
     try {
       const response = editing
         ? await updateTeamPosition(churchId, editing.positionId, payload)
@@ -183,6 +185,7 @@ const PositionManager = ({
       if (!editing) {
         onSaved(response.position, localPositionId);
       }
+      showToast(saveToastMessage, "success");
       finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this position.");

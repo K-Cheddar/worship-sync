@@ -94,13 +94,23 @@ const TransmitHandler = ({
   // when the church actually has a board (the alias is auto-seeded once one
   // exists). Collapsed by default so it stays out of the way until needed.
   const boardAliasId = useStoredBoardDisplayAlias();
+  const monitorBoardAliasId = useSelector(
+    (state) => state.presentation.monitorBoardAliasId
+  );
   const [isBoardSectionOpen, setIsBoardSectionOpen] = useState(false);
 
   const showProjector = visibleScreens.includes("projector");
   const showMonitor = visibleScreens.includes("monitor");
   const showStream = visibleScreens.includes("stream");
+  // A board that's already live on the monitor must always keep its section (and
+  // its "off" switch) rendered, even if the preview inputs that normally reveal
+  // the section — the seeded board alias or the monitor being visible — have
+  // since gone away. Otherwise the control that turns the board off can unmount
+  // while the board stays on the monitor, leaving no way to remove it.
+  const isBoardLiveOnMonitor = monitorBoardAliasId !== "";
   const showBoardSection =
-    variant === "default" && showMonitor && Boolean(boardAliasId);
+    variant === "default" &&
+    (isBoardLiveOnMonitor || (showMonitor && Boolean(boardAliasId)));
   const showBulkControls =
     showProjector && showMonitor && showStream;
   const showFocusedStreamControls =

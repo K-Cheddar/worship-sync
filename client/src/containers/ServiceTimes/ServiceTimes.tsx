@@ -36,6 +36,7 @@ import {
   lineTabsListShellClassName,
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
+import { serverDate } from "../../utils/serverTime";
 
 /** Service times editor for the overlay controller "Service times" tab only. */
 const ServiceTimes = () => {
@@ -78,7 +79,7 @@ const ServiceTimes = () => {
           addService({
             id: generateRandomId(),
             timerType: "countdown",
-            createdAt: new Date().toISOString(),
+            createdAt: serverDate().toISOString(),
             ...values,
           } as ServiceTime)
         );

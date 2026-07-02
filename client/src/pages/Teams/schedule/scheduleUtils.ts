@@ -26,6 +26,12 @@ export const scheduleServiceHeaderLeftBorderClassName =
 export const scheduleDateColumnClassName = "whitespace-nowrap";
 export const schedulePositionColumnClassName = "whitespace-nowrap";
 export const scheduleCellPaddingClassName = "px-2 py-2";
+/** Hide remove controls until hover on pointer devices; always visible on touch. */
+export const scheduleCellRemoveButtonVisibilityClassName =
+  "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100";
+/** Larger tap target for inline cell remove controls on small screens. */
+export const scheduleCellRemoveButtonTouchClassName =
+  "max-md:min-h-10 max-md:min-w-10 max-md:[&_svg]:size-4";
 export const scheduleColumnMinCh = 8;
 export const scheduleColumnPaddingCh = 1;
 export const schedulePositionIconCh = 2;

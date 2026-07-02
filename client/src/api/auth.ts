@@ -3,7 +3,7 @@ import {
   isPackagedElectronRenderer,
 } from "../utils/environment";
 import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
-import { notifyAuthError } from "./authErrorBus";
+import { notifyAuthError, requestAuthRecovery } from "./authErrorBus";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
   AuthBootstrap,
@@ -60,49 +60,71 @@ export class AuthApiError extends Error {
 }
 
 type JsonBody = Record<string, unknown>;
+type ApiFetchConfig = {
+  authRecovery?: boolean;
+  notifyAuthError?: boolean;
+};
 
-const apiFetch = async <T>(
-  path: string,
-  options: RequestInit = {},
-  extraHeaders?: Record<string, string>,
-) => {
-  let response: Response;
+const readJsonResponse = async <T>(response: Response) => {
   try {
-    response = await fetch(`${getApiBasePath()}${path}`, {
-      credentials: "include",
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-        ...(extraHeaders || {}),
-        ...(isPackagedElectronRenderer() && getHumanApiToken()
-          ? { Authorization: `Bearer ${getHumanApiToken()}` }
-          : {}),
-        ...((options.method || "GET").toUpperCase() !== "GET" && getCsrfToken()
-          ? { "x-csrf-token": getCsrfToken() }
-          : {}),
-      },
-    });
-  } catch {
-    throw new AuthApiError("Could not reach the server.", {
-      isReachabilityError: true,
-    });
-  }
-
-  let data: (T & { errorMessage?: string }) | null = null;
-  try {
-    data = (await response.json()) as T & { errorMessage?: string };
+    return (await response.json()) as T & { errorMessage?: string };
   } catch {
     throw new AuthApiError("Received an invalid server response.", {
       status: response.status,
       isReachabilityError: true,
     });
   }
+};
+
+const apiFetch = async <T>(
+  path: string,
+  options: RequestInit = {},
+  extraHeaders?: Record<string, string>,
+  config: ApiFetchConfig = {},
+) => {
+  const runFetch = async () => {
+    try {
+      const response = await fetch(`${getApiBasePath()}${path}`, {
+        credentials: "include",
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+          ...(extraHeaders || {}),
+          ...(isPackagedElectronRenderer() && getHumanApiToken()
+            ? { Authorization: `Bearer ${getHumanApiToken()}` }
+            : {}),
+          ...((options.method || "GET").toUpperCase() !== "GET" && getCsrfToken()
+            ? { "x-csrf-token": getCsrfToken() }
+            : {}),
+        },
+      });
+      return { response, data: await readJsonResponse<T>(response) };
+    } catch (error) {
+      if (error instanceof AuthApiError) throw error;
+      throw new AuthApiError("Could not reach the server.", {
+        isReachabilityError: true,
+      });
+    }
+  };
+
+  let { response, data } = await runFetch();
+
+  if (
+    !response.ok &&
+    response.status === 401 &&
+    config.authRecovery !== false
+  ) {
+    const recovered = await requestAuthRecovery();
+    if (recovered) {
+      ({ response, data } = await runFetch());
+    }
+  }
 
   if (!response.ok) {
     // A 401 means the session is gone; announce it so the app can prompt a
     // refresh no matter which action triggered the request.
-    if (response.status === 401) {
+    if (response.status === 401 && config.notifyAuthError !== false) {
       notifyAuthError();
     }
     throw new AuthApiError(data?.errorMessage || "Request failed", {
@@ -112,6 +134,16 @@ const apiFetch = async <T>(
 
   return data;
 };
+
+const apiFetchWithoutAuthRecovery = async <T>(
+  path: string,
+  options: RequestInit = {},
+  config: Pick<ApiFetchConfig, "notifyAuthError"> = {},
+) =>
+  apiFetch<T>(path, options, undefined, {
+    authRecovery: false,
+    ...config,
+  });
 
 export const getAuthBootstrap = async ({
   workstationToken,
@@ -129,17 +161,24 @@ export const getAuthBootstrap = async ({
     },
   );
 
-export const createHumanSession = async (body: JsonBody) =>
-  apiFetch<
+export const createHumanSession = async (
+  body: JsonBody,
+  config: Pick<ApiFetchConfig, "notifyAuthError"> = {},
+) =>
+  apiFetchWithoutAuthRecovery<
     {
       success: boolean;
       bootstrap?: AuthBootstrap;
       humanApiToken?: string;
     } & EmailCodeChallengeFields
-  >("api/auth/session", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  >(
+    "api/auth/session",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+    config,
+  );
 
 export const startDesktopAuth = async (body: {
   provider: DesktopAuthProvider;
