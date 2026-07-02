@@ -1,3 +1,10 @@
+# [2.17.0](https://github.com/K-Cheddar/worship-sync/compare/v2.16.5...v2.17.0) (2026-07-02)
+
+
+### Features
+
+* Generate Credits Overview + Fixes ([abcfcd5](https://github.com/K-Cheddar/worship-sync/commit/abcfcd5133373febb4ee551dcae8cc7c2ef24d18))
+
 ## [2.16.5](https://github.com/K-Cheddar/worship-sync/compare/v2.16.4...v2.16.5) (2026-07-01)
 
 
