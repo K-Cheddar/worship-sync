@@ -10,6 +10,7 @@ import TimerControlButtons from "./TimerControlButtons";
 import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import cn from "classnames";
+import { serverDate } from "../../utils/serverTime";
 
 type TimerControlsProps = {
   className?: string;
@@ -76,7 +77,7 @@ const TimerControls = ({ className, variant = "full" }: TimerControlsProps) => {
   const handlePlay = () =>
     updateTimerState({
       status: "running",
-      startedAt: new Date().toISOString(),
+      startedAt: serverDate().toISOString(),
     });
   const handlePause = () => updateTimerState({ status: "paused" });
   const handleStop = () => updateTimerState({ status: "stopped" });

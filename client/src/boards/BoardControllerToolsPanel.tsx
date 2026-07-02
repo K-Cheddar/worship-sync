@@ -1,11 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import cn from "classnames";
-import {
-  MessageSquarePlus,
-  Minus,
-  Plus,
-  RotateCcw,
-} from "lucide-react";
+import { MessageSquarePlus, RotateCcw } from "lucide-react";
 import Button from "../components/Button/Button";
 import DeleteModal from "../components/Modal/DeleteModal";
 import Select from "../components/Select/Select";
@@ -14,14 +9,9 @@ import {
   resetRestreamSession,
   softResetBoardAlias,
 } from "./api";
+import BoardPresentationFontScaleControl from "./BoardPresentationFontScaleControl";
 import { BoardShareLinkGroup } from "./BoardShareLinkGroup";
-import {
-  BOARD_PRESENTATION_FONT_SCALE_STEP,
-  DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
-  getBoardLabel,
-  MAX_BOARD_PRESENTATION_FONT_SCALE,
-  MIN_BOARD_PRESENTATION_FONT_SCALE,
-} from "./boardUtils";
+import { getBoardLabel } from "./boardUtils";
 import type { DBBoard, DBBoardAlias, Option } from "../types";
 import type { UseRestreamSessionResult } from "./useRestreamSession";
 
@@ -186,53 +176,11 @@ export const BoardToolsPanelBody = ({
         <p className="mt-1 text-xs text-gray-400">
           Size on the presentation screen when posts are highlighted.
         </p>
-        <div
-          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-600 bg-gray-900/60 px-3 py-2"
-          role="group"
-          aria-labelledby="board-tools-presentation-label"
-        >
-          <Button
-            variant="tertiary"
-            svg={Minus}
-            padding="p-2"
-            className="min-h-0!"
-            onClick={() =>
-              onFontScaleChange(
-                presentationFontScale - BOARD_PRESENTATION_FONT_SCALE_STEP,
-              )
-            }
-            disabled={presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE}
-          />
-          <span className="min-w-14 text-center text-sm font-semibold text-white">
-            {Math.round(presentationFontScale * 100)}%
-          </span>
-          <Button
-            variant="tertiary"
-            padding="px-3 py-2"
-            className="min-h-0!"
-            aria-label="Reset presentation text size"
-            onClick={() =>
-              onFontScaleChange(
-                DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
-              )
-            }
-            disabled={presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE}
-          >
-            Reset
-          </Button>
-          <Button
-            variant="tertiary"
-            svg={Plus}
-            padding="p-2"
-            className="min-h-0!"
-            onClick={() =>
-              onFontScaleChange(
-                presentationFontScale + BOARD_PRESENTATION_FONT_SCALE_STEP,
-              )
-            }
-            disabled={presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE}
-          />
-        </div>
+        <BoardPresentationFontScaleControl
+          className="mt-3"
+          value={presentationFontScale}
+          onChange={onFontScaleChange}
+        />
       </div>
 
       <div className="mt-6 border-t border-gray-600 pt-6">

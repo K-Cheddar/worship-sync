@@ -11,6 +11,7 @@ type ScheduleMembersPositionFilterProps = {
   value: string[];
   onChange: (value: string[]) => void;
   panelRef: RefObject<HTMLElement | null>;
+  className?: string;
 };
 
 const ScheduleMembersPositionFilter = ({
@@ -18,6 +19,7 @@ const ScheduleMembersPositionFilter = ({
   value,
   onChange,
   panelRef,
+  className,
 }: ScheduleMembersPositionFilterProps) => {
   const [open, setOpen] = useState(false);
   const activeCount = value.length;
@@ -143,7 +145,8 @@ const ScheduleMembersPositionFilter = ({
         svg={ListFilter}
         iconSize="sm"
         className={cn(
-          "w-full justify-center",
+          "justify-center",
+          className,
           hasFilter && "border-cyan-400/40 bg-cyan-400/10 text-cyan-50",
         )}
         aria-expanded={open}

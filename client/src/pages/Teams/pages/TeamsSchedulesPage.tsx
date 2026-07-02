@@ -18,7 +18,6 @@ const TeamsSchedulesPage = () => {
     scheduleDrafts,
     upsertData,
     removeData,
-    refresh,
     trackTeamsSave,
     updateSelectedScheduleId,
     updateScheduleDraft,
@@ -91,7 +90,6 @@ const TeamsSchedulesPage = () => {
       }
       onScheduleDraftChanged={updateScheduleDraft}
       onScheduleDraftFlush={flushScheduleDraft}
-      onRefresh={() => void refresh()}
       trackTeamsSave={trackTeamsSave}
     />
   );

@@ -40,6 +40,7 @@ import {
   isActive,
   memberName,
 } from "../teamsUtils";
+import { formatIntakeFormSaveToast } from "../teamsSaveToasts";
 import { cn } from "@/utils/cnHelper";
 import {
   intakeSubmissionNeedsAction,
@@ -345,6 +346,12 @@ const IntakeManager = ({
       return;
     }
     const payload = buildPayload();
+    const saveToastMessage = formatIntakeFormSaveToast(editing, payload, {
+      teamNameById: new Map(teams.map((team) => [team.teamId, team.name])),
+      serviceNameById: new Map(
+        services.map((service) => [service.serviceId, service.name]),
+      ),
+    });
     setSaving(true);
     try {
       if (editing) {
@@ -354,6 +361,7 @@ const IntakeManager = ({
         setShowEditForm(false);
         setEditing(null);
         setDraft(emptyDraft());
+        showToast(saveToastMessage, "success");
       } else {
         const response = await createTeamIntakeForm(churchId, payload);
         onFormSaved(response.form);
@@ -362,6 +370,7 @@ const IntakeManager = ({
             response.publicUrl || buildTeamIntakePublicUrl(response.publicToken),
           );
         }
+        showToast(saveToastMessage, "success");
         closePanel();
       }
     } catch (error) {

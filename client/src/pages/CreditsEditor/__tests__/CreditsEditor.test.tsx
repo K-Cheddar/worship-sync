@@ -50,39 +50,6 @@ jest.mock("firebase/database", () => ({
   set: jest.fn(),
 }));
 
-// Mock the Excel utility
-jest.mock("../../../utils/getScheduleFromExcel", () => {
-  const mockSchedule = [
-    { heading: "Sabbath School", names: "John Doe\nJane Smith" },
-    { heading: "Welcome", names: "Jane Smith" },
-    { heading: "Call to Praise", names: "Elder Praise" },
-    { heading: "Invocation", names: "Elder Invocation" },
-    { heading: "Reading of the Word", names: "The Reader" },
-    { heading: "Intercessory Prayer", names: "Mrs. Prayer Ministry" },
-    { heading: "Offertory", names: "Treasurer" },
-    { heading: "Special Song", names: "Special Singer" },
-    { heading: "Sermon", names: "The Pastor" },
-    { heading: "Technical Director", names: "Mr. Director" },
-    {
-      heading: "Production Coordinators",
-      names: "Coordinator 1\nCoordinator 2",
-    },
-    {
-      heading: "Audio Engineers",
-      names: "Front of House - Mr. Mixer\nOnline - Mrs. Studio",
-    },
-    {
-      heading: "Camera Operators",
-      names: "Camera 1\nCamera 2\nCamera 3\nCamera 4",
-    },
-    { heading: "Graphics", names: "Graphics Team" },
-  ];
-
-  return jest.fn().mockImplementation(() => {
-    return Promise.resolve(mockSchedule);
-  });
-});
-
 interface RootState {
   credits: ReturnType<typeof creditsSlice.reducer>;
   overlays: ReturnType<typeof overlaysSlice.reducer>;

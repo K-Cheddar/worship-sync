@@ -23,6 +23,7 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
+import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -143,6 +144,7 @@ const TeamRoleManager = ({
       archivedAt: editing?.archivedAt || null,
     };
     onSaved(editing ? { ...editing, ...optimisticRole } : optimisticRole);
+    const saveToastMessage = formatTeamRoleSaveToast(editing, payload);
     try {
       const response = editing
         ? await updateTeamRole(churchId, editing.roleId, payload)
@@ -150,6 +152,7 @@ const TeamRoleManager = ({
       if (!editing) {
         onSaved(response.role, localRoleId);
       }
+      showToast(saveToastMessage, "success");
       finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this role.");

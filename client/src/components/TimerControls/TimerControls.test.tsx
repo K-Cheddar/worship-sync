@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import TimerControls from "./TimerControls";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { setServerTimeOffset } from "../../utils/serverTime";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -96,6 +97,8 @@ const renderWithAccess = (
 
 describe("TimerControls access gating", () => {
   beforeEach(() => {
+    jest.useRealTimers();
+    setServerTimeOffset(0);
     jest.clearAllMocks();
     mockState = {
       undoable: {
@@ -120,6 +123,11 @@ describe("TimerControls access gating", () => {
     };
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+    setServerTimeOffset(0);
+  });
+
   it.each(["music", "view"] as const)(
     "disables timer controls for %s access",
     (access) => {
@@ -136,6 +144,10 @@ describe("TimerControls access gating", () => {
   );
 
   it("allows timer controls for full access", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+    setServerTimeOffset(90_000);
+
     renderWithAccess("full");
 
     const playButton = screen.getByRole("button", { name: "Play" });
@@ -148,6 +160,9 @@ describe("TimerControls access gating", () => {
         type: "timers/updateTimer",
         payload: expect.objectContaining({
           id: "timer-1",
+          timerInfo: expect.objectContaining({
+            startedAt: "2026-01-01T12:01:30.000Z",
+          }),
         }),
       }),
     );

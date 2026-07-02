@@ -4,6 +4,7 @@ import { RootState } from "../../store/store";
 import { updateService } from "../../store/serviceTimesSlice";
 import { getEffectiveTargetTime } from "../../utils/serviceTimes";
 import generateRandomId from "../../utils/generateRandomId";
+import { serverDate } from "../../utils/serverTime";
 import { Plus, RotateCcw, Timer, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -88,7 +89,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
   const applySecondsToCountdown = (totalSeconds: number) => {
     if (!service || totalSeconds <= 0) return;
 
-    const now = new Date();
+    const now = serverDate();
     const newTime = new Date(now.getTime() + totalSeconds * 1000);
 
     dispatch(

@@ -5,8 +5,14 @@ import {
   calculateRemainingTime,
 } from "./timerUtils";
 import { TimerInfo } from "../types";
+import { setServerTimeOffset } from "./serverTime";
 
 describe("timerUtils", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    setServerTimeOffset(0);
+  });
+
   describe("mergeTimers", () => {
     const hostA = "host-a";
     const hostB = "host-b";
@@ -204,6 +210,27 @@ describe("timerUtils", () => {
       const result = calculateEndTime(existing, false, true, existing);
       expect(result).toBeDefined();
       expect(new Date(result!).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("uses the Firebase-aligned clock when starting countdown timers", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date(2026, 0, 1, 12, 0, 0));
+      setServerTimeOffset(90_000);
+
+      const timer: TimerInfo = {
+        id: "t1",
+        hostId: "h",
+        name: "Countdown",
+        timerType: "countdown",
+        countdownTime: "12:01",
+        status: "running",
+        isActive: true,
+        remainingTime: 0,
+      };
+
+      const result = calculateEndTime(timer, true, false);
+
+      expect(result).toBe(new Date(2026, 0, 2, 12, 1, 0).toISOString());
     });
   });
 

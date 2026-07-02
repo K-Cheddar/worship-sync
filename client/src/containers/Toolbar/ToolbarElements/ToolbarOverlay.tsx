@@ -22,6 +22,7 @@ import ToolbarButton from "./ToolbarButton";
 import Outlines from "./Outlines";
 import { useGenerateCreditsFromOverlays } from "../../../hooks/useGenerateCreditsFromOverlays";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../../utils/scrollToolbarTabIntoView";
+import GeneratedCreditsFloatingWindow from "../../../pages/CreditsEditor/GeneratedCreditsFloatingWindow";
 export type ToolbarOverlayProps = {
   isEditMode: boolean;
   quickLinksDrawerOpen: boolean;
@@ -123,6 +124,7 @@ const ToolbarOverlay = ({
             )}
         </div>
       </div>
+      <GeneratedCreditsFloatingWindow />
       <hr className="sticky left-0 w-full border-t-2 border-gray-500" />
       <div
         className={cn(

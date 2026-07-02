@@ -5,3 +5,5 @@ export const setServerTimeOffset = (offset: number): void => {
 };
 
 export const serverNow = (): number => Date.now() + _offset;
+
+export const serverDate = (): Date => new Date(serverNow());

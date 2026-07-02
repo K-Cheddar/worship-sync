@@ -5,6 +5,7 @@ import {
   ServiceTime,
   Weekday,
 } from "../types";
+import { serverDate } from "./serverTime";
 
 type ServiceScheduleSortShape = Pick<
   ServiceTime,
@@ -312,7 +313,7 @@ const getPreviousMonthly = (
 
 export function getNextOccurrenceForService(
   service: ServiceTime,
-  now = new Date(),
+  now = serverDate(),
 ): Date | null {
   if (service.reccurence === "one_time") {
     if (!service.dateTimeISO) return null;
@@ -337,7 +338,7 @@ export function getNextOccurrenceForService(
 
 export function getClosestUpcomingService(
   services: ServiceTime[],
-  now = new Date(),
+  now = serverDate(),
 ): { service: ServiceTime; nextAt: Date } | null {
   let best: { service: ServiceTime; nextAt: Date } | null = null;
   for (const s of services) {
@@ -354,12 +355,12 @@ export function getClosestUpcomingService(
  * Gets the effective target time for a service, considering overrideDateTimeISO if set.
  * This is the time that should be used for the timer display.
  * @param service The service to get the target time for
- * @param now Optional current time (defaults to new Date())
+ * @param now Optional current time (defaults to Firebase-aligned server time)
  * @returns The target date, or null if none exists
  */
 export function getEffectiveTargetTime(
   service: ServiceTime,
-  now = new Date(),
+  now = serverDate(),
 ): Date | null {
   // If there's an override, use it (if it's in the future)
   if (service.overrideDateTimeISO) {
@@ -375,7 +376,7 @@ export function getEffectiveTargetTime(
 
 export function getMostRecentTargetTime(
   service: ServiceTime,
-  now = new Date(),
+  now = serverDate(),
 ): Date | null {
   if (service.overrideDateTimeISO) {
     const overrideTime = new Date(service.overrideDateTimeISO);
@@ -412,7 +413,7 @@ export function getMostRecentTargetTime(
 
 export function getDisplayedUpcomingService(
   services: ServiceTime[],
-  now = new Date(),
+  now = serverDate(),
   graceMs = 0,
   options: DisplayedUpcomingServiceOptions = {},
 ): { service: ServiceTime; nextAt: Date } | null {
@@ -437,7 +438,7 @@ export function getDisplayedUpcomingService(
 
 export function getUpcomingServiceRefreshDelay(
   services: ServiceTime[],
-  now = new Date(),
+  now = serverDate(),
   graceMs = 0,
   options: DisplayedUpcomingServiceOptions = {},
 ): number | null {

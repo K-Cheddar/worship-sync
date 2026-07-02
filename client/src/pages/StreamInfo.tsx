@@ -9,6 +9,7 @@ import useNextServiceCountdownText from "../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../hooks/useDisplayedUpcomingService";
 import { updateService } from "../store/serviceTimesSlice";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../constants/nextServiceTimer";
+import { serverDate } from "../utils/serverTime";
 
 const StreamInfo = () => {
   const dispatch = useDispatch();
@@ -30,7 +31,7 @@ const StreamInfo = () => {
   // Clear overrideDateTimeISO when the time passes
   useEffect(() => {
     const checkAndClearOverrides = () => {
-      const now = new Date();
+      const now = serverDate();
       services.forEach((service) => {
         if (service.overrideDateTimeISO) {
           const overrideTime = new Date(service.overrideDateTimeISO);

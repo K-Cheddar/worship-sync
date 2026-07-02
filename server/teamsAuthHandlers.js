@@ -2526,6 +2526,15 @@ export const createTeamsAuthHandlers = ({
           payload,
           adminUserId: admin.user.uid,
         });
+        // Positions are team-scoped, so being eligible for a team's position
+        // implies belonging to that team's roster. Mirror the intake-apply flow
+        // and reconcile membership into `team.memberIds` (idempotent, add-only).
+        await addMemberToTeamsForPositions({
+          churchId: req.params.churchId,
+          positionIds: payload.positionIds,
+          memberId: member.memberId,
+          adminUserId: admin.user.uid,
+        });
         await addSecurityEvent({
           type: "team_roster_member_created",
           churchId: req.params.churchId,
@@ -2564,6 +2573,15 @@ export const createTeamsAuthHandlers = ({
           churchId: req.params.churchId,
           id: req.params.memberId,
           payload,
+          adminUserId: admin.user.uid,
+        });
+        // Positions are team-scoped, so being eligible for a team's position
+        // implies belonging to that team's roster. Mirror the intake-apply flow
+        // and reconcile membership into `team.memberIds` (idempotent, add-only).
+        await addMemberToTeamsForPositions({
+          churchId: req.params.churchId,
+          positionIds: payload.positionIds,
+          memberId: member.memberId,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({

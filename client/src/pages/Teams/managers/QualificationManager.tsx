@@ -32,6 +32,10 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
+import {
+  formatQualificationAreaSaveToast,
+  formatQualificationLevelSaveToast,
+} from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -205,6 +209,7 @@ const QualificationManager = ({
       archivedAt: editing?.archivedAt || null,
     };
     onAreaSaved(editing ? { ...editing, ...optimisticArea } : optimisticArea);
+    const saveToastMessage = formatQualificationAreaSaveToast(editing, payload);
     try {
       const response = editing
         ? await updateTeamQualificationArea(churchId, editing.areaId, payload)
@@ -221,6 +226,7 @@ const QualificationManager = ({
           reset();
         }
       }
+      showToast(saveToastMessage, "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification area.");
       onArchived();
@@ -244,6 +250,10 @@ const QualificationManager = ({
     }
     const savingKey = levelId ? `level:${levelId}` : "level:new";
     setLevelSavingKey(savingKey);
+    const existingLevel = levelId
+      ? levels.find((level) => level.levelId === levelId) || null
+      : null;
+    const saveToastMessage = formatQualificationLevelSaveToast(existingLevel, payload);
     const localLevel: TeamQualificationLevel = {
       churchId,
       levelId: levelId || `local-level-${generateRandomId()}`,
@@ -274,6 +284,7 @@ const QualificationManager = ({
           rank: response.level.rank,
         },
       }));
+      showToast(saveToastMessage, "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification level.");
       onArchived();

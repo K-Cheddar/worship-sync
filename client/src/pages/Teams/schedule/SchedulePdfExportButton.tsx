@@ -31,15 +31,29 @@ const SchedulePdfExportButton = ({
   disabled,
   buttonVariant = "secondary",
   layout,
+  hideTrigger = false,
+  open,
+  onOpenChange,
 }: {
   model: ScheduleExportModel | null;
   disabled?: boolean;
   buttonVariant?: "secondary" | "tertiary";
   layout?: ScheduleExportLayout;
+  /** Hide the built-in button and drive the preview modal from `open` instead
+   * (e.g. when the trigger lives in a toolbar overflow menu). */
+  hideTrigger?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) => {
   const controlled = layout != null;
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [internalPreviewOpen, setInternalPreviewOpen] = useState(false);
+  const previewControlled = open !== undefined;
+  const previewOpen = previewControlled ? open : internalPreviewOpen;
+  const setPreviewOpen = (next: boolean) => {
+    if (!previewControlled) setInternalPreviewOpen(next);
+    onOpenChange?.(next);
+  };
   const [pickedLayout, setPickedLayout] = useState<ScheduleExportLayout>("grid");
   const [previewUrl, setPreviewUrl] = useState("");
   const activeLayout = layout ?? pickedLayout;
@@ -76,7 +90,7 @@ const SchedulePdfExportButton = ({
 
   return (
     <>
-      {controlled ? (
+      {hideTrigger ? null : controlled ? (
         exportButton
       ) : (
         <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>

@@ -4,6 +4,7 @@ import {
   getDisplayedUpcomingService,
   getUpcomingServiceRefreshDelay,
 } from "../utils/serviceTimes";
+import { serverDate } from "../utils/serverTime";
 
 type UseDisplayedUpcomingServiceOptions = {
   keepRecentlyElapsedDuringGrace?: boolean;
@@ -17,7 +18,7 @@ export const useDisplayedUpcomingService = (
   const keepRecentlyElapsedDuringGrace =
     options.keepRecentlyElapsedDuringGrace ?? false;
   const [upcomingService, setUpcomingService] = useState(() =>
-    getDisplayedUpcomingService(services, new Date(), graceMs, {
+    getDisplayedUpcomingService(services, serverDate(), graceMs, {
       keepRecentlyElapsedDuringGrace,
     }),
   );
@@ -26,7 +27,7 @@ export const useDisplayedUpcomingService = (
     let timeoutId: number | null = null;
 
     const syncUpcomingService = () => {
-      const now = new Date();
+      const now = serverDate();
       setUpcomingService(
         getDisplayedUpcomingService(services, now, graceMs, {
           keepRecentlyElapsedDuringGrace,

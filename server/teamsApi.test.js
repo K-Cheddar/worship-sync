@@ -1642,6 +1642,73 @@ test("intake submission rejects positions outside the form's team scope", async 
   assert.equal(outOfScopeRes.payload.success, false);
 });
 
+test("creating a member with team positions adds them to those teams' rosters", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_positions_join_team");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+  });
+  const positionId = worship.positionIds.Vocal;
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Sky",
+      lastName: "Lane",
+      positionIds: [positionId],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const memberId = created.payload.member.memberId;
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const team = bootstrap.payload.teams.find(
+    (item) => item.teamId === worship.teamId,
+  );
+  // Positions are team-scoped, so eligibility implies roster membership.
+  assert.ok(team.memberIds.includes(memberId));
+});
+
+test("adding a team position to an existing member joins that team's roster", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_update_positions_join_team");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+  });
+  const positionId = worship.positionIds.Vocal;
+
+  // Member starts with no positions, so there's no roster membership yet.
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Rae", lastName: "Kim", positionIds: [] },
+  });
+  assert.equal(created.statusCode, 200);
+  const memberId = created.payload.member.memberId;
+
+  const before = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const teamBefore = before.payload.teams.find(
+    (item) => item.teamId === worship.teamId,
+  );
+  assert.ok(!teamBefore.memberIds.includes(memberId));
+
+  const updated = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: { firstName: "Rae", lastName: "Kim", positionIds: [positionId] },
+  });
+  assert.equal(updated.statusCode, 200);
+
+  const after = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const teamAfter = after.payload.teams.find(
+    (item) => item.teamId === worship.teamId,
+  );
+  assert.ok(teamAfter.memberIds.includes(memberId));
+});
+
 test("applying intake as a new member adds them to position teams", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("intake_new_member_team");

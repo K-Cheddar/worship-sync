@@ -23,6 +23,7 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import PositionIconPicker from "../PositionIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
+import { formatTeamSaveToast } from "../teamsSaveToasts";
 import {
   buildGroupsReturnTo,
   buildTeamsPositionsPath,
@@ -163,6 +164,11 @@ const TeamManager = ({
       archivedAt: editing?.archivedAt || null,
     };
     onSaved(editing ? { ...editing, ...optimisticTeam } : optimisticTeam);
+    const saveToastMessage = formatTeamSaveToast(editing, draft, {
+      memberNameById: new Map(
+        members.map((member) => [member.memberId, memberName(member)]),
+      ),
+    });
     try {
       const response = editing
         ? await updateTeam(churchId, editing.teamId, draft)
@@ -170,6 +176,7 @@ const TeamManager = ({
       if (!editing) {
         onSaved(response.team, localTeamId);
       }
+      showToast(saveToastMessage, "success");
       finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this team.");

@@ -44,6 +44,7 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
+import { formatMemberSaveToast } from "../teamsSaveToasts";
 import { TEAMS_MEMBER_EDIT_SEARCH_PARAM } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import {
@@ -186,6 +187,11 @@ const MemberManager = ({
     () => new Map(positions.map((position) => [position.positionId, position.name])),
     [positions],
   );
+  const positionTeamIdById = useMemo(
+    () =>
+      new Map(positions.map((position) => [position.positionId, position.teamId])),
+    [positions],
+  );
   const teamNameById = useMemo(
     () => new Map(data.teams.map((team) => [team.teamId, team.name])),
     [data.teams],
@@ -287,6 +293,13 @@ const MemberManager = ({
       archivedAt: editing?.archivedAt || null,
     };
     onSaved(editing ? { ...editing, ...optimisticMember } : optimisticMember);
+    const saveToastMessage = formatMemberSaveToast(editing, body, {
+      positionNameById,
+      teamNameById,
+      roleNameById: new Map(
+        data.teamRoles.map((role) => [role.roleId, role.name]),
+      ),
+    });
     try {
       const response = editing
         ? await updateTeamRosterMember(churchId, editing.memberId, body)
@@ -294,6 +307,7 @@ const MemberManager = ({
       if (!editing) {
         onSaved(response.member, localMemberId);
       }
+      showToast(saveToastMessage, "success");
       finishEditing(reset);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this member.");
@@ -338,6 +352,20 @@ const MemberManager = ({
   const roleTeams = roleTeamIds
     .map((teamId) => data.teams.find((team) => team.teamId === teamId))
     .filter(Boolean) as TeamRecord[];
+  // Positions are team-scoped, so selecting one adds the member to that team's
+  // roster on save (see updateTeamRosterMember on the server). Surface the teams
+  // they'll newly join so the side effect isn't a surprise.
+  const teamsJoinedByPositions = (() => {
+    const alreadyOn = new Set(roleTeamIds);
+    const names = new Map<string, string>();
+    draft.positionIds.forEach((positionId) => {
+      const teamId = positionTeamIdById.get(positionId);
+      if (!teamId || alreadyOn.has(teamId) || names.has(teamId)) return;
+      const name = teamNameById.get(teamId);
+      if (name) names.set(teamId, name);
+    });
+    return Array.from(names.values());
+  })();
   const qualificationAreaOptions = data.qualificationAreas.map((area) => ({
     value: area.areaId,
     label: `${area.name}${teamNameById.get(area.teamId) ? ` (${teamNameById.get(area.teamId)})` : ""}`,
@@ -495,6 +523,15 @@ const MemberManager = ({
           value={draft.positionIds}
           onChange={(positionIds) => setDraft((d) => ({ ...d, positionIds }))}
         />
+        {teamsJoinedByPositions.length > 0 ? (
+          <p className="rounded-md border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
+            Saving will also add {draft.firstName.trim() || "this member"} to{" "}
+            <span className="font-semibold">
+              {formatTeamJoinList(teamsJoinedByPositions)}
+            </span>
+            .
+          </p>
+        ) : null}
         {desiredNotEligible.length > 0 ? (
           <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3">
             <p className="text-sm font-semibold text-amber-100">
@@ -779,9 +816,9 @@ const MemberManager = ({
           ) : null}
           {draft.blockoutDates.map((range, index) => (
             <div key={index} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/60 p-2">
-              <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                <DatePicker label="Start date" hideLabel value={range.startDate} onChange={(startDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, startDate } : item) }))} />
-                <DatePicker label="End date" hideLabel value={range.endDate} onChange={(endDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, endDate } : item) }))} />
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+                <DatePicker className="min-w-0" label="Start date" hideLabel value={range.startDate} onChange={(startDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, startDate } : item) }))} />
+                <DatePicker className="min-w-0" label="End date" hideLabel value={range.endDate} onChange={(endDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, endDate } : item) }))} />
                 <Button
                   type="button"
                   variant="tertiary"
@@ -819,6 +856,12 @@ const MemberManager = ({
       />
     </>
   );
+};
+
+const formatTeamJoinList = (names: string[]) => {
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 };
 
 export default MemberManager;

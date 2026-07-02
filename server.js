@@ -22,7 +22,6 @@ import {
   resolveRequestBootstrap,
   requireTeamsViewSession,
 } from "./authService.js";
-import { fetchExcelFile } from "./getScheduleFunctions.js";
 import { createLyricsImportService } from "./lyricsImport.js";
 import {
   BOARD_DB_NAME,
@@ -2019,18 +2018,6 @@ app.use("/db", async (req, res) => {
     console.log(err?.response?.data);
     res.status(err?.response?.status || 500).send(err);
   }
-});
-
-app.get("/getSchedule", async (req, res) => {
-  const scheduleFilePath = `/${req.query.fileName}`;
-  const schedule = await fetchExcelFile(scheduleFilePath, 0);
-  res.send(schedule);
-});
-
-app.get("/getMembers", async (req, res) => {
-  const membersFilePath = `/${req.query.fileName}`;
-  const members = await fetchExcelFile(membersFilePath, 1);
-  res.send(members);
 });
 
 app.get("/api/changelog", async (req, res) => {

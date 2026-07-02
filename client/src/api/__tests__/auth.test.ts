@@ -26,12 +26,18 @@ jest.mock("../../utils/authStorage", () => ({
 // Imports follow jest.mock factories; module under test must load after mocks.
 // eslint-disable-next-line import/first -- see above
 import {
+  AuthApiError,
   getAuthBootstrap,
   logoutSession,
   removeChurchMember,
   revokeTrustedDevice,
   updateChurchMemberAccess,
 } from "../auth";
+// eslint-disable-next-line import/first -- see mocked module setup above
+import {
+  registerAuthErrorHandler,
+  registerAuthRecoveryHandler,
+} from "../authErrorBus";
 
 describe("api/auth", () => {
   beforeEach(() => {
@@ -152,5 +158,62 @@ describe("api/auth", () => {
         }),
       }),
     );
+  });
+
+  it("silently recovers a 401 session and retries the request once", async () => {
+    const recoveryHandler = jest.fn(() => Promise.resolve(true));
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true }),
+      });
+
+    try {
+      await removeChurchMember("church-1", "user-7");
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(authErrorHandler).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("announces a 401 when silent recovery cannot restore the session", async () => {
+    const recoveryHandler = jest.fn(() => Promise.resolve(false));
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+    });
+
+    try {
+      await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
+        expect.objectContaining<AuthApiError>({
+          message: "Authentication required",
+          status: 401,
+        }),
+      );
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(authErrorHandler).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });
