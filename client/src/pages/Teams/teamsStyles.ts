@@ -59,15 +59,15 @@ export const scheduleWorkspaceMainColumnClassName =
 
 /** TabsContent body that grows inside the schedule workspace. */
 export const scheduleWorkspaceTabContentClassName =
-  "flex flex-col outline-none max-lg:flex-none lg:min-h-0 lg:flex-1";
+  "flex min-w-0 flex-col outline-none max-lg:flex-none lg:min-h-0 lg:flex-1";
 
 /** Schedule grid scrollport; grows with the workspace while the bordered frame hugs the table. */
 export const scheduleGridScrollClassName =
-  "scrollbar-variable min-h-0 overflow-auto max-lg:max-h-none lg:min-h-0 lg:flex-1";
+  "scrollbar-variable min-h-0 min-w-0 overflow-auto max-lg:max-h-none lg:min-h-0 lg:flex-1";
 
 /** Border frame sized to the schedule table, not the full scrollport. */
 export const scheduleGridFrameClassName =
-  "w-max max-w-full overflow-hidden rounded-lg border border-gray-800";
+  "w-max rounded-lg border border-gray-800";
 
 /** Create/edit panel fills the Teams content column on mobile. */
 export const teamsCreatePanelOpenMobileClassName =

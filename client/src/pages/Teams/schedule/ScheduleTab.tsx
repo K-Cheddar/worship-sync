@@ -161,6 +161,7 @@ import {
   type ScheduleAttendanceRow,
 } from "./scheduleAttendance";
 import {
+  capScheduleColumnLabelForSizing,
   getAssignmentCellContentLabel,
   getScheduleAxisHighlight,
   pickLongestLabel,
@@ -174,6 +175,8 @@ import {
   scheduleGridRightBorderClassName,
   scheduleGridTopBorderClassName,
   schedulePositionColumnClassName,
+  scheduleStickyPositionColumnClassName,
+  scheduleStickyPositionLabelClassName,
   scheduleRowTone,
   scheduleServiceHeaderBottomBorderClassName,
   scheduleServiceHeaderLeftBorderClassName,
@@ -1524,12 +1527,14 @@ const ScheduleTab = ({
         const assignmentCell =
           selectedSchedule?.assignments?.[occurrence.occurrenceId]?.[column.columnKey];
         labels.push(
-          getAssignmentCellContentLabel({
-            assignmentCell,
-            positionName: column.label,
-            members: data.members,
-            duplicateFirstNames: duplicateScheduleFirstNames,
-          }),
+          capScheduleColumnLabelForSizing(
+            getAssignmentCellContentLabel({
+              assignmentCell,
+              positionName: column.label,
+              members: data.members,
+              duplicateFirstNames: duplicateScheduleFirstNames,
+            }),
+          ),
         );
       });
       minChByColumn.set(
@@ -2071,6 +2076,40 @@ const ScheduleTab = ({
     [occurrencesByService],
   );
 
+  const scheduleOccurrenceColumnCh = useMemo(() => {
+    const chByOccurrence = new Map<string, number>();
+    flatOccurrences.forEach(({ occurrence, group }) => {
+      const labels = [
+        formatOccurrenceRowLabel(occurrence, group.sharedTiming),
+      ];
+      scheduleColumns.forEach((column) => {
+        const assignmentCell =
+          selectedSchedule?.assignments?.[occurrence.occurrenceId]?.[column.columnKey];
+        labels.push(
+          capScheduleColumnLabelForSizing(
+            getAssignmentCellContentLabel({
+              assignmentCell,
+              positionName: column.label,
+              members: data.members,
+              duplicateFirstNames: duplicateScheduleFirstNames,
+            }),
+          ),
+        );
+      });
+      chByOccurrence.set(
+        occurrence.occurrenceId,
+        toScheduleColumnMinCh(pickLongestLabel(...labels)),
+      );
+    });
+    return chByOccurrence;
+  }, [
+    data.members,
+    duplicateScheduleFirstNames,
+    flatOccurrences,
+    scheduleColumns,
+    selectedSchedule?.assignments,
+  ]);
+
   const cellAxisHighlightMap = useMemo(() => {
     const map = new Map<string, string>();
     if (!activeSlot) return map;
@@ -2601,126 +2640,126 @@ const ScheduleTab = ({
               </TabsList>
 
               <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
-                <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-lg font-semibold">
-                      <Icon svg={CalendarDays} size="md" className="text-cyan-200" />
+                <div className="shrink-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
+                      <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
                       Team schedule
                     </h2>
-                    <p className="mt-1 text-sm text-gray-400">
-                      Schedule members first, then switch to attendance when you are tracking one service.
-                    </p>
-                  </div>
-                  {scheduleWorkspaceTab === "schedule" ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Edit history: the frequent, in-flow controls stay visible. */}
-                      {canEdit ? (
-                        <>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="tertiary"
-                              svg={Undo2}
-                              iconSize="sm"
-                              disabled={!canUndo}
-                              onClick={handleUndo}
-                              aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
-                              title={
-                                undoLabel
-                                  ? `Undo ${undoLabel} (${undoShortcut.undo})`
-                                  : `Nothing to undo (${undoShortcut.undo})`
-                              }
+                    {scheduleWorkspaceTab === "schedule" ? (
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                        {/* Edit history: the frequent, in-flow controls stay visible. */}
+                        {canEdit ? (
+                          <>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="tertiary"
+                                svg={Undo2}
+                                iconSize="sm"
+                                disabled={!canUndo}
+                                onClick={handleUndo}
+                                aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
+                                title={
+                                  undoLabel
+                                    ? `Undo ${undoLabel} (${undoShortcut.undo})`
+                                    : `Nothing to undo (${undoShortcut.undo})`
+                                }
+                              />
+                              <Button
+                                variant="tertiary"
+                                svg={Redo2}
+                                iconSize="sm"
+                                disabled={!canRedo}
+                                onClick={handleRedo}
+                                aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
+                                title={
+                                  redoLabel
+                                    ? `Redo ${redoLabel} (${undoShortcut.redo})`
+                                    : `Nothing to redo (${undoShortcut.redo})`
+                                }
+                              />
+                            </div>
+                            {SHOW_PASTE_FROM_EXCEL ? (
+                              <Button
+                                variant="tertiary"
+                                svg={ClipboardPaste}
+                                iconSize="sm"
+                                onClick={() => setPasteRowOpen(true)}
+                              >
+                                Paste from Excel
+                              </Button>
+                            ) : null}
+                            <span
+                              aria-hidden
+                              className="mx-0.5 h-5 w-px self-center bg-gray-700"
                             />
-                            <Button
-                              variant="tertiary"
-                              svg={Redo2}
-                              iconSize="sm"
-                              disabled={!canRedo}
-                              onClick={handleRedo}
-                              aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
-                              title={
-                                redoLabel
-                                  ? `Redo ${redoLabel} (${undoShortcut.redo})`
-                                  : `Nothing to redo (${undoShortcut.redo})`
-                              }
-                            />
-                          </div>
-                          {SHOW_PASTE_FROM_EXCEL ? (
-                            <Button
-                              variant="tertiary"
-                              svg={ClipboardPaste}
-                              iconSize="sm"
-                              onClick={() => setPasteRowOpen(true)}
-                            >
-                              Paste from Excel
-                            </Button>
-                          ) : null}
-                          <span
-                            aria-hidden
-                            className="mx-0.5 h-5 w-px self-center bg-gray-700"
-                          />
-                        </>
-                      ) : null}
+                          </>
+                        ) : null}
 
-                      {/* View, export & share: infrequent actions in an overflow menu. */}
-                      <Menu
-                        align="end"
-                        menuItems={[
-                          {
-                            element: (
-                              <span className="flex items-center gap-2">
-                                <LayoutGrid className="h-4 w-4" aria-hidden />
-                                Layout
-                              </span>
-                            ),
-                            subItems: scheduleLayoutOptions.map((option) => ({
-                              text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                              onClick: () => setScheduleLayout(option.value),
-                            })),
-                          },
-                          {
-                            element: (
-                              <span className="flex items-center gap-2">
-                                <Printer className="h-4 w-4" aria-hidden />
-                                Save as PDF
-                              </span>
-                            ),
-                            onClick: () => setPdfPreviewOpen(true),
-                            disabled: !scheduleExportModel,
-                          },
-                          ...(canEdit
-                            ? [
-                              {
-                                element: (
-                                  <span className="flex items-center gap-2">
-                                    <Link2 className="h-4 w-4" aria-hidden />
-                                    {copyingLink ? "Copying…" : "Copy view-only link"}
-                                  </span>
-                                ),
-                                onClick: () => void copyPublicLink(),
-                                disabled: copyingLink,
-                                preventClose: copyingLink,
-                              },
-                            ]
-                            : []),
-                        ] as MenuItemType[]}
-                        TriggeringButton={
-                          <Button
-                            variant="tertiary"
-                            svg={MoreHorizontal}
-                            iconSize="sm"
-                            aria-label="More schedule actions"
-                          />
-                        }
-                      />
-                      <SchedulePdfExportButton
-                        model={scheduleExportModel}
-                        layout={scheduleLayout}
-                        hideTrigger
-                        open={pdfPreviewOpen}
-                        onOpenChange={setPdfPreviewOpen}
-                      />
-                    </div>
-                  ) : null}
+                        {/* View, export & share: infrequent actions in an overflow menu. */}
+                        <Menu
+                          align="end"
+                          menuItems={[
+                            {
+                              element: (
+                                <span className="flex items-center gap-2">
+                                  <LayoutGrid className="h-4 w-4" aria-hidden />
+                                  Layout
+                                </span>
+                              ),
+                              subItems: scheduleLayoutOptions.map((option) => ({
+                                text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
+                                onClick: () => setScheduleLayout(option.value),
+                              })),
+                            },
+                            {
+                              element: (
+                                <span className="flex items-center gap-2">
+                                  <Printer className="h-4 w-4" aria-hidden />
+                                  Save as PDF
+                                </span>
+                              ),
+                              onClick: () => setPdfPreviewOpen(true),
+                              disabled: !scheduleExportModel,
+                            },
+                            ...(canEdit
+                              ? [
+                                {
+                                  element: (
+                                    <span className="flex items-center gap-2">
+                                      <Link2 className="h-4 w-4" aria-hidden />
+                                      {copyingLink ? "Copying…" : "Copy view-only link"}
+                                    </span>
+                                  ),
+                                  onClick: () => void copyPublicLink(),
+                                  disabled: copyingLink,
+                                  preventClose: copyingLink,
+                                },
+                              ]
+                              : []),
+                          ] as MenuItemType[]}
+                          TriggeringButton={
+                            <Button
+                              variant="tertiary"
+                              svg={MoreHorizontal}
+                              iconSize="sm"
+                              aria-label="More schedule actions"
+                            />
+                          }
+                        />
+                        <SchedulePdfExportButton
+                          model={scheduleExportModel}
+                          layout={scheduleLayout}
+                          hideTrigger
+                          open={pdfPreviewOpen}
+                          onOpenChange={setPdfPreviewOpen}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Schedule members first, then switch to attendance when you are tracking one service.
+                  </p>
                 </div>
 
                 {occurrencesStale && !showForm ? (
@@ -2748,16 +2787,36 @@ const ScheduleTab = ({
                         {scheduleLayout === "transpose" ? (
                           <div className={scheduleGridScrollClassName}>
                             <div className={scheduleGridFrameClassName}>
-                              <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
+                              <table className="w-max border-collapse text-left text-sm table-auto">
+                                <colgroup>
+                                  <col />
+                                  {flatOccurrences.map(({ occurrence }) => {
+                                    const columnCh =
+                                      scheduleOccurrenceColumnCh.get(occurrence.occurrenceId) ??
+                                      toScheduleColumnMinCh("Empty");
+                                    return (
+                                      <col
+                                        key={occurrence.occurrenceId}
+                                        style={{
+                                          width: `${columnCh}ch`,
+                                          minWidth: `${columnCh}ch`,
+                                          maxWidth: `${columnCh}ch`,
+                                        }}
+                                      />
+                                    );
+                                  })}
+                                </colgroup>
                                 <thead>
                                   <tr>
                                     <th
                                       rowSpan={2}
                                       className={cn(
-                                        "sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200",
+                                        "sticky left-0 top-0 z-20 border-b text-gray-200",
                                         scheduleGridBottomBorderClassName,
                                         schedulePositionColumnClassName,
+                                        scheduleStickyPositionColumnClassName,
                                         scheduleCellPaddingClassName,
+                                        scheduleStickyRowTone(1),
                                       )}
                                     >
                                       Position
@@ -2774,19 +2833,22 @@ const ScheduleTab = ({
                                           serviceHeaderRowTone,
                                         )}
                                       >
-                                        <span className="inline-flex items-center gap-x-2">
-                                          <span>{group.serviceName}</span>
-                                          {group.sharedTiming.sharedWeekday ? (
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <span className="whitespace-nowrap">
+                                            {group.serviceName}
+                                          </span>
+                                          {group.sharedTiming.sharedWeekday ||
+                                            group.sharedTiming.sharedTime ? (
                                             <span className="font-normal text-gray-300">
-                                              {group.sharedTiming.sharedWeekday}
+                                              {[
+                                                group.sharedTiming.sharedWeekday,
+                                                group.sharedTiming.sharedTime,
+                                              ]
+                                                .filter(Boolean)
+                                                .join(" ")}
                                             </span>
                                           ) : null}
-                                          {group.sharedTiming.sharedTime ? (
-                                            <span className="font-normal text-gray-300">
-                                              {group.sharedTiming.sharedTime}
-                                            </span>
-                                          ) : null}
-                                        </span>
+                                        </div>
                                       </th>
                                     ))}
                                   </tr>
@@ -2833,6 +2895,7 @@ const ScheduleTab = ({
                                             "sticky left-0 z-10 align-middle",
                                             scheduleGridRightBorderClassName,
                                             schedulePositionColumnClassName,
+                                            scheduleStickyPositionColumnClassName,
                                             scheduleCellPaddingClassName,
                                             stickyTone,
                                             getAxisHighlightClassName(undefined, column.columnKey, {
@@ -2841,13 +2904,15 @@ const ScheduleTab = ({
                                             }),
                                           )}
                                         >
-                                          <span className="inline-flex items-center gap-2">
+                                          <span className="inline-flex min-w-0 max-w-full items-center gap-2">
                                             {PositionIcon ? (
                                               <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
                                             ) : null}
-                                            <span className="font-medium text-white">{column.label}</span>
+                                            <span className={cn(scheduleStickyPositionLabelClassName, "font-medium text-white")}>
+                                              {column.label}
+                                            </span>
                                             {column.position.archivedAt ? (
-                                              <span className="text-xs text-gray-500">(archived)</span>
+                                              <span className="shrink-0 text-xs text-gray-500">(archived)</span>
                                             ) : null}
                                           </span>
                                         </th>
@@ -2867,18 +2932,24 @@ const ScheduleTab = ({
                         ) : (
                           <div className={scheduleGridScrollClassName}>
                             <div className={scheduleGridFrameClassName}>
-                              <table className="w-max max-w-full border-collapse text-left text-sm table-auto">
+                              <table className="w-max border-collapse text-left text-sm table-auto">
                                 <colgroup>
                                   <col style={{ minWidth: `${scheduleDateColumnMinCh}ch` }} />
-                                  {scheduleColumns.map((column) => (
-                                    <col
-                                      key={column.columnKey}
-                                      style={{
-                                        width: `${scheduleColumnMinCh.get(column.columnKey)}ch`,
-                                        minWidth: `${scheduleColumnMinCh.get(column.columnKey)}ch`,
-                                      }}
-                                    />
-                                  ))}
+                                  {scheduleColumns.map((column) => {
+                                    const columnCh =
+                                      scheduleColumnMinCh.get(column.columnKey) ??
+                                      toScheduleColumnMinCh("Empty");
+                                    return (
+                                      <col
+                                        key={column.columnKey}
+                                        style={{
+                                          width: `${columnCh}ch`,
+                                          minWidth: `${columnCh}ch`,
+                                          maxWidth: `${columnCh}ch`,
+                                        }}
+                                      />
+                                    );
+                                  })}
                                 </colgroup>
                                 <thead>
                                   <tr>
@@ -2979,6 +3050,7 @@ const ScheduleTab = ({
                       assignmentQuery={assignmentQuery}
                       onAssignmentQueryChange={setAssignmentQuery}
                       currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
+                      currentAssigneeLabel={activeSlotMeta?.currentAssigneeLabel || "Empty"}
                       duplicateFirstNames={duplicateScheduleFirstNames}
                       getIssue={activeSlotGetIssue}
                       getAssignmentActionIssues={
