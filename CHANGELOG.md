@@ -1,3 +1,10 @@
+## [2.17.1](https://github.com/K-Cheddar/worship-sync/compare/v2.17.0...v2.17.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* Improve Schedule Grid UI ([73cd12f](https://github.com/K-Cheddar/worship-sync/commit/73cd12f270057aa63adcd10281d16db5221c6e12))
+
 # [2.17.0](https://github.com/K-Cheddar/worship-sync/compare/v2.16.5...v2.17.0) (2026-07-02)
 
 
