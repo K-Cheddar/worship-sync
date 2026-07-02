@@ -25,23 +25,29 @@ export const scheduleServiceHeaderLeftBorderClassName =
 
 export const scheduleDateColumnClassName = "whitespace-nowrap";
 export const schedulePositionColumnClassName = "whitespace-nowrap";
+/** Sticky position column: cap width on small screens and allow label truncation. */
+export const scheduleStickyPositionColumnClassName =
+  "w-0 max-w-[40vw] min-w-0 overflow-hidden";
+export const scheduleStickyPositionLabelClassName = "min-w-0 truncate";
 export const scheduleCellPaddingClassName = "px-2 py-2";
-/** Hide remove controls until hover on pointer devices; always visible on touch. */
-export const scheduleCellRemoveButtonVisibilityClassName =
-  "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100";
-/** Larger tap target for inline cell remove controls on small screens. */
-export const scheduleCellRemoveButtonTouchClassName =
-  "max-md:min-h-10 max-md:min-w-10 max-md:[&_svg]:size-4";
 export const scheduleColumnMinCh = 8;
 export const scheduleColumnPaddingCh = 1;
 export const schedulePositionIconCh = 2;
-export const scheduleAssignmentButtonCh = 1;
+/** Cap assignment cell column width so long names truncate instead of widening the grid. */
+export const scheduleAssignmentColumnMaxCh = 15;
+export const scheduleAssignmentCellColumnClassName =
+  "w-0 max-w-[15ch] min-w-0 overflow-hidden";
+
+export const capScheduleColumnLabelForSizing = (label: string) =>
+  label.length > scheduleAssignmentColumnMaxCh
+    ? label.slice(0, scheduleAssignmentColumnMaxCh)
+    : label;
 
 export const scheduleRowTone = (rowIndex: number) =>
   rowIndex % 2 === 0 ? "bg-gray-950/80" : "bg-gray-900/45";
 
 export const scheduleStickyRowTone = (rowIndex: number) =>
-  rowIndex % 2 === 0 ? "bg-gray-950" : "bg-gray-900/70";
+  rowIndex % 2 === 0 ? "bg-gray-950/95" : "bg-gray-900/95";
 
 export type ScheduleFocusedCell = {
   occurrenceId: string;
@@ -216,10 +222,7 @@ export const toSchedulePositionColumnMinCh = ({
 }) => {
   const headerCh = headerLabel.length + (hasIcon ? schedulePositionIconCh : 0);
   const contentCh = Math.max(longestLabel.length, headerCh);
-  return Math.max(
-    contentCh + scheduleAssignmentButtonCh + scheduleColumnPaddingCh,
-    scheduleColumnMinCh,
-  );
+  return Math.max(contentCh + scheduleColumnPaddingCh, scheduleColumnMinCh);
 };
 
 export const getAssignmentCellContentLabel = ({

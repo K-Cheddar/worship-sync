@@ -2,6 +2,7 @@ import { memo, type ReactNode } from "react";
 import { cn } from "@/utils/cnHelper";
 import {
   scheduleCellPaddingClassName,
+  scheduleAssignmentCellColumnClassName,
   scheduleGridLeftBorderClassName,
   schedulePositionColumnClassName,
 } from "./scheduleUtils";
@@ -23,6 +24,7 @@ const ScheduleAssignmentCell = memo(({
     <td
       className={cn(
         schedulePositionColumnClassName,
+        scheduleAssignmentCellColumnClassName,
         scheduleCellPaddingClassName,
         "align-middle",
         scheduleGridLeftBorderClassName,

@@ -56,6 +56,7 @@ type ScheduleAssignmentPickerProps = {
   assignmentQuery: string;
   onAssignmentQueryChange: (query: string) => void;
   currentPrimaryMemberId: string;
+  currentAssigneeLabel: string;
   duplicateFirstNames?: Set<string>;
   getIssue: (memberId: string) => string;
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
@@ -86,6 +87,7 @@ const ScheduleAssignmentPicker = memo(({
   assignmentQuery,
   onAssignmentQueryChange,
   currentPrimaryMemberId,
+  currentAssigneeLabel,
   duplicateFirstNames,
   getIssue,
   getAssignmentActionIssues,
@@ -226,13 +228,19 @@ const ScheduleAssignmentPicker = memo(({
     menuView === "members" &&
     Boolean(onClearAssignment);
 
+  const showCurrentAssigneeRow =
+    Boolean(currentPrimaryMemberId) &&
+    menuView === "members" &&
+    !pendingSubmenu;
+
   const showListContent =
     menuView === "assignmentActions" ||
     menuView === "createMember" ||
     Boolean(pendingSubmenu) ||
     selectableRows.length > 0 ||
     showCreateOption ||
-    showClearAssignmentOption;
+    showClearAssignmentOption ||
+    showCurrentAssigneeRow;
 
   const pickerOpen = open && Boolean(anchorRect);
 
@@ -298,7 +306,7 @@ const ScheduleAssignmentPicker = memo(({
         role={menuView === "members" ? "listbox" : "menu"}
         align="start"
         sideOffset={4}
-        className="z-50 w-48 overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+        className="z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
           if (menuView !== "createMember") event.preventDefault();
@@ -409,6 +417,19 @@ const ScheduleAssignmentPicker = memo(({
             <div className="p-1">
               {showListContent ? (
                 <>
+                  {showCurrentAssigneeRow ? (
+                    <div
+                      className="mb-1 border-b border-gray-600 px-2 py-1.5"
+                      aria-label={`Current assignee, ${currentAssigneeLabel}`}
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-300/90">
+                        Current assignee
+                      </p>
+                      <p className="mt-0.5 wrap-break-word text-sm font-semibold text-white">
+                        {currentAssigneeLabel}
+                      </p>
+                    </div>
+                  ) : null}
                   {showClearAssignmentOption ? (
                     <Button
                       type="button"
