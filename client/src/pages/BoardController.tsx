@@ -36,6 +36,8 @@ import { BoardRenameModal } from "../boards/BoardRenameModal";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import {
   buildBoardPublicUrl,
+  filterHighlightedBoardPosts,
+  filterHighlightedRestreamMessages,
   filterVisibleBoardPosts,
   formatBoardTimestamp,
   getAliasDocId,
@@ -153,6 +155,51 @@ const getBoardPosts = async (
   );
 };
 
+const getHighlightedBoardPostCount = (posts: DBBoardPost[]): number =>
+  filterHighlightedBoardPosts(posts).length;
+
+const getCurrentBoardHighlightedCount = async (
+  db: PouchDB.Database,
+  currentBoardId: string,
+  boardIdToView: string,
+  viewedPosts: DBBoardPost[],
+): Promise<number> => {
+  if (boardIdToView === currentBoardId) {
+    return getHighlightedBoardPostCount(viewedPosts);
+  }
+
+  return getHighlightedBoardPostCount(await getBoardPosts(db, currentBoardId));
+};
+
+const getSelectedAliasViewData = async (
+  db: PouchDB.Database,
+  alias: DBBoardAlias,
+  selectedBoardId: string,
+) => {
+  const boardIds = Array.from(new Set([alias.currentBoardId, ...alias.history]));
+  const boardIdToView =
+    selectedBoardId && boardIds.includes(selectedBoardId)
+      ? selectedBoardId
+      : alias.currentBoardId;
+  const [boardsById, posts] = await Promise.all([
+    getBoardDocsById(db, boardIds),
+    getBoardPosts(db, boardIdToView),
+  ]);
+  const currentBoardHighlightedCount = await getCurrentBoardHighlightedCount(
+    db,
+    alias.currentBoardId,
+    boardIdToView,
+    posts,
+  );
+
+  return {
+    boardIdToView,
+    boardsById,
+    posts,
+    currentBoardHighlightedCount,
+  };
+};
+
 const SessionResetToastAction = ({
   keepLabel,
   confirmLabel,
@@ -190,6 +237,8 @@ export const BoardControllerContent = () => {
       filterRestreamMessagesForDisplay(restreamSession.messages).length,
     [restreamSession.messages],
   );
+  const [currentBoardHighlightedCount, setCurrentBoardHighlightedCount] =
+    useState(0);
 
   const [aliases, setAliases] = useState<DBBoardAlias[]>([]);
   const [selectedAliasId, setSelectedAliasId] = useState<string>("");
@@ -245,6 +294,7 @@ export const BoardControllerContent = () => {
       setSelectedAlias(null);
       setBoardsById({});
       setPosts([]);
+      setCurrentBoardHighlightedCount(0);
       setIsLoading(false);
       return;
     }
@@ -253,21 +303,22 @@ export const BoardControllerContent = () => {
     setIsLoading(true);
     try {
       const alias = (await db.get(getAliasDocId(selectedAliasId))) as DBBoardAlias;
-      const boardIds = Array.from(new Set([alias.currentBoardId, ...alias.history]));
-      const nextBoards = await getBoardDocsById(db, boardIds);
-      const boardIdToView =
-        selectedBoardId && boardIds.includes(selectedBoardId)
-          ? selectedBoardId
-          : alias.currentBoardId;
-      const nextPosts = await getBoardPosts(db, boardIdToView);
+      const nextViewData = await getSelectedAliasViewData(
+        db,
+        alias,
+        selectedBoardId,
+      );
 
       if (requestId !== loadRequestIdRef.current) {
         return;
       }
 
       setSelectedAlias(alias);
-      setBoardsById(nextBoards);
-      setPosts(nextPosts);
+      setBoardsById(nextViewData.boardsById);
+      setPosts(nextViewData.posts);
+      setCurrentBoardHighlightedCount(
+        nextViewData.currentBoardHighlightedCount,
+      );
     } catch (error) {
       if (requestId === loadRequestIdRef.current) {
         console.warn("Board link is not ready in local sync yet:", error);
@@ -329,27 +380,28 @@ export const BoardControllerContent = () => {
             return [...prev, updatedAlias].sort((a, b) => a.title.localeCompare(b.title));
           });
           if (selectedAliasIdRef.current === updatedAlias.aliasId) {
-            const boardIds = Array.from(
-              new Set([updatedAlias.currentBoardId, ...updatedAlias.history]),
-            );
             const selectedBoardId = selectedBoardIdRef.current;
-            const boardIdToView =
-              selectedBoardId && boardIds.includes(selectedBoardId)
-                ? selectedBoardId
-                : updatedAlias.currentBoardId;
 
             setSelectedAlias(updatedAlias);
-            setSelectedBoardId(
-              boardIdToView === updatedAlias.currentBoardId ? "" : boardIdToView,
-            );
 
             void (async () => {
               try {
-                const nextBoards = await getBoardDocsById(db, boardIds);
-                const nextPosts = await getBoardPosts(db, boardIdToView);
+                const nextViewData = await getSelectedAliasViewData(
+                  db,
+                  updatedAlias,
+                  selectedBoardId,
+                );
                 if (selectedAliasIdRef.current !== updatedAlias.aliasId) return;
-                setBoardsById(nextBoards);
-                setPosts(nextPosts);
+                setSelectedBoardId(
+                  nextViewData.boardIdToView === updatedAlias.currentBoardId
+                    ? ""
+                    : nextViewData.boardIdToView,
+                );
+                setBoardsById(nextViewData.boardsById);
+                setPosts(nextViewData.posts);
+                setCurrentBoardHighlightedCount(
+                  nextViewData.currentBoardHighlightedCount,
+                );
               } catch (error) {
                 console.warn("Board link is not ready in local sync yet:", error);
               }
@@ -616,6 +668,19 @@ export const BoardControllerContent = () => {
   }, []);
 
   const visibleCount = filterVisibleBoardPosts(posts).length;
+
+  useEffect(() => {
+    if (isViewingCurrent) {
+      setCurrentBoardHighlightedCount(getHighlightedBoardPostCount(posts));
+    }
+  }, [isViewingCurrent, posts]);
+
+  const highlightedPresentationCount = useMemo(
+    () =>
+      currentBoardHighlightedCount +
+      filterHighlightedRestreamMessages(restreamSession.messages).length,
+    [currentBoardHighlightedCount, restreamSession.messages],
+  );
   const postsScrollTrigger = useMemo(
     () => posts.map((p) => `${p._id}:${p._rev ?? ""}`).join("|"),
     [posts],
@@ -677,85 +742,85 @@ export const BoardControllerContent = () => {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span
-                      className={cn(
-                        "font-semibold",
-                        (post.hidden || post.deleted) && "text-gray-400",
-                        !post.hidden &&
-                        !post.deleted &&
-                        getBoardAuthorNameColorClass(post),
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          (post.hidden || post.deleted) && "text-gray-400",
+                          !post.hidden &&
+                          !post.deleted &&
+                          getBoardAuthorNameColorClass(post),
+                        )}
+                      >
+                        {post.author}
+                      </span>
+                      {isModeratorPost ? <BoardModeratorReplyBadge /> : null}
+                      <span className="text-xs text-gray-300">
+                        {formatBoardTimestamp(post.timestamp)}
+                      </span>
+                      {post.deleted && (
+                        <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
+                          Deleted by author
+                        </span>
                       )}
-                    >
-                      {post.author}
-                    </span>
-                    {isModeratorPost ? <BoardModeratorReplyBadge /> : null}
-                    <span className="text-xs text-gray-300">
-                      {formatBoardTimestamp(post.timestamp)}
-                    </span>
-                    {post.deleted && (
-                      <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
-                        Deleted by author
-                      </span>
-                    )}
-                    {post.highlighted && !post.deleted && (
-                      <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
-                        Highlighted
-                      </span>
-                    )}
-                    {post.hidden && (
-                      <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
-                        Hidden
-                      </span>
+                      {post.highlighted && !post.deleted && (
+                        <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
+                          Highlighted
+                        </span>
+                      )}
+                      {post.hidden && (
+                        <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
+                          Hidden
+                        </span>
+                      )}
+                    </div>
+                    {isViewingCurrent && (
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          variant="tertiary"
+                          svg={post.hidden ? Eye : EyeOff}
+                          onClick={() => {
+                            void runPostAction(
+                              post._id,
+                              () => updateBoardPostHidden(post._id, !post.hidden),
+                              (p) => ({ ...p, hidden: !p.hidden }),
+                            );
+                          }}
+                          disabled={actingPostIds.has(post._id) || post.deleted}
+                        >
+                          {post.hidden ? "Unhide" : "Hide"}
+                        </Button>
+                        <Button
+                          variant="tertiary"
+                          svg={post.highlighted ? StarOff : Sparkles}
+                          onClick={() =>
+                            void runPostAction(
+                              post._id,
+                              () =>
+                                updateBoardPostHighlighted(
+                                  post._id,
+                                  !post.highlighted,
+                                ),
+                              (p) => ({ ...p, highlighted: !p.highlighted }),
+                            )
+                          }
+                          disabled={
+                            actingPostIds.has(post._id) || post.hidden || post.deleted
+                          }
+                        >
+                          {post.highlighted ? "Unhighlight" : "Highlight"}
+                        </Button>
+                      </div>
                     )}
                   </div>
-                  {isViewingCurrent && (
-                    <div className="flex shrink-0 gap-2">
-                      <Button
-                        variant="tertiary"
-                        svg={post.hidden ? Eye : EyeOff}
-                        onClick={() => {
-                          void runPostAction(
-                            post._id,
-                            () => updateBoardPostHidden(post._id, !post.hidden),
-                            (p) => ({ ...p, hidden: !p.hidden }),
-                          );
-                        }}
-                        disabled={actingPostIds.has(post._id) || post.deleted}
-                      >
-                        {post.hidden ? "Unhide" : "Hide"}
-                      </Button>
-                      <Button
-                        variant="tertiary"
-                        svg={post.highlighted ? StarOff : Sparkles}
-                        onClick={() =>
-                          void runPostAction(
-                            post._id,
-                            () =>
-                              updateBoardPostHighlighted(
-                                post._id,
-                                !post.highlighted,
-                              ),
-                            (p) => ({ ...p, highlighted: !p.highlighted }),
-                          )
-                        }
-                        disabled={
-                          actingPostIds.has(post._id) || post.hidden || post.deleted
-                        }
-                      >
-                        {post.highlighted ? "Unhighlight" : "Highlight"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                <div
-                  className={cn(
-                    "mt-3 min-w-0",
-                    post.deleted && "opacity-80",
-                  )}
-                >
-                  <BoardPostMessage text={post.text} isMine={false} tone="moderator" />
-                </div>
-              </article>
+                  <div
+                    className={cn(
+                      "mt-3 min-w-0",
+                      post.deleted && "opacity-80",
+                    )}
+                  >
+                    <BoardPostMessage text={post.text} isMine={false} tone="moderator" />
+                  </div>
+                </article>
               );
             })}
           </div>
@@ -1052,7 +1117,8 @@ export const BoardControllerContent = () => {
                       className="rounded-md border border-gray-500 px-3 py-0.5 text-sm text-gray-200"
                       aria-live="polite"
                     >
-                      {posts.length} total · {visibleCount} visible
+                      {posts.length} total · {visibleCount} visible ·{" "}
+                      {highlightedPresentationCount} highlighted
                     </div>
 
                   </div>

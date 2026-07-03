@@ -131,6 +131,90 @@ describe("scheduleMemberPickerUtils", () => {
     expect(rows.map((row) => row.desiresPosition)).toEqual([true, false]);
   });
 
+  it("ranks eligible members with fewer schedule assignments first", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members: [
+        {
+          memberId: "busy",
+          churchId: "c1",
+          firstName: "Avery",
+          lastName: "Lee",
+          positionIds: ["position-vocal"],
+          desiredPositionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+        {
+          memberId: "rested",
+          churchId: "c1",
+          firstName: "Morgan",
+          lastName: "Kay",
+          positionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+      ],
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+      recommendationStats: new Map([
+        ["busy", { assignmentCount: 3, nearestAssignmentDistance: null }],
+        ["rested", { assignmentCount: 0, nearestAssignmentDistance: 1 }],
+      ]),
+    });
+
+    expect(rows.map((row) => row.member.memberId)).toEqual(["rested", "busy"]);
+  });
+
+  it("prefers members spaced farther from their nearest assignment", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members: [
+        {
+          memberId: "nearby",
+          churchId: "c1",
+          firstName: "Avery",
+          lastName: "Lee",
+          positionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+        {
+          memberId: "spaced",
+          churchId: "c1",
+          firstName: "Morgan",
+          lastName: "Kay",
+          positionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+        {
+          memberId: "unused",
+          churchId: "c1",
+          firstName: "Jordan",
+          lastName: "Ray",
+          positionIds: ["position-vocal"],
+          blockoutDates: [],
+        },
+      ],
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+      recommendationStats: new Map([
+        ["nearby", { assignmentCount: 1, nearestAssignmentDistance: 1 }],
+        ["spaced", { assignmentCount: 1, nearestAssignmentDistance: 3 }],
+        ["unused", { assignmentCount: 1, nearestAssignmentDistance: null }],
+      ]),
+    });
+
+    expect(rows.map((row) => row.member.memberId)).toEqual([
+      "unused",
+      "spaced",
+      "nearby",
+    ]);
+  });
+
   it("attaches a non-blocking warning without making the member ineligible", () => {
     const rows = buildScheduleMemberPickerMembers({
       members,

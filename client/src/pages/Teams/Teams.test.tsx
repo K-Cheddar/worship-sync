@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -14,6 +14,7 @@ import {
   getTeamsBootstrap,
   updateTeam,
   updateTeamScheduleAssignment,
+  updateTeamScheduleAssignmentSwap,
 } from "../../api/auth";
 import type { TeamSchedulePayload } from "../../api/auth";
 import type {
@@ -26,6 +27,7 @@ import ScheduleEditForm from "./schedule/ScheduleEditForm";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
+let originalMatchMedia: typeof window.matchMedia;
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -51,6 +53,7 @@ jest.mock("../../api/auth", () => ({
   getTeamsBootstrap: jest.fn(),
   createTeamPosition: jest.fn(),
   updateTeamScheduleAssignment: jest.fn(),
+  updateTeamScheduleAssignmentSwap: jest.fn(),
   archiveTeamPosition: jest.fn(),
   deleteTeamPosition: jest.fn(),
   createTeamRosterMember: jest.fn(),
@@ -73,6 +76,9 @@ const mockDeleteTeamPosition = jest.mocked(deleteTeamPosition);
 const mockUpdateTeamScheduleAssignment = jest.mocked(
   updateTeamScheduleAssignment,
 );
+const mockUpdateTeamScheduleAssignmentSwap = jest.mocked(
+  updateTeamScheduleAssignmentSwap,
+);
 const mockCreateTeamRosterMember = jest.mocked(createTeamRosterMember);
 const mockCreateTeamSchedule = jest.mocked(createTeamSchedule);
 const mockUpdateTeam = jest.mocked(updateTeam);
@@ -90,10 +96,25 @@ type UpdateTeamResponse = Awaited<ReturnType<typeof updateTeam>>;
 type UpdateTeamScheduleAssignmentResponse = Awaited<
   ReturnType<typeof updateTeamScheduleAssignment>
 >;
+type UpdateTeamScheduleAssignmentSwapResponse = Awaited<
+  ReturnType<typeof updateTeamScheduleAssignmentSwap>
+>;
 
 const asTeamsBootstrapResponse = (
   value: TestTeamsBootstrap,
 ): TeamsBootstrapResponse => value;
+
+const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
+  jest.fn().mockImplementation((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })) as unknown as typeof window.matchMedia;
 
 const baseBootstrap: TestTeamsBootstrap = {
   success: true,
@@ -262,10 +283,15 @@ describe("Teams", () => {
   jest.setTimeout(15000);
   beforeEach(() => {
     jest.clearAllMocks();
+    originalMatchMedia = window.matchMedia;
     mockState = makeMockState();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(baseBootstrap),
     );
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
   });
 
   it("renders the empty schedule state after bootstrap loads", async () => {
@@ -440,10 +466,19 @@ describe("Teams", () => {
     });
   });
 
-  it("shows unavailable members as disabled in the assign panel", async () => {
+  it("allows moving an already scheduled member into an empty slot", async () => {
     const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+    let resolveAssignment:
+      | ((value: UpdateTeamScheduleAssignmentResponse) => void)
+      | undefined;
+    mockUpdateTeamScheduleAssignment.mockImplementation(
+      () =>
+        new Promise<UpdateTeamScheduleAssignmentResponse>((resolve) => {
+          resolveAssignment = resolve;
+        }),
     );
 
     renderTeams();
@@ -453,10 +488,59 @@ describe("Teams", () => {
       await screen.findByRole("button", { name: /Morgan, unavailable: Blocked out/i }),
     ).toBeDisabled();
     expect(
-      await screen.findByRole("button", {
-        name: /Avery, unavailable: Already assigned in this service/i,
-      }),
-    ).toBeDisabled();
+      screen.queryByRole("group", { name: /^Recommended$/i }),
+    ).not.toBeInTheDocument();
+    const averyOption = await screen.findByRole("option", {
+      name: /Avery.*Will move from Keys/i,
+    });
+    expect(averyOption).not.toBeDisabled();
+
+    await user.click(averyOption);
+
+    expect(
+      await screen.findByRole("button", { name: /Sunday Vocal, Avery/i }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Sunday Keys, Empty/i }),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith(
+        "church-1",
+        "schedule-july",
+        {
+          serviceId: sundayOccurrenceId,
+          positionSlotKey: "position-vocal::0",
+          memberId: "member-avery",
+          serviceDate: "2026-07-05",
+          sourceServiceId: sundayOccurrenceId,
+          sourcePositionSlotKey: "position-keys::0",
+        },
+      );
+    });
+    resolveAssignment?.({
+      success: true,
+      schedule: {
+        ...scheduleBootstrap.schedules[0],
+        assignments: {
+          [sundayOccurrenceId]: {
+            "position-vocal::0": { primaryMemberId: "member-avery" },
+          },
+        },
+      },
+    });
+  });
+
+  it("does not focus the assignment search when opening a schedule cell", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams();
+    const vocalCombo = await openVocalSlot(user);
+
+    expect(vocalCombo).not.toHaveFocus();
   });
 
   it("shows other eligible members when opening an occupied slot", async () => {
@@ -510,6 +594,154 @@ describe("Teams", () => {
     expect(
       screen.getByRole("button", { name: /Clear assignment/i }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Recommended")).toBeInTheDocument();
+  });
+
+  it("does not recommend members who can only be assigned as shadows", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: [
+          ...scheduleBootstrap.members,
+          {
+            memberId: "member-jordan",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Ray",
+            positionIds: ["position-vocal"],
+            blockoutDates: [],
+            notes: "",
+          },
+          {
+            memberId: "member-casey",
+            churchId: "church-1",
+            firstName: "Casey",
+            lastName: "Poe",
+            positionIds: ["position-keys"],
+            blockoutDates: [],
+            notes: "",
+          },
+        ],
+        teams: [
+          {
+            ...scheduleBootstrap.teams[0],
+            memberIds: [
+              ...scheduleBootstrap.teams[0].memberIds,
+              "member-jordan",
+              "member-casey",
+            ],
+          },
+        ],
+        schedules: [
+          {
+            ...scheduleBootstrap.schedules[0],
+            assignments: {
+              [sundayOccurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-avery" },
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    renderTeams();
+    await openVocalSlot(user, /Sunday Vocal, Avery/i);
+
+    const recommendedGroup = await screen.findByRole("group", {
+      name: /^Recommended$/i,
+    });
+    expect(
+      within(recommendedGroup).getByRole("option", { name: /^Jordan$/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(recommendedGroup).queryByRole("option", { name: /^Casey$/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /^Casey$/i })).toBeInTheDocument();
+  });
+
+  it("applies a recommended swap from the assignment popover", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        members: [
+          ...scheduleBootstrap.members,
+          {
+            memberId: "member-jordan",
+            churchId: "church-1",
+            firstName: "Jordan",
+            lastName: "Ray",
+            positionIds: ["position-vocal", "position-keys"],
+            blockoutDates: [],
+            notes: "",
+          },
+        ],
+        teams: [
+          {
+            ...scheduleBootstrap.teams[0],
+            memberIds: [
+              ...scheduleBootstrap.teams[0].memberIds,
+              "member-jordan",
+            ],
+          },
+        ],
+        schedules: [
+          {
+            ...scheduleBootstrap.schedules[0],
+            assignments: {
+              [sundayOccurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-avery" },
+                "position-keys::0": { primaryMemberId: "member-jordan" },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    mockUpdateTeamScheduleAssignmentSwap.mockResolvedValue({
+      success: true,
+      schedule: {
+        ...scheduleBootstrap.schedules[0],
+        assignments: {
+          [sundayOccurrenceId]: {
+            "position-vocal::0": { primaryMemberId: "member-jordan" },
+            "position-keys::0": { primaryMemberId: "member-avery" },
+          },
+        },
+      },
+    } satisfies UpdateTeamScheduleAssignmentSwapResponse);
+
+    renderTeams();
+    await openVocalSlot(user, /Sunday Vocal, Avery/i);
+
+    expect(await screen.findByText("Possible swaps")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /Move Avery to Keys.*Assign Jordan here/i }),
+    );
+
+    expect(await screen.findByText("Recommended swap")).toBeInTheDocument();
+    expect(screen.getByText(/Move Avery from Vocal to Keys/i)).toBeInTheDocument();
+    expect(screen.getByText(/Assign Jordan to Vocal/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Apply swap/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(1);
+    });
+    expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledWith(
+      "church-1",
+      "schedule-july",
+      {
+        serviceId: sundayOccurrenceId,
+        targetPositionSlotKey: "position-vocal::0",
+        sourcePositionSlotKey: "position-keys::0",
+        currentMemberId: "member-avery",
+        candidateMemberId: "member-jordan",
+        serviceDate: "2026-07-05",
+      },
+    );
+    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
   });
 
   it("limits day-of replacements to eligible members and hides clear assignment", async () => {
@@ -583,6 +815,29 @@ describe("Teams", () => {
     // The replacement flow never offers to clear the slot.
     expect(
       screen.queryByRole("button", { name: /Clear assignment/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses attendance cards instead of the table on narrow screens", async () => {
+    const user = userEvent.setup();
+    window.matchMedia = makeMatchMedia(false);
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(
+      await screen.findByRole("button", {
+        name: /View and copy assignments for Sunday/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("region", { name: /Avery, Keys/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /Person/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -977,6 +1232,7 @@ describe("Teams", () => {
 
     renderTeams();
     const vocalCombo = await openVocalSlot(user);
+    await user.click(vocalCombo);
     await user.type(vocalCombo, "Jordan Ray");
 
     // No match -> the dropdown offers to add the typed person to the team.

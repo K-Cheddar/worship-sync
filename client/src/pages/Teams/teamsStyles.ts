@@ -67,7 +67,7 @@ export const scheduleGridScrollClassName =
 
 /** Border frame sized to the schedule table, not the full scrollport. */
 export const scheduleGridFrameClassName =
-  "w-max rounded-lg border border-gray-800";
+  "w-max overflow-hidden rounded-lg border border-gray-800";
 
 /** Create/edit panel fills the Teams content column on mobile. */
 export const teamsCreatePanelOpenMobileClassName =

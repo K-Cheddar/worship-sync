@@ -25,11 +25,11 @@ export type ScheduleAttendanceRow = {
   isPrimary: boolean;
 };
 
-export type RescheduleSuggestion = {
-  memberId: string;
-  memberLabel: string;
-  assignmentCount: number;
-};
+export const countAttendanceStatuses = (rows: ScheduleAttendanceRow[]) => ({
+  present: rows.filter((row) => row.status === "present").length,
+  absent: rows.filter((row) => row.status === "absent").length,
+  unmarked: rows.filter((row) => !row.status).length,
+});
 
 export const getAttendanceStatus = (
   schedule: Pick<TeamSchedule, "attendance"> | null | undefined,
@@ -61,12 +61,17 @@ export const buildAttendanceRows = ({
   requiredCountFor: (occurrenceId: string, positionId: string) => number;
 }): ScheduleAttendanceRow[] => {
   if (!schedule) return [];
-  const memberById = new Map(members.map((member) => [member.memberId, member]));
+  const memberById = new Map(
+    members.map((member) => [member.memberId, member]),
+  );
   const seen = new Set<string>();
   const rows: ScheduleAttendanceRow[] = [];
   occurrences.forEach((occurrence) => {
     columns.forEach((column) => {
-      if (column.slot >= requiredCountFor(occurrence.occurrenceId, column.positionId)) {
+      if (
+        column.slot >=
+        requiredCountFor(occurrence.occurrenceId, column.positionId)
+      ) {
         return;
       }
       const assignmentCell =
@@ -91,7 +96,11 @@ export const buildAttendanceRows = ({
           positionLabel: column.label,
           memberId,
           memberLabel: scheduleMemberName(member, duplicateFirstNames),
-          status: getAttendanceStatus(schedule, occurrence.occurrenceId, memberId),
+          status: getAttendanceStatus(
+            schedule,
+            occurrence.occurrenceId,
+            memberId,
+          ),
           isPrimary: memberId === primaryMemberId,
         });
       });
@@ -125,47 +134,3 @@ export const buildAttendanceRows = ({
   });
   return rows;
 };
-
-export const countAttendanceStatuses = (rows: ScheduleAttendanceRow[]) => ({
-  present: rows.filter((row) => row.status === "present").length,
-  absent: rows.filter((row) => row.status === "absent").length,
-  unmarked: rows.filter((row) => !row.status).length,
-});
-
-export const buildRescheduleSuggestions = ({
-  row,
-  members,
-  duplicateFirstNames,
-  assignmentCounts,
-  excludedMemberIds,
-  getIssue,
-}: {
-  row: ScheduleAttendanceRow;
-  members: TeamRosterMember[];
-  duplicateFirstNames: Set<string>;
-  assignmentCounts: Map<string, number>;
-  excludedMemberIds?: Set<string>;
-  getIssue: (
-    memberId: string,
-    occurrenceId: string,
-    positionId: string,
-  ) => string;
-}): RescheduleSuggestion[] =>
-  members
-    .filter((member) => member.memberId !== row.memberId)
-    .filter((member) => !excludedMemberIds?.has(member.memberId))
-    .filter(
-      (member) =>
-        !getIssue(member.memberId, row.occurrenceId, row.positionId),
-    )
-    .map((member) => ({
-      memberId: member.memberId,
-      memberLabel: scheduleMemberName(member, duplicateFirstNames),
-      assignmentCount: assignmentCounts.get(member.memberId) || 0,
-    }))
-    .sort(
-      (first, second) =>
-        first.assignmentCount - second.assignmentCount ||
-        first.memberLabel.localeCompare(second.memberLabel),
-    )
-    .slice(0, 3);

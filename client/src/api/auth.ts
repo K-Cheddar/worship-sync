@@ -94,7 +94,8 @@ const apiFetch = async <T>(
           ...(isPackagedElectronRenderer() && getHumanApiToken()
             ? { Authorization: `Bearer ${getHumanApiToken()}` }
             : {}),
-          ...((options.method || "GET").toUpperCase() !== "GET" && getCsrfToken()
+          ...((options.method || "GET").toUpperCase() !== "GET" &&
+          getCsrfToken()
             ? { "x-csrf-token": getCsrfToken() }
             : {}),
         },
@@ -900,6 +901,26 @@ export const updateTeamScheduleAssignment = async (
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
     `api/churches/${churchId}/team-schedules/${scheduleId}/assignments`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const updateTeamScheduleAssignmentSwap = async (
+  churchId: string,
+  scheduleId: string,
+  body: {
+    serviceId: string;
+    targetPositionSlotKey: string;
+    sourcePositionSlotKey: string;
+    currentMemberId: string;
+    candidateMemberId: string;
+    serviceDate?: string;
+  },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignment-swaps`,
     {
       method: "POST",
       body: JSON.stringify(body),

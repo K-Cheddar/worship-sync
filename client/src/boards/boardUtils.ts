@@ -1,4 +1,4 @@
-import { DBBoard, DBBoardAlias, DBBoardPost } from "../types";
+import { DBBoard, DBBoardAlias, DBBoardPost, RestreamMessage } from "../types";
 import { buildShareableHashRouterUrl } from "../utils/environment";
 
 export const BOARD_REMOTE_DB_NAME = "worship-sync-boards";
@@ -249,6 +249,26 @@ export const filterHighlightedBoardPosts = (
   posts: DBBoardPost[],
 ): DBBoardPost[] =>
   filterVisibleBoardPosts(posts).filter((post) => post.highlighted);
+
+export const filterHighlightedRestreamMessages = (
+  messages: RestreamMessage[],
+): RestreamMessage[] =>
+  messages.filter(
+    (message) =>
+      message.isHighlighted &&
+      !message.hidden &&
+      message.kind === "viewer_message",
+  );
+
+export const countHighlightedPresentationItems = ({
+  boardPosts,
+  restreamMessages,
+}: {
+  boardPosts: DBBoardPost[];
+  restreamMessages: RestreamMessage[];
+}): number =>
+  filterHighlightedBoardPosts(boardPosts).length +
+  filterHighlightedRestreamMessages(restreamMessages).length;
 
 export const buildBoardRoute = (aliasId: string): string =>
   `/boards/${aliasId}`;

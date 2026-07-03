@@ -8,7 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronRight, Plus, TriangleAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
@@ -24,13 +24,33 @@ import { scheduleMemberName } from "../teamsUtils";
 import MemberAssignmentSubmenu, {
   type MemberAssignmentActionIssues,
 } from "./MemberAssignmentSubmenu";
-import { splitTypedMemberName, shouldShowScheduleMemberPositionGroupDivider } from "./scheduleMemberPickerUtils";
+import {
+  splitTypedMemberName,
+  shouldShowScheduleMemberPositionGroupDivider,
+  type ScheduleMemberPickerMember,
+  type ScheduleMemberRecommendationStats,
+} from "./scheduleMemberPickerUtils";
 import ScheduleMemberPositionGroupDivider from "./ScheduleMemberPositionGroupDivider";
 import { useScheduleMemberPicker } from "./useScheduleMemberPicker";
 import { WantsThisIcon } from "./WantsThisIndicator";
 
 type MemberAssignmentAction = "replace" | TeamScheduleShadowKind;
-type PickerMenuView = "members" | "assignmentActions" | "createMember";
+type PickerMenuView =
+  | "members"
+  | "assignmentActions"
+  | "createMember"
+  | "swapConfirmation";
+
+const MOVE_WARNING_PREFIX = "Will move from ";
+
+export type ScheduleAssignmentSwapRecommendation = {
+  swapId: string;
+  candidateMemberId: string;
+  candidateLabel: string;
+  currentMemberLabel: string;
+  sourcePositionLabel: string;
+  targetPositionLabel: string;
+};
 
 /**
  * Non-blocking caution (e.g. the member marked this service unavailable on
@@ -39,7 +59,7 @@ type PickerMenuView = "members" | "assignmentActions" | "createMember";
 const WarningBadge = ({ label }: { label: string }) => (
   <span
     title={label}
-    aria-label={label}
+    aria-hidden
     className="inline-flex shrink-0 items-center rounded-full bg-amber-500/20 p-1 text-amber-200"
   >
     <TriangleAlert className="h-3 w-3" aria-hidden />
@@ -58,11 +78,16 @@ type ScheduleAssignmentPickerProps = {
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
   duplicateFirstNames?: Set<string>;
+  recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   getIssue: (memberId: string) => string;
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   getWarning?: (memberId: string) => string;
   onSelectMember: (memberId: string) => void;
   onAssignmentAction?: (memberId: string, action: MemberAssignmentAction) => void;
+  swapRecommendations?: ScheduleAssignmentSwapRecommendation[];
+  onApplySwapRecommendation?: (
+    recommendation: ScheduleAssignmentSwapRecommendation,
+  ) => void;
   onCreateMember?: (member: { firstName: string; lastName: string }) => Promise<void> | void;
   onClearAssignment?: () => void;
   pendingSubmenu?: {
@@ -89,11 +114,14 @@ const ScheduleAssignmentPicker = memo(({
   currentPrimaryMemberId,
   currentAssigneeLabel,
   duplicateFirstNames,
+  recommendationStats,
   getIssue,
   getAssignmentActionIssues,
   getWarning,
   onSelectMember,
   onAssignmentAction,
+  swapRecommendations = [],
+  onApplySwapRecommendation,
   onCreateMember,
   onClearAssignment,
   pendingSubmenu,
@@ -106,6 +134,8 @@ const ScheduleAssignmentPicker = memo(({
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [menuView, setMenuView] = useState<PickerMenuView>("members");
   const [activeSubmenuMemberId, setActiveSubmenuMemberId] = useState<string | null>(null);
+  const [activeSwapRecommendation, setActiveSwapRecommendation] =
+    useState<ScheduleAssignmentSwapRecommendation | null>(null);
   const [createDraft, setCreateDraft] = useState({ firstName: "", lastName: "" });
   const [creatingMember, setCreatingMember] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -120,6 +150,7 @@ const ScheduleAssignmentPicker = memo(({
     getIssue,
     getAssignmentActionIssues,
     getWarning,
+    recommendationStats,
     canCreateMember: Boolean(onCreateMember),
   });
 
@@ -162,17 +193,13 @@ const ScheduleAssignmentPicker = memo(({
     if (!open) {
       setMenuView("members");
       setActiveSubmenuMemberId(null);
+      setActiveSwapRecommendation(null);
       setHighlightedIndex(0);
       setCreateDraft({ firstName: "", lastName: "" });
       setCreatingMember(false);
       return;
     }
-    const timeoutId = window.setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [inputRef, open, anchorEl]);
+  }, [open]);
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -188,6 +215,7 @@ const ScheduleAssignmentPicker = memo(({
   const resetMenuView = useCallback(() => {
     setMenuView("members");
     setActiveSubmenuMemberId(null);
+    setActiveSwapRecommendation(null);
   }, []);
 
   const runAssignmentAction = (memberId: string, action: MemberAssignmentAction) => {
@@ -203,6 +231,13 @@ const ScheduleAssignmentPicker = memo(({
   const openCreateMember = () => {
     setCreateDraft(splitTypedMemberName(assignmentQuery));
     setMenuView("createMember");
+  };
+
+  const openSwapConfirmation = (
+    recommendation: ScheduleAssignmentSwapRecommendation,
+  ) => {
+    setActiveSwapRecommendation(recommendation);
+    setMenuView("swapConfirmation");
   };
 
   const submitCreateMember = async () => {
@@ -221,6 +256,31 @@ const ScheduleAssignmentPicker = memo(({
 
   const selectableRows = positionMembers.filter((row) => row.eligible);
   const trimmedQuery = assignmentQuery.trim();
+  const directAssignmentRows = selectableRows.filter((row) => {
+    if (!currentPrimaryMemberId || !getAssignmentActionIssues) return true;
+    return !getAssignmentActionIssues(row.member.memberId).replace;
+  });
+  const recommendationRows = directAssignmentRows.filter(
+    (row) => !row.warning.startsWith(MOVE_WARNING_PREFIX),
+  );
+  const showRecommendations =
+    menuView === "members" && !trimmedQuery && recommendationRows.length > 0;
+  const recommendedRows = showRecommendations ? recommendationRows.slice(0, 3) : [];
+  const recommendedMemberIds = new Set(
+    recommendedRows.map((row) => row.member.memberId),
+  );
+  const visibleSelectableRows =
+    recommendedRows.length > 0
+      ? selectableRows.filter(
+        (row) => !recommendedMemberIds.has(row.member.memberId),
+      )
+      : selectableRows;
+  const showSwapRecommendations =
+    menuView === "members" &&
+    !trimmedQuery &&
+    Boolean(currentPrimaryMemberId) &&
+    swapRecommendations.length > 0 &&
+    Boolean(onApplySwapRecommendation);
 
   const showClearAssignmentOption =
     Boolean(currentPrimaryMemberId) &&
@@ -236,8 +296,10 @@ const ScheduleAssignmentPicker = memo(({
   const showListContent =
     menuView === "assignmentActions" ||
     menuView === "createMember" ||
+    menuView === "swapConfirmation" ||
     Boolean(pendingSubmenu) ||
     selectableRows.length > 0 ||
+    showSwapRecommendations ||
     showCreateOption ||
     showClearAssignmentOption ||
     showCurrentAssigneeRow;
@@ -250,6 +312,89 @@ const ScheduleAssignmentPicker = memo(({
       return;
     }
     onSelectMember(memberId);
+  };
+
+  const renderSelectableRow = (
+    row: ScheduleMemberPickerMember,
+    index: number,
+    rows: ScheduleMemberPickerMember[],
+    keyPrefix = "",
+  ) => {
+    const memberLabel = formatMemberLabel(row.member);
+    const highlighted =
+      selectableRows.findIndex(
+        (item) => item.member.memberId === row.member.memberId,
+      ) === highlightedIndex;
+    const showPositionGroupDivider =
+      shouldShowScheduleMemberPositionGroupDivider(rows, index, positionId);
+    const key = `${keyPrefix}${row.member.memberId}`;
+
+    if (row.usesSubmenu) {
+      return (
+        <div key={key}>
+          {showPositionGroupDivider ? (
+            <ScheduleMemberPositionGroupDivider />
+          ) : null}
+          <button
+            role="option"
+            aria-selected={highlighted}
+            type="button"
+            className={cn(
+              "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
+              highlighted && "bg-gray-800",
+            )}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              openAssignmentActions(row.member.memberId);
+            }}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{memberLabel}</span>
+              {row.warning ? (
+                <span className="mt-0.5 block truncate text-xs text-amber-200">
+                  {row.warning}
+                </span>
+              ) : null}
+            </span>
+            {row.warning ? <WarningBadge label={row.warning} /> : null}
+            {row.desiresPosition ? <WantsThisIcon /> : null}
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div key={key}>
+        {showPositionGroupDivider ? (
+          <ScheduleMemberPositionGroupDivider />
+        ) : null}
+        <button
+          role="option"
+          aria-selected={highlighted}
+          type="button"
+          className={cn(
+            "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
+            highlighted && "bg-gray-800",
+          )}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onSelectMember(row.member.memberId);
+          }}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{memberLabel}</span>
+            {row.warning ? (
+              <span className="mt-0.5 block truncate text-xs font-normal text-amber-200">
+                {row.warning}
+              </span>
+            ) : null}
+          </span>
+          {row.warning ? <WarningBadge label={row.warning} /> : null}
+          {row.desiresPosition ? <WantsThisIcon /> : null}
+        </button>
+      </div>
+    );
   };
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -309,29 +454,40 @@ const ScheduleAssignmentPicker = memo(({
         className="z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
-          if (menuView !== "createMember") event.preventDefault();
+          if (
+            menuView !== "createMember" &&
+            !(event.target instanceof HTMLInputElement)
+          ) {
+            event.preventDefault();
+          }
         }}
       >
         <div className="border-b border-gray-800 p-2">
           <label className="sr-only">{label}</label>
-          <input
-            ref={inputRef}
-            role="combobox"
-            aria-autocomplete="list"
-            aria-controls={listboxId}
-            aria-expanded={pickerOpen}
-            aria-label={label}
-            className="w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1 text-sm text-white focus:border-gray-600 focus:outline-none"
-            value={assignmentQuery}
-            onChange={(event) => {
-              onAssignmentQueryChange(event.target.value);
-              setMenuView("members");
-              setActiveSubmenuMemberId(null);
-            }}
-            onKeyDown={handleInputKeyDown}
-          />
+          <div className="relative flex min-w-0 items-stretch">
+            <input
+              ref={inputRef}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls={listboxId}
+              aria-expanded={pickerOpen}
+              aria-label={label}
+              className="w-full rounded-md border border-gray-800 bg-gray-950 py-1 pl-9 pr-2 text-sm text-white focus:border-gray-600 focus:outline-none"
+              value={assignmentQuery}
+              onChange={(event) => {
+                onAssignmentQueryChange(event.target.value);
+                setMenuView("members");
+                setActiveSubmenuMemberId(null);
+                setActiveSwapRecommendation(null);
+              }}
+              onKeyDown={handleInputKeyDown}
+            />
+            <div className="pointer-events-none absolute inset-y-0 left-2 flex items-center">
+              <Search className="h-4 w-4 text-neutral-400" aria-hidden />
+            </div>
+          </div>
         </div>
-        <div className="scrollbar-variable max-h-56 overflow-x-hidden overflow-y-auto">
+        <div className="scrollbar-portal max-h-56 overflow-x-hidden overflow-y-auto">
           {pendingSubmenu && menuView === "assignmentActions" ? (
             <MemberAssignmentSubmenu
               title={pendingSubmenu.title}
@@ -413,6 +569,68 @@ const ScheduleAssignmentPicker = memo(({
                 </Button>
               </div>
             </form>
+          ) : menuView === "swapConfirmation" && activeSwapRecommendation ? (
+            <div className="space-y-3 p-2">
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={ChevronLeft}
+                iconSize="sm"
+                padding="px-2 py-1"
+                className="text-xs"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  resetMenuView();
+                }}
+              >
+                Back
+              </Button>
+              <div className="px-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">
+                  Recommended swap
+                </p>
+                <p className="mt-1 text-sm font-semibold text-white">
+                  This will make 2 changes.
+                </p>
+                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-gray-300">
+                  <li>
+                    Move {activeSwapRecommendation.currentMemberLabel} from{" "}
+                    {activeSwapRecommendation.targetPositionLabel} to{" "}
+                    {activeSwapRecommendation.sourcePositionLabel}
+                  </li>
+                  <li>
+                    Assign {activeSwapRecommendation.candidateLabel} to{" "}
+                    {activeSwapRecommendation.targetPositionLabel}
+                  </li>
+                </ol>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  padding="px-2 py-1"
+                  className="text-xs"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    resetMenuView();
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  padding="px-3 py-1"
+                  className="text-xs"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onApplySwapRecommendation?.(activeSwapRecommendation);
+                  }}
+                >
+                  Apply swap
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="p-1">
               {showListContent ? (
@@ -444,77 +662,94 @@ const ScheduleAssignmentPicker = memo(({
                       Clear assignment
                     </Button>
                   ) : null}
-                  {selectableRows.map((row, index) => {
-                    const memberLabel = formatMemberLabel(row.member);
-                    const highlighted =
-                      selectableRows.findIndex(
-                        (item) => item.member.memberId === row.member.memberId,
-                      ) === highlightedIndex;
-                    const showPositionGroupDivider =
-                      shouldShowScheduleMemberPositionGroupDivider(
-                        selectableRows,
-                        index,
-                        positionId,
-                      );
-
-                    if (row.usesSubmenu) {
-                      return (
-                        <div key={row.member.memberId}>
-                          {showPositionGroupDivider ? (
-                            <ScheduleMemberPositionGroupDivider />
-                          ) : null}
-                          <button
-                            role="option"
-                            aria-selected={highlighted}
-                            type="button"
-                            className={cn(
-                              "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
-                              highlighted && "bg-gray-800",
-                            )}
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              openAssignmentActions(row.member.memberId);
-                            }}
-                          >
-                            <span className="min-w-0 flex-1 truncate font-medium">{memberLabel}</span>
-                            {row.warning ? <WarningBadge label={row.warning} /> : null}
-                            {row.desiresPosition ? <WantsThisIcon /> : null}
-                            <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
-                          </button>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div key={row.member.memberId}>
-                        {showPositionGroupDivider ? (
-                          <ScheduleMemberPositionGroupDivider />
-                        ) : null}
+                  {recommendedRows.length > 0 ? (
+                    <div
+                      role="group"
+                      aria-label="Recommended"
+                      className={cn(
+                        (showCurrentAssigneeRow || showClearAssignmentOption) && "mt-1",
+                      )}
+                    >
+                      <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-cyan-200">
+                        Recommended
+                      </p>
+                      {recommendedRows.map((row, index) =>
+                        renderSelectableRow(
+                          row,
+                          index,
+                          recommendedRows,
+                          "recommended-",
+                        ),
+                      )}
+                    </div>
+                  ) : null}
+                  {visibleSelectableRows.length > 0 ? (
+                    <div
+                      className={cn(
+                        recommendedRows.length > 0 && "mt-1 border-t border-gray-800 pt-1",
+                      )}
+                    >
+                      {recommendedRows.length > 0 ? (
+                        <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                          All available members
+                        </p>
+                      ) : null}
+                      {visibleSelectableRows.map((row, index) =>
+                        renderSelectableRow(row, index, visibleSelectableRows),
+                      )}
+                    </div>
+                  ) : null}
+                  {showSwapRecommendations ? (
+                    <div
+                      className={cn(
+                        "mt-1 border-t border-gray-800 px-1 pb-1 pt-2",
+                        recommendedRows.length === 0 &&
+                        visibleSelectableRows.length === 0 &&
+                        !showCurrentAssigneeRow &&
+                        !showClearAssignmentOption &&
+                        "mt-0 border-t-0 pt-1",
+                      )}
+                    >
+                      <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                        Possible swaps
+                      </p>
+                      {swapRecommendations.map((recommendation) => (
                         <button
-                          role="option"
-                          aria-selected={highlighted}
+                          key={recommendation.swapId}
                           type="button"
-                          className={cn(
-                            "flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
-                            highlighted && "bg-gray-800",
-                          )}
+                          className="flex min-w-0 w-full flex-col rounded px-2 py-1.5 text-left hover:bg-gray-800"
                           onMouseDown={(event) => {
                             event.preventDefault();
-                            onSelectMember(row.member.memberId);
+                            openSwapConfirmation(recommendation);
                           }}
                         >
-                          <span className="min-w-0 flex-1 truncate">{memberLabel}</span>
-                          {row.warning ? <WarningBadge label={row.warning} /> : null}
-                          {row.desiresPosition ? <WantsThisIcon /> : null}
+                          <span className="flex w-full min-w-0 items-center gap-1 text-sm font-medium text-gray-100">
+                            <span className="shrink-0">Move</span>
+                            <span className="min-w-0 truncate">
+                              {recommendation.currentMemberLabel}
+                            </span>
+                            <span className="shrink-0">to</span>
+                            <span className="min-w-0 truncate">
+                              {recommendation.sourcePositionLabel}
+                            </span>
+                          </span>
+                          <span className="flex w-full min-w-0 items-center gap-1 text-xs text-gray-400">
+                            <span className="shrink-0">Assign</span>
+                            <span className="min-w-0 truncate">
+                              {recommendation.candidateLabel}
+                            </span>
+                            <span className="shrink-0">here</span>
+                          </span>
                         </button>
-                      </div>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  ) : null}
                   {showCreateOption ? (
                     <div
                       className={cn(
                         "px-2 pb-1 pt-2 text-xs text-gray-400",
-                        selectableRows.length > 0 && "mt-1 border-t border-gray-800",
+                        (selectableRows.length > 0 || showSwapRecommendations) &&
+                        "mt-1 border-t border-gray-800",
                       )}
                     >
                       <p className="px-0.5">No members match “{trimmedQuery}”.</p>

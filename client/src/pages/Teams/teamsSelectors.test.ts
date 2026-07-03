@@ -8,6 +8,8 @@ import {
   intakeSubmissionNeedsAction,
   isMemberOnTeam,
   memberMatchesListFilters,
+  selectIntakeExactMemberMatch,
+  selectIntakeMemberMatch,
   submissionMatchesStatusFilter,
 } from "./teamsSelectors";
 
@@ -64,6 +66,62 @@ const member = (
   positionIds: [],
   blockoutDates: [],
   ...overrides,
+});
+
+const intakeSubmission = (normalizedName: string): TeamIntakeSubmission => ({
+  submissionId: "submission-1",
+  formId: "form-1",
+  churchId: "church-1",
+  firstName: "Sam",
+  lastName: "Rivera",
+  normalizedName,
+  positionIds: [],
+  occurrenceAvailability: {},
+  blockoutRanges: [],
+  status: "new",
+  submittedAt: "2026-07-01T00:00:00.000Z",
+});
+
+describe("intake member matching", () => {
+  const roster = [
+    member("member-1", { firstName: "Sam", lastName: "Rivera" }),
+    member("member-2", { firstName: "Jo", lastName: "Riveras" }),
+  ];
+
+  it("finds an exact normalized-name match", () => {
+    expect(
+      selectIntakeExactMemberMatch(intakeSubmission("sam rivera"), roster)
+        ?.memberId,
+    ).toBe("member-1");
+  });
+
+  it("does not treat close last-name matches as exact", () => {
+    expect(
+      selectIntakeExactMemberMatch(intakeSubmission("jo rivera"), roster),
+    ).toBeUndefined();
+    expect(
+      selectIntakeMemberMatch(intakeSubmission("jo rivera"), roster)?.memberId,
+    ).toBe("member-2");
+  });
+
+  it("returns no exact match when two members share the same name", () => {
+    const rosterWithDuplicate = [
+      ...roster,
+      member("member-3", { firstName: "Sam", lastName: "Rivera" }),
+    ];
+    expect(
+      selectIntakeExactMemberMatch(
+        intakeSubmission("sam rivera"),
+        rosterWithDuplicate,
+      ),
+    ).toBeUndefined();
+    // The per-card suggestion still proposes a candidate for the reviewer to
+    // confirm; only the unattended bulk path skips ambiguous names.
+    expect(
+      selectIntakeMemberMatch(intakeSubmission("sam rivera"), rosterWithDuplicate)
+        ?.memberId,
+    ).toBe("member-1");
+  });
 });
 
 describe("member list filtering", () => {

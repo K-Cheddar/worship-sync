@@ -30,6 +30,7 @@ import EntityMultiSelect from "../EntityMultiSelect";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityRow from "../components/EntityRow";
 import Checkbox from "../../../components/Checkbox/Checkbox";
+import Modal from "../../../components/Modal/Modal";
 import { DEFAULT_INTAKE_FORM_COPY } from "../intakeFormCopy";
 import { emptyData } from "../teamsConstants";
 import {
@@ -44,6 +45,7 @@ import { formatIntakeFormSaveToast } from "../teamsSaveToasts";
 import { cn } from "@/utils/cnHelper";
 import {
   intakeSubmissionNeedsAction,
+  selectIntakeExactMemberMatch,
   selectIntakeMemberMatch,
   selectNewestIntakeSubmissions,
   submissionMatchesStatusFilter,
@@ -169,6 +171,8 @@ const IntakeManager = ({
   const [lastCreatedPublicUrl, setLastCreatedPublicUrl] = useState("");
   const [selectedMemberBySubmission, setSelectedMemberBySubmission] = useState<Record<string, string>>({});
   const [submissionUpdatingKey, setSubmissionUpdatingKey] = useState("");
+  const [bulkLinking, setBulkLinking] = useState(false);
+  const [showBulkLinkConfirm, setShowBulkLinkConfirm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<SubmissionStatusFilter>(
     "needs_action",
   );
@@ -417,6 +421,58 @@ const IntakeManager = ({
     [selectedFormSubmissions],
   );
 
+  // Open submissions whose name exactly matches one active member; these are
+  // the only ones safe to link without a person reviewing each match.
+  const exactMatchTargets = useMemo(
+    () =>
+      selectedFormSubmissions
+        .filter(intakeSubmissionNeedsAction)
+        .flatMap((submission) => {
+          const member = selectIntakeExactMemberMatch(submission, activeMembers);
+          return member ? [{ submission, member }] : [];
+        }),
+    [selectedFormSubmissions, activeMembers],
+  );
+
+  // Aggregate views so an admin can scan every submitter's notes or blockout
+  // dates at once instead of expanding each card. Covers all submissions for
+  // the form regardless of the status filter.
+  const allSubmissionNotes = useMemo(
+    () =>
+      selectedFormSubmissions.flatMap((submission) => {
+        const notes = (submission.notes || "").trim();
+        return notes
+          ? [
+            {
+              submissionId: submission.submissionId,
+              name: `${submission.firstName} ${submission.lastName}`.trim(),
+              notes,
+            },
+          ]
+          : [];
+      }),
+    [selectedFormSubmissions],
+  );
+
+  const allSubmissionBlockouts = useMemo(
+    () =>
+      selectedFormSubmissions.flatMap((submission) => {
+        const labels = (submission.blockoutRanges || [])
+          .map((range) => formatPlainDateRangeLabel(range.startDate, range.endDate))
+          .filter(Boolean);
+        return labels.length > 0
+          ? [
+            {
+              submissionId: submission.submissionId,
+              name: `${submission.firstName} ${submission.lastName}`.trim(),
+              labels,
+            },
+          ]
+          : [];
+      }),
+    [selectedFormSubmissions],
+  );
+
   // occurrenceId (`serviceId@startsAt`) -> the form's label/date for it, so the
   // review queue can show which services a submitter is (un)available for.
   const occurrenceLabelById = useMemo(() => {
@@ -515,6 +571,50 @@ const IntakeManager = ({
     }
   };
 
+  const bulkLinkExactMatches = async () => {
+    setShowBulkLinkConfirm(false);
+    if (!canEdit || bulkLinking || exactMatchTargets.length === 0) return;
+    setBulkLinking(true);
+    let linked = 0;
+    let failed = 0;
+    try {
+      // Sequential on purpose: each apply can touch the same roster/teams, and
+      // the per-row spinner tracks whichever submission is in flight.
+      for (const { submission, member } of exactMatchTargets) {
+        setSubmissionUpdatingKey(
+          submissionActionKey(submission.submissionId, "link"),
+        );
+        try {
+          const response = await applyTeamIntakeSubmission(
+            churchId,
+            submission.submissionId,
+            { action: "applied", memberId: member.memberId },
+          );
+          onSubmissionSaved(response.submission);
+          if (response.member) onMemberSaved(response.member);
+          response.teams?.forEach((team) => onTeamSaved(team));
+          linked += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+    } finally {
+      setSubmissionUpdatingKey("");
+      setBulkLinking(false);
+    }
+    if (failed === 0) {
+      showToast(
+        `Linked ${linked} submission${linked === 1 ? "" : "s"} to matching members.`,
+        "success",
+      );
+    } else {
+      showToast(
+        `Linked ${linked} of ${exactMatchTargets.length} submissions. Link the rest from their cards.`,
+        "neutral",
+      );
+    }
+  };
+
   const panelTitle = showCreate
     ? "Create intake form"
     : showingEditForm
@@ -529,9 +629,9 @@ const IntakeManager = ({
       "";
     const canLinkSubmission = submission.status !== "applied";
     const needsAction = submission.status === "new";
-    const isUpdatingThisSubmission = submissionUpdatingKey.startsWith(
-      `${submission.submissionId}:`,
-    );
+    const isUpdatingThisSubmission =
+      bulkLinking ||
+      submissionUpdatingKey.startsWith(`${submission.submissionId}:`);
     const linkedMember = submission.appliedMemberId
       ? members.find((member) => member.memberId === submission.appliedMemberId)
       : undefined;
@@ -894,17 +994,69 @@ const IntakeManager = ({
             </p>
           ) : null}
         </div>
-        {selectedFormSubmissions.length > 0 ? (
-          <Select
-            label="Status"
-            hideLabel
-            className="min-w-40"
-            value={statusFilter}
-            onChange={(value) => setStatusFilter(value as SubmissionStatusFilter)}
-            options={statusFilterOptions}
-          />
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Hidden on "Processed" so the bulk action only appears when its
+              target submissions are visible in the list below. */}
+          {canEdit && exactMatchTargets.length > 0 && statusFilter !== "processed" ? (
+            <Button
+              variant="secondary"
+              svg={Check}
+              iconSize="sm"
+              padding="px-2 py-1"
+              disabled={bulkLinking}
+              isLoading={bulkLinking}
+              onClick={() => setShowBulkLinkConfirm(true)}
+            >
+              Link {exactMatchTargets.length} exact match
+              {exactMatchTargets.length === 1 ? "" : "es"}
+            </Button>
+          ) : null}
+          {selectedFormSubmissions.length > 0 ? (
+            <Select
+              label="Status"
+              hideLabel
+              className="min-w-40"
+              value={statusFilter}
+              onChange={(value) => setStatusFilter(value as SubmissionStatusFilter)}
+              options={statusFilterOptions}
+            />
+          ) : null}
+        </div>
       </div>
+      {allSubmissionBlockouts.length > 0 || allSubmissionNotes.length > 0 ? (
+        <div className="rounded-md border border-gray-700 bg-gray-950/60 px-3 pb-3">
+          {allSubmissionBlockouts.length > 0 ? (
+            <ReviewQueueCollapsibleSection
+              title="All blockout dates"
+              summary={`${allSubmissionBlockouts.length} ${allSubmissionBlockouts.length === 1 ? "person" : "people"}`}
+            >
+              <ul className="space-y-1 text-gray-300">
+                {allSubmissionBlockouts.map((entry) => (
+                  <li key={entry.submissionId}>
+                    <span className="font-semibold">{entry.name}: </span>
+                    {entry.labels.join("; ")}
+                  </li>
+                ))}
+              </ul>
+            </ReviewQueueCollapsibleSection>
+          ) : null}
+          {allSubmissionNotes.length > 0 ? (
+            <ReviewQueueCollapsibleSection
+              title="All notes"
+              summary={`${allSubmissionNotes.length} note${allSubmissionNotes.length === 1 ? "" : "s"}`}
+            >
+              <ul className="space-y-2 text-gray-300">
+                {allSubmissionNotes.map((entry) => (
+                  <li key={entry.submissionId}>
+                    <span className="font-semibold">{entry.name}: </span>
+                    <span className="whitespace-pre-wrap">{entry.notes}</span>
+                  </li>
+                ))}
+              </ul>
+            </ReviewQueueCollapsibleSection>
+          ) : null}
+        </div>
+      ) : null}
       <div className="space-y-3">
         {selectedFormSubmissions.length === 0 ? (
           <p className="text-sm text-gray-300">No submissions yet.</p>
@@ -914,6 +1066,44 @@ const IntakeManager = ({
           filteredSubmissions.map(renderSubmissionCard)
         )}
       </div>
+      <Modal
+        isOpen={showBulkLinkConfirm}
+        onClose={() => setShowBulkLinkConfirm(false)}
+        title="Link exact matches?"
+        size="sm"
+      >
+        <div className="space-y-3 text-sm text-gray-200">
+          <p>
+            This links {exactMatchTargets.length} submission
+            {exactMatchTargets.length === 1 ? "" : "s"} to the member with the
+            same name:
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-gray-300">
+            {exactMatchTargets.map(({ submission, member }) => (
+              <li key={submission.submissionId}>{memberName(member)}</li>
+            ))}
+          </ul>
+          <p>Linked submissions move to Processed.</p>
+        </div>
+        <div className="mt-6 flex w-full gap-3">
+          <Button
+            className="flex-1 justify-center"
+            type="button"
+            variant="tertiary"
+            onClick={() => setShowBulkLinkConfirm(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            className="flex-1 justify-center"
+            type="button"
+            variant="secondary"
+            onClick={() => void bulkLinkExactMatches()}
+          >
+            Link members
+          </Button>
+        </div>
+      </Modal>
     </>
   );
 

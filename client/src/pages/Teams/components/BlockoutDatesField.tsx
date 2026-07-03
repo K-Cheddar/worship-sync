@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
 import Button from "../../../components/Button/Button";
+import Input from "../../../components/Input/Input";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import DatePicker from "@/components/ui/DatePicker";
 import DateRangePicker from "@/components/ui/DateRangePicker";
-import type { TeamIntakeBlockoutRange } from "../../../api/authTypes";
+import type { TeamBlockoutDateRange } from "../../../api/authTypes";
 import {
   boardFieldsetDescriptionClassName,
   boardFieldsetLegendClassName,
@@ -19,11 +20,12 @@ type BlockoutItem = {
   mode: BlockoutMode;
   startDate: string;
   endDate: string;
+  notes: string;
 };
 
 type BlockoutDatesFieldProps = {
-  value: TeamIntakeBlockoutRange[];
-  onChange: (ranges: TeamIntakeBlockoutRange[]) => void;
+  value: TeamBlockoutDateRange[];
+  onChange: (ranges: TeamBlockoutDateRange[]) => void;
   label?: string;
   description?: string;
   /** Earliest selectable date, `yyyy-MM-dd` (the form period start). */
@@ -33,6 +35,10 @@ type BlockoutDatesFieldProps = {
   /** Styling for the date inputs, e.g. the dark board theme. */
   fieldClassName?: string;
   variant?: "admin" | "board-attendee";
+  /** Show an optional free-form notes input per entry (admin roster editing). */
+  showNotes?: boolean;
+  /** Muted message shown when there are no entries yet. */
+  emptyLabel?: string;
 };
 
 const makeId = () =>
@@ -40,23 +46,30 @@ const makeId = () =>
     ? crypto.randomUUID()
     : `blockout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-const itemToRange = (item: BlockoutItem): TeamIntakeBlockoutRange =>
-  item.mode === "single"
-    ? { startDate: item.startDate, endDate: item.startDate }
-    : { startDate: item.startDate, endDate: item.endDate };
+const itemToRange = (
+  item: BlockoutItem,
+  showNotes: boolean,
+): TeamBlockoutDateRange => {
+  const endDate = item.mode === "single" ? item.startDate : item.endDate;
+  const range: TeamBlockoutDateRange = { startDate: item.startDate, endDate };
+  if (showNotes && item.notes) range.notes = item.notes;
+  return range;
+};
 
-const rangeToItem = (range: TeamIntakeBlockoutRange): BlockoutItem => ({
+const rangeToItem = (range: TeamBlockoutDateRange): BlockoutItem => ({
   id: makeId(),
   mode: range.startDate === range.endDate ? "single" : "range",
   startDate: range.startDate,
   endDate: range.endDate,
+  notes: range.notes || "",
 });
 
 /**
- * Blockout dates for a team intake form. Each entry is either a single day or an
- * explicit start → end range, so the submitter is never left guessing whether
- * two side-by-side dates form a range. Emits normalized
- * `{ startDate, endDate }` ranges (single days collapse to the same date).
+ * Blockout dates for team intake forms and admin roster editing. Each entry is
+ * either a single day or an explicit start → end range, so the user is never
+ * left guessing whether two side-by-side dates form a range. Emits normalized
+ * `{ startDate, endDate }` ranges (single days collapse to the same date), with
+ * optional per-entry `notes` when `showNotes` is set.
  */
 const BlockoutDatesField = ({
   value,
@@ -67,13 +80,15 @@ const BlockoutDatesField = ({
   max,
   fieldClassName,
   variant = "board-attendee",
+  showNotes = false,
+  emptyLabel,
 }: BlockoutDatesFieldProps) => {
   const isBoard = variant === "board-attendee";
   const [items, setItems] = useState<BlockoutItem[]>(() => value.map(rangeToItem));
 
   const commit = (next: BlockoutItem[]) => {
     setItems(next);
-    onChange(next.map(itemToRange));
+    onChange(next.map((item) => itemToRange(item, showNotes)));
   };
 
   const updateItem = (id: string, patch: Partial<BlockoutItem>) =>
@@ -109,6 +124,9 @@ const BlockoutDatesField = ({
         </p>
       ) : null}
       <div className="space-y-3">
+        {items.length === 0 && emptyLabel ? (
+          <p className="text-sm text-gray-400">{emptyLabel}</p>
+        ) : null}
         {items.map((item) => (
           <div
             key={item.id}
@@ -127,13 +145,17 @@ const BlockoutDatesField = ({
                 className={isBoard ? "border-0" : undefined}
               />
               <Button
+                type="button"
                 variant="tertiary"
                 svg={X}
+                iconSize="sm"
+                padding="p-0"
                 aria-label="Remove blockout"
                 className={cn(
+                  "shrink-0 self-center",
                   isBoard
                     ? "text-stone-300 hover:bg-stone-800/60"
-                    : "rounded-md border border-stone-600/80 bg-stone-900/60 text-stone-200 hover:bg-stone-800/80",
+                    : "text-gray-400 hover:text-white",
                 )}
                 onClick={() => commit(items.filter((other) => other.id !== item.id))}
               />
@@ -160,6 +182,19 @@ const BlockoutDatesField = ({
                 }
               />
             )}
+
+            {showNotes ? (
+              <Input
+                label="Notes"
+                hideLabel
+                placeholder="Notes (optional)"
+                value={item.notes}
+                inputClassName={fieldClassName}
+                onChange={(notes) =>
+                  updateItem(item.id, { notes: String(notes) })
+                }
+              />
+            ) : null}
           </div>
         ))}
 
@@ -171,7 +206,7 @@ const BlockoutDatesField = ({
             onClick={() =>
               commit([
                 ...items,
-                { id: makeId(), mode: "single", startDate: "", endDate: "" },
+                { id: makeId(), mode: "single", startDate: "", endDate: "", notes: "" },
               ])
             }
           >
@@ -184,7 +219,7 @@ const BlockoutDatesField = ({
             onClick={() =>
               commit([
                 ...items,
-                { id: makeId(), mode: "range", startDate: "", endDate: "" },
+                { id: makeId(), mode: "range", startDate: "", endDate: "", notes: "" },
               ])
             }
           >

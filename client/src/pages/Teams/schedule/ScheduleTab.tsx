@@ -55,8 +55,10 @@ import {
   updateTeam,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
+  updateTeamScheduleAssignmentSwap,
   updateTeamScheduleAttendance,
 } from "../../../api/auth";
+import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
   rekeyAssignmentsByServiceDate,
   rekeyAttendanceByServiceDate,
@@ -129,7 +131,10 @@ import {
   type ScheduleSlotColumn,
 } from "./scheduleRequirements";
 import ScheduleGridCell from "./ScheduleGridCell";
-import ScheduleAssignmentPicker from "./ScheduleAssignmentPicker";
+import ScheduleAssignmentPicker, {
+  type ScheduleAssignmentSwapRecommendation,
+} from "./ScheduleAssignmentPicker";
+import type { ScheduleMemberRecommendationStats } from "./scheduleMemberPickerUtils";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import {
   ScheduleAssignmentProvider,
@@ -156,7 +161,6 @@ import {
 } from "./occurrenceSummary";
 import {
   buildAttendanceRows,
-  buildRescheduleSuggestions,
   countAttendanceStatuses,
   type ScheduleAttendanceRow,
 } from "./scheduleAttendance";
@@ -193,6 +197,16 @@ import type { TeamSchedulePayload } from "../../../api/auth";
 // wired, but held back from operators for now. Flip to true to re-enable the
 // toolbar entry point (see SchedulePasteRowDialog + schedulePasteRow).
 const SHOW_PASTE_FROM_EXCEL = false;
+
+type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
+  serviceId: string;
+  serviceDate: string;
+  targetCellKey: string;
+  targetPositionId: string;
+  sourceCellKey: string;
+  sourcePositionId: string;
+  currentMemberId: string;
+};
 
 const ScheduleTab = ({
   data,
@@ -458,7 +472,6 @@ const ScheduleTab = ({
   } | null>(null);
   const [membersPanelQuery, setMembersPanelQuery] = useState("");
   const [memberPositionFilterIds, setMemberPositionFilterIds] = useState<string[]>([]);
-  const membersPanelRef = useRef<HTMLDivElement>(null);
   const [highlightedMemberIds, setHighlightedMemberIds] = useState<string[]>([]);
   const highlightedMemberIdSet = useMemo(
     () => new Set(highlightedMemberIds),
@@ -479,6 +492,7 @@ const ScheduleTab = ({
   const [scheduleWorkspaceTab, setScheduleWorkspaceTab] = useState<
     "schedule" | "attendance"
   >("schedule");
+  const useAttendanceCardLayout = !useMediaQuery("(min-width: 1024px)");
 
   const scheduleLayoutOptions = useMemo(
     () =>
@@ -1009,7 +1023,7 @@ const ScheduleTab = ({
       }
     }
     const nextAssignments = { ...(selectedSchedule.assignments || {}) };
-    const targetRow = { ...(nextAssignments[serviceId] || {}) };
+    let targetRow = { ...(nextAssignments[serviceId] || {}) };
     if (sourceServiceId && sourcePositionSlotKey) {
       const sourceRow = { ...(nextAssignments[sourceServiceId] || {}) };
       const sourceCell = normalizeAssignmentCell(sourceRow[sourcePositionSlotKey]);
@@ -1026,6 +1040,9 @@ const ScheduleTab = ({
         nextAssignments[sourceServiceId] = sourceRow;
       } else {
         delete nextAssignments[sourceServiceId];
+      }
+      if (sourceServiceId === serviceId) {
+        targetRow = sourceRow;
       }
     }
     const targetCell = normalizeAssignmentCell(targetRow[cellKey]);
@@ -1707,17 +1724,6 @@ const ScheduleTab = ({
     ],
   );
 
-  const reschedulableRows = useMemo(
-    () =>
-      attendanceRows.filter(
-        (row) =>
-          row.isPrimary &&
-          row.columnKey &&
-          row.positionId,
-      ),
-    [attendanceRows],
-  );
-
   const absentMemberIdsByOccurrence = useMemo(() => {
     const map = new Map<string, Set<string>>();
     attendanceRows.forEach((row) => {
@@ -1789,29 +1795,6 @@ const ScheduleTab = ({
     [churchId, canEdit, onScheduleSaved, selectedSchedule, showToast, trackTeamsSave],
   );
 
-  const rescheduleSuggestionRows = useMemo(
-    () =>
-      reschedulableRows.map((row) => ({
-        row,
-        suggestions: buildRescheduleSuggestions({
-          row,
-          members: activeTeamMembers,
-          duplicateFirstNames: duplicateScheduleFirstNames,
-          assignmentCounts: scheduleAssignmentCounts,
-          excludedMemberIds: absentMemberIdsByOccurrence.get(row.occurrenceId),
-          getIssue: getAssignmentIssue,
-        }),
-      })),
-    [
-      absentMemberIdsByOccurrence,
-      reschedulableRows,
-      activeTeamMembers,
-      duplicateScheduleFirstNames,
-      getAssignmentIssue,
-      scheduleAssignmentCounts,
-    ],
-  );
-
   const detailAttendanceRows = useMemo(
     () =>
       detailOccurrence
@@ -1820,16 +1803,6 @@ const ScheduleTab = ({
         )
         : [],
     [attendanceRows, detailOccurrence],
-  );
-
-  const detailRescheduleSuggestionRows = useMemo(
-    () =>
-      detailOccurrence
-        ? rescheduleSuggestionRows.filter(
-          ({ row }) => row.occurrenceId === detailOccurrence.occurrenceId,
-        )
-        : [],
-    [detailOccurrence, rescheduleSuggestionRows],
   );
 
   const detailAttendanceCounts = useMemo(
@@ -1854,6 +1827,92 @@ const ScheduleTab = ({
     },
     [activateSlot, showToast],
   );
+
+  const renderAttendanceStatusControls = (row: ScheduleAttendanceRow) => (
+    <div className="flex flex-wrap items-center gap-2">
+      {row.status === "absent" ? (
+        <>
+          <span className="inline-flex items-center gap-1 rounded border border-rose-300/40 bg-rose-500/15 px-2 py-1 text-xs font-medium text-rose-50">
+            <UserX className="h-3.5 w-3.5" aria-hidden />
+            No-show
+          </span>
+          <Button
+            variant="tertiary"
+            svg={Check}
+            iconSize="xs"
+            disabled={!canEdit}
+            onClick={() => void commitAttendanceStatus(row, "present")}
+          >
+            Mark present
+          </Button>
+        </>
+      ) : (
+        <>
+          <span className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-50">
+            <Check className="h-3.5 w-3.5" aria-hidden />
+            Present
+          </span>
+          <Button
+            variant="tertiary"
+            svg={UserX}
+            iconSize="xs"
+            disabled={!canEdit}
+            onClick={() => void commitAttendanceStatus(row, "absent")}
+          >
+            Mark no-show
+          </Button>
+        </>
+      )}
+    </div>
+  );
+
+  const renderReplacementControls = (row: ScheduleAttendanceRow) => {
+    const canOpenReplacement =
+      canEdit &&
+      row.isPrimary &&
+      Boolean(row.columnKey) &&
+      Boolean(row.positionId);
+
+    if (canOpenReplacement) {
+      return (
+        <Button
+          variant="tertiary"
+          svg={RefreshCw}
+          iconSize="xs"
+          padding="px-2 py-1"
+          aria-label={
+            row.status === "absent"
+              ? `Choose fill-in for ${row.positionLabel}`
+              : `Choose replacement for ${row.positionLabel}`
+          }
+          onClick={(event) =>
+            activateAttendanceRowSlot(row, event.currentTarget)
+          }
+        >
+          Choose
+        </Button>
+      );
+    }
+
+    if (row.status === "absent") {
+      return <span className="text-sm text-gray-400">No-show recorded.</span>;
+    }
+    if (row.status === "present") {
+      return <span className="text-sm text-gray-400">Present recorded.</span>;
+    }
+    if (row.isPrimary) {
+      return (
+        <span className="text-sm text-gray-400">
+          Select the grid cell to assign this slot.
+        </span>
+      );
+    }
+    return (
+      <span className="text-sm text-gray-500">
+        Replacement applies to primary slots.
+      </span>
+    );
+  };
 
   const activeSlotMeta = useMemo(() => {
     if (!activeSlot) return null;
@@ -1891,6 +1950,158 @@ const ScheduleTab = ({
     selectedSchedule?.assignments,
   ]);
 
+  const activeSlotRecommendationStats = useMemo(() => {
+    const stats = new Map<string, ScheduleMemberRecommendationStats>();
+    activeTeamMembers.forEach((member) => {
+      stats.set(member.memberId, {
+        assignmentCount: scheduleAssignmentCounts.get(member.memberId) || 0,
+        nearestAssignmentDistance: null,
+      });
+    });
+    if (!activeSlot || !selectedSchedule?.assignments) return stats;
+
+    const activeOccurrenceIndex = scheduleOccurrences.findIndex(
+      (occurrence) => occurrence.occurrenceId === activeSlot.occurrenceId,
+    );
+    if (activeOccurrenceIndex < 0) return stats;
+
+    const activeMemberIds = new Set(activeTeamMembers.map((member) => member.memberId));
+    const occurrenceIndexById = new Map(
+      scheduleOccurrences.map((occurrence, index) => [occurrence.occurrenceId, index]),
+    );
+    Object.entries(selectedSchedule.assignments).forEach(([occurrenceId, row]) => {
+      const occurrenceIndex = occurrenceIndexById.get(occurrenceId);
+      if (occurrenceIndex === undefined || !row) return;
+      const distance = Math.abs(occurrenceIndex - activeOccurrenceIndex);
+      const assignedMemberIds = new Set<string>();
+      Object.values(row).forEach((cell) => {
+        getCellMemberIds(cell).forEach((memberId) => {
+          if (activeMemberIds.has(memberId)) assignedMemberIds.add(memberId);
+        });
+      });
+      assignedMemberIds.forEach((memberId) => {
+        const current = stats.get(memberId);
+        if (!current) return;
+        stats.set(memberId, {
+          ...current,
+          nearestAssignmentDistance:
+            current.nearestAssignmentDistance === null
+              ? distance
+              : Math.min(current.nearestAssignmentDistance, distance),
+        });
+      });
+    });
+
+    return stats;
+  }, [
+    activeSlot,
+    activeTeamMembers,
+    scheduleAssignmentCounts,
+    scheduleOccurrences,
+    selectedSchedule?.assignments,
+  ]);
+
+  const activeSlotSwapRecommendations = useMemo<ScheduleAssignmentSwapPlan[]>(() => {
+    if (!activeSlot || !activeSlotMeta?.currentPrimaryMemberId || !selectedSchedule) {
+      return [];
+    }
+    if (slotPickerMode === "replace") return [];
+
+    const occurrenceAssignments =
+      selectedSchedule.assignments?.[activeSlot.occurrenceId] || {};
+    const currentMemberId = activeSlotMeta.currentPrimaryMemberId;
+    const currentMember = data.members.find(
+      (item) => item.memberId === currentMemberId,
+    );
+    const absentMemberIds =
+      absentMemberIdsByOccurrence.get(activeSlot.occurrenceId) || new Set<string>();
+    if (!currentMember || absentMemberIds.has(currentMemberId)) return [];
+
+    const plans: ScheduleAssignmentSwapPlan[] = [];
+    for (const column of scheduleColumns) {
+      if (column.columnKey === activeSlot.columnKey) continue;
+
+      const sourceCell = occurrenceAssignments[column.columnKey];
+      const candidateMemberId = getCellPrimaryMemberId(sourceCell);
+      if (!candidateMemberId || candidateMemberId === currentMemberId) continue;
+      if (absentMemberIds.has(candidateMemberId)) continue;
+
+      const candidateMember = data.members.find(
+        (item) => item.memberId === candidateMemberId,
+      );
+      if (!candidateMember) continue;
+
+      const candidateTargetIssue = getAssignmentIssue(
+        candidateMemberId,
+        activeSlot.occurrenceId,
+        activeSlotMeta.positionId,
+        {
+          serviceId: activeSlot.occurrenceId,
+          positionId: column.columnKey,
+        },
+      );
+      if (candidateTargetIssue) continue;
+
+      const currentSourceIssue = getAssignmentIssue(
+        currentMemberId,
+        activeSlot.occurrenceId,
+        column.positionId,
+        {
+          serviceId: activeSlot.occurrenceId,
+          positionId: activeSlot.columnKey,
+        },
+      );
+      if (currentSourceIssue) continue;
+
+      const occurrence = scheduleOccurrences.find(
+        (item) => item.occurrenceId === activeSlot.occurrenceId,
+      );
+      plans.push({
+        swapId: `${activeSlot.occurrenceId}:${activeSlot.columnKey}:${column.columnKey}:${candidateMemberId}`,
+        serviceId: activeSlot.occurrenceId,
+        serviceDate: occurrence ? getOccurrenceDate(occurrence) : "",
+        targetCellKey: activeSlot.columnKey,
+        targetPositionId: activeSlotMeta.positionId,
+        sourceCellKey: column.columnKey,
+        sourcePositionId: column.positionId,
+        candidateMemberId,
+        currentMemberId,
+        candidateLabel: scheduleMemberName(candidateMember, duplicateScheduleFirstNames),
+        currentMemberLabel: scheduleMemberName(currentMember, duplicateScheduleFirstNames),
+        sourcePositionLabel: column.label,
+        targetPositionLabel: activeSlotMeta.positionLabel,
+      });
+    }
+
+    return plans
+      .sort((a, b) => {
+        const aStats = activeSlotRecommendationStats.get(a.candidateMemberId);
+        const bStats = activeSlotRecommendationStats.get(b.candidateMemberId);
+        const aCount = aStats?.assignmentCount ?? 0;
+        const bCount = bStats?.assignmentCount ?? 0;
+        if (aCount !== bCount) return aCount - bCount;
+        const aSpacing =
+          aStats?.nearestAssignmentDistance ?? Number.POSITIVE_INFINITY;
+        const bSpacing =
+          bStats?.nearestAssignmentDistance ?? Number.POSITIVE_INFINITY;
+        if (aSpacing !== bSpacing) return aSpacing > bSpacing ? -1 : 1;
+        return a.candidateLabel.localeCompare(b.candidateLabel);
+      })
+      .slice(0, 3);
+  }, [
+    absentMemberIdsByOccurrence,
+    activeSlot,
+    activeSlotMeta,
+    activeSlotRecommendationStats,
+    data.members,
+    duplicateScheduleFirstNames,
+    getAssignmentIssue,
+    scheduleColumns,
+    scheduleOccurrences,
+    selectedSchedule,
+    slotPickerMode,
+  ]);
+
   const handleEditMemberFromPanel = useCallback(
     (memberId: string) => {
       if (!onEditMember || !selectedScheduleId) return;
@@ -1913,9 +2124,33 @@ const ScheduleTab = ({
     ],
   );
 
+  const getActiveSlotMoveSource = useCallback(
+    (memberId: string) => {
+      if (!activeSlot || !selectedSchedule) return null;
+      if (slotPickerMode === "replace") return null;
+      const row = selectedSchedule.assignments?.[activeSlot.occurrenceId] || {};
+      const sourceEntry = Object.entries(row).find(([cellKey, cell]) => {
+        if (cellKey === activeSlot.columnKey) return false;
+        return getCellPrimaryMemberId(cell) === memberId;
+      });
+      if (!sourceEntry) return null;
+      const [sourcePositionSlotKey] = sourceEntry;
+      const sourceColumn = scheduleColumns.find(
+        (column) => column.columnKey === sourcePositionSlotKey,
+      );
+      return {
+        serviceId: activeSlot.occurrenceId,
+        positionSlotKey: sourcePositionSlotKey,
+        positionLabel: sourceColumn?.label || "another position",
+      };
+    },
+    [activeSlot, scheduleColumns, selectedSchedule, slotPickerMode],
+  );
+
   const handleActiveSlotMemberSelect = (memberId: string) => {
     if (!canEdit) return;
     if (!activeSlot || !activeSlotMeta) return;
+    const moveSource = getActiveSlotMoveSource(memberId);
     if (slotPickerMode === "replace") {
       // Day-of replacement: swap the fill-in straight into the slot without the
       // replace/shadow confirmation step.
@@ -1933,6 +2168,8 @@ const ScheduleTab = ({
       basePositionId: activeSlotMeta.positionId,
       memberId,
       currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
+      sourceServiceId: moveSource?.serviceId,
+      sourcePositionSlotKey: moveSource?.positionSlotKey,
     });
   };
 
@@ -1942,21 +2179,43 @@ const ScheduleTab = ({
       if (absentMemberIdsByOccurrence.get(activeSlot.occurrenceId)?.has(memberId)) {
         return "Marked no-show for this service";
       }
+      const moveSource = getActiveSlotMoveSource(memberId);
+      if (moveSource) {
+        return getAssignmentIssue(
+          memberId,
+          activeSlot.occurrenceId,
+          activeSlotMeta.positionId,
+          {
+            serviceId: moveSource.serviceId,
+            positionId: moveSource.positionSlotKey,
+          },
+        );
+      }
       return getAssignmentIssue(
         memberId,
         activeSlot.occurrenceId,
         activeSlotMeta.positionId,
       );
     },
-    [absentMemberIdsByOccurrence, activeSlot, activeSlotMeta, getAssignmentIssue],
+    [
+      absentMemberIdsByOccurrence,
+      activeSlot,
+      activeSlotMeta,
+      getActiveSlotMoveSource,
+      getAssignmentIssue,
+    ],
   );
 
   const activeSlotGetWarning = useCallback(
     (memberId: string) => {
       if (!activeSlot) return "";
+      const moveSource = getActiveSlotMoveSource(memberId);
+      if (moveSource) {
+        return `Will move from ${moveSource.positionLabel}`;
+      }
       return getServiceAvailabilityWarning(memberId, activeSlot.occurrenceId);
     },
-    [activeSlot, getServiceAvailabilityWarning],
+    [activeSlot, getActiveSlotMoveSource, getServiceAvailabilityWarning],
   );
 
   const activeSlotGetAssignmentActionIssues = useCallback(
@@ -1976,16 +2235,24 @@ const ScheduleTab = ({
           reverseShadow: issue,
         };
       }
+      const moveSource = getActiveSlotMoveSource(memberId);
       return getAssignmentActionIssues(
         memberId,
         activeSlot.occurrenceId,
         activeSlotMeta.positionId,
+        moveSource
+          ? {
+            serviceId: moveSource.serviceId,
+            positionId: moveSource.positionSlotKey,
+          }
+          : undefined,
       );
     },
     [
       absentMemberIdsByOccurrence,
       activeSlot,
       activeSlotMeta,
+      getActiveSlotMoveSource,
       getAssignmentActionIssues,
     ],
   );
@@ -1996,12 +2263,16 @@ const ScheduleTab = ({
   ) => {
     if (!canEdit) return;
     if (!activeSlot || !activeSlotMeta) return;
+    const moveSource = getActiveSlotMoveSource(memberId);
     handleAssignmentAction({
       serviceId: activeSlot.occurrenceId,
       cellKey: activeSlot.columnKey,
       basePositionId: activeSlotMeta.positionId,
       memberId,
       action,
+      sourceServiceId: action === "replace" ? moveSource?.serviceId : undefined,
+      sourcePositionSlotKey:
+        action === "replace" ? moveSource?.positionSlotKey : undefined,
     });
     setPendingCellAssignment(null);
   };
@@ -2029,6 +2300,116 @@ const ScheduleTab = ({
       cellKey: activeSlot.columnKey,
       basePositionId: activeSlotMeta.positionId,
       memberId: null,
+    });
+  };
+
+  const commitActiveSlotSwapRecommendation = async (
+    recommendation: ScheduleAssignmentSwapRecommendation,
+  ) => {
+    if (!canEdit || !selectedSchedule) return;
+    const plan = activeSlotSwapRecommendations.find(
+      (item) => item.swapId === recommendation.swapId,
+    );
+    if (!plan) {
+      showToast("Swap is no longer available.", "neutral");
+      return;
+    }
+
+    const candidateTargetIssue = getAssignmentIssue(
+      plan.candidateMemberId,
+      plan.serviceId,
+      plan.targetPositionId,
+      {
+        serviceId: plan.serviceId,
+        positionId: plan.sourceCellKey,
+      },
+    );
+    const currentSourceIssue = getAssignmentIssue(
+      plan.currentMemberId,
+      plan.serviceId,
+      plan.sourcePositionId,
+      {
+        serviceId: plan.serviceId,
+        positionId: plan.targetCellKey,
+      },
+    );
+    const issue = candidateTargetIssue || currentSourceIssue;
+    if (issue) {
+      showToast(issue, "neutral");
+      return;
+    }
+
+    const previousSchedule = selectedSchedule;
+    const nextAssignments: TeamScheduleAssignments = {
+      ...(selectedSchedule.assignments || {}),
+    };
+    const occurrenceAssignments = {
+      ...(nextAssignments[plan.serviceId] || {}),
+    };
+    const previousTargetValue =
+      selectedSchedule.assignments?.[plan.serviceId]?.[plan.targetCellKey] ?? "";
+    const previousSourceValue =
+      selectedSchedule.assignments?.[plan.serviceId]?.[plan.sourceCellKey] ?? "";
+    const targetCell = normalizeAssignmentCell(previousTargetValue);
+    const sourceCell = normalizeAssignmentCell(previousSourceValue);
+    const nextTargetValue = serializeAssignmentCell({
+      primaryMemberId: plan.candidateMemberId,
+      shadows: targetCell.shadows,
+    });
+    const nextSourceValue = serializeAssignmentCell({
+      primaryMemberId: plan.currentMemberId,
+      shadows: sourceCell.shadows,
+    });
+
+    if (nextTargetValue) {
+      occurrenceAssignments[plan.targetCellKey] = nextTargetValue;
+    } else {
+      delete occurrenceAssignments[plan.targetCellKey];
+    }
+    if (nextSourceValue) {
+      occurrenceAssignments[plan.sourceCellKey] = nextSourceValue;
+    } else {
+      delete occurrenceAssignments[plan.sourceCellKey];
+    }
+    nextAssignments[plan.serviceId] = occurrenceAssignments;
+
+    recordAssignmentChange(`swap ${plan.currentMemberLabel} and ${plan.candidateLabel}`, [
+      {
+        occurrenceId: plan.serviceId,
+        cellKey: plan.targetCellKey,
+        serviceDate: plan.serviceDate,
+        before: previousTargetValue,
+        after: nextAssignments[plan.serviceId]?.[plan.targetCellKey] ?? "",
+      },
+      {
+        occurrenceId: plan.serviceId,
+        cellKey: plan.sourceCellKey,
+        serviceDate: plan.serviceDate,
+        before: previousSourceValue,
+        after: nextAssignments[plan.serviceId]?.[plan.sourceCellKey] ?? "",
+      },
+    ]);
+
+    const mutationSeq = ++scheduleMutationSeqRef.current;
+    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    clearActiveSlot();
+
+    await enqueueAssignmentSave(async () => {
+      try {
+        await updateTeamScheduleAssignmentSwap(churchId, selectedSchedule.scheduleId, {
+          serviceId: plan.serviceId,
+          targetPositionSlotKey: plan.targetCellKey,
+          sourcePositionSlotKey: plan.sourceCellKey,
+          currentMemberId: plan.currentMemberId,
+          candidateMemberId: plan.candidateMemberId,
+          serviceDate: plan.serviceDate,
+        });
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not apply this swap.");
+      }
     });
   };
 
@@ -2398,33 +2779,58 @@ const ScheduleTab = ({
                   Assign members to this service before taking attendance.
                 </p>
               ) : (
-                <div className="mt-3 overflow-auto rounded-md border border-gray-800">
-                  <table className="min-w-full border-collapse text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-800 bg-gray-950 text-xs uppercase text-gray-400">
-                        <th className="px-3 py-2 font-medium">Person</th>
-                        <th className="px-3 py-2 font-medium">Position</th>
-                        <th className="px-3 py-2 font-medium">Attendance</th>
-                        <th className="px-3 py-2 font-medium">Replacement or fill-in</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {detailAttendanceRows.map((row) => {
-                        const replacement = detailRescheduleSuggestionRows.find(
-                          (item) =>
-                            item.row.occurrenceId === row.occurrenceId &&
-                            item.row.memberId === row.memberId &&
-                            item.row.columnKey === row.columnKey,
-                        );
-                        const suggestionLabels =
-                          replacement?.suggestions.map((suggestion) => suggestion.memberLabel) ||
-                          [];
-                        const canOpenReplacement =
-                          canEdit &&
-                          row.isPrimary &&
-                          Boolean(row.columnKey) &&
-                          Boolean(row.positionId);
-                        return (
+                useAttendanceCardLayout ? (
+                  <div className="mt-3 space-y-3">
+                    {detailAttendanceRows.map((row) => (
+                      <section
+                        key={`${row.occurrenceId}-${row.memberId}-${row.columnKey || "record"}-card`}
+                        className="rounded-md border border-gray-800 bg-gray-950/70 p-3"
+                        aria-label={`${row.memberLabel}, ${row.positionLabel}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h5 className="truncate text-sm font-semibold text-white">
+                              {row.memberLabel}
+                            </h5>
+                            <p className="mt-0.5 truncate text-xs font-medium text-gray-400">
+                              {row.positionLabel}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                              Attendance
+                            </p>
+                            <div className="mt-1">
+                              {renderAttendanceStatusControls(row)}
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                              Replacement or fill-in
+                            </p>
+                            <div className="mt-1">
+                              {renderReplacementControls(row)}
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-3 overflow-auto rounded-md border border-gray-800">
+                    <table className="min-w-full border-collapse text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-800 bg-gray-950 text-xs uppercase text-gray-400">
+                          <th className="px-3 py-2 font-medium">Person</th>
+                          <th className="px-3 py-2 font-medium">Position</th>
+                          <th className="px-3 py-2 font-medium">Attendance</th>
+                          <th className="px-3 py-2 font-medium">Replacement or fill-in</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailAttendanceRows.map((row) => (
                           <tr
                             key={`${row.occurrenceId}-${row.memberId}-${row.columnKey || "record"}`}
                             className="border-b border-gray-900 last:border-0"
@@ -2432,87 +2838,17 @@ const ScheduleTab = ({
                             <td className="px-3 py-2 text-white">{row.memberLabel}</td>
                             <td className="px-3 py-2 text-gray-300">{row.positionLabel}</td>
                             <td className="px-3 py-2">
-                              <div className="flex flex-wrap items-center gap-2">
-                                {row.status === "absent" ? (
-                                  <>
-                                    <span className="inline-flex items-center gap-1 rounded border border-rose-300/40 bg-rose-500/15 px-2 py-1 text-xs font-medium text-rose-50">
-                                      <UserX className="h-3.5 w-3.5" aria-hidden />
-                                      No-show
-                                    </span>
-                                    <Button
-                                      variant="tertiary"
-                                      svg={Check}
-                                      iconSize="xs"
-                                      disabled={!canEdit}
-                                      onClick={() => void commitAttendanceStatus(row, "present")}
-                                    >
-                                      Mark present
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <span className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-50">
-                                      <Check className="h-3.5 w-3.5" aria-hidden />
-                                      Present
-                                    </span>
-                                    <Button
-                                      variant="tertiary"
-                                      svg={UserX}
-                                      iconSize="xs"
-                                      disabled={!canEdit}
-                                      onClick={() => void commitAttendanceStatus(row, "absent")}
-                                    >
-                                      Mark no-show
-                                    </Button>
-                                  </>
-                                )}
-                              </div>
+                              {renderAttendanceStatusControls(row)}
                             </td>
                             <td className="px-3 py-2">
-                              {canOpenReplacement ? (
-                                <div className="space-y-1.5">
-                                  <Button
-                                    variant="tertiary"
-                                    svg={RefreshCw}
-                                    iconSize="xs"
-                                    onClick={(event) =>
-                                      activateAttendanceRowSlot(row, event.currentTarget)
-                                    }
-                                  >
-                                    {row.status === "absent"
-                                      ? "Choose fill-in"
-                                      : "Choose replacement"}
-                                  </Button>
-                                  <p className="text-xs text-gray-400">
-                                    {suggestionLabels.length > 0
-                                      ? `Suggested: ${suggestionLabels.join(", ")}`
-                                      : "No available match yet."}
-                                  </p>
-                                </div>
-                              ) : row.status === "absent" ? (
-                                <span className="text-sm text-gray-400">
-                                  No-show recorded.
-                                </span>
-                              ) : row.status === "present" ? (
-                                <span className="text-sm text-gray-400">
-                                  Present recorded.
-                                </span>
-                              ) : row.isPrimary ? (
-                                <span className="text-sm text-gray-400">
-                                  Select the grid cell to assign this slot.
-                                </span>
-                              ) : (
-                                <span className="text-sm text-gray-500">
-                                  Replacement applies to primary slots.
-                                </span>
-                              )}
+                              {renderReplacementControls(row)}
                             </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
               )}
             </div>
           </div>
@@ -3052,6 +3388,7 @@ const ScheduleTab = ({
                       currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
                       currentAssigneeLabel={activeSlotMeta?.currentAssigneeLabel || "Empty"}
                       duplicateFirstNames={duplicateScheduleFirstNames}
+                      recommendationStats={activeSlotRecommendationStats}
                       getIssue={activeSlotGetIssue}
                       getAssignmentActionIssues={
                         slotPickerMode === "replace"
@@ -3061,6 +3398,10 @@ const ScheduleTab = ({
                       getWarning={activeSlotGetWarning}
                       onSelectMember={handleActiveSlotMemberSelect}
                       onAssignmentAction={handleActiveSlotAssignmentAction}
+                      swapRecommendations={activeSlotSwapRecommendations}
+                      onApplySwapRecommendation={(recommendation) =>
+                        void commitActiveSlotSwapRecommendation(recommendation)
+                      }
                       onCreateMember={
                         slotPickerMode === "replace"
                           ? undefined
@@ -3075,13 +3416,13 @@ const ScheduleTab = ({
                       inputRef={pickerInputRef}
                     />
                     <ScheduleMembersPanel
-                      panelRef={membersPanelRef}
                       open={membersPanelOpen}
                       onOpenChange={setMembersPanelOpen}
                       mode={canEdit && activeSlot ? "assign" : "browse"}
                       activeTeamMembers={activeTeamMembers}
                       schedulePositions={schedulePositions}
                       scheduleAssignmentCounts={scheduleAssignmentCounts}
+                      recommendationStats={activeSlotRecommendationStats}
                       duplicateFirstNames={duplicateScheduleFirstNames}
                       highlightedMemberIdSet={highlightedMemberIdSet}
                       onToggleHighlight={toggleHighlightedMember}

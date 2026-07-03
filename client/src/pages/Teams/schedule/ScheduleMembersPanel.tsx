@@ -21,19 +21,23 @@ import {
   type ScheduleMembersSort as ScheduleMembersSortState,
 } from "../teamsUtils";
 import ScheduleMemberPositionGroupDivider from "./ScheduleMemberPositionGroupDivider";
-import { shouldShowScheduleMemberEligibilityGroupDivider, shouldShowScheduleMemberPositionGroupDivider } from "./scheduleMemberPickerUtils";
+import {
+  shouldShowScheduleMemberEligibilityGroupDivider,
+  shouldShowScheduleMemberPositionGroupDivider,
+  type ScheduleMemberRecommendationStats,
+} from "./scheduleMemberPickerUtils";
 import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
 
 export type ScheduleMembersPanelMode = "browse" | "assign";
 
 type ScheduleMembersPanelProps = {
-  panelRef: React.RefObject<HTMLDivElement | null>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: ScheduleMembersPanelMode;
   activeTeamMembers: TeamRosterMember[];
   schedulePositions: TeamPosition[];
   scheduleAssignmentCounts: Map<string, number>;
+  recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   duplicateFirstNames: Set<string>;
   highlightedMemberIdSet: Set<string>;
   onToggleHighlight: (memberId: string) => void;
@@ -60,13 +64,13 @@ type ScheduleMembersPanelProps = {
 };
 
 const ScheduleMembersPanel = ({
-  panelRef,
   open,
   onOpenChange,
   mode,
   activeTeamMembers,
   schedulePositions,
   scheduleAssignmentCounts,
+  recommendationStats,
   duplicateFirstNames,
   highlightedMemberIdSet,
   onToggleHighlight,
@@ -184,6 +188,7 @@ const ScheduleMembersPanel = ({
     getIssue,
     getAssignmentActionIssues,
     getWarning,
+    recommendationStats,
     filterByQuery: isAssignMode,
   });
 
@@ -304,10 +309,7 @@ const ScheduleMembersPanel = ({
         )}
       </Button>
       {open ? (
-        <div
-          ref={panelRef}
-          className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg p-3"
-        >
+        <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg p-3">
           {isAssignMode && slotContext ? (
             <ScheduleSlotContextHeader
               positionLabel={slotContext.positionLabel}
@@ -336,7 +338,6 @@ const ScheduleMembersPanel = ({
             <div className="mt-3 flex shrink-0 flex-col gap-2">
               <div className="flex gap-2">
                 <ScheduleMembersPositionFilter
-                  panelRef={panelRef}
                   positions={schedulePositions}
                   value={memberPositionFilterIds}
                   onChange={onMemberPositionFilterChange}
@@ -344,7 +345,6 @@ const ScheduleMembersPanel = ({
                 />
                 {!isAssignMode ? (
                   <ScheduleMembersSort
-                    panelRef={panelRef}
                     value={membersSort}
                     onChange={setMembersSort}
                   />

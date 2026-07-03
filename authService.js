@@ -244,11 +244,7 @@ const validateUpdateInviteAccessPayload = (body) => {
     throw httpError(400, "Invalid request body.");
   }
   const role =
-    body.role === "admin"
-      ? "admin"
-      : body.role === "member"
-        ? "member"
-        : null;
+    body.role === "admin" ? "admin" : body.role === "member" ? "member" : null;
   if (!role) {
     throw httpError(400, "Choose a valid role.");
   }
@@ -3260,7 +3256,10 @@ const armIntakeDigestTimer = (formId) => {
   intakeDigestTimers.set(formId, timer);
 };
 
-const scheduleIntakeSubmissionDigest = async (formId) => {
+const scheduleIntakeSubmissionDigest = async (
+  formId,
+  submittedAt = nowIso(),
+) => {
   const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
   if (!form) return;
   const action = decideDigestAction({
@@ -3278,7 +3277,7 @@ const scheduleIntakeSubmissionDigest = async (formId) => {
     await setDoc(
       COLLECTIONS.teamIntakeForms,
       formId,
-      { pendingDigestSince: nowIso() },
+      { pendingDigestSince: submittedAt },
       { merge: true },
     );
   }
