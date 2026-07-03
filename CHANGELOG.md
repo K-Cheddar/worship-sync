@@ -1,3 +1,15 @@
+# [2.18.0](https://github.com/K-Cheddar/worship-sync/compare/v2.17.1...v2.18.0) (2026-07-03)
+
+
+### Bug Fixes
+
+* improve form notifications ([b0dd14e](https://github.com/K-Cheddar/worship-sync/commit/b0dd14e0182647104947bed610b29db0c487ab3c))
+
+
+### Features
+
+* Add limited recommendations to scheduling - ux improvements ([9c23c70](https://github.com/K-Cheddar/worship-sync/commit/9c23c709c7dd4ea0b40a4410008cd0d4e83f7d99))
+
 ## [2.17.1](https://github.com/K-Cheddar/worship-sync/compare/v2.17.0...v2.17.1) (2026-07-02)
 
 
