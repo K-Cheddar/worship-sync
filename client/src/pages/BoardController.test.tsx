@@ -275,6 +275,11 @@ const createMockBoardDb = () => {
     __setPosts: (boardId: string, posts: any[]) => {
       postDocsByBoardId[boardId] = posts;
     },
+    __updatePost: (boardId: string, postId: string, patch: Record<string, unknown>) => {
+      postDocsByBoardId[boardId] = (postDocsByBoardId[boardId] || []).map((post) =>
+        post.id === postId ? { ...post, ...patch } : post,
+      );
+    },
     __emitChange: () => {
       changeListeners.forEach((listener) => listener());
     },
@@ -641,6 +646,28 @@ describe("BoardControllerContent", () => {
     expect(await screen.findByText(/Archived session question/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Hide$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Highlight$/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the presentation highlight count tied to the current board while viewing an earlier session", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(await screen.findByText(/0 highlighted/i)).toBeInTheDocument();
+
+    await openBoardToolsSheetIfMobile(user);
+    await user.click(screen.getByLabelText(/Show posts from/i));
+    await user.click(
+      screen.getByRole("option", { name: /Earlier session:/i }),
+    );
+    expect(await screen.findByText(/Archived session question/i)).toBeInTheDocument();
+
+    await act(async () => {
+      mockBoardDb.__updatePost("board-current", "2", { highlighted: true });
+      mockBoardDb.__emitChange();
+    });
+
+    expect(await screen.findByText(/1 highlighted/i)).toBeInTheDocument();
   });
 
   it("renders the Restream tab with connection guidance", async () => {

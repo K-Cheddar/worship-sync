@@ -11,10 +11,7 @@ process.env.FIREBASE_PRIVATE_KEY = "";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  addTeamsSseClient,
-  removeTeamsSseClient,
-} from "../server/teamsSse.js";
+import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
 
 const {
   authHandlers,
@@ -723,6 +720,221 @@ test("schedule assignments block duplicate positions and unavailable members", a
   );
   assert.equal(blockedUnavailable.statusCode, 400);
   assert.match(blockedUnavailable.payload.errorMessage, /unavailable/i);
+});
+
+test("schedule assignment swaps update both cells atomically", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("assignment_swap");
+
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship Team",
+    positions: [
+      { name: "Vocal", icon: "mic" },
+      { name: "Keys", icon: "piano" },
+    ],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys"] },
+      { firstName: "Morgan", lastName: "Lee", positions: ["Vocal", "Keys"] },
+      { firstName: "Riley", lastName: "Hart", positions: ["Vocal"] },
+      { firstName: "Quinn", lastName: "Baker", positions: ["Keys"] },
+    ],
+  });
+  const vocalSlot = `${positionIds.Vocal}::0`;
+  const keysSlot = `${positionIds.Keys}::0`;
+  const serviceId = "service-sunday";
+  const occurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "July",
+      teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: [serviceId],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-07-05T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: vocalSlot,
+      memberId: memberIds.Avery,
+      serviceDate: "2026-07-05",
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: keysSlot,
+      memberId: memberIds.Morgan,
+      serviceDate: "2026-07-05",
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: vocalSlot,
+      memberId: memberIds.Riley,
+      serviceDate: "2026-07-05",
+      shadowAction: "add",
+      shadowKind: "shadow",
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: keysSlot,
+      memberId: memberIds.Quinn,
+      serviceDate: "2026-07-05",
+      shadowAction: "add",
+      shadowKind: "shadow",
+    },
+  });
+
+  const swapped = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentSwap,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        targetPositionSlotKey: vocalSlot,
+        sourcePositionSlotKey: keysSlot,
+        currentMemberId: memberIds.Avery,
+        candidateMemberId: memberIds.Morgan,
+        serviceDate: "2026-07-05",
+      },
+    },
+  );
+
+  assert.equal(swapped.statusCode, 200);
+  const assignments =
+    swapped.payload.schedule.assignments?.[occurrenceId] || {};
+  assert.equal(getMemberId(assignments[vocalSlot]), memberIds.Morgan);
+  assert.equal(getMemberId(assignments[keysSlot]), memberIds.Avery);
+  assert.deepEqual(assignments[vocalSlot].shadows, [
+    { memberId: memberIds.Riley, kind: "shadow" },
+  ]);
+  assert.deepEqual(assignments[keysSlot].shadows, [
+    { memberId: memberIds.Quinn, kind: "shadow" },
+  ]);
+});
+
+test("stale schedule assignment swaps leave both cells unchanged", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("assignment_swap_stale");
+
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship Team",
+    positions: [
+      { name: "Vocal", icon: "mic" },
+      { name: "Keys", icon: "piano" },
+    ],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys"] },
+      { firstName: "Morgan", lastName: "Lee", positions: ["Vocal", "Keys"] },
+      { firstName: "Taylor", lastName: "Cole", positions: ["Vocal", "Keys"] },
+    ],
+  });
+  const vocalSlot = `${positionIds.Vocal}::0`;
+  const keysSlot = `${positionIds.Keys}::0`;
+  const serviceId = "service-sunday";
+  const occurrenceId = "service-sunday@2026-07-12T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "July",
+      teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: [serviceId],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-07-12T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: vocalSlot,
+      memberId: memberIds.Avery,
+      serviceDate: "2026-07-12",
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: keysSlot,
+      memberId: memberIds.Morgan,
+      serviceDate: "2026-07-12",
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: vocalSlot,
+      memberId: memberIds.Taylor,
+      serviceDate: "2026-07-12",
+    },
+  });
+
+  const staleSwap = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentSwap,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        targetPositionSlotKey: vocalSlot,
+        sourcePositionSlotKey: keysSlot,
+        currentMemberId: memberIds.Avery,
+        candidateMemberId: memberIds.Morgan,
+        serviceDate: "2026-07-12",
+      },
+    },
+  );
+  assert.equal(staleSwap.statusCode, 409);
+  assert.match(staleSwap.payload.errorMessage, /no longer available/i);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const updatedSchedule = bootstrap.payload.schedules.find(
+    (item) => item.scheduleId === scheduleId,
+  );
+  const assignments = updatedSchedule.assignments?.[occurrenceId] || {};
+  assert.equal(getMemberId(assignments[vocalSlot]), memberIds.Taylor);
+  assert.equal(getMemberId(assignments[keysSlot]), memberIds.Morgan);
 });
 
 test("schedule assignment updates broadcast the new schedule over SSE", async (t) => {
@@ -1531,7 +1743,10 @@ test("intake form stores custom wording and ships it on the public preview", asy
     },
   });
   assert.equal(form.statusCode, 200);
-  assert.equal(form.payload.form.welcomeMessage, "Welcome to Worship sign-ups!");
+  assert.equal(
+    form.payload.form.welcomeMessage,
+    "Welcome to Worship sign-ups!",
+  );
   assert.equal(
     form.payload.form.positionsMessage,
     "In which positions would you like to serve?",
@@ -1748,9 +1963,12 @@ test("applying intake as a new member adds them to position teams", async (t) =>
   );
   assert.equal(submitRes.statusCode, 200);
 
-  const bootstrapBeforeApply = await callHandler(authHandlers.getTeamsBootstrap, {
-    context,
-  });
+  const bootstrapBeforeApply = await callHandler(
+    authHandlers.getTeamsBootstrap,
+    {
+      context,
+    },
+  );
   const submission = bootstrapBeforeApply.payload.intakeSubmissions.find(
     (item) => item.firstName === "Pat",
   );
@@ -1772,9 +1990,12 @@ test("applying intake as a new member adds them to position teams", async (t) =>
   assert.deepEqual(applyRes.payload.member.positionIds, []);
   assert.deepEqual(applyRes.payload.member.desiredPositionIds, [positionId]);
 
-  const bootstrapAfterApply = await callHandler(authHandlers.getTeamsBootstrap, {
-    context,
-  });
+  const bootstrapAfterApply = await callHandler(
+    authHandlers.getTeamsBootstrap,
+    {
+      context,
+    },
+  );
   const team = bootstrapAfterApply.payload.teams.find(
     (item) => item.teamId === worship.teamId,
   );
@@ -1816,7 +2037,9 @@ test("creating a member with no requested positions still joins the form's teams
   );
   assert.equal(submitRes.statusCode, 200);
 
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
   const submission = bootstrap.payload.intakeSubmissions.find(
     (item) => item.firstName === "Pat",
   );
@@ -1883,9 +2106,12 @@ test("applying intake to an existing member sets desire without granting eligibi
   );
   assert.equal(submitRes.statusCode, 200);
 
-  const bootstrapBeforeApply = await callHandler(authHandlers.getTeamsBootstrap, {
-    context,
-  });
+  const bootstrapBeforeApply = await callHandler(
+    authHandlers.getTeamsBootstrap,
+    {
+      context,
+    },
+  );
   const submission = bootstrapBeforeApply.payload.intakeSubmissions.find(
     (item) => item.firstName === "Sam",
   );
@@ -1943,7 +2169,9 @@ test("a dismissed intake submission can be restored to the active queue", async 
   );
   assert.equal(submitRes.statusCode, 200);
 
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
   const submission = bootstrap.payload.intakeSubmissions.find(
     (item) => item.firstName === "Pat",
   );
@@ -2025,7 +2253,9 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
   );
   assert.equal(submitRes.statusCode, 200);
 
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
   const submission = bootstrap.payload.intakeSubmissions.find(
     (item) => item.firstName === "Sam",
   );
@@ -2123,7 +2353,9 @@ test("intake service availability is a soft warning, not a hard block", async (t
   );
   assert.equal(submitRes.statusCode, 200);
 
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
   const submission = bootstrap.payload.intakeSubmissions.find(
     (item) => item.firstName === "Sam",
   );
@@ -2211,5 +2443,8 @@ test("intake service availability is a soft warning, not a hard block", async (t
     },
   );
   assert.equal(blockedByBlockout.statusCode, 400);
-  assert.match(blockedByBlockout.payload.errorMessage, /unavailable for this service/i);
+  assert.match(
+    blockedByBlockout.payload.errorMessage,
+    /unavailable for this service/i,
+  );
 });

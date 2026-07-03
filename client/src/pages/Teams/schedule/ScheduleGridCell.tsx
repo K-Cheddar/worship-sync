@@ -111,7 +111,7 @@ const ScheduleGridCell = memo(({
           aria-label={`${cellLabel}, ${displayLabel}`}
           disabled={!canEdit}
           className={cn(
-            "w-full min-w-0 rounded-md border px-2 py-1 text-left text-sm text-white focus:border-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
+            "w-full min-w-0 rounded-lg border px-2 py-1 text-left text-sm text-white focus:border-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
             rowTone ? "border-gray-800 bg-transparent" : "border-gray-800 bg-gray-950",
             isActiveSlot && "border-cyan-400/60 ring-1 ring-cyan-400/40",
             !assignedMember && "text-gray-400 italic",
@@ -130,7 +130,7 @@ const ScheduleGridCell = memo(({
               return (
                 <span
                   key={`${shadow.kind}-${shadow.memberId}`}
-                  className="block truncate rounded border border-amber-300/35 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-50"
+                  className="block truncate rounded-lg border border-amber-300/35 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-50"
                 >
                   {shadowKindLabel(shadow.kind)}:{" "}
                   {scheduleMemberName(member, duplicateFirstNames)}

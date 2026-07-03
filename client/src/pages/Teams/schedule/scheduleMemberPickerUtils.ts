@@ -10,6 +10,7 @@ export type ScheduleMemberPickerMember = {
   eligible: boolean;
   issue: string;
   usesSubmenu: boolean;
+  recommendationStats?: ScheduleMemberRecommendationStats;
   /** Member asked for this position via intake. A soft preference signal. */
   desiresPosition: boolean;
   /**
@@ -17,6 +18,11 @@ export type ScheduleMemberPickerMember = {
    * member is still selectable; this just informs the scheduler.
    */
   warning: string;
+};
+
+export type ScheduleMemberRecommendationStats = {
+  assignmentCount: number;
+  nearestAssignmentDistance: number | null;
 };
 
 export const splitTypedMemberName = (raw: string) => {
@@ -59,6 +65,18 @@ export const sortScheduleMemberPickerRows = (
     const bQualifies = memberQualifiesForPosition(b.member, positionId);
     if (aQualifies !== bQualifies) {
       return aQualifies ? -1 : 1;
+    }
+    const aAssignmentCount = a.recommendationStats?.assignmentCount ?? 0;
+    const bAssignmentCount = b.recommendationStats?.assignmentCount ?? 0;
+    if (aAssignmentCount !== bAssignmentCount) {
+      return aAssignmentCount - bAssignmentCount;
+    }
+    const aSpacing =
+      a.recommendationStats?.nearestAssignmentDistance ?? Number.POSITIVE_INFINITY;
+    const bSpacing =
+      b.recommendationStats?.nearestAssignmentDistance ?? Number.POSITIVE_INFINITY;
+    if (aSpacing !== bSpacing) {
+      return aSpacing > bSpacing ? -1 : 1;
     }
     // Among otherwise-equal members, float those who asked for this position
     // (intake desire) to the top so schedulers reach for willing people first.
@@ -155,6 +173,7 @@ export const buildScheduleMemberPickerMembers = ({
   getIssue,
   getAssignmentActionIssues,
   getWarning,
+  recommendationStats,
   filterByQuery = true,
 }: {
   members: TeamRosterMember[];
@@ -168,6 +187,7 @@ export const buildScheduleMemberPickerMembers = ({
     memberId: string,
   ) => MemberAssignmentActionIssues;
   getWarning?: (memberId: string) => string;
+  recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   filterByQuery?: boolean;
 }): ScheduleMemberPickerMember[] => {
   const trimmedQuery = assignmentQuery.trim();
@@ -218,6 +238,7 @@ export const buildScheduleMemberPickerMembers = ({
             ...issueArgs,
           }),
       usesSubmenu: Boolean(usesSubmenu && eligible),
+      recommendationStats: recommendationStats?.get(member.memberId),
       desiresPosition: memberDesiresPosition(member, positionId),
       // Only surface a warning when the member is actually selectable — a
       // blocked row already shows its blocking reason.

@@ -795,6 +795,10 @@ app.post(
   authHandlers.updateTeamScheduleAssignment,
 );
 app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignment-swaps",
+  authHandlers.updateTeamScheduleAssignmentSwap,
+);
+app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/attendance",
   authHandlers.updateTeamScheduleAttendance,
 );

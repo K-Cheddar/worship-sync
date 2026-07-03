@@ -139,6 +139,15 @@ const BoardPresentationScreen = ({
             <h1 className="min-w-0 flex-1 text-4xl font-semibold md:text-5xl">
               {alias?.title || "Presentation"}
             </h1>
+            {hasLoadedOnce && aliasId ? (
+              <div
+                className="flex min-w-16 items-center justify-center rounded-full border border-amber-300/30 bg-amber-400/15 px-5 py-3 text-3xl font-semibold tabular-nums text-amber-100 md:min-w-20 md:px-6 md:py-4 md:text-4xl"
+                aria-live="polite"
+                aria-label={`${highlightedItems.length} highlighted`}
+              >
+                {highlightedItems.length}
+              </div>
+            ) : null}
           </div>
         </header>
 

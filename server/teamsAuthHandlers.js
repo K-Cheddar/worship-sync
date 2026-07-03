@@ -1935,9 +1935,7 @@ export const createTeamsAuthHandlers = ({
         occurrences: schedule.occurrences || [],
         assignments: schedule.assignments || {},
       },
-      positions: sortPositionsByOrder(
-        referencedPositions,
-      ).map((position) => ({
+      positions: sortPositionsByOrder(referencedPositions).map((position) => ({
         positionId: position.positionId,
         name: position.name,
         groupId: position.groupId || "",
@@ -2210,6 +2208,171 @@ export const createTeamsAuthHandlers = ({
     return assignments;
   };
 
+  const assertScheduleRowContains = (schedule, serviceId) => {
+    const rowIds = (schedule.occurrences || []).map(
+      (occurrence) => occurrence.occurrenceId,
+    );
+    const allowedRowIds =
+      rowIds.length > 0 ? rowIds : schedule.serviceIds || [];
+    if (!allowedRowIds.includes(serviceId)) {
+      throw httpError(400, "That service occurrence is not in this schedule.");
+    }
+  };
+
+  const assertSchedulePositionForTeam = ({
+    churchId,
+    team,
+    position,
+    label = "Position",
+  }) => {
+    if (!position || position.churchId !== churchId || position.archivedAt) {
+      throw httpError(400, `${label} is archived.`);
+    }
+    if (position.teamId !== team.teamId) {
+      throw httpError(400, "That position is not part of this team.");
+    }
+  };
+
+  const assertScheduleMemberForPosition = ({
+    churchId,
+    team,
+    member,
+    memberId,
+    positionId,
+    serviceDate,
+  }) => {
+    if (!member || member.churchId !== churchId || member.archivedAt) {
+      throw httpError(400, "Member is archived.");
+    }
+    if (!(team.memberIds || []).includes(memberId)) {
+      throw httpError(400, "That member is not part of this team.");
+    }
+    if (!(member.positionIds || []).includes(positionId)) {
+      throw httpError(400, "That member cannot serve in this position.");
+    }
+    if (isMemberUnavailableForService(member, { date: serviceDate || "" })) {
+      throw httpError(400, "That member is unavailable for this service.");
+    }
+  };
+
+  const assertNoDuplicateScheduleMembersForService = (row) => {
+    const seen = new Set();
+    for (const cell of Object.values(row || {})) {
+      for (const memberId of getScheduleAssignmentCellMemberIds(cell)) {
+        if (seen.has(memberId)) {
+          throw httpError(
+            400,
+            "Members can only serve one position per service.",
+          );
+        }
+        seen.add(memberId);
+      }
+    }
+  };
+
+  const buildValidatedScheduleAssignmentSwap = ({
+    churchId,
+    schedule,
+    team,
+    serviceId,
+    targetPositionSlotKey,
+    sourcePositionSlotKey,
+    currentMember,
+    currentMemberId,
+    candidateMember,
+    candidateMemberId,
+    targetPosition,
+    sourcePosition,
+    serviceDate,
+  }) => {
+    assertScheduleRowContains(schedule, serviceId);
+    const targetSlot = parseScheduleSlotKey(targetPositionSlotKey);
+    const sourceSlot = parseScheduleSlotKey(sourcePositionSlotKey);
+    if (!targetSlot || !sourceSlot) {
+      throw httpError(400, "Position slot key is invalid.");
+    }
+    const normalizedTargetSlotKey = makeScheduleSlotKey(
+      targetSlot.positionId,
+      targetSlot.slot,
+    );
+    const normalizedSourceSlotKey = makeScheduleSlotKey(
+      sourceSlot.positionId,
+      sourceSlot.slot,
+    );
+    if (normalizedTargetSlotKey === normalizedSourceSlotKey) {
+      throw httpError(400, "Choose two different schedule slots.");
+    }
+
+    const normalizedCurrentMemberId = normalizeShortText(currentMemberId, {
+      max: 160,
+    });
+    const normalizedCandidateMemberId = normalizeShortText(candidateMemberId, {
+      max: 160,
+    });
+    if (!normalizedCurrentMemberId || !normalizedCandidateMemberId) {
+      throw httpError(400, "Both members are required for this swap.");
+    }
+
+    assertSchedulePositionForTeam({
+      churchId,
+      team,
+      position: targetPosition,
+      label: "Target position",
+    });
+    assertSchedulePositionForTeam({
+      churchId,
+      team,
+      position: sourcePosition,
+      label: "Source position",
+    });
+    assertScheduleMemberForPosition({
+      churchId,
+      team,
+      member: candidateMember,
+      memberId: normalizedCandidateMemberId,
+      positionId: targetSlot.positionId,
+      serviceDate,
+    });
+    assertScheduleMemberForPosition({
+      churchId,
+      team,
+      member: currentMember,
+      memberId: normalizedCurrentMemberId,
+      positionId: sourceSlot.positionId,
+      serviceDate,
+    });
+
+    const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
+    const row = { ...(assignments[serviceId] || {}) };
+    const targetCell = normalizeScheduleAssignmentCell(
+      row[normalizedTargetSlotKey],
+    );
+    const sourceCell = normalizeScheduleAssignmentCell(
+      row[normalizedSourceSlotKey],
+    );
+    if (
+      targetCell.primaryMemberId !== normalizedCurrentMemberId ||
+      sourceCell.primaryMemberId !== normalizedCandidateMemberId
+    ) {
+      throw httpError(
+        409,
+        "This swap is no longer available. Refresh the schedule and try again.",
+      );
+    }
+
+    row[normalizedTargetSlotKey] = serializeScheduleAssignmentCell({
+      primaryMemberId: normalizedCandidateMemberId,
+      shadows: targetCell.shadows,
+    });
+    row[normalizedSourceSlotKey] = serializeScheduleAssignmentCell({
+      primaryMemberId: normalizedCurrentMemberId,
+      shadows: sourceCell.shadows,
+    });
+    assertNoDuplicateScheduleMembersForService(row);
+    assignments[serviceId] = row;
+    return assignments;
+  };
+
   const validateScheduleAssignment = async ({
     churchId,
     scheduleId,
@@ -2404,6 +2567,205 @@ export const createTeamsAuthHandlers = ({
       // Use update (not set with merge) so the assignments map is replaced
       // wholesale. A merged set deep-merges nested maps, which would keep
       // cleared/moved cell keys we deleted and resurrect old assignments.
+      transaction.update(scheduleRef, update);
+      return { ...schedule, ...update };
+    });
+  };
+
+  const updateTeamScheduleAssignmentSwapInStore = async ({
+    churchId,
+    scheduleId,
+    serviceId,
+    targetPositionSlotKey,
+    sourcePositionSlotKey,
+    currentMemberId,
+    candidateMemberId,
+    serviceDate,
+    adminUserId,
+  }) => {
+    const normalizedCurrentMemberId = normalizeShortText(currentMemberId, {
+      max: 160,
+    });
+    const normalizedCandidateMemberId = normalizeShortText(candidateMemberId, {
+      max: 160,
+    });
+    if (!normalizedCurrentMemberId || !normalizedCandidateMemberId) {
+      throw httpError(400, "Both members are required for this swap.");
+    }
+
+    const db = requireFirestore();
+    if (!db) {
+      const schedule = await assertTeamEntityInChurch(
+        "schedule",
+        scheduleId,
+        churchId,
+        { label: "Schedule" },
+      );
+      const team = await assertTeamEntityInChurch(
+        "team",
+        schedule.teamId,
+        churchId,
+        { label: "Team" },
+      );
+      const targetSlot = parseScheduleSlotKey(targetPositionSlotKey);
+      const sourceSlot = parseScheduleSlotKey(sourcePositionSlotKey);
+      if (!targetSlot || !sourceSlot) {
+        throw httpError(400, "Position slot key is invalid.");
+      }
+      const [targetPosition, sourcePosition, currentMember, candidateMember] =
+        await Promise.all([
+          assertTeamEntityInChurch(
+            "position",
+            targetSlot.positionId,
+            churchId,
+            {
+              label: "Target position",
+            },
+          ),
+          assertTeamEntityInChurch(
+            "position",
+            sourceSlot.positionId,
+            churchId,
+            {
+              label: "Source position",
+            },
+          ),
+          assertTeamEntityInChurch(
+            "member",
+            normalizedCurrentMemberId,
+            churchId,
+            {
+              label: "Current member",
+            },
+          ),
+          assertTeamEntityInChurch(
+            "member",
+            normalizedCandidateMemberId,
+            churchId,
+            {
+              label: "Candidate member",
+            },
+          ),
+        ]);
+      const assignments = buildValidatedScheduleAssignmentSwap({
+        churchId,
+        schedule,
+        team,
+        serviceId,
+        targetPositionSlotKey,
+        sourcePositionSlotKey,
+        currentMember,
+        currentMemberId: normalizedCurrentMemberId,
+        candidateMember,
+        candidateMemberId: normalizedCandidateMemberId,
+        targetPosition,
+        sourcePosition,
+        serviceDate,
+      });
+      await setDoc(
+        COLLECTIONS.teamSchedules,
+        scheduleId,
+        {
+          assignments,
+          updatedAt: nowIso(),
+          updatedByUid: adminUserId,
+        },
+        { merge: true },
+      );
+      return getTeamEntity("schedule", scheduleId);
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const scheduleRef = db
+        .collection(COLLECTIONS.teamSchedules)
+        .doc(scheduleId);
+      const scheduleSnap = await transaction.get(scheduleRef);
+      const schedule = readTransactionTeamEntity(
+        scheduleSnap,
+        "scheduleId",
+        "Schedule",
+      );
+      if (schedule.churchId !== churchId) {
+        throw httpError(404, "Schedule not found.");
+      }
+
+      const teamSnap = await transaction.get(
+        db.collection(COLLECTIONS.teams).doc(schedule.teamId),
+      );
+      const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
+      if (team.churchId !== churchId) {
+        throw httpError(404, "Team not found.");
+      }
+
+      const targetSlot = parseScheduleSlotKey(targetPositionSlotKey);
+      const sourceSlot = parseScheduleSlotKey(sourcePositionSlotKey);
+      if (!targetSlot || !sourceSlot) {
+        throw httpError(400, "Position slot key is invalid.");
+      }
+      const [
+        targetPositionSnap,
+        sourcePositionSnap,
+        currentMemberSnap,
+        candidateMemberSnap,
+      ] = await Promise.all([
+        transaction.get(
+          db.collection(COLLECTIONS.teamPositions).doc(targetSlot.positionId),
+        ),
+        transaction.get(
+          db.collection(COLLECTIONS.teamPositions).doc(sourceSlot.positionId),
+        ),
+        transaction.get(
+          db
+            .collection(COLLECTIONS.teamRosterMembers)
+            .doc(normalizedCurrentMemberId),
+        ),
+        transaction.get(
+          db
+            .collection(COLLECTIONS.teamRosterMembers)
+            .doc(normalizedCandidateMemberId),
+        ),
+      ]);
+      const targetPosition = readTransactionTeamEntity(
+        targetPositionSnap,
+        "positionId",
+        "Target position",
+      );
+      const sourcePosition = readTransactionTeamEntity(
+        sourcePositionSnap,
+        "positionId",
+        "Source position",
+      );
+      const currentMember = readTransactionTeamEntity(
+        currentMemberSnap,
+        "memberId",
+        "Current member",
+      );
+      const candidateMember = readTransactionTeamEntity(
+        candidateMemberSnap,
+        "memberId",
+        "Candidate member",
+      );
+
+      const assignments = buildValidatedScheduleAssignmentSwap({
+        churchId,
+        schedule,
+        team,
+        serviceId,
+        targetPositionSlotKey,
+        sourcePositionSlotKey,
+        currentMember,
+        currentMemberId: normalizedCurrentMemberId,
+        candidateMember,
+        candidateMemberId: normalizedCandidateMemberId,
+        targetPosition,
+        sourcePosition,
+        serviceDate,
+      });
+      const update = {
+        assignments,
+        updatedAt: nowIso(),
+        updatedByUid: adminUserId,
+      };
       transaction.update(scheduleRef, update);
       return { ...schedule, ...update };
     });
@@ -2693,7 +3055,11 @@ export const createTeamsAuthHandlers = ({
           publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not save this intake form.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this intake form.",
+        );
       }
     },
 
@@ -2733,7 +3099,11 @@ export const createTeamsAuthHandlers = ({
           form: sanitizeTeamIntakeFormForAdmin(nextForm),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not save this intake form.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this intake form.",
+        );
       }
     },
 
@@ -2774,7 +3144,11 @@ export const createTeamsAuthHandlers = ({
           publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not create a new intake link.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not create a new intake link.",
+        );
       }
     },
 
@@ -2850,7 +3224,11 @@ export const createTeamsAuthHandlers = ({
           teams,
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not load this intake form.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load this intake form.",
+        );
       }
     },
 
@@ -2888,8 +3266,7 @@ export const createTeamsAuthHandlers = ({
         // submission (the response is already saved).
         if (scheduleIntakeSubmissionDigest) {
           Promise.resolve(scheduleIntakeSubmissionDigest(form.formId)).catch(
-            (error) =>
-              console.error("Could not schedule intake digest", error),
+            (error) => console.error("Could not schedule intake digest", error),
           );
         }
         return res.json({ success: true, submissionId });
@@ -3005,7 +3382,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not archive this position.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not archive this position.",
+        );
       }
     },
 
@@ -3119,7 +3500,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, area });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not save this qualification area.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this qualification area.",
+        );
       }
     },
 
@@ -3145,7 +3530,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, area });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not save this qualification area.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this qualification area.",
+        );
       }
     },
 
@@ -3167,7 +3556,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not archive this qualification area.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not archive this qualification area.",
+        );
       }
     },
 
@@ -3189,7 +3582,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not delete this qualification area.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not delete this qualification area.",
+        );
       }
     },
 
@@ -3214,7 +3611,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, level });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not save this qualification level.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this qualification level.",
+        );
       }
     },
 
@@ -3240,7 +3641,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, level });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not save this qualification level.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this qualification level.",
+        );
       }
     },
 
@@ -3262,7 +3667,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not archive this qualification level.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not archive this qualification level.",
+        );
       }
     },
 
@@ -3284,7 +3693,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not delete this qualification level.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not delete this qualification level.",
+        );
       }
     },
 
@@ -3414,7 +3827,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true, publicToken: publicLinkToken });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not create a public link.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not create a public link.",
+        );
       }
     },
 
@@ -3505,7 +3922,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not archive this schedule.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not archive this schedule.",
+        );
       }
     },
 
@@ -3559,7 +3980,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not delete this position.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not delete this position.",
+        );
       }
     },
 
@@ -3616,7 +4041,11 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({ success: true });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not delete this schedule.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not delete this schedule.",
+        );
       }
     },
 
@@ -3830,7 +4259,11 @@ export const createTeamsAuthHandlers = ({
           ...(updatedTeams.length ? { teams: updatedTeams } : {}),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not update this submission.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update this submission.",
+        );
       }
     },
 
@@ -3876,7 +4309,65 @@ export const createTeamsAuthHandlers = ({
         emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
         return res.json({ success: true, schedule });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not update this assignment.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update this assignment.",
+        );
+      }
+    },
+
+    async updateTeamScheduleAssignmentSwap(req, res) {
+      try {
+        await assertCsrf(req);
+        const existing = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          req.params.churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
+        const schedule = await updateTeamScheduleAssignmentSwapInStore({
+          churchId: req.params.churchId,
+          scheduleId: req.params.scheduleId,
+          serviceId: String(req.body?.serviceId || "").trim(),
+          targetPositionSlotKey: String(
+            req.body?.targetPositionSlotKey || "",
+          ).trim(),
+          sourcePositionSlotKey: String(
+            req.body?.sourcePositionSlotKey || "",
+          ).trim(),
+          currentMemberId: String(req.body?.currentMemberId || "").trim(),
+          candidateMemberId: String(req.body?.candidateMemberId || "").trim(),
+          serviceDate: normalizeOptionalPlainDate(
+            req.body?.serviceDate,
+            "Service date",
+          ),
+          adminUserId: admin.user.uid,
+        });
+        await addSecurityEvent({
+          type: "team_schedule_assignment_swap_updated",
+          churchId: req.params.churchId,
+          userId: admin.user.uid,
+          scheduleId: req.params.scheduleId,
+          serviceId: String(req.body?.serviceId || "").trim(),
+          targetPositionSlotKey: String(
+            req.body?.targetPositionSlotKey || "",
+          ).trim(),
+          sourcePositionSlotKey: String(
+            req.body?.sourcePositionSlotKey || "",
+          ).trim(),
+          currentMemberId: req.body?.currentMemberId || null,
+          candidateMemberId: req.body?.candidateMemberId || null,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not apply this swap.");
       }
     },
 

@@ -35,10 +35,10 @@ import {
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import BlockoutDatesField from "../components/BlockoutDatesField";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
   describeDeletionImpacts,
-  emptyRange,
   memberMatchesListQuery,
   memberName,
   orderPositionsByTeamList,
@@ -809,39 +809,17 @@ const MemberManager = ({
             Add qualification
           </Button>
         </fieldset>
-        <fieldset className="space-y-2">
-          <legend className="p-1 text-sm font-semibold">Blockout dates:</legend>
-          {draft.blockoutDates.length === 0 ? (
-            <p className="text-sm text-gray-400">No blockout dates added.</p>
-          ) : null}
-          {draft.blockoutDates.map((range, index) => (
-            <div key={index} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/60 p-2">
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
-                <DatePicker className="min-w-0" label="Start date" hideLabel value={range.startDate} onChange={(startDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, startDate } : item) }))} />
-                <DatePicker className="min-w-0" label="End date" hideLabel value={range.endDate} onChange={(endDate) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, endDate } : item) }))} />
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  svg={X}
-                  iconSize="sm"
-                  padding="p-0"
-                  className="shrink-0 self-center text-gray-400 hover:text-white"
-                  aria-label="Remove blockout date"
-                  onClick={() =>
-                    setDraft((d) => ({
-                      ...d,
-                      blockoutDates: d.blockoutDates.filter((_, i) => i !== index),
-                    }))
-                  }
-                />
-              </div>
-              <Input hideLabel label="Notes" placeholder="Notes (optional)" value={range.notes || ""} onChange={(notes) => setDraft((d) => ({ ...d, blockoutDates: d.blockoutDates.map((item, i) => i === index ? { ...item, notes: String(notes) } : item) }))} />
-            </div>
-          ))}
-          <Button variant="secondary" svg={Plus} iconSize="sm" onClick={() => setDraft((d) => ({ ...d, blockoutDates: [...d.blockoutDates, emptyRange()] }))}>
-            Add date
-          </Button>
-        </fieldset>
+        <BlockoutDatesField
+          key={editing?.memberId ?? "new-member"}
+          variant="admin"
+          label="Blockout dates"
+          showNotes
+          emptyLabel="No blockout dates added."
+          value={draft.blockoutDates}
+          onChange={(blockoutDates) =>
+            setDraft((current) => ({ ...current, blockoutDates }))
+          }
+        />
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
       </CreatePanel>
       <DeleteModal

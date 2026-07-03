@@ -3,6 +3,8 @@ import {
   buildBoardPublicUrl,
   buildWorshipSyncModeratorBoardPostAuthorId,
   filterHighlightedBoardPosts,
+  filterHighlightedRestreamMessages,
+  countHighlightedPresentationItems,
   filterVisibleBoardPosts,
   generateAnonymousDisplayName,
   getAliasDocId,
@@ -181,6 +183,48 @@ describe("boardUtils", () => {
     expect(
       filterHighlightedBoardPosts(withDeleted).map((post) => post.id),
     ).toEqual(["1"]);
+  });
+
+  it("filters highlighted restream messages and counts presentation items", () => {
+    const posts = [
+      createPost({ _id: "post:board-a:1", id: "1", highlighted: true }),
+      createPost({
+        _id: "post:board-a:2",
+        id: "2",
+        highlighted: true,
+        hidden: true,
+      }),
+    ];
+    const restreamMessages = [
+      {
+        id: "r1",
+        kind: "viewer_message" as const,
+        isHighlighted: true,
+        hidden: false,
+      },
+      {
+        id: "r2",
+        kind: "viewer_message" as const,
+        isHighlighted: true,
+        hidden: true,
+      },
+      {
+        id: "r3",
+        kind: "moderator_reply" as const,
+        isHighlighted: true,
+        hidden: false,
+      },
+    ] as Parameters<typeof filterHighlightedRestreamMessages>[0];
+
+    expect(
+      filterHighlightedRestreamMessages(restreamMessages).map((m) => m.id),
+    ).toEqual(["r1"]);
+    expect(
+      countHighlightedPresentationItems({
+        boardPosts: posts,
+        restreamMessages,
+      }),
+    ).toBe(2);
   });
 
   it("includes a hidden post only for the matching participant id", () => {

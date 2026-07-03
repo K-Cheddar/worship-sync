@@ -5,6 +5,7 @@ import {
   buildScheduleMemberPickerMembers,
   shouldOfferCreateMember,
   type ScheduleMemberPickerMember,
+  type ScheduleMemberRecommendationStats,
 } from "./scheduleMemberPickerUtils";
 
 export type UseScheduleMemberPickerArgs = {
@@ -18,6 +19,7 @@ export type UseScheduleMemberPickerArgs = {
     memberId: string,
   ) => MemberAssignmentActionIssues;
   getWarning?: (memberId: string) => string;
+  recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   canCreateMember?: boolean;
   filterByQuery?: boolean;
 };
@@ -41,6 +43,7 @@ export const useScheduleMemberPicker = ({
   getIssue,
   getAssignmentActionIssues,
   getWarning,
+  recommendationStats,
   canCreateMember = false,
   filterByQuery = true,
 }: UseScheduleMemberPickerArgs): UseScheduleMemberPickerResult => {
@@ -58,6 +61,7 @@ export const useScheduleMemberPicker = ({
         getIssue,
         getAssignmentActionIssues,
         getWarning,
+        recommendationStats,
         filterByQuery,
       }),
     [
@@ -71,6 +75,7 @@ export const useScheduleMemberPicker = ({
       hasPrimaryAssignee,
       members,
       positionId,
+      recommendationStats,
     ],
   );
 

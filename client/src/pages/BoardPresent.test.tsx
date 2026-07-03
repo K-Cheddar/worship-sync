@@ -85,12 +85,14 @@ describe("BoardPresent", () => {
     renderPage();
 
     expect(await screen.findByText(/No highlighted messages yet/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("0 highlighted")).toHaveTextContent("0");
 
     await act(async () => {
       refreshCallback?.({ type: "post-created" });
     });
 
     expect(await screen.findByText(/Highlighted now/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("1 highlighted")).toHaveTextContent("1");
     expect(mockGetBoardAlias).toHaveBeenCalledTimes(1);
     expect(mockGetBoardDisplayItems).toHaveBeenCalledTimes(2);
   });

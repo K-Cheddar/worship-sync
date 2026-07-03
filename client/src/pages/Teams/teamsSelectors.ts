@@ -218,15 +218,27 @@ export const memberMatchesListFilters = (
   return true;
 };
 
-export const selectIntakeMemberMatch = (
+// Exact matches (identical normalized full name) are safe enough to link in
+// bulk; close matches below still require a person to confirm each one. When
+// two members share the name, there is no safe automatic choice, so ambiguous
+// names also fall back to human review.
+export const selectIntakeExactMemberMatch = (
   submission: TeamIntakeSubmission,
   members: TeamRosterMember[],
 ) => {
-  const exact = members.find(
+  const matches = members.filter(
     (member) =>
       normalizeMemberNameKey(member.firstName, member.lastName) ===
       submission.normalizedName,
   );
+  return matches.length === 1 ? matches[0] : undefined;
+};
+
+export const selectIntakeMemberMatch = (
+  submission: TeamIntakeSubmission,
+  members: TeamRosterMember[],
+) => {
+  const exact = selectIntakeExactMemberMatch(submission, members);
   if (exact) return exact;
 
   const { first: submissionFirst, last: submissionLast } = splitNormalizedName(
