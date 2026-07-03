@@ -3249,6 +3249,7 @@ export const createTeamsAuthHandlers = ({
           form,
         );
         const submissionId = createId("teamIntakeSubmission");
+        const submittedAt = nowIso();
         await setDoc(
           COLLECTIONS.teamIntakeSubmissions,
           submissionId,
@@ -3258,15 +3259,17 @@ export const createTeamsAuthHandlers = ({
             formId: form.formId,
             churchId: form.churchId,
             status: "new",
-            submittedAt: nowIso(),
+            submittedAt,
           },
           { merge: false },
         );
         // Notify editors out-of-band; a failure here must not fail the public
         // submission (the response is already saved).
         if (scheduleIntakeSubmissionDigest) {
-          Promise.resolve(scheduleIntakeSubmissionDigest(form.formId)).catch(
-            (error) => console.error("Could not schedule intake digest", error),
+          Promise.resolve(
+            scheduleIntakeSubmissionDigest(form.formId, submittedAt),
+          ).catch((error) =>
+            console.error("Could not schedule intake digest", error),
           );
         }
         return res.json({ success: true, submissionId });

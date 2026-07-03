@@ -79,6 +79,8 @@ const createRes = () => {
   return res;
 };
 
+const flushAsyncWork = () => new Promise((resolve) => setImmediate(resolve));
+
 const skipUnlessInMemoryAuth = (t) => {
   if (!canSeedHumanBearerAuthForServerTests()) {
     t.skip("Teams API tests seed in-memory auth only.");
@@ -1962,6 +1964,7 @@ test("applying intake as a new member adds them to position teams", async (t) =>
     submitRes,
   );
   assert.equal(submitRes.statusCode, 200);
+  await flushAsyncWork();
 
   const bootstrapBeforeApply = await callHandler(
     authHandlers.getTeamsBootstrap,
@@ -1973,6 +1976,10 @@ test("applying intake as a new member adds them to position teams", async (t) =>
     (item) => item.firstName === "Pat",
   );
   assert.ok(submission?.submissionId);
+  const intakeForm = bootstrapBeforeApply.payload.intakeForms.find(
+    (item) => item.formId === form.payload.form.formId,
+  );
+  assert.equal(intakeForm?.pendingDigestSince, submission.submittedAt);
 
   const applyRes = await callHandler(authHandlers.updateTeamIntakeSubmission, {
     context,
