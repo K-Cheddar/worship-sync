@@ -340,14 +340,14 @@ describe("LyricsEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(
-      screen.getByText(/you have unsaved changes\. are you sure you want to leave/i)
+      screen.getByText(/you have unsaved changes\. are you sure you want to discard them/i)
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Stay" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(screen.getByRole("button", { name: "Leave Without Saving" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
 
     expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
   });

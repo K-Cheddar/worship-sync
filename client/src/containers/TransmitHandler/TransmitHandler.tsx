@@ -28,7 +28,7 @@ import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
 import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
 import BoardMonitorPreview from "./BoardMonitorPreview";
-import { useStoredBoardDisplayAlias } from "../../boards/useStoredBoardDisplayAlias";
+import { useResolvedBoardDisplayAlias } from "../../boards/useResolvedBoardDisplayAlias";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
 const OVERLAY_STREAM_QUICK_LINKS_VISIBLE = 10;
@@ -90,10 +90,6 @@ const TransmitHandler = ({
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
-  // Discussion board → monitor: only relevant on the main controller, and only
-  // when the church actually has a board (the alias is auto-seeded once one
-  // exists). Collapsed by default so it stays out of the way until needed.
-  const boardAliasId = useStoredBoardDisplayAlias();
   const monitorBoardAliasId = useSelector(
     (state) => state.presentation.monitorBoardAliasId
   );
@@ -102,11 +98,19 @@ const TransmitHandler = ({
   const showProjector = visibleScreens.includes("projector");
   const showMonitor = visibleScreens.includes("monitor");
   const showStream = visibleScreens.includes("stream");
+
+  // Discussion board → monitor: only relevant on the main controller. Resolve the
+  // church's board from the server (not just this device's stored alias) so the
+  // tile shows even on a device that has never opened the board. Collapsed by
+  // default so it stays out of the way until needed.
+  const boardAliasId = useResolvedBoardDisplayAlias({
+    enabled: variant === "default" && showMonitor,
+  });
   // A board that's already live on the monitor must always keep its section (and
-  // its "off" switch) rendered, even if the preview inputs that normally reveal
-  // the section — the seeded board alias or the monitor being visible — have
-  // since gone away. Otherwise the control that turns the board off can unmount
-  // while the board stays on the monitor, leaving no way to remove it.
+  // its "off" switch) rendered, even if the inputs that normally reveal it — a
+  // resolvable board alias or the monitor being visible — have since gone away.
+  // Otherwise the control that turns the board off can unmount while the board
+  // stays on the monitor, leaving no way to remove it.
   const isBoardLiveOnMonitor = monitorBoardAliasId !== "";
   const showBoardSection =
     variant === "default" &&
@@ -294,7 +298,7 @@ const TransmitHandler = ({
               />
             )}
             {showBoardSection && (
-              <div className="relative overflow-hidden rounded-sm border border-white/12 bg-black/30">
+              <div className="relative shrink-0 overflow-hidden rounded-sm border border-white/12 bg-black/30">
                 <button
                   type="button"
                   onClick={() => setIsBoardSectionOpen((open) => !open)}
@@ -327,8 +331,13 @@ const TransmitHandler = ({
                     className="min-h-0 overflow-hidden"
                     inert={isBoardSectionOpen ? undefined : true}
                   >
-                    <div className="px-2 pb-2">
-                      <BoardMonitorPreview isOpen={isBoardSectionOpen} />
+                    <div className="pb-2 pr-2">
+                      <BoardMonitorPreview
+                        aliasId={boardAliasId}
+                        isOpen={isBoardSectionOpen}
+                        isMobile={isMobile}
+                        previewScale={previewScale}
+                      />
                     </div>
                   </div>
                 </div>

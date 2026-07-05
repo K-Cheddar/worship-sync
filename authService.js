@@ -8,6 +8,7 @@ import { Resend } from "resend";
 import {
   renderAccountRestoredEmail,
   renderAdminRecoveryRequestEmail,
+  renderInviteAcceptedAdminEmail,
   renderInviteEmail,
   renderIntakeSubmissionsDigestEmail,
   renderPairingSetupCodeEmail,
@@ -22,6 +23,7 @@ import {
 } from "./server/authResponseSanitize.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
+import { selectInviteAcceptedAdminRecipients } from "./server/inviteAcceptedNotifyRecipients.js";
 import {
   collectDigestSubmitterNames,
   decideDigestAction,
@@ -1335,6 +1337,71 @@ const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
     }),
   );
   return selectIntakeNotifyRecipients(candidates);
+};
+
+const listInviteAcceptedNotifyRecipients = async (
+  churchId,
+  acceptedUserId,
+) => {
+  const memberships = await listMembershipsForChurch(churchId);
+  const candidates = await Promise.all(
+    memberships.map(async (membership) => {
+      if (membership.role !== "admin" || membership.status !== "active") {
+        return { isActiveAdmin: false };
+      }
+      const user = await getUserByUid(membership.userId);
+      return {
+        isActiveAdmin: true,
+        isAcceptedUser: membership.userId === acceptedUserId,
+        email: user?.primaryEmail || user?.email || "",
+      };
+    }),
+  );
+  return selectInviteAcceptedAdminRecipients(candidates);
+};
+
+const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
+  const recipients = await listInviteAcceptedNotifyRecipients(
+    invite.churchId,
+    user.uid,
+  );
+  if (recipients.length === 0) {
+    return;
+  }
+  const church = await getChurchById(invite.churchId);
+  const churchName = church?.name || "your church";
+  const acceptedEmail = user.primaryEmail || user.email || invite.email || "";
+  const acceptedDisplayName = user.displayName || "";
+  const acceptedLabel = acceptedDisplayName.trim() || acceptedEmail;
+  const { html, text } = await renderInviteAcceptedAdminEmail({
+    acceptedDisplayName,
+    acceptedEmail,
+    churchName,
+    role: invite.role || "member",
+    managePeopleUrl: `${APP_BASE_URL}/#/account/people`,
+  });
+  await Promise.all(
+    recipients.map((to) =>
+      sendEmail({
+        to,
+        subject: `${acceptedLabel} accepted a WorshipSync invite`,
+        textBody: text,
+        htmlBody: html,
+        tags: {
+          type: "invite_accepted",
+          churchId: invite.churchId,
+          inviteId: invite.inviteId,
+          role: invite.role || "member",
+        },
+      }).catch((error) =>
+        logAuthEvent("warn", "invite.accepted.notify.send-error", {
+          churchId: invite.churchId,
+          inviteId: invite.inviteId,
+          errorMessage: error?.message || "send failed",
+        }),
+      ),
+    ),
+  );
 };
 
 const getTrustedHumanDeviceByFingerprint = async ({
@@ -4961,6 +5028,15 @@ export const authHandlers = {
         userId: user.uid,
         inviteId: invite.inviteId,
       });
+      await sendInviteAcceptedAdminNotifications({ invite, user }).catch(
+        (error) =>
+          logAuthEvent("warn", "invite.accepted.notify.error", {
+            churchId: invite.churchId,
+            inviteId: invite.inviteId,
+            userId: user.uid,
+            errorMessage: error?.message || "notification failed",
+          }),
+      );
 
       return res.json({
         success: true,

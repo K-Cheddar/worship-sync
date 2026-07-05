@@ -195,7 +195,7 @@ describe("CreateItem", () => {
     fireEvent.change(screen.getByLabelText("Song name:"), {
       target: { value: "Amazing Grace" },
     });
-    fireEvent.change(screen.getByLabelText("Paste Lyrics Here:"), {
+    fireEvent.change(screen.getByLabelText("Lyrics:"), {
       target: { value: "Verse 1" },
     });
 
@@ -203,7 +203,7 @@ describe("CreateItem", () => {
     renderCreateItem({ store });
 
     expect(screen.getByLabelText("Song name:")).toHaveValue("Amazing Grace");
-    expect(screen.getByLabelText("Paste Lyrics Here:")).toHaveValue("Verse 1");
+    expect(screen.getByLabelText("Lyrics:")).toHaveValue("Verse 1");
   });
 
   it("persists timer values when leaving and returning", () => {
@@ -264,7 +264,7 @@ describe("CreateItem", () => {
     });
 
     expect(screen.getByLabelText("Song:")).toBeChecked();
-    expect(screen.getByLabelText("Paste Lyrics Here:")).toHaveValue("");
+    expect(screen.getByLabelText("Lyrics:")).toHaveValue("");
     expect(store.getState().createItem).toEqual({
       ...initialCreateItemState,
       name: "Grace",
@@ -371,7 +371,7 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Paste Lyrics Here:")).toHaveValue(
+      expect(screen.getByLabelText("Lyrics:")).toHaveValue(
         "Amazing grace",
       );
     });
@@ -395,6 +395,57 @@ describe("CreateItem", () => {
             geniusId: 17,
           }),
         }),
+      );
+    });
+  });
+
+  it("opens full lyrics in a drawer when import returns multiple candidates", async () => {
+    mockedResolveLrclibImport.mockResolvedValue({
+      match: null,
+      candidates: [
+        {
+          source: "lrclib",
+          lrclibId: 42,
+          trackName: "Owe You Praise",
+          artistName: "Elevation Worship",
+          albumName: "Living Room Sessions",
+          plainLyrics: "Verse 1\nLine one\nLine two\nBridge\nFinal line",
+          syncedLyrics: null,
+        },
+      ],
+    });
+
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Owe You Praise",
+      },
+    });
+
+    renderCreateItem({ store });
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Choose song")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "Expand preview" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "View lyrics" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Lyrics — Owe You Praise" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Bridge").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Use Lyrics" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Lyrics:")).toHaveValue(
+        "Verse 1\nLine one\nLine two\nBridge\nFinal line",
       );
     });
   });
@@ -484,5 +535,57 @@ describe("CreateItem", () => {
 
     expect(screen.getByLabelText("Item Name:")).toHaveValue("John Reading");
     expect(screen.getByLabelText("Bible:")).toBeChecked();
+  });
+
+  it("shows remove-ad-libs toggle for songs without opening Advanced", () => {
+    renderCreateItem();
+
+    expect(
+      screen.getByLabelText("Remove ad-libs in parentheses:"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Sends to:")).not.toBeInTheDocument();
+  });
+
+  it("keeps Sends to behind the Advanced toggle", () => {
+    renderCreateItem();
+
+    expect(screen.queryByText("Sends to:")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+
+    expect(screen.getByText("Sends to:")).toBeInTheDocument();
+  });
+
+  it("strips parenthetical phrases from lyrics on create when the option is enabled", async () => {
+    mockedCreateNewSong.mockResolvedValue(
+      createMockItem({
+        name: "Created Song",
+        _id: "song-1",
+        type: "song",
+      })
+    );
+
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Created Song",
+        text: "Praises (Only You)",
+      },
+    });
+
+    renderCreateItem({ store });
+
+    fireEvent.click(screen.getByLabelText("Remove ad-libs in parentheses:"));
+    fireEvent.click(screen.getByRole("button", { name: "Create Song" }));
+
+    await waitFor(() => {
+      expect(mockedCreateNewSong).toHaveBeenCalled();
+    });
+
+    const formattedLyrics = mockedCreateNewSong.mock.calls[0][0].formattedLyrics;
+    expect(formattedLyrics.some((lyric) => lyric.words.includes("("))).toBe(
+      false,
+    );
+    expect(formattedLyrics[0].words).toBe("Praises");
   });
 });

@@ -10,8 +10,7 @@ import { parseSlotKey } from "../pages/Teams/schedule/scheduleRequirements";
 import {
   getCellPrimaryMemberId,
   getCellShadowAssignments,
-  getDuplicateScheduleFirstNames,
-  scheduleMemberName,
+  memberName,
   sortPositionsByOrder,
 } from "../pages/Teams/teamsUtils";
 
@@ -75,10 +74,13 @@ const normalizeTokens = (value: string) =>
 const normalizeTeamName = (value: string) => normalizeTokens(value).join(" ");
 
 const coreCreditTokens = (value: string) =>
-  normalizeTokens(value).filter((token) => !GENERIC_CREDIT_ROLE_WORDS.has(token));
+  normalizeTokens(value).filter(
+    (token) => !GENERIC_CREDIT_ROLE_WORDS.has(token),
+  );
 
 const tokensMatch = (left: string[], right: string[]) =>
-  left.length === right.length && left.every((token, index) => token === right[index]);
+  left.length === right.length &&
+  left.every((token, index) => token === right[index]);
 
 export const teamScheduleCreditHeadingMatches = (
   creditHeading: string,
@@ -131,7 +133,8 @@ const findTargetOccurrence = (
   const inProgress = occurrences
     .filter(
       (entry) =>
-        entry.startsAtMs <= nowMs && nowMs <= entry.startsAtMs + serviceWindowMs,
+        entry.startsAtMs <= nowMs &&
+        nowMs <= entry.startsAtMs + serviceWindowMs,
     )
     .sort((a, b) => b.startsAtMs - a.startsAtMs);
   if (inProgress[0]) return inProgress[0];
@@ -162,29 +165,25 @@ const pushMemberName = ({
   seenMemberIds,
   memberId,
   membersById,
-  duplicateFirstNames,
 }: {
   names: string[];
   seenMemberIds: Set<string>;
   memberId: string;
   membersById: Map<string, TeamRosterMember>;
-  duplicateFirstNames: Set<string>;
 }) => {
   if (!memberId || seenMemberIds.has(memberId)) return;
   seenMemberIds.add(memberId);
-  names.push(scheduleMemberName(membersById.get(memberId), duplicateFirstNames));
+  names.push(memberName(membersById.get(memberId)));
 };
 
 const collectCellMemberNames = ({
   cell,
   membersById,
-  duplicateFirstNames,
   names,
   seenMemberIds,
 }: {
   cell: TeamScheduleCellAssignment;
   membersById: Map<string, TeamRosterMember>;
-  duplicateFirstNames: Set<string>;
   names: string[];
   seenMemberIds: Set<string>;
 }) => {
@@ -193,7 +192,6 @@ const collectCellMemberNames = ({
     seenMemberIds,
     memberId: getCellPrimaryMemberId(cell),
     membersById,
-    duplicateFirstNames,
   });
   getCellShadowAssignments(cell).forEach((shadow) => {
     pushMemberName({
@@ -201,7 +199,6 @@ const collectCellMemberNames = ({
       seenMemberIds,
       memberId: shadow.memberId,
       membersById,
-      duplicateFirstNames,
     });
   });
 };
@@ -226,22 +223,27 @@ export const buildTeamScheduleCreditEntries = ({
 
   const teamPositions = sortPositionsByOrder(
     positions.filter(
-      (position) => !position.archivedAt && position.teamId === mediaTeam.teamId,
+      (position) =>
+        !position.archivedAt && position.teamId === mediaTeam.teamId,
     ),
   );
   const positionById = new Map(
     teamPositions.map((position) => [position.positionId, position]),
   );
-  const membersById = new Map(members.map((member) => [member.memberId, member]));
-  const duplicateFirstNames = getDuplicateScheduleFirstNames(members);
+  const membersById = new Map(
+    members.map((member) => [member.memberId, member]),
+  );
   const namesByPositionId = new Map<string, string[]>();
   const seenMemberIdsByPositionId = new Map<string, Set<string>>();
-  const row = target.schedule.assignments?.[target.occurrence.occurrenceId] || {};
+  const row =
+    target.schedule.assignments?.[target.occurrence.occurrenceId] || {};
 
   Object.entries(row)
     .map(([cellKey, cell]) => ({ cellKey, cell, slot: parseSlotKey(cellKey) }))
     .filter(
-      (entry): entry is {
+      (
+        entry,
+      ): entry is {
         cellKey: string;
         cell: TeamScheduleCellAssignment;
         slot: { positionId: string; slot: number };
@@ -260,7 +262,6 @@ export const buildTeamScheduleCreditEntries = ({
       collectCellMemberNames({
         cell,
         membersById,
-        duplicateFirstNames,
         names,
         seenMemberIds,
       });

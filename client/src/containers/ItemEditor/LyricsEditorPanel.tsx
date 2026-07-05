@@ -37,7 +37,7 @@ import {
 import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { createSections, updateFormattedSections } from "../../utils/itemUtil";
-import { sortList } from "../../utils/sort";
+import { sortList, uniquePreservingOrder } from "../../utils/sort";
 import {
   formatSong,
   formatSection,
@@ -442,25 +442,30 @@ const LyricsEditorPanel = () => {
   };
 
   const { availableSections, currentSections } = useMemo(() => {
-    const sections = sortList(localFormattedLyrics.map(({ name }) => name));
+    const sectionNamesFromLyrics = localFormattedLyrics
+      .map(({ name }) => name)
+      .filter(Boolean);
     const sectionOptionClassName = (name: string) =>
       cn(
         itemSectionBgColorMap.get(name.split(/\s+/)[0]) ?? "bg-gray-700",
         "text-white rounded px-2 py-0.5 block w-full text-left"
       );
+    const toSectionOptions = (names: string[]) =>
+      names.map((section) => ({
+        label: section,
+        value: section,
+        className: sectionOptionClassName(section),
+      }));
+
     return {
-      availableSections: Array.from(
-        new Set([...sortList(sectionTypes), ...sections])
-      ).map((section) => ({
-        label: section,
-        value: section,
-        className: sectionOptionClassName(section),
-      })),
-      currentSections: sections.map((section) => ({
-        label: section,
-        value: section,
-        className: sectionOptionClassName(section),
-      })),
+      availableSections: toSectionOptions(
+        sortList(
+          uniquePreservingOrder([...sectionTypes, ...sectionNamesFromLyrics]),
+        ),
+      ),
+      currentSections: toSectionOptions(
+        uniquePreservingOrder(sectionNamesFromLyrics),
+      ),
     };
   }, [localFormattedLyrics]);
 
@@ -1234,8 +1239,7 @@ const LyricsEditorPanel = () => {
           showCloseButton={false}
         >
           <p className="mb-6">
-            You have unsaved changes. Are you sure you want to leave without
-            saving?
+            You have unsaved changes. Are you sure you want to discard them?
           </p>
           <div className="flex justify-center gap-4">
             <Button
@@ -1246,11 +1250,11 @@ const LyricsEditorPanel = () => {
               Stay
             </Button>
             <Button
-              variant="cta"
+              variant="destructive"
               onClick={handleConfirmAction}
               className="text-base"
             >
-              Leave Without Saving
+              Discard changes
             </Button>
           </div>
         </Modal>

@@ -8,6 +8,13 @@ jest.mock("../../../components/Button/Button", () => ({
   ),
 }));
 
+jest.mock("../../../components/FloatingWindow/FloatingWindow", () => ({
+  __esModule: true,
+  default: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="add-from-lyrics-window">{children}</div>
+  ),
+}));
+
 jest.mock("../../../components/Select/Select", () => ({
   __esModule: true,
   default: ({
@@ -109,5 +116,33 @@ describe("LyricSectionTools", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /import from song/i }));
     expect(onOpenImportDrawer).toHaveBeenCalledTimes(1);
+  });
+
+  it("strips parenthetical phrases from pasted lyrics when the option is enabled", () => {
+    const onAddMultipleSections = jest.fn();
+
+    render(
+      <LyricSectionTools
+        addNewSectionsToSongOrder
+        onAddNewSectionsToSongOrderChange={jest.fn()}
+        onAddEmptySection={jest.fn()}
+        onOpenImportDrawer={jest.fn()}
+        onAddMultipleSections={onAddMultipleSections}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /add from lyrics/i }));
+
+    fireEvent.change(screen.getByLabelText(/^lyrics:/i), {
+      target: { value: "Praises (Only You)\nMore lines" },
+    });
+    fireEvent.click(
+      screen.getByLabelText("Remove ad-libs in parentheses:"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /add sections/i }));
+
+    expect(onAddMultipleSections).toHaveBeenCalledWith(
+      "Praises\nMore lines",
+    );
   });
 });

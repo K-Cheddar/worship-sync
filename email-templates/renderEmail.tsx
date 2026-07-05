@@ -3,6 +3,7 @@ import React, { type ReactElement } from "react";
 import {
   AccountRestoredEmail,
   AdminRecoveryRequestEmail,
+  InviteAcceptedAdminEmail,
   InviteEmail,
   IntakeSubmissionsDigestEmail,
   PairingSetupCodeEmail,
@@ -36,6 +37,16 @@ export async function renderInviteEmail(
   return renderEmailHtmlAndText(
     <InviteEmail inviteUrl={inviteUrl} churchName={options.churchName} />
   );
+}
+
+export async function renderInviteAcceptedAdminEmail(props: {
+  acceptedDisplayName: string;
+  acceptedEmail: string;
+  churchName: string;
+  role: string;
+  managePeopleUrl: string;
+}) {
+  return renderEmailHtmlAndText(<InviteAcceptedAdminEmail {...props} />);
 }
 
 export async function renderAdminRecoveryRequestEmail(props: {

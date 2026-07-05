@@ -33,13 +33,95 @@ export const extractPlainLyricsFromSyncedLyrics = (
 ): string | null => {
   if (!syncedLyrics?.trim()) return null;
 
-  const plainText = syncedLyrics
+  const lines = syncedLyrics
     .split(/\r?\n/)
-    .map((line) => line.replace(/^\[[^\]]+\]/g, "").trim())
-    .filter((line) => line.length > 0)
-    .join("\n");
+    .map((line) => line.replace(/^\[[^\]]+\]/g, "").trim());
 
-  return plainText.trim() || null;
+  // LRC files timestamp section pauses as blank lines. Collapse runs of them
+  // into a single blank line instead of dropping them entirely, so imported
+  // lyrics keep the same verse/chorus breaks Genius imports have.
+  const collapsedLines: string[] = [];
+  for (const line of lines) {
+    const isBlank = line.length === 0;
+    const previousIsBlank =
+      collapsedLines.length > 0 &&
+      collapsedLines[collapsedLines.length - 1].length === 0;
+    if (isBlank && (previousIsBlank || collapsedLines.length === 0)) continue;
+    collapsedLines.push(line);
+  }
+  while (
+    collapsedLines.length > 0 &&
+    collapsedLines[collapsedLines.length - 1].length === 0
+  ) {
+    collapsedLines.pop();
+  }
+
+  const plainText = collapsedLines.join("\n").trim();
+  return plainText || null;
+};
+
+const scoreImportableLyricsText = (text: string): number => {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) return 0;
+
+  if (!normalized.includes("\n")) {
+    return normalized.length > 80 ? 1 : normalized.length;
+  }
+
+  const sectionBreaks = (normalized.match(/\n\n/g) || []).length;
+  const lineCount = normalized
+    .split("\n")
+    .filter((line) => line.trim().length > 0).length;
+
+  return sectionBreaks * 100 + lineCount;
+};
+
+const pickBestImportablePlainLyrics = (
+  plainLyrics?: string | null,
+  derivedFromSynced?: string | null,
+): string | null => {
+  const plain = plainLyrics?.trim() ?? "";
+  const syncedDerived = derivedFromSynced?.trim() ?? "";
+
+  if (!plain && !syncedDerived) return null;
+  if (!plain) return syncedDerived;
+  if (!syncedDerived) return plain;
+
+  const plainScore = scoreImportableLyricsText(plain);
+  const syncedScore = scoreImportableLyricsText(syncedDerived);
+
+  return syncedScore > plainScore ? syncedDerived : plain;
+};
+
+/** Higher scores mean lyrics are more likely to split cleanly into sections on import. */
+export const getLyricsImportStructureScore = (
+  track: Pick<NormalizedLrclibTrack, "plainLyrics" | "syncedLyrics">,
+): number => {
+  const text =
+    pickBestImportablePlainLyrics(
+      track.plainLyrics,
+      extractPlainLyricsFromSyncedLyrics(track.syncedLyrics),
+    ) ?? "";
+
+  return scoreImportableLyricsText(text);
+};
+
+export const sortLrclibTracksByLyricsStructure = (
+  tracks: NormalizedLrclibTrack[],
+): NormalizedLrclibTrack[] => {
+  if (tracks.length <= 1) return tracks;
+
+  return [...tracks].sort((left, right) => {
+    const scoreDelta =
+      getLyricsImportStructureScore(right) -
+      getLyricsImportStructureScore(left);
+
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const leftId = left.lrclibId ?? 0;
+    const rightId = right.lrclibId ?? 0;
+    return rightId - leftId;
+  });
 };
 
 export const normalizeLrclibTrack = (
@@ -78,14 +160,11 @@ export const normalizeLrclibTrack = (
   }
 
   const syncedLyrics =
-    asString(rawTrack.syncedLyrics) ??
-    asString(rawTrack.synced_lyrics) ??
-    null;
-  const plainLyrics =
-    asString(rawTrack.plainLyrics) ??
-    asString(rawTrack.plain_lyrics) ??
-    extractPlainLyricsFromSyncedLyrics(syncedLyrics) ??
-    null;
+    asString(rawTrack.syncedLyrics) ?? asString(rawTrack.synced_lyrics) ?? null;
+  const plainLyrics = pickBestImportablePlainLyrics(
+    asString(rawTrack.plainLyrics) ?? asString(rawTrack.plain_lyrics),
+    extractPlainLyricsFromSyncedLyrics(syncedLyrics),
+  );
 
   return {
     source,
@@ -126,9 +205,7 @@ export const createManualSongMetadata = (
   source: "manual",
   trackName: fields.trackName.trim(),
   artistName: fields.artistName.trim(),
-  ...(fields.albumName?.trim()
-    ? { albumName: fields.albumName.trim() }
-    : {}),
+  ...(fields.albumName?.trim() ? { albumName: fields.albumName.trim() } : {}),
   importedAt,
 });
 
@@ -136,9 +213,10 @@ export const getImportableLyricsFromTrack = (
   track: Pick<NormalizedLrclibTrack, "plainLyrics" | "syncedLyrics">,
 ): string => {
   return (
-    track.plainLyrics ??
-    extractPlainLyricsFromSyncedLyrics(track.syncedLyrics) ??
-    ""
+    pickBestImportablePlainLyrics(
+      track.plainLyrics,
+      extractPlainLyricsFromSyncedLyrics(track.syncedLyrics),
+    ) ?? ""
   ).trim();
 };
 

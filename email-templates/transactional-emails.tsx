@@ -183,6 +183,55 @@ export function InviteEmail({ inviteUrl, churchName }: InviteEmailProps) {
   );
 }
 
+type InviteAcceptedAdminEmailProps = {
+  acceptedDisplayName: string;
+  acceptedEmail: string;
+  churchName: string;
+  role: string;
+  managePeopleUrl: string;
+};
+
+export function InviteAcceptedAdminEmail({
+  acceptedDisplayName,
+  acceptedEmail,
+  churchName,
+  role,
+  managePeopleUrl,
+}: InviteAcceptedAdminEmailProps) {
+  const churchDisplay = churchName.trim() || "your church";
+  const acceptedName = acceptedDisplayName.trim();
+  const acceptedLabel = acceptedName || acceptedEmail;
+  const roleLabel = role === "admin" ? "admin" : "member";
+  return (
+    <WorshipSyncEmailLayout
+      previewText={`${acceptedLabel} accepted an invite to ${churchDisplay}`}
+      title="Invite accepted"
+    >
+      <Text style={bodyText}>
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          {acceptedLabel}
+        </strong>{" "}
+        accepted an invitation to join{" "}
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          {churchDisplay}
+        </strong>{" "}
+        as a {roleLabel}.
+      </Text>
+      {acceptedName && acceptedEmail ? (
+        <Text style={bodyText}>Email: {acceptedEmail}</Text>
+      ) : null}
+      <Section style={{ margin: "24px 0", textAlign: "center" }}>
+        <Button href={managePeopleUrl} style={ctaButtonStyle}>
+          Review people
+        </Button>
+      </Section>
+      <Text style={finePrint}>
+        You receive this because you are an admin for {churchDisplay}.
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}
+
 type AdminRecoveryRequestEmailProps = {
   requesterEmail: string;
   churchName: string;

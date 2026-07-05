@@ -232,6 +232,43 @@ describe("lrclib api", () => {
     });
   });
 
+  it("auto-selects a clearly best structured search result", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: 2,
+            track_name: "Owe You Praise",
+            artist_name: "Elevation Worship",
+            plainLyrics:
+              "We're grateful people\nSo grateful\n\nYou woke me up this morning\nSo I owe You my praise\n\nWe're grateful people\nSo grateful",
+          },
+          {
+            id: 1,
+            track_name: "Owe You Praise",
+            artist_name: "Elevation Worship",
+            plainLyrics:
+              "We're grateful people\nSo grateful\nYou woke me up this morning\nSo I owe You my praise\nWe're grateful people\nSo grateful",
+          },
+        ],
+      });
+
+    const result = await resolveLrclibImport({
+      trackName: "Owe You Praise",
+      artistName: "Elevation Worship",
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(result.match?.lrclibId).toBe(2);
+    expect(result.candidates).toEqual([]);
+  });
+
   it("returns an empty candidate list when the fallback search finds nothing", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
@@ -253,7 +290,7 @@ describe("lrclib api", () => {
           id: 20,
           track_name: "Clean Song",
           artist_name: "Choir",
-          plainLyrics: "Grace and peace",
+          plainLyrics: "Grace and peace\n\nMore grace",
           syncedLyrics: null,
         },
         {
@@ -282,15 +319,7 @@ describe("lrclib api", () => {
         source: "lrclib",
         trackName: "Clean Song",
         artistName: "Choir",
-        plainLyrics: "Grace and peace",
-        syncedLyrics: null,
-      },
-      {
-        lrclibId: 21,
-        source: "lrclib",
-        trackName: "Explicit Song",
-        artistName: "Artist",
-        plainLyrics: "clean words",
+        plainLyrics: "Grace and peace\n\nMore grace",
         syncedLyrics: null,
       },
       {
@@ -299,6 +328,14 @@ describe("lrclib api", () => {
         trackName: "Rude Song",
         artistName: "Artist",
         plainLyrics: "This lyric says fuck",
+        syncedLyrics: null,
+      },
+      {
+        lrclibId: 21,
+        source: "lrclib",
+        trackName: "Explicit Song",
+        artistName: "Artist",
+        plainLyrics: "clean words",
         syncedLyrics: null,
       },
     ]);

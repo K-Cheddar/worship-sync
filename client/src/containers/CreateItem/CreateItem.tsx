@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
-import { FileQuestion, Import, Plus, Check, X } from "lucide-react";
+import { FileQuestion, Import, LayoutList, Plus, Check, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -19,6 +19,7 @@ import {
   createNewSong,
   createNewTimer,
   createSections,
+  removeParentheticalPhrases,
   updateFormattedSections,
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
@@ -30,6 +31,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 import Toggle from "../../components/Toggle/Toggle";
+import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -37,6 +39,7 @@ import {
   buildLyricsImportQueryEntries,
 } from "../../components/LyricsImportQuerySummary/LyricsImportQuerySummary";
 import { LyricsImportLyricsPreview } from "../../components/LyricsImportLyricsPreview/LyricsImportLyricsPreview";
+import ViewExternalLyricsDrawer from "../../components/FilteredItems/ViewExternalLyricsDrawer";
 import { resolveLrclibImport } from "../../api/lrclib";
 import {
   createSongMetadataFromLrclib,
@@ -44,6 +47,7 @@ import {
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { cn } from "@/utils/cnHelper";
+import CollapsibleSectionTrigger from "../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
 import {
   Tabs,
   TabsList,
@@ -120,8 +124,12 @@ const CreateItem = () => {
     monitor: true,
     stream: true,
   });
+  const [isAdvancedExpanded, setIsAdvancedExpanded] = useState(false);
+  const [removeParentheticals, setRemoveParentheticals] = useState(false);
+  const [viewLyricsCandidate, setViewLyricsCandidate] =
+    useState<NormalizedLrclibTrack | null>(null);
 
-  const { db } = useContext(ControllerInfoContext) || {};
+  const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -169,6 +177,7 @@ const CreateItem = () => {
       lyricsImportCandidates: [],
       lyricsImportError: "",
     });
+    setViewLyricsCandidate(null);
     setMobileSongTab("create");
   };
 
@@ -225,6 +234,8 @@ const CreateItem = () => {
       lyricsImportCandidates: [],
       lyricsImportError: "",
     });
+    setViewLyricsCandidate(null);
+    setRemoveParentheticals(true);
     setMobileSongTab("create");
   };
 
@@ -305,10 +316,12 @@ const CreateItem = () => {
   };
 
   const createItem = async () => {
+    const draftText = removeParentheticals ? removeParentheticalPhrases(text) : text;
+
     if (selectedType === "song") {
       const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
         createSections({
-          unformattedLyrics: text,
+          unformattedLyrics: draftText,
         });
 
       const { formattedLyrics, songOrder } = updateFormattedSections({
@@ -343,7 +356,7 @@ const CreateItem = () => {
         background: defaultFreeFormBackground.background,
         mediaInfo: defaultFreeFormBackground.mediaInfo,
         brightness: defaultFreeFormBackgroundBrightness,
-        text,
+        text: draftText,
         overflow: defaultFreeFormFontMode,
         shouldSendTo,
       });
@@ -419,52 +432,72 @@ const CreateItem = () => {
         Select a result below to import into this draft.
       </p>
       <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-        {lyricsImportCandidates.map((candidate) => (
-          <li
-            key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
-              }-${candidate.artistName}`}
-            className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
-          >
-            <div className="flex flex-col gap-1">
-              <div className="flex min-w-0 items-start justify-between gap-3">
-                <p className="min-w-0 wrap-break-word font-semibold text-neutral-100">
-                  {candidate.trackName}
+        {lyricsImportCandidates.map((candidate) => {
+          const lyricsText = getImportableLyricsFromTrack(candidate);
+
+          return (
+            <li
+              key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
+                }-${candidate.artistName}`}
+              className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
+            >
+              <div className="flex flex-col gap-1">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <p className="min-w-0 wrap-break-word font-semibold text-neutral-100">
+                    {candidate.trackName}
+                  </p>
+                  <span className="shrink-0 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200/95">
+                    {candidate.source === "genius" ? "Genius" : "LRCLIB"}
+                  </span>
+                </div>
+                <p className="text-sm text-neutral-300">
+                  {candidate.artistName}
+                  {candidate.albumName ? ` • ${candidate.albumName}` : ""}
                 </p>
-                <span className="shrink-0 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200/95">
-                  {candidate.source === "genius" ? "Genius" : "LRCLIB"}
-                </span>
+                {candidate.durationMs ? (
+                  <p className="text-xs text-neutral-400">
+                    {(candidate.durationMs / 1000).toFixed(0)} seconds
+                  </p>
+                ) : null}
+                <LyricsImportLyricsPreview lyricsText={lyricsText} />
+                <div className="flex flex-wrap items-center gap-2 pt-2">
+                  {lyricsText.trim() ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={LayoutList}
+                      color="#22d3ee"
+                      aria-label="View lyrics"
+                      onClick={() => setViewLyricsCandidate(candidate)}
+                    >
+                      View lyrics
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="cta"
+                    className="min-w-0 flex-1 justify-center"
+                    svg={Import}
+                    onClick={() => applyLrclibImport(candidate)}
+                  >
+                    Use Lyrics
+                  </Button>
+                </div>
               </div>
-              <p className="text-sm text-neutral-300">
-                {candidate.artistName}
-                {candidate.albumName ? ` • ${candidate.albumName}` : ""}
-              </p>
-              {candidate.durationMs ? (
-                <p className="text-xs text-neutral-400">
-                  {(candidate.durationMs / 1000).toFixed(0)} seconds
-                </p>
-              ) : null}
-              <LyricsImportLyricsPreview
-                lyricsText={getImportableLyricsFromTrack(candidate)}
-              />
-              <div className="pt-2">
-                <Button
-                  variant="cta"
-                  className="justify-center"
-                  svg={Import}
-                  onClick={() => applyLrclibImport(candidate)}
-                >
-                  Use Lyrics
-                </Button>
-              </div>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
 
   return (
     <ErrorBoundary>
+      <ViewExternalLyricsDrawer
+        candidate={viewLyricsCandidate}
+        isOpen={Boolean(viewLyricsCandidate)}
+        isMobile={isMobile}
+        onClose={() => setViewLyricsCandidate(null)}
+      />
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <h2 className="mt-2 shrink-0 px-4 text-center text-2xl font-semibold">
           Create Item
@@ -500,10 +533,8 @@ const CreateItem = () => {
           )}
           <div
             className={cn(
-              "flex min-h-0 w-full flex-col rounded-md border border-white/10 bg-neutral-900/35 p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl lg:min-w-0 lg:max-w-2xl",
-              showLyricsImportPanel
-                ? "lg:flex-1 lg:basis-0 lg:overflow-x-hidden lg:overflow-y-auto [scrollbar-gutter:stable]"
-                : "lg:w-1/2",
+              "flex min-h-0 w-full flex-col overflow-x-hidden overflow-y-auto rounded-md border border-white/10 bg-neutral-900/35 p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl [scrollbar-gutter:stable] lg:min-w-0 lg:max-w-2xl",
+              showLyricsImportPanel ? "lg:flex-1 lg:basis-0" : "lg:w-1/2",
               (selectedType === "song" || selectedType === "free") &&
               "flex min-h-0 flex-1 flex-col",
               showLyricsImportPanel &&
@@ -616,17 +647,28 @@ const CreateItem = () => {
 
             {(selectedType === "song" || selectedType === "free") && (
               <TextArea
-                textareaClassName="min-h-72 rounded-md"
+                textareaClassName="min-h-56 rounded-md"
                 className={cn(
-                  "min-h-0 w-full flex-1",
+                  "min-h-auto w-full flex-1",
                   selectedType === "song" ? "mt-3" : "mt-2",
                 )}
-                label={
-                  selectedType === "song" ? "Paste Lyrics Here" : "Paste Text Here"
+                label={selectedType === "song" ? "Lyrics" : "Text"}
+                description={
+                  selectedType === "song"
+                    ? "Paste lyrics here."
+                    : "Paste text here."
                 }
                 value={text}
                 onChange={(val) => updateCreateItemDraft({ text: val as string })}
                 data-ignore-undo="true"
+              />
+            )}
+
+            {(selectedType === "song" || selectedType === "free") && (
+              <RemoveParentheticalsToggle
+                value={removeParentheticals}
+                onChange={setRemoveParentheticals}
+                className="mt-2 shrink-0 px-1"
               />
             )}
 
@@ -706,29 +748,41 @@ const CreateItem = () => {
               </div>
             )}
 
-            <div className="mt-4 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
-              <p className="font-semibold text-nowrap text-sm">Sends to:</p>
-              <Toggle
-                label="Projector"
-                value={shouldSendTo.projector}
-                onChange={(val) =>
-                  setShouldSendTo((prev) => ({ ...prev, projector: val }))
-                }
+            <div className="mt-4 shrink-0 rounded-lg border border-white/10 bg-gray-950/70 px-3 py-2">
+              <CollapsibleSectionTrigger
+                label="Advanced"
+                expanded={isAdvancedExpanded}
+                onExpandedChange={setIsAdvancedExpanded}
+                className="-mx-1 px-1"
               />
-              <Toggle
-                label="Monitor"
-                value={shouldSendTo.monitor}
-                onChange={(val) =>
-                  setShouldSendTo((prev) => ({ ...prev, monitor: val }))
-                }
-              />
-              <Toggle
-                label="Stream"
-                value={shouldSendTo.stream}
-                onChange={(val) =>
-                  setShouldSendTo((prev) => ({ ...prev, stream: val }))
-                }
-              />
+              {isAdvancedExpanded && (
+                <div className="mt-1 flex flex-col items-center gap-2 border-t border-white/10 pt-2">
+                  <p className="text-sm font-medium text-gray-200">Sends to:</p>
+                  <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                    <Toggle
+                      label="Projector"
+                      value={shouldSendTo.projector}
+                      onChange={(val) =>
+                        setShouldSendTo((prev) => ({ ...prev, projector: val }))
+                      }
+                    />
+                    <Toggle
+                      label="Monitor"
+                      value={shouldSendTo.monitor}
+                      onChange={(val) =>
+                        setShouldSendTo((prev) => ({ ...prev, monitor: val }))
+                      }
+                    />
+                    <Toggle
+                      label="Stream"
+                      value={shouldSendTo.stream}
+                      onChange={(val) =>
+                        setShouldSendTo((prev) => ({ ...prev, stream: val }))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             <Button
               disabled={

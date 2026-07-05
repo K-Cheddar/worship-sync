@@ -100,6 +100,9 @@ const {
 } = createLyricsImportService({
   geniusAccessToken: process.env.GENIUS_ACCESS_TOKEN,
 });
+/** Genius lyrics scraping is unreliable from cloud hosts; LRCLIB is used there instead. */
+const skipGeniusLyricsImport =
+  !isDevelopment || process.env.LYRICS_IMPORT_SKIP_GENIUS === "true";
 
 const configuredAllowedOrigins = [
   frontEndHost,
@@ -1913,13 +1916,23 @@ app.get("/api/lrclib/get", async (req, res) => {
   }
 
   try {
-    try {
-      const geniusTrack = await getGeniusTrack(params);
+    if (!skipGeniusLyricsImport) {
+      try {
+        const geniusTrack = await getGeniusTrack(params);
 
-      if (geniusTrack) {
-        return res.json(geniusTrack);
+        if (geniusTrack) {
+          return res.json(geniusTrack);
+        }
+      } catch (error) {
+        console.warn("Genius lookup failed, falling back to LRCLIB:", {
+          message: error.message,
+          status: error.response?.status,
+          code: error.code,
+          trackName: params.track_name,
+          artistName: params.artist_name,
+        });
       }
-    } catch (error) {}
+    }
 
     const lrclibTrack = await getLrclibTrack(params);
 
@@ -1962,13 +1975,23 @@ app.get("/api/lrclib/search", async (req, res) => {
   }
 
   try {
-    try {
-      const geniusTracks = await searchGeniusTracks(params);
+    if (!skipGeniusLyricsImport) {
+      try {
+        const geniusTracks = await searchGeniusTracks(params);
 
-      if (geniusTracks.length > 0) {
-        return res.json(geniusTracks);
+        if (geniusTracks.length > 0) {
+          return res.json(geniusTracks);
+        }
+      } catch (error) {
+        console.warn("Genius search failed, falling back to LRCLIB:", {
+          message: error.message,
+          status: error.response?.status,
+          code: error.code,
+          trackName: params.track_name,
+          artistName: params.artist_name,
+        });
       }
-    } catch (error) {}
+    }
 
     res.json(await searchLrclibTracks(params));
   } catch (error) {
