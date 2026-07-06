@@ -1,3 +1,10 @@
+## [2.18.1](https://github.com/K-Cheddar/worship-sync/compare/v2.18.0...v2.18.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* Multiple improvements for importing lyrics ([e2995a8](https://github.com/K-Cheddar/worship-sync/commit/e2995a8befe0b5fbc546b92e7ea77cbb7beb4ece))
+
 # [2.18.0](https://github.com/K-Cheddar/worship-sync/compare/v2.17.1...v2.18.0) (2026-07-03)
 
 
