@@ -38,7 +38,9 @@ type PlannedGeneratedCreditUpdate = {
 };
 
 const waitForCreditGenerationStep = () =>
-  new Promise((resolve) => setTimeout(resolve, CREDIT_GENERATION_STEP_DELAY_MS));
+  new Promise((resolve) =>
+    setTimeout(resolve, CREDIT_GENERATION_STEP_DELAY_MS),
+  );
 
 const normalizeGeneratedCreditText = (text: string) =>
   text
@@ -47,7 +49,10 @@ const normalizeGeneratedCreditText = (text: string) =>
     .join("\n");
 
 function praiseTeamSortKey(role: string): number {
-  const normalized = role.replace(/\s+Singer$/i, "").trim().toLowerCase();
+  const normalized = role
+    .replace(/\s+Singer$/i, "")
+    .trim()
+    .toLowerCase();
   const idx = PRAISE_TEAM_ROLE_ORDER.indexOf(normalized);
   return idx === -1 ? PRAISE_TEAM_ROLE_ORDER.length : idx;
 }
@@ -80,9 +85,7 @@ function buildTeamCreditsText(
  */
 export function useGenerateCreditsFromOverlays() {
   const dispatch = useDispatch();
-  const { list } = useSelector(
-    (state) => state.undoable.present.credits,
-  );
+  const { list } = useSelector((state) => state.undoable.present.credits);
   const outlineIdForCredits = useSelector(
     (state) =>
       state.undoable.present.itemLists.selectedList?._id ??
@@ -99,7 +102,8 @@ export function useGenerateCreditsFromOverlays() {
   const { churchId = "" } = useContext(GlobalInfoContext) ?? {};
   const teamAssignments = useSelector(
     (state) =>
-      state.servicePlanningImport?.serviceOutline?.preview.teamAssignments ?? [],
+      state.servicePlanningImport?.serviceOutline?.preview.teamAssignments ??
+      [],
   );
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -148,6 +152,10 @@ export function useGenerateCreditsFromOverlays() {
         sermon:
           participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("sermon"),
+          )?.name || "",
+        "behind the pulpit":
+          participantOverlays.find((overlay) =>
+            overlay.event?.toLowerCase().includes("behind the pulpit"),
           )?.name || "",
       };
 
@@ -226,8 +234,16 @@ export function useGenerateCreditsFromOverlays() {
           format: "role-name" | "name-only";
         }> = [
           { headingMatch: "band", teamName: "Band", format: "role-name" },
-          { headingMatch: "worship coordinators", teamName: "Coordinators", format: "name-only" },
-          { headingMatch: "praise team", teamName: "Praise Team", format: "role-name" },
+          {
+            headingMatch: "worship coordinators",
+            teamName: "Coordinators",
+            format: "name-only",
+          },
+          {
+            headingMatch: "praise team",
+            teamName: "Praise Team",
+            format: "role-name",
+          },
         ];
 
         updatedList = updatedList.map((credit) => {
@@ -235,7 +251,11 @@ export function useGenerateCreditsFromOverlays() {
             (m) => credit.heading.toLowerCase() === m.headingMatch,
           );
           if (!match) return credit;
-          const text = buildTeamCreditsText(teamAssignments, match.teamName, match.format);
+          const text = buildTeamCreditsText(
+            teamAssignments,
+            match.teamName,
+            match.format,
+          );
           if (text === null) return credit;
           generatedDetails.set(credit.id, {
             sourceLabel: `Service plan: ${match.teamName}`,
@@ -256,17 +276,18 @@ export function useGenerateCreditsFromOverlays() {
       const previousCreditTextById = new Map(
         list.map((credit) => [credit.id, credit.text]),
       );
-      const plannedUpdates: PlannedGeneratedCreditUpdate[] = updatedList.flatMap((credit) => {
-        const detail = generatedDetails.get(credit.id);
-        if (!detail) return [];
-        return [
-          {
-            credit,
-            sourceLabel: detail.sourceLabel,
-            previousText: previousCreditTextById.get(credit.id) ?? "",
-          },
-        ];
-      });
+      const plannedUpdates: PlannedGeneratedCreditUpdate[] =
+        updatedList.flatMap((credit) => {
+          const detail = generatedDetails.get(credit.id);
+          if (!detail) return [];
+          return [
+            {
+              credit,
+              sourceLabel: detail.sourceLabel,
+              previousText: previousCreditTextById.get(credit.id) ?? "",
+            },
+          ];
+        });
       const missedScheduleItems = schedule
         .filter((entry) => !matchedScheduleEntries.has(entry))
         .map((entry, index) => ({
@@ -297,7 +318,9 @@ export function useGenerateCreditsFromOverlays() {
         }),
       );
 
-      const docsToBroadcast: NonNullable<Awaited<ReturnType<typeof putCreditDoc>>>[] = [];
+      const docsToBroadcast: NonNullable<
+        Awaited<ReturnType<typeof putCreditDoc>>
+      >[] = [];
       let hadPersistenceError = false;
       for (const { credit, previousText } of plannedUpdates) {
         dispatch(setGeneratedCreditActive(credit.id));
@@ -373,6 +396,7 @@ export function useGenerateCreditsFromOverlays() {
     generateFromOverlays,
     isGenerating,
     justGenerated,
-    hasOverlays: overlays.length > 0 || Boolean(churchId) || teamAssignments.length > 0,
+    hasOverlays:
+      overlays.length > 0 || Boolean(churchId) || teamAssignments.length > 0,
   };
 }

@@ -12,6 +12,7 @@ import {
   createItemFromProps,
   updateItemInList,
   buildServiceTimeItem,
+  removeParentheticalPhrases,
 } from "./itemUtil";
 import type { ServiceItem, BibleInfo, verseType } from "../types";
 
@@ -82,7 +83,8 @@ describe("itemUtil", () => {
 
     it("strips section label from words and assigns correct type", () => {
       const result = createSections({
-        unformattedLyrics: "Verse\nLine one\nLine two\n\nChorus\nHold on\nHold tight",
+        unformattedLyrics:
+          "Verse\nLine one\nLine two\n\nChorus\nHold on\nHold tight",
       });
       expect(result.formattedLyrics).toHaveLength(2);
       expect(result.formattedLyrics[0].type).toBe("Verse");
@@ -145,9 +147,13 @@ describe("itemUtil", () => {
       });
       expect(result.formattedLyrics).toHaveLength(2);
       expect(result.formattedLyrics[0].type).toBe("Verse");
-      expect(result.formattedLyrics[0].words).toBe("Lord, we need\nFill this place");
+      expect(result.formattedLyrics[0].words).toBe(
+        "Lord, we need\nFill this place",
+      );
       expect(result.formattedLyrics[1].type).toBe("Chorus");
-      expect(result.formattedLyrics[1].words).toBe("Have Your way\nHave Your way");
+      expect(result.formattedLyrics[1].words).toBe(
+        "Have Your way\nHave Your way",
+      );
     });
 
     it("parses parenthesis-wrapped labels like (VERSE 1)", () => {
@@ -239,6 +245,57 @@ Let Your fire fall`;
       expect(result.songOrder).toHaveLength(6);
       // Second [CHORUS] repeats the first
       expect(result.songOrder[3].name).toBe(result.songOrder[1].name);
+    });
+  });
+
+  describe("removeParentheticalPhrases", () => {
+    it("strips an inline parenthetical phrase from a line", () => {
+      expect(removeParentheticalPhrases("Praises (Only You)")).toBe("Praises");
+    });
+
+    it("strips multiple parenthetical phrases across lines", () => {
+      const result = removeParentheticalPhrases(
+        "Oh Lord, You deserve (Only You)\nOnly You deserve all my (praises)",
+      );
+      expect(result).toBe("Oh Lord, You deserve\nOnly You deserve all my");
+    });
+
+    it("leaves whole-line section labels untouched", () => {
+      const result = removeParentheticalPhrases(
+        "(Chorus)\nOh Lord, You deserve (Only You)",
+      );
+      expect(result).toBe("(Chorus)\nOh Lord, You deserve");
+    });
+
+    it("removes whole-line spoken ad-libs in parentheses", () => {
+      const result = removeParentheticalPhrases(
+        [
+          "When I think of all You've done",
+          "(Somebody think about it)",
+          "When I think about Your love",
+          "(I didn't deserve it, I didn't deserve it)",
+        ].join("\n"),
+      );
+      expect(result).toBe(
+        [
+          "When I think of all You've done",
+          "",
+          "When I think about Your love",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    it("collapses extra whitespace left behind after stripping", () => {
+      expect(
+        removeParentheticalPhrases("Praises (Only You) all my praises"),
+      ).toBe("Praises all my praises");
+    });
+
+    it("returns lines without parentheses unchanged", () => {
+      expect(
+        removeParentheticalPhrases("Amazing grace, how sweet the sound"),
+      ).toBe("Amazing grace, how sweet the sound");
     });
   });
 
@@ -349,7 +406,13 @@ Let Your fire fall`;
         name: "My Song",
         formattedLyrics,
         songOrder,
-        list: [{ _id: "existing-song", name: "My Song", type: "song" } as ServiceItem],
+        list: [
+          {
+            _id: "existing-song",
+            name: "My Song",
+            type: "song",
+          } as ServiceItem,
+        ],
         db: undefined,
         background: "#000",
         brightness: 100,

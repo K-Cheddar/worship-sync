@@ -23,6 +23,10 @@ import {
   ShouldSendTo,
 } from "../types";
 import generateRandomId from "./generateRandomId";
+import {
+  inferLyricsSections,
+  tryParseSectionLabel,
+} from "./lyricsSectionInference";
 import { applyPouchAudit } from "./pouchAudit";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
@@ -34,90 +38,31 @@ type CreateSectionsType = {
   unformattedLyrics: string;
 };
 
-const SECTION_LABEL_MAP: Record<string, string> = {
-  verse: "Verse",
-  chorus: "Chorus",
-  "pre-chorus": "Pre-Chorus",
-  prechorus: "Pre-Chorus",
-  "pre chorus": "Pre-Chorus",
-  bridge: "Bridge",
-  intro: "Intro",
-  outro: "Ending",
-  tag: "Tag",
-  interlude: "Interlude",
-  hook: "Hook",
-  refrain: "Refrain",
-  vamp: "Vamp",
-  instrumental: "Instrumental",
-};
-
 const WRAPPED_LABEL_RE = /^[[(]([^\])]*)[\])]$/;
 
-const tryParseSectionLabel = (rawLine: string): string | null => {
-  const line = rawLine.trim();
-  const wrappedMatch = line.match(WRAPPED_LABEL_RE);
-  const inner = wrappedMatch ? wrappedMatch[1].trim() : line;
-  // Strip trailing number so "VERSE 1" → base "VERSE"
-  const base = inner.replace(/\s+\d+$/, "").trim();
-  return SECTION_LABEL_MAP[base.toLowerCase()] ?? null;
-};
-
-const normalizeLyricsText = (text: string): string =>
+/**
+ * Strips parenthetical ad-libs from lyrics/text.
+ * Inline phrases (e.g. "Praises (Only You)" -> "Praises") are removed from the line.
+ * Whole-line parentheticals are kept only when they are chart section labels
+ * (e.g. "(Chorus)"); spoken ad-lib lines like "(Somebody think about it)" are dropped.
+ */
+export const removeParentheticalPhrases = (text: string): string =>
   text
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-type ParsedSection = { type: string; words: string };
-
-const parseWithSectionLabels = (normalizedText: string): ParsedSection[] => {
-  const lines = normalizedText.split("\n");
-  const sections: ParsedSection[] = [];
-  let currentType: string | null = null;
-  let contentLines: string[] = [];
-
-  const flush = () => {
-    if (currentType !== null) {
-      sections.push({
-        type: currentType,
-        words: contentLines
-          .join("\n")
-          .replace(/\n{2,}/g, "\n")
-          .trim(),
-      });
-      contentLines = [];
-    }
-  };
-
-  for (const line of lines) {
-    const labelType = tryParseSectionLabel(line);
-    if (labelType !== null) {
-      flush();
-      currentType = labelType;
-    } else if (currentType !== null) {
-      contentLines.push(line);
-    }
-  }
-  flush();
-
-  return sections;
-};
-
-const parseSectionBlock = (block: string): ParsedSection => {
-  const newlineIndex = block.indexOf("\n");
-  if (newlineIndex !== -1) {
-    const firstLine = block.slice(0, newlineIndex).trim();
-    const canonical = SECTION_LABEL_MAP[firstLine.toLowerCase()];
-    if (canonical) {
-      return {
-        type: canonical,
-        words: block.slice(newlineIndex + 1).trimStart(),
-      };
-    }
-  }
-  return { type: "Verse", words: block };
-};
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (WRAPPED_LABEL_RE.test(trimmed)) {
+        if (tryParseSectionLabel(trimmed) !== null) {
+          return line;
+        }
+        return "";
+      }
+      return line
+        .replace(/\s*\([^()]*\)/g, "")
+        .replace(/ {2,}/g, " ")
+        .trim();
+    })
+    .join("\n");
 
 export const createSections = ({
   formattedLyrics,
@@ -132,15 +77,7 @@ export const createSections = ({
     : [];
   const newSongOrder: SongOrder[] = songOrder ? [...songOrder] : [];
 
-  const normalizedText = normalizeLyricsText(unformattedLyrics);
-
-  const hasSectionLabels = normalizedText
-    .split("\n")
-    .some((line) => tryParseSectionLabel(line) !== null);
-
-  const parsedSections: ParsedSection[] = hasSectionLabels
-    ? parseWithSectionLabels(normalizedText)
-    : normalizedText.split("\n\n").map(parseSectionBlock);
+  const parsedSections = inferLyricsSections(unformattedLyrics);
 
   for (const { type, words } of parsedSections) {
     const name = type + " " + (newLyrics.length === 0 ? "" : newLyrics.length);

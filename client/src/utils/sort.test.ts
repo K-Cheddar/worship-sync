@@ -1,4 +1,4 @@
-import { sortNamesInList, sortList } from "./sort";
+import { sortNamesInList, sortList, uniquePreservingOrder } from "./sort";
 
 describe("sort", () => {
   describe("sortNamesInList", () => {
@@ -63,6 +63,14 @@ describe("sort", () => {
       const result = sortList(list);
       expect(result).toEqual(list);
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe("uniquePreservingOrder", () => {
+    it("dedupes while keeping first occurrence order", () => {
+      expect(
+        uniquePreservingOrder(["Verse 1", "Chorus", "Verse 1", "Bridge"]),
+      ).toEqual(["Verse 1", "Chorus", "Bridge"]);
     });
   });
 });

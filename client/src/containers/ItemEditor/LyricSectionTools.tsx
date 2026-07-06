@@ -4,9 +4,12 @@ import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import { Switch } from "../../components/ui/Switch";
 import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
+import { sortList } from "../../utils/sort";
 import cn from "classnames";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import TextArea from "../../components/TextArea/TextArea";
+import { removeParentheticalPhrases } from "../../utils/itemUtil";
 
 type LyricSectionToolsProps = {
   addNewSectionsToSongOrder: boolean;
@@ -20,7 +23,7 @@ type LyricSectionToolsProps = {
 
 const ADD_SECTION_SELECT_ID = "lyrics-section-tools-add-section-select";
 
-const sectionTypeOptions = sectionTypes.map((type) => ({
+const sectionTypeOptions = sortList(sectionTypes).map((type) => ({
   value: type,
   label: type,
   className: cn(
@@ -43,6 +46,7 @@ const LyricSectionTools = ({
   const [multipleSectionsOpen, setMultipleSectionsOpen] = useState(false);
   const [multipleSectionsPosition, setMultipleSectionsPosition] = useState<{ x: number; y: number } | undefined>();
   const [multipleLyricsText, setMultipleLyricsText] = useState("");
+  const [removeParentheticals, setRemoveParentheticals] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const addMultipleButtonRef = useRef<HTMLButtonElement>(null);
   const floatingWindowRef = useRef<FloatingWindowHandle>(null);
@@ -52,8 +56,12 @@ const LyricSectionTools = ({
 
   const handleAddMultipleSections = () => {
     if (!multipleLyricsText.trim()) return;
-    onAddMultipleSections(multipleLyricsText);
+    const text = removeParentheticals
+      ? removeParentheticalPhrases(multipleLyricsText)
+      : multipleLyricsText;
+    onAddMultipleSections(text);
     setMultipleLyricsText("");
+    setRemoveParentheticals(false);
     setMultipleSectionsOpen(false);
   };
 
@@ -153,23 +161,31 @@ const LyricSectionTools = ({
             onClose={() => {
               setMultipleSectionsOpen(false);
               setMultipleLyricsText("");
+              setRemoveParentheticals(false);
             }}
             defaultWidth={360}
-            autoHeight
             defaultHeight={420}
             defaultPosition={multipleSectionsPosition}
+            contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
           >
             <TextArea
               ref={textareaRef}
-              textareaClassName="min-h-48 rounded-md text-sm"
-              className="w-full"
-              label="Paste lyrics"
+              textareaClassName="min-h-0 flex-1 overflow-y-auto rounded-md text-sm"
+              className="min-h-0 flex-1"
+              label="Lyrics"
+              description="Paste lyrics here."
               value={multipleLyricsText}
               onChange={(val) => setMultipleLyricsText(val as string)}
             />
+            <RemoveParentheticalsToggle
+              className="mt-2 shrink-0"
+              value={removeParentheticals}
+              onChange={setRemoveParentheticals}
+              description='Drops ad-libs like "(Only You)" from the pasted lyrics when sections are added.'
+            />
             <Button
               variant="primary"
-              className="mt-2 w-full justify-center"
+              className="mt-2 w-full shrink-0 justify-center"
               onClick={handleAddMultipleSections}
               disabled={!multipleLyricsText.trim()}
             >

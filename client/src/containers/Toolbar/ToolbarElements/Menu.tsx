@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
-import { useState, useEffect, useContext, useRef } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useAboutChangelogMenu } from "../../../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
 import { useIdentifyOnHover } from "../../../hooks/useIdentifyOnHover";
@@ -26,9 +26,7 @@ import {
   buildBoardDisplayUrl,
   setStoredBoardDisplayAliasId,
 } from "../../../boards/boardUtils";
-import { useStoredBoardDisplayAlias } from "../../../boards/useStoredBoardDisplayAlias";
-import { getBoardAliases } from "../../../boards/api";
-import { MAX_INITIAL_SESSION_RETRIES } from "../../../constants";
+import { useResolvedBoardDisplayAlias } from "../../../boards/useResolvedBoardDisplayAlias";
 import type { WindowType } from "../../../types/electron";
 import { Slider } from "../../../components/ui/Slider";
 import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
@@ -98,75 +96,15 @@ const ToolbarMenu = ({
     !isGuest;
 
   // The board display renders one discussion board, identified by an alias id in
-  // localStorage (kept in step across tabs/windows by useStoredBoardDisplayAlias).
-  // That id used to be seeded only by visiting the Board Controller page. To let
-  // the operator open the board straight from here, we fetch the church's boards
-  // and resolve a default for enabling the menu item: the remembered board if it
-  // still exists, otherwise the first one. Resolution is pure — it never writes
-  // storage. The write happens only when the operator explicitly opens the board
-  // (see openWindowOnLastUsedDisplay / openWindowOnDisplay), so resolving on
-  // mount can never silently re-point an open board display.
-  const storedBoardAliasId = useStoredBoardDisplayAlias();
-  const [boardAliases, setBoardAliases] = useState<
-    { aliasId: string }[] | null
-  >(null);
-  const boardAliasesLoadedRef = useRef(false);
-
-  // Until the church's boards have loaded, trust the stored id (it was validated
-  // when written). Once loaded, keep it only if it still exists, else fall back
-  // to the first board. Empty means there is nothing to show → item disabled.
-  const resolvedBoardAliasId =
-    boardAliases === null
-      ? storedBoardAliasId
-      : storedBoardAliasId &&
-          boardAliases.some((alias) => alias.aliasId === storedBoardAliasId)
-        ? storedBoardAliasId
-        : (boardAliases[0]?.aliasId ?? "");
-
-  useEffect(() => {
-    if (!canManageDisplays) return;
-    let cancelled = false;
-    let attempt = 0;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const load = async () => {
-      try {
-        const { aliases } = await getBoardAliases();
-        if (cancelled) return;
-        attempt = 0;
-        boardAliasesLoadedRef.current = true;
-        setBoardAliases(aliases);
-      } catch (error) {
-        if (cancelled) return;
-        // Transient failures (flaky booth network) shouldn't permanently wedge
-        // the resolver; retry with backoff. A known-good stored alias stays
-        // usable meanwhile because resolution falls back to it until we load.
-        console.error("Could not load discussion boards:", error);
-        if (attempt >= MAX_INITIAL_SESSION_RETRIES) return;
-        const delay = Math.min(30000, 5000 * 2 ** attempt);
-        attempt += 1;
-        retryTimer = setTimeout(() => void load(), delay);
-      }
-    };
-
-    const handleFocus = () => {
-      // If we never managed to learn the church's boards, try again when the
-      // operator returns to the window (covers exhausted retries).
-      if (boardAliasesLoadedRef.current) return;
-      attempt = 0;
-      if (retryTimer) clearTimeout(retryTimer);
-      void load();
-    };
-
-    void load();
-    window.addEventListener("focus", handleFocus);
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [canManageDisplays]);
+  // localStorage. That id used to be seeded only by visiting the Board Controller
+  // page; the resolver fetches the church's boards and picks a default (remembered
+  // board if it still exists, else the first) so the menu item can enable without a
+  // prior open. Resolution is pure — the write happens only when the operator
+  // explicitly opens the board (see openWindowOnLastUsedDisplay / openWindowOnDisplay),
+  // so resolving on mount can never silently re-point an open board display.
+  const resolvedBoardAliasId = useResolvedBoardDisplayAlias({
+    enabled: canManageDisplays,
+  });
 
   useEffect(() => {
     // Base font size from index.css (92.5%)

@@ -19,11 +19,11 @@ const ANIM_MS = 180;
 const TITLE_BAR_CONTROL_CLASS =
   "max-md:!min-h-8 max-md:!min-w-8 max-md:p-1 touch-manipulation";
 const BOTTOM_EDGE_RESIZE_CLASS =
-  "absolute bottom-0 left-12 right-12 z-0 h-1 cursor-ns-resize pointer-coarse:h-12";
+  "absolute bottom-0 left-12 right-12 z-10 h-1 cursor-ns-resize pointer-coarse:h-12";
 const BOTTOM_CORNER_RESIZE_CLASS =
-  "absolute bottom-0 z-0 h-3 w-3 pointer-coarse:h-12 pointer-coarse:w-12";
+  "absolute bottom-0 z-10 h-3 w-3 pointer-coarse:h-12 pointer-coarse:w-12";
 const SIDE_EDGE_RESIZE_CLASS =
-  "absolute top-10 bottom-12 z-0 w-1 cursor-ew-resize pointer-coarse:w-12";
+  "absolute top-10 bottom-12 z-10 w-1.5 cursor-ew-resize pointer-coarse:w-12";
 
 export interface FloatingWindowHandle {
   restore: () => void;
@@ -321,6 +321,31 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       startPosY: 0,
     });
 
+    const prepareResizeGesture = useCallback(() => {
+      if (!autoHeightRef.current || userResized) {
+        return {
+          width: sizeRef.current.width,
+          height: sizeRef.current.height,
+        };
+      }
+
+      const el = containerRef.current;
+      if (!el) {
+        return {
+          width: sizeRef.current.width,
+          height: sizeRef.current.height,
+        };
+      }
+
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      sizeRef.current = { width, height };
+      el.style.maxHeight = "none";
+      el.style.height = `${height}px`;
+
+      return { width, height };
+    }, [userResized]);
+
     const applyResize = useCallback((clientX: number, clientY: number) => {
       if (!resizeState.current.isResizing) return;
       const { direction, startX, startY, startWidth, startHeight, startPosX, startPosY } =
@@ -386,17 +411,14 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         e.preventDefault();
         e.stopPropagation();
         const direction = (e.currentTarget as HTMLElement).dataset.resizeDir as ResizeDirection;
-        const actualHeight =
-          !userResized && containerRef.current
-            ? containerRef.current.offsetHeight
-            : sizeRef.current.height;
+        const { width, height } = prepareResizeGesture();
         resizeState.current = {
           isResizing: true,
           direction,
           startX: e.clientX,
           startY: e.clientY,
-          startWidth: sizeRef.current.width,
-          startHeight: actualHeight,
+          startWidth: width,
+          startHeight: height,
           startPosX: positionRef.current.x,
           startPosY: positionRef.current.y,
         };
@@ -404,7 +426,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         document.addEventListener("mousemove", handleResizeMouseMove);
         document.addEventListener("mouseup", handleResizeMouseUp);
       },
-      [handleResizeMouseMove, handleResizeMouseUp, userResized, setGestureTransition],
+      [handleResizeMouseMove, handleResizeMouseUp, prepareResizeGesture, setGestureTransition],
     );
 
     const handleResizeTouchMove = useCallback(
@@ -431,17 +453,14 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         e.stopPropagation();
         const direction = (e.currentTarget as HTMLElement).dataset.resizeDir as ResizeDirection;
         const touch = e.touches[0];
-        const actualHeight =
-          !userResized && containerRef.current
-            ? containerRef.current.offsetHeight
-            : sizeRef.current.height;
+        const { width, height } = prepareResizeGesture();
         resizeState.current = {
           isResizing: true,
           direction,
           startX: touch.clientX,
           startY: touch.clientY,
-          startWidth: sizeRef.current.width,
-          startHeight: actualHeight,
+          startWidth: width,
+          startHeight: height,
           startPosX: positionRef.current.x,
           startPosY: positionRef.current.y,
         };
@@ -449,7 +468,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         document.addEventListener("touchmove", handleResizeTouchMove, { passive: false });
         document.addEventListener("touchend", handleResizeTouchEnd);
       },
-      [handleResizeTouchMove, handleResizeTouchEnd, userResized, setGestureTransition],
+      [handleResizeTouchMove, handleResizeTouchEnd, prepareResizeGesture, setGestureTransition],
     );
 
     useEffect(() => {
@@ -513,6 +532,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     return (
       <div
+        data-testid="floating-window"
         style={windowStyle}
         ref={containerRef}
         onMouseDown={() => setActiveZ(bringToFront())}

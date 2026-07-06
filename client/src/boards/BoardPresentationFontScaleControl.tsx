@@ -25,10 +25,10 @@ type BoardPresentationFontScaleControlProps = {
   disabled?: boolean;
   /**
    * `compact` tightens spacing and drops the Reset button for dense toolbars
-   * (e.g. the transmit panel's board tile); `default` keeps the full control
-   * used in the board controller's tools panel.
+   * (e.g. the transmit panel's board tile); `mini` is tighter still for narrow
+   * side columns; `default` keeps the full control used in the board controller.
    */
-  size?: "default" | "compact";
+  size?: "default" | "compact" | "mini";
   className?: string;
 };
 
@@ -45,7 +45,8 @@ const BoardPresentationFontScaleControl = ({
   size = "default",
   className,
 }: BoardPresentationFontScaleControlProps) => {
-  const isCompact = size === "compact";
+  const isCompact = size === "compact" || size === "mini";
+  const isMini = size === "mini";
 
   // Local optimistic value so a fast burst of clicks moves immediately without
   // waiting for the parent (or a network round-trip) to echo each step back.
@@ -97,58 +98,88 @@ const BoardPresentationFontScaleControl = ({
   const atMin = localValue <= MIN_BOARD_PRESENTATION_FONT_SCALE;
   const atMax = localValue >= MAX_BOARD_PRESENTATION_FONT_SCALE;
   const atDefault = localValue === DEFAULT_BOARD_PRESENTATION_FONT_SCALE;
+  const percentLabel = `${Math.round(localValue * 100)}%`;
+
+  const decreaseButton = (
+    <Button
+      variant="tertiary"
+      svg={Minus}
+      padding={isMini ? "p-1" : isCompact ? "p-1.5" : "p-2"}
+      className="min-h-0!"
+      aria-label="Decrease presentation text size"
+      onClick={() =>
+        applyScale(localRef.current - BOARD_PRESENTATION_FONT_SCALE_STEP)
+      }
+      disabled={disabled || atMin}
+    />
+  );
+
+  const increaseButton = (
+    <Button
+      variant="tertiary"
+      svg={Plus}
+      padding={isMini ? "p-1" : isCompact ? "p-1.5" : "p-2"}
+      className="min-h-0!"
+      aria-label="Increase presentation text size"
+      onClick={() =>
+        applyScale(localRef.current + BOARD_PRESENTATION_FONT_SCALE_STEP)
+      }
+      disabled={disabled || atMax}
+    />
+  );
+
+  const percentReadout = (
+    <span
+      className={cn(
+        "text-center font-semibold text-white",
+        isMini ? "text-[10px] leading-none" : isCompact ? "min-w-10 text-xs" : "min-w-14 text-sm",
+      )}
+    >
+      {percentLabel}
+    </span>
+  );
 
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-2 rounded-lg border border-gray-600 bg-gray-900/60",
-        isCompact ? "px-2 py-1" : "px-3 py-2",
+        "flex rounded-lg border border-gray-600 bg-gray-900/60",
+        isMini
+          ? "flex-col items-center gap-0.5 px-1.5 py-1"
+          : cn(
+            "items-center flex-wrap gap-2",
+            isCompact ? "px-2 py-1" : "px-3 py-2",
+          ),
         className,
       )}
       role="group"
-      aria-label="Presentation text size"
+      aria-label={`Presentation text size, ${percentLabel}`}
     >
-      <Button
-        variant="tertiary"
-        svg={Minus}
-        padding={isCompact ? "p-1.5" : "p-2"}
-        className="min-h-0!"
-        aria-label="Decrease presentation text size"
-        onClick={() =>
-          applyScale(localRef.current - BOARD_PRESENTATION_FONT_SCALE_STEP)
-        }
-        disabled={disabled || atMin}
-      />
-      <span
-        className={cn(
-          "text-center font-semibold text-white",
-          isCompact ? "min-w-10 text-xs" : "min-w-14 text-sm",
-        )}
-      >
-        {Math.round(localValue * 100)}%
-      </span>
-      <Button
-        variant="tertiary"
-        svg={Plus}
-        padding={isCompact ? "p-1.5" : "p-2"}
-        className="min-h-0!"
-        aria-label="Increase presentation text size"
-        onClick={() =>
-          applyScale(localRef.current + BOARD_PRESENTATION_FONT_SCALE_STEP)
-        }
-        disabled={disabled || atMax}
-      />
-      {!isCompact && (
-        <Button
-          variant="tertiary"
-          padding="px-3 py-2"
-          className="min-h-0!"
-          aria-label="Reset presentation text size"
-          onClick={() => applyScale(DEFAULT_BOARD_PRESENTATION_FONT_SCALE)}
-          disabled={disabled || atDefault}
-        >
-          Reset
-        </Button>
+      {isMini ? (
+        <>
+          <div className="w-full px-1 pb-0.5 text-center">{percentReadout}</div>
+          <div className="flex w-full items-center justify-center gap-1 border-t border-gray-600 pt-0.5">
+            {decreaseButton}
+            {increaseButton}
+          </div>
+        </>
+      ) : (
+        <>
+          {decreaseButton}
+          {percentReadout}
+          {increaseButton}
+          {!isCompact && (
+            <Button
+              variant="tertiary"
+              padding="px-3 py-2"
+              className="min-h-0!"
+              aria-label="Reset presentation text size"
+              onClick={() => applyScale(DEFAULT_BOARD_PRESENTATION_FONT_SCALE)}
+              disabled={disabled || atDefault}
+            >
+              Reset
+            </Button>
+          )}
+        </>
       )}
     </div>
   );

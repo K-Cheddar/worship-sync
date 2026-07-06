@@ -131,7 +131,7 @@ describe("useGenerateCreditsFromOverlays", () => {
       _id: "doc",
       id: "c1",
       heading: "Executive Producers",
-      text: "Alice\nBob",
+      text: "Alice Jones\nBob Smith",
     }));
     mockState = JSON.parse(JSON.stringify(baseMockState));
     mockState.undoable.present.credits.list = [
@@ -187,7 +187,7 @@ describe("useGenerateCreditsFromOverlays", () => {
         creditHeading: "Camera Operators",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
         previousText: "Old",
-        nextText: "Alice\nBob",
+        nextText: "Alice Jones\nBob Smith",
       },
     ]);
     expect(mockDispatch).toHaveBeenCalledWith(
@@ -200,7 +200,7 @@ describe("useGenerateCreditsFromOverlays", () => {
       (c) => c[0]?.type === "credits/updateCredit",
     );
     expect(updateAction).toBeDefined();
-    expect(updateAction![0].payload.text).toBe("Alice\nBob");
+    expect(updateAction![0].payload.text).toBe("Alice Jones\nBob Smith");
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "generatedCredits/completeGeneratedCreditItem",
@@ -245,6 +245,42 @@ describe("useGenerateCreditsFromOverlays", () => {
       (c) => c[0]?.type === "credits/updateCredit",
     );
     expect(updateAction![0].payload.text.trim()).toBe("Host Name");
+  });
+
+  it("fills from overlay event mapping for Behind the Pulpit credit heading", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      schedules: [],
+    });
+    mockState.undoable.present.credits.list = [
+      {
+        id: "c1",
+        heading: "Behind the Pulpit",
+        text: "",
+        hidden: false,
+      },
+    ];
+    mockState.undoable.present.overlays.list = [
+      {
+        id: "o1",
+        type: "participant",
+        name: "Dr. Greg Baldeo",
+        event: "Behind the Pulpit",
+      },
+    ];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.generateFromOverlays();
+    });
+
+    const updateAction = mockDispatch.mock.calls.find(
+      (c) => c[0]?.type === "credits/updateCredit",
+    );
+    expect(updateAction![0].payload.text.trim()).toBe("Dr. Greg Baldeo");
   });
 
   it("lists assigned schedule positions that did not match a credit heading", async () => {
@@ -299,11 +335,11 @@ describe("useGenerateCreditsFromOverlays", () => {
       expect.objectContaining({
         creditId: "c1",
         creditHeading: "Camera Operators",
-        nextText: "Alice",
+        nextText: "Alice Jones",
       }),
       expect.objectContaining({
         creditHeading: "Stream Audio",
-        nextText: "Sam",
+        nextText: "Sam Taylor",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
         status: "missed",
       }),

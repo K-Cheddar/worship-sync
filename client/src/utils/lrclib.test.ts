@@ -2,7 +2,9 @@ import {
   createManualSongMetadata,
   createSongMetadataFromLrclib,
   extractPlainLyricsFromSyncedLyrics,
+  getLyricsImportStructureScore,
   normalizeLrclibTrack,
+  sortLrclibTracksByLyricsStructure,
 } from "./lrclib";
 
 describe("lrclib utils", () => {
@@ -36,6 +38,47 @@ describe("lrclib utils", () => {
         "[ar:Artist]\n[00:01.00]Line 1\n[00:02.00]Line 2",
       ),
     ).toBe("Line 1\nLine 2");
+  });
+
+  it("preserves section breaks from blank pause lines in synced lyrics", () => {
+    expect(
+      extractPlainLyricsFromSyncedLyrics(
+        "[00:01.00]Verse line 1\n[00:02.00]Verse line 2\n[00:03.00] \n[00:04.00]Chorus line 1",
+      ),
+    ).toBe("Verse line 1\nVerse line 2\n\nChorus line 1");
+  });
+
+  it("collapses multiple consecutive pause lines into a single section break", () => {
+    expect(
+      extractPlainLyricsFromSyncedLyrics(
+        "[00:01.00]Verse line\n[00:02.00] \n[00:03.00] \n[00:04.00]Chorus line",
+      ),
+    ).toBe("Verse line\n\nChorus line");
+  });
+
+  it("ranks lyrics with section breaks above single-block LRCLIB submissions", () => {
+    const poorlyStructured = normalizeLrclibTrack({
+      id: 1,
+      trackName: "Owe You Praise",
+      artistName: "Elevation Worship",
+      plainLyrics:
+        "We're grateful people\nSo grateful\nYou woke me up this morning\nSo I owe You my praise",
+    });
+    const wellStructured = normalizeLrclibTrack({
+      id: 2,
+      trackName: "Owe You Praise",
+      artistName: "Elevation Worship",
+      plainLyrics:
+        "We're grateful people\nSo grateful\n\nYou woke me up this morning\nSo I owe You my praise",
+    });
+
+    expect(getLyricsImportStructureScore(wellStructured)).toBeGreaterThan(
+      getLyricsImportStructureScore(poorlyStructured),
+    );
+    expect(
+      sortLrclibTracksByLyricsStructure([poorlyStructured, wellStructured])[0]
+        .lrclibId,
+    ).toBe(2);
   });
 
   it("creates manual song metadata for operator-entered details", () => {

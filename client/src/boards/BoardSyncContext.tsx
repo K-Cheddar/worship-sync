@@ -19,10 +19,55 @@ import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "../utils/authUserMessages";
 const BOARD_SESSION_TIMEOUT_MS = 15000;
 const getRetryDelay = (attempt: number) => Math.min(30000, 5000 * 2 ** attempt);
 
+/** Pull a human-readable line out of the varied shapes PouchDB/fetch throw
+ * (PouchDB errors serialize to `{}` through console, hiding the real cause). */
+export const describeBoardSyncError = (error: unknown): string => {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    const e = error as {
+      status?: number;
+      name?: string;
+      reason?: string;
+      message?: string;
+    };
+    return (
+      e.reason ||
+      e.message ||
+      e.name ||
+      (typeof e.status === "number" ? `HTTP ${e.status}` : "") ||
+      "Unknown error"
+    );
+  }
+  return String(error);
+};
+
+/** True when the failure is an expired/absent session rather than a transient
+ * network fault — i.e. retrying won't help until the operator signs in again. */
+export const isBoardAuthError = (error: unknown): boolean => {
+  if (error instanceof Error && error.message === AUTH_SIGN_IN_AGAIN_MESSAGE) {
+    return true;
+  }
+  if (error && typeof error === "object") {
+    const e = error as { status?: number; name?: string };
+    return e.status === 401 || e.name === "unauthorized";
+  }
+  return false;
+};
+
+/** The sync provider adds "paused" (replication is intentionally not running
+ * because the operator isn't signed in) on top of the shared connection states,
+ * so the UI can say "waiting for sign-in" instead of a misleading "connecting". */
+export type BoardSyncStatus = BoardConnectionStatus["status"] | "paused";
+
+type BoardSyncConnectionStatus = {
+  status: BoardSyncStatus;
+  retryCount: number;
+};
+
 type BoardSyncContextType = {
   db: PouchDB.Database | undefined;
-  status: BoardConnectionStatus["status"];
-  connectionStatus: BoardConnectionStatus;
+  status: BoardSyncStatus;
+  connectionStatus: BoardSyncConnectionStatus;
   pullFromRemote: () => void;
   retryNow: () => void;
 };
@@ -71,13 +116,15 @@ const getBoardSession = async () => {
 };
 
 const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
-  const { database } = useContext(GlobalInfoContext) || {};
+  const { database, loginState } = useContext(GlobalInfoContext) || {};
+  const isAuthenticated = loginState === "success";
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
   const [retryNonce, setRetryNonce] = useState(0);
-  const [connectionStatus, setConnectionStatus] = useState<BoardConnectionStatus>({
-    status: "connecting",
-    retryCount: 0,
-  });
+  const [connectionStatus, setConnectionStatus] =
+    useState<BoardSyncConnectionStatus>({
+      status: "connecting",
+      retryCount: 0,
+    });
   const syncRef = useRef<PouchDB.Replication.Sync<{}> | null>(null);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const localDbRef = useRef<PouchDB.Database | null>(null);
@@ -124,7 +171,21 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
   }, [clearRetryTimeout]);
 
   useEffect(() => {
-    if (!database) return;
+    // Still loading the church context — genuinely mid-connect.
+    if (!database) {
+      setConnectionStatus({ status: "connecting", retryCount: 0 });
+      return;
+    }
+    // Board replication rides the operator's session cookie. Until they're signed
+    // in, don't attempt it — a stale/absent session just 401s and loops (the
+    // "Board sync setup failed: {}" spam after a session expires on refresh).
+    // Surface a distinct "paused" state so the UI reads "waiting for sign-in"
+    // rather than a hung "connecting". This effect re-runs when loginState flips
+    // to "success" after (re-)sign-in, so sync resumes on its own.
+    if (!isAuthenticated) {
+      setConnectionStatus({ status: "paused", retryCount: 0 });
+      return;
+    }
     let cancelled = false;
 
     const scheduleRetry = (nextRetryCount: number) => {
@@ -224,9 +285,27 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
         retryCountRef.current = 0;
         setConnectionStatus({ status: "connected", retryCount: 0 });
       } catch (error) {
-        console.error("Board sync setup failed:", error);
+        if (cancelled) return;
         setDb(undefined);
         await closeConnections();
+
+        if (isBoardAuthError(error)) {
+          // Session expired or the operator signed out. Retrying without a fresh
+          // session is futile and just spams failures — stop and wait for
+          // re-sign-in (loginState → "success") to re-run this effect.
+          console.warn(
+            "Board sync paused — sign in again to resume:",
+            describeBoardSyncError(error),
+          );
+          retryCountRef.current = 0;
+          setConnectionStatus({ status: "failed", retryCount: 0 });
+          return;
+        }
+
+        console.error(
+          "Board sync setup failed:",
+          describeBoardSyncError(error),
+        );
         scheduleRetry(retryCountRef.current + 1);
       }
     };
@@ -239,7 +318,7 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
       void closeConnections();
       setDb(undefined);
     };
-  }, [database, retryNonce, clearRetryTimeout, closeConnections]);
+  }, [database, isAuthenticated, retryNonce, clearRetryTimeout, closeConnections]);
 
   const value = useMemo(
     () => ({

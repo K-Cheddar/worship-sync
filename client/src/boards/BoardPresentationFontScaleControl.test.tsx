@@ -69,4 +69,36 @@ describe("BoardPresentationFontScaleControl", () => {
       screen.queryByRole("button", { name: /Reset presentation text size/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("omits the Reset button in mini size", () => {
+    render(
+      <BoardPresentationFontScaleControl
+        value={1.2}
+        onChange={jest.fn()}
+        size="mini"
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Reset presentation text size/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stacks the mini percentage above the buttons", () => {
+    render(
+      <BoardPresentationFontScaleControl
+        value={1.3}
+        onChange={jest.fn()}
+        size="mini"
+      />,
+    );
+
+    const readout = screen.getByText("130%");
+    const decrease = screen.getByRole("button", {
+      name: /Decrease presentation text size/i,
+    });
+    expect(
+      readout.compareDocumentPosition(decrease) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

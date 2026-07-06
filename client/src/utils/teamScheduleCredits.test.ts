@@ -117,7 +117,7 @@ describe("buildTeamScheduleCreditEntries", () => {
     expect(entries).toEqual([
       {
         heading: "Camera",
-        names: "Alice",
+        names: "Alice Jones",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
       },
     ]);
@@ -160,13 +160,13 @@ describe("buildTeamScheduleCreditEntries", () => {
     expect(entries).toEqual([
       {
         heading: "Camera",
-        names: "Bob",
+        names: "Bob Smith",
         sourceLabel: "Media schedule: July Media - Afternoon Worship",
       },
     ]);
   });
 
-  it("groups multiple slots, includes shadows, and disambiguates duplicate first names", () => {
+  it("groups multiple slots and includes shadows with full member names", () => {
     const entries = buildTeamScheduleCreditEntries({
       teams,
       positions,
@@ -192,12 +192,12 @@ describe("buildTeamScheduleCreditEntries", () => {
     expect(entries).toEqual([
       {
         heading: "Audio Engineer",
-        names: "Bob",
+        names: "Bob Smith",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
       },
       {
         heading: "Camera",
-        names: "Alice\nJordan T.\nJordan S.\nBob",
+        names: "Alice Jones\nJordan Taylor\nJordan Smith\nBob Smith",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
       },
     ]);
@@ -247,7 +247,7 @@ describe("teamScheduleCreditHeadingMatches", () => {
         [
           {
             heading: "Camera",
-            names: "Alice",
+            names: "Alice Jones",
             sourceLabel: "Media schedule: July Media - Sabbath Worship",
           },
         ],
@@ -255,7 +255,7 @@ describe("teamScheduleCreditHeadingMatches", () => {
       ),
     ).toEqual({
       heading: "Camera",
-      names: "Alice",
+      names: "Alice Jones",
       sourceLabel: "Media schedule: July Media - Sabbath Worship",
     });
   });

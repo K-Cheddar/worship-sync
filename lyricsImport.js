@@ -1,6 +1,10 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 import lyricsImportFilter from "./lyricsImportFilter.cjs";
+import {
+  pickBestImportablePlainLyrics,
+  sortLyricsImportTracksByStructure,
+} from "./lyricsImportFormat.cjs";
 
 const { shouldExcludeLyricsImport } = lyricsImportFilter;
 
@@ -36,13 +40,31 @@ const normalizeDurationMs = (value) => {
 const extractPlainLyricsFromSyncedLyrics = (syncedLyrics) => {
   if (typeof syncedLyrics !== "string" || !syncedLyrics.trim()) return null;
 
-  const plainText = syncedLyrics
+  const lines = syncedLyrics
     .split(/\r?\n/)
-    .map((line) => line.replace(/^\[[^\]]+\]/g, "").trim())
-    .filter(Boolean)
-    .join("\n");
+    .map((line) => line.replace(/^\[[^\]]+\]/g, "").trim());
 
-  return plainText.trim() || null;
+  // LRC files timestamp section pauses as blank lines. Collapse runs of them
+  // into a single blank line instead of dropping them entirely, so imported
+  // lyrics keep the same verse/chorus breaks Genius imports have.
+  const collapsedLines = [];
+  for (const line of lines) {
+    const isBlank = line.length === 0;
+    const previousIsBlank =
+      collapsedLines.length > 0 &&
+      collapsedLines[collapsedLines.length - 1].length === 0;
+    if (isBlank && (previousIsBlank || collapsedLines.length === 0)) continue;
+    collapsedLines.push(line);
+  }
+  while (
+    collapsedLines.length > 0 &&
+    collapsedLines[collapsedLines.length - 1].length === 0
+  ) {
+    collapsedLines.pop();
+  }
+
+  const plainText = collapsedLines.join("\n").trim();
+  return plainText || null;
 };
 
 const normalizeComparableText = (value) => {
@@ -57,7 +79,8 @@ const normalizeComparableText = (value) => {
 };
 
 const normalizeLyricsImportTrack = (track) => {
-  const source = getStringValue(track.source) === "genius" ? "genius" : "lrclib";
+  const source =
+    getStringValue(track.source) === "genius" ? "genius" : "lrclib";
   const lrclibId = Number(
     track.lrclibId ?? track.id ?? track.trackId ?? track.track_id ?? 0,
   );
@@ -88,10 +111,10 @@ const normalizeLyricsImportTrack = (track) => {
     getStringValue(track.syncedLyrics) ??
     getStringValue(track.synced_lyrics) ??
     null;
-  const plainLyrics =
-    getStringValue(track.plainLyrics) ??
-    getStringValue(track.plain_lyrics) ??
-    extractPlainLyricsFromSyncedLyrics(syncedLyrics);
+  const plainLyrics = pickBestImportablePlainLyrics(
+    getStringValue(track.plainLyrics) ?? getStringValue(track.plain_lyrics),
+    extractPlainLyricsFromSyncedLyrics(syncedLyrics),
+  );
 
   return {
     source,
@@ -202,14 +225,25 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       ? `${GENIUS_API_BASE_URL}/search?q=${encodedQuery}`
       : `${GENIUS_UNOFFICIAL_API_BASE_URL}/search/song?per_page=5&q=${encodedQuery}`;
 
-    const response = await axios.get(url, {
-      headers: getGeniusSearchHeaders(),
-      timeout: 10000,
-    });
+    try {
+      const response = await axios.get(url, {
+        headers: getGeniusSearchHeaders(),
+        timeout: 10000,
+      });
 
-    return normalizeGeniusSearchHits(response.data)
-      .filter((hit) => hit?.type === "song" && hit?.result)
-      .map((hit) => hit.result);
+      return normalizeGeniusSearchHits(response.data)
+        .filter((hit) => hit?.type === "song" && hit?.result)
+        .map((hit) => hit.result);
+    } catch (error) {
+      console.warn("Genius search request failed:", {
+        url,
+        hasAccessToken,
+        message: error.message,
+        status: error.response?.status,
+        code: error.code,
+      });
+      throw error;
+    }
   };
 
   const stripGeniusLyricsPreamble = (lyrics, title) => {
@@ -270,18 +304,43 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
   };
 
   const fetchGeniusLyrics = async (song) => {
+    let response;
     try {
-      const response = await axios.get(song.url, {
+      response = await axios.get(song.url, {
         headers: {
           "User-Agent": GENIUS_USER_AGENT,
         },
         timeout: 10000,
       });
-
-      return extractLyricsFromGeniusHtml(response.data, song?.title, true);
     } catch (error) {
+      console.warn("Genius lyrics page request failed:", {
+        url: song?.url,
+        message: error.message,
+        status: error.response?.status,
+        code: error.code,
+      });
       return null;
     }
+
+    const lyrics = extractLyricsFromGeniusHtml(
+      response.data,
+      song?.title,
+      true,
+    );
+
+    if (!lyrics) {
+      // A 200 response with no lyrics container usually means Genius served a
+      // bot-challenge/interstitial page instead of the real song page (common
+      // when scraping from datacenter/cloud IPs), not that lyrics don't exist.
+      console.warn("Genius lyrics page returned no lyrics container:", {
+        url: song?.url,
+        status: response.status,
+        htmlLength:
+          typeof response.data === "string" ? response.data.length : 0,
+      });
+    }
+
+    return lyrics;
   };
 
   const normalizeGeniusTrack = ({ song, plainLyrics }) => {
@@ -398,7 +457,9 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       timeout: 10000,
     });
 
-    return normalizeLrclibTracksList(response.data);
+    return sortLyricsImportTracksByStructure(
+      normalizeLrclibTracksList(response.data),
+    );
   };
 
   return {

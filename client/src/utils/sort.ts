@@ -24,3 +24,8 @@ export const sortList = (list: any[]) => {
     return list;
   }
 };
+
+/** Dedupes while keeping the first occurrence of each value. */
+export const uniquePreservingOrder = <T>(items: readonly T[]): T[] => [
+  ...new Map(items.map((item) => [item, item])).values(),
+];
