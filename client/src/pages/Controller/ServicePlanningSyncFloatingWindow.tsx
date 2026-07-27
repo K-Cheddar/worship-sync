@@ -563,6 +563,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     <FloatingWindow
       ref={floatingWindowRef}
       title={titleNode}
+      label={planLabel}
       onClose={handleClose}
       defaultPosition={defaultPosition}
       defaultWidth={windowWidth}

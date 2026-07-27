@@ -34,6 +34,13 @@ const ctaButtonStyle = {
   textDecoration: "none",
 } as const;
 
+const digestListItemStyle = {
+  color: worshipSyncEmailBrand.textPrimary,
+  fontSize: "15px",
+  lineHeight: "24px",
+  margin: "0 0 6px",
+};
+
 type SignInCodeEmailProps = {
   code: string;
   /** Opens WorshipSync with the code prefilled on the sign-in page (hash router). */
@@ -188,6 +195,8 @@ type InviteAcceptedAdminEmailProps = {
   acceptedEmail: string;
   churchName: string;
   role: string;
+  /** Human-readable permission lines (app access, Teams access, etc.). */
+  accessLines?: string[];
   managePeopleUrl: string;
 };
 
@@ -196,12 +205,16 @@ export function InviteAcceptedAdminEmail({
   acceptedEmail,
   churchName,
   role,
+  accessLines = [],
   managePeopleUrl,
 }: InviteAcceptedAdminEmailProps) {
   const churchDisplay = churchName.trim() || "your church";
   const acceptedName = acceptedDisplayName.trim();
   const acceptedLabel = acceptedName || acceptedEmail;
   const roleLabel = role === "admin" ? "admin" : "member";
+  const permissionLines = accessLines
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
   return (
     <WorshipSyncEmailLayout
       previewText={`${acceptedLabel} accepted an invite to ${churchDisplay}`}
@@ -219,6 +232,16 @@ export function InviteAcceptedAdminEmail({
       </Text>
       {acceptedName && acceptedEmail ? (
         <Text style={bodyText}>Email: {acceptedEmail}</Text>
+      ) : null}
+      {permissionLines.length > 0 ? (
+        <Section style={{ margin: "0 0 8px" }}>
+          <Text style={bodyText}>Permissions:</Text>
+          {permissionLines.map((line) => (
+            <Text key={line} style={digestListItemStyle}>
+              • {line}
+            </Text>
+          ))}
+        </Section>
       ) : null}
       <Section style={{ margin: "24px 0", textAlign: "center" }}>
         <Button href={managePeopleUrl} style={ctaButtonStyle}>
@@ -352,13 +375,6 @@ type IntakeSubmissionsDigestEmailProps = {
   reviewUrl: string;
   /** Submitter display names, in arrival order. Length drives the summary line. */
   submitterNames: string[];
-};
-
-const digestListItemStyle = {
-  color: worshipSyncEmailBrand.textPrimary,
-  fontSize: "15px",
-  lineHeight: "24px",
-  margin: "0 0 6px",
 };
 
 export function IntakeSubmissionsDigestEmail({

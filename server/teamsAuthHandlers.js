@@ -1971,6 +1971,11 @@ export const createTeamsAuthHandlers = ({
   const makeScheduleSlotKey = (positionId, slot) =>
     `${positionId}${SCHEDULE_SLOT_KEY_SEPARATOR}${slot}`;
 
+  const CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE =
+    "This person is already scheduled on another team for this service. Confirm to schedule them anyway.";
+
+  const normalizeAllowCrossTeamConflict = (value) => value === true;
+
   const parseScheduleSlotKey = (value) => {
     const raw = String(value || "");
     const idx = raw.lastIndexOf(SCHEDULE_SLOT_KEY_SEPARATOR);
@@ -1984,6 +1989,144 @@ export const createTeamsAuthHandlers = ({
       return null;
     }
     return { positionId: base, slot };
+  };
+
+  const getScheduleOccurrenceServiceIds = (occurrence) =>
+    new Set(
+      [occurrence?.serviceId, ...(occurrence?.serviceIds || [])]
+        .map((id) => String(id || "").trim())
+        .filter(Boolean),
+    );
+
+  const getScheduleOccurrencesForConflict = (schedule) =>
+    schedule?.occurrences?.length
+      ? schedule.occurrences
+      : (schedule?.serviceIds || []).map((serviceId) => ({
+          occurrenceId: serviceId,
+          serviceId,
+          startsAt: "",
+        }));
+
+  const scheduleDateRangesOverlap = (a, b) => {
+    const aStart = a?.startDate || a?.endDate || "";
+    const aEnd = a?.endDate || a?.startDate || "";
+    const bStart = b?.startDate || b?.endDate || "";
+    const bEnd = b?.endDate || b?.startDate || "";
+    if (!aStart || !aEnd || !bStart || !bEnd) return true;
+    return aStart <= bEnd && aEnd >= bStart;
+  };
+
+  // Prefer shared occurrence identity / start time. When either side lacks
+  // startsAt (legacy schedules), match on shared service ids only if the parent
+  // schedules' date ranges overlap — so unrelated months do not false-positive.
+  const scheduleOccurrencesConflict = (current, other, options = {}) => {
+    if (!current || !other) return false;
+    if (
+      current.occurrenceId &&
+      other.occurrenceId &&
+      current.occurrenceId === other.occurrenceId &&
+      current.startsAt &&
+      other.startsAt
+    ) {
+      return true;
+    }
+    if (current.startsAt && other.startsAt) {
+      if (current.startsAt !== other.startsAt) return false;
+      const currentServiceIds = getScheduleOccurrenceServiceIds(current);
+      const otherServiceIds = getScheduleOccurrenceServiceIds(other);
+      return [...currentServiceIds].some((serviceId) =>
+        otherServiceIds.has(serviceId),
+      );
+    }
+    if (!options.schedulesOverlap) return false;
+    const currentServiceIds = getScheduleOccurrenceServiceIds(current);
+    const otherServiceIds = getScheduleOccurrenceServiceIds(other);
+    return [...currentServiceIds].some((serviceId) =>
+      otherServiceIds.has(serviceId),
+    );
+  };
+
+  const findCrossTeamScheduleAssignmentConflicts = ({
+    schedule,
+    assignments,
+    schedules,
+    memberIds,
+  }) => {
+    const memberIdSet = memberIds?.size
+      ? memberIds
+      : new Set(
+          Object.values(assignments || {}).flatMap((row) =>
+            Object.values(row || {}).flatMap(
+              getScheduleAssignmentCellMemberIds,
+            ),
+          ),
+        );
+    if (memberIdSet.size === 0) return [];
+
+    const occurrences = getScheduleOccurrencesForConflict(schedule);
+    const conflicts = [];
+    for (const currentOccurrence of occurrences) {
+      const row = assignments?.[currentOccurrence.occurrenceId] || {};
+      const rowMemberIds = new Set(
+        Object.values(row).flatMap(getScheduleAssignmentCellMemberIds),
+      );
+      const targetMemberIds = [...rowMemberIds].filter((memberId) =>
+        memberIdSet.has(memberId),
+      );
+      if (targetMemberIds.length === 0) continue;
+
+      for (const otherSchedule of schedules || []) {
+        if (!otherSchedule || otherSchedule.archivedAt) continue;
+        if (otherSchedule.scheduleId === schedule.scheduleId) continue;
+        if (otherSchedule.teamId === schedule.teamId) continue;
+        const otherOccurrence = getScheduleOccurrencesForConflict(
+          otherSchedule,
+        ).find((candidate) =>
+          scheduleOccurrencesConflict(currentOccurrence, candidate, {
+            schedulesOverlap: scheduleDateRangesOverlap(
+              schedule,
+              otherSchedule,
+            ),
+          }),
+        );
+        if (!otherOccurrence) continue;
+        const otherRow =
+          otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
+        const otherMemberIds = new Set(
+          Object.values(otherRow).flatMap(getScheduleAssignmentCellMemberIds),
+        );
+        targetMemberIds.forEach((memberId) => {
+          if (otherMemberIds.has(memberId)) {
+            conflicts.push({
+              memberId,
+              scheduleId: otherSchedule.scheduleId,
+              teamId: otherSchedule.teamId,
+              occurrenceId: currentOccurrence.occurrenceId,
+            });
+          }
+        });
+      }
+    }
+    return conflicts;
+  };
+
+  const assertNoCrossTeamScheduleAssignmentConflicts = ({
+    schedule,
+    assignments,
+    schedules,
+    memberIds,
+    allowCrossTeamConflict,
+  }) => {
+    if (allowCrossTeamConflict) return;
+    const conflicts = findCrossTeamScheduleAssignmentConflicts({
+      schedule,
+      assignments,
+      schedules,
+      memberIds,
+    });
+    if (conflicts.length > 0) {
+      throw httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
+    }
   };
 
   const buildValidatedScheduleAssignments = ({
@@ -2384,6 +2527,7 @@ export const createTeamsAuthHandlers = ({
     sourcePositionSlotKey,
     shadowAction,
     shadowKind,
+    allowCrossTeamConflict,
   }) => {
     const schedule = await assertTeamEntityInChurch(
       "schedule",
@@ -2421,7 +2565,7 @@ export const createTeamsAuthHandlers = ({
             },
           )
         : null;
-    return buildValidatedScheduleAssignments({
+    const assignments = buildValidatedScheduleAssignments({
       churchId,
       schedule,
       team,
@@ -2436,6 +2580,43 @@ export const createTeamsAuthHandlers = ({
       shadowAction,
       shadowKind,
     });
+    if (normalizedMemberId && shadowAction !== "remove") {
+      const schedules = await listTeamCollectionForChurch(
+        COLLECTIONS.teamSchedules,
+        "scheduleId",
+        churchId,
+      );
+      assertNoCrossTeamScheduleAssignmentConflicts({
+        schedule,
+        assignments,
+        schedules,
+        memberIds: new Set([normalizedMemberId]),
+        allowCrossTeamConflict,
+      });
+    }
+    return assignments;
+  };
+
+  const listTransactionSchedulesForChurch = async (
+    transaction,
+    db,
+    churchId,
+  ) => {
+    const snapshot = await transaction.get(
+      db
+        .collection(COLLECTIONS.teamSchedules)
+        .where("churchId", "==", churchId)
+        .limit(TEAM_COLLECTION_QUERY_LIMIT),
+    );
+    if (snapshot.docs.length >= TEAM_COLLECTION_QUERY_LIMIT) {
+      console.warn(
+        `Teams: ${COLLECTIONS.teamSchedules} returned the ${TEAM_COLLECTION_QUERY_LIMIT}-row query cap for church ${churchId}; conflict checks may be truncated.`,
+      );
+    }
+    return snapshot.docs.map((doc) => ({
+      scheduleId: doc.id,
+      ...doc.data(),
+    }));
   };
 
   const readTransactionTeamEntity = (
@@ -2465,6 +2646,7 @@ export const createTeamsAuthHandlers = ({
     sourcePositionSlotKey,
     shadowAction,
     shadowKind,
+    allowCrossTeamConflict,
     adminUserId,
   }) => {
     const db = requireFirestore();
@@ -2480,6 +2662,7 @@ export const createTeamsAuthHandlers = ({
         sourcePositionSlotKey,
         shadowAction,
         shadowKind,
+        allowCrossTeamConflict,
       });
       await setDoc(
         COLLECTIONS.teamSchedules,
@@ -2559,6 +2742,20 @@ export const createTeamsAuthHandlers = ({
         shadowAction,
         shadowKind,
       });
+      if (normalizedMemberId && shadowAction !== "remove") {
+        const schedules = await listTransactionSchedulesForChurch(
+          transaction,
+          db,
+          churchId,
+        );
+        assertNoCrossTeamScheduleAssignmentConflicts({
+          schedule,
+          assignments,
+          schedules,
+          memberIds: new Set([normalizedMemberId]),
+          allowCrossTeamConflict,
+        });
+      }
       const update = {
         assignments,
         updatedAt: nowIso(),
@@ -2581,6 +2778,7 @@ export const createTeamsAuthHandlers = ({
     currentMemberId,
     candidateMemberId,
     serviceDate,
+    allowCrossTeamConflict,
     adminUserId,
   }) => {
     const normalizedCurrentMemberId = normalizeShortText(currentMemberId, {
@@ -2661,6 +2859,21 @@ export const createTeamsAuthHandlers = ({
         targetPosition,
         sourcePosition,
         serviceDate,
+      });
+      const schedules = await listTeamCollectionForChurch(
+        COLLECTIONS.teamSchedules,
+        "scheduleId",
+        churchId,
+      );
+      assertNoCrossTeamScheduleAssignmentConflicts({
+        schedule,
+        assignments,
+        schedules,
+        memberIds: new Set([
+          normalizedCurrentMemberId,
+          normalizedCandidateMemberId,
+        ]),
+        allowCrossTeamConflict,
       });
       await setDoc(
         COLLECTIONS.teamSchedules,
@@ -2760,6 +2973,21 @@ export const createTeamsAuthHandlers = ({
         targetPosition,
         sourcePosition,
         serviceDate,
+      });
+      const schedules = await listTransactionSchedulesForChurch(
+        transaction,
+        db,
+        churchId,
+      );
+      assertNoCrossTeamScheduleAssignmentConflicts({
+        schedule,
+        assignments,
+        schedules,
+        memberIds: new Set([
+          normalizedCurrentMemberId,
+          normalizedCandidateMemberId,
+        ]),
+        allowCrossTeamConflict,
       });
       const update = {
         assignments,
@@ -3783,6 +4011,21 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           payload.teamId,
         );
+        if (Object.keys(payload.assignments || {}).length > 0) {
+          const schedules = await listTeamCollectionForChurch(
+            COLLECTIONS.teamSchedules,
+            "scheduleId",
+            req.params.churchId,
+          );
+          assertNoCrossTeamScheduleAssignmentConflicts({
+            schedule: { churchId: req.params.churchId, ...payload },
+            assignments: payload.assignments,
+            schedules,
+            allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
+              req.body?.allowCrossTeamConflict,
+            ),
+          });
+        }
         const schedule = await upsertTeamEntity({
           kind: "schedule",
           churchId: req.params.churchId,
@@ -3874,6 +4117,25 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           [existing.teamId, payload.teamId],
         );
+        if (Object.keys(payload.assignments || {}).length > 0) {
+          const schedules = await listTeamCollectionForChurch(
+            COLLECTIONS.teamSchedules,
+            "scheduleId",
+            req.params.churchId,
+          );
+          assertNoCrossTeamScheduleAssignmentConflicts({
+            schedule: {
+              scheduleId: req.params.scheduleId,
+              churchId: req.params.churchId,
+              ...payload,
+            },
+            assignments: payload.assignments,
+            schedules,
+            allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
+              req.body?.allowCrossTeamConflict,
+            ),
+          });
+        }
         const schedule = await upsertTeamEntity({
           kind: "schedule",
           churchId: req.params.churchId,
@@ -4298,6 +4560,9 @@ export const createTeamsAuthHandlers = ({
           sourcePositionSlotKey: req.body?.sourcePositionSlotKey,
           shadowAction: req.body?.shadowAction,
           shadowKind: req.body?.shadowKind,
+          allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
+            req.body?.allowCrossTeamConflict,
+          ),
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -4349,6 +4614,9 @@ export const createTeamsAuthHandlers = ({
           serviceDate: normalizeOptionalPlainDate(
             req.body?.serviceDate,
             "Service date",
+          ),
+          allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
+            req.body?.allowCrossTeamConflict,
           ),
           adminUserId: admin.user.uid,
         });

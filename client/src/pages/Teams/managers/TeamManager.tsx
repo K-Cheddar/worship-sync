@@ -23,7 +23,6 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import PositionIconPicker from "../PositionIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
-import { formatTeamSaveToast } from "../teamsSaveToasts";
 import {
   buildGroupsReturnTo,
   buildTeamsPositionsPath,
@@ -32,6 +31,10 @@ import {
 } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import type { TeamsData } from "../types";
+
+// Key used to track an in-flight save for the create form, which has no team id
+// yet. Existing teams are tracked by their own teamId.
+const CREATE_SAVING_KEY = "__create__";
 
 type TeamManagerProps = {
   teams: TeamRecord[];
@@ -71,7 +74,10 @@ const TeamManager = ({
     icon: "",
     memberIds: [],
   });
-  const [saving, setSaving] = useState(false);
+  // Teams with a save currently in flight, keyed by teamId (or CREATE_SAVING_KEY
+  // for a new team). Tracking per-editor keeps the Save spinner on the team
+  // actually saving and lets editing continue back-to-back in the background.
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
 
@@ -152,8 +158,13 @@ const TeamManager = ({
 
   const submit = async () => {
     if (!canEdit) return;
-    setSaving(true);
-    const localTeamId = editing?.teamId || `local-team-${generateRandomId()}`;
+    const wasEditing = editing;
+    const savingKey = wasEditing?.teamId ?? CREATE_SAVING_KEY;
+    // Ignore a repeat submit for the same editor while its save is pending —
+    // this prevents a fast double-click on "Create" from making duplicates.
+    if (savingIds.has(savingKey)) return;
+    setSavingIds((prev) => new Set(prev).add(savingKey));
+    const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
     const optimisticTeam: TeamRecord = {
       churchId,
       teamId: localTeamId,
@@ -161,30 +172,53 @@ const TeamManager = ({
       description: draft.description || "",
       icon: draft.icon || "",
       memberIds: draft.memberIds,
-      archivedAt: editing?.archivedAt || null,
+      archivedAt: wasEditing?.archivedAt || null,
     };
-    onSaved(editing ? { ...editing, ...optimisticTeam } : optimisticTeam);
-    const saveToastMessage = formatTeamSaveToast(editing, draft, {
-      memberNameById: new Map(
-        members.map((member) => [member.memberId, memberName(member)]),
-      ),
-    });
+    const savedRecord = wasEditing
+      ? { ...wasEditing, ...optimisticTeam }
+      : optimisticTeam;
+    onSaved(savedRecord);
     try {
-      const response = editing
-        ? await updateTeam(churchId, editing.teamId, draft)
+      const response = wasEditing
+        ? await updateTeam(churchId, wasEditing.teamId, draft)
         : await createTeam(churchId, draft);
-      if (!editing) {
+      if (!wasEditing) {
         onSaved(response.team, localTeamId);
       }
-      showToast(saveToastMessage, "success");
-      finishEditing(reset);
+      // Reached via a cross-section link: return to the origin. Otherwise keep
+      // the panel open for back-to-back editing.
+      if (returnTo) {
+        finishEditing(reset);
+      } else if (wasEditing) {
+        // The operator may have switched to a different team while this save was
+        // in flight. Only refresh the selected record if they're still on the
+        // one we just saved, so the panel never rebinds to a stale team.
+        setEditing((current) =>
+          current?.teamId === wasEditing.teamId ? savedRecord : current,
+        );
+      } else {
+        // Newly created: adopt the saved record so a subsequent Save updates it
+        // instead of creating a duplicate — but only if the create form is still
+        // the active editor and the operator hasn't selected another team.
+        const created = response.team;
+        setEditing((current) => (current === null ? created : current));
+      }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this team.");
       onArchived();
     } finally {
-      setSaving(false);
+      setSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(savingKey);
+        return next;
+      });
     }
   };
+
+  // The panel shows one editor at a time; its Save state reflects only the team
+  // currently open, so a background save elsewhere never spins or disables it.
+  const currentEditorKey = editing ? editing.teamId : CREATE_SAVING_KEY;
+  const isSavingCurrent = savingIds.has(currentEditorKey);
 
   const formatNameList = (names: string[]) =>
     names.length === 0 ? "None yet." : names.join(", ");
@@ -263,8 +297,8 @@ const TeamManager = ({
             saveLabel="Save team"
             onSave={() => void submit()}
             onCancel={cancelEditing}
-            disabled={!canEdit || !draft.name.trim()}
-            isLoading={saving}
+            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            isLoading={isSavingCurrent}
           />
         }
       >

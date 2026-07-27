@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import {
   renderAccountRestoredEmail,
   renderAdminRecoveryRequestEmail,
+  renderInviteAcceptedAdminEmail,
   renderInviteEmail,
   renderIntakeSubmissionsDigestEmail,
   renderPairingSetupCodeEmail,
@@ -38,6 +39,20 @@ const main = async () => {
       file: "invite.html",
       html: renderInviteEmail(`${demoBase}/#/invite?token=demo-invite-token`, {
         churchName: "Sample Community Church",
+      }).then(({ html }) => html),
+    },
+    {
+      file: "invite-accepted-admin.html",
+      html: renderInviteAcceptedAdminEmail({
+        acceptedDisplayName: "Jordan Lee",
+        acceptedEmail: "jordan@example.com",
+        churchName: "Sample Community Church",
+        role: "member",
+        accessLines: [
+          "Access: Full access",
+          "Teams: Can edit Worship Team, Choir only",
+        ],
+        managePeopleUrl: `${demoBase}/#/account/people`,
       }).then(({ html }) => html),
     },
     {

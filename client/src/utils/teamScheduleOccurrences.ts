@@ -149,6 +149,35 @@ export const formatOccurrenceRowLabel = (
 export const getOccurrenceDate = (occurrence: TeamScheduleOccurrence) =>
   occurrence.startsAt.slice(0, 10);
 
+const startOfTodayMs = () => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return now.getTime();
+};
+
+/**
+ * The occurrence the operator is most likely to work next: the earliest one that
+ * starts on or after `referenceMs` (defaults to the start of today, so a service
+ * earlier today still counts as up next). Occurrences need not be pre-sorted;
+ * returns null when every occurrence is in the past.
+ */
+export const findNextUpcomingOccurrenceId = (
+  occurrences: TeamScheduleOccurrence[],
+  referenceMs: number = startOfTodayMs(),
+): string | null => {
+  let bestId: string | null = null;
+  let bestMs = Infinity;
+  for (const occurrence of occurrences) {
+    const ms = new Date(occurrence.startsAt).getTime();
+    if (Number.isNaN(ms) || ms < referenceMs) continue;
+    if (ms < bestMs) {
+      bestMs = ms;
+      bestId = occurrence.occurrenceId;
+    }
+  }
+  return bestId;
+};
+
 /** Union of position requirements across a group, keeping the largest count per position. */
 const mergeGroupedRequirements = (
   services: TeamService[],
@@ -258,6 +287,19 @@ export const generateScheduleOccurrences = ({
   const occurrences: TeamScheduleOccurrence[] = [];
 
   for (const service of selectedServices) {
+    const serviceStart = service.startDateISO
+      ? parsePlainDate(service.startDateISO)
+      : null;
+    const serviceEnd = service.endDateISO
+      ? parsePlainDate(service.endDateISO)
+      : null;
+    if (serviceEnd) serviceEnd.setHours(23, 59, 59, 999);
+    const withinServiceBounds = (date: Date) => {
+      if (serviceStart && date < serviceStart) return false;
+      if (serviceEnd && date > serviceEnd) return false;
+      return true;
+    };
+
     if (service.reccurence === "one_time") {
       const startsAt = service.dateTimeISO
         ? new Date(service.dateTimeISO)
@@ -275,27 +317,23 @@ export const generateScheduleOccurrences = ({
         cursor <= endTime;
         cursor.setDate(cursor.getDate() + 1)
       ) {
-        if (cursor.getDay() === service.dayOfWeek) {
-          occurrences.push(
-            toOccurrence(service, setDateTime(cursor, service.time)),
-          );
-        }
+        if (cursor.getDay() !== service.dayOfWeek) continue;
+        if (!withinServiceBounds(cursor)) continue;
+        occurrences.push(
+          toOccurrence(service, setDateTime(cursor, service.time)),
+        );
       }
       continue;
     }
 
     if (service.reccurence === "multi_weekly") {
       const days = service.daysOfWeek || [];
-      const serviceEnd = service.endDateISO
-        ? parsePlainDate(service.endDateISO)
-        : null;
-      if (serviceEnd) serviceEnd.setHours(23, 59, 59, 999);
       for (
         const cursor = new Date(start);
         cursor <= endTime;
         cursor.setDate(cursor.getDate() + 1)
       ) {
-        if (serviceEnd && cursor > serviceEnd) continue;
+        if (!withinServiceBounds(cursor)) continue;
         const day = days.find((item) => item.day === cursor.getDay());
         if (day)
           occurrences.push(
@@ -322,7 +360,8 @@ export const generateScheduleOccurrences = ({
         if (
           !occurrenceDate ||
           occurrenceDate < start ||
-          occurrenceDate > endTime
+          occurrenceDate > endTime ||
+          !withinServiceBounds(occurrenceDate)
         )
           continue;
         occurrences.push(

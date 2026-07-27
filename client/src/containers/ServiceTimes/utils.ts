@@ -52,23 +52,48 @@ export const parseDateOnlyAsLocalDate = (dateStr?: string) => {
   const [year, month, day] = dateStr
     .split("-")
     .map((part) => parseInt(part, 10));
-  if (
-    Number.isNaN(year) ||
-    Number.isNaN(month) ||
-    Number.isNaN(day)
-  ) {
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
     return null;
   }
   return new Date(year, month - 1, day);
 };
 
-export const formatWeekly = (dow?: Weekday, hhmm?: string) => {
+const formatBoundDate = (dateStr?: string) => {
+  const date = parseDateOnlyAsLocalDate(dateStr);
+  if (!date) return "";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
+/** Optional "from … until …" suffix for recurring service date bounds. */
+export const formatServiceBounds = (
+  startDateISO?: string,
+  endDateISO?: string,
+) => {
+  const startStr = formatBoundDate(startDateISO);
+  const endStr = formatBoundDate(endDateISO);
+  if (startStr && endStr) return ` from ${startStr} until ${endStr}`;
+  if (startStr) return ` from ${startStr}`;
+  if (endStr) return ` until ${endStr}`;
+  return "";
+};
+
+export const formatWeekly = (
+  dow?: Weekday,
+  hhmm?: string,
+  startDateISO?: string,
+  endDateISO?: string,
+) => {
   const day = weekdays.find((w) => w.value === dow)?.label || "";
-  return `${day}${day ? "s" : ""} @ ${to12Hour(hhmm)}`;
+  return `${day}${day ? "s" : ""} @ ${to12Hour(hhmm)}${formatServiceBounds(startDateISO, endDateISO)}`;
 };
 
 export const formatMultiWeekly = (
   days?: MultiWeeklyDay[],
+  startDateISO?: string,
   endDateISO?: string,
 ) => {
   if (!days?.length) return "";
@@ -87,22 +112,22 @@ export const formatMultiWeekly = (
   // Sort groups by the earliest day each contains
   const groups = [...byTime.entries()].sort(([, a], [, b]) => a[0] - b[0]);
 
-  const endDate = parseDateOnlyAsLocalDate(endDateISO);
-  const endStr = endDate
-    ? ` until ${endDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`
-    : "";
-
   return (
     groups
-      .map(([t, groupDays]) => `${groupDays.map((d) => DAY_ABBRS[d]).join(", ")} @ ${to12Hour(t)}`)
-      .join(", ") + endStr
+      .map(
+        ([t, groupDays]) =>
+          `${groupDays.map((d) => DAY_ABBRS[d]).join(", ")} @ ${to12Hour(t)}`,
+      )
+      .join(", ") + formatServiceBounds(startDateISO, endDateISO)
   );
 };
 
 export const formatMonthly = (
   ord?: MonthWeekOrdinal,
   w?: Weekday,
-  hhmm?: string
+  hhmm?: string,
+  startDateISO?: string,
+  endDateISO?: string,
 ) => {
   const ordLabel =
     ord === 5
@@ -111,5 +136,5 @@ export const formatMonthly = (
   const day = weekdays.find((wd) => wd.value === w)?.label || "";
   if (!ordLabel || !day) return "";
   const timeStr = to12Hour(hhmm);
-  return `Every ${ordLabel === "last" ? "last" : ordLabel} ${day}${timeStr ? ` @ ${timeStr}` : ""}`;
+  return `Every ${ordLabel === "last" ? "last" : ordLabel} ${day}${timeStr ? ` @ ${timeStr}` : ""}${formatServiceBounds(startDateISO, endDateISO)}`;
 };

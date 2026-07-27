@@ -130,6 +130,8 @@ export type MemberListFilterState = {
   qualificationAreaIds: string[];
   qualificationLevelIds: string[];
   qualificationStatuses: TeamMemberQualificationStatus[];
+  /** When false (default), archived members are hidden from the list. */
+  includeArchived: boolean;
 };
 
 export const emptyMemberListFilters = (): MemberListFilterState => ({
@@ -139,6 +141,7 @@ export const emptyMemberListFilters = (): MemberListFilterState => ({
   qualificationAreaIds: [],
   qualificationLevelIds: [],
   qualificationStatuses: [],
+  includeArchived: false,
 });
 
 export const countActiveMemberListFilters = (filters: MemberListFilterState) =>
@@ -147,7 +150,8 @@ export const countActiveMemberListFilters = (filters: MemberListFilterState) =>
   filters.roleIds.length +
   filters.qualificationAreaIds.length +
   filters.qualificationLevelIds.length +
-  filters.qualificationStatuses.length;
+  filters.qualificationStatuses.length +
+  (filters.includeArchived ? 1 : 0);
 
 export const isMemberOnTeam = (
   member: TeamRosterMember,
@@ -164,6 +168,9 @@ export const memberMatchesListFilters = (
   filters: MemberListFilterState,
   teamsById: Map<string, TeamRecord>,
 ) => {
+  if (!filters.includeArchived && member.archivedAt) {
+    return false;
+  }
   if (filters.teamIds.length > 0) {
     const onTeam = filters.teamIds.some((teamId) =>
       isMemberOnTeam(member, teamId, teamsById),

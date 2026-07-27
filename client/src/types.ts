@@ -450,7 +450,9 @@ export type ServiceTime = {
   dayOfWeek?: Weekday;
   // multi_weekly
   daysOfWeek?: MultiWeeklyDay[];
-  // optional end date for multi_weekly (ISO date string, e.g. "2026-05-30")
+  // Optional inclusive bounds for recurring services (plain YYYY-MM-DD).
+  // After endDateISO the service is inactive for pickers/timers.
+  startDateISO?: string;
   endDateISO?: string;
   // monthly nth weekday
   ordinal?: MonthWeekOrdinal;

@@ -1,7 +1,4 @@
-import {
-  formatMultiWeekly,
-  parseDateOnlyAsLocalDate,
-} from "./utils";
+import { formatMultiWeekly, parseDateOnlyAsLocalDate } from "./utils";
 
 describe("ServiceTimes utils", () => {
   describe("parseDateOnlyAsLocalDate", () => {
@@ -23,7 +20,14 @@ describe("ServiceTimes utils", () => {
   });
 
   describe("formatMultiWeekly", () => {
-    it("formats grouped weekly days and preserves the end date label", () => {
+    it("formats grouped weekly days and preserves start/end date labels", () => {
+      const expectedStartDate = parseDateOnlyAsLocalDate(
+        "2026-05-01",
+      )?.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
       const expectedEndDate = parseDateOnlyAsLocalDate(
         "2026-05-30",
       )?.toLocaleDateString(undefined, {
@@ -39,9 +43,12 @@ describe("ServiceTimes utils", () => {
             { day: 3, time: "09:00" },
             { day: 5, time: "10:30" },
           ],
+          "2026-05-01",
           "2026-05-30",
         ),
-      ).toBe(`Mon, Wed @ 9:00 AM, Fri @ 10:30 AM until ${expectedEndDate}`);
+      ).toBe(
+        `Mon, Wed @ 9:00 AM, Fri @ 10:30 AM from ${expectedStartDate} until ${expectedEndDate}`,
+      );
     });
   });
 });

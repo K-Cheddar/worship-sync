@@ -2,11 +2,16 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
+import Button from "../../../components/Button/Button";
 import DeleteModal from "../../../components/Modal/DeleteModal";
+import Modal from "../../../components/Modal/Modal";
 import DatePicker from "@/components/ui/DatePicker";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
-import { generateScheduleOccurrences } from "@/utils/teamScheduleOccurrences";
+import {
+  filterServicesWithOccurrencesInRange,
+  generateScheduleOccurrences,
+} from "@/utils/teamScheduleOccurrences";
 import {
   archiveTeamSchedule,
   createTeamSchedule,
@@ -30,6 +35,8 @@ import { cn } from "@/utils/cnHelper";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
   formatServiceTiming,
+  getCellMemberIds,
+  isActive,
   scheduleDraftsMatch,
 } from "../teamsUtils";
 import { formatScheduleSaveToast } from "../teamsSaveToasts";
@@ -41,6 +48,10 @@ import {
   SCHEDULE_DRAFT_PERSIST_DELAY_MS,
   type ScheduleEditFormProps,
 } from "./scheduleDraftUtils";
+import {
+  findCrossTeamScheduleOccurrenceConflicts,
+  formatCrossTeamScheduleConflictWarning,
+} from "./scheduleConflicts";
 
 const ScheduleEditForm = ({
   draftKey,
@@ -51,6 +62,7 @@ const ScheduleEditForm = ({
   defaultRange,
   services,
   activeTeams,
+  schedules,
   churchId,
   canEdit,
   onDraftChange,
@@ -73,6 +85,7 @@ const ScheduleEditForm = ({
   const [saving, setSaving] = useState(false);
   const [deletingSchedule, setDeletingSchedule] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [scheduleConflictWarning, setScheduleConflictWarning] = useState("");
   const draftRef = useRef(draft);
   const skipNextPersistRef = useRef(false);
   // The last draft we synced from the schedule/persisted source. If the live
@@ -167,11 +180,75 @@ const ScheduleEditForm = ({
     [draft.endDate, draft.serviceIds, draft.startDate, services],
   );
 
-  const saveSchedule = async () => {
+  const serviceOptions = useMemo(() => {
+    const serviceIdsWithOccurrences = new Set(
+      draft.startDate && draft.endDate
+        ? filterServicesWithOccurrencesInRange({
+          services: services.filter(isActive),
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+        }).map((service) => service.serviceId)
+        : [],
+    );
+
+    return services.map((service) => ({
+      id: service.serviceId,
+      label: [service.name, formatServiceTiming(service)]
+        .filter(Boolean)
+        .join(" - "),
+      archived: Boolean(service.archivedAt),
+      // Keep date-inapplicable services visible so operators can understand why
+      // they are unavailable for this range; selected legacy services can still
+      // be removed by the checkbox control.
+      unavailable:
+        Boolean(draft.startDate && draft.endDate) &&
+        !service.archivedAt &&
+        !serviceIdsWithOccurrences.has(service.serviceId),
+      unavailableLabel: "no occurrences in this range",
+    }));
+  }, [draft.endDate, draft.startDate, services]);
+
+  const getScheduleSaveConflictWarning = (payload: TeamSchedulePayload) => {
+    if (!payload.assignments || Object.keys(payload.assignments).length === 0) {
+      return "";
+    }
+    const scheduleForConflict: TeamSchedule = {
+      churchId,
+      scheduleId: selectedSchedule?.scheduleId || "draft-schedule",
+      name: payload.name,
+      description: payload.description || "",
+      teamId: payload.teamId,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      serviceIds: payload.serviceIds,
+      occurrences: payload.occurrences || [],
+      assignments: payload.assignments,
+      attendance: payload.attendance,
+      archivedAt: selectedSchedule?.archivedAt || null,
+    };
+    const conflicts = Object.entries(payload.assignments).flatMap(
+      ([occurrenceId, row]) => {
+        const memberIds = new Set(
+          Object.values(row || {}).flatMap(getCellMemberIds),
+        );
+        return [...memberIds].flatMap((memberId) =>
+          findCrossTeamScheduleOccurrenceConflicts({
+            schedule: scheduleForConflict,
+            occurrenceId,
+            memberId,
+            schedules,
+            teams: activeTeams,
+          }),
+        );
+      },
+    );
+    return formatCrossTeamScheduleConflictWarning(conflicts);
+  };
+
+  const saveSchedule = async (allowCrossTeamConflict = false) => {
     if (!canEdit) return;
     const currentDraft = draftRef.current;
     onDraftFlush(draftKey, currentDraft);
-    setSaving(true);
     try {
       const occurrences = generateScheduleOccurrences({
         services,
@@ -208,7 +285,13 @@ const ScheduleEditForm = ({
         occurrences,
         assignments,
         attendance,
+        ...(allowCrossTeamConflict ? { allowCrossTeamConflict: true } : {}),
       };
+      const conflictWarning = getScheduleSaveConflictWarning(payload);
+      if (conflictWarning && !allowCrossTeamConflict) {
+        setScheduleConflictWarning(conflictWarning);
+        return;
+      }
       const saveToastMessage = formatScheduleSaveToast(selectedSchedule, payload, {
         teamNameById: new Map(
           activeTeams.map((team) => [team.teamId, team.name]),
@@ -217,6 +300,7 @@ const ScheduleEditForm = ({
           services.map((service) => [service.serviceId, service.name]),
         ),
       });
+      setSaving(true);
       const localScheduleId =
         selectedSchedule?.scheduleId || `local-schedule-${generateRandomId()}`;
       const optimisticSchedule: TeamSchedule = {
@@ -248,6 +332,7 @@ const ScheduleEditForm = ({
       }
       setSelectedScheduleId(response.schedule.scheduleId);
       showToast(saveToastMessage, "success");
+      setScheduleConflictWarning("");
       onCancel();
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this schedule.");
@@ -368,11 +453,7 @@ const ScheduleEditForm = ({
             <div className="lg:col-span-2">
               <MultiCheckboxGroup
                 label="Services"
-                options={services.map((service) => ({
-                  id: service.serviceId,
-                  label: [service.name, formatServiceTiming(service)].filter(Boolean).join(" - "),
-                  archived: Boolean(service.archivedAt),
-                }))}
+                options={serviceOptions}
                 value={draft.serviceIds}
                 onChange={(serviceIds) => setDraft((current) => ({ ...current, serviceIds }))}
               />
@@ -381,8 +462,8 @@ const ScheduleEditForm = ({
               </p>
               {isCopy ? (
                 <p className="mt-1 text-xs text-gray-400">
-                  Set the new date range and the assignments will move to the matching
-                  services. Attendance starts fresh.
+                  Set the new date range. Assignments stay with matching services and
+                  move to replacement services when needed. Attendance starts fresh.
                 </p>
               ) : null}
             </div>
@@ -412,6 +493,46 @@ const ScheduleEditForm = ({
         message="Permanently delete the schedule"
         warningMessage="This cannot be undone, including all of its assignments. Archive instead to keep a record."
       />
+      <Modal
+        isOpen={Boolean(scheduleConflictWarning)}
+        onClose={() => setScheduleConflictWarning("")}
+        title="Schedule conflict"
+        size="sm"
+        description="Confirm whether to save this schedule despite a team conflict."
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-200">
+            This schedule includes someone who is{" "}
+            {scheduleConflictWarning
+              ? scheduleConflictWarning.charAt(0).toLowerCase() +
+              scheduleConflictWarning.slice(1)
+              : "already scheduled on another team"}{" "}
+            for the same service.
+          </p>
+          <p className="text-sm text-gray-400">
+            Confirm if this is intentional.
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="tertiary"
+              onClick={() => setScheduleConflictWarning("")}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                setScheduleConflictWarning("");
+                void saveSchedule(true);
+              }}
+            >
+              Save anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 };

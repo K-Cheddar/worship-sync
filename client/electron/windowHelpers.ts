@@ -26,7 +26,7 @@ const OAUTH_POPUP_HOST_PATTERNS = [
   /^account\.live\.com$/i,
 ];
 
-const shouldOpenAuthPopupInApp = (targetUrl: string): boolean => {
+const isAuthPopupUrl = (targetUrl: string): boolean => {
   try {
     const target = new URL(targetUrl);
     if (target.protocol !== "https:") return false;
@@ -39,9 +39,6 @@ const shouldOpenAuthPopupInApp = (targetUrl: string): boolean => {
 };
 
 const AUTH_HANDLER_PATH = "/__/auth/handler";
-const AUTH_POPUP_CLOSE_DELAY_MS = 800;
-const authPopupLifecycleAttached = new WeakSet<WebContents>();
-
 const hasAuthCompletionSignals = (value: string): boolean => {
   const normalized = value.toLowerCase();
   return (
@@ -92,44 +89,6 @@ export const isLikelyAuthPopupCompletionUrl = (
   return false;
 };
 
-const attachAuthPopupLifecycle = (parentContents: WebContents): void => {
-  if (authPopupLifecycleAttached.has(parentContents)) {
-    return;
-  }
-  authPopupLifecycleAttached.add(parentContents);
-
-  parentContents.on("did-create-window", (popupWindow, details) => {
-    if (!shouldOpenAuthPopupInApp(details.url)) {
-      return;
-    }
-
-    const safeClosePopup = () => {
-      if (!popupWindow.isDestroyed()) {
-        popupWindow.close();
-      }
-    };
-
-    const parentWindow = BrowserWindow.fromWebContents(parentContents);
-    if (parentWindow && !parentWindow.isDestroyed()) {
-      parentWindow.once("closed", safeClosePopup);
-    }
-
-    popupWindow.webContents.on("did-fail-load", () => {
-      safeClosePopup();
-    });
-
-    popupWindow.webContents.on("did-navigate", (_event, navigatedUrl) => {
-      if (
-        isLikelyAuthPopupCompletionUrl(parentContents.getURL(), navigatedUrl)
-      ) {
-        setTimeout(() => {
-          safeClosePopup();
-        }, AUTH_POPUP_CLOSE_DELAY_MS);
-      }
-    });
-  });
-};
-
 /**
  * Only same-app child windows should inherit the WorshipSync session partition and preload.
  * External links should open in the OS browser instead of receiving app privileges.
@@ -164,7 +123,6 @@ export const setupSharedSessionWindowOpenHandler = (
   webContents: WebContents,
   electronMainDirname: string,
 ): void => {
-  attachAuthPopupLifecycle(webContents);
   webContents.setWindowOpenHandler(({ url }) => {
     if (shouldUseSharedSessionChildWindow(webContents.getURL(), url)) {
       return {
@@ -175,26 +133,10 @@ export const setupSharedSessionWindowOpenHandler = (
       };
     }
 
-    if (shouldOpenAuthPopupInApp(url)) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          parent: BrowserWindow.fromWebContents(webContents) || undefined,
-          modal: false,
-          autoHideMenuBar: true,
-          show: true,
-          width: 520,
-          height: 720,
-          webPreferences: {
-            partition: WORSHIPSYNC_SESSION_PARTITION,
-            preload: undefined,
-            nodeIntegration: false,
-            contextIsolation: true,
-            sandbox: true,
-            backgroundThrottling: false,
-          },
-        },
-      };
+    if (isAuthPopupUrl(url)) {
+      // Desktop provider sign-in uses the explicit browser broker flow.
+      // Renderer-created OAuth popups can trip Electron's sandbox bootstrap.
+      return { action: "deny" };
     }
 
     try {

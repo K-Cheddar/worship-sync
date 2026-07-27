@@ -209,7 +209,7 @@ Prefer existing patterns already used in the client:
 - Existing Electron preload boundary for privileged APIs
 - Existing `DisplayWindow` and preview architecture for rendering
 - Existing test style with Jest and Testing Library
-- Reusable shared UI components (for example `Button`, `Input`, `Select`, and other primitives already in `client/src/components`) instead of ad hoc markup when something suitable already exists
+- Reusable shared UI components (`Button`, `Input`, `Select`, and other primitives in `client/src/components`) instead of ad hoc markup when something suitable already exists. Icon-only controls still use `Button` with `svg` + `aria-label` — do not reach for a raw `<button>` for that case.
 
 **Operator UI density (live controllers and moderator surfaces)**
 

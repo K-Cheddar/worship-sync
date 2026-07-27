@@ -724,6 +724,294 @@ test("schedule assignments block duplicate positions and unavailable members", a
   assert.match(blockedUnavailable.payload.errorMessage, /unavailable/i);
 });
 
+test("schedule assignments require confirmation for cross-team service conflicts", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("cross_team_conflict");
+
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+    members: [{ firstName: "Avery", lastName: "Stone", positions: ["Vocal"] }],
+  });
+  const productionTeam = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Production", memberIds: [] },
+  });
+  const productionTeamId = productionTeam.payload.team.teamId;
+  const cameraPosition = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Camera", icon: "Camera", teamId: productionTeamId },
+  });
+  const cameraId = cameraPosition.payload.position.positionId;
+  const averyId = worship.memberIds.Avery;
+  await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId: averyId },
+    body: {
+      firstName: "Avery",
+      lastName: "Stone",
+      positionIds: [worship.positionIds.Vocal, cameraId],
+      blockoutDates: [],
+    },
+  });
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: productionTeamId },
+    body: { name: "Production", memberIds: [averyId] },
+  });
+
+  const occurrenceId = "svc@2026-07-05T10:00:00.000Z";
+  const occurrence = {
+    occurrenceId,
+    serviceId: "svc",
+    name: "Sunday",
+    startsAt: "2026-07-05T10:00:00.000Z",
+  };
+  const worshipSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Worship July",
+      teamId: worship.teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [occurrence],
+    },
+  });
+  const productionSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Production July",
+      teamId: productionTeamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [occurrence],
+    },
+  });
+
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: worshipSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${worship.positionIds.Vocal}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-05",
+    },
+  });
+
+  const blocked = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: productionSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${cameraId}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-05",
+    },
+  });
+  assert.equal(blocked.statusCode, 409);
+  assert.match(blocked.payload.errorMessage, /already scheduled on another team/i);
+
+  const confirmed = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: productionSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${cameraId}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-05",
+      allowCrossTeamConflict: true,
+    },
+  });
+  assert.equal(confirmed.statusCode, 200);
+  assert.equal(
+    getMemberId(
+      confirmed.payload.schedule.assignments?.[occurrenceId]?.[`${cameraId}::0`],
+    ),
+    averyId,
+  );
+
+  const copiedScheduleBlocked = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Production Copy",
+      teamId: productionTeamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [occurrence],
+      assignments: {
+        [occurrenceId]: {
+          [`${cameraId}::0`]: { primaryMemberId: averyId },
+        },
+      },
+    },
+  });
+  assert.equal(copiedScheduleBlocked.statusCode, 409);
+
+  const copiedScheduleConfirmed = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Production Copy",
+      teamId: productionTeamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [occurrence],
+      assignments: {
+        [occurrenceId]: {
+          [`${cameraId}::0`]: { primaryMemberId: averyId },
+        },
+      },
+      allowCrossTeamConflict: true,
+    },
+  });
+  assert.equal(copiedScheduleConfirmed.statusCode, 200);
+});
+
+test("cross-team conflict checks ignore same team, different dates, and archived schedules", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("cross_team_no_conflict");
+
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+    members: [{ firstName: "Avery", lastName: "Stone", positions: ["Vocal"] }],
+  });
+  const productionTeam = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Production", memberIds: [] },
+  });
+  const productionTeamId = productionTeam.payload.team.teamId;
+  const cameraPosition = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Camera", teamId: productionTeamId },
+  });
+  const cameraId = cameraPosition.payload.position.positionId;
+  const averyId = worship.memberIds.Avery;
+  await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId: averyId },
+    body: {
+      firstName: "Avery",
+      lastName: "Stone",
+      positionIds: [worship.positionIds.Vocal, cameraId],
+      blockoutDates: [],
+    },
+  });
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: productionTeamId },
+    body: { name: "Production", memberIds: [averyId] },
+  });
+
+  const firstOccurrence = {
+    occurrenceId: "svc@2026-07-05T10:00:00.000Z",
+    serviceId: "svc",
+    name: "Sunday",
+    startsAt: "2026-07-05T10:00:00.000Z",
+  };
+  const secondOccurrence = {
+    occurrenceId: "svc@2026-07-12T10:00:00.000Z",
+    serviceId: "svc",
+    name: "Sunday",
+    startsAt: "2026-07-12T10:00:00.000Z",
+  };
+
+  const archivedSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Archived Production",
+      teamId: productionTeamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [firstOccurrence],
+      assignments: {
+        [firstOccurrence.occurrenceId]: {
+          [`${cameraId}::0`]: { primaryMemberId: averyId },
+        },
+      },
+    },
+  });
+  assert.equal(archivedSchedule.statusCode, 200);
+  await callHandler(authHandlers.archiveTeamSchedule, {
+    context,
+    params: { scheduleId: archivedSchedule.payload.schedule.scheduleId },
+  });
+
+  const worshipSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Worship",
+      teamId: worship.teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [firstOccurrence],
+    },
+  });
+  const sameTeamSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Worship same team",
+      teamId: worship.teamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [firstOccurrence],
+    },
+  });
+  const differentDateSchedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Production different date",
+      teamId: productionTeamId,
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: ["svc"],
+      occurrences: [secondOccurrence],
+    },
+  });
+
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: worshipSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: firstOccurrence.occurrenceId,
+      positionSlotKey: `${worship.positionIds.Vocal}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-05",
+    },
+  });
+
+  const sameTeam = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: sameTeamSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: firstOccurrence.occurrenceId,
+      positionSlotKey: `${worship.positionIds.Vocal}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-05",
+    },
+  });
+  assert.equal(sameTeam.statusCode, 200);
+
+  const differentDate = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: differentDateSchedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: secondOccurrence.occurrenceId,
+      positionSlotKey: `${cameraId}::0`,
+      memberId: averyId,
+      serviceDate: "2026-07-12",
+    },
+  });
+  assert.equal(differentDate.statusCode, 200);
+});
+
 test("schedule assignment swaps update both cells atomically", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("assignment_swap");

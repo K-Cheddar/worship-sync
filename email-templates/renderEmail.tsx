@@ -44,6 +44,7 @@ export async function renderInviteAcceptedAdminEmail(props: {
   acceptedEmail: string;
   churchName: string;
   role: string;
+  accessLines?: string[];
   managePeopleUrl: string;
 }) {
   return renderEmailHtmlAndText(<InviteAcceptedAdminEmail {...props} />);

@@ -267,6 +267,8 @@ const IntakeManager = ({
     () =>
       draft.startDate && draft.endDate
         ? filterServicesWithOccurrencesInRange({
+          // A service remains discoverable after its recurrence ends. Its own
+          // date bounds decide whether it can produce an occurrence in this form.
           services: services.filter(isActive),
           startDate: draft.startDate,
           endDate: draft.endDate,

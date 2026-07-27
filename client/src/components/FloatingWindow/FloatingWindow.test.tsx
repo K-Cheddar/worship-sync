@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import FloatingWindow from "./FloatingWindow";
 import { FloatingWindowZIndexProvider } from "./FloatingWindowZIndexContext";
 
@@ -83,5 +83,54 @@ describe("FloatingWindow", () => {
 
     expect(windowEl).not.toHaveStyle({ maxHeight: "300px" });
     expect(windowEl.style.maxHeight).toBe("");
+  });
+
+  it("opens a new window above an existing one", () => {
+    render(
+      <FloatingWindowZIndexProvider>
+        <FloatingWindow title="First" onClose={jest.fn()}>
+          <p>One</p>
+        </FloatingWindow>
+        <FloatingWindow title="Second" onClose={jest.fn()}>
+          <p>Two</p>
+        </FloatingWindow>
+      </FloatingWindowZIndexProvider>,
+    );
+
+    const [first, second] = screen.getAllByTestId("floating-window");
+    const firstZ = Number(first.style.zIndex);
+    const secondZ = Number(second.style.zIndex);
+    expect(secondZ).toBeGreaterThan(firstZ);
+  });
+
+  it("shows a dock to switch between open windows", () => {
+    render(
+      <FloatingWindowZIndexProvider>
+        <FloatingWindow title="First" onClose={jest.fn()}>
+          <p>One</p>
+        </FloatingWindow>
+        <FloatingWindow title="Second" onClose={jest.fn()}>
+          <p>Two</p>
+        </FloatingWindow>
+      </FloatingWindowZIndexProvider>,
+    );
+
+    const dock = screen.getByTestId("floating-window-dock");
+    expect(within(dock).getByRole("button", { name: "First" })).toBeInTheDocument();
+    expect(within(dock).getByRole("button", { name: "Second" })).toBeInTheDocument();
+
+    const [first, second] = screen.getAllByTestId("floating-window");
+    fireEvent.click(within(dock).getByRole("button", { name: "First" }));
+
+    expect(Number(first.style.zIndex)).toBeGreaterThan(Number(second.style.zIndex));
+    expect(within(dock).getByRole("button", { name: "First" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("hides the dock when only one window is open", () => {
+    renderWindow();
+    expect(screen.queryByTestId("floating-window-dock")).not.toBeInTheDocument();
   });
 });

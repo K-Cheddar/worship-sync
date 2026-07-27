@@ -1,4 +1,4 @@
-import { useCallback, useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
@@ -32,13 +32,14 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
-import {
-  formatQualificationAreaSaveToast,
-  formatQualificationLevelSaveToast,
-} from "../teamsSaveToasts";
+import { formatQualificationLevelSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
+
+// Key used to track an in-flight save for the create form, which has no area id
+// yet. Existing areas are tracked by their own areaId.
+const CREATE_SAVING_KEY = "__create__";
 
 type QualificationManagerProps = {
   areas: TeamQualificationArea[];
@@ -81,9 +82,19 @@ const QualificationManager = ({
   const [newLevelName, setNewLevelName] = useState("");
   const [newLevelRank, setNewLevelRank] = useState("1");
   const [levelSavingKey, setLevelSavingKey] = useState("");
-  const [saving, setSaving] = useState(false);
+  // Areas with a save currently in flight, keyed by areaId (or CREATE_SAVING_KEY
+  // for a new area). Tracking per-editor keeps the Save spinner on the area
+  // actually saving and lets editing continue back-to-back in the background.
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  // Mirrors `editing` so an in-flight save can tell, on completion, whether the
+  // operator has since switched areas — without rebinding the panel or clobbering
+  // the other area's level drafts.
+  const editingRef = useRef<TeamQualificationArea | null>(null);
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
 
   const applyTeamId = useCallback((nextTeamId: string) => {
     setSelectedTeamId(nextTeamId);
@@ -193,8 +204,13 @@ const QualificationManager = ({
       showToast("Create a team first, then add qualification areas.", "neutral");
       return;
     }
-    setSaving(true);
-    const localAreaId = editing?.areaId || `local-area-${generateRandomId()}`;
+    const wasEditing = editing;
+    const savingKey = wasEditing?.areaId ?? CREATE_SAVING_KEY;
+    // Ignore a repeat submit for the same editor while its save is pending —
+    // this prevents a fast double-click on "Create" from making duplicates.
+    if (savingIds.has(savingKey)) return;
+    setSavingIds((prev) => new Set(prev).add(savingKey));
+    const localAreaId = wasEditing?.areaId || `local-area-${generateRandomId()}`;
     const payload: TeamQualificationAreaPayload = {
       teamId: areaTeamId,
       name: draft.name.trim(),
@@ -206,34 +222,48 @@ const QualificationManager = ({
       teamId: areaTeamId,
       name: payload.name,
       description: payload.description,
-      archivedAt: editing?.archivedAt || null,
+      archivedAt: wasEditing?.archivedAt || null,
     };
-    onAreaSaved(editing ? { ...editing, ...optimisticArea } : optimisticArea);
-    const saveToastMessage = formatQualificationAreaSaveToast(editing, payload);
+    onAreaSaved(wasEditing ? { ...wasEditing, ...optimisticArea } : optimisticArea);
     try {
-      const response = editing
-        ? await updateTeamQualificationArea(churchId, editing.areaId, payload)
+      const response = wasEditing
+        ? await updateTeamQualificationArea(churchId, wasEditing.areaId, payload)
         : await createTeamQualificationArea(churchId, payload);
-      if (!editing) {
+      if (!wasEditing) {
         onAreaSaved(response.area, localAreaId);
+      }
+      // Reached via a cross-section link: return to the origin. Otherwise keep
+      // the panel open. The operator may have switched areas while this save was
+      // in flight, so only rebind the panel (and touch level drafts) when
+      // they're still on the area this save belongs to.
+      if (returnTo) {
+        finishEditing(reset);
+      } else if (wasEditing) {
+        if (editingRef.current?.areaId === wasEditing.areaId) {
+          setEditing(response.area);
+        }
+      } else if (editingRef.current === null) {
+        // Newly created and still on the create form: adopt the created area so
+        // its levels can be added and a subsequent Save updates it.
         setEditing(response.area);
         resetLevelDrafts(response.area);
-      } else {
-        setEditing(response.area);
-        if (returnTo) {
-          finishEditing(reset);
-        } else {
-          reset();
-        }
       }
-      showToast(saveToastMessage, "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification area.");
       onArchived();
     } finally {
-      setSaving(false);
+      setSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(savingKey);
+        return next;
+      });
     }
   };
+
+  // The panel shows one editor at a time; its Save state reflects only the area
+  // currently open, so a background save elsewhere never spins or disables it.
+  const currentEditorKey = editing ? editing.areaId : CREATE_SAVING_KEY;
+  const isSavingCurrent = savingIds.has(currentEditorKey);
 
   const saveLevel = async (levelId?: string) => {
     if (!canEdit || !editing) return;
@@ -426,8 +456,8 @@ const QualificationManager = ({
             saveLabel="Save area"
             onSave={() => void submitArea()}
             onCancel={cancelEditing}
-            disabled={!canEdit || !draft.name.trim()}
-            isLoading={saving}
+            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            isLoading={isSavingCurrent}
           />
         }
       >

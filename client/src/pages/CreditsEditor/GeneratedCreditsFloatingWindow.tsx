@@ -128,6 +128,7 @@ const GeneratedCreditsFloatingWindow = () => {
           </span>
         </span>
       }
+      label="Generated Credits"
       onClose={handleClose}
       defaultPosition={defaultPosition}
       defaultWidth={windowWidth}

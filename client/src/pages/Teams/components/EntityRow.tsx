@@ -23,6 +23,8 @@ type EntityRowProps = {
   note?: string;
   icon?: string;
   archived?: boolean;
+  /** Soft-inactive (e.g. past end date). Shown when not archived. */
+  inactive?: boolean;
   /** Compact row: smaller title, hides note. */
   compact?: boolean;
   /** Opens edit mode; the row becomes fully clickable with a hover affordance. */
@@ -52,6 +54,7 @@ const EntityRow = ({
   note,
   icon,
   archived,
+  inactive,
   compact = false,
   onTitleClick,
   onEdit,
@@ -106,6 +109,10 @@ const EntityRow = ({
       {archived ? (
         <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-xs text-gray-300">
           Archived
+        </span>
+      ) : inactive ? (
+        <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-xs text-gray-300">
+          Inactive
         </span>
       ) : null}
       {showInlineBadge ? headerBadge : null}

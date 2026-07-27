@@ -13,6 +13,7 @@ import ScheduleSlotContextHeader from "./ScheduleSlotContextHeader";
 import { useScheduleMemberPicker } from "./useScheduleMemberPicker";
 import {
   formatBlockoutDateRangeLabel,
+  filterBlockoutDatesForScheduleRange,
   getScheduleMemberPositionNames,
   memberMatchesScheduleQuery,
   scheduleMemberName,
@@ -36,6 +37,8 @@ type ScheduleMembersPanelProps = {
   mode: ScheduleMembersPanelMode;
   activeTeamMembers: TeamRosterMember[];
   schedulePositions: TeamPosition[];
+  scheduleStartDate?: string;
+  scheduleEndDate?: string;
   scheduleAssignmentCounts: Map<string, number>;
   recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   duplicateFirstNames: Set<string>;
@@ -69,6 +72,8 @@ const ScheduleMembersPanel = ({
   mode,
   activeTeamMembers,
   schedulePositions,
+  scheduleStartDate,
+  scheduleEndDate,
   scheduleAssignmentCounts,
   recommendationStats,
   duplicateFirstNames,
@@ -112,7 +117,11 @@ const ScheduleMembersPanel = ({
 
   const renderMemberDetails = (member: TeamRosterMember) => {
     const positionNames = getScheduleMemberPositionNames(member, schedulePositions);
-    const blockoutDates = member.blockoutDates || [];
+    const blockoutDates = filterBlockoutDatesForScheduleRange(
+      member.blockoutDates,
+      scheduleStartDate,
+      scheduleEndDate,
+    );
     const dateOfBirth = member.dateOfBirth
       ? parsePlainDate(member.dateOfBirth)?.toLocaleDateString(undefined, {
         month: "long",
@@ -351,7 +360,7 @@ const ScheduleMembersPanel = ({
                 ) : null}
               </div>
               <EntityListSearch
-                label={isAssignMode ? "Search members to assign" : "Members"}
+                label={isAssignMode ? "Members to assign" : "Members"}
                 value={searchValue}
                 onChange={onSearchChange}
               />

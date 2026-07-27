@@ -8,9 +8,9 @@ import {
   getCellPrimaryMemberId,
   getCellShadowAssignments,
   scheduleMemberName,
-  shadowKindLabel,
 } from "../teamsUtils";
 import ScheduleAssignmentCell from "./ScheduleAssignmentCell";
+import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 import {
   scheduleCellPaddingClassName,
@@ -39,7 +39,7 @@ const ScheduleGridCell = memo(({
   occurrenceId,
   occurrenceName,
   columnKey,
-  positionId: _positionId,
+  positionId,
   columnLabel,
   rowTone,
   slot,
@@ -128,13 +128,15 @@ const ScheduleGridCell = memo(({
                 (item) => item.memberId === shadow.memberId,
               );
               return (
-                <span
+                <ScheduleShadowChip
                   key={`${shadow.kind}-${shadow.memberId}`}
-                  className="block truncate rounded-lg border border-amber-300/35 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-50"
-                >
-                  {shadowKindLabel(shadow.kind)}:{" "}
-                  {scheduleMemberName(member, duplicateFirstNames)}
-                </span>
+                  occurrenceId={occurrenceId}
+                  cellKey={columnKey}
+                  positionId={positionId}
+                  shadow={shadow}
+                  memberName={scheduleMemberName(member, duplicateFirstNames)}
+                  canEdit={canEdit}
+                />
               );
             })}
           </div>

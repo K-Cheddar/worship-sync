@@ -39,13 +39,16 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
-import { formatPositionSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
 
 type PositionDraft = { name: string; description: string; icon: string };
+
+// Key used to track an in-flight save for the create form, which has no
+// position id yet. Existing positions are tracked by their own positionId.
+const CREATE_SAVING_KEY = "__create__";
 
 type PositionManagerProps = {
   positions: TeamPosition[];
@@ -79,7 +82,11 @@ const PositionManager = ({
   const [deleting, setDeleting] = useState<TeamPosition | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [draft, setDraft] = useState<PositionDraft>({ name: "", description: "", icon: "" });
-  const [saving, setSaving] = useState(false);
+  // Positions with a save currently in flight, keyed by positionId (or
+  // CREATE_SAVING_KEY for a new position). Tracking per-editor keeps the Save
+  // spinner on the position actually saving and lets editing continue
+  // back-to-back while a background save resolves.
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
 
@@ -159,8 +166,13 @@ const PositionManager = ({
       showToast("Create a team first, then add its positions.", "neutral");
       return;
     }
-    setSaving(true);
-    const localPositionId = editing?.positionId || `local-position-${generateRandomId()}`;
+    const wasEditing = editing;
+    const savingKey = wasEditing?.positionId ?? CREATE_SAVING_KEY;
+    // Ignore a repeat submit for the same editor while its save is pending —
+    // this prevents a fast double-click on "Create" from making duplicates.
+    if (savingIds.has(savingKey)) return;
+    setSavingIds((prev) => new Set(prev).add(savingKey));
+    const localPositionId = wasEditing?.positionId || `local-position-${generateRandomId()}`;
     const payload = {
       name: draft.name.trim(),
       description: draft.description || "",
@@ -174,26 +186,56 @@ const PositionManager = ({
       name: payload.name,
       description: payload.description,
       icon: payload.icon,
-      archivedAt: editing?.archivedAt || null,
+      archivedAt: wasEditing?.archivedAt || null,
     };
-    onSaved(editing ? { ...editing, ...optimisticPosition } : optimisticPosition);
-    const saveToastMessage = formatPositionSaveToast(editing, payload);
+    const savedRecord = wasEditing
+      ? { ...wasEditing, ...optimisticPosition }
+      : optimisticPosition;
+    onSaved(savedRecord);
     try {
-      const response = editing
-        ? await updateTeamPosition(churchId, editing.positionId, payload)
+      const response = wasEditing
+        ? await updateTeamPosition(churchId, wasEditing.positionId, payload)
         : await createTeamPosition(churchId, payload);
-      if (!editing) {
+      if (!wasEditing) {
         onSaved(response.position, localPositionId);
       }
-      showToast(saveToastMessage, "success");
-      finishEditing(reset);
+      // When editing was reached via a cross-section link, saving should return
+      // the operator to where they came from. Otherwise keep the panel open so
+      // they can keep editing positions back-to-back without reopening it.
+      if (returnTo) {
+        finishEditing(reset);
+      } else if (wasEditing) {
+        // The operator may have switched to a different position while this save
+        // was in flight. Only refresh the selected record if they're still on
+        // the one we just saved; otherwise leave their current edit untouched so
+        // the panel never rebinds to a stale position and overwrites another.
+        setEditing((current) =>
+          current?.positionId === wasEditing.positionId ? savedRecord : current,
+        );
+      } else {
+        // Newly created: adopt the saved record so a subsequent Save updates it
+        // instead of creating a duplicate — but only if the create form is still
+        // the active editor and the operator hasn't selected another position.
+        const created = response.position;
+        setEditing((current) => (current === null ? created : current));
+      }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this position.");
       onArchived();
     } finally {
-      setSaving(false);
+      setSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(savingKey);
+        return next;
+      });
     }
   };
+
+  // The panel shows one editor at a time; its Save state reflects only the
+  // position currently open, so a background save elsewhere never spins or
+  // disables this button.
+  const currentEditorKey = editing ? editing.positionId : CREATE_SAVING_KEY;
+  const isSavingCurrent = savingIds.has(currentEditorKey);
 
   const openPositionEditor = (position: TeamPosition) => {
     setEditing(position);
@@ -353,8 +395,8 @@ const PositionManager = ({
             saveLabel="Save position"
             onSave={() => void submit()}
             onCancel={cancelEditing}
-            disabled={!canEdit || !draft.name.trim()}
-            isLoading={saving}
+            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            isLoading={isSavingCurrent}
           />
         }
       >

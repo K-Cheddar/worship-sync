@@ -653,6 +653,58 @@ export const formatBlockoutDateRangeLabel = (range: TeamBlockoutDateRange) => {
   return `${formatBlockoutDisplayDate(range.startDate)} – ${formatBlockoutDisplayDate(endDate)}`;
 };
 
+const plainDateRangesOverlap = (
+  rangeAStart: string,
+  rangeAEnd: string,
+  rangeBStart: string,
+  rangeBEnd: string,
+) => rangeAStart <= rangeBEnd && rangeAEnd >= rangeBStart;
+
+const clipBlockoutDateRangeToSchedule = (
+  range: TeamBlockoutDateRange,
+  scheduleStartDate: string,
+  scheduleEndDate: string,
+): TeamBlockoutDateRange | null => {
+  const blockoutEnd = range.endDate || range.startDate;
+  if (!range.startDate) return null;
+  if (
+    !plainDateRangesOverlap(
+      range.startDate,
+      blockoutEnd,
+      scheduleStartDate,
+      scheduleEndDate,
+    )
+  ) {
+    return null;
+  }
+  const clippedStart =
+    range.startDate < scheduleStartDate ? scheduleStartDate : range.startDate;
+  const clippedEnd =
+    blockoutEnd > scheduleEndDate ? scheduleEndDate : blockoutEnd;
+  return {
+    ...range,
+    startDate: clippedStart,
+    endDate: clippedEnd,
+  };
+};
+
+/** Limits member blockouts to the portion that overlaps the active schedule window. */
+export const filterBlockoutDatesForScheduleRange = (
+  blockoutDates: TeamBlockoutDateRange[] | undefined,
+  scheduleStartDate?: string,
+  scheduleEndDate?: string,
+): TeamBlockoutDateRange[] => {
+  const ranges = blockoutDates || [];
+  const scheduleStart = scheduleStartDate || scheduleEndDate || "";
+  const scheduleEnd = scheduleEndDate || scheduleStartDate || "";
+  if (!scheduleStart || !scheduleEnd) return ranges;
+  return ranges
+    .map((range) =>
+      clipBlockoutDateRangeToSchedule(range, scheduleStart, scheduleEnd),
+    )
+    .filter((range): range is TeamBlockoutDateRange => range !== null);
+};
+
 export const countScheduleAssignmentsForMember = (
   assignments: TeamSchedule["assignments"] | undefined,
   memberId: string,
@@ -788,17 +840,55 @@ export const entityStatus = (archivedAt?: string | null) =>
 export const isActive = (item: { archivedAt?: string | null }) =>
   !item.archivedAt;
 
+/** True when today is after the service's inclusive end date. */
+export const isServicePastEnd = (
+  service: { endDateISO?: string },
+  now: Date = new Date(),
+) => {
+  if (!service.endDateISO) return false;
+  const end = parsePlainDate(service.endDateISO);
+  if (!end) return false;
+  end.setHours(23, 59, 59, 999);
+  const current = now instanceof Date ? now : new Date();
+  return current.getTime() > end.getTime();
+};
+
+/**
+ * Legacy current-date status helper. Date-bounded service selection must use
+ * `filterServicesWithOccurrencesInRange` so planned historical or future
+ * ranges remain available.
+ */
+export const isServiceActive = (
+  service: { archivedAt?: string | null; endDateISO?: string },
+  now: Date = new Date(),
+) => isActive(service) && !isServicePastEnd(service, now);
+
 export const formatServiceTiming = (service?: TeamService | null) => {
   if (!service) return "";
   if (service.reccurence === "one_time")
     return formatOneTime(service.dateTimeISO);
   if (service.reccurence === "weekly")
-    return formatWeekly(service.dayOfWeek, service.time);
+    return formatWeekly(
+      service.dayOfWeek,
+      service.time,
+      service.startDateISO,
+      service.endDateISO,
+    );
   if (service.reccurence === "multi_weekly") {
-    return formatMultiWeekly(service.daysOfWeek, service.endDateISO);
+    return formatMultiWeekly(
+      service.daysOfWeek,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   if (service.reccurence === "monthly") {
-    return formatMonthly(service.ordinal, service.weekday, service.time);
+    return formatMonthly(
+      service.ordinal,
+      service.weekday,
+      service.time,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   return "";
 };
@@ -1067,6 +1157,14 @@ export const buildServiceTimeUpdate = (
     reccurence: recurrence,
   };
 
+  const bounds =
+    recurrence === "one_time"
+      ? {}
+      : {
+          startDateISO: draft.startDateISO || undefined,
+          endDateISO: draft.endDateISO || undefined,
+        };
+
   if (recurrence === "one_time") {
     return { ...base, dateTimeISO: draft.dateTimeISO || "" };
   }
@@ -1074,7 +1172,7 @@ export const buildServiceTimeUpdate = (
     return {
       ...base,
       daysOfWeek: draft.daysOfWeek || [],
-      endDateISO: draft.endDateISO || undefined,
+      ...bounds,
     };
   }
   if (recurrence === "monthly") {
@@ -1083,12 +1181,14 @@ export const buildServiceTimeUpdate = (
       ordinal: (draft.ordinal as MonthWeekOrdinal) || 1,
       weekday: (draft.weekday as Weekday) ?? 3,
       time: draft.time || "10:00",
+      ...bounds,
     };
   }
   return {
     ...base,
     dayOfWeek: (draft.dayOfWeek as Weekday) ?? 0,
     time: draft.time || "10:00",
+    ...bounds,
   };
 };
 

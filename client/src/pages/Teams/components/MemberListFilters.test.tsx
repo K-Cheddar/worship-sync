@@ -1,11 +1,56 @@
 import { useState, type ComponentProps } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemberFilterPanel } from "./MemberListFilters";
 import {
+  MemberFilterPanel,
+  MemberListFilterToolbar,
+} from "./MemberListFilters";
+import {
+  countActiveMemberListFilters,
   emptyMemberListFilters,
   type MemberListFilterState,
 } from "../teamsSelectors";
+
+describe("MemberListFilterToolbar", () => {
+  it("shows a clear control only when filters are active", async () => {
+    const user = userEvent.setup();
+    const onClearFilters = jest.fn();
+    const filters = {
+      ...emptyMemberListFilters(),
+      includeArchived: true,
+    };
+
+    const { rerender } = render(
+      <MemberListFilterToolbar
+        listQuery=""
+        onListQueryChange={() => undefined}
+        filters={emptyMemberListFilters()}
+        filtersOpen={false}
+        onFiltersOpenChange={() => undefined}
+        onClearFilters={onClearFilters}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Clear all filters" })).not.toBeInTheDocument();
+
+    rerender(
+      <MemberListFilterToolbar
+        listQuery=""
+        onListQueryChange={() => undefined}
+        filters={filters}
+        filtersOpen={false}
+        onFiltersOpenChange={() => undefined}
+        onClearFilters={onClearFilters}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Filter members, 1 selected" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear all filters" }));
+    expect(onClearFilters).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("MemberFilterPanel", () => {
   const StatefulMemberFilterPanel = ({
@@ -20,6 +65,40 @@ describe("MemberFilterPanel", () => {
       <MemberFilterPanel data={data} value={value} onChange={setValue} />
     );
   };
+
+  it("offers a show-archived control that counts as an active filter", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+
+    render(
+      <MemberFilterPanel
+        data={{
+          teams: [],
+          positions: [],
+          teamRoles: [],
+          qualificationAreas: [],
+          qualificationLevels: [],
+        }}
+        value={emptyMemberListFilters()}
+        onChange={onChange}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: "Show archived members" })).not.toBeChecked();
+    expect(countActiveMemberListFilters(emptyMemberListFilters())).toBe(0);
+
+    await user.click(screen.getByRole("checkbox", { name: "Show archived members" }));
+    expect(onChange).toHaveBeenCalledWith({
+      ...emptyMemberListFilters(),
+      includeArchived: true,
+    });
+    expect(
+      countActiveMemberListFilters({
+        ...emptyMemberListFilters(),
+        includeArchived: true,
+      }),
+    ).toBe(1);
+  });
 
   it("groups scheduling positions and team roles by team without parenthetical labels", async () => {
     const user = userEvent.setup();

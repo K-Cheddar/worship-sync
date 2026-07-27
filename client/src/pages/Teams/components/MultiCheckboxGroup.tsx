@@ -7,6 +7,8 @@ export type MultiCheckboxOption = {
   id: string;
   label: string;
   archived?: boolean;
+  unavailable?: boolean;
+  unavailableLabel?: string;
 };
 
 export type MultiCheckboxOptionSection = {
@@ -37,19 +39,25 @@ const renderCheckboxOptions = (
 ) =>
   options.map((option) => {
     const checked = value.includes(option.id);
+    const unavailable = Boolean(option.archived || option.unavailable);
+    let statusLabel = "";
+    if (option.archived) statusLabel = " (archived)";
+    else if (option.unavailable) {
+      statusLabel = ` (${option.unavailableLabel || "unavailable"})`;
+    }
     return (
       <Checkbox
         key={option.id}
-        className={cn("rounded px-2 py-1", option.archived && "text-gray-400")}
+        className={cn("rounded px-2 py-1", unavailable && "text-gray-400")}
         label={
           <span className="truncate">
             {option.label}
-            {option.archived ? " (archived)" : ""}
+            {statusLabel}
           </span>
         }
         labelClassName="truncate"
         checked={checked}
-        disabled={option.archived && !checked}
+        disabled={unavailable && !checked}
         onCheckedChange={() => {
           onChange(
             checked

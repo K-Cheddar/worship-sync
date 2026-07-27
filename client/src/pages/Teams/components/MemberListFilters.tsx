@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { ListFilter } from "lucide-react";
+import { ListFilter, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import { cn } from "@/utils/cnHelper";
 import type { TeamPosition, TeamRecord, TeamRole } from "../../../api/authTypes";
 import {
@@ -31,6 +32,7 @@ type MemberListFilterToolbarProps = {
   filters: MemberListFilterState;
   filtersOpen: boolean;
   onFiltersOpenChange: (open: boolean) => void;
+  onClearFilters: () => void;
   filtersDisabled?: boolean;
 };
 
@@ -74,6 +76,7 @@ export const MemberListFilterToolbar = ({
   filters,
   filtersOpen,
   onFiltersOpenChange,
+  onClearFilters,
   filtersDisabled = false,
 }: MemberListFilterToolbarProps) => {
   const activeCount = countActiveMemberListFilters(filters);
@@ -87,27 +90,42 @@ export const MemberListFilterToolbar = ({
         value={listQuery}
         onChange={onListQueryChange}
       />
-      <Button
-        type="button"
-        variant="tertiary"
-        svg={ListFilter}
-        iconSize="sm"
-        className={cn(
-          "shrink-0",
-          hasFilter && "border-cyan-400/40 bg-cyan-400/10 text-cyan-50",
-        )}
-        aria-expanded={filtersOpen}
-        aria-controls={MEMBER_FILTER_PANEL_ID}
-        disabled={filtersDisabled}
-        aria-label={
-          hasFilter
-            ? `Filter members, ${activeCount} selected`
-            : "Filter members"
-        }
-        onClick={() => onFiltersOpenChange(!filtersOpen)}
-      >
-        {hasFilter ? `Filter (${activeCount})` : "Filter"}
-      </Button>
+      <div className="flex shrink-0">
+        <Button
+          type="button"
+          variant="tertiary"
+          svg={ListFilter}
+          iconSize="sm"
+          className={cn(
+            hasFilter &&
+            "rounded-r-none border-cyan-400/40 border-r-0 bg-cyan-400/10 text-cyan-50",
+          )}
+          aria-expanded={filtersOpen}
+          aria-controls={MEMBER_FILTER_PANEL_ID}
+          disabled={filtersDisabled}
+          aria-label={
+            hasFilter
+              ? `Filter members, ${activeCount} selected`
+              : "Filter members"
+          }
+          onClick={() => onFiltersOpenChange(!filtersOpen)}
+        >
+          {hasFilter ? `Filter (${activeCount})` : "Filter"}
+        </Button>
+        {hasFilter ? (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={X}
+            iconSize="sm"
+            padding="px-1.5 py-1"
+            className="rounded-l-none border-cyan-400/40 bg-cyan-400/10 text-cyan-50"
+            disabled={filtersDisabled}
+            aria-label="Clear all filters"
+            onClick={onClearFilters}
+          />
+        ) : null}
+      </div>
     </div>
   );
 };
@@ -227,6 +245,13 @@ export const MemberFilterPanel = ({
           </Button>
         </div>
       ) : null}
+      <Checkbox
+        label="Show archived members"
+        checked={value.includeArchived}
+        onCheckedChange={(checked) =>
+          updateFilters({ includeArchived: Boolean(checked) })
+        }
+      />
       <MultiCheckboxGroup
         label="Teams"
         options={teamOptions}

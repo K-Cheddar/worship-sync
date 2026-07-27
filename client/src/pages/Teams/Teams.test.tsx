@@ -13,6 +13,7 @@ import {
   deleteTeamPosition,
   getTeamsBootstrap,
   updateTeam,
+  updateTeamPosition,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentSwap,
 } from "../../api/auth";
@@ -52,6 +53,7 @@ jest.mock("./pages/TeamsFormsPage", () => ({
 jest.mock("../../api/auth", () => ({
   getTeamsBootstrap: jest.fn(),
   createTeamPosition: jest.fn(),
+  updateTeamPosition: jest.fn(),
   updateTeamScheduleAssignment: jest.fn(),
   updateTeamScheduleAssignmentSwap: jest.fn(),
   archiveTeamPosition: jest.fn(),
@@ -72,6 +74,7 @@ jest.mock("../../api/auth", () => ({
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockCreateTeamPosition = jest.mocked(createTeamPosition);
+const mockUpdateTeamPosition = jest.mocked(updateTeamPosition);
 const mockDeleteTeamPosition = jest.mocked(deleteTeamPosition);
 const mockUpdateTeamScheduleAssignment = jest.mocked(
   updateTeamScheduleAssignment,
@@ -87,6 +90,7 @@ const sundayOccurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
 type TeamsBootstrapResponse = Awaited<ReturnType<typeof getTeamsBootstrap>>;
 type TestTeamsBootstrap = TeamsBootstrap & { services?: TeamService[] };
 type CreateTeamPositionResponse = Awaited<ReturnType<typeof createTeamPosition>>;
+type UpdateTeamPositionResponse = Awaited<ReturnType<typeof updateTeamPosition>>;
 type CreateTeamRosterMemberResponse = Awaited<
   ReturnType<typeof createTeamRosterMember>
 >;
@@ -284,6 +288,9 @@ describe("Teams", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     originalMatchMedia = window.matchMedia;
+    // Desktop default: max-width queries do not match, so the schedule grid
+    // (not the board) is the layout under test.
+    window.matchMedia = makeMatchMedia(false);
     mockState = makeMockState();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(baseBootstrap),
@@ -429,6 +436,167 @@ describe("Teams", () => {
         teamId: "team-main",
       });
     });
+  });
+
+  it("keeps the team editor open after saving so teams can be edited back-to-back", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeam.mockResolvedValue({
+      success: true,
+      team: {
+        teamId: "team-main",
+        churchId: "church-1",
+        name: "Main Team Renamed",
+        memberIds: [],
+      },
+    } satisfies UpdateTeamResponse);
+
+    renderTeams("/teams/groups");
+    await screen.findByRole("button", { name: /Edit Main Team/i });
+    await user.click(screen.getByRole("button", { name: /Edit Main Team/i }));
+    expect(
+      await screen.findByRole("heading", { name: /Edit team/i }),
+    ).toBeInTheDocument();
+
+    const nameInput = screen.getByLabelText(/^Name/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, "Main Team Renamed");
+    await user.click(screen.getByRole("button", { name: /Save team/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeam).toHaveBeenCalledWith(
+        "church-1",
+        "team-main",
+        expect.objectContaining({ name: "Main Team Renamed" }),
+      );
+    });
+    // The panel stays open on save so the next team can be edited without
+    // reopening it.
+    expect(screen.getByRole("heading", { name: /Edit team/i })).toBeInTheDocument();
+  });
+
+  it("does not create duplicate positions when Save is double-clicked", async () => {
+    const user = userEvent.setup();
+    let resolveCreate: (value: CreateTeamPositionResponse) => void = () => { };
+    mockCreateTeamPosition.mockImplementation(
+      () =>
+        new Promise<CreateTeamPositionResponse>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    renderTeams("/teams/positions");
+    await screen.findByRole("button", { name: /Create position/i });
+    await user.click(screen.getByRole("button", { name: /Create position/i }));
+    await user.type(screen.getByLabelText(/^Name/i), "Vocal");
+
+    const saveButton = screen.getByRole("button", { name: /Save position/i });
+    await user.click(saveButton);
+    // A second Save while the create is still in flight must be ignored so the
+    // panel staying open can't spawn duplicate positions.
+    await user.click(saveButton);
+    expect(mockCreateTeamPosition).toHaveBeenCalledTimes(1);
+
+    resolveCreate({
+      success: true,
+      position: {
+        positionId: "position-vocal",
+        churchId: "church-1",
+        teamId: "team-main",
+        name: "Vocal",
+        description: "",
+        icon: "",
+      },
+    } satisfies CreateTeamPositionResponse);
+
+    await waitFor(() => {
+      expect(mockCreateTeamPosition).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not rebind the panel to a stale position when an in-flight save resolves after switching", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...baseBootstrap,
+        positions: [
+          {
+            positionId: "position-vocal",
+            churchId: "church-1",
+            teamId: "team-main",
+            name: "Vocal",
+            icon: "mic",
+          },
+          {
+            positionId: "position-keys",
+            churchId: "church-1",
+            teamId: "team-main",
+            name: "Keys",
+            icon: "keys",
+          },
+        ],
+      }),
+    );
+    let resolveVocalSave: (value: UpdateTeamPositionResponse) => void = () => { };
+    mockUpdateTeamPosition.mockImplementation(
+      () =>
+        new Promise<UpdateTeamPositionResponse>((resolve) => {
+          resolveVocalSave = resolve;
+        }),
+    );
+
+    renderTeams("/teams/positions");
+    await screen.findByRole("button", { name: /Edit Vocal/i });
+
+    // Edit Vocal, save, and leave the save in flight.
+    await user.click(screen.getByRole("button", { name: /Edit Vocal/i }));
+    const vocalNameInput = screen.getByLabelText(/^Name/i);
+    await user.clear(vocalNameInput);
+    await user.type(vocalNameInput, "Lead Vocal");
+    await user.click(screen.getByRole("button", { name: /Save position/i }));
+    await waitFor(() => {
+      expect(mockUpdateTeamPosition).toHaveBeenCalledWith(
+        "church-1",
+        "position-vocal",
+        expect.objectContaining({ name: "Lead Vocal" }),
+      );
+    });
+
+    // Switch to another position while the first save is still pending.
+    await user.click(screen.getByRole("button", { name: /Edit Keys/i }));
+    expect(screen.getByLabelText(/^Name/i)).toHaveValue("Keys");
+
+    // The in-flight Vocal save resolves; the panel must stay on Keys.
+    resolveVocalSave({
+      success: true,
+      position: {
+        positionId: "position-vocal",
+        churchId: "church-1",
+        teamId: "team-main",
+        name: "Lead Vocal",
+        icon: "mic",
+      },
+    } satisfies UpdateTeamPositionResponse);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^Name/i)).toHaveValue("Keys");
+    });
+
+    // Editing and saving now must target Keys, never overwrite Vocal.
+    const keysNameInput = screen.getByLabelText(/^Name/i);
+    await user.clear(keysNameInput);
+    await user.type(keysNameInput, "Grand Piano");
+    await user.click(screen.getByRole("button", { name: /Save position/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeamPosition).toHaveBeenLastCalledWith(
+        "church-1",
+        "position-keys",
+        expect.objectContaining({ name: "Grand Piano" }),
+      );
+    });
+    const vocalSaves = mockUpdateTeamPosition.mock.calls.filter(
+      ([, positionId]) => positionId === "position-vocal",
+    );
+    expect(vocalSaves).toHaveLength(1);
   });
 
   it("permanently deletes a position after confirmation", async () => {
@@ -820,7 +988,7 @@ describe("Teams", () => {
 
   it("uses attendance cards instead of the table on narrow screens", async () => {
     const user = userEvent.setup();
-    window.matchMedia = makeMatchMedia(false);
+    window.matchMedia = makeMatchMedia(true);
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -931,7 +1099,7 @@ describe("Teams", () => {
     const payload = mockCreateTeamSchedule.mock.calls[0][1] as TeamSchedulePayload;
     // The copy remaps assignments onto the freshly generated occurrence (its id
     // is timezone-dependent), so assert on the carried-over content, not the key.
-    expect(Object.values(payload.assignments)).toEqual([
+    expect(Object.values(payload.assignments || {})).toEqual([
       { "position-keys::0": { primaryMemberId: "member-avery" } },
     ]);
   });
@@ -1003,6 +1171,7 @@ describe("Teams", () => {
             } as TeamService,
           ]}
           activeTeams={scheduleBootstrap.teams as TeamRecord[]}
+          schedules={scheduleBootstrap.schedules as TeamSchedule[]}
           churchId="church-1"
           canEdit
           onDraftChange={jest.fn()}
