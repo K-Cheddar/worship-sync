@@ -1,6 +1,13 @@
-import type { TeamRosterMember } from "../../../api/authTypes";
+import type {
+  TeamPosition,
+  TeamQualificationLevel,
+  TeamRosterMember,
+} from "../../../api/authTypes";
 import {
   buildScheduleMemberPickerMembers,
+  computeLevelBalanceBoost,
+  getLowestLevelRank,
+  getMemberQualificationLevelRank,
   isSelectableScheduleMember,
   shouldOfferCreateMember,
   shouldShowScheduleMemberEligibilityGroupDivider,
@@ -486,6 +493,108 @@ describe("scheduleMemberPickerUtils", () => {
     });
 
     expect(eligible).toBe(true);
+  });
+
+  it("prefers a member who fixes a lowest-level pairing on a multi-slot position", () => {
+    const cameraPosition: TeamPosition = {
+      positionId: "position-camera",
+      churchId: "c1",
+      teamId: "t1",
+      name: "Camera",
+      qualificationAreaId: "area-camera",
+    };
+    const levels: TeamQualificationLevel[] = [
+      { levelId: "level-1", churchId: "c1", areaId: "area-camera", name: "Level 1", rank: 1 },
+      { levelId: "level-2", churchId: "c1", areaId: "area-camera", name: "Level 2", rank: 2 },
+      { levelId: "level-3", churchId: "c1", areaId: "area-camera", name: "Level 3", rank: 3 },
+    ];
+    const rookie: TeamRosterMember = {
+      memberId: "rookie2",
+      churchId: "c1",
+      firstName: "Rory",
+      lastName: "Rookie",
+      positionIds: ["position-camera"],
+      blockoutDates: [],
+      qualifications: [
+        { qualificationId: "q1", areaId: "area-camera", levelId: "level-1", status: "completed" },
+      ],
+    };
+    const veteran: TeamRosterMember = {
+      memberId: "veteran",
+      churchId: "c1",
+      firstName: "Val",
+      lastName: "Veteran",
+      positionIds: ["position-camera"],
+      blockoutDates: [],
+      qualifications: [
+        { qualificationId: "q2", areaId: "area-camera", levelId: "level-2", status: "completed" },
+      ],
+    };
+
+    expect(getMemberQualificationLevelRank(rookie, "area-camera", levels)).toBe(1);
+    expect(getLowestLevelRank("area-camera", levels)).toBe(1);
+
+    // A sibling camera slot is already filled by a level-1 person, so filling
+    // the second slot should boost the level-2 candidate over another rookie.
+    const boosts = computeLevelBalanceBoost({
+      position: cameraPosition,
+      requiredCountForOccurrence: 2,
+      siblingAssignedMemberIds: ["rookie1"],
+      members: [rookie, veteran],
+      qualificationLevels: levels,
+    });
+    expect(boosts.get("veteran")).toBe(true);
+    expect(boosts.get("rookie2")).toBe(false);
+
+    const rows = buildScheduleMemberPickerMembers({
+      members: [rookie, veteran],
+      positionId: "position-camera",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+      recommendationStats: new Map([
+        ["rookie2", { assignmentCount: 0, nearestAssignmentDistance: null, levelBalanceBoost: false }],
+        ["veteran", { assignmentCount: 0, nearestAssignmentDistance: null, levelBalanceBoost: true }],
+      ]),
+    });
+
+    expect(rows.map((row) => row.member.memberId)).toEqual(["veteran", "rookie2"]);
+  });
+
+  it("does not boost when no sibling is at the position's lowest level", () => {
+    const cameraPosition: TeamPosition = {
+      positionId: "position-camera",
+      churchId: "c1",
+      teamId: "t1",
+      name: "Camera",
+      qualificationAreaId: "area-camera",
+    };
+    const levels: TeamQualificationLevel[] = [
+      { levelId: "level-1", churchId: "c1", areaId: "area-camera", name: "Level 1", rank: 1 },
+      { levelId: "level-2", churchId: "c1", areaId: "area-camera", name: "Level 2", rank: 2 },
+    ];
+    const boosts = computeLevelBalanceBoost({
+      position: cameraPosition,
+      requiredCountForOccurrence: 2,
+      siblingAssignedMemberIds: ["already-level-2"],
+      members: [
+        {
+          memberId: "already-level-2",
+          churchId: "c1",
+          firstName: "Val",
+          lastName: "Veteran",
+          positionIds: ["position-camera"],
+          blockoutDates: [],
+          qualifications: [
+            { qualificationId: "q1", areaId: "area-camera", levelId: "level-2", status: "completed" },
+          ],
+        },
+      ],
+      qualificationLevels: levels,
+    });
+    expect(boosts.size).toBe(0);
   });
 
   it("offers create member when typed name matches nobody", () => {

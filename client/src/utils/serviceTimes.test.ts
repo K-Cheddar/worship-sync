@@ -118,6 +118,27 @@ describe("serviceTimes", () => {
       expect(rolledResult?.getMinutes()).toBe(0);
     });
 
+    it("skips weekly occurrences before startDateISO and after endDateISO", () => {
+      const now = new Date(2026, 0, 4, 11, 0, 0); // Sunday after the 10:00 slot
+      const beforeStart = createService({
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        startDateISO: "2026-01-18",
+      });
+      const afterEnd = createService({
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        endDateISO: "2026-01-04",
+      });
+
+      const nextBounded = getNextOccurrenceForService(beforeStart, now);
+      expect(nextBounded?.getDate()).toBe(18);
+      // Next Sunday (Jan 11) falls after the inclusive end date.
+      expect(getNextOccurrenceForService(afterEnd, now)).toBeNull();
+    });
+
     describe("multi_weekly", () => {
       it("returns the soonest upcoming day among the selected days", () => {
         // Wednesday 2026-01-07 at 09:00
@@ -287,9 +308,7 @@ describe("serviceTimes", () => {
     const result = getClosestUpcomingService(services, now);
 
     expect(result?.service.id).toBe("one-time-earlier");
-    expect(result?.nextAt.toISOString()).toBe(
-      "2026-01-10T09:30:00.000Z",
-    );
+    expect(result?.nextAt.toISOString()).toBe("2026-01-10T09:30:00.000Z");
   });
 
   describe("getEffectiveTargetTime", () => {
@@ -342,9 +361,7 @@ describe("serviceTimes", () => {
       const result = getDisplayedUpcomingService(services, now, 15 * 60 * 1000);
 
       expect(result?.service.id).toBe("next");
-      expect(result?.nextAt.toISOString()).toBe(
-        "2026-01-10T10:00:00.000Z",
-      );
+      expect(result?.nextAt.toISOString()).toBe("2026-01-10T10:00:00.000Z");
     });
 
     it("can keep the just-started service during grace even when another future service exists", () => {
@@ -370,9 +387,7 @@ describe("serviceTimes", () => {
       );
 
       expect(result?.service.id).toBe("current");
-      expect(result?.nextAt.toISOString()).toBe(
-        "2026-01-10T09:00:00.000Z",
-      );
+      expect(result?.nextAt.toISOString()).toBe("2026-01-10T09:00:00.000Z");
     });
 
     it("shows the next service instead of pending when it starts within the grace window", () => {
@@ -398,9 +413,7 @@ describe("serviceTimes", () => {
       );
 
       expect(result?.service.id).toBe("next-soon");
-      expect(result?.nextAt.toISOString()).toBe(
-        "2026-01-10T09:10:00.000Z",
-      );
+      expect(result?.nextAt.toISOString()).toBe("2026-01-10T09:10:00.000Z");
     });
 
     it("keeps a just-started service during the grace window when there is no future service", () => {
@@ -411,12 +424,14 @@ describe("serviceTimes", () => {
         dateTimeISO: new Date("2026-01-10T09:00:00.000Z").toISOString(),
       });
 
-      const result = getDisplayedUpcomingService([service], now, 15 * 60 * 1000);
+      const result = getDisplayedUpcomingService(
+        [service],
+        now,
+        15 * 60 * 1000,
+      );
 
       expect(result?.service.id).toBe("current");
-      expect(result?.nextAt.toISOString()).toBe(
-        "2026-01-10T09:00:00.000Z",
-      );
+      expect(result?.nextAt.toISOString()).toBe("2026-01-10T09:00:00.000Z");
     });
 
     it("returns the most recent expired override during the grace window", () => {

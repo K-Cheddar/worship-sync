@@ -32,6 +32,7 @@ import {
   MemberListFilterToolbar,
   MEMBER_FILTER_PANEL_ID,
 } from "../components/MemberListFilters";
+import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
@@ -44,8 +45,13 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
-import { formatMemberSaveToast } from "../teamsSaveToasts";
-import { TEAMS_MEMBER_EDIT_SEARCH_PARAM } from "../teamsReturnNavigation";
+import {
+  TEAMS_MEMBER_EDIT_SEARCH_PARAM,
+  TEAMS_SECTION_PATHS,
+  buildSectionReturnTo,
+  buildTeamsMemberEditPath,
+  buildTeamsPositionEditPath,
+} from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import {
   countActiveMemberListFilters,
@@ -55,6 +61,10 @@ import {
 import type { TeamsData } from "../types";
 
 const NO_SELECTION_VALUE = "__none";
+
+// Key used to track an in-flight save for the create form, which has no member
+// id yet. Existing members are tracked by their own memberId.
+const CREATE_SAVING_KEY = "__create__";
 
 const qualificationStatusOptions: {
   value: TeamMemberQualificationStatus;
@@ -102,7 +112,11 @@ const MemberManager = ({
     blockoutDates: [],
     notes: "",
   });
-  const [saving, setSaving] = useState(false);
+  // Members with a save currently in flight, keyed by memberId (or
+  // CREATE_SAVING_KEY for a new member). Tracking per-editor keeps the Save
+  // spinner on the member actually saving and lets editing continue back-to-back
+  // in the background.
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const [listFilters, setListFilters] = useState(emptyMemberListFilters);
   const [draftListFilters, setDraftListFilters] = useState(emptyMemberListFilters);
@@ -161,6 +175,13 @@ const MemberManager = ({
     setShowFilters(false);
   }, [draftListFilters]);
 
+  const clearFilters = useCallback(() => {
+    const empty = emptyMemberListFilters();
+    setListFilters(empty);
+    setDraftListFilters(empty);
+    setShowFilters(false);
+  }, []);
+
   const handleFiltersOpenChange = useCallback(
     (next: boolean) => {
       if (showCreate && next) return;
@@ -208,6 +229,14 @@ const MemberManager = ({
   const areaById = useMemo(
     () => new Map(data.qualificationAreas.map((area) => [area.areaId, area])),
     [data.qualificationAreas],
+  );
+
+  const membersInListScope = useMemo(
+    () =>
+      listFilters.includeArchived
+        ? members
+        : members.filter((member) => !member.archivedAt),
+    [listFilters.includeArchived, members],
   );
 
   const filteredMembers = useMemo(
@@ -270,14 +299,19 @@ const MemberManager = ({
 
   const submit = async () => {
     if (!canEdit) return;
-    setSaving(true);
+    const wasEditing = editing;
+    const savingKey = wasEditing?.memberId ?? CREATE_SAVING_KEY;
+    // Ignore a repeat submit for the same editor while its save is pending —
+    // this prevents a fast double-click on "Create" from making duplicates.
+    if (savingIds.has(savingKey)) return;
+    setSavingIds((prev) => new Set(prev).add(savingKey));
     const body = {
       ...draft,
       blockoutDates: draft.blockoutDates.filter(
         (range) => range.startDate || range.endDate,
       ),
     };
-    const localMemberId = editing?.memberId || `local-member-${generateRandomId()}`;
+    const localMemberId = wasEditing?.memberId || `local-member-${generateRandomId()}`;
     const optimisticMember: TeamRosterMember = {
       churchId,
       memberId: localMemberId,
@@ -290,32 +324,54 @@ const MemberManager = ({
       qualifications: body.qualifications || [],
       blockoutDates: body.blockoutDates,
       notes: body.notes || "",
-      archivedAt: editing?.archivedAt || null,
+      archivedAt: wasEditing?.archivedAt || null,
     };
-    onSaved(editing ? { ...editing, ...optimisticMember } : optimisticMember);
-    const saveToastMessage = formatMemberSaveToast(editing, body, {
-      positionNameById,
-      teamNameById,
-      roleNameById: new Map(
-        data.teamRoles.map((role) => [role.roleId, role.name]),
-      ),
-    });
+    const savedRecord = wasEditing
+      ? { ...wasEditing, ...optimisticMember }
+      : optimisticMember;
+    onSaved(savedRecord);
     try {
-      const response = editing
-        ? await updateTeamRosterMember(churchId, editing.memberId, body)
+      const response = wasEditing
+        ? await updateTeamRosterMember(churchId, wasEditing.memberId, body)
         : await createTeamRosterMember(churchId, body);
-      if (!editing) {
+      if (!wasEditing) {
         onSaved(response.member, localMemberId);
       }
-      showToast(saveToastMessage, "success");
-      finishEditing(reset);
+      // Reached via a cross-section link: return to the origin. Otherwise keep
+      // the panel open for back-to-back editing.
+      if (returnTo) {
+        finishEditing(reset);
+      } else if (wasEditing) {
+        // The operator may have switched to a different member while this save
+        // was in flight. Only refresh the selected record if they're still on
+        // the one we just saved, so the panel never rebinds to a stale member.
+        setEditing((current) =>
+          current?.memberId === wasEditing.memberId ? savedRecord : current,
+        );
+      } else {
+        // Newly created: adopt the saved record so a subsequent Save updates it
+        // instead of creating a duplicate — but only if the create form is still
+        // the active editor and the operator hasn't selected another member.
+        const created = response.member;
+        setEditing((current) => (current === null ? created : current));
+      }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();
     } finally {
-      setSaving(false);
+      setSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(savingKey);
+        return next;
+      });
     }
   };
+
+  // The panel shows one editor at a time; its Save state reflects only the
+  // member currently open, so a background save elsewhere never spins or
+  // disables it.
+  const currentEditorKey = editing ? editing.memberId : CREATE_SAVING_KEY;
+  const isSavingCurrent = savingIds.has(currentEditorKey);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
   const positionOptions = useMemo(
@@ -399,7 +455,10 @@ const MemberManager = ({
             Members{" "}
             <span className="text-sm font-normal text-gray-400">
               ({filteredMembers.length}
-              {listQuery || activeFilterCount > 0 ? ` of ${members.length}` : ""})
+              {listQuery || activeFilterCount > 0
+                ? ` of ${membersInListScope.length}`
+                : ""}
+              )
             </span>
           </>
         }
@@ -415,6 +474,7 @@ const MemberManager = ({
               filtersOpen={showFilters}
               filtersDisabled={showCreate}
               onFiltersOpenChange={handleFiltersOpenChange}
+              onClearFilters={clearFilters}
             />
           ) : null
         }
@@ -452,7 +512,11 @@ const MemberManager = ({
           <>
             {members.length === 0 ? <p className="text-sm text-gray-300">No members yet.</p> : null}
             {members.length > 0 && filteredMembers.length === 0 ? (
-              <p className="text-sm text-gray-300">No matches.</p>
+              <p className="text-sm text-gray-300">
+                {membersInListScope.length === 0 && !listQuery && activeFilterCount === 0
+                  ? "Archived members are hidden. Open Filter to show them."
+                  : "No matches."}
+              </p>
             ) : null}
             {filteredMembers.map((member) => (
               <EntityRow
@@ -506,8 +570,13 @@ const MemberManager = ({
             saveLabel="Save member"
             onSave={() => void submit()}
             onCancel={cancelEditing}
-            disabled={!canEdit || !draft.firstName.trim() || !draft.lastName.trim()}
-            isLoading={saving}
+            disabled={
+              !canEdit ||
+              !draft.firstName.trim() ||
+              !draft.lastName.trim() ||
+              isSavingCurrent
+            }
+            isLoading={isSavingCurrent}
           />
         }
       >
@@ -522,6 +591,30 @@ const MemberManager = ({
           options={positionOptions}
           value={draft.positionIds}
           onChange={(positionIds) => setDraft((d) => ({ ...d, positionIds }))}
+          renderOptionAction={
+            canEdit
+              ? (option) => {
+                const teamIdForPosition = positionTeamIdById.get(option.id);
+                if (!teamIdForPosition) return null;
+                return (
+                  <TeamsCrossSectionLink
+                    to={buildTeamsPositionEditPath(option.id, teamIdForPosition)}
+                    returnTo={
+                      editing
+                        ? {
+                          label: "Back to member",
+                          pathname: buildTeamsMemberEditPath(editing.memberId),
+                        }
+                        : buildSectionReturnTo(TEAMS_SECTION_PATHS.members)
+                    }
+                    aria-label={`Edit ${option.label}`}
+                  >
+                    Edit
+                  </TeamsCrossSectionLink>
+                );
+              }
+              : undefined
+          }
         />
         {teamsJoinedByPositions.length > 0 ? (
           <p className="rounded-md border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">

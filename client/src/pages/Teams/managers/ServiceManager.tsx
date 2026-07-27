@@ -42,6 +42,7 @@ import {
   createEmptyServiceDraft,
   formatServiceTiming,
   isActive,
+  isServicePastEnd,
   planServiceGroupCleanupOnDelete,
   planServiceGroupUpdates,
 } from "../teamsUtils";
@@ -134,7 +135,16 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       dispatch(updateService({ id, changes: { serviceGroupId } }));
     });
     showToast(saveToastMessage, "success");
-    reset();
+    if (editing) {
+      // Keep the panel open so services can be edited back-to-back. Re-seed the
+      // editor from the saved snapshot so a follow-up edit uses the fresh group
+      // id and requirements rather than stale pre-save values.
+      const nextEditing: TeamService = { ...editing, ...saved };
+      setEditing(nextEditing);
+      setDraft({ ...nextEditing });
+    } else {
+      reset();
+    }
   };
 
   // Services that can be combined with the one being edited: anything that could
@@ -218,6 +228,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
               title={service.name}
               subtitle={formatServiceTiming(service)}
               archived={Boolean(service.archivedAt)}
+              inactive={!service.archivedAt && isServicePastEnd(service)}
               canEdit={canEdit}
               onTitleClick={() => startEdit(service)}
             />
@@ -340,11 +351,6 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
               })}
             </div>
           </fieldset>
-          <DatePicker
-            label="End Date (optional)"
-            value={draft.endDateISO || ""}
-            onChange={(endDateISO) => setDraft((d) => ({ ...d, endDateISO }))}
-          />
         </div>
       ) : null}
 
@@ -369,6 +375,23 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
             inputClassName="w-full"
             value={draft.time || "10:00"}
             onChange={(time) => setDraft((d) => ({ ...d, time: String(time) }))}
+          />
+        </div>
+      ) : null}
+
+      {recurrence === "weekly" ||
+        recurrence === "multi_weekly" ||
+        recurrence === "monthly" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DatePicker
+            label="Start date (optional)"
+            value={draft.startDateISO || ""}
+            onChange={(startDateISO) => setDraft((d) => ({ ...d, startDateISO }))}
+          />
+          <DatePicker
+            label="End date (optional)"
+            value={draft.endDateISO || ""}
+            onChange={(endDateISO) => setDraft((d) => ({ ...d, endDateISO }))}
           />
         </div>
       ) : null}

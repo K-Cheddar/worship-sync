@@ -5,6 +5,7 @@ import {
   ServiceTime,
   Weekday,
 } from "../types";
+import { parsePlainDate } from "./plainDate";
 import { serverDate } from "./serverTime";
 
 type ServiceScheduleSortShape = Pick<
@@ -146,10 +147,48 @@ function parseTimeToDate(base: Date, hhmm: string): Date | null {
   return d;
 }
 
+// Parse a date-only string ("YYYY-MM-DD") as local start-of-day / end-of-day.
+// new Date("YYYY-MM-DD") is UTC midnight and breaks in non-UTC timezones.
+const parseStartOfDay = (dateStr?: string): Date | null => {
+  if (!dateStr) return null;
+  return parsePlainDate(dateStr) ?? null;
+};
+
+const parseEndOfDay = (dateStr?: string): Date | null => {
+  if (!dateStr) return null;
+  const parsed = parsePlainDate(dateStr);
+  if (!parsed) return null;
+  parsed.setHours(23, 59, 59, 999);
+  return parsed;
+};
+
+const isBeforeServiceStart = (date: Date, startDateISO?: string) => {
+  const start = parseStartOfDay(startDateISO);
+  return Boolean(start && date < start);
+};
+
+const isAfterServiceEnd = (date: Date, endDateISO?: string) => {
+  const end = parseEndOfDay(endDateISO);
+  return Boolean(end && date > end);
+};
+
+const clipOccurrenceToBounds = (
+  date: Date | null,
+  startDateISO?: string,
+  endDateISO?: string,
+): Date | null => {
+  if (!date) return null;
+  if (isBeforeServiceStart(date, startDateISO)) return null;
+  if (isAfterServiceEnd(date, endDateISO)) return null;
+  return date;
+};
+
 function getNextWeekly(
   now: Date,
   dayOfWeek: Weekday,
   time: string,
+  startDateISO?: string,
+  endDateISO?: string,
 ): Date | null {
   const currentDow = now.getDay();
   const daysUntil = (dayOfWeek - currentDow + 7) % 7;
@@ -161,7 +200,11 @@ function getNextWeekly(
   if (daysUntil === 0 && atTime <= now) {
     atTime.setDate(atTime.getDate() + 7);
   }
-  return atTime;
+  // Advance until on or after the optional start bound.
+  while (isBeforeServiceStart(atTime, startDateISO)) {
+    atTime.setDate(atTime.getDate() + 7);
+  }
+  return clipOccurrenceToBounds(atTime, startDateISO, endDateISO);
 }
 
 function getNthWeekdayOfMonth(
@@ -202,39 +245,43 @@ function getNextMonthly(
   ordinal: MonthWeekOrdinal,
   weekday: Weekday,
   time: string,
+  startDateISO?: string,
+  endDateISO?: string,
 ): Date | null {
   const tryMonth = (y: number, m: number): Date | null => {
     const day = getNthWeekdayOfMonth(y, m, ordinal, weekday);
     if (!day) return null;
-    const atTime = parseTimeToDate(day, time);
-    return atTime;
+    return parseTimeToDate(day, time);
   };
 
-  const candidateThis = tryMonth(now.getFullYear(), now.getMonth());
-  if (candidateThis && candidateThis > now) return candidateThis;
-
-  return tryMonth(now.getFullYear(), now.getMonth() + 1);
+  let year = now.getFullYear();
+  let month = now.getMonth();
+  // Search a generous window so start bounds far in the future still resolve.
+  for (let i = 0; i < 24; i += 1) {
+    const candidate = tryMonth(year, month);
+    if (
+      candidate &&
+      candidate > now &&
+      !isBeforeServiceStart(candidate, startDateISO)
+    ) {
+      return clipOccurrenceToBounds(candidate, startDateISO, endDateISO);
+    }
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+  }
+  return null;
 }
-
-// Parse a date-only string ("YYYY-MM-DD") as local end-of-day.
-// new Date("YYYY-MM-DD") is UTC midnight and breaks in non-UTC timezones.
-const parseEndOfDay = (dateStr: string): Date | null => {
-  const parts = dateStr.split("-");
-  if (parts.length < 3) return null;
-  const y = parseInt(parts[0], 10);
-  const m = parseInt(parts[1], 10) - 1;
-  const d = parseInt(parts[2], 10);
-  if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
-  return new Date(y, m, d, 23, 59, 59, 999);
-};
 
 const getNextMultiWeekly = (
   now: Date,
   daysOfWeek: MultiWeeklyDay[],
+  startDateISO?: string,
   endDateISO?: string,
 ): Date | null => {
   if (daysOfWeek.length === 0) return null;
-  const endDate = endDateISO ? parseEndOfDay(endDateISO) : null;
 
   let best: Date | null = null;
   const currentDow = now.getDay();
@@ -248,7 +295,10 @@ const getNextMultiWeekly = (
     if (daysUntil === 0 && atTime <= now) {
       atTime.setDate(atTime.getDate() + 7);
     }
-    if (endDate && atTime > endDate) continue;
+    while (isBeforeServiceStart(atTime, startDateISO)) {
+      atTime.setDate(atTime.getDate() + 7);
+    }
+    if (isAfterServiceEnd(atTime, endDateISO)) continue;
     if (!best || atTime < best) best = atTime;
   }
   return best;
@@ -257,20 +307,26 @@ const getNextMultiWeekly = (
 const getPreviousMultiWeekly = (
   now: Date,
   daysOfWeek: MultiWeeklyDay[],
+  startDateISO?: string,
+  endDateISO?: string,
 ): Date | null => {
   if (daysOfWeek.length === 0) return null;
-  const currentDow = now.getDay();
+  const end = parseEndOfDay(endDateISO);
+  const reference = end && now > end ? end : now;
+  const currentDow = reference.getDay();
   let best: Date | null = null;
 
   for (const { day, time } of daysOfWeek) {
     const daysSince = (currentDow - day + 7) % 7;
-    const candidate = new Date(now);
-    candidate.setDate(now.getDate() - daysSince);
+    const candidate = new Date(reference);
+    candidate.setDate(reference.getDate() - daysSince);
     const atTime = parseTimeToDate(candidate, time);
     if (!atTime) continue;
-    if (daysSince === 0 && atTime > now) {
+    if (daysSince === 0 && atTime > reference) {
       atTime.setDate(atTime.getDate() - 7);
     }
+    if (isBeforeServiceStart(atTime, startDateISO)) continue;
+    if (isAfterServiceEnd(atTime, endDateISO)) continue;
     if (!best || atTime > best) best = atTime;
   }
   return best;
@@ -280,17 +336,21 @@ const getPreviousWeekly = (
   now: Date,
   dayOfWeek: Weekday,
   time: string,
+  startDateISO?: string,
+  endDateISO?: string,
 ): Date | null => {
-  const currentDow = now.getDay();
+  const end = parseEndOfDay(endDateISO);
+  const reference = end && now > end ? end : now;
+  const currentDow = reference.getDay();
   const daysSince = (currentDow - dayOfWeek + 7) % 7;
-  const candidate = new Date(now);
-  candidate.setDate(now.getDate() - daysSince);
+  const candidate = new Date(reference);
+  candidate.setDate(reference.getDate() - daysSince);
   const atTime = parseTimeToDate(candidate, time);
   if (!atTime) return null;
-  if (daysSince === 0 && atTime > now) {
+  if (daysSince === 0 && atTime > reference) {
     atTime.setDate(atTime.getDate() - 7);
   }
-  return atTime;
+  return clipOccurrenceToBounds(atTime, startDateISO, endDateISO);
 };
 
 const getPreviousMonthly = (
@@ -298,17 +358,36 @@ const getPreviousMonthly = (
   ordinal: MonthWeekOrdinal,
   weekday: Weekday,
   time: string,
+  startDateISO?: string,
+  endDateISO?: string,
 ): Date | null => {
+  const end = parseEndOfDay(endDateISO);
+  const reference = end && now > end ? end : now;
   const tryMonth = (y: number, m: number): Date | null => {
     const day = getNthWeekdayOfMonth(y, m, ordinal, weekday);
     if (!day) return null;
     return parseTimeToDate(day, time);
   };
 
-  const candidateThis = tryMonth(now.getFullYear(), now.getMonth());
-  if (candidateThis && candidateThis <= now) return candidateThis;
-
-  return tryMonth(now.getFullYear(), now.getMonth() - 1);
+  let year = reference.getFullYear();
+  let month = reference.getMonth();
+  for (let i = 0; i < 24; i += 1) {
+    const candidate = tryMonth(year, month);
+    if (
+      candidate &&
+      candidate <= reference &&
+      !isAfterServiceEnd(candidate, endDateISO) &&
+      !isBeforeServiceStart(candidate, startDateISO)
+    ) {
+      return candidate;
+    }
+    month -= 1;
+    if (month < 0) {
+      month = 11;
+      year -= 1;
+    }
+  }
+  return null;
 };
 
 export function getNextOccurrenceForService(
@@ -322,16 +401,34 @@ export function getNextOccurrenceForService(
   }
   if (service.reccurence === "weekly") {
     if (service.dayOfWeek == null || !service.time) return null;
-    return getNextWeekly(now, service.dayOfWeek, service.time);
+    return getNextWeekly(
+      now,
+      service.dayOfWeek,
+      service.time,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   if (service.reccurence === "monthly") {
     if (service.ordinal == null || service.weekday == null || !service.time)
       return null;
-    return getNextMonthly(now, service.ordinal, service.weekday, service.time);
+    return getNextMonthly(
+      now,
+      service.ordinal,
+      service.weekday,
+      service.time,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   if (service.reccurence === "multi_weekly") {
     if (!service.daysOfWeek?.length) return null;
-    return getNextMultiWeekly(now, service.daysOfWeek, service.endDateISO);
+    return getNextMultiWeekly(
+      now,
+      service.daysOfWeek,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   return null;
 }
@@ -392,7 +489,13 @@ export function getMostRecentTargetTime(
   }
   if (service.reccurence === "weekly") {
     if (service.dayOfWeek == null || !service.time) return null;
-    return getPreviousWeekly(now, service.dayOfWeek, service.time);
+    return getPreviousWeekly(
+      now,
+      service.dayOfWeek,
+      service.time,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   if (service.reccurence === "monthly") {
     if (service.ordinal == null || service.weekday == null || !service.time)
@@ -402,11 +505,18 @@ export function getMostRecentTargetTime(
       service.ordinal,
       service.weekday,
       service.time,
+      service.startDateISO,
+      service.endDateISO,
     );
   }
   if (service.reccurence === "multi_weekly") {
     if (!service.daysOfWeek?.length) return null;
-    return getPreviousMultiWeekly(now, service.daysOfWeek);
+    return getPreviousMultiWeekly(
+      now,
+      service.daysOfWeek,
+      service.startDateISO,
+      service.endDateISO,
+    );
   }
   return null;
 }

@@ -1,4 +1,8 @@
-import type { TeamRosterMember } from "../../../api/authTypes";
+import type {
+  TeamPosition,
+  TeamQualificationLevel,
+  TeamRosterMember,
+} from "../../../api/authTypes";
 import {
   compareTeamRosterMembersByScheduleDisplay,
   memberMatchesScheduleQuery,
@@ -23,6 +27,13 @@ export type ScheduleMemberPickerMember = {
 export type ScheduleMemberRecommendationStats = {
   assignmentCount: number;
   nearestAssignmentDistance: number | null;
+  /**
+   * True when picking this member would improve the qualification-level mix
+   * across a multi-slot position (e.g. avoid a second lowest-level camera
+   * operator when a higher-level alternative exists). Only meaningful for
+   * positions with a linked qualification area and more than one slot.
+   */
+  levelBalanceBoost?: boolean;
 };
 
 export const splitTypedMemberName = (raw: string) => {
@@ -40,6 +51,81 @@ export const memberDesiresPosition = (
   member: TeamRosterMember,
   positionId: string,
 ) => (member.desiredPositionIds || []).includes(positionId);
+
+/**
+ * The member's highest completed qualification level within an area, as that
+ * level's rank, or null if they have no completed qualification there. A
+ * member can be position-eligible (via positionIds) with no level at all —
+ * this only feeds soft ordering, never a hard gate.
+ */
+export const getMemberQualificationLevelRank = (
+  member: TeamRosterMember,
+  areaId: string,
+  levels: TeamQualificationLevel[],
+): number | null => {
+  const levelById = new Map(levels.map((level) => [level.levelId, level]));
+  const ranks = (member.qualifications || [])
+    .filter((q) => q.areaId === areaId && q.status === "completed")
+    .map((q) => (q.levelId ? levelById.get(q.levelId)?.rank : undefined))
+    .filter((rank): rank is number => typeof rank === "number");
+  return ranks.length ? Math.max(...ranks) : null;
+};
+
+/** The lowest rank among an area's active levels, or null if it has none. */
+export const getLowestLevelRank = (
+  areaId: string,
+  levels: TeamQualificationLevel[],
+): number | null => {
+  const ranks = levels
+    .filter((level) => level.areaId === areaId && !level.archivedAt)
+    .map((level) => level.rank);
+  return ranks.length ? Math.min(...ranks) : null;
+};
+
+/**
+ * For a position with more than one slot per occurrence and a linked
+ * qualification area, flag which candidates would improve the skill mix —
+ * i.e. picking them avoids stacking a second lowest-level person alongside
+ * whoever is already assigned to a sibling slot. Returns an empty map when
+ * the rule doesn't apply (no linked area, single-slot position, no levels
+ * defined, or the sibling mix is already fine).
+ */
+export const computeLevelBalanceBoost = ({
+  position,
+  requiredCountForOccurrence,
+  siblingAssignedMemberIds,
+  members,
+  qualificationLevels,
+}: {
+  position: TeamPosition;
+  requiredCountForOccurrence: number;
+  siblingAssignedMemberIds: string[];
+  /** Full roster to look up siblings and candidates in — not just eligible picks. */
+  members: TeamRosterMember[];
+  qualificationLevels: TeamQualificationLevel[];
+}): Map<string, boolean> => {
+  const boosts = new Map<string, boolean>();
+  const areaId = position.qualificationAreaId;
+  if (!areaId || requiredCountForOccurrence < 2) return boosts;
+  const lowestRank = getLowestLevelRank(areaId, qualificationLevels);
+  if (lowestRank === null) return boosts;
+
+  const memberById = new Map(members.map((member) => [member.memberId, member]));
+  const hasLowestSibling = siblingAssignedMemberIds.some((memberId) => {
+    const sibling = memberById.get(memberId);
+    const rank = sibling
+      ? getMemberQualificationLevelRank(sibling, areaId, qualificationLevels)
+      : null;
+    return rank === null || rank === lowestRank;
+  });
+  if (!hasLowestSibling) return boosts;
+
+  members.forEach((member) => {
+    const rank = getMemberQualificationLevelRank(member, areaId, qualificationLevels);
+    boosts.set(member.memberId, rank !== null && rank > lowestRank);
+  });
+  return boosts;
+};
 
 /** 0 = fully available, 1 = selectable with caution, 2 = not selectable. */
 export const getScheduleMemberPickerAvailabilityRank = (
@@ -77,6 +163,11 @@ export const sortScheduleMemberPickerRows = (
       b.recommendationStats?.nearestAssignmentDistance ?? Number.POSITIVE_INFINITY;
     if (aSpacing !== bSpacing) {
       return aSpacing > bSpacing ? -1 : 1;
+    }
+    const aLevelBoost = a.recommendationStats?.levelBalanceBoost ?? false;
+    const bLevelBoost = b.recommendationStats?.levelBalanceBoost ?? false;
+    if (aLevelBoost !== bLevelBoost) {
+      return aLevelBoost ? -1 : 1;
     }
     // Among otherwise-equal members, float those who asked for this position
     // (intake desire) to the top so schedulers reach for willing people first.

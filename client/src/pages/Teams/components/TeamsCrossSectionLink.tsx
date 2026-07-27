@@ -11,6 +11,7 @@ type TeamsCrossSectionLinkProps = {
   to: string;
   returnTo: TeamsReturnTo;
   className?: string;
+  "aria-label"?: string;
   children: ReactNode;
 };
 
@@ -18,11 +19,13 @@ const TeamsCrossSectionLink = ({
   to,
   returnTo,
   className,
+  "aria-label": ariaLabel,
   children,
 }: TeamsCrossSectionLinkProps) => (
   <Link
     to={to}
     state={buildTeamsReturnNavigationState(returnTo, teamsRoutePathname(to))}
+    aria-label={ariaLabel}
     className={cn("text-xs font-medium text-cyan-300 hover:text-cyan-200", className)}
   >
     {children}

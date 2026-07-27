@@ -1,7 +1,10 @@
-import type { TeamService } from "../../api/authTypes";
+import type { TeamBlockoutDateRange, TeamService } from "../../api/authTypes";
 import {
   buildIntakeAvailabilityServiceOptions,
+  filterBlockoutDatesForScheduleRange,
   formatShortOccurrenceDate,
+  isServiceActive,
+  isServicePastEnd,
 } from "./teamsUtils";
 
 const service = (overrides: Partial<TeamService>): TeamService => ({
@@ -15,7 +18,6 @@ const service = (overrides: Partial<TeamService>): TeamService => ({
   time: "10:00",
   ...overrides,
 });
-
 describe("formatShortOccurrenceDate", () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -32,7 +34,90 @@ describe("formatShortOccurrenceDate", () => {
     );
   });
 });
+describe("filterBlockoutDatesForScheduleRange", () => {
+  const range = (
+    startDate: string,
+    endDate = startDate,
+    notes?: string,
+  ): TeamBlockoutDateRange => ({ startDate, endDate, notes });
 
+  it("returns all blockouts when the schedule has no date bounds", () => {
+    const blockouts = [range("2026-01-01", "2026-01-31")];
+    expect(filterBlockoutDatesForScheduleRange(blockouts, "", "")).toEqual(
+      blockouts,
+    );
+  });
+
+  it("drops blockouts that fall entirely outside the schedule", () => {
+    expect(
+      filterBlockoutDatesForScheduleRange(
+        [range("2025-12-01", "2025-12-31"), range("2026-08-01", "2026-08-31")],
+        "2026-07-01",
+        "2026-07-31",
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps blockouts that fall entirely inside the schedule", () => {
+    const blockouts = [range("2026-07-10", "2026-07-12", "Vacation")];
+    expect(
+      filterBlockoutDatesForScheduleRange(
+        blockouts,
+        "2026-07-01",
+        "2026-07-31",
+      ),
+    ).toEqual(blockouts);
+  });
+
+  it("clips blockouts that overlap the schedule on one side", () => {
+    expect(
+      filterBlockoutDatesForScheduleRange(
+        [range("2026-06-15", "2026-07-10", "Away")],
+        "2026-07-01",
+        "2026-07-31",
+      ),
+    ).toEqual([range("2026-07-01", "2026-07-10", "Away")]);
+  });
+});
+
+describe("isServicePastEnd / isServiceActive", () => {
+  it("treats a service as past end after its inclusive end date", () => {
+    const ended = service({ endDateISO: "2026-07-01" });
+    expect(isServicePastEnd(ended, new Date(2026, 6, 1, 23, 59, 59))).toBe(
+      false,
+    );
+    expect(isServicePastEnd(ended, new Date(2026, 6, 2, 0, 0, 0))).toBe(true);
+  });
+
+  it("marks ended services inactive while keeping unbounded services active", () => {
+    expect(
+      isServiceActive(
+        service({ endDateISO: "2026-06-01" }),
+        new Date(2026, 6, 1),
+      ),
+    ).toBe(false);
+    expect(isServiceActive(service({}), new Date(2026, 6, 1))).toBe(true);
+  });
+
+  it("treats archived services as inactive even without an end date", () => {
+    expect(
+      isServiceActive(
+        service({ archivedAt: "2026-01-01T00:00:00.000Z" }),
+        new Date(2026, 6, 1),
+      ),
+    ).toBe(false);
+  });
+
+  it("stays safe when used directly with Array.filter (index as 2nd arg)", () => {
+    const services = [
+      service({ serviceId: "open", endDateISO: undefined }),
+      service({ serviceId: "ended", endDateISO: "2020-01-01" }),
+    ];
+    expect(
+      services.filter(isServiceActive).map((item) => item.serviceId),
+    ).toEqual(["open"]);
+  });
+});
 describe("buildIntakeAvailabilityServiceOptions", () => {
   it("groups linked services into one availability option with all service ids", () => {
     const options = buildIntakeAvailabilityServiceOptions([

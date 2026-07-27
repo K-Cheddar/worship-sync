@@ -20,7 +20,7 @@ import {
 import type { TeamRosterMember } from "../../../api/authTypes";
 import type { TeamScheduleShadowKind } from "../../../api/authTypes";
 import { emptyDuplicateFirstNames } from "../teamsConstants";
-import { scheduleMemberName } from "../teamsUtils";
+import { scheduleMemberName, shadowKindLabel } from "../teamsUtils";
 import MemberAssignmentSubmenu, {
   type MemberAssignmentActionIssues,
 } from "./MemberAssignmentSubmenu";
@@ -66,6 +66,10 @@ const WarningBadge = ({ label }: { label: string }) => (
   </span>
 );
 
+/** Stable empty default so an omitted currentShadows prop doesn't churn renders. */
+const emptyShadows: { memberId: string; kind: TeamScheduleShadowKind; label: string }[] =
+  [];
+
 type ScheduleAssignmentPickerProps = {
   open: boolean;
   anchorEl: HTMLElement | null;
@@ -90,6 +94,9 @@ type ScheduleAssignmentPickerProps = {
   ) => void;
   onCreateMember?: (member: { firstName: string; lastName: string }) => Promise<void> | void;
   onClearAssignment?: () => void;
+  /** Shadows currently on the active cell, offered for one-tap removal. */
+  currentShadows?: { memberId: string; kind: TeamScheduleShadowKind; label: string }[];
+  onRemoveShadow?: (memberId: string, kind: TeamScheduleShadowKind) => void;
   pendingSubmenu?: {
     memberId: string;
     title: string;
@@ -124,6 +131,8 @@ const ScheduleAssignmentPicker = memo(({
   onApplySwapRecommendation,
   onCreateMember,
   onClearAssignment,
+  currentShadows = emptyShadows,
+  onRemoveShadow,
   pendingSubmenu,
   inputRef: externalInputRef,
 }: ScheduleAssignmentPickerProps) => {
@@ -288,6 +297,12 @@ const ScheduleAssignmentPicker = memo(({
     menuView === "members" &&
     Boolean(onClearAssignment);
 
+  const showClearShadowOptions =
+    currentShadows.length > 0 &&
+    !trimmedQuery &&
+    menuView === "members" &&
+    Boolean(onRemoveShadow);
+
   const showCurrentAssigneeRow =
     Boolean(currentPrimaryMemberId) &&
     menuView === "members" &&
@@ -302,6 +317,7 @@ const ScheduleAssignmentPicker = memo(({
     showSwapRecommendations ||
     showCreateOption ||
     showClearAssignmentOption ||
+    showClearShadowOptions ||
     showCurrentAssigneeRow;
 
   const pickerOpen = open && Boolean(anchorRect);
@@ -487,7 +503,7 @@ const ScheduleAssignmentPicker = memo(({
             </div>
           </div>
         </div>
-        <div className="scrollbar-portal max-h-56 overflow-x-hidden overflow-y-auto">
+        <div className="scrollbar-portal max-h-[min(24rem,55dvh)] overflow-x-hidden overflow-y-auto">
           {pendingSubmenu && menuView === "assignmentActions" ? (
             <MemberAssignmentSubmenu
               title={pendingSubmenu.title}
@@ -662,6 +678,23 @@ const ScheduleAssignmentPicker = memo(({
                       Clear assignment
                     </Button>
                   ) : null}
+                  {showClearShadowOptions
+                    ? currentShadows.map((shadow) => (
+                      <Button
+                        key={`${shadow.kind}-${shadow.memberId}`}
+                        type="button"
+                        variant="tertiary"
+                        padding="px-2 py-1"
+                        className="w-full justify-start text-sm font-medium text-rose-200 hover:bg-gray-800"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          onRemoveShadow?.(shadow.memberId, shadow.kind);
+                        }}
+                      >
+                        Remove {shadowKindLabel(shadow.kind).toLowerCase()}: {shadow.label}
+                      </Button>
+                    ))
+                    : null}
                   {recommendedRows.length > 0 ? (
                     <div
                       role="group"

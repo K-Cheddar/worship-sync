@@ -89,52 +89,152 @@ export const remapAssignmentsToOccurrences = ({
 
   // Combined occurrences are keyed by their shared group so they line up across a
   // date shift the same way single services do.
-  const bucketKey = (occurrence: TeamScheduleOccurrence) =>
-    occurrence.groupId ? `group:${occurrence.groupId}` : occurrence.serviceId;
-  const byService = (occurrences: TeamScheduleOccurrence[]) => {
-    const map = new Map<string, TeamScheduleOccurrence[]>();
-    occurrences.forEach((occurrence) => {
-      const key = bucketKey(occurrence);
-      const list = map.get(key) || [];
-      list.push(occurrence);
-      map.set(key, list);
-    });
-    map.forEach((list) =>
-      list.sort(
-        (a, b) =>
-          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-      ),
-    );
-    return map;
-  };
+  const sourceToTargets = mapOccurrencesByServiceIndex(
+    sourceOccurrences,
+    targetOccurrences,
+  );
+  mapReplacementOccurrences({
+    sourceOccurrences,
+    targetOccurrences,
+    sourceToTargets,
+  });
+  return buildRemappedAssignments({
+    sourceOccurrences,
+    assignments,
+    sourceToTargets,
+  });
+};
 
-  const sourceByService = byService(sourceOccurrences);
-  const targetByService = byService(targetOccurrences);
+const occurrenceBucketKey = (occurrence: TeamScheduleOccurrence) =>
+  occurrence.groupId ? `group:${occurrence.groupId}` : occurrence.serviceId;
 
-  // Map each source occurrence ID to the target occurrence holding the same
-  // chronological position within its service.
-  const sourceToTarget = new Map<string, string>();
-  sourceByService.forEach((sourceList, serviceId) => {
-    const targetList = targetByService.get(serviceId) || [];
-    sourceList.forEach((sourceOccurrence, index) => {
+const sortOccurrences = (occurrences: TeamScheduleOccurrence[]) =>
+  [...occurrences].sort(
+    (a, b) =>
+      new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
+      a.occurrenceId.localeCompare(b.occurrenceId),
+  );
+
+const getMappedTargetIds = (sourceToTargets: Map<string, string[]>) =>
+  new Set([...sourceToTargets.values()].flat());
+
+const mapOccurrencesByServiceIndex = (
+  sourceOccurrences: TeamScheduleOccurrence[],
+  targetOccurrences: TeamScheduleOccurrence[],
+  sourceToTargets: Map<string, string[]> = new Map(),
+) => {
+  const sourceByService = new Map<string, TeamScheduleOccurrence[]>();
+  const targetByService = new Map<string, TeamScheduleOccurrence[]>();
+  const mappedTargetIds = getMappedTargetIds(sourceToTargets);
+
+  sourceOccurrences.forEach((occurrence) => {
+    if (sourceToTargets.has(occurrence.occurrenceId)) return;
+    const key = occurrenceBucketKey(occurrence);
+    sourceByService.set(key, [...(sourceByService.get(key) || []), occurrence]);
+  });
+  targetOccurrences.forEach((occurrence) => {
+    if (mappedTargetIds.has(occurrence.occurrenceId)) return;
+    const key = occurrenceBucketKey(occurrence);
+    targetByService.set(key, [...(targetByService.get(key) || []), occurrence]);
+  });
+
+  sourceByService.forEach((sourceList, serviceKey) => {
+    const targetList = sortOccurrences(targetByService.get(serviceKey) || []);
+    sortOccurrences(sourceList).forEach((sourceOccurrence, index) => {
       const targetOccurrence = targetList[index];
       if (targetOccurrence) {
-        sourceToTarget.set(
-          sourceOccurrence.occurrenceId,
-          targetOccurrence.occurrenceId,
-        );
+        sourceToTargets.set(sourceOccurrence.occurrenceId, [targetOccurrence.occurrenceId]);
       }
     });
   });
+  return sourceToTargets;
+};
 
-  const remapped: TeamScheduleAssignments = {};
-  Object.entries(assignments).forEach(([sourceOccurrenceId, row]) => {
-    const targetOccurrenceId = sourceToTarget.get(sourceOccurrenceId);
-    if (targetOccurrenceId) {
-      remapped[targetOccurrenceId] = row;
+/**
+ * Service selections can change while a schedule is edited or copied. After
+ * preserving every exact service match, carry the remaining rows to a
+ * replacement service on the same date; when the range moved too, line them up
+ * chronologically. Newly added services stay empty because only unmatched source
+ * rows are considered here.
+ */
+const mapReplacementOccurrences = ({
+  sourceOccurrences,
+  targetOccurrences,
+  sourceToTargets,
+}: {
+  sourceOccurrences: TeamScheduleOccurrence[];
+  targetOccurrences: TeamScheduleOccurrence[];
+  sourceToTargets: Map<string, string[]>;
+}) => {
+  const mappedTargetIds = getMappedTargetIds(sourceToTargets);
+  const unmatchedSources = sortOccurrences(
+    sourceOccurrences.filter(
+      (occurrence) => !sourceToTargets.has(occurrence.occurrenceId),
+    ),
+  );
+  const unmatchedTargets = sortOccurrences(
+    targetOccurrences.filter(
+      (occurrence) => !mappedTargetIds.has(occurrence.occurrenceId),
+    ),
+  );
+  const targetsByDate = new Map<string, TeamScheduleOccurrence[]>();
+  unmatchedTargets.forEach((occurrence) => {
+    const date = occurrenceDate(occurrence);
+    targetsByDate.set(date, [...(targetsByDate.get(date) || []), occurrence]);
+  });
+  const sourceIndexByDate = new Map<string, number>();
+
+  unmatchedSources.forEach((sourceOccurrence) => {
+    const date = occurrenceDate(sourceOccurrence);
+    const sameDayTargets = targetsByDate.get(date) || [];
+    if (!sameDayTargets.length) return;
+    const sourceIndex = sourceIndexByDate.get(date) || 0;
+    // A replacement occurrence can safely receive only one source row. Extra
+    // same-day source rows have no unambiguous counterpart, so leave them
+    // unmapped instead of merging people from different services.
+    if (sourceIndex >= sameDayTargets.length) return;
+    const target = sameDayTargets[sourceIndex];
+    sourceToTargets.set(sourceOccurrence.occurrenceId, [target.occurrenceId]);
+    sourceIndexByDate.set(date, sourceIndex + 1);
+  });
+
+  const remainingSources = unmatchedSources.filter(
+    (occurrence) => !sourceToTargets.has(occurrence.occurrenceId),
+  );
+  const newlyMappedTargetIds = getMappedTargetIds(sourceToTargets);
+  const remainingTargets = unmatchedTargets.filter(
+    (occurrence) => !newlyMappedTargetIds.has(occurrence.occurrenceId),
+  );
+  remainingSources.forEach((sourceOccurrence, index) => {
+    const targetOccurrence = remainingTargets[index];
+    if (targetOccurrence) {
+      sourceToTargets.set(sourceOccurrence.occurrenceId, [targetOccurrence.occurrenceId]);
     }
   });
-  return remapped;
+};
+
+const buildRemappedAssignments = ({
+  sourceOccurrences,
+  assignments,
+  sourceToTargets,
+}: {
+  sourceOccurrences: TeamScheduleOccurrence[];
+  assignments: TeamScheduleAssignments;
+  sourceToTargets: Map<string, string[]>;
+}): TeamScheduleAssignments => {
+  const result: TeamScheduleAssignments = {};
+  sortOccurrences(sourceOccurrences).forEach((sourceOccurrence) => {
+    const row = assignments[sourceOccurrence.occurrenceId];
+    const targetIds = sourceToTargets.get(sourceOccurrence.occurrenceId);
+    if (!row || !targetIds) return;
+    targetIds.forEach((targetId) => {
+      const targetRow = (result[targetId] ||= {});
+      Object.entries(row).forEach(([cellKey, cell]) => {
+        if (targetRow[cellKey] === undefined) targetRow[cellKey] = cell;
+      });
+    });
+  });
+  return result;
 };
 
 /**
@@ -212,8 +312,10 @@ const mapOccurrencesByServiceDate = (
  * Re-key assignments when an existing schedule's occurrence ids change shape due
  * to services being combined/un-combined. Rows are matched by (serviceId, date)
  * and, when several source rows collapse onto one combined occurrence, merged
- * cell-by-cell with the earliest service winning a contested slot. A no-op when
- * the ids are unchanged (it reproduces the assignments exactly).
+ * cell-by-cell with the earliest service winning a contested slot. Service
+ * replacements and date changes then use the same safe fallback as copied
+ * schedules, so editing services does not silently erase the people already
+ * scheduled.
  */
 export const rekeyAssignmentsByServiceDate = ({
   sourceOccurrences,
@@ -225,24 +327,25 @@ export const rekeyAssignmentsByServiceDate = ({
   assignments: TeamScheduleAssignments;
 }): TeamScheduleAssignments => {
   if (!assignments || Object.keys(assignments).length === 0) return {};
-  const map = mapOccurrencesByServiceDate(sourceOccurrences, targetOccurrences);
-  // Earliest service first so its assignments take precedence in a merge.
-  const orderedSources = [...sourceOccurrences].sort(
-    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+  const sourceToTargets = mapOccurrencesByServiceDate(
+    sourceOccurrences,
+    targetOccurrences,
   );
-  const result: TeamScheduleAssignments = {};
-  orderedSources.forEach((source) => {
-    const row = assignments[source.occurrenceId];
-    const targetIds = map.get(source.occurrenceId);
-    if (!row || !targetIds) return;
-    targetIds.forEach((targetId) => {
-      const dest = (result[targetId] ||= {});
-      Object.entries(row).forEach(([cellKey, cell]) => {
-        if (dest[cellKey] === undefined) dest[cellKey] = cell;
-      });
-    });
+  mapOccurrencesByServiceIndex(
+    sourceOccurrences,
+    targetOccurrences,
+    sourceToTargets,
+  );
+  mapReplacementOccurrences({
+    sourceOccurrences,
+    targetOccurrences,
+    sourceToTargets,
   });
-  return result;
+  return buildRemappedAssignments({
+    sourceOccurrences,
+    assignments,
+    sourceToTargets,
+  });
 };
 
 /** Attendance counterpart of {@link rekeyAssignmentsByServiceDate}, merged per member. */
@@ -284,6 +387,7 @@ export type ScheduleEditFormProps = {
   defaultRange: { startDate: string; endDate: string };
   services: TeamService[];
   activeTeams: TeamRecord[];
+  schedules: TeamSchedule[];
   churchId: string;
   canEdit: boolean;
   onDraftChange: (draftKey: string, draft: TeamSchedulePayload) => void;

@@ -12,6 +12,8 @@ import {
   CalendarDays,
   Check,
   ChevronLeft,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Clipboard,
   ClipboardList,
   ClipboardPaste,
@@ -25,9 +27,11 @@ import {
   RefreshCw,
   Undo2,
   UserX,
+  Wand2,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
+import Modal from "../../../components/Modal/Modal";
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
@@ -41,8 +45,10 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/utils/cnHelper";
 import {
+  findNextUpcomingOccurrenceId,
   formatOccurrenceRowLabel,
   formatOccurrenceTiming,
+  filterServicesWithOccurrencesInRange,
   generateScheduleOccurrences,
   getDefaultScheduleRange,
   getOccurrenceDate,
@@ -69,8 +75,12 @@ import { SCHEDULE_EXPORT_LAYOUTS } from "./scheduleExportPdf";
 import { parsePlainDate } from "@/utils/plainDate";
 import {
   ADMIN_SCHEDULE_LAYOUTS,
-  readTeamScheduleAdminLayout,
+  hasStoredTeamScheduleAdminLayout,
+  resolveInitialTeamScheduleAdminLayout,
+  responsiveDefaultTeamScheduleAdminLayout,
+  toScheduleExportLayout,
   writeTeamScheduleAdminLayout,
+  type TeamScheduleAdminLayout,
 } from "../teamScheduleAdminLayout";
 import type {
   PositionRequirement,
@@ -114,6 +124,7 @@ import {
   countScheduleAssignmentsForMember,
   getCellMemberIds,
   getCellPrimaryMemberId,
+  getCellShadowAssignments,
   getDuplicateScheduleFirstNames,
   isActive,
   normalizeAssignmentCell,
@@ -126,15 +137,23 @@ import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
 import type { TeamsReturnTo } from "../teamsReturnNavigation";
 import {
   buildScheduleColumns,
+  computeOccurrenceFill,
   getRequiredCount,
   resolveOccurrenceRequirements,
+  type OccurrenceFill,
   type ScheduleSlotColumn,
 } from "./scheduleRequirements";
+import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
 import ScheduleGridCell from "./ScheduleGridCell";
+import ScheduleBoardView from "./ScheduleBoardView";
 import ScheduleAssignmentPicker, {
   type ScheduleAssignmentSwapRecommendation,
 } from "./ScheduleAssignmentPicker";
-import type { ScheduleMemberRecommendationStats } from "./scheduleMemberPickerUtils";
+import {
+  computeLevelBalanceBoost,
+  type ScheduleMemberRecommendationStats,
+} from "./scheduleMemberPickerUtils";
+import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import {
   ScheduleAssignmentProvider,
@@ -142,6 +161,10 @@ import {
 } from "./ScheduleAssignmentContext";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
 import SchedulePasteRowDialog from "./SchedulePasteRowDialog";
+import {
+  findCrossTeamScheduleOccurrenceConflicts,
+  formatCrossTeamScheduleConflictWarning,
+} from "./scheduleConflicts";
 import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
 import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
@@ -178,6 +201,7 @@ import {
   scheduleGridLeftBorderClassName,
   scheduleGridRightBorderClassName,
   scheduleGridTopBorderClassName,
+  scheduleUpNextHeaderHighlightClassName,
   schedulePositionColumnClassName,
   scheduleStickyPositionColumnClassName,
   scheduleStickyPositionLabelClassName,
@@ -198,6 +222,9 @@ import type { TeamSchedulePayload } from "../../../api/auth";
 // toolbar entry point (see SchedulePasteRowDialog + schedulePasteRow).
 const SHOW_PASTE_FROM_EXCEL = false;
 
+// Paces the auto-fill reveal animation (see commitAutoFillAssignments).
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
   serviceId: string;
   serviceDate: string;
@@ -206,6 +233,13 @@ type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
   sourceCellKey: string;
   sourcePositionId: string;
   currentMemberId: string;
+};
+
+type PendingCrossTeamConflict = {
+  memberId: string;
+  warning: string;
+  onConfirm: () => void;
+  onCancel?: () => void;
 };
 
 const ScheduleTab = ({
@@ -246,16 +280,17 @@ const ScheduleTab = ({
   const churchId = context?.churchId || "";
   const churchName = context?.churchName || "";
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
-  const activeServices = useMemo(
-    () => data.services.filter(isActive),
-    [data.services],
-  );
+  const defaultRange = useMemo(getDefaultScheduleRange, []);
   const defaultTeamId = activeTeams[0]?.teamId || "";
   const defaultServiceIds = useMemo(
-    () => activeServices.map((service) => service.serviceId),
-    [activeServices],
+    () =>
+      filterServicesWithOccurrencesInRange({
+        services: data.services.filter(isActive),
+        startDate: defaultRange.startDate,
+        endDate: defaultRange.endDate,
+      }).map((service) => service.serviceId),
+    [data.services, defaultRange],
   );
-  const defaultRange = useMemo(getDefaultScheduleRange, []);
   const schedules = data.schedules;
   const selectedSchedule = selectedScheduleId
     ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
@@ -466,6 +501,14 @@ const ScheduleTab = ({
     }
   }, [showForm]);
   const [membersPanelOpen, setMembersPanelOpen] = useState(true);
+  // Cell keys auto-fill placed someone into within the last ~900ms, purely to
+  // drive a brief highlight as the animation reveals picks one at a time.
+  const [justFilledCellKeys, setJustFilledCellKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [autoFilling, setAutoFilling] = useState(false);
+  // Synchronous double-click guard for handleAutoFillSchedule — see there.
+  const autoFillRunningRef = useRef(false);
   const pendingScheduleSlotRestoreRef = useRef<{
     activeSlot: ScheduleFocusedCell;
     slotPickerMode?: "assign" | "replace";
@@ -488,24 +531,46 @@ const ScheduleTab = ({
   }, []);
   const [copyingLink, setCopyingLink] = useState(false);
   const [pasteRowOpen, setPasteRowOpen] = useState(false);
-  const [scheduleLayout, setScheduleLayout] = useState(readTeamScheduleAdminLayout);
+  const [scheduleLayout, setScheduleLayout] = useState<TeamScheduleAdminLayout>(
+    resolveInitialTeamScheduleAdminLayout,
+  );
+  // Once the operator deliberately picks a layout it wins for the rest of the
+  // session; until then the layout tracks the viewport (see the effect below).
+  const hasExplicitLayoutPreference = useRef(hasStoredTeamScheduleAdminLayout());
   const [scheduleWorkspaceTab, setScheduleWorkspaceTab] = useState<
     "schedule" | "attendance"
   >("schedule");
-  const useAttendanceCardLayout = !useMediaQuery("(min-width: 1024px)");
+  const isNarrowViewport = useMediaQuery("(max-width: 1023px)");
+  const useAttendanceCardLayout = isNarrowViewport;
+
+  // With no stored preference, follow the viewport so a mid-session resize across
+  // the breakpoint swaps to the layout that reads best at that width.
+  useEffect(() => {
+    if (hasExplicitLayoutPreference.current) return;
+    setScheduleLayout(responsiveDefaultTeamScheduleAdminLayout(isNarrowViewport));
+  }, [isNarrowViewport]);
 
   const scheduleLayoutOptions = useMemo(
     () =>
-      ADMIN_SCHEDULE_LAYOUTS.flatMap((value) => {
-        const option = SCHEDULE_EXPORT_LAYOUTS.find((item) => item.value === value);
-        return option ? [{ value, label: option.label }] : [];
-      }),
+      ADMIN_SCHEDULE_LAYOUTS.flatMap(
+        (value): { value: TeamScheduleAdminLayout; label: string }[] => {
+          if (value === "board") {
+            return [{ value, label: "By service (cards)" }];
+          }
+          const option = SCHEDULE_EXPORT_LAYOUTS.find((item) => item.value === value);
+          return option ? [{ value, label: option.label }] : [];
+        },
+      ),
     [],
   );
 
-  useEffect(() => {
-    writeTeamScheduleAdminLayout(scheduleLayout);
-  }, [scheduleLayout]);
+  // Persist only deliberate switches, so an explicit choice wins over the
+  // responsive default and pins the layout against further viewport-driven swaps.
+  const changeScheduleLayout = useCallback((layout: TeamScheduleAdminLayout) => {
+    hasExplicitLayoutPreference.current = true;
+    setScheduleLayout(layout);
+    writeTeamScheduleAdminLayout(layout);
+  }, []);
   const [activeSlot, setActiveSlot] = useState<ScheduleFocusedCell | null>(null);
   // "assign" is the grid flow (replace / shadow / clear). "replace" is the
   // attendance day-of flow, which only swaps in an eligible fill-in: no shadows,
@@ -519,6 +584,8 @@ const ScheduleTab = ({
   const [pendingCellAssignment, setPendingCellAssignment] =
     useState<PendingCellAssignment | null>(null);
   const pendingCellAssignmentRef = useRef<PendingCellAssignment | null>(null);
+  const [pendingCrossTeamConflict, setPendingCrossTeamConflict] =
+    useState<PendingCrossTeamConflict | null>(null);
   // Assignment saves are read-modify-write transactions on the same schedule
   // document. The UI updates optimistically, so a member can be removed from one
   // cell and immediately re-added (e.g. as a reverse shadow) before the first
@@ -569,6 +636,7 @@ const ScheduleTab = ({
     setActiveSlot(null);
     setAssignmentQuery("");
     setPickerAnchorEl(null);
+    setPendingCrossTeamConflict(null);
     resetUndoHistory();
   }, [resetUndoHistory, selectedScheduleId]);
 
@@ -580,6 +648,42 @@ const ScheduleTab = ({
     setPendingCellAssignment(null);
     setMemberPositionFilterIds([]);
   }, []);
+
+  const getCrossTeamConflictWarning = useCallback(
+    (memberId: string, occurrenceId: string) =>
+      formatCrossTeamScheduleConflictWarning(
+        findCrossTeamScheduleOccurrenceConflicts({
+          schedule: selectedSchedule,
+          occurrenceId,
+          memberId,
+          schedules: data.schedules,
+          teams: data.teams,
+        }),
+      ),
+    [data.schedules, data.teams, selectedSchedule],
+  );
+
+  const requestCrossTeamConflictConfirmation = useCallback(
+    ({
+      memberId,
+      warning,
+      onConfirm,
+      onCancel,
+    }: PendingCrossTeamConflict) => {
+      setPendingCrossTeamConflict({ memberId, warning, onConfirm, onCancel });
+    },
+    [],
+  );
+
+  const dismissCrossTeamConflict = useCallback(() => {
+    setPendingCrossTeamConflict((pending) => {
+      pending?.onCancel?.();
+      return null;
+    });
+  }, []);
+
+  const assignmentConflictPayload = (allowCrossTeamConflict?: boolean) =>
+    allowCrossTeamConflict ? { allowCrossTeamConflict: true as const } : {};
 
   const positionNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -619,9 +723,13 @@ const ScheduleTab = ({
   // Re-apply one side of an undo entry against the live grid. Each cell is guarded
   // against concurrent edits: if a teammate changed a cell since the entry was
   // recorded, that cell is skipped rather than clobbered. Returns whether any cell
-  // was applied (false ⇒ the entry is stale and should be discarded).
+  // was applied (false ⇒ the entry is stale, deferred for confirmation, or discarded).
   const applyUndoEntry = useCallback(
-    (entry: ScheduleUndoEntry, direction: "undo" | "redo") => {
+    (
+      entry: ScheduleUndoEntry,
+      direction: "undo" | "redo",
+      allowCrossTeamConflict = false,
+    ) => {
       if (!canEdit || !selectedSchedule) return false;
       if (selectedSchedule.scheduleId !== entry.scheduleId) return false;
       const previousSchedule = selectedSchedule;
@@ -676,6 +784,35 @@ const ScheduleTab = ({
         );
       }
       if (applied === 0) return false;
+
+      // Preflight cross-team conflicts before any write so a mid-batch 409 cannot
+      // leave earlier verbs persisted while the optimistic grid rolls back.
+      if (!allowCrossTeamConflict) {
+        for (const verb of verbs) {
+          if (!verb.memberId || verb.shadowAction === "remove") continue;
+          const warning = getCrossTeamConflictWarning(
+            verb.memberId,
+            verb.serviceId,
+          );
+          if (!warning) continue;
+          requestCrossTeamConflictConfirmation({
+            memberId: verb.memberId,
+            warning,
+            onConfirm: () => {
+              if (applyUndoEntry(entry, direction, true)) {
+                if (direction === "undo") pushRedo(entry);
+                else pushUndo(entry);
+              }
+            },
+            onCancel: () => {
+              if (direction === "undo") pushUndo(entry);
+              else pushRedo(entry);
+            },
+          });
+          return false;
+        }
+      }
+
       const mutationSeq = ++scheduleMutationSeqRef.current;
       onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
       clearActiveSlot();
@@ -685,7 +822,10 @@ const ScheduleTab = ({
             await updateTeamScheduleAssignment(
               churchId,
               previousSchedule.scheduleId,
-              verb,
+              {
+                ...verb,
+                ...assignmentConflictPayload(allowCrossTeamConflict),
+              },
             );
           }
         } catch (error) {
@@ -702,23 +842,32 @@ const ScheduleTab = ({
       churchId,
       clearActiveSlot,
       enqueueAssignmentSave,
+      getCrossTeamConflictWarning,
       onScheduleSaved,
+      pushRedo,
+      pushUndo,
+      requestCrossTeamConflictConfirmation,
       selectedSchedule,
       showToast,
     ],
   );
 
   const handleUndo = useCallback(() => {
+    // Auto-fill records its undo entry for the fully-filled end state before
+    // the reveal animation finishes applying it — undoing mid-reveal would
+    // diff against a grid that doesn't match either state yet.
+    if (autoFilling) return;
     const entry = takeUndo();
     if (!entry) return;
     if (applyUndoEntry(entry, "undo")) pushRedo(entry);
-  }, [applyUndoEntry, pushRedo, takeUndo]);
+  }, [applyUndoEntry, autoFilling, pushRedo, takeUndo]);
 
   const handleRedo = useCallback(() => {
+    if (autoFilling) return;
     const entry = takeRedo();
     if (!entry) return;
     if (applyUndoEntry(entry, "redo")) pushUndo(entry);
-  }, [applyUndoEntry, pushUndo, takeRedo]);
+  }, [applyUndoEntry, autoFilling, pushUndo, takeRedo]);
 
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
@@ -1000,6 +1149,7 @@ const ScheduleTab = ({
     memberId,
     sourceServiceId,
     sourcePositionSlotKey,
+    allowCrossTeamConflict = false,
   }: {
     serviceId: string;
     cellKey: string;
@@ -1007,6 +1157,7 @@ const ScheduleTab = ({
     memberId: string | null;
     sourceServiceId?: string;
     sourcePositionSlotKey?: string;
+    allowCrossTeamConflict?: boolean;
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
@@ -1019,6 +1170,24 @@ const ScheduleTab = ({
       });
       if (issue) {
         showToast(issue, "neutral");
+        return;
+      }
+      const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
+      if (conflictWarning && !allowCrossTeamConflict) {
+        requestCrossTeamConflictConfirmation({
+          memberId,
+          warning: conflictWarning,
+          onConfirm: () =>
+            void commitAssignment({
+              serviceId,
+              cellKey,
+              basePositionId,
+              memberId,
+              sourceServiceId,
+              sourcePositionSlotKey,
+              allowCrossTeamConflict: true,
+            }),
+        });
         return;
       }
     }
@@ -1108,7 +1277,8 @@ const ScheduleTab = ({
             memberId,
             serviceDate,
             sourceServiceId,
-            sourcePositionSlotKey: sourcePositionSlotKey,
+            sourcePositionSlotKey,
+            ...assignmentConflictPayload(allowCrossTeamConflict),
           },
         );
       } catch (error) {
@@ -1258,6 +1428,7 @@ const ScheduleTab = ({
     memberId,
     shadowKind,
     action,
+    allowCrossTeamConflict = false,
   }: {
     serviceId: string;
     cellKey: string;
@@ -1265,6 +1436,7 @@ const ScheduleTab = ({
     memberId: string;
     shadowKind: TeamScheduleShadowKind;
     action: "add" | "remove";
+    allowCrossTeamConflict?: boolean;
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
@@ -1280,6 +1452,24 @@ const ScheduleTab = ({
       );
       if (issue) {
         showToast(issue, "neutral");
+        return;
+      }
+      const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
+      if (conflictWarning && !allowCrossTeamConflict) {
+        requestCrossTeamConflictConfirmation({
+          memberId,
+          warning: conflictWarning,
+          onConfirm: () =>
+            void commitShadowAssignment({
+              serviceId,
+              cellKey,
+              basePositionId,
+              memberId,
+              shadowKind,
+              action,
+              allowCrossTeamConflict: true,
+            }),
+        });
         return;
       }
     }
@@ -1343,6 +1533,7 @@ const ScheduleTab = ({
             serviceDate,
             shadowAction: action,
             shadowKind,
+            ...assignmentConflictPayload(allowCrossTeamConflict),
           },
         );
       } catch (error) {
@@ -1362,6 +1553,7 @@ const ScheduleTab = ({
   const commitRowAssignments = async (
     occurrenceId: string,
     entries: RowPasteApplyEntry[],
+    allowCrossTeamConflict = false,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
     const previousSchedule = selectedSchedule;
@@ -1391,6 +1583,23 @@ const ScheduleTab = ({
       showToast("Those slots changed — nothing to paste.", "neutral");
       return;
     }
+
+    // Confirm every cross-team conflict before writing so a mid-batch 409 cannot
+    // leave earlier cells persisted while the optimistic row rolls back.
+    if (!allowCrossTeamConflict) {
+      for (const entry of applied) {
+        const warning = getCrossTeamConflictWarning(entry.memberId, occurrenceId);
+        if (!warning) continue;
+        requestCrossTeamConflictConfirmation({
+          memberId: entry.memberId,
+          warning,
+          onConfirm: () =>
+            void commitRowAssignments(occurrenceId, entries, true),
+        });
+        return;
+      }
+    }
+
     if (Object.keys(targetRow).length > 0) {
       nextAssignments[occurrenceId] = targetRow;
     } else {
@@ -1408,6 +1617,7 @@ const ScheduleTab = ({
             positionSlotKey: entry.columnKey,
             memberId: entry.memberId,
             serviceDate,
+            ...assignmentConflictPayload(allowCrossTeamConflict),
           });
         }
         showToast(
@@ -1421,6 +1631,170 @@ const ScheduleTab = ({
         showApiErrorToast(showToast, error, "Could not paste this row.");
       }
     });
+  };
+
+  // Writes an auto-fill plan's entries the same way commitRowAssignments does,
+  // except the optimistic update is revealed one slot at a time (with a brief
+  // highlight) instead of all at once, so the fill reads as something that
+  // happened rather than a single instantaneous jump. The reveal is purely
+  // local state — network persistence still runs as one batch afterward, so
+  // the animation's pacing isn't at the mercy of network latency, and undo/redo
+  // still treats the whole batch as one step. Auto-fill only ever targets slots
+  // that were empty, so this never overwrites an existing assignment.
+  const commitAutoFillAssignments = async (
+    entries: AutoFillEntry[],
+    unfilledCount: number,
+  ) => {
+    if (!canEdit || !selectedSchedule || entries.length === 0) return;
+    const previousSchedule = selectedSchedule;
+    const serviceDateByOccurrenceId = new Map(
+      scheduleOccurrences.map((occurrence) => [
+        occurrence.occurrenceId,
+        getOccurrenceDate(occurrence),
+      ]),
+    );
+
+    // Precompute the full before/after diff up front so undo/redo treats the
+    // whole batch as one step, independent of how the reveal below is paced.
+    const finalAssignments = { ...(selectedSchedule.assignments || {}) };
+    const undoChanges: ScheduleCellChange[] = [];
+    entries.forEach((entry) => {
+      const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
+      const before = previousSchedule.assignments?.[entry.occurrenceId]?.[entry.columnKey] ?? "";
+      const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+      const nextCell = serializeAssignmentCell({
+        primaryMemberId: entry.memberId,
+        shadows: cell.shadows,
+      });
+      if (nextCell) {
+        targetRow[entry.columnKey] = nextCell;
+      }
+      finalAssignments[entry.occurrenceId] = targetRow;
+      undoChanges.push({
+        occurrenceId: entry.occurrenceId,
+        cellKey: entry.columnKey,
+        serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
+        before,
+        after: finalAssignments[entry.occurrenceId]?.[entry.columnKey] ?? "",
+      });
+    });
+    recordAssignmentChange(
+      `auto-fill ${entries.length} ${entries.length === 1 ? "slot" : "slots"}`,
+      undoChanges,
+    );
+
+    const mutationSeq = ++scheduleMutationSeqRef.current;
+
+    // Reveal picks in the order the algorithm made them, one at a time. Total
+    // pacing is capped so a big schedule doesn't take forever to watch, but a
+    // small one still gets a visible beat per slot.
+    const stepDelayMs = Math.round(Math.max(35, Math.min(150, 1800 / entries.length)));
+    let revealedAssignments = { ...(selectedSchedule.assignments || {}) };
+    for (const entry of entries) {
+      const targetRow = { ...(revealedAssignments[entry.occurrenceId] || {}) };
+      const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+      const nextCell = serializeAssignmentCell({
+        primaryMemberId: entry.memberId,
+        shadows: cell.shadows,
+      });
+      if (nextCell) {
+        targetRow[entry.columnKey] = nextCell;
+      }
+      revealedAssignments = { ...revealedAssignments, [entry.occurrenceId]: targetRow };
+
+      const cellKey = scheduleGridCellKey(entry.occurrenceId, entry.columnKey);
+      setJustFilledCellKeys((prev) => new Set(prev).add(cellKey));
+      setTimeout(() => {
+        setJustFilledCellKeys((prev) => {
+          if (!prev.has(cellKey)) return prev;
+          const next = new Set(prev);
+          next.delete(cellKey);
+          return next;
+        });
+      }, 900);
+
+      onScheduleSaved({ ...previousSchedule, assignments: revealedAssignments });
+      // eslint-disable-next-line no-await-in-loop -- pacing the reveal is the point
+      await sleep(stepDelayMs);
+    }
+
+    // Fire-and-forget, like every other commit function here (e.g.
+    // commitAssignment): the caller's busy state should track the visual
+    // reveal above, not however long N sequential API calls take to settle.
+    // The outcome toast lives here too (success only after every write
+    // actually lands, error on failure) rather than in the caller, so the
+    // two can never both fire for the same run.
+    const totalOpenSlots = entries.length + unfilledCount;
+    const gapLabel = unfilledCount
+      ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${
+          unfilledCount === 1 ? "needs" : "need"
+        } a person you'll have to assign manually.`
+      : "";
+    void enqueueAssignmentSave(async () => {
+      try {
+        for (const entry of entries) {
+          await updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+            serviceId: entry.occurrenceId,
+            positionSlotKey: entry.columnKey,
+            memberId: entry.memberId,
+            serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
+          });
+        }
+        showToast(
+          `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
+          "success",
+        );
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+      }
+    });
+  };
+
+  const handleAutoFillSchedule = async () => {
+    // A synchronous ref guard, not just the autoFilling state: two clicks
+    // dispatched before React re-renders the disabled button would both read
+    // the same (still-false) state value and could each plan and commit a
+    // bulk write against the same starting grid.
+    if (!canEdit || !selectedSchedule || autoFillRunningRef.current) return;
+    autoFillRunningRef.current = true;
+    try {
+      const plan = buildAutoFillPlan({
+        occurrences: scheduleOccurrences,
+        columns: scheduleColumns,
+        requirementsByOccurrence,
+        assignments: selectedSchedule.assignments,
+        members: activeTeamMembers,
+        positions: data.positions,
+        qualificationLevels: data.qualificationLevels,
+        duplicateFirstNames: duplicateScheduleFirstNames,
+        getAssignmentIssue: (memberId, occurrenceId, positionId) =>
+          getAssignmentIssue(memberId, occurrenceId, positionId),
+        getServiceAvailabilityWarning,
+        getCrossTeamConflictWarning,
+      });
+
+      const totalOpenSlots = plan.entries.length + plan.unfilledSlots.length;
+      if (totalOpenSlots === 0) {
+        showToast("Every slot is already filled.", "neutral");
+        return;
+      }
+      if (plan.entries.length === 0) {
+        showToast("No eligible person was available for the open slots.", "neutral");
+        return;
+      }
+
+      setAutoFilling(true);
+      try {
+        await commitAutoFillAssignments(plan.entries, plan.unfilledSlots.length);
+      } finally {
+        setAutoFilling(false);
+      }
+    } finally {
+      autoFillRunningRef.current = false;
+    }
   };
 
   // Create a brand-new roster member straight from a schedule cell: make the
@@ -1588,6 +1962,31 @@ const ScheduleTab = ({
     if (start && end) return `${start} – ${end}`;
     return start || end;
   }, [selectedSchedule?.startDate, selectedSchedule?.endDate]);
+
+  const scheduleDateBounds = useMemo(() => {
+    const startDate = selectedSchedule?.startDate || "";
+    const endDate = selectedSchedule?.endDate || "";
+    if (startDate || endDate) {
+      return {
+        startDate: startDate || endDate,
+        endDate: endDate || startDate,
+      };
+    }
+    if (scheduleOccurrences.length === 0) {
+      return { startDate: "", endDate: "" };
+    }
+    const occurrenceDates = scheduleOccurrences
+      .map(getOccurrenceDate)
+      .sort();
+    return {
+      startDate: occurrenceDates[0] || "",
+      endDate: occurrenceDates[occurrenceDates.length - 1] || "",
+    };
+  }, [
+    scheduleOccurrences,
+    selectedSchedule?.endDate,
+    selectedSchedule?.startDate,
+  ]);
 
   const scheduleExportModel = useMemo(() => {
     if (!selectedSchedule) return null;
@@ -1928,6 +2327,14 @@ const ScheduleTab = ({
     const primaryMember = data.members.find(
       (item) => item.memberId === primaryMemberId,
     );
+    const currentShadows = getCellShadowAssignments(assignmentCell).map((shadow) => {
+      const member = data.members.find((item) => item.memberId === shadow.memberId);
+      return {
+        memberId: shadow.memberId,
+        kind: shadow.kind,
+        label: scheduleMemberName(member, duplicateScheduleFirstNames),
+      };
+    });
     return {
       positionLabel: column.label,
       occurrenceLabel: sharedTiming
@@ -1938,6 +2345,7 @@ const ScheduleTab = ({
         : "Empty",
       positionId: column.positionId,
       currentPrimaryMemberId: primaryMemberId,
+      currentShadows,
       occurrenceName: occurrence.name,
     };
   }, [
@@ -1992,11 +2400,49 @@ const ScheduleTab = ({
       });
     });
 
+    const activePosition = activeSlotMeta
+      ? data.positions.find((item) => item.positionId === activeSlotMeta.positionId)
+      : undefined;
+    if (activePosition) {
+      const requiredCount = getRequiredCount(
+        requirementsByOccurrence.get(activeSlot.occurrenceId),
+        activePosition.positionId,
+      );
+      const occurrenceAssignments =
+        selectedSchedule.assignments[activeSlot.occurrenceId] || {};
+      const siblingAssignedMemberIds = scheduleColumns
+        .filter(
+          (column) =>
+            column.positionId === activePosition.positionId &&
+            column.columnKey !== activeSlot.columnKey &&
+            column.slot < requiredCount,
+        )
+        .map((column) => getCellPrimaryMemberId(occurrenceAssignments[column.columnKey]))
+        .filter((memberId): memberId is string => Boolean(memberId));
+      const boosts = computeLevelBalanceBoost({
+        position: activePosition,
+        requiredCountForOccurrence: requiredCount,
+        siblingAssignedMemberIds,
+        members: activeTeamMembers,
+        qualificationLevels: data.qualificationLevels,
+      });
+      boosts.forEach((levelBalanceBoost, memberId) => {
+        const current = stats.get(memberId);
+        if (!current) return;
+        stats.set(memberId, { ...current, levelBalanceBoost });
+      });
+    }
+
     return stats;
   }, [
     activeSlot,
+    activeSlotMeta,
     activeTeamMembers,
+    data.positions,
+    data.qualificationLevels,
+    requirementsByOccurrence,
     scheduleAssignmentCounts,
+    scheduleColumns,
     scheduleOccurrences,
     selectedSchedule?.assignments,
   ]);
@@ -2209,13 +2655,29 @@ const ScheduleTab = ({
   const activeSlotGetWarning = useCallback(
     (memberId: string) => {
       if (!activeSlot) return "";
+      const warnings: string[] = [];
       const moveSource = getActiveSlotMoveSource(memberId);
       if (moveSource) {
-        return `Will move from ${moveSource.positionLabel}`;
+        warnings.push(`Will move from ${moveSource.positionLabel}`);
       }
-      return getServiceAvailabilityWarning(memberId, activeSlot.occurrenceId);
+      const conflictWarning = getCrossTeamConflictWarning(
+        memberId,
+        activeSlot.occurrenceId,
+      );
+      if (conflictWarning) warnings.push(conflictWarning);
+      const availabilityWarning = getServiceAvailabilityWarning(
+        memberId,
+        activeSlot.occurrenceId,
+      );
+      if (availabilityWarning) warnings.push(availabilityWarning);
+      return warnings.join(". ");
     },
-    [activeSlot, getActiveSlotMoveSource, getServiceAvailabilityWarning],
+    [
+      activeSlot,
+      getActiveSlotMoveSource,
+      getCrossTeamConflictWarning,
+      getServiceAvailabilityWarning,
+    ],
   );
 
   const activeSlotGetAssignmentActionIssues = useCallback(
@@ -2303,8 +2765,25 @@ const ScheduleTab = ({
     });
   };
 
+  const handleActiveSlotRemoveShadow = (
+    memberId: string,
+    shadowKind: TeamScheduleShadowKind,
+  ) => {
+    if (!canEdit) return;
+    if (!activeSlot || !activeSlotMeta) return;
+    void commitShadowAssignment({
+      serviceId: activeSlot.occurrenceId,
+      cellKey: activeSlot.columnKey,
+      basePositionId: activeSlotMeta.positionId,
+      memberId,
+      shadowKind,
+      action: "remove",
+    });
+  };
+
   const commitActiveSlotSwapRecommendation = async (
     recommendation: ScheduleAssignmentSwapRecommendation,
+    allowCrossTeamConflict = false,
   ) => {
     if (!canEdit || !selectedSchedule) return;
     const plan = activeSlotSwapRecommendations.find(
@@ -2336,6 +2815,26 @@ const ScheduleTab = ({
     const issue = candidateTargetIssue || currentSourceIssue;
     if (issue) {
       showToast(issue, "neutral");
+      return;
+    }
+    const candidateConflictWarning = getCrossTeamConflictWarning(
+      plan.candidateMemberId,
+      plan.serviceId,
+    );
+    const currentConflictWarning = getCrossTeamConflictWarning(
+      plan.currentMemberId,
+      plan.serviceId,
+    );
+    const conflictWarning = candidateConflictWarning || currentConflictWarning;
+    if (conflictWarning && !allowCrossTeamConflict) {
+      requestCrossTeamConflictConfirmation({
+        memberId: candidateConflictWarning
+          ? plan.candidateMemberId
+          : plan.currentMemberId,
+        warning: conflictWarning,
+        onConfirm: () =>
+          void commitActiveSlotSwapRecommendation(recommendation, true),
+      });
       return;
     }
 
@@ -2403,6 +2902,7 @@ const ScheduleTab = ({
           currentMemberId: plan.currentMemberId,
           candidateMemberId: plan.candidateMemberId,
           serviceDate: plan.serviceDate,
+          ...assignmentConflictPayload(allowCrossTeamConflict),
         });
       } catch (error) {
         if (scheduleMutationSeqRef.current === mutationSeq) {
@@ -2447,6 +2947,18 @@ const ScheduleTab = ({
     };
   })();
 
+  const pendingCrossTeamConflictMember = pendingCrossTeamConflict
+    ? data.members.find(
+      (item) => item.memberId === pendingCrossTeamConflict.memberId,
+    )
+    : null;
+  const pendingCrossTeamConflictMemberLabel = pendingCrossTeamConflictMember
+    ? scheduleMemberName(
+      pendingCrossTeamConflictMember,
+      duplicateScheduleFirstNames,
+    )
+    : "This person";
+
   // Flattened occurrences (in service order) for the by-position orientation,
   // where dates become columns.
   const flatOccurrences = useMemo(
@@ -2455,6 +2967,78 @@ const ScheduleTab = ({
         group.occurrences.map((occurrence) => ({ occurrence, group })),
       ),
     [occurrencesByService],
+  );
+
+  // Filled/required per occurrence, shared by every layout's fill badge so the
+  // board and both grids read from one computation.
+  const fillByOccurrence = useMemo(() => {
+    const map = new Map<string, OccurrenceFill>();
+    scheduleOccurrences.forEach((occurrence) => {
+      map.set(
+        occurrence.occurrenceId,
+        computeOccurrenceFill(
+          scheduleColumns,
+          requirementsByOccurrence.get(occurrence.occurrenceId),
+          selectedSchedule?.assignments?.[occurrence.occurrenceId],
+        ),
+      );
+    });
+    return map;
+  }, [
+    scheduleColumns,
+    requirementsByOccurrence,
+    scheduleOccurrences,
+    selectedSchedule?.assignments,
+  ]);
+
+  // The soonest service from today onward, highlighted in every layout.
+  const nextUpcomingOccurrenceId = useMemo(
+    () => findNextUpcomingOccurrenceId(scheduleOccurrences),
+    [scheduleOccurrences],
+  );
+
+  // Grid occurrence headers are sticky (positioned), so the badge anchors to the
+  // header cell. Absolute so it never adds row/column height; it straddles the
+  // cell's top edge like the board's card ribbon.
+  const renderUpNext = (occurrenceId: string) =>
+    occurrenceId === nextUpcomingOccurrenceId ? (
+      <span className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
+        <ScheduleUpNextBadge />
+      </span>
+    ) : null;
+
+  // Board accordion state lives here so the header's expand-all/collapse-all
+  // controls and the per-card chevrons stay in sync. Default expanded on desktop
+  // and collapsed on phones; `overrides` only records explicit toggles.
+  const boardCardsExpandedByDefault = useMediaQuery("(min-width: 768px)");
+  const [boardExpandOverrides, setBoardExpandOverrides] = useState<
+    Map<string, boolean>
+  >(() => new Map());
+  const isBoardCardExpanded = (occurrenceId: string) =>
+    boardExpandOverrides.get(occurrenceId) ?? boardCardsExpandedByDefault;
+  const toggleBoardCard = (occurrenceId: string) =>
+    setBoardExpandOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(
+        occurrenceId,
+        !(prev.get(occurrenceId) ?? boardCardsExpandedByDefault),
+      );
+      return next;
+    });
+  const setAllBoardCardsExpanded = (expanded: boolean) =>
+    setBoardExpandOverrides(
+      new Map(
+        scheduleOccurrences.map((occurrence) => [
+          occurrence.occurrenceId,
+          expanded,
+        ]),
+      ),
+    );
+  const allBoardCardsExpanded = scheduleOccurrences.every((occurrence) =>
+    isBoardCardExpanded(occurrence.occurrenceId),
+  );
+  const allBoardCardsCollapsed = scheduleOccurrences.every(
+    (occurrence) => !isBoardCardExpanded(occurrence.occurrenceId),
   );
 
   const scheduleOccurrenceColumnCh = useMemo(() => {
@@ -2493,7 +3077,9 @@ const ScheduleTab = ({
 
   const cellAxisHighlightMap = useMemo(() => {
     const map = new Map<string, string>();
-    if (!activeSlot) return map;
+    // Cards have no row/column cross to highlight, so the board layout never reads
+    // this map — skip building it (and the grid-semantics fallback) entirely.
+    if (scheduleLayout === "board" || !activeSlot) return map;
 
     if (activeGridLayout === "transpose") {
       scheduleColumns.forEach((column, columnIndex) => {
@@ -2544,6 +3130,7 @@ const ScheduleTab = ({
     activeSlot,
     scheduleColumns,
     scheduleOccurrences,
+    scheduleLayout,
   ]);
 
   const assignmentHandlers: ScheduleAssignmentHandlers = {
@@ -2592,6 +3179,7 @@ const ScheduleTab = ({
           highlightedMemberIdSet.has(memberId),
         ),
         isActiveSlot,
+        justFilled: justFilledCellKeys.has(cellKey),
         allMembers: data.members,
         duplicateFirstNames: duplicateScheduleFirstNames,
         canEdit,
@@ -2604,6 +3192,7 @@ const ScheduleTab = ({
       data.members,
       duplicateScheduleFirstNames,
       highlightedMemberIdSet,
+      justFilledCellKeys,
       requirementsByOccurrence,
       selectedSchedule,
     ],
@@ -2866,6 +3455,7 @@ const ScheduleTab = ({
       defaultRange={defaultRange}
       services={data.services}
       activeTeams={activeTeams}
+      schedules={data.schedules}
       churchId={churchId}
       canEdit={canEdit}
       onDraftChange={onScheduleDraftChanged}
@@ -2952,6 +3542,17 @@ const ScheduleTab = ({
                     Copy schedule
                   </Button>
                 ) : null}
+                {canEdit && selectedSchedule && canShowScheduleWorkspace ? (
+                  <Button
+                    variant="tertiary"
+                    svg={Wand2}
+                    iconSize="sm"
+                    disabled={autoFilling}
+                    onClick={() => void handleAutoFillSchedule()}
+                  >
+                    {autoFilling ? "Auto-filling…" : "Auto-fill schedule"}
+                  </Button>
+                ) : null}
               </div>
             </div>
           </section>
@@ -2984,6 +3585,29 @@ const ScheduleTab = ({
                     </h2>
                     {scheduleWorkspaceTab === "schedule" ? (
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                        {/* Board accordion: expand/collapse every service at once. */}
+                        {scheduleLayout === "board" && scheduleOccurrences.length > 1 ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="tertiary"
+                              svg={ChevronsUpDown}
+                              iconSize="sm"
+                              disabled={allBoardCardsExpanded}
+                              onClick={() => setAllBoardCardsExpanded(true)}
+                              aria-label="Expand all services"
+                              title="Expand all services"
+                            />
+                            <Button
+                              variant="tertiary"
+                              svg={ChevronsDownUp}
+                              iconSize="sm"
+                              disabled={allBoardCardsCollapsed}
+                              onClick={() => setAllBoardCardsExpanded(false)}
+                              aria-label="Collapse all services"
+                              title="Collapse all services"
+                            />
+                          </div>
+                        ) : null}
                         {/* Edit history: the frequent, in-flow controls stay visible. */}
                         {canEdit ? (
                           <>
@@ -2992,7 +3616,7 @@ const ScheduleTab = ({
                                 variant="tertiary"
                                 svg={Undo2}
                                 iconSize="sm"
-                                disabled={!canUndo}
+                                disabled={!canUndo || autoFilling}
                                 onClick={handleUndo}
                                 aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
                                 title={
@@ -3005,7 +3629,7 @@ const ScheduleTab = ({
                                 variant="tertiary"
                                 svg={Redo2}
                                 iconSize="sm"
-                                disabled={!canRedo}
+                                disabled={!canRedo || autoFilling}
                                 onClick={handleRedo}
                                 aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
                                 title={
@@ -3045,7 +3669,7 @@ const ScheduleTab = ({
                               ),
                               subItems: scheduleLayoutOptions.map((option) => ({
                                 text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                                onClick: () => setScheduleLayout(option.value),
+                                onClick: () => changeScheduleLayout(option.value),
                               })),
                             },
                             {
@@ -3085,7 +3709,7 @@ const ScheduleTab = ({
                         />
                         <SchedulePdfExportButton
                           model={scheduleExportModel}
-                          layout={scheduleLayout}
+                          layout={toScheduleExportLayout(scheduleLayout)}
                           hideTrigger
                           open={pdfPreviewOpen}
                           onOpenChange={setPdfPreviewOpen}
@@ -3120,7 +3744,29 @@ const ScheduleTab = ({
                   <div className={scheduleWorkspaceBodyRowClassName}>
                     <div className={scheduleWorkspaceMainColumnClassName}>
                       <TabsContent value="schedule" className={scheduleWorkspaceTabContentClassName}>
-                        {scheduleLayout === "transpose" ? (
+                        {scheduleLayout === "board" ? (
+                          <div className={scheduleGridScrollClassName}>
+                            <ScheduleBoardView
+                              groups={occurrencesByService}
+                              columns={scheduleColumns}
+                              teamName={selectedTeam?.name || ""}
+                              detailOccurrenceId={detailOccurrenceId}
+                              nextUpcomingOccurrenceId={nextUpcomingOccurrenceId}
+                              fillByOccurrence={fillByOccurrence}
+                              isExpanded={isBoardCardExpanded}
+                              onToggleExpanded={toggleBoardCard}
+                              serviceArchivedById={(serviceId) =>
+                                Boolean(
+                                  data.services.find(
+                                    (item) => item.serviceId === serviceId,
+                                  )?.archivedAt,
+                                )
+                              }
+                              onOpenAttendance={openAttendanceForOccurrence}
+                              buildCellProps={buildGridCellProps}
+                            />
+                          </div>
+                        ) : scheduleLayout === "transpose" ? (
                           <div className={scheduleGridScrollClassName}>
                             <div className={scheduleGridFrameClassName}>
                               <table className="w-max border-collapse text-left text-sm table-auto">
@@ -3198,11 +3844,14 @@ const ScheduleTab = ({
                                           scheduleGridLeftBorderClassName,
                                           schedulePositionColumnClassName,
                                           scheduleCellPaddingClassName,
+                                          nextUpcomingOccurrenceId === occurrence.occurrenceId &&
+                                          scheduleUpNextHeaderHighlightClassName,
                                           getAxisHighlightClassName(occurrence.occurrenceId, undefined, {
                                             surface: "header",
                                           }),
                                         )}
                                       >
+                                        {renderUpNext(occurrence.occurrenceId)}
                                         <ScheduleOccurrenceDateButton
                                           label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
                                           ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
@@ -3341,7 +3990,8 @@ const ScheduleTab = ({
                                           const stickyTone = scheduleStickyRowTone(rowIndex);
                                           return (
                                             <tr key={occurrence.occurrenceId} className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}>
-                                              <th className={cn("sticky left-0 z-10 align-middle", scheduleGridRightBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName, stickyTone, getAxisHighlightClassName(occurrence.occurrenceId, undefined, { rowIndex, surface: "sticky" }))}>
+                                              <th className={cn("sticky left-0 z-10 align-middle", scheduleGridRightBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName, stickyTone, nextUpcomingOccurrenceId === occurrence.occurrenceId && scheduleUpNextHeaderHighlightClassName, getAxisHighlightClassName(occurrence.occurrenceId, undefined, { rowIndex, surface: "sticky" }))}>
+                                                {renderUpNext(occurrence.occurrenceId)}
                                                 <ScheduleOccurrenceDateButton
                                                   label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
                                                   ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
@@ -3412,6 +4062,12 @@ const ScheduleTab = ({
                           ? undefined
                           : handleActiveSlotClearAssignment
                       }
+                      currentShadows={activeSlotMeta?.currentShadows}
+                      onRemoveShadow={
+                        slotPickerMode === "replace"
+                          ? undefined
+                          : handleActiveSlotRemoveShadow
+                      }
                       pendingSubmenu={pendingPickerSubmenu}
                       inputRef={pickerInputRef}
                     />
@@ -3421,6 +4077,8 @@ const ScheduleTab = ({
                       mode={canEdit && activeSlot ? "assign" : "browse"}
                       activeTeamMembers={activeTeamMembers}
                       schedulePositions={schedulePositions}
+                      scheduleStartDate={scheduleDateBounds.startDate}
+                      scheduleEndDate={scheduleDateBounds.endDate}
                       scheduleAssignmentCounts={scheduleAssignmentCounts}
                       recommendationStats={activeSlotRecommendationStats}
                       duplicateFirstNames={duplicateScheduleFirstNames}
@@ -3499,6 +4157,47 @@ const ScheduleTab = ({
           )}
         </>
       )}
+      <Modal
+        isOpen={Boolean(pendingCrossTeamConflict)}
+        onClose={dismissCrossTeamConflict}
+        title="Schedule conflict"
+        size="sm"
+        description="Confirm whether to schedule this member despite a team conflict."
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-200">
+            {pendingCrossTeamConflictMemberLabel} is{" "}
+            {pendingCrossTeamConflict?.warning
+              ? pendingCrossTeamConflict.warning.charAt(0).toLowerCase() +
+              pendingCrossTeamConflict.warning.slice(1)
+              : "already scheduled on another team"}{" "}
+            for this service.
+          </p>
+          <p className="text-sm text-gray-400">
+            Confirm if this is intentional.
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="tertiary"
+              onClick={dismissCrossTeamConflict}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                const pending = pendingCrossTeamConflict;
+                setPendingCrossTeamConflict(null);
+                pending?.onConfirm();
+              }}
+            >
+              Schedule anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

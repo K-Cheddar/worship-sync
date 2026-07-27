@@ -147,7 +147,7 @@ describe("setupSharedSessionWindowOpenHandler", () => {
     );
   });
 
-  it("allows Firebase auth popups inside Electron with hardened options", () => {
+  it("denies Firebase auth popups inside Electron", () => {
     const setWindowOpenHandler = jest.fn();
     const webContents = {
       getURL: () => "file:///C:/app/index.html#/home",
@@ -165,24 +165,11 @@ describe("setupSharedSessionWindowOpenHandler", () => {
       url: "https://worshipsync.firebaseapp.com/__/auth/handler",
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        action: "allow",
-        overrideBrowserWindowOptions: expect.objectContaining({
-          webPreferences: expect.objectContaining({
-            partition: "persist:worshipsync",
-            preload: undefined,
-            nodeIntegration: false,
-            contextIsolation: true,
-            sandbox: true,
-          }),
-        }),
-      }),
-    );
+    expect(result).toEqual({ action: "deny" });
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
 
-  it("allows custom auth domain popups inside Electron with hardened options", () => {
+  it("denies custom auth domain popups inside Electron", () => {
     const setWindowOpenHandler = jest.fn();
     const webContents = {
       getURL: () => "file:///C:/app/index.html#/home",
@@ -200,20 +187,7 @@ describe("setupSharedSessionWindowOpenHandler", () => {
       url: "https://auth.worshipsync.net/__/auth/handler",
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        action: "allow",
-        overrideBrowserWindowOptions: expect.objectContaining({
-          webPreferences: expect.objectContaining({
-            partition: "persist:worshipsync",
-            preload: undefined,
-            nodeIntegration: false,
-            contextIsolation: true,
-            sandbox: true,
-          }),
-        }),
-      }),
-    );
+    expect(result).toEqual({ action: "deny" });
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
 });

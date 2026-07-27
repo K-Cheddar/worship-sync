@@ -45,10 +45,6 @@ import { normalizeTeamsForSelectors } from "../teamsSelectors";
 import { useTeamsLiveSync, type TeamsStreamEvent } from "./useTeamsLiveSync";
 import type { TeamSchedule } from "../../../api/authTypes";
 
-// How often to re-fetch the full teams bootstrap to catch other admins' changes
-// to the slower-moving collections (members, positions, teams, services, …).
-// The scheduling grid gets near-instant updates via the SSE channel instead.
-const BACKGROUND_POLL_INTERVAL_MS = 15000;
 // After a local optimistic edit, ignore inbound polls/pushes for this long so a
 // slightly-stale server snapshot (or an echo of our own change) can't revert it.
 const LOCAL_EDIT_COOLDOWN_MS = 3000;
@@ -668,20 +664,18 @@ export const useTeamsPageState = () => {
 
   useTeamsLiveSync(churchId, applyTeamsStreamEvent);
 
-  // Poll the bootstrap on an interval (only while the tab is visible) and
-  // immediately whenever the tab regains focus/visibility.
+  // Refresh when the Teams tab regains focus/visibility so changes that occurred
+  // while it was inactive are recovered without repeatedly reloading the full
+  // bootstrap while the tab remains open. Schedule changes still arrive through
+  // the Teams SSE channel.
   useEffect(() => {
     if (!churchId) return undefined;
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") void backgroundRefresh();
-    }, BACKGROUND_POLL_INTERVAL_MS);
     const handleVisible = () => {
       if (document.visibilityState === "visible") void backgroundRefresh();
     };
     window.addEventListener("focus", handleVisible);
     document.addEventListener("visibilitychange", handleVisible);
     return () => {
-      clearInterval(interval);
       window.removeEventListener("focus", handleVisible);
       document.removeEventListener("visibilitychange", handleVisible);
     };

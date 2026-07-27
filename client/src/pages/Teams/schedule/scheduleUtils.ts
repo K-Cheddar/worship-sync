@@ -17,6 +17,10 @@ export const scheduleGridLeftBorderClassName =
   "border-l-2 border-l-cyan-900/50";
 export const scheduleGridRightBorderClassName =
   "border-r-2 border-r-cyan-900/50";
+/** Shared up-next accent — badge, board card, and header highlights stay in lockstep. */
+export const scheduleUpNextBorderClassName = "border-orange-400";
+export const scheduleUpNextHeaderHighlightClassName =
+  "border-b border-b-orange-400";
 export const scheduleServiceHeaderTopBorderClassName = "border-t-orange-900/40";
 export const scheduleServiceHeaderBottomBorderClassName =
   "border-b-orange-900/40";

@@ -1,6 +1,7 @@
 import type {
   PositionRequirement,
   TeamPosition,
+  TeamScheduleCellAssignment,
   TeamScheduleOccurrence,
   TeamService,
 } from "../../../api/authTypes";
@@ -95,6 +96,32 @@ export type ScheduleSlotColumn = {
   /** Max slots needed for this position across the whole schedule. */
   totalSlots: number;
   label: string;
+};
+
+export type OccurrenceFill = { filled: number; required: number };
+
+/**
+ * How many required slots an occurrence has and how many are filled, using the
+ * same `slot < requiredCount` guard the grid and board render with. Shared so
+ * every schedule layout shows an identical fill indicator.
+ */
+export const computeOccurrenceFill = (
+  columns: ScheduleSlotColumn[],
+  requirements: PositionRequirement[] | undefined,
+  assignmentsForOccurrence:
+    | Record<string, TeamScheduleCellAssignment>
+    | undefined,
+): OccurrenceFill => {
+  let filled = 0;
+  let required = 0;
+  columns.forEach((column) => {
+    if (column.slot >= getRequiredCount(requirements, column.positionId)) return;
+    required += 1;
+    if (assignmentsForOccurrence?.[column.columnKey]?.primaryMemberId) {
+      filled += 1;
+    }
+  });
+  return { filled, required };
 };
 
 /**

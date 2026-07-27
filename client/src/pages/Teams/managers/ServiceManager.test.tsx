@@ -82,6 +82,30 @@ describe("ServiceManager combined services", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps the editor open after saving an edited service", async () => {
+    const user = userEvent.setup();
+    renderManager([sundayMorning, sundayLate, midweek]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    expect(
+      screen.getByRole("heading", { name: "Edit service" }),
+    ).toBeInTheDocument();
+
+    const nameInput = screen.getByLabelText(/^Name:?$/);
+    await user.clear(nameInput);
+    await user.type(nameInput, "Early Service");
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+
+    const updates = findActions(mockDispatch.mock.calls, "serviceTimes/updateService");
+    expect(updates.length).toBeGreaterThan(0);
+    // The panel stays open on edit so services can be edited back-to-back, and
+    // the form is re-seeded from the saved snapshot.
+    expect(
+      screen.getByRole("heading", { name: "Edit service" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Early Service");
+  });
+
   it("stamps a shared group id on the new service and its partner when saved", async () => {
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);

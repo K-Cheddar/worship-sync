@@ -23,15 +23,26 @@ const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
             {service.reccurence === "one_time" &&
               formatOneTime(service.dateTimeISO)}
             {service.reccurence === "weekly" &&
-              formatWeekly(service.dayOfWeek, service.time)}
+              formatWeekly(
+                service.dayOfWeek,
+                service.time,
+                service.startDateISO,
+                service.endDateISO,
+              )}
             {service.reccurence === "monthly" &&
               formatMonthly(
                 service.ordinal as MonthWeekOrdinal,
                 service.weekday as Weekday,
-                service.time
+                service.time,
+                service.startDateISO,
+                service.endDateISO,
               )}
             {service.reccurence === "multi_weekly" &&
-              formatMultiWeekly(service.daysOfWeek, service.endDateISO)}
+              formatMultiWeekly(
+                service.daysOfWeek,
+                service.startDateISO,
+                service.endDateISO,
+              )}
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">

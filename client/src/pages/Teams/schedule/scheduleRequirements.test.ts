@@ -1,6 +1,7 @@
 import type { TeamPosition } from "../../../api/authTypes";
 import {
   buildScheduleColumns,
+  computeOccurrenceFill,
   makeSlotKey,
   parseSlotKey,
   resolveOccurrenceRequirements,
@@ -123,5 +124,56 @@ describe("buildScheduleColumns", () => {
       teamPositionIds: ["vocal", "camera"],
     });
     expect(columns.map((c) => c.columnKey)).toEqual(["vocal::0"]);
+  });
+});
+
+describe("computeOccurrenceFill", () => {
+  const positions = [position("vocal", "Vocal"), position("camera", "Camera")];
+  const requirementsByOccurrence = new Map([
+    ["sun", [{ positionId: "camera", count: 2 }, { positionId: "vocal", count: 1 }]],
+    ["wed", [{ positionId: "camera", count: 1 }]],
+  ]);
+  // Union columns across occurrences: vocal::0, camera::0, camera::1.
+  const columns = buildScheduleColumns({
+    occurrences: [{ occurrenceId: "sun" }, { occurrenceId: "wed" }],
+    requirementsByOccurrence,
+    positions,
+    teamPositionIds: ["vocal", "camera"],
+  });
+
+  it("counts filled required slots for an occurrence", () => {
+    expect(
+      computeOccurrenceFill(columns, requirementsByOccurrence.get("sun"), {
+        "vocal::0": { primaryMemberId: "m1" },
+        "camera::0": { primaryMemberId: "m2" },
+      }),
+    ).toEqual({ filled: 2, required: 3 });
+  });
+
+  it("ignores columns the occurrence does not require", () => {
+    // wed needs only camera x1, so camera::1 and vocal::0 are out of scope even
+    // when they carry an assignment.
+    expect(
+      computeOccurrenceFill(columns, requirementsByOccurrence.get("wed"), {
+        "camera::0": { primaryMemberId: "m2" },
+        "camera::1": { primaryMemberId: "should-not-count" },
+        "vocal::0": { primaryMemberId: "should-not-count" },
+      }),
+    ).toEqual({ filled: 1, required: 1 });
+  });
+
+  it("treats a slot without a primary member as unfilled", () => {
+    expect(
+      computeOccurrenceFill(columns, requirementsByOccurrence.get("sun"), {
+        "vocal::0": { shadows: [] },
+      }),
+    ).toEqual({ filled: 0, required: 3 });
+  });
+
+  it("reports nothing required when the occurrence needs no positions", () => {
+    expect(computeOccurrenceFill(columns, undefined, undefined)).toEqual({
+      filled: 0,
+      required: 0,
+    });
   });
 });

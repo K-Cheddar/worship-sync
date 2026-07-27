@@ -23,6 +23,10 @@ import {
 } from "./server/authResponseSanitize.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
+import {
+  buildInviteAcceptedAccessLines,
+  listEditableTeamScopeIds,
+} from "./server/inviteAcceptedAccessSummary.js";
 import { selectInviteAcceptedAdminRecipients } from "./server/inviteAcceptedNotifyRecipients.js";
 import {
   collectDigestSubmitterNames,
@@ -1339,10 +1343,7 @@ const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
   return selectIntakeNotifyRecipients(candidates);
 };
 
-const listInviteAcceptedNotifyRecipients = async (
-  churchId,
-  acceptedUserId,
-) => {
+const listInviteAcceptedNotifyRecipients = async (churchId, acceptedUserId) => {
   const memberships = await listMembershipsForChurch(churchId);
   const candidates = await Promise.all(
     memberships.map(async (membership) => {
@@ -1360,6 +1361,24 @@ const listInviteAcceptedNotifyRecipients = async (
   return selectInviteAcceptedAdminRecipients(candidates);
 };
 
+const resolveScopedTeamNamesForInvite = async (invite) => {
+  const permissions = normalizeMembershipPermissions(
+    invite.permissions,
+    invite.role || "member",
+  );
+  const scopedTeamIds = listEditableTeamScopeIds(permissions);
+  if (scopedTeamIds.length === 0) {
+    return [];
+  }
+  const teams = await Promise.all(
+    scopedTeamIds.map((teamId) => getDoc(COLLECTIONS.teams, teamId)),
+  );
+  return scopedTeamIds.map((teamId, index) => {
+    const name = String(teams[index]?.name || "").trim();
+    return name || teamId;
+  });
+};
+
 const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
   const recipients = await listInviteAcceptedNotifyRecipients(
     invite.churchId,
@@ -1373,11 +1392,21 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
   const acceptedEmail = user.primaryEmail || user.email || invite.email || "";
   const acceptedDisplayName = user.displayName || "";
   const acceptedLabel = acceptedDisplayName.trim() || acceptedEmail;
+  const role = invite.role || "member";
+  const permissions = normalizeMembershipPermissions(invite.permissions, role);
+  const scopedTeamNames = await resolveScopedTeamNamesForInvite(invite);
+  const accessLines = buildInviteAcceptedAccessLines({
+    role,
+    appAccess: invite.appAccess || "view",
+    permissions,
+    scopedTeamNames,
+  });
   const { html, text } = await renderInviteAcceptedAdminEmail({
     acceptedDisplayName,
     acceptedEmail,
     churchName,
-    role: invite.role || "member",
+    role,
+    accessLines,
     managePeopleUrl: `${APP_BASE_URL}/#/account/people`,
   });
   await Promise.all(
@@ -1391,7 +1420,7 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
           type: "invite_accepted",
           churchId: invite.churchId,
           inviteId: invite.inviteId,
-          role: invite.role || "member",
+          role,
         },
       }).catch((error) =>
         logAuthEvent("warn", "invite.accepted.notify.send-error", {

@@ -392,6 +392,7 @@ export type TeamPositionPayload = {
   description?: string;
   icon?: string;
   groupId?: string;
+  qualificationAreaId?: string;
   teamId: string;
 };
 
@@ -431,6 +432,7 @@ export type TeamSchedulePayload = {
   occurrences?: TeamSchedule["occurrences"];
   assignments?: TeamScheduleAssignments;
   attendance?: TeamScheduleAttendance;
+  allowCrossTeamConflict?: boolean;
 };
 
 export type TeamIntakeFormPayload = {
@@ -897,6 +899,7 @@ export const updateTeamScheduleAssignment = async (
     sourcePositionSlotKey?: string;
     shadowAction?: "add" | "remove";
     shadowKind?: TeamScheduleShadowKind;
+    allowCrossTeamConflict?: boolean;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
@@ -917,6 +920,7 @@ export const updateTeamScheduleAssignmentSwap = async (
     currentMemberId: string;
     candidateMemberId: string;
     serviceDate?: string;
+    allowCrossTeamConflict?: boolean;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(

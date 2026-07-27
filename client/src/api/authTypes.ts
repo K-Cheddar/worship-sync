@@ -206,6 +206,13 @@ export type TeamPosition = {
   groupId?: string;
   // explicit display order within the team; also drives schedule column order
   order?: number;
+  /**
+   * Qualification area whose levels apply to this position (e.g. "Camera" ->
+   * levels 1/2/3). Optional — most positions have no formal level system.
+   * Used to balance skill levels across multiple slots of the same position
+   * on a schedule, not as a hard eligibility gate.
+   */
+  qualificationAreaId?: string;
   archivedAt?: string | null;
 };
 

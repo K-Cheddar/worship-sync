@@ -130,7 +130,7 @@ describe("member list filtering", () => {
     ["team-b", team("team-b", ["member-2"])],
   ]);
 
-  it("returns all members when no filters are active", () => {
+  it("returns all active members when no filters are active", () => {
     const roster = [
       member("member-1"),
       member("member-2", { positionIds: ["position-b"] }),
@@ -141,6 +141,31 @@ describe("member list filtering", () => {
         memberMatchesListFilters(item, filters, teamsById),
       ),
     ).toEqual(roster);
+  });
+
+  it("hides archived members by default and includes them when requested", () => {
+    const roster = [
+      member("member-1"),
+      member("member-2", { archivedAt: "2026-01-01T00:00:00.000Z" }),
+    ];
+    expect(
+      roster
+        .filter((item) =>
+          memberMatchesListFilters(item, emptyMemberListFilters(), teamsById),
+        )
+        .map((item) => item.memberId),
+    ).toEqual(["member-1"]);
+    expect(
+      roster
+        .filter((item) =>
+          memberMatchesListFilters(
+            item,
+            { ...emptyMemberListFilters(), includeArchived: true },
+            teamsById,
+          ),
+        )
+        .map((item) => item.memberId),
+    ).toEqual(["member-1", "member-2"]);
   });
 
   it("filters members by team roster membership", () => {

@@ -7,6 +7,7 @@ export const TEAMS_RETURN_STORAGE_KEY = "worship-sync:teams-return-to";
 /** Shared deep-link param for team-scoped sections (positions, roles, qualifications). */
 export const TEAMS_TEAM_SEARCH_PARAM = "teamId";
 export const TEAMS_MEMBER_EDIT_SEARCH_PARAM = "editMember";
+export const TEAMS_POSITION_EDIT_SEARCH_PARAM = "editPosition";
 
 export const TEAMS_SECTION_PATHS = {
   schedules: "/teams/schedules",
@@ -255,6 +256,13 @@ export const buildTeamsTeamScopedPath = (
 
 export const buildTeamsPositionsPath = (teamId: string) =>
   buildTeamsTeamScopedPath("positions", teamId);
+
+/** Opens Positions for a team and selects a specific position editor. */
+export const buildTeamsPositionEditPath = (
+  positionId: string,
+  teamId: string,
+) =>
+  `${buildTeamsPositionsPath(teamId)}&${TEAMS_POSITION_EDIT_SEARCH_PARAM}=${encodeURIComponent(positionId)}`;
 
 export const buildTeamsRolesPath = (teamId: string) =>
   buildTeamsTeamScopedPath("roles", teamId);

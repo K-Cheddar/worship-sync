@@ -53,6 +53,7 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
   const [dateTimeISO, setDateTimeISO] = useState(initialValues?.dateTimeISO ?? "");
   const [dayOfWeek, setDayOfWeek] = useState<Weekday>(initialValues?.dayOfWeek ?? 0);
   const [daysOfWeek, setDaysOfWeek] = useState<MultiWeeklyDay[]>(initialValues?.daysOfWeek ?? []);
+  const [startDateISO, setStartDateISO] = useState(initialValues?.startDateISO ?? "");
   const [endDateISO, setEndDateISO] = useState(initialValues?.endDateISO ?? "");
   const [ordinal, setOrdinal] = useState<MonthWeekOrdinal>((initialValues?.ordinal as MonthWeekOrdinal) ?? 1);
   const [weekday, setWeekday] = useState<Weekday>(initialValues?.weekday ?? 3);
@@ -71,6 +72,7 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
     setDateTimeISO(initialValues?.dateTimeISO ?? "");
     setDayOfWeek(initialValues?.dayOfWeek ?? 0);
     setDaysOfWeek(initialValues?.daysOfWeek ?? []);
+    setStartDateISO(initialValues?.startDateISO ?? "");
     setEndDateISO(initialValues?.endDateISO ?? "");
     setOrdinal((initialValues?.ordinal as MonthWeekOrdinal) ?? 1);
     setWeekday(initialValues?.weekday ?? 3);
@@ -137,6 +139,10 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
 
   const handleSave = () => {
     if (!canSave) return;
+    const hasBounds =
+      recurrence === "weekly" ||
+      recurrence === "multi_weekly" ||
+      recurrence === "monthly";
     onSave({
       name,
       color,
@@ -146,7 +152,8 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
       dateTimeISO: recurrence === "one_time" ? dateTimeISO : undefined,
       dayOfWeek: recurrence === "weekly" ? dayOfWeek : undefined,
       daysOfWeek: recurrence === "multi_weekly" ? daysOfWeek : undefined,
-      endDateISO: recurrence === "multi_weekly" ? endDateISO || undefined : undefined,
+      startDateISO: hasBounds ? startDateISO || undefined : undefined,
+      endDateISO: hasBounds ? endDateISO || undefined : undefined,
       ordinal: recurrence === "monthly" ? ordinal : undefined,
       weekday: recurrence === "monthly" ? weekday : undefined,
       position,
@@ -310,14 +317,6 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
                   })}
                 </div>
               </div>
-              <Input
-                className={stackedFieldClass}
-                label="End Date (optional)"
-                labelClassName={labelClassName}
-                type="date"
-                value={endDateISO}
-                onChange={(v) => setEndDateISO(String(v))}
-              />
             </>
           )}
 
@@ -352,6 +351,29 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
               />
             </>
           )}
+
+          {(recurrence === "weekly" ||
+            recurrence === "multi_weekly" ||
+            recurrence === "monthly") && (
+              <>
+                <Input
+                  className={stackedFieldClass}
+                  label="Start Date (optional)"
+                  labelClassName={labelClassName}
+                  type="date"
+                  value={startDateISO}
+                  onChange={(v) => setStartDateISO(String(v))}
+                />
+                <Input
+                  className={stackedFieldClass}
+                  label="End Date (optional)"
+                  labelClassName={labelClassName}
+                  type="date"
+                  value={endDateISO}
+                  onChange={(v) => setEndDateISO(String(v))}
+                />
+              </>
+            )}
 
           <ColorField className={fieldClass} label="Color" value={color} onChange={setColor} />
           <ColorField

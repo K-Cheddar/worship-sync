@@ -152,6 +152,62 @@ describe("remapAssignmentsToOccurrences", () => {
       [bFeb.occurrenceId]: { keys: cell("b") },
     });
   });
+
+  it("carries assignments to replacement services when a copied schedule changes services", () => {
+    const janService = occurrence("january-service", "2026-01-04T10:00:00.000Z");
+    const febReplacement = occurrence(
+      "february-service",
+      "2026-02-01T10:00:00.000Z",
+    );
+
+    expect(
+      remapAssignmentsToOccurrences({
+        sourceOccurrences: [janService],
+        targetOccurrences: [febReplacement],
+        assignments: {
+          [janService.occurrenceId]: { "keys::0": cell("m1") },
+        },
+      }),
+    ).toEqual({
+      [febReplacement.occurrenceId]: { "keys::0": cell("m1") },
+    });
+  });
+
+  it("leaves newly added services empty while retaining assignments on existing services", () => {
+    const janService = occurrence("existing", "2026-01-04T10:00:00.000Z");
+    const addedService = occurrence("added", "2026-01-04T18:00:00.000Z");
+
+    expect(
+      remapAssignmentsToOccurrences({
+        sourceOccurrences: [janService],
+        targetOccurrences: [janService, addedService],
+        assignments: {
+          [janService.occurrenceId]: { "keys::0": cell("m1") },
+        },
+      }),
+    ).toEqual({
+      [janService.occurrenceId]: { "keys::0": cell("m1") },
+    });
+  });
+
+  it("drops surplus same-day rows instead of merging them into one replacement", () => {
+    const morning = occurrence("morning", "2026-01-04T09:00:00.000Z");
+    const evening = occurrence("evening", "2026-01-04T18:00:00.000Z");
+    const replacement = occurrence("replacement", "2026-01-04T10:00:00.000Z");
+
+    expect(
+      remapAssignmentsToOccurrences({
+        sourceOccurrences: [morning, evening],
+        targetOccurrences: [replacement],
+        assignments: {
+          [morning.occurrenceId]: { "vocals::0": cell("m1") },
+          [evening.occurrenceId]: { "keys::0": cell("m2") },
+        },
+      }),
+    ).toEqual({
+      [replacement.occurrenceId]: { "vocals::0": cell("m1") },
+    });
+  });
 });
 
 describe("rekeyAssignmentsByServiceDate", () => {
@@ -230,6 +286,40 @@ describe("rekeyAssignmentsByServiceDate", () => {
         assignments,
       }),
     ).toEqual(assignments);
+  });
+
+  it("carries assignments to a replacement service on the same date", () => {
+    const replacement = occurrence("replacement", "2026-07-05T13:00:00.000Z");
+    const assignments: TeamScheduleAssignments = {
+      [first.occurrenceId]: { "vocals::0": cell("kev") },
+    };
+
+    expect(
+      rekeyAssignmentsByServiceDate({
+        sourceOccurrences: [first],
+        targetOccurrences: [replacement],
+        assignments,
+      }),
+    ).toEqual({
+      [replacement.occurrenceId]: { "vocals::0": cell("kev") },
+    });
+  });
+
+  it("retains assignments on services that remain after another service is removed", () => {
+    const assignments: TeamScheduleAssignments = {
+      [first.occurrenceId]: { "vocals::0": cell("kev") },
+      [second.occurrenceId]: { "keys::0": cell("lee") },
+    };
+
+    expect(
+      rekeyAssignmentsByServiceDate({
+        sourceOccurrences: [first, second],
+        targetOccurrences: [first],
+        assignments,
+      }),
+    ).toEqual({
+      [first.occurrenceId]: { "vocals::0": cell("kev") },
+    });
   });
 });
 

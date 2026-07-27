@@ -23,10 +23,13 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
-import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
+
+// Key used to track an in-flight save for the create form, which has no role id
+// yet. Existing roles are tracked by their own roleId.
+const CREATE_SAVING_KEY = "__create__";
 
 type TeamRoleManagerProps = {
   roles: TeamRole[];
@@ -59,7 +62,10 @@ const TeamRoleManager = ({
     name: "",
     description: "",
   });
-  const [saving, setSaving] = useState(false);
+  // Roles with a save currently in flight, keyed by roleId (or CREATE_SAVING_KEY
+  // for a new role). Tracking per-editor keeps the Save spinner on the role
+  // actually saving and lets editing continue back-to-back in the background.
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
 
@@ -128,8 +134,13 @@ const TeamRoleManager = ({
       showToast("Create a team first, then add its roles.", "neutral");
       return;
     }
-    setSaving(true);
-    const localRoleId = editing?.roleId || `local-role-${generateRandomId()}`;
+    const wasEditing = editing;
+    const savingKey = wasEditing?.roleId ?? CREATE_SAVING_KEY;
+    // Ignore a repeat submit for the same editor while its save is pending —
+    // this prevents a fast double-click on "Create" from making duplicates.
+    if (savingIds.has(savingKey)) return;
+    setSavingIds((prev) => new Set(prev).add(savingKey));
+    const localRoleId = wasEditing?.roleId || `local-role-${generateRandomId()}`;
     const payload: TeamRolePayload = {
       teamId: roleTeamId,
       name: draft.name.trim(),
@@ -141,26 +152,53 @@ const TeamRoleManager = ({
       teamId: roleTeamId,
       name: payload.name,
       description: payload.description,
-      archivedAt: editing?.archivedAt || null,
+      archivedAt: wasEditing?.archivedAt || null,
     };
-    onSaved(editing ? { ...editing, ...optimisticRole } : optimisticRole);
-    const saveToastMessage = formatTeamRoleSaveToast(editing, payload);
+    const savedRecord = wasEditing
+      ? { ...wasEditing, ...optimisticRole }
+      : optimisticRole;
+    onSaved(savedRecord);
     try {
-      const response = editing
-        ? await updateTeamRole(churchId, editing.roleId, payload)
+      const response = wasEditing
+        ? await updateTeamRole(churchId, wasEditing.roleId, payload)
         : await createTeamRole(churchId, payload);
-      if (!editing) {
+      if (!wasEditing) {
         onSaved(response.role, localRoleId);
       }
-      showToast(saveToastMessage, "success");
-      finishEditing(reset);
+      // Reached via a cross-section link: return to the origin. Otherwise keep
+      // the panel open for back-to-back editing.
+      if (returnTo) {
+        finishEditing(reset);
+      } else if (wasEditing) {
+        // The operator may have switched to a different role while this save was
+        // in flight. Only refresh the selected record if they're still on the
+        // one we just saved, so the panel never rebinds to a stale role.
+        setEditing((current) =>
+          current?.roleId === wasEditing.roleId ? savedRecord : current,
+        );
+      } else {
+        // Newly created: adopt the saved record so a subsequent Save updates it
+        // instead of creating a duplicate — but only if the create form is still
+        // the active editor and the operator hasn't selected another role.
+        const created = response.role;
+        setEditing((current) => (current === null ? created : current));
+      }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this role.");
       onArchived();
     } finally {
-      setSaving(false);
+      setSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(savingKey);
+        return next;
+      });
     }
   };
+
+  // The panel shows one editor at a time; its Save state reflects only the role
+  // currently open, so a background save elsewhere never spins or disables it.
+  const currentEditorKey = editing ? editing.roleId : CREATE_SAVING_KEY;
+  const isSavingCurrent = savingIds.has(currentEditorKey);
 
   return (
     <>
@@ -283,8 +321,8 @@ const TeamRoleManager = ({
             saveLabel="Save role"
             onSave={() => void submit()}
             onCancel={cancelEditing}
-            disabled={!canEdit || !draft.name.trim()}
-            isLoading={saving}
+            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            isLoading={isSavingCurrent}
           />
         }
       >

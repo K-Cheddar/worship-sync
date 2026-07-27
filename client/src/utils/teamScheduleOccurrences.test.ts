@@ -1,5 +1,6 @@
 import type { TeamScheduleOccurrence, TeamService } from "../api/authTypes";
 import {
+  findNextUpcomingOccurrenceId,
   formatOccurrenceRowLabel,
   formatOccurrenceTiming,
   filterServicesWithOccurrencesInRange,
@@ -19,6 +20,50 @@ const service = (overrides: Partial<TeamService>): TeamService => ({
   dayOfWeek: 0,
   time: "10:00",
   ...overrides,
+});
+
+describe("findNextUpcomingOccurrenceId", () => {
+  const occ = (
+    occurrenceId: string,
+    startsAt: string,
+  ): TeamScheduleOccurrence => ({
+    occurrenceId,
+    serviceId: "s1",
+    name: "Service",
+    startsAt,
+  });
+  // Reference = start of 2026-07-13.
+  const ref = new Date("2026-07-13T00:00:00.000Z").getTime();
+
+  it("picks the earliest occurrence on or after the reference day", () => {
+    const occurrences = [
+      occ("past", "2026-07-05T10:00:00.000Z"),
+      occ("later", "2026-07-26T10:00:00.000Z"),
+      occ("next", "2026-07-19T10:00:00.000Z"),
+    ];
+    expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBe("next");
+  });
+
+  it("counts a service earlier the same day as still up next", () => {
+    const occurrences = [occ("today", "2026-07-13T09:00:00.000Z")];
+    expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBe("today");
+  });
+
+  it("returns null when every occurrence is in the past", () => {
+    const occurrences = [
+      occ("a", "2026-07-01T10:00:00.000Z"),
+      occ("b", "2026-07-05T10:00:00.000Z"),
+    ];
+    expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBeNull();
+  });
+
+  it("ignores unparseable dates", () => {
+    const occurrences = [
+      occ("bad", "not-a-date"),
+      occ("next", "2026-07-14T10:00:00.000Z"),
+    ];
+    expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBe("next");
+  });
 });
 
 describe("generateScheduleOccurrences", () => {
@@ -63,6 +108,55 @@ describe("generateScheduleOccurrences", () => {
       "2026-07-02",
       "2026-07-07",
       "2026-07-09",
+    ]);
+  });
+
+  it("honors weekly service start and end dates", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "summer",
+          name: "Summer Series",
+          reccurence: "weekly",
+          dayOfWeek: 0,
+          time: "10:00",
+          startDateISO: "2026-07-12",
+          endDateISO: "2026-07-26",
+        }),
+      ],
+      serviceIds: ["summer"],
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+    });
+
+    expect(occurrences.map(getOccurrenceDate)).toEqual([
+      "2026-07-12",
+      "2026-07-19",
+      "2026-07-26",
+    ]);
+  });
+
+  it("honors monthly service start dates", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "prayer",
+          name: "Prayer",
+          reccurence: "monthly",
+          ordinal: 1,
+          weekday: 3,
+          time: "19:00",
+          startDateISO: "2026-08-01",
+        }),
+      ],
+      serviceIds: ["prayer"],
+      startDate: "2026-07-01",
+      endDate: "2026-09-30",
+    });
+
+    expect(occurrences.map(getOccurrenceDate)).toEqual([
+      "2026-08-05",
+      "2026-09-02",
     ]);
   });
 
@@ -239,6 +333,30 @@ describe("filterServicesWithOccurrencesInRange", () => {
       "sunday",
       "future-retreat",
     ]);
+  });
+
+  it("uses a recurring service's own bounds instead of today's date", () => {
+    const summerService = service({
+      serviceId: "summer",
+      name: "Summer Service",
+      startDateISO: "2026-06-01",
+      endDateISO: "2026-06-30",
+    });
+
+    expect(
+      filterServicesWithOccurrencesInRange({
+        services: [summerService],
+        startDate: "2026-06-01",
+        endDate: "2026-06-30",
+      }).map((item) => item.serviceId),
+    ).toEqual(["summer"]);
+    expect(
+      filterServicesWithOccurrencesInRange({
+        services: [summerService],
+        startDate: "2026-07-01",
+        endDate: "2026-07-31",
+      }),
+    ).toEqual([]);
   });
 
   it("returns an empty list when the range is missing", () => {
@@ -418,8 +536,6 @@ describe("occurrenceIdsMatch", () => {
   });
 
   it("flags a differing count", () => {
-    expect(
-      occurrenceIdsMatch([occ("first@2026-07-05")], []),
-    ).toBe(false);
+    expect(occurrenceIdsMatch([occ("first@2026-07-05")], [])).toBe(false);
   });
 });

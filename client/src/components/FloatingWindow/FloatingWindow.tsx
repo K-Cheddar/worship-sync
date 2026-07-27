@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -10,7 +11,10 @@ import {
 import { Minus, Maximize2, X } from "lucide-react";
 import Button from "../Button/Button";
 import { cn } from "@/utils/cnHelper";
-import { useFloatingWindowBringToFront } from "./FloatingWindowZIndexContext";
+import {
+  useFloatingWindowBringToFront,
+  useFloatingWindowManager,
+} from "./FloatingWindowZIndexContext";
 
 const TITLE_BAR_HEIGHT = 40;
 const MIN_WIDTH = 200;
@@ -31,6 +35,10 @@ export interface FloatingWindowHandle {
 
 interface FloatingWindowProps {
   title: React.ReactNode;
+  /**
+   * Short label for the multi-window dock. Defaults to `title` when it is a string.
+   */
+  label?: string;
   children: React.ReactNode;
   onClose: () => void;
   defaultPosition?: { x: number; y: number };
@@ -41,7 +49,6 @@ interface FloatingWindowProps {
   contentClassName?: string;
   className?: string;
   initiallyMinimized?: boolean;
-  zIndex?: number;
 }
 
 /**
@@ -67,6 +74,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
   function FloatingWindow(
     {
       title,
+      label,
       children,
       onClose,
       defaultPosition,
@@ -76,10 +84,14 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       contentClassName,
       className,
       initiallyMinimized = false,
-      zIndex = 60,
     },
     ref,
   ) {
+    const windowId = useId();
+    const dockLabel =
+      label?.trim() ||
+      (typeof title === "string" && title.trim() ? title.trim() : "Window");
+
     const [size, setSize] = useState({ width: defaultWidth, height: defaultHeight });
     const [userResized, setUserResized] = useState(false);
     const sizeRef = useRef(size);
@@ -113,7 +125,14 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     const autoHeightRef = useRef(autoHeight);
     const bringToFront = useFloatingWindowBringToFront();
-    const [activeZ, setActiveZ] = useState(zIndex);
+    const { register, update, setFrontmost } = useFloatingWindowManager();
+    // Fresh top z-index on mount so new windows open above existing ones.
+    const [activeZ, setActiveZ] = useState(() => bringToFront());
+
+    const raiseWindow = useCallback(() => {
+      setActiveZ(bringToFront());
+      setFrontmost(windowId);
+    }, [bringToFront, setFrontmost, windowId]);
 
     // ── Animation state ──────────────────────────────────────────────────────
     const [phase, setPhase] = useState<AnimPhase>(
@@ -157,6 +176,13 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       }
     }, []);
 
+    const focusWindow = useCallback(() => {
+      raiseWindow();
+      if (phaseRef.current === "minimized" || phaseRef.current === "minimizing") {
+        handleMinimize();
+      }
+    }, [handleMinimize, raiseWindow]);
+
     const handleClose = useCallback(() => {
       clearAnimTimer();
       setPhase("closing");
@@ -164,6 +190,24 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     }, [onClose]);
 
     useEffect(() => () => clearAnimTimer(), []);
+
+    useEffect(() => {
+      setFrontmost(windowId);
+      return register({
+        id: windowId,
+        label: dockLabel,
+        isMinimized: initiallyMinimized,
+        focus: focusWindow,
+      });
+    }, [windowId]); // eslint-disable-line react-hooks/exhaustive-deps -- register once per mount
+
+    useEffect(() => {
+      update(windowId, {
+        label: dockLabel,
+        isMinimized: phase === "minimized" || phase === "minimizing",
+        focus: focusWindow,
+      });
+    }, [dockLabel, focusWindow, phase, update, windowId]);
 
     useImperativeHandle(
       ref,
@@ -535,8 +579,8 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         data-testid="floating-window"
         style={windowStyle}
         ref={containerRef}
-        onMouseDown={() => setActiveZ(bringToFront())}
-        onTouchStart={() => setActiveZ(bringToFront())}
+        onMouseDown={raiseWindow}
+        onTouchStart={raiseWindow}
         className={cn(
           "flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-gray-800 shadow-2xl",
           isMinimized && "rounded-b-none",
