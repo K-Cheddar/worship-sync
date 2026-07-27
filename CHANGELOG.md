@@ -1,3 +1,11 @@
+# [2.19.0](https://github.com/K-Cheddar/worship-sync/compare/v2.18.1...v2.19.0) (2026-07-27)
+
+
+### Features
+
+* Add ability to auto fill schedule ([4bf9c57](https://github.com/K-Cheddar/worship-sync/commit/4bf9c57264d3614ff4daa27aebeaf767fa948ea1))
+* Multiple scheduling improvements ([65bd16f](https://github.com/K-Cheddar/worship-sync/commit/65bd16f4f2935882530e6eec614fa60819a06ba1))
+
 ## [2.18.1](https://github.com/K-Cheddar/worship-sync/compare/v2.18.0...v2.18.1) (2026-07-06)
 
 
