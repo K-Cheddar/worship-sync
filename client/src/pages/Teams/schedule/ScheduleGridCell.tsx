@@ -30,6 +30,7 @@ type ScheduleGridCellProps = {
   assignmentCell?: TeamScheduleCellAssignment;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
+  justFilled?: boolean;
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   canEdit: boolean;
@@ -48,6 +49,7 @@ const ScheduleGridCell = memo(({
   assignmentCell,
   isMemberHighlighted,
   isActiveSlot,
+  justFilled = false,
   allMembers,
   duplicateFirstNames,
   canEdit,
@@ -99,6 +101,7 @@ const ScheduleGridCell = memo(({
     <ScheduleAssignmentCell
       rowTone={rowTone}
       highlighted={isMemberHighlighted}
+      justFilled={justFilled}
       axisHighlightClassName={axisHighlightClassName}
     >
       <div className="space-y-2">

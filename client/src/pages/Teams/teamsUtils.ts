@@ -499,8 +499,10 @@ export const memberName = (member?: TeamRosterMember | null) => {
 
 export {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
+  TEAMS_POSITION_EDIT_SEARCH_PARAM,
   TEAMS_TEAM_SEARCH_PARAM,
   buildTeamsMemberEditPath,
+  buildTeamsPositionEditPath,
   buildTeamsPositionsPath,
 } from "./teamsReturnNavigation";
 

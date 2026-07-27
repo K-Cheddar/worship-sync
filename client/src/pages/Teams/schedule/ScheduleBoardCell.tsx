@@ -25,6 +25,7 @@ type ScheduleBoardCellProps = {
   assignmentCell?: TeamScheduleCellAssignment;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
+  justFilled?: boolean;
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   canEdit: boolean;
@@ -47,6 +48,7 @@ const ScheduleBoardCell = memo(({
   assignmentCell,
   isMemberHighlighted,
   isActiveSlot,
+  justFilled = false,
   allMembers,
   duplicateFirstNames,
   canEdit,
@@ -87,10 +89,11 @@ const ScheduleBoardCell = memo(({
         aria-label={`${occurrenceName} ${positionLabel}, ${assigneeLabel || "empty"}`}
         disabled={!canEdit}
         className={cn(
-          "flex w-full min-w-0 items-center gap-3 rounded-lg px-2.5 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
+          "flex w-full min-w-0 items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors duration-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
           isMemberHighlighted && "bg-amber-400/15",
           isActiveSlot && "bg-cyan-400/10 ring-1 ring-cyan-400/40",
-          canEdit && !isMemberHighlighted && !isActiveSlot && "hover:bg-gray-900/50",
+          justFilled && "bg-cyan-400/15",
+          canEdit && !isMemberHighlighted && !isActiveSlot && !justFilled && "hover:bg-gray-900/50",
           !canEdit && "cursor-default",
         )}
         onClick={handleActivate}

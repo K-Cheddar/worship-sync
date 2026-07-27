@@ -2,6 +2,7 @@ import {
   TEAMS_RETURN_STORAGE_KEY,
   TEAMS_SECTION_PATHS,
   buildScheduleReturnTo,
+  buildTeamsPositionEditPath,
   buildTeamsReturnNavigationState,
   clearPersistedTeamsReturnTo,
   persistTeamsReturnTo,
@@ -55,6 +56,12 @@ describe("teamsReturnNavigation persistence", () => {
     expect(
       teamsRoutePathname(`${TEAMS_SECTION_PATHS.positions}?teamId=team-1`),
     ).toBe(TEAMS_SECTION_PATHS.positions);
+  });
+
+  it("builds a position edit path with team and position params", () => {
+    expect(buildTeamsPositionEditPath("pos-1", "team-1")).toBe(
+      `${TEAMS_SECTION_PATHS.positions}?teamId=team-1&editPosition=pos-1`,
+    );
   });
 
   it("clearPersistedTeamsReturnTo removes stored navigation", () => {

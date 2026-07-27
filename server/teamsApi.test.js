@@ -398,6 +398,80 @@ test("team position validation and archive keep archived rows readable", async (
   assert.ok(position?.archivedAt);
 });
 
+test("a position's qualification area must belong to the same team", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("qualification_area_scope");
+
+  const worship = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const media = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Media", memberIds: [] },
+  });
+
+  const mediaArea = await callHandler(authHandlers.createTeamQualificationArea, {
+    context,
+    body: { name: "Camera Skill", teamId: media.payload.team.teamId },
+  });
+  const areaId = mediaArea.payload?.area?.areaId;
+  assert.ok(areaId);
+
+  const rejected = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: {
+      name: "Vocal",
+      teamId: worship.payload.team.teamId,
+      qualificationAreaId: areaId,
+    },
+  });
+  assert.equal(rejected.statusCode, 400);
+
+  const accepted = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: {
+      name: "Camera Operator",
+      teamId: media.payload.team.teamId,
+      qualificationAreaId: areaId,
+    },
+  });
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(accepted.payload?.position?.qualificationAreaId, areaId);
+});
+
+test("updating a position without a qualification area clears a previously set one", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("qualification_area_clear");
+
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Media", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  const area = await callHandler(authHandlers.createTeamQualificationArea, {
+    context,
+    body: { name: "Camera Skill", teamId },
+  });
+  const areaId = area.payload?.area?.areaId;
+  assert.ok(areaId);
+
+  const created = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Camera Operator", teamId, qualificationAreaId: areaId },
+  });
+  const positionId = created.payload?.position?.positionId;
+  assert.equal(created.payload?.position?.qualificationAreaId, areaId);
+
+  const updated = await callHandler(authHandlers.updateTeamPosition, {
+    context,
+    params: { positionId },
+    body: { name: "Camera Operator", teamId },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.payload?.position?.qualificationAreaId, null);
+});
+
 test("deleting a team position permanently removes it", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("delete");

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
@@ -33,6 +33,8 @@ type EntityMultiSelectProps = {
   variant?: "admin" | "board-attendee";
   /** When set, sublabel renders above label with stronger visual weight (e.g. service dates). */
   emphasizeSublabel?: boolean;
+  /** Trailing control per option (e.g. cross-section Edit link). Rendered outside the toggle. */
+  renderOptionAction?: (option: EntityMultiSelectOption) => ReactNode;
 };
 
 /**
@@ -51,6 +53,7 @@ const EntityMultiSelect = ({
   emptyText = "Nothing to choose yet.",
   variant = "admin",
   emphasizeSublabel = false,
+  renderOptionAction,
 }: EntityMultiSelectProps) => {
   const [query, setQuery] = useState("");
   const isBoard = variant === "board-attendee";
@@ -147,93 +150,108 @@ const EntityMultiSelect = ({
             const checked = value.includes(option.id);
             const disabled = Boolean(option.archived) && !checked;
             const OptionIcon = resolvePositionLucideIcon(option.icon);
+            const optionAction = renderOptionAction?.(option);
             return (
-              <button
+              <div
                 key={option.id}
-                type="button"
-                role="checkbox"
-                aria-checked={checked}
-                disabled={disabled}
-                onClick={() => toggle(option.id)}
                 className={cn(
-                  "flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
+                  "flex items-stretch gap-1 rounded-md",
                   checked
                     ? isBoard
                       ? "bg-amber-400/10 text-stone-50 ring-1 ring-amber-400/20"
                       : "border border-cyan-400/60 bg-cyan-400/10 text-cyan-50"
                     : isBoard
-                      ? "text-stone-100 hover:bg-stone-800/40"
-                      : "border border-gray-700 bg-gray-950/40 text-gray-100 hover:border-gray-600 hover:bg-gray-800/60",
-                  disabled && "cursor-not-allowed opacity-50",
+                      ? "text-stone-100"
+                      : "border border-gray-700 bg-gray-950/40 text-gray-100",
+                  disabled && "opacity-50",
                 )}
               >
-                <span
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={checked}
+                  disabled={disabled}
+                  onClick={() => toggle(option.id)}
                   className={cn(
-                    "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border",
-                    checked
-                      ? isBoard
-                        ? "border-amber-400 bg-amber-400 text-stone-950"
-                        : "border-cyan-400 bg-cyan-400 text-gray-950"
-                      : isBoard
-                        ? "border-stone-600"
-                        : "border-gray-600",
+                    "flex min-w-0 flex-1 items-start gap-3 px-2.5 py-2 text-left text-sm transition-colors",
+                    !disabled &&
+                    (isBoard
+                      ? "hover:bg-stone-800/40"
+                      : "hover:bg-gray-800/60"),
+                    disabled && "cursor-not-allowed",
                   )}
                 >
-                  {checked ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : null}
-                </span>
-                {OptionIcon ? (
                   <span
                     className={cn(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded",
-                      isBoard
-                        ? "bg-amber-400/10 text-amber-200"
-                        : "border border-cyan-300/30 bg-cyan-400/10 text-cyan-100",
+                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border",
+                      checked
+                        ? isBoard
+                          ? "border-amber-400 bg-amber-400 text-stone-950"
+                          : "border-cyan-400 bg-cyan-400 text-gray-950"
+                        : isBoard
+                          ? "border-stone-600"
+                          : "border-gray-600",
                     )}
                   >
-                    <OptionIcon className="h-4 w-4" aria-hidden />
+                    {checked ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : null}
                   </span>
-                ) : null}
-                <span className="min-w-0 flex-1">
-                  {option.sublabel && emphasizeSublabel ? (
-                    <>
-                      <span
-                        className={cn(
-                          "block truncate text-base font-semibold leading-snug",
-                          isBoard ? "text-stone-50" : "text-white",
-                        )}
-                      >
-                        {option.sublabel}
-                      </span>
-                      <span
-                        className={cn(
-                          "mt-0.5 block truncate text-sm font-medium leading-snug",
-                          isBoard ? "text-stone-300" : "text-gray-300",
-                        )}
-                      >
-                        {option.label}
-                        {option.archived ? " (archived)" : ""}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="block truncate font-medium">
-                        {option.label}
-                        {option.archived ? " (archived)" : ""}
-                      </span>
-                      {option.sublabel ? (
+                  {OptionIcon ? (
+                    <span
+                      className={cn(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded",
+                        isBoard
+                          ? "bg-amber-400/10 text-amber-200"
+                          : "border border-cyan-300/30 bg-cyan-400/10 text-cyan-100",
+                      )}
+                    >
+                      <OptionIcon className="h-4 w-4" aria-hidden />
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1">
+                    {option.sublabel && emphasizeSublabel ? (
+                      <>
                         <span
                           className={cn(
-                            "block truncate text-xs",
-                            isBoard ? "text-stone-400" : "text-gray-400",
+                            "block truncate text-base font-semibold leading-snug",
+                            isBoard ? "text-stone-50" : "text-white",
                           )}
                         >
                           {option.sublabel}
                         </span>
-                      ) : null}
-                    </>
-                  )}
-                </span>
-              </button>
+                        <span
+                          className={cn(
+                            "mt-0.5 block truncate text-sm font-medium leading-snug",
+                            isBoard ? "text-stone-300" : "text-gray-300",
+                          )}
+                        >
+                          {option.label}
+                          {option.archived ? " (archived)" : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="block truncate font-medium">
+                          {option.label}
+                          {option.archived ? " (archived)" : ""}
+                        </span>
+                        {option.sublabel ? (
+                          <span
+                            className={cn(
+                              "block truncate text-xs",
+                              isBoard ? "text-stone-400" : "text-gray-400",
+                            )}
+                          >
+                            {option.sublabel}
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </span>
+                </button>
+                {optionAction ? (
+                  <div className="flex shrink-0 items-center pr-2">{optionAction}</div>
+                ) : null}
+              </div>
             );
           })
         )}

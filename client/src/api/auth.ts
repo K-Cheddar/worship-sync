@@ -392,6 +392,7 @@ export type TeamPositionPayload = {
   description?: string;
   icon?: string;
   groupId?: string;
+  qualificationAreaId?: string;
   teamId: string;
 };
 

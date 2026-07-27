@@ -795,11 +795,29 @@ export const createTeamsAuthHandlers = ({
         label: "Team",
       },
     );
+    const qualificationAreaId = normalizeShortText(body?.qualificationAreaId, {
+      max: 160,
+    });
+    if (qualificationAreaId) {
+      const area = await assertTeamEntityInChurch(
+        "qualificationArea",
+        qualificationAreaId,
+        churchId,
+        { label: "Qualification area" },
+      );
+      if (area.teamId !== team.teamId) {
+        throw httpError(
+          400,
+          "Qualification area must belong to the selected team.",
+        );
+      }
+    }
     return {
       name,
       description: normalizeLongText(body?.description),
       icon: normalizeShortText(body?.icon, { max: 40 }),
       groupId: normalizeShortText(body?.groupId, { max: 160 }) || null,
+      qualificationAreaId: qualificationAreaId || null,
       teamId: team.teamId,
     };
   };

@@ -32,6 +32,7 @@ import {
   MemberListFilterToolbar,
   MEMBER_FILTER_PANEL_ID,
 } from "../components/MemberListFilters";
+import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
@@ -44,7 +45,13 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
-import { TEAMS_MEMBER_EDIT_SEARCH_PARAM } from "../teamsReturnNavigation";
+import {
+  TEAMS_MEMBER_EDIT_SEARCH_PARAM,
+  TEAMS_SECTION_PATHS,
+  buildSectionReturnTo,
+  buildTeamsMemberEditPath,
+  buildTeamsPositionEditPath,
+} from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import {
   countActiveMemberListFilters,
@@ -584,6 +591,30 @@ const MemberManager = ({
           options={positionOptions}
           value={draft.positionIds}
           onChange={(positionIds) => setDraft((d) => ({ ...d, positionIds }))}
+          renderOptionAction={
+            canEdit
+              ? (option) => {
+                const teamIdForPosition = positionTeamIdById.get(option.id);
+                if (!teamIdForPosition) return null;
+                return (
+                  <TeamsCrossSectionLink
+                    to={buildTeamsPositionEditPath(option.id, teamIdForPosition)}
+                    returnTo={
+                      editing
+                        ? {
+                          label: "Back to member",
+                          pathname: buildTeamsMemberEditPath(editing.memberId),
+                        }
+                        : buildSectionReturnTo(TEAMS_SECTION_PATHS.members)
+                    }
+                    aria-label={`Edit ${option.label}`}
+                  >
+                    Edit
+                  </TeamsCrossSectionLink>
+                );
+              }
+              : undefined
+          }
         />
         {teamsJoinedByPositions.length > 0 ? (
           <p className="rounded-md border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">

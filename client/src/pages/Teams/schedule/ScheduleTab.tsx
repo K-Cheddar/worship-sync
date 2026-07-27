@@ -27,6 +27,7 @@ import {
   RefreshCw,
   Undo2,
   UserX,
+  Wand2,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
@@ -148,7 +149,11 @@ import ScheduleBoardView from "./ScheduleBoardView";
 import ScheduleAssignmentPicker, {
   type ScheduleAssignmentSwapRecommendation,
 } from "./ScheduleAssignmentPicker";
-import type { ScheduleMemberRecommendationStats } from "./scheduleMemberPickerUtils";
+import {
+  computeLevelBalanceBoost,
+  type ScheduleMemberRecommendationStats,
+} from "./scheduleMemberPickerUtils";
+import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import {
   ScheduleAssignmentProvider,
@@ -216,6 +221,9 @@ import type { TeamSchedulePayload } from "../../../api/auth";
 // wired, but held back from operators for now. Flip to true to re-enable the
 // toolbar entry point (see SchedulePasteRowDialog + schedulePasteRow).
 const SHOW_PASTE_FROM_EXCEL = false;
+
+// Paces the auto-fill reveal animation (see commitAutoFillAssignments).
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
   serviceId: string;
@@ -493,6 +501,14 @@ const ScheduleTab = ({
     }
   }, [showForm]);
   const [membersPanelOpen, setMembersPanelOpen] = useState(true);
+  // Cell keys auto-fill placed someone into within the last ~900ms, purely to
+  // drive a brief highlight as the animation reveals picks one at a time.
+  const [justFilledCellKeys, setJustFilledCellKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [autoFilling, setAutoFilling] = useState(false);
+  // Synchronous double-click guard for handleAutoFillSchedule — see there.
+  const autoFillRunningRef = useRef(false);
   const pendingScheduleSlotRestoreRef = useRef<{
     activeSlot: ScheduleFocusedCell;
     slotPickerMode?: "assign" | "replace";
@@ -837,16 +853,21 @@ const ScheduleTab = ({
   );
 
   const handleUndo = useCallback(() => {
+    // Auto-fill records its undo entry for the fully-filled end state before
+    // the reveal animation finishes applying it — undoing mid-reveal would
+    // diff against a grid that doesn't match either state yet.
+    if (autoFilling) return;
     const entry = takeUndo();
     if (!entry) return;
     if (applyUndoEntry(entry, "undo")) pushRedo(entry);
-  }, [applyUndoEntry, pushRedo, takeUndo]);
+  }, [applyUndoEntry, autoFilling, pushRedo, takeUndo]);
 
   const handleRedo = useCallback(() => {
+    if (autoFilling) return;
     const entry = takeRedo();
     if (!entry) return;
     if (applyUndoEntry(entry, "redo")) pushUndo(entry);
-  }, [applyUndoEntry, pushUndo, takeRedo]);
+  }, [applyUndoEntry, autoFilling, pushUndo, takeRedo]);
 
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
@@ -1612,6 +1633,170 @@ const ScheduleTab = ({
     });
   };
 
+  // Writes an auto-fill plan's entries the same way commitRowAssignments does,
+  // except the optimistic update is revealed one slot at a time (with a brief
+  // highlight) instead of all at once, so the fill reads as something that
+  // happened rather than a single instantaneous jump. The reveal is purely
+  // local state — network persistence still runs as one batch afterward, so
+  // the animation's pacing isn't at the mercy of network latency, and undo/redo
+  // still treats the whole batch as one step. Auto-fill only ever targets slots
+  // that were empty, so this never overwrites an existing assignment.
+  const commitAutoFillAssignments = async (
+    entries: AutoFillEntry[],
+    unfilledCount: number,
+  ) => {
+    if (!canEdit || !selectedSchedule || entries.length === 0) return;
+    const previousSchedule = selectedSchedule;
+    const serviceDateByOccurrenceId = new Map(
+      scheduleOccurrences.map((occurrence) => [
+        occurrence.occurrenceId,
+        getOccurrenceDate(occurrence),
+      ]),
+    );
+
+    // Precompute the full before/after diff up front so undo/redo treats the
+    // whole batch as one step, independent of how the reveal below is paced.
+    const finalAssignments = { ...(selectedSchedule.assignments || {}) };
+    const undoChanges: ScheduleCellChange[] = [];
+    entries.forEach((entry) => {
+      const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
+      const before = previousSchedule.assignments?.[entry.occurrenceId]?.[entry.columnKey] ?? "";
+      const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+      const nextCell = serializeAssignmentCell({
+        primaryMemberId: entry.memberId,
+        shadows: cell.shadows,
+      });
+      if (nextCell) {
+        targetRow[entry.columnKey] = nextCell;
+      }
+      finalAssignments[entry.occurrenceId] = targetRow;
+      undoChanges.push({
+        occurrenceId: entry.occurrenceId,
+        cellKey: entry.columnKey,
+        serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
+        before,
+        after: finalAssignments[entry.occurrenceId]?.[entry.columnKey] ?? "",
+      });
+    });
+    recordAssignmentChange(
+      `auto-fill ${entries.length} ${entries.length === 1 ? "slot" : "slots"}`,
+      undoChanges,
+    );
+
+    const mutationSeq = ++scheduleMutationSeqRef.current;
+
+    // Reveal picks in the order the algorithm made them, one at a time. Total
+    // pacing is capped so a big schedule doesn't take forever to watch, but a
+    // small one still gets a visible beat per slot.
+    const stepDelayMs = Math.round(Math.max(35, Math.min(150, 1800 / entries.length)));
+    let revealedAssignments = { ...(selectedSchedule.assignments || {}) };
+    for (const entry of entries) {
+      const targetRow = { ...(revealedAssignments[entry.occurrenceId] || {}) };
+      const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+      const nextCell = serializeAssignmentCell({
+        primaryMemberId: entry.memberId,
+        shadows: cell.shadows,
+      });
+      if (nextCell) {
+        targetRow[entry.columnKey] = nextCell;
+      }
+      revealedAssignments = { ...revealedAssignments, [entry.occurrenceId]: targetRow };
+
+      const cellKey = scheduleGridCellKey(entry.occurrenceId, entry.columnKey);
+      setJustFilledCellKeys((prev) => new Set(prev).add(cellKey));
+      setTimeout(() => {
+        setJustFilledCellKeys((prev) => {
+          if (!prev.has(cellKey)) return prev;
+          const next = new Set(prev);
+          next.delete(cellKey);
+          return next;
+        });
+      }, 900);
+
+      onScheduleSaved({ ...previousSchedule, assignments: revealedAssignments });
+      // eslint-disable-next-line no-await-in-loop -- pacing the reveal is the point
+      await sleep(stepDelayMs);
+    }
+
+    // Fire-and-forget, like every other commit function here (e.g.
+    // commitAssignment): the caller's busy state should track the visual
+    // reveal above, not however long N sequential API calls take to settle.
+    // The outcome toast lives here too (success only after every write
+    // actually lands, error on failure) rather than in the caller, so the
+    // two can never both fire for the same run.
+    const totalOpenSlots = entries.length + unfilledCount;
+    const gapLabel = unfilledCount
+      ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${
+          unfilledCount === 1 ? "needs" : "need"
+        } a person you'll have to assign manually.`
+      : "";
+    void enqueueAssignmentSave(async () => {
+      try {
+        for (const entry of entries) {
+          await updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+            serviceId: entry.occurrenceId,
+            positionSlotKey: entry.columnKey,
+            memberId: entry.memberId,
+            serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
+          });
+        }
+        showToast(
+          `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
+          "success",
+        );
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+      }
+    });
+  };
+
+  const handleAutoFillSchedule = async () => {
+    // A synchronous ref guard, not just the autoFilling state: two clicks
+    // dispatched before React re-renders the disabled button would both read
+    // the same (still-false) state value and could each plan and commit a
+    // bulk write against the same starting grid.
+    if (!canEdit || !selectedSchedule || autoFillRunningRef.current) return;
+    autoFillRunningRef.current = true;
+    try {
+      const plan = buildAutoFillPlan({
+        occurrences: scheduleOccurrences,
+        columns: scheduleColumns,
+        requirementsByOccurrence,
+        assignments: selectedSchedule.assignments,
+        members: activeTeamMembers,
+        positions: data.positions,
+        qualificationLevels: data.qualificationLevels,
+        duplicateFirstNames: duplicateScheduleFirstNames,
+        getAssignmentIssue: (memberId, occurrenceId, positionId) =>
+          getAssignmentIssue(memberId, occurrenceId, positionId),
+        getServiceAvailabilityWarning,
+        getCrossTeamConflictWarning,
+      });
+
+      const totalOpenSlots = plan.entries.length + plan.unfilledSlots.length;
+      if (totalOpenSlots === 0) {
+        showToast("Every slot is already filled.", "neutral");
+        return;
+      }
+      if (plan.entries.length === 0) {
+        showToast("No eligible person was available for the open slots.", "neutral");
+        return;
+      }
+
+      setAutoFilling(true);
+      try {
+        await commitAutoFillAssignments(plan.entries, plan.unfilledSlots.length);
+      } finally {
+        setAutoFilling(false);
+      }
+    } finally {
+      autoFillRunningRef.current = false;
+    }
+  };
+
   // Create a brand-new roster member straight from a schedule cell: make the
   // person, add them to this team (so they're eligible), then assign them to the
   // cell. Keeps the scheduler in flow instead of bouncing to the Members tab.
@@ -2215,11 +2400,49 @@ const ScheduleTab = ({
       });
     });
 
+    const activePosition = activeSlotMeta
+      ? data.positions.find((item) => item.positionId === activeSlotMeta.positionId)
+      : undefined;
+    if (activePosition) {
+      const requiredCount = getRequiredCount(
+        requirementsByOccurrence.get(activeSlot.occurrenceId),
+        activePosition.positionId,
+      );
+      const occurrenceAssignments =
+        selectedSchedule.assignments[activeSlot.occurrenceId] || {};
+      const siblingAssignedMemberIds = scheduleColumns
+        .filter(
+          (column) =>
+            column.positionId === activePosition.positionId &&
+            column.columnKey !== activeSlot.columnKey &&
+            column.slot < requiredCount,
+        )
+        .map((column) => getCellPrimaryMemberId(occurrenceAssignments[column.columnKey]))
+        .filter((memberId): memberId is string => Boolean(memberId));
+      const boosts = computeLevelBalanceBoost({
+        position: activePosition,
+        requiredCountForOccurrence: requiredCount,
+        siblingAssignedMemberIds,
+        members: activeTeamMembers,
+        qualificationLevels: data.qualificationLevels,
+      });
+      boosts.forEach((levelBalanceBoost, memberId) => {
+        const current = stats.get(memberId);
+        if (!current) return;
+        stats.set(memberId, { ...current, levelBalanceBoost });
+      });
+    }
+
     return stats;
   }, [
     activeSlot,
+    activeSlotMeta,
     activeTeamMembers,
+    data.positions,
+    data.qualificationLevels,
+    requirementsByOccurrence,
     scheduleAssignmentCounts,
+    scheduleColumns,
     scheduleOccurrences,
     selectedSchedule?.assignments,
   ]);
@@ -2956,6 +3179,7 @@ const ScheduleTab = ({
           highlightedMemberIdSet.has(memberId),
         ),
         isActiveSlot,
+        justFilled: justFilledCellKeys.has(cellKey),
         allMembers: data.members,
         duplicateFirstNames: duplicateScheduleFirstNames,
         canEdit,
@@ -2968,6 +3192,7 @@ const ScheduleTab = ({
       data.members,
       duplicateScheduleFirstNames,
       highlightedMemberIdSet,
+      justFilledCellKeys,
       requirementsByOccurrence,
       selectedSchedule,
     ],
@@ -3317,6 +3542,17 @@ const ScheduleTab = ({
                     Copy schedule
                   </Button>
                 ) : null}
+                {canEdit && selectedSchedule && canShowScheduleWorkspace ? (
+                  <Button
+                    variant="tertiary"
+                    svg={Wand2}
+                    iconSize="sm"
+                    disabled={autoFilling}
+                    onClick={() => void handleAutoFillSchedule()}
+                  >
+                    {autoFilling ? "Auto-filling…" : "Auto-fill schedule"}
+                  </Button>
+                ) : null}
               </div>
             </div>
           </section>
@@ -3380,7 +3616,7 @@ const ScheduleTab = ({
                                 variant="tertiary"
                                 svg={Undo2}
                                 iconSize="sm"
-                                disabled={!canUndo}
+                                disabled={!canUndo || autoFilling}
                                 onClick={handleUndo}
                                 aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
                                 title={
@@ -3393,7 +3629,7 @@ const ScheduleTab = ({
                                 variant="tertiary"
                                 svg={Redo2}
                                 iconSize="sm"
-                                disabled={!canRedo}
+                                disabled={!canRedo || autoFilling}
                                 onClick={handleRedo}
                                 aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
                                 title={

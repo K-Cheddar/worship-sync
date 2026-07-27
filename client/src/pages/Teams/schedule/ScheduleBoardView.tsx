@@ -24,6 +24,7 @@ type BoardCellData = {
   assignmentCell?: TeamScheduleCellAssignment;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
+  justFilled?: boolean;
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   canEdit: boolean;
@@ -183,6 +184,7 @@ const ScheduleBoardView = ({
                       assignmentCell={cellProps.assignmentCell}
                       isMemberHighlighted={cellProps.isMemberHighlighted}
                       isActiveSlot={cellProps.isActiveSlot}
+                      justFilled={cellProps.justFilled}
                       allMembers={cellProps.allMembers}
                       duplicateFirstNames={cellProps.duplicateFirstNames}
                       canEdit={cellProps.canEdit}

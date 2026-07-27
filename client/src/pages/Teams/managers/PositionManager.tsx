@@ -1,4 +1,4 @@
-import { useCallback, useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -9,6 +9,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useSearchParams } from "react-router-dom";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -26,6 +27,7 @@ import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import EntityListSearch from "../components/EntityListSearch";
 import EntityRow from "../components/EntityRow";
+import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
@@ -39,16 +41,31 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
-import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+import {
+  TEAMS_POSITION_EDIT_SEARCH_PARAM,
+  TEAMS_SECTION_PATHS,
+  buildTeamsPositionEditPath,
+  buildTeamsPositionsPath,
+  buildTeamsQualificationsPath,
+} from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
 
-type PositionDraft = { name: string; description: string; icon: string };
+type PositionDraft = {
+  name: string;
+  description: string;
+  icon: string;
+  qualificationAreaId: string;
+};
 
 // Key used to track an in-flight save for the create form, which has no
 // position id yet. Existing positions are tracked by their own positionId.
 const CREATE_SAVING_KEY = "__create__";
+
+// Radix Select forbids an empty-string item value, so "no area picked" needs
+// its own sentinel distinct from the draft's real (empty-string) value.
+const NO_QUALIFICATION_AREA_VALUE = "__none__";
 
 type PositionManagerProps = {
   positions: TeamPosition[];
@@ -81,14 +98,21 @@ const PositionManager = ({
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamPosition | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [draft, setDraft] = useState<PositionDraft>({ name: "", description: "", icon: "" });
+  const [draft, setDraft] = useState<PositionDraft>({
+    name: "",
+    description: "",
+    icon: "",
+    qualificationAreaId: "",
+  });
   // Positions with a save currently in flight, keyed by positionId (or
   // CREATE_SAVING_KEY for a new position). Tracking per-editor keeps the Save
   // spinner on the position actually saving and lets editing continue
   // back-to-back while a background save resolves.
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const pendingEditPositionIdRef = useRef<string | null>(null);
 
   const applyTeamId = useCallback((nextTeamId: string) => {
     setSelectedTeamId(nextTeamId);
@@ -101,6 +125,13 @@ const PositionManager = ({
 
   // Default the selected team to the first active team once teams load.
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
+  const teamQualificationAreaOptions = useMemo(
+    () =>
+      data.qualificationAreas
+        .filter((area) => area.teamId === teamId && isActive(area))
+        .map((area) => ({ label: area.name, value: area.areaId })),
+    [data.qualificationAreas, teamId],
+  );
 
   const teamPositions = positions.filter((position) => position.teamId === teamId);
   const filteredTeamPositions = useMemo(
@@ -130,7 +161,7 @@ const PositionManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ name: "", description: "", icon: "" });
+    setDraft({ name: "", description: "", icon: "", qualificationAreaId: "" });
   };
 
   const cancelEditing = () => {
@@ -177,6 +208,7 @@ const PositionManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
       icon: draft.icon || "",
+      qualificationAreaId: draft.qualificationAreaId || undefined,
       teamId: positionTeamId,
     };
     const optimisticPosition: TeamPosition = {
@@ -186,6 +218,7 @@ const PositionManager = ({
       name: payload.name,
       description: payload.description,
       icon: payload.icon,
+      qualificationAreaId: payload.qualificationAreaId,
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -237,7 +270,7 @@ const PositionManager = ({
   const currentEditorKey = editing ? editing.positionId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
 
-  const openPositionEditor = (position: TeamPosition) => {
+  const openPositionEditor = useCallback((position: TeamPosition) => {
     setEditing(position);
     setSelectedTeamId(position.teamId);
     setShowCreate(true);
@@ -245,8 +278,28 @@ const PositionManager = ({
       name: position.name,
       description: position.description || "",
       icon: position.icon || "",
+      qualificationAreaId: position.qualificationAreaId || "",
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    const editPositionId = searchParams.get(TEAMS_POSITION_EDIT_SEARCH_PARAM)?.trim();
+    if (!editPositionId) return;
+    pendingEditPositionIdRef.current = editPositionId;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete(TEAMS_POSITION_EDIT_SEARCH_PARAM);
+    setSearchParams(nextParams, { replace: true });
+  }, [canEdit, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const editPositionId = pendingEditPositionIdRef.current;
+    if (!editPositionId) return;
+    const position = positions.find((item) => item.positionId === editPositionId);
+    if (!position) return;
+    pendingEditPositionIdRef.current = null;
+    openPositionEditor(position);
+  }, [openPositionEditor, positions]);
 
   const positionRowProps = (position: TeamPosition) => ({
     title: position.name,
@@ -411,6 +464,57 @@ const PositionManager = ({
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
         <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-24" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
+        <div>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <Select
+                label="Qualification area (optional)"
+                value={draft.qualificationAreaId || NO_QUALIFICATION_AREA_VALUE}
+                onChange={(value) =>
+                  setDraft((d) => ({
+                    ...d,
+                    qualificationAreaId: value === NO_QUALIFICATION_AREA_VALUE ? "" : value,
+                  }))
+                }
+                options={[
+                  { label: "None", value: NO_QUALIFICATION_AREA_VALUE },
+                  ...teamQualificationAreaOptions,
+                ]}
+              />
+            </div>
+            {teamId ? (
+              <TeamsCrossSectionLink
+                to={buildTeamsQualificationsPath(teamId)}
+                returnTo={
+                  editing
+                    ? {
+                      label: "Back to position",
+                      pathname: buildTeamsPositionEditPath(
+                        editing.positionId,
+                        editing.teamId,
+                      ),
+                    }
+                    : {
+                      label: "Back to positions",
+                      pathname: buildTeamsPositionsPath(teamId),
+                    }
+                }
+                className="mb-1 shrink-0"
+              >
+                Edit qualifications
+              </TeamsCrossSectionLink>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">
+            When this position needs more than one person per service, auto-fill uses this
+            area&apos;s levels to avoid pairing two lowest-level people together.
+          </p>
+          {teamQualificationAreaOptions.length === 0 && teamId ? (
+            <p className="mt-1 text-xs text-amber-200/90">
+              No qualification areas on this team yet. Use Edit qualifications to add one.
+            </p>
+          ) : null}
+        </div>
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}
