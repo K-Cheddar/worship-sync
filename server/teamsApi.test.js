@@ -2848,6 +2848,11 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   const sseClient = createSseClient();
   addTeamsSseClient(context.churchId, sseClient);
 
+  // Relative to now: the church "current service" link only resolves to a
+  // service happening now or shortly ahead, so a hard-coded past date would
+  // make these assertions depend on when the suite runs.
+  const upcomingStartsAt = new Date(Date.now() + 60 * 60_000).toISOString();
+
   const created = await callHandler(authHandlers.saveServicePlan, {
     context,
     params: { planKey },
@@ -2855,7 +2860,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       serviceId: "svc1",
       date: "2026-07-26",
       name: "Sunday Service",
-      startsAt: "2026-07-26T14:00:00.000Z",
+      startsAt: upcomingStartsAt,
       timezone: "America/New_York",
       sections: [
         {
@@ -2906,6 +2911,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       serviceId: "svc1",
       date: "2026-07-26",
       name: "Sunday Service",
+      // Saves replace the whole document, so a client that still wants a start
+      // time has to keep sending it (the editor's autosave always does).
+      startsAt: upcomingStartsAt,
+      timezone: "America/New_York",
       sections: [
         {
           id: "section-1",
@@ -2971,8 +2980,12 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.match(published.payload.generalPublicUrl, /#\/services\//);
   assert.match(published.payload.currentTeamPublicUrl, /#\/services\//);
   assert.match(published.payload.currentGeneralPublicUrl, /#\/services\//);
-  const publicToken = published.payload.servicePlan.publicLinkToken;
-  const generalPublicToken = published.payload.servicePlan.publicGeneralLinkToken;
+  // Share tokens are capabilities, so they no longer ride along in the plan
+  // body — publish hands them back only as explicit share URLs.
+  assert.equal(published.payload.servicePlan.publicLinkToken, undefined);
+  assert.equal(published.payload.servicePlan.publicTokenHash, undefined);
+  const publicToken = published.payload.publicUrl.split("/").at(-1);
+  const generalPublicToken = published.payload.generalPublicUrl.split("/").at(-1);
   const currentTeamToken = published.payload.currentTeamPublicUrl.split("/").at(-1);
   const currentGeneralToken = published.payload.currentGeneralPublicUrl.split("/").at(-1);
 
@@ -3099,7 +3112,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       serviceId: "svc1",
       date: "2026-07-26",
       name: "Sunday Service",
-      startsAt: "2026-07-26T14:00:00.000Z",
+      startsAt: upcomingStartsAt,
       sections: [
         {
           id: "section-1",
@@ -3127,7 +3140,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       serviceId: "svc1",
       date: "2026-07-26",
       name: "Sunday Service",
-      startsAt: "2026-07-26T14:00:00.000Z",
+      startsAt: upcomingStartsAt,
       sections: [
         {
           id: "section-1",
@@ -3164,6 +3177,22 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     params: { planKey },
   });
   assert.equal(viewerRead.statusCode, 200);
+  // A viewer can read the plan, but a share URL is a capability that exposes
+  // operational team notes — neither the raw tokens nor the links may reach
+  // someone who cannot edit.
+  assert.equal(viewerRead.payload.servicePlan.publicLinkToken, undefined);
+  assert.equal(viewerRead.payload.servicePlan.publicGeneralLinkToken, undefined);
+  assert.equal(viewerRead.payload.servicePlan.publicTokenHash, undefined);
+  assert.equal(viewerRead.payload.publicUrls, undefined);
+
+  // An editor still gets the links back so "copy share link" keeps working.
+  const editorRead = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(editorRead.payload.servicePlan.publicLinkToken, undefined);
+  assert.equal(editorRead.payload.publicUrls.team.includes(publicToken), true);
+
   const viewerWrite = await callHandler(authHandlers.saveServicePlan, {
     context: viewerContext,
     params: { planKey },
@@ -3255,6 +3284,120 @@ test("listServicePlans returns a lightweight, church-scoped summary for the Plan
   );
   // Full section/element content is not shipped in the list projection.
   assert.equal(listed.payload.servicePlans[0].sections, undefined);
+});
+
+test("church current-service link stops resolving once the service is past", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_current_window");
+  const planKey = "svc1@2026-07-26";
+
+  const soon = new Date(Date.now() + 60 * 60_000).toISOString();
+  await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Upcoming Service",
+      startsAt: soon,
+      sections: [],
+    },
+  });
+  const published = await callHandler(authHandlers.publishServicePlan, {
+    context,
+    params: { planKey },
+  });
+  const currentTeamToken = published.payload.currentTeamPublicUrl.split("/").at(-1);
+
+  const upcoming = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: currentTeamToken } },
+    upcoming,
+  );
+  assert.equal(upcoming.statusCode, 200);
+  assert.equal(upcoming.payload.service.title, "Upcoming Service");
+
+  // Move the service well into the past. The sticky church link must stop
+  // resolving rather than becoming a permanent reader of the last service's
+  // team notes — unpublishing one plan never revoked the church token.
+  const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+  const latest = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      baseRevision: latest.payload.servicePlan.revision,
+      serviceId: "svc1",
+      date: "2026-06-26",
+      name: "Upcoming Service",
+      startsAt: longAgo,
+      sections: [],
+    },
+  });
+
+  const afterwards = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: currentTeamToken } },
+    afterwards,
+  );
+  assert.equal(afterwards.statusCode, 404);
+});
+
+test("saving a service plan clears optional fields that are left out", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_clear_optional");
+  const planKey = "svc1@2026-07-26";
+
+  const created = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "America/New_York",
+      groupId: "group-1",
+      sourceImport: {
+        source: "servicePlanning",
+        sourceUrl: "https://example.test/plan",
+        loadedAt: "2026-07-20T00:00:00.000Z",
+        planLabel: "Imported",
+      },
+      sections: [],
+    },
+  });
+  assert.equal(created.payload.servicePlan.startsAt, "2026-07-26T14:00:00.000Z");
+  assert.equal(created.payload.servicePlan.groupId, "group-1");
+
+  // A save is a whole-document replace: omitting these must actually clear
+  // them, not silently keep the previous values under `merge: true`.
+  const cleared = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      baseRevision: created.payload.servicePlan.revision,
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      sections: [],
+    },
+  });
+  assert.equal(cleared.statusCode, 200);
+  assert.equal(cleared.payload.servicePlan.startsAt, null);
+  assert.equal(cleared.payload.servicePlan.timezone, null);
+  assert.equal(cleared.payload.servicePlan.groupId, null);
+  assert.equal(cleared.payload.servicePlan.sourceImport, null);
+
+  // Without a start time the plan is no longer publishable.
+  const publishAttempt = await callHandler(authHandlers.publishServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(publishAttempt.statusCode, 400);
 });
 
 test("service plan templates: create, update in place, list, scope, and delete", async (t) => {

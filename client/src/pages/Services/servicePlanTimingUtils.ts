@@ -108,7 +108,17 @@ export const applyStartTimeChange = <T extends TimedItem>(
   if (previousStartMinutes == null) return items;
   const previousDuration = Math.max(0, newStartMinutes - previousStartMinutes);
   const updated = items.map((item, i) =>
-    i === index - 1 ? { ...item, durationMinutes: previousDuration } : item,
+    i === index - 1
+      ? {
+          ...item,
+          durationMinutes: previousDuration,
+          // Must be written *before* the recompute below: that reads duration
+          // via getTimedItemDurationMinutes, which prefers durationSeconds —
+          // leaving the old seconds here would recompute every later start
+          // time from the stale duration.
+          durationSeconds: Math.round(previousDuration * 60),
+        }
+      : item,
   );
   const anchor = updated[0]?.startTime;
   if (!anchor) return updated;
@@ -185,18 +195,12 @@ export const applyElementStartTimeChange = (
   const flat = flattenElements(sections);
   const index = flat.findIndex((element) => element.id === elementId);
   if (index === -1) return sections;
-  const updated = applyStartTimeChange(flat, index, startTime).map(
-    (element, itemIndex) => {
-      if (itemIndex !== index - 1) return element;
-      const durationMinutes = Math.max(0, Number(element.durationMinutes) || 0);
-      return {
-        ...element,
-        durationMinutes,
-        durationSeconds: Math.round(durationMinutes * 60),
-      };
-    },
+  // applyStartTimeChange keeps durationMinutes and durationSeconds in step
+  // itself, so there's nothing to reconcile afterwards.
+  return writeBackFlatElements(
+    sections,
+    applyStartTimeChange(flat, index, startTime),
   );
-  return writeBackFlatElements(sections, updated);
 };
 
 /** Set (or reset) the whole plan's anchor start time, recomputing every

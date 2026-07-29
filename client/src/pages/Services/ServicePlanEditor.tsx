@@ -137,9 +137,30 @@ const urlsFromPublishResult = (result: {
   };
 };
 
-const occurrenceLocalTime = (iso: string) => {
+/**
+ * The occurrence's wall-clock HH:mm *in the plan's own timezone*. Element start
+ * times are stored as bare wall-clock strings and rendered to viewers in the
+ * plan's timezone, so seeding them from the editor's browser zone would put an
+ * operator working from another timezone an hour or more out.
+ */
+const occurrenceLocalTime = (iso: string, timeZone: string) => {
   const date = new Date(iso);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
+  } catch {
+    // An unusable stored zone shouldn't block seeding a time.
+    return new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
+  }
 };
 
 type ServicePlanEditorProps = {
@@ -536,10 +557,17 @@ const ServicePlanEditor = ({
     save: saveAutosavePayload,
     getConflictPlan,
     onSaved: (savedPlan) => {
+      // Defence in depth alongside the hook's generation guard: this editor
+      // stays mounted across prev/next, so a late response could otherwise
+      // describe a plan the operator has already navigated away from.
+      if (savedPlan.planKey && savedPlan.planKey !== planKey) return;
       setPlan(savedPlan);
       rememberAssignmentHistory(savedPlan.sections);
     },
-    onConflict: setConflictPlan,
+    onConflict: (latestPlan) => {
+      if (latestPlan.planKey && latestPlan.planKey !== planKey) return;
+      setConflictPlan(latestPlan);
+    },
   });
 
   // Clean editors follow remote plan changes. Local edits are never silently
@@ -612,7 +640,7 @@ const ServicePlanEditor = ({
         // it. Older printouts without time columns still receive our normal
         // occurrence-time anchor as a useful starting point.
         hasElements && !hasSourceTiming
-          ? applyPlanAnchorStartTime(importedSections, occurrenceLocalTime(occurrence.startsAt))
+          ? applyPlanAnchorStartTime(importedSections, occurrenceLocalTime(occurrence.startsAt, planTimezone))
           : importedSections,
       );
       // The occurrence being planned names the plan — the imported source's
@@ -636,7 +664,7 @@ const ServicePlanEditor = ({
     const isFirstElementOverall = sections.every((s) => s.elements.length === 0);
     let next = addElement(sections, sectionId);
     if (isFirstElementOverall) {
-      const anchor = occurrenceLocalTime(occurrence.startsAt);
+      const anchor = occurrenceLocalTime(occurrence.startsAt, planTimezone);
       const newElement = next
         .find((s) => s.id === sectionId)
         ?.elements.slice(-1)[0];

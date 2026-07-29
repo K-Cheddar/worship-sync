@@ -363,18 +363,22 @@ export const createTeamsAuthHandlers = ({
             }),
           }
         : undefined;
+    // Optional fields are written as explicit nulls rather than omitted:
+    // saves use `merge: true`, so an omitted key leaves the previous value in
+    // place and an operator clearing a start time / group / import would
+    // silently keep the old one.
     return {
       churchId,
       planKey,
       serviceId,
       serviceIds,
-      ...(groupId ? { groupId } : {}),
+      groupId: groupId ?? null,
       date,
       name,
-      ...(startsAt ? { startsAt } : {}),
-      ...(timezone ? { timezone } : {}),
+      startsAt: startsAt ?? null,
+      timezone: timezone ?? null,
       sections,
-      ...(sourceImport ? { sourceImport } : {}),
+      sourceImport: sourceImport ?? null,
       ...(clonedFromPlanKey ? { clonedFromPlanKey } : {}),
     };
   };
@@ -469,6 +473,36 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  /**
+   * Raw share tokens are capabilities: anyone holding one can read the team
+   * view, operational notes included. They must never travel to a Teams
+   * *viewer*, and never over the church-wide Teams SSE stream, which every
+   * viewer is on. Hashes stay server-side too — they're the lookup key.
+   */
+  const SERVICE_PLAN_SECRET_FIELDS = [
+    "publicLinkToken",
+    "publicTokenHash",
+    "publicGeneralLinkToken",
+    "publicGeneralTokenHash",
+  ];
+
+  const withoutServicePlanSecrets = (plan) => {
+    if (!plan || typeof plan !== "object") return plan;
+    const safe = { ...plan };
+    for (const field of SERVICE_PLAN_SECRET_FIELDS) delete safe[field];
+    return safe;
+  };
+
+  /** Whether this request may edit Teams data, as a boolean rather than a throw. */
+  const hasTeamsEditAccess = async (req, churchId) => {
+    try {
+      await requireTeamsEdit(req, churchId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const createServicePlanPublicToken = () =>
     crypto.randomBytes(24).toString("base64url");
 
@@ -531,6 +565,14 @@ export const createTeamsAuthHandlers = ({
     return startsAtMs + Math.max(durationMs, MIN_CURRENT_SERVICE_WINDOW_MS);
   };
 
+  /**
+   * How far ahead a church's sticky "current service" link will resolve. The
+   * link is meant to point at the service happening now or imminently; without
+   * a bound it would hand a leaked URL access to every future plan a church
+   * ever publishes.
+   */
+  const CURRENT_SERVICE_LOOKAHEAD_MS = 7 * 24 * 60 * 60_000;
+
   const getCurrentPublishedServicePlan = async (churchId) => {
     const plans = await queryDocs(
       COLLECTIONS.servicePlans,
@@ -551,10 +593,16 @@ export const createTeamsAuthHandlers = ({
       .sort((left, right) => right.startsAtMs - left.startsAtMs)[0];
     if (active) return active.plan;
     const next = eligible
-      .filter(({ startsAtMs }) => startsAtMs > now)
+      .filter(
+        ({ startsAtMs }) =>
+          startsAtMs > now && startsAtMs <= now + CURRENT_SERVICE_LOOKAHEAD_MS,
+      )
       .sort((left, right) => left.startsAtMs - right.startsAtMs)[0];
     if (next) return next.plan;
-    return eligible.sort((left, right) => right.startsAtMs - left.startsAtMs)[0]?.plan || null;
+    // Deliberately no fall back to the most recent past plan: that made a
+    // leaked link a permanent reader of the last service's team notes, and
+    // unpublishing the current plan would not revoke it.
+    return null;
   };
 
   const getPlanElementIds = (plan) =>
@@ -578,7 +626,10 @@ export const createTeamsAuthHandlers = ({
     return { mode: "schedule" };
   };
 
-  const ensureServicePlanPublicTokens = async (plan, adminUid) => {
+  // `docId` is passed explicitly rather than read off `plan.planId`: a doc
+  // written before planId was stamped (or a partial one) would otherwise be
+  // written under the literal string "undefined", stranding the token hashes.
+  const ensureServicePlanPublicTokens = async (plan, adminUid, docId) => {
     const existingTeamToken = normalizeShortText(plan?.publicLinkToken, {
       max: 200,
     });
@@ -590,7 +641,7 @@ export const createTeamsAuthHandlers = ({
     if (!existingTeamToken || !existingGeneralToken) {
       await setDoc(
         COLLECTIONS.servicePlans,
-        plan.planId,
+        docId,
         {
           ...(!existingTeamToken
             ? { publicLinkToken, publicTokenHash: hashValue(publicLinkToken) }
@@ -4877,9 +4928,11 @@ export const createTeamsAuthHandlers = ({
         // Rebuild the share links for an already-published plan so reopening
         // the editor still shows them — they used to exist only in the publish
         // response, so a reload left an operator with no way to reach the
-        // links short of publishing again.
+        // links short of publishing again. Edit-gated: a share URL embeds the
+        // capability token, so a Teams *viewer* must not receive one.
+        const canEdit = await hasTeamsEditAccess(req, churchId);
         let publicUrls;
-        if (servicePlan.published && servicePlan.publicLinkToken) {
+        if (canEdit && servicePlan.published && servicePlan.publicLinkToken) {
           const church = await getDoc(COLLECTIONS.churches, churchId);
           publicUrls = {
             team: buildPublicServicePlanUrl(servicePlan.publicLinkToken),
@@ -4900,7 +4953,7 @@ export const createTeamsAuthHandlers = ({
         }
         return res.json({
           success: true,
-          servicePlan,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
           ...(publicUrls ? { publicUrls } : {}),
         });
       } catch (error) {
@@ -4963,19 +5016,24 @@ export const createTeamsAuthHandlers = ({
           );
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
-        emitTeamsEvent(churchId, "service-plan-updated", { servicePlan });
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
         await emitPublicServicePlanUpdated(
           servicePlan,
           Date.parse(servicePlan?.updatedAt || "") || Date.now(),
         );
-        return res.json({ success: true, servicePlan });
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
       } catch (error) {
         if (error?.servicePlanConflict) {
           return res.status(409).json({
             success: false,
             conflict: true,
             errorMessage: error.message,
-            servicePlan: error.servicePlanConflict,
+            servicePlan: withoutServicePlanSecrets(error.servicePlanConflict),
           });
         }
         return sendTeamsJsonError(
@@ -5145,7 +5203,7 @@ export const createTeamsAuthHandlers = ({
           throw httpError(400, "Save the service start time before publishing.");
         }
         const { publicLinkToken, publicGeneralLinkToken } =
-          await ensureServicePlanPublicTokens(existing, admin.user.uid);
+          await ensureServicePlanPublicTokens(existing, admin.user.uid, docId);
         const { teamToken: currentTeamToken, generalToken: currentGeneralToken } =
           await ensureChurchCurrentServiceTokens(churchId, admin.user.uid);
         const now = nowIso();
@@ -5162,11 +5220,13 @@ export const createTeamsAuthHandlers = ({
         };
         await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, { merge: true });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", { servicePlan });
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
         await emitPublicServicePlanUpdated(servicePlan, Date.parse(now) || Date.now());
         return res.json({
           success: true,
-          servicePlan,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
           publicUrl: buildPublicServicePlanUrl(publicLinkToken),
           teamPublicUrl: buildPublicServicePlanUrl(publicLinkToken),
           generalPublicUrl: buildPublicServicePlanUrl(publicGeneralLinkToken),
@@ -5197,12 +5257,17 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", { servicePlan });
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
         await emitPublicServicePlanUpdated(
           { ...existing, published: true },
           Date.parse(now) || Date.now(),
         );
-        return res.json({ success: true, servicePlan });
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not unpublish this service plan.");
       }
@@ -5228,9 +5293,14 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", { servicePlan });
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
         await emitPublicServicePlanUpdated(servicePlan, Date.parse(now) || Date.now());
-        return res.json({ success: true, servicePlan });
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update live service progress.");
       }

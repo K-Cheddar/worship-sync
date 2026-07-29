@@ -55,6 +55,19 @@ export const useServicePlanAutosave = ({
   const inFlightRef = useRef<Promise<boolean> | null>(null);
   const retryCountRef = useRef(0);
   const resetKeyRef = useRef(resetKey);
+  /** Bumped whenever we switch plans. A save that resolves after a switch
+   * belongs to the previous plan, so its result must not touch this hook's
+   * state — otherwise its revision and "saved" ack would be applied to the
+   * plan now on screen. */
+  const generationRef = useRef(0);
+  /** The newest unsaved snapshot, captured with the save function bound to the
+   * plan it came from, so a pending edit can still be persisted to the *right*
+   * plan after the editor has moved on. */
+  const pendingRef = useRef<{
+    payload: ServicePlanPayload;
+    baseRevision: number;
+    save: (payload: ServicePlanPayload, baseRevision: number) => Promise<ServicePlan>;
+  } | null>(null);
 
   changeVersionRef.current = changeVersion;
   enabledRef.current = enabled;
@@ -81,20 +94,26 @@ export const useServicePlanAutosave = ({
     const versionBeingSaved = changeVersionRef.current;
     const payload = buildPayloadRef.current();
     if (!payload) return true;
+    const generation = generationRef.current;
 
     setState("saving");
     const request = (async () => {
       try {
         const savedPlan = await saveRef.current(payload, revisionRef.current);
+        // Resolved after a plan switch — this result describes the plan we
+        // left, so applying any of it here would corrupt the current one.
+        if (generation !== generationRef.current) return false;
         revisionRef.current = savedPlan.revision ?? revisionRef.current + 1;
         savedVersionRef.current = versionBeingSaved;
         retryCountRef.current = 0;
+        pendingRef.current = null;
         onSavedRef.current(savedPlan);
         setState(
           changeVersionRef.current > versionBeingSaved ? "dirty" : "saved",
         );
         return true;
       } catch (error) {
+        if (generation !== generationRef.current) return false;
         const latestPlan = getConflictPlanRef.current(error);
         if (latestPlan) {
           setState("conflict");
@@ -119,6 +138,23 @@ export const useServicePlanAutosave = ({
     })();
     inFlightRef.current = request;
     return request;
+  }, []);
+
+  /**
+   * Persist the newest snapshot of the plan we are leaving. `save` is captured
+   * with the snapshot because by the time this runs the live `save` is already
+   * bound to the *new* plan's key — reusing it would write the old content
+   * under the new plan. Fire-and-forget: this hook's state now belongs to a
+   * different plan, so the result is deliberately not applied here.
+   */
+  const flushPendingForPreviousPlan = useCallback(() => {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending) return;
+    if (changeVersionRef.current <= savedVersionRef.current) return;
+    void pending.save(pending.payload, pending.baseRevision).catch(() => {
+      // Nothing to surface — the editor has already moved to another plan.
+    });
   }, []);
 
   const flush = useCallback(async () => {
@@ -148,6 +184,10 @@ export const useServicePlanAutosave = ({
     if (resetKeyRef.current === resetKey) return;
     resetKeyRef.current = resetKey;
     clearTimers();
+    flushPendingForPreviousPlan();
+    // Any in-flight request now belongs to the previous plan.
+    generationRef.current += 1;
+    inFlightRef.current = null;
     // Editor route changes reset their local draft counter to zero. Do not
     // snapshot the render's value here: an incoming route response must never
     // acknowledge a click that happened while it was settling.
@@ -171,6 +211,14 @@ export const useServicePlanAutosave = ({
       return;
     }
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    const payload = buildPayloadRef.current();
+    if (payload) {
+      pendingRef.current = {
+        payload,
+        baseRevision: revisionRef.current,
+        save: saveRef.current,
+      };
+    }
     setState("dirty");
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
@@ -188,8 +236,11 @@ export const useServicePlanAutosave = ({
   useEffect(
     () => () => {
       clearTimers();
+      generationRef.current += 1;
+      inFlightRef.current = null;
+      flushPendingForPreviousPlan();
     },
-    [clearTimers],
+    [clearTimers, flushPendingForPreviousPlan],
   );
 
   return { state, flush, retry, acceptRemoteRevision, getRevision };

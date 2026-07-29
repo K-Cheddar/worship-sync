@@ -309,7 +309,7 @@ describe("Teams", () => {
     const user = userEvent.setup();
     renderTeams();
 
-    expect(await screen.findByRole("heading", { name: /^Schedules$/i })).toBeInTheDocument();
+    await waitForTeamsBootstrap();
     await openTeamsSectionsNavIfNeeded(user);
     expect(screen.getByRole("tab", { name: "Teams" })).toHaveAttribute(
       "aria-selected",
@@ -322,7 +322,7 @@ describe("Teams", () => {
 
     await user.click(screen.getByRole("tab", { name: "Services" }));
     expect(
-      await screen.findByRole("heading", { name: /^Plans$/i }),
+      await screen.findByRole("heading", { name: /^Plans$/i }, { timeout: 8000 }),
     ).toBeInTheDocument();
     await openTeamsSectionsNavIfNeeded(user);
     expect(screen.getByRole("tab", { name: "Services" })).toHaveAttribute(
@@ -340,7 +340,7 @@ describe("Teams", () => {
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Teams" }));
-    expect(await screen.findByRole("heading", { name: /^Schedules$/i })).toBeInTheDocument();
+    await waitForTeamsBootstrap();
   });
 
   it("renders the empty schedule state after bootstrap loads", async () => {

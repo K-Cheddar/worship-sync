@@ -10,7 +10,12 @@ import {
 import type { ServicePlanSection } from "../../types/servicePlan";
 import { EMPTY_RICH_TEXT } from "../../types/richText";
 
-type Item = { id: string; startTime?: string; durationMinutes?: number };
+type Item = {
+  id: string;
+  startTime?: string;
+  durationMinutes?: number;
+  durationSeconds?: number;
+};
 
 const items = (rows: Item[]): Item[] => rows;
 
@@ -95,6 +100,27 @@ describe("applyStartTimeChange (time drives duration)", () => {
       { id: "b", startTime: "09:15", durationMinutes: 30 },
       { id: "c", startTime: "09:45", durationMinutes: 5 },
     ]);
+  });
+
+  it("rewrites durationSeconds too, so later start times use the new duration", () => {
+    // Regression: the duration UI always writes durationSeconds, and the
+    // recompute prefers it. Updating only durationMinutes left the recompute
+    // chaining off the stale seconds, so every later start time was wrong.
+    const start = recomputeStartTimesFromAnchor(
+      items([
+        { id: "a", durationMinutes: 10, durationSeconds: 600 },
+        { id: "b", durationMinutes: 30, durationSeconds: 1_800 },
+        { id: "c", durationMinutes: 5, durationSeconds: 300 },
+      ]),
+      "09:00",
+    );
+
+    const result = applyStartTimeChange(start, 1, "09:15");
+
+    expect(result[0].durationMinutes).toBe(15);
+    expect(result[0].durationSeconds).toBe(900);
+    // c must follow b's real end (09:15 + 30m), not the pre-edit chain.
+    expect(result.map((i) => i.startTime)).toEqual(["09:00", "09:15", "09:45"]);
   });
 
   it("moves the whole plan's anchor when the first item's start time changes, without touching durations", () => {
