@@ -9,25 +9,27 @@ import {
   type AccountPageState,
 } from "./hooks/useAccountPageState";
 
+const ACCOUNT_PAGE_CONTEXT_KEY = "__worshipSyncAccountPageContext__";
+
+type AccountPageContextGlobal = {
+  [ACCOUNT_PAGE_CONTEXT_KEY]?: Context<AccountPageState | null>;
+};
+
 /**
  * Keep a single Context identity across Vite Fast Refresh. Without this,
  * HMR recreates createContext() while an old Provider is still mounted, so
  * useAccountPage() reads null and throws in AccountShell.
+ *
+ * Uses globalThis (not import.meta.hot) so Jest can parse this module.
  */
 const getAccountPageContext = (): Context<AccountPageState | null> => {
-  if (import.meta.hot?.data.AccountPageContext) {
-    return import.meta.hot.data.AccountPageContext as Context<
-      AccountPageState | null
-    >;
+  const globalStore = globalThis as typeof globalThis &
+    AccountPageContextGlobal;
+  if (!globalStore[ACCOUNT_PAGE_CONTEXT_KEY]) {
+    globalStore[ACCOUNT_PAGE_CONTEXT_KEY] =
+      createContext<AccountPageState | null>(null);
   }
-
-  const context = createContext<AccountPageState | null>(null);
-
-  if (import.meta.hot) {
-    import.meta.hot.data.AccountPageContext = context;
-  }
-
-  return context;
+  return globalStore[ACCOUNT_PAGE_CONTEXT_KEY];
 };
 
 const AccountPageContext = getAccountPageContext();
