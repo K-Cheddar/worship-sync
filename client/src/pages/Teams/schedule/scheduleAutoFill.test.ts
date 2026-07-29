@@ -163,6 +163,53 @@ describe("buildAutoFillPlan", () => {
     expect(picks[2]).toBe(picks[0]);
   });
 
+  it("never puts someone back-to-back even when they're far behind on overall fairness", () => {
+    const positions = [position("vocal")];
+    const occurrences = [{ occurrenceId: "occ1" }, { occurrenceId: "occ2" }];
+    const requirementsByOccurrence = new Map([
+      ["occ1", [{ positionId: "vocal", count: 1 }]],
+      ["occ2", [{ positionId: "vocal", count: 1 }]],
+    ]);
+    const columns = buildScheduleColumns({
+      occurrences,
+      requirementsByOccurrence,
+      positions,
+      teamPositionIds: ["vocal"],
+    });
+    const members = [member("a", ["vocal"]), member("b", ["vocal"]), member("c", ["vocal"])];
+    // b and c each have three prior assignments from occurrences outside this
+    // pass's range (old history, so it counts toward fairness but carries no
+    // spacing distance), while a has none. Fairness alone would pick a for
+    // both occ1 and occ2 back-to-back, since a's count (0, then 1) stays
+    // below b/c's (3) the whole time.
+    const assignments: TeamScheduleAssignments = {
+      old1: { "vocal::0": { primaryMemberId: "b" } },
+      old2: { "vocal::0": { primaryMemberId: "b" } },
+      old3: { "vocal::0": { primaryMemberId: "b" } },
+      old4: { "vocal::0": { primaryMemberId: "c" } },
+      old5: { "vocal::0": { primaryMemberId: "c" } },
+      old6: { "vocal::0": { primaryMemberId: "c" } },
+    };
+
+    const plan = buildAutoFillPlan({
+      occurrences,
+      columns,
+      requirementsByOccurrence,
+      assignments,
+      members,
+      positions,
+      qualificationLevels: [],
+      duplicateFirstNames,
+      getAssignmentIssue: makeGetAssignmentIssue(members, assignments),
+      getServiceAvailabilityWarning: noWarning,
+      getCrossTeamConflictWarning: noWarning,
+    });
+
+    const picks = plan.entries.map((e) => e.memberId);
+    expect(picks[0]).toBe("a");
+    expect(picks[1]).not.toBe("a");
+  });
+
   it("fills the scarcest position first so a rare position isn't starved", () => {
     const positions = [position("vocal"), position("camera")];
     const occurrences = [{ occurrenceId: "occ1" }];

@@ -118,6 +118,9 @@ export const useTeamsPageState = () => {
   const [data, setData] = useState<TeamsData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
+  /** Bumped when another admin changes a service plan, so the Plans page can
+   * refetch its summary list instead of showing stale "has plan" badges. */
+  const [servicePlansRevision, setServicePlansRevision] = useState(0);
   const [scheduleDrafts, setScheduleDrafts] = useState<TeamsScheduleDrafts>({});
   const dataRef = useRef(data);
   const selectedScheduleIdRef = useRef(selectedScheduleId);
@@ -652,6 +655,16 @@ export const useTeamsPageState = () => {
           selectedScheduleIdRef.current = nextSelectedScheduleId;
           writeSelectedScheduleId(churchIdRef.current, nextSelectedScheduleId);
         }
+        return;
+      }
+      // Service plans aren't part of TeamsData — the Plans page keeps its own
+      // summary list — so just bump a revision the page can watch to refetch,
+      // rather than trying to merge the plan into this dataset.
+      if (
+        event.type === "service-plan-updated" ||
+        event.type === "service-plan-removed"
+      ) {
+        setServicePlansRevision((current) => current + 1);
       }
     },
     [
@@ -712,6 +725,7 @@ export const useTeamsPageState = () => {
     canEditTeam,
     pageData,
     normalizedPageData,
+    servicePlansRevision,
     selectedScheduleId,
     scheduleDrafts,
     upsertData,

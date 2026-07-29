@@ -113,7 +113,7 @@ describe("Home", () => {
     ).toHaveAttribute("href", "/boards/controller");
     expect(
       screen.getByRole("link", { name: /^Teams /i }),
-    ).toHaveAttribute("href", "/teams");
+    ).toHaveAttribute("href", "/teams-and-services");
 
     expect(
       screen.getByText(

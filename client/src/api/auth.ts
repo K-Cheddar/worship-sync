@@ -6,6 +6,13 @@ import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
 import { notifyAuthError, requestAuthRecovery } from "./authErrorBus";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
+  ServicePlan,
+  ServicePlanPayload,
+  ServicePlanSummary,
+  ServicePlanTemplate,
+  ServicePlanTemplatePayload,
+} from "../types/servicePlan";
+import type {
   AuthBootstrap,
   ChurchBranding,
   ChurchInviteRow,
@@ -47,15 +54,17 @@ export type { AuthBootstrap, ChurchStatus, SessionKind } from "./authTypes";
 export class AuthApiError extends Error {
   status?: number;
   isReachabilityError: boolean;
+  details?: unknown;
 
   constructor(
     message: string,
-    options: { status?: number; isReachabilityError?: boolean } = {},
+    options: { status?: number; isReachabilityError?: boolean; details?: unknown } = {},
   ) {
     super(message);
     this.name = "AuthApiError";
     this.status = options.status;
     this.isReachabilityError = Boolean(options.isReachabilityError);
+    this.details = options.details;
   }
 }
 
@@ -130,6 +139,7 @@ const apiFetch = async <T>(
     }
     throw new AuthApiError(data?.errorMessage || "Request failed", {
       status: response.status,
+      details: data,
     });
   }
 
@@ -949,6 +959,126 @@ export const updateTeamScheduleAttendance = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const listServicePlans = async (churchId: string) =>
+  apiFetch<{ success: boolean; servicePlans: ServicePlanSummary[] }>(
+    `api/churches/${churchId}/service-plans`,
+    { method: "GET" },
+  );
+
+/** Share links come back for an already-published plan so reopening the editor
+ * restores them without needing to publish again. */
+export type ServicePlanPublicUrls = {
+  team: string;
+  general?: string;
+  currentTeam?: string;
+  currentGeneral?: string;
+};
+
+export const getServicePlan = async (churchId: string, planKey: string) =>
+  apiFetch<{
+    success: boolean;
+    servicePlan: ServicePlan | null;
+    publicUrls?: ServicePlanPublicUrls;
+  }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`,
+    { method: "GET" },
+  );
+
+export const saveServicePlan = async (
+  churchId: string,
+  planKey: string,
+  body: ServicePlanPayload,
+) =>
+  apiFetch<{ success: boolean; servicePlan: ServicePlan }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const publishServicePlan = async (churchId: string, planKey: string) =>
+  apiFetch<{
+    success: boolean;
+    servicePlan: ServicePlan;
+    /** Legacy alias for the serving/team link. */
+    publicUrl: string;
+    teamPublicUrl?: string;
+    generalPublicUrl?: string;
+    currentTeamPublicUrl?: string;
+    currentGeneralPublicUrl?: string;
+  }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/publish`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const unpublishServicePlan = async (churchId: string, planKey: string) =>
+  apiFetch<{ success: boolean; servicePlan: ServicePlan }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/unpublish`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const updateServicePlanPublicLive = async (
+  churchId: string,
+  planKey: string,
+  body: { mode: "schedule" } | { mode: "manual"; currentElementId: string },
+) =>
+  apiFetch<{ success: boolean; servicePlan: ServicePlan }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/live`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const deleteServicePlan = async (churchId: string, planKey: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export const listServicePlanTemplates = async (churchId: string) =>
+  apiFetch<{ success: boolean; templates: ServicePlanTemplate[] }>(
+    `api/churches/${churchId}/service-plan-templates`,
+    { method: "GET" },
+  );
+
+/** Upsert: omit `templateId` to create, pass it to overwrite an existing one. */
+export const saveServicePlanTemplate = async (
+  churchId: string,
+  body: ServicePlanTemplatePayload & { templateId?: string },
+) =>
+  apiFetch<{ success: boolean; template: ServicePlanTemplate }>(
+    `api/churches/${churchId}/service-plan-templates`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const deleteServicePlanTemplate = async (
+  churchId: string,
+  templateId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/service-plan-templates/${encodeURIComponent(templateId)}/delete`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+/** Free-text "Assigned to" values remembered per church, for suggestions —
+ * same members+history pattern as Overlays/Credits (see HistorySuggestField). */
+export const getServicePlanAssignmentHistory = async (churchId: string) =>
+  apiFetch<{ success: boolean; values: string[] }>(
+    `api/churches/${churchId}/service-plan-assignment-history`,
+    { method: "GET" },
+  );
+
+export const saveServicePlanAssignmentHistory = async (
+  churchId: string,
+  values: string[],
+) =>
+  apiFetch<{ success: boolean; values: string[] }>(
+    `api/churches/${churchId}/service-plan-assignment-history`,
+    { method: "POST", body: JSON.stringify({ values }) },
   );
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>

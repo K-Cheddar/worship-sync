@@ -11,6 +11,7 @@ const Textarea = React.forwardRef<
       ref={ref}
       data-slot="textarea"
       className={cn(
+        "control-spacing",
         "border border-neutral-500 bg-neutral-900 text-neutral-100 placeholder:text-neutral-400",
         "selection:bg-neutral-700 selection:text-neutral-100",
         "w-full min-w-0 min-h-0 rounded-md px-2 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none",

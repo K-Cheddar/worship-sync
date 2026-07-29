@@ -133,7 +133,11 @@ import {
   shadowKindLabel,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
-import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
+import {
+  useTeamsRestoreOnMount,
+  useTeamsReturnNavigation,
+} from "../hooks/useTeamsReturnNavigation";
+import TeamsReturnBackButton from "../components/TeamsReturnBackButton";
 import type { TeamsReturnTo } from "../teamsReturnNavigation";
 import {
   buildScheduleColumns,
@@ -922,6 +926,11 @@ const ScheduleTab = ({
     },
     [scheduleColumns],
   );
+
+  // Set when the user arrived from somewhere that wants them back — e.g. a plan's
+  // "Who's serving" panel — so they aren't stranded in the schedule.
+  const { returnTo: scheduleReturnTo, finishEditing: returnFromSchedule } =
+    useTeamsReturnNavigation();
 
   useTeamsRestoreOnMount({
     onScheduleRestore: (restore) => {
@@ -3496,6 +3505,14 @@ const ScheduleTab = ({
             )}
           >
             <div className={cn(panelHeaderPaddingClassName, "pb-4")}>
+              {scheduleReturnTo ? (
+                <div className="mb-2">
+                  <TeamsReturnBackButton
+                    returnTo={scheduleReturnTo}
+                    onClick={() => returnFromSchedule()}
+                  />
+                </div>
+              ) : null}
               <h2 className="text-lg font-semibold">Schedules</h2>
               <p className="mt-1 text-sm text-gray-400">
                 Assign people to services by position.

@@ -45,6 +45,7 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
+import { formatMemberSaveToast } from "../teamsSaveToasts";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -311,6 +312,15 @@ const MemberManager = ({
         (range) => range.startDate || range.endDate,
       ),
     };
+    const saveToastMessage = formatMemberSaveToast(wasEditing, body, {
+      positionNameById: new Map(
+        positions.map((position) => [position.positionId, position.name]),
+      ),
+      teamNameById: new Map(data.teams.map((team) => [team.teamId, team.name])),
+      roleNameById: new Map(
+        data.teamRoles.map((role) => [role.roleId, role.name]),
+      ),
+    });
     const localMemberId = wasEditing?.memberId || `local-member-${generateRandomId()}`;
     const optimisticMember: TeamRosterMember = {
       churchId,
@@ -337,6 +347,7 @@ const MemberManager = ({
       if (!wasEditing) {
         onSaved(response.member, localMemberId);
       }
+      showToast(saveToastMessage, "success");
       // Reached via a cross-section link: return to the origin. Otherwise keep
       // the panel open for back-to-back editing.
       if (returnTo) {

@@ -810,6 +810,59 @@ app.post(
   authHandlers.getTeamSchedulePublicLink,
 );
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
+app.get(
+  "/api/churches/:churchId/service-plans",
+  authHandlers.listServicePlans,
+);
+app.get(
+  "/api/churches/:churchId/service-plans/:planKey",
+  authHandlers.getServicePlan,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/:planKey",
+  authHandlers.saveServicePlan,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/:planKey/publish",
+  authHandlers.publishServicePlan,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/:planKey/unpublish",
+  authHandlers.unpublishServicePlan,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/:planKey/live",
+  authHandlers.updateServicePlanPublicLive,
+);
+app.post(
+  "/api/churches/:churchId/service-plans/:planKey/delete",
+  authHandlers.deleteServicePlan,
+);
+app.get(
+  "/api/churches/:churchId/service-plan-templates",
+  authHandlers.listServicePlanTemplates,
+);
+app.post(
+  "/api/churches/:churchId/service-plan-templates",
+  authHandlers.saveServicePlanTemplate,
+);
+app.post(
+  "/api/churches/:churchId/service-plan-templates/:templateId/delete",
+  authHandlers.deleteServicePlanTemplate,
+);
+app.get(
+  "/api/churches/:churchId/service-plan-assignment-history",
+  authHandlers.getServicePlanAssignmentHistory,
+);
+app.post(
+  "/api/churches/:churchId/service-plan-assignment-history",
+  authHandlers.saveServicePlanAssignmentHistory,
+);
+app.get("/api/service-plan/public", authHandlers.getPublicServicePlan);
+app.get(
+  "/api/service-plan/public/stream",
+  authHandlers.openPublicServicePlanStream,
+);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.post(
   "/api/churches/:churchId/invites/:inviteId/access",

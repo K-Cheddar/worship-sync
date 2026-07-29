@@ -19,8 +19,17 @@ type FilteredItemProps = {
   updateShowWords: (showWords: boolean, index: number) => void;
   /** Shown under the title for songs when stored metadata includes an artist (e.g. lyrics import). */
   artistName?: string;
-  /** When false, hide add-to-outline and delete (view-only library access). */
+  /**
+   * When false, hide library delete. Primary add/attach still shows when
+   * `showAddButton` is true (attach mode uses add without delete).
+   */
   canMutateLibrary?: boolean;
+  /** When false, hide the primary add/attach control (view-only library). Default true. */
+  showAddButton?: boolean;
+  /** Label for the primary action before the brief "Added." confirmation. */
+  addButtonLabel?: string;
+  /** When false, hide delete controls even if `canMutateLibrary` is true. Default follows canMutateLibrary. */
+  showDelete?: boolean;
   /** Songs library: open read-only sections preview for this item. */
   onViewSongSections?: () => void;
 };
@@ -36,9 +45,14 @@ const FilteredItem = ({
   updateShowWords,
   artistName,
   canMutateLibrary = true,
+  showAddButton,
+  addButtonLabel = "Add to outline",
+  showDelete,
   onViewSongSections,
 }: FilteredItemProps) => {
   const [justAdded, setJustAdded] = useState(false);
+  const canAdd = showAddButton ?? canMutateLibrary;
+  const canDelete = showDelete ?? canMutateLibrary;
 
   const _updateShowWords = () => {
     updateShowWords(!showWords, libraryIndex ?? index);
@@ -87,7 +101,7 @@ const FilteredItem = ({
               </p>
             ) : null}
           </div>
-          {canMutateLibrary && (
+          {canDelete ? (
             <Button
               svg={Trash2}
               variant="tertiary"
@@ -95,7 +109,7 @@ const FilteredItem = ({
               className="shrink-0 md:hidden"
               onClick={() => setItemToBeDeleted(item)}
             />
-          )}
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2 md:ml-auto md:flex-nowrap">
           {matchedWords && (
@@ -118,28 +132,28 @@ const FilteredItem = ({
               View lyrics
             </Button>
           )}
-          {canMutateLibrary && (
-            <>
-              <Button
-                variant="primary"
-                color={justAdded ? "#84cc16" : "#22d3ee"}
-                className="min-h-6 text-sm leading-3"
-                padding="py-1 px-2"
-                disabled={justAdded}
-                svg={justAdded ? Check : Plus}
-                onClick={() => addItem(item)}
-              >
-                {justAdded ? "Added." : "Add to outline"}
-              </Button>
-              <Button
-                svg={Trash2}
-                variant="tertiary"
-                color="red"
-                className="hidden md:inline-flex"
-                onClick={() => setItemToBeDeleted(item)}
-              />
-            </>
-          )}
+          {canAdd ? (
+            <Button
+              variant="primary"
+              color={justAdded ? "#84cc16" : "#22d3ee"}
+              className="min-h-6 text-sm leading-3"
+              padding="py-1 px-2"
+              disabled={justAdded}
+              svg={justAdded ? Check : Plus}
+              onClick={() => addItem(item)}
+            >
+              {justAdded ? "Added." : addButtonLabel}
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              svg={Trash2}
+              variant="tertiary"
+              color="red"
+              className="hidden md:inline-flex"
+              onClick={() => setItemToBeDeleted(item)}
+            />
+          ) : null}
         </div>
       </div>
       {showWordsSection ? (

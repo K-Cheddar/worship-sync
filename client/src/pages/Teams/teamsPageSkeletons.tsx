@@ -363,6 +363,9 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
     case "qualifications":
       return <TeamsQualificationsPageSkeleton />;
     case "services":
+    case "service-settings":
+      return <TeamsServicesPageSkeleton />;
+    case "plans":
       return <TeamsServicesPageSkeleton />;
     case "forms":
       return <TeamsFormsPageSkeleton />;

@@ -1,5 +1,5 @@
 import "./App.css";
-import { HashRouter as Router, Routes, Route } from "react-router-dom";
+import { HashRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { ScrollToPlugin } from "gsap/ScrollToPlugin";
@@ -42,9 +42,10 @@ import InviteAccept from "./pages/InviteAccept";
 import PasswordReset from "./pages/PasswordReset";
 import RecoveryConfirm from "./pages/RecoveryConfirm";
 import Account from "./pages/Account";
-import Teams from "./pages/Teams/Teams";
+import TeamsAndServices from "./pages/Teams/TeamsAndServices";
 import TeamIntakePublic from "./pages/Teams/TeamIntakePublic";
 import TeamSchedulePublic from "./pages/Teams/TeamSchedulePublic";
+import ServicePublic from "./pages/ServicePublic";
 import { GlobalInfoContext } from "./context/globalInfo";
 import WorshipSyncIcon from "./assets/WorshipSyncIconNoBg.png";
 import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
@@ -55,14 +56,15 @@ gsap.ticker.lagSmoothing(0);
 
 /** Connecting splash on entry and board/controller surfaces; display windows stay blank until ready. */
 const isTeamsAdminRoute = (pathname: string) => {
-  if (pathname === "/teams") return true;
+  if (pathname === "/teams-and-services") return true;
   return [
-    "/teams/schedules",
-    "/teams/members",
-    "/teams/positions",
-    "/teams/groups",
-    "/teams/services",
-    "/teams/forms",
+    "/teams-and-services/schedules",
+    "/teams-and-services/members",
+    "/teams-and-services/positions",
+    "/teams-and-services/groups",
+    "/teams-and-services/forms",
+    "/teams-and-services/plans",
+    "/teams-and-services/service-settings",
   ].some(
     (adminPath) =>
       pathname === adminPath || pathname.startsWith(`${adminPath}/`),
@@ -98,6 +100,21 @@ const isTransparentDisplayRoute = (pathname: string) => {
 };
 
 const HOMEPAGE_CANVAS_COLOR = "#2b3544";
+
+/** Compat redirect: the admin shell used to live at "/teams" (renamed to
+ * "/teams-and-services" since it covers both roster/scheduling and service
+ * planning now) — old bookmarks/links still land on the right page. Public
+ * links under "/teams/intake" and "/teams/schedule" are unaffected; they're
+ * registered as their own routes and unrelated to this admin shell. */
+const RedirectLegacyTeamsPath = () => {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`/teams-and-services${location.pathname.slice("/teams".length)}${location.search}`}
+      replace
+    />
+  );
+};
 
 const BootstrapSplash = () => {
   const context = useContext(GlobalInfoContext);
@@ -209,11 +226,11 @@ const AppRoutes = () => {
             }
           />
           <Route
-            path="/teams/*"
+            path="/teams-and-services/*"
             element={
               <AuthGate allowedKinds={["human"]}>
                 <TeamsAccessGuard>
-                  <Teams />
+                  <TeamsAndServices />
                 </TeamsAccessGuard>
               </AuthGate>
             }
@@ -230,6 +247,8 @@ const AppRoutes = () => {
             path="/teams/schedule/:token"
             element={<TeamSchedulePublic />}
           />
+          <Route path="/teams/*" element={<RedirectLegacyTeamsPath />} />
+          <Route path="/services/:shareId" element={<ServicePublic />} />
           <Route
             path="/workstation/operator"
             element={<WorkstationOperator />}
@@ -326,6 +345,7 @@ const AppRoutes = () => {
             </AuthGate>
           }
         />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ErrorBoundary>
   );

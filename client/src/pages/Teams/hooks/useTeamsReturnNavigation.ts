@@ -9,6 +9,7 @@ import {
   readTeamsRestore,
   readTeamsReturnTo,
   type TeamsGroupsRestore,
+  type TeamsPlansRestore,
   type TeamsRestoreState,
   type TeamsReturnTo,
   type TeamsScheduleRestore,
@@ -52,12 +53,14 @@ export const useTeamsReturnNavigation = () => {
 type TeamsRestoreHandlers = {
   onScheduleRestore?: (restore: TeamsScheduleRestore) => void;
   onGroupsRestore?: (restore: TeamsGroupsRestore) => void;
+  onPlansRestore?: (restore: TeamsPlansRestore) => void;
   onTeamScopedRestore?: (restore: TeamsTeamScopedRestore) => void;
 };
 
 export const useTeamsRestoreOnMount = ({
   onScheduleRestore,
   onGroupsRestore,
+  onPlansRestore,
   onTeamScopedRestore,
 }: TeamsRestoreHandlers) => {
   const location = useLocation();
@@ -65,11 +68,13 @@ export const useTeamsRestoreOnMount = ({
   const handlersRef = useRef({
     onScheduleRestore,
     onGroupsRestore,
+    onPlansRestore,
     onTeamScopedRestore,
   });
   handlersRef.current = {
     onScheduleRestore,
     onGroupsRestore,
+    onPlansRestore,
     onTeamScopedRestore,
   };
 
@@ -82,6 +87,9 @@ export const useTeamsRestoreOnMount = ({
     }
     if (restore.kind === "groups") {
       handlersRef.current.onGroupsRestore?.(restore);
+    }
+    if (restore.kind === "plans") {
+      handlersRef.current.onPlansRestore?.(restore);
     }
     if (restore.kind === "teamScoped") {
       handlersRef.current.onTeamScopedRestore?.(restore);

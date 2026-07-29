@@ -23,6 +23,7 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import PositionIconPicker from "../PositionIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
+import { formatTeamSaveToast } from "../teamsSaveToasts";
 import {
   buildGroupsReturnTo,
   buildTeamsPositionsPath,
@@ -164,6 +165,11 @@ const TeamManager = ({
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
     setSavingIds((prev) => new Set(prev).add(savingKey));
+    const saveToastMessage = formatTeamSaveToast(wasEditing, draft, {
+      memberNameById: new Map(
+        members.map((member) => [member.memberId, memberName(member)]),
+      ),
+    });
     const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
     const optimisticTeam: TeamRecord = {
       churchId,
@@ -185,6 +191,7 @@ const TeamManager = ({
       if (!wasEditing) {
         onSaved(response.team, localTeamId);
       }
+      showToast(saveToastMessage, "success");
       // Reached via a cross-section link: return to the origin. Otherwise keep
       // the panel open for back-to-back editing.
       if (returnTo) {

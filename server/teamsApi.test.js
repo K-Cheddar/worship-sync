@@ -12,6 +12,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
+import {
+  addServiceFlowSseClient,
+  removeServiceFlowSseClient,
+} from "../server/serviceFlowSse.js";
 
 const {
   authHandlers,
@@ -2816,4 +2820,558 @@ test("intake service availability is a soft warning, not a hard block", async (t
     blockedByBlockout.payload.errorMessage,
     /unavailable for this service/i,
   );
+});
+
+// Element titles/notes are the structured rich text doc the ServiceFlow
+// normalizer validates (see server/serviceFlowService.js), not a plain string.
+const richText = (text) => ({ blocks: [{ type: "paragraph", spans: [{ text }] }] });
+
+test("service plan endpoints: create, read, update, delete, permission gating, and SSE", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan");
+  const planKey = "svc1@2026-07-26";
+
+  const missing = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(missing.statusCode, 200);
+  assert.equal(missing.payload.servicePlan, null);
+
+  const invalid = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: { name: "Sunday Service" },
+  });
+  assert.equal(invalid.statusCode, 400);
+
+  const sseClient = createSseClient();
+  addTeamsSseClient(context.churchId, sseClient);
+
+  const created = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "America/New_York",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "el-1",
+              type: "song",
+              title: richText("Great Are You Lord"),
+              durationMinutes: 5,
+              notes: richText("Red mic"),
+              teamNotes: [{ id: "media", label: "Media", note: richText("Private cue") }],
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  assert.equal(created.payload.servicePlan.revision, 1);
+  assert.equal(created.payload.servicePlan.planKey, planKey);
+  assert.equal(created.payload.servicePlan.sections.length, 1);
+  assert.deepEqual(
+    created.payload.servicePlan.sections[0].elements[0].title,
+    richText("Great Are You Lord"),
+  );
+
+  await flushAsyncWork();
+  const createEvent = sseClient
+    .events()
+    .find((event) => event.type === "service-plan-updated");
+  assert.ok(createEvent, "expected a service-plan-updated SSE event");
+  assert.equal(createEvent.servicePlan.planKey, planKey);
+
+  const fetched = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(fetched.statusCode, 200);
+  assert.equal(fetched.payload.servicePlan.name, "Sunday Service");
+
+  const updated = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      baseRevision: created.payload.servicePlan.revision,
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "el-1",
+              type: "song",
+              title: richText("Great Are You Lord"),
+              durationMinutes: 5,
+              notes: richText("Red mic"),
+              teamNotes: [{ id: "media", label: "Media", note: richText("Private cue") }],
+            },
+            {
+              id: "el-2",
+              type: "announcement",
+              title: richText("Welcome"),
+              durationMinutes: 1.5,
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.payload.servicePlan.revision, 2);
+  assert.equal(updated.payload.servicePlan.sections[0].elements.length, 2);
+  assert.equal(
+    updated.payload.servicePlan.sections[0].elements[1].durationMinutes,
+    1.5,
+  );
+  assert.equal(
+    updated.payload.servicePlan.sections[0].elements[1].durationSeconds,
+    90,
+  );
+  // Upsert-by-key: a second save updates in place, so createdAt must survive.
+  assert.equal(
+    updated.payload.servicePlan.createdAt,
+    created.payload.servicePlan.createdAt,
+  );
+
+  const staleSave = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      baseRevision: created.payload.servicePlan.revision,
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Stale change",
+      sections: [],
+    },
+  });
+  assert.equal(staleSave.statusCode, 409);
+  assert.equal(staleSave.payload.conflict, true);
+  assert.equal(staleSave.payload.servicePlan.revision, 2);
+
+  const published = await callHandler(authHandlers.publishServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(published.statusCode, 200);
+  assert.match(published.payload.publicUrl, /#\/services\//);
+  assert.match(published.payload.generalPublicUrl, /#\/services\//);
+  assert.match(published.payload.currentTeamPublicUrl, /#\/services\//);
+  assert.match(published.payload.currentGeneralPublicUrl, /#\/services\//);
+  const publicToken = published.payload.servicePlan.publicLinkToken;
+  const generalPublicToken = published.payload.servicePlan.publicGeneralLinkToken;
+  const currentTeamToken = published.payload.currentTeamPublicUrl.split("/").at(-1);
+  const currentGeneralToken = published.payload.currentGeneralPublicUrl.split("/").at(-1);
+
+  const publicSnapshotRes = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: publicToken } },
+    publicSnapshotRes,
+  );
+  assert.equal(publicSnapshotRes.statusCode, 200);
+  assert.equal(publicSnapshotRes.payload.service.title, "Sunday Service");
+  assert.deepEqual(
+    publicSnapshotRes.payload.service.sections[0].items[0].teamNotes,
+    [{ label: "Media", notes: richText("Private cue") }],
+  );
+  assert.equal(
+    publicSnapshotRes.payload.service.sections[0].items[0].assignedMemberId,
+    undefined,
+  );
+  assert.equal(
+    publicSnapshotRes.payload.service.sections[0].items[1].durationSeconds,
+    90,
+  );
+
+  const generalPublicSnapshotRes = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: generalPublicToken } },
+    generalPublicSnapshotRes,
+  );
+  assert.equal(generalPublicSnapshotRes.statusCode, 200);
+  assert.equal(generalPublicSnapshotRes.payload.service.viewMode, "general");
+  assert.deepEqual(
+    generalPublicSnapshotRes.payload.service.sections[0].items[0].notes,
+    { blocks: [] },
+  );
+  assert.deepEqual(
+    generalPublicSnapshotRes.payload.service.sections[0].items[0].teamNotes,
+    [],
+  );
+
+  const currentTeamSnapshotRes = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: currentTeamToken } },
+    currentTeamSnapshotRes,
+  );
+  assert.equal(currentTeamSnapshotRes.statusCode, 200);
+  assert.equal(currentTeamSnapshotRes.payload.service.title, "Sunday Service");
+  assert.equal(currentTeamSnapshotRes.payload.service.viewMode, "team");
+
+  const currentGeneralSnapshotRes = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: currentGeneralToken } },
+    currentGeneralSnapshotRes,
+  );
+  assert.equal(currentGeneralSnapshotRes.statusCode, 200);
+  assert.equal(currentGeneralSnapshotRes.payload.service.viewMode, "general");
+  assert.deepEqual(
+    currentGeneralSnapshotRes.payload.service.sections[0].items[0].notes,
+    { blocks: [] },
+  );
+
+  const publicSseClient = createSseClient();
+  const generalPublicSseClient = createSseClient();
+  const currentTeamSseClient = createSseClient();
+  addServiceFlowSseClient(publicToken, publicSseClient);
+  addServiceFlowSseClient(generalPublicToken, generalPublicSseClient);
+  addServiceFlowSseClient(currentTeamToken, currentTeamSseClient);
+  const manualLive = await callHandler(authHandlers.updateServicePlanPublicLive, {
+    context,
+    params: { planKey },
+    body: { mode: "manual", currentElementId: "el-2" },
+  });
+  assert.equal(manualLive.statusCode, 200);
+  assert.deepEqual(manualLive.payload.servicePlan.publicLive, {
+    mode: "manual",
+    currentElementId: "el-2",
+  });
+  const publicEvents = publicSseClient.events();
+  assert.equal(publicEvents.at(-1).type, "service-updated");
+  assert.equal("servicePlan" in publicEvents.at(-1), false);
+  assert.equal(generalPublicSseClient.events().at(-1).type, "service-updated");
+  assert.equal(currentTeamSseClient.events().at(-1).type, "service-updated");
+  removeServiceFlowSseClient(publicToken, publicSseClient);
+  removeServiceFlowSseClient(generalPublicToken, generalPublicSseClient);
+  removeServiceFlowSseClient(currentTeamToken, currentTeamSseClient);
+
+  const manualPublicSnapshotRes = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: publicToken } },
+    manualPublicSnapshotRes,
+  );
+  assert.deepEqual(manualPublicSnapshotRes.payload.service.live, {
+    mode: "manual",
+    currentItemId: "el-2",
+  });
+
+  // Reopening the editor must restore the share links; they used to live only
+  // in the publish response, so a reload left no way to reach them.
+  const reopened = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(reopened.statusCode, 200);
+  assert.equal(reopened.payload.publicUrls.team.includes(publicToken), true);
+  assert.equal(
+    reopened.payload.publicUrls.general.includes(generalPublicToken),
+    true,
+  );
+  assert.equal(
+    reopened.payload.publicUrls.currentTeam.includes(currentTeamToken),
+    true,
+  );
+  assert.equal(
+    reopened.payload.publicUrls.currentGeneral.includes(currentGeneralToken),
+    true,
+  );
+
+  // A plain content save must not clobber a live "now" selection made
+  // concurrently — publicLive is only rewritten when the selected element is
+  // actually gone from the sections being saved.
+  const concurrentSave = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "el-1", type: "song", title: richText("Great Are You Lord") },
+            { id: "el-2", type: "announcement", title: richText("Welcome") },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(concurrentSave.statusCode, 200);
+  assert.deepEqual(concurrentSave.payload.servicePlan.publicLive, {
+    mode: "manual",
+    currentElementId: "el-2",
+  });
+
+  // Removing the selected element does still have to reset it, or the public
+  // view would point at an item that no longer exists.
+  const droppedElementSave = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "el-1", type: "song", title: richText("Great Are You Lord") },
+          ],
+        },
+      ],
+    },
+  });
+  assert.deepEqual(droppedElementSave.payload.servicePlan.publicLive, {
+    mode: "schedule",
+  });
+
+  const unknownPublicSnapshotRes = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: "not-a-service-token" } },
+    unknownPublicSnapshotRes,
+  );
+  assert.equal(unknownPublicSnapshotRes.statusCode, 404);
+  assert.equal(unknownPublicSnapshotRes.payload.errorMessage, "Service not found.");
+
+  const viewerContext = await createHumanContext("service_plan_viewer", {
+    userId: "teams_api_service_plan_viewer",
+    email: "teams-api-service-plan-viewer@example.com",
+    churchId: context.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "view" },
+  });
+  const viewerRead = await callHandler(authHandlers.getServicePlan, {
+    context: viewerContext,
+    params: { planKey },
+  });
+  assert.equal(viewerRead.statusCode, 200);
+  const viewerWrite = await callHandler(authHandlers.saveServicePlan, {
+    context: viewerContext,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Blocked",
+      sections: [],
+    },
+  });
+  assert.equal(viewerWrite.statusCode, 403);
+
+  const deleteSseClient = createSseClient();
+  addServiceFlowSseClient(publicToken, deleteSseClient);
+  const deleted = await callHandler(authHandlers.deleteServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(deleted.statusCode, 200);
+
+  await flushAsyncWork();
+  // Deleting revokes public access just as unpublishing does, so already-open
+  // viewers must be told to re-fetch instead of sitting on a stale snapshot of
+  // now-deleted serving notes.
+  assert.equal(
+    deleteSseClient.events().at(-1)?.type,
+    "service-updated",
+    "expected public viewers to be notified that a deleted plan changed",
+  );
+  removeServiceFlowSseClient(publicToken, deleteSseClient);
+
+  await flushAsyncWork();
+  const removeEvent = sseClient
+    .events()
+    .find((event) => event.type === "service-plan-removed");
+  assert.ok(removeEvent, "expected a service-plan-removed SSE event");
+  assert.equal(removeEvent.planKey, planKey);
+
+  const afterDelete = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(afterDelete.payload.servicePlan, null);
+
+  removeTeamsSseClient(context.churchId, sseClient);
+});
+
+test("listServicePlans returns a lightweight, church-scoped summary for the Plans list view", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_list");
+  const otherContext = await createAdminContext("service_plan_list_other_church");
+
+  await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey: "svc1@2026-07-26" },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "el-1", type: "song", title: richText("Great Are You Lord") },
+          ],
+        },
+      ],
+    },
+  });
+  await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey: "svc1@2026-08-02" },
+    body: { serviceId: "svc1", date: "2026-08-02", name: "Sunday Service", sections: [] },
+  });
+  // A plan in a different church must never leak into this church's list.
+  await callHandler(authHandlers.saveServicePlan, {
+    context: otherContext,
+    params: { planKey: "svc1@2026-07-26" },
+    body: { serviceId: "svc1", date: "2026-07-26", name: "Other church", sections: [] },
+  });
+
+  const listed = await callHandler(authHandlers.listServicePlans, { context });
+  assert.equal(listed.statusCode, 200);
+  assert.equal(listed.payload.servicePlans.length, 2);
+  assert.deepEqual(
+    listed.payload.servicePlans.map((plan) => plan.planKey).sort(),
+    ["svc1@2026-07-26", "svc1@2026-08-02"],
+  );
+  // Full section/element content is not shipped in the list projection.
+  assert.equal(listed.payload.servicePlans[0].sections, undefined);
+});
+
+test("service plan templates: create, update in place, list, scope, and delete", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_templates");
+  const otherContext = await createAdminContext("service_plan_templates_other");
+
+  const sections = [
+    {
+      id: "section-1",
+      name: "Worship",
+      elements: [{ id: "el-1", type: "free", title: richText("Welcome") }],
+    },
+  ];
+
+  const empty = await callHandler(authHandlers.listServicePlanTemplates, { context });
+  assert.equal(empty.statusCode, 200);
+  assert.deepEqual(empty.payload.templates, []);
+
+  const created = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: { name: "Standard Sabbath", serviceId: "svc1", sections },
+  });
+  assert.equal(created.statusCode, 200);
+  const templateId = created.payload.template.templateId;
+  assert.ok(templateId);
+  assert.equal(created.payload.template.serviceId, "svc1");
+  assert.equal(created.payload.template.sections[0].elements.length, 1);
+
+  // A template with no serviceId is offered for every service.
+  await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: { name: "Any service", sections: [] },
+  });
+
+  // Passing the id updates in place rather than creating a duplicate.
+  const updated = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: { templateId, name: "Standard Sabbath v2", serviceId: "svc1", sections },
+  });
+  assert.equal(updated.payload.template.templateId, templateId);
+  assert.equal(updated.payload.template.name, "Standard Sabbath v2");
+  assert.equal(
+    updated.payload.template.createdAt,
+    created.payload.template.createdAt,
+  );
+
+  const listed = await callHandler(authHandlers.listServicePlanTemplates, { context });
+  assert.equal(listed.payload.templates.length, 2);
+
+  // A name is required.
+  const unnamed = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context,
+    body: { sections },
+  });
+  assert.equal(unnamed.statusCode, 400);
+
+  // Another church can neither see nor overwrite this church's templates.
+  const otherList = await callHandler(authHandlers.listServicePlanTemplates, {
+    context: otherContext,
+  });
+  assert.deepEqual(otherList.payload.templates, []);
+  const hijack = await callHandler(authHandlers.saveServicePlanTemplate, {
+    context: otherContext,
+    body: { templateId, name: "Hijacked", sections: [] },
+  });
+  assert.equal(hijack.statusCode, 404);
+
+  const foreignDelete = await callHandler(authHandlers.deleteServicePlanTemplate, {
+    context: otherContext,
+    params: { templateId },
+  });
+  assert.equal(foreignDelete.statusCode, 404);
+
+  const removed = await callHandler(authHandlers.deleteServicePlanTemplate, {
+    context,
+    params: { templateId },
+  });
+  assert.equal(removed.statusCode, 200);
+  const afterDelete = await callHandler(authHandlers.listServicePlanTemplates, {
+    context,
+  });
+  assert.equal(afterDelete.payload.templates.length, 1);
+});
+
+test("service plan assignment history: church-scoped, deduped, and merges across saves", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_assignment_history");
+  const otherContext = await createAdminContext(
+    "service_plan_assignment_history_other_church",
+  );
+
+  const empty = await callHandler(authHandlers.getServicePlanAssignmentHistory, {
+    context,
+  });
+  assert.equal(empty.statusCode, 200);
+  assert.deepEqual(empty.payload.values, []);
+
+  const saved = await callHandler(authHandlers.saveServicePlanAssignmentHistory, {
+    context,
+    body: { values: ["Jane Doe", "John Smith", "Jane Doe", "  ", ""] },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.payload.values.sort(), ["Jane Doe", "John Smith"]);
+
+  const reloaded = await callHandler(authHandlers.getServicePlanAssignmentHistory, {
+    context,
+  });
+  assert.deepEqual(reloaded.payload.values.sort(), ["Jane Doe", "John Smith"]);
+
+  // A save from a different church must never leak into or overwrite this one's.
+  await callHandler(authHandlers.saveServicePlanAssignmentHistory, {
+    context: otherContext,
+    body: { values: ["Someone Else"] },
+  });
+  const stillOwnChurch = await callHandler(authHandlers.getServicePlanAssignmentHistory, {
+    context,
+  });
+  assert.deepEqual(stillOwnChurch.payload.values.sort(), ["Jane Doe", "John Smith"]);
 });

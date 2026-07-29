@@ -41,6 +41,7 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
+import { formatPositionSaveToast } from "../teamsSaveToasts";
 import {
   TEAMS_POSITION_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -211,6 +212,7 @@ const PositionManager = ({
       qualificationAreaId: draft.qualificationAreaId || undefined,
       teamId: positionTeamId,
     };
+    const saveToastMessage = formatPositionSaveToast(wasEditing, payload);
     const optimisticPosition: TeamPosition = {
       churchId,
       positionId: localPositionId,
@@ -232,6 +234,7 @@ const PositionManager = ({
       if (!wasEditing) {
         onSaved(response.position, localPositionId);
       }
+      showToast(saveToastMessage, "success");
       // When editing was reached via a cross-section link, saving should return
       // the operator to where they came from. Otherwise keep the panel open so
       // they can keep editing positions back-to-back without reopening it.

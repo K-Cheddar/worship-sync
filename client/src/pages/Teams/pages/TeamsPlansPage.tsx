@@ -1,0 +1,835 @@
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  CalendarDays,
+  CalendarRange,
+  Check,
+  ChevronRight,
+  Clock,
+  Users,
+} from "lucide-react";
+import Button from "../../../components/Button/Button";
+import Icon from "../../../components/Icon/Icon";
+import Select from "../../../components/Select/Select";
+import DatePicker from "@/components/ui/DatePicker";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import { listServicePlans } from "../../../api/auth";
+import { formatPlainDate } from "../../../utils/plainDate";
+import {
+  findNextUpcomingOccurrenceId,
+  generateScheduleOccurrences,
+  getOccurrenceDate,
+  getSharedOccurrenceTiming,
+  type SharedOccurrenceTiming,
+} from "../../../utils/teamScheduleOccurrences";
+import { getServicePlanKey } from "../../../utils/servicePlanKeys";
+import ServicePlanEditor from "../../Services/ServicePlanEditor";
+import { useTeamsPage } from "../TeamsPageContext";
+import {
+  getOccurrenceAssignmentSummary,
+  groupAssignmentSummaryByTeam,
+  summarizeNeededPositions,
+} from "./teamsAssignmentsSummary";
+import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
+import {
+  buildPlansReturnTo,
+  buildPlanToScheduleNavigationState,
+  TEAMS_SECTION_PATHS,
+  type TeamsPlansRestore,
+} from "../teamsReturnNavigation";
+import { isActive } from "../teamsUtils";
+import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
+import ScheduleUpNextBadge from "../schedule/ScheduleUpNextBadge";
+import { scheduleUpNextBorderClassName } from "../schedule/scheduleUtils";
+import { cn } from "@/utils/cnHelper";
+import type { TeamScheduleOccurrence, TeamService } from "../../../api/authTypes";
+
+type RangePreset = "4w" | "8w" | "custom";
+
+const ALL_SERVICES = "all";
+
+/** Every "Who's serving" line is a link into that slot's schedule. */
+const whosServingRowClassName =
+  "flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70";
+
+const rangeFromPreset = (preset: "4w" | "8w") => {
+  const start = new Date();
+  start.setDate(start.getDate() - 7);
+  const end = new Date();
+  end.setDate(end.getDate() + (preset === "4w" ? 28 : 56));
+  return {
+    start: formatPlainDate(start),
+    end: formatPlainDate(end),
+  };
+};
+
+const defaultRange = () => rangeFromPreset("4w");
+
+/**
+ * Plain date `days` away from `date`. Noon keeps the shift clear of DST edges.
+ */
+const shiftPlainDate = (date: string, days: number) => {
+  const shifted = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(shifted.getTime())) return date;
+  shifted.setDate(shifted.getDate() + days);
+  return formatPlainDate(shifted);
+};
+
+type ServiceGroup = {
+  /** `group:<serviceGroupId>` for a combined service, else its own serviceId. */
+  key: string;
+  /** Occurrence display name — already joined with " & " for combined groups. */
+  name: string;
+  /** Representative service (used to open the editor and read recurrence type). */
+  service: TeamService;
+  /** Every member service id, so the Service filter matches on any of them. */
+  serviceIds: string[];
+  occurrences: TeamScheduleOccurrence[];
+};
+
+type MonthGroup = {
+  key: string;
+  label: string;
+  occurrences: TeamScheduleOccurrence[];
+};
+
+type PlansTileParts = {
+  weekday: string;
+  month: string;
+  day: string;
+  time: string | null;
+  /** Accessible / aria label, e.g. "Sat · Jul 25". */
+  label: string;
+};
+
+const monthKeyFromStartsAt = (startsAt: string) => {
+  const date = new Date(startsAt);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const monthLabelFromStartsAt = (startsAt: string) =>
+  new Date(startsAt).toLocaleString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+
+const groupOccurrencesByMonth = (
+  occurrences: TeamScheduleOccurrence[],
+): MonthGroup[] => {
+  const groups: MonthGroup[] = [];
+  for (const occurrence of occurrences) {
+    const key = monthKeyFromStartsAt(occurrence.startsAt);
+    const last = groups[groups.length - 1];
+    if (last?.key === key) {
+      last.occurrences.push(occurrence);
+      continue;
+    }
+    groups.push({
+      key,
+      label: monthLabelFromStartsAt(occurrence.startsAt),
+      occurrences: [occurrence],
+    });
+  }
+  return groups;
+};
+
+/**
+ * Compact calendar-style parts for month-grouped tiles. Year lives in the month
+ * header; shared service time lives in the service header chips.
+ */
+const getPlansTileParts = (
+  occurrence: TeamScheduleOccurrence,
+  shared: SharedOccurrenceTiming,
+): PlansTileParts => {
+  const date = new Date(occurrence.startsAt);
+  const weekday = date.toLocaleString(undefined, { weekday: "short" });
+  const month = date.toLocaleString(undefined, { month: "short" });
+  const day = date.toLocaleString(undefined, { day: "numeric" });
+  const time = shared.sharedTime
+    ? null
+    : date.toLocaleString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  const label = time ? `${weekday} · ${month} ${day} · ${time}` : `${weekday} · ${month} ${day}`;
+  return { weekday, month, day, time, label };
+};
+
+const serviceTimingLabel = (shared: SharedOccurrenceTiming) => {
+  if (shared.sharedWeekday && shared.sharedTime) {
+    return `${shared.sharedWeekday} at ${shared.sharedTime}`;
+  }
+  return shared.sharedWeekday || shared.sharedTime || null;
+};
+
+/**
+ * Plans list: pick a date for a service and jump straight into building or
+ * editing its order-of-service — no service/date-range/occurrence dropdown
+ * gauntlet first. Matches the "list of plans, click one" simplicity of
+ * Planning Center's Plans tab, which many users will already know.
+ */
+const TeamsPlansPage = () => {
+  const { churchId } = useContext(GlobalInfoContext) || {};
+  const { pageData, canEditTeams, servicePlansRevision } = useTeamsPage();
+  const navigate = useNavigate();
+  const initialRange = useMemo(() => defaultRange(), []);
+  const [windowStart, setWindowStart] = useState(initialRange.start);
+  const [windowEnd, setWindowEnd] = useState(initialRange.end);
+  const [rangePreset, setRangePreset] = useState<RangePreset>("4w");
+  const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
+  const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
+  const [selection, setSelection] = useState<{
+    service: TeamService;
+    occurrence: TeamScheduleOccurrence;
+  } | null>(null);
+  const [pendingPlanRestore, setPendingPlanRestore] =
+    useState<TeamsPlansRestore | null>(null);
+
+  // Coming back from a schedule the user opened out of "Who's serving".
+  useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
+
+  useEffect(() => {
+    if (!pendingPlanRestore || !pageData.services.length) return;
+    const { occurrenceId, date } = pendingPlanRestore;
+    setPendingPlanRestore(null);
+    // Regenerate around the plan's own date rather than the current range, so
+    // the plan reopens even if the user had a narrower window selected. The
+    // ±1 day margin covers occurrences whose UTC date differs from their local
+    // one; the occurrence id match keeps the extra days harmless.
+    const match = generateScheduleOccurrences({
+      services: pageData.services,
+      serviceIds: pageData.services.map((service) => service.serviceId),
+      startDate: shiftPlainDate(date, -1),
+      endDate: shiftPlainDate(date, 1),
+    }).find((occurrence) => occurrence.occurrenceId === occurrenceId);
+    if (!match) return;
+    const service = pageData.services.find(
+      (item) => item.serviceId === match.serviceId,
+    );
+    if (!service) return;
+    setSelection({ service, occurrence: match });
+    // Keep the list behind the editor showing this plan once the user backs out.
+    if (date < windowStart) {
+      setWindowStart(date);
+      setRangePreset("custom");
+    }
+    if (date > windowEnd) {
+      setWindowEnd(date);
+      setRangePreset("custom");
+    }
+  }, [pendingPlanRestore, pageData.services, windowStart, windowEnd]);
+
+  useEffect(() => {
+    if (!churchId) return;
+    let cancelled = false;
+    listServicePlans(churchId)
+      .then((res) => {
+        if (cancelled) return;
+        setPlanKeysWithPlans(new Set(res.servicePlans.map((plan) => plan.planKey)));
+      })
+      .catch(() => {
+        // The list still works without plan-status badges if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // servicePlansRevision changes when another admin saves/deletes a plan, so
+    // the "Add plan"/"Open plan" badges refresh instead of going stale.
+  }, [churchId, servicePlansRevision]);
+
+  const activeServices = useMemo(
+    () => pageData.services.filter(isActive),
+    [pageData.services],
+  );
+
+  const groups: ServiceGroup[] = useMemo(() => {
+    const activeServiceIds = new Set(
+      activeServices.map((service) => service.serviceId),
+    );
+    // Generate against every service (not just active ones) so a combined
+    // group still merges correctly even if one member happens to be inactive
+    // — matches generateScheduleOccurrences' own grouping requirements.
+    const occurrences = generateScheduleOccurrences({
+      services: pageData.services,
+      serviceIds: pageData.services.map((service) => service.serviceId),
+      startDate: windowStart,
+      endDate: windowEnd,
+    });
+
+    const order: string[] = [];
+    const byKey = new Map<string, ServiceGroup>();
+    for (const occurrence of occurrences) {
+      const memberServiceIds = occurrence.serviceIds || [occurrence.serviceId];
+      // Only surface a section if at least one member service is active.
+      if (!memberServiceIds.some((id) => activeServiceIds.has(id))) continue;
+      const representative = pageData.services.find(
+        (service) => service.serviceId === occurrence.serviceId,
+      );
+      if (!representative) continue;
+
+      // A combined occurrence's serviceIds includes every member service, so
+      // keying by the shared group (rather than by each member individually)
+      // is what keeps it from rendering once per member service below.
+      const key = occurrence.groupId
+        ? `group:${occurrence.groupId}`
+        : occurrence.serviceId;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.occurrences.push(occurrence);
+        continue;
+      }
+      order.push(key);
+      byKey.set(key, {
+        key,
+        name: occurrence.name,
+        service: representative,
+        serviceIds: memberServiceIds,
+        occurrences: [occurrence],
+      });
+    }
+    return order.map((key) => byKey.get(key) as ServiceGroup);
+  }, [activeServices, pageData.services, windowStart, windowEnd]);
+
+  const visibleGroups = useMemo(
+    () =>
+      serviceFilter === ALL_SERVICES
+        ? groups
+        : groups.filter((group) => group.serviceIds.includes(serviceFilter)),
+    [groups, serviceFilter],
+  );
+
+  const nextUpcomingOccurrenceId = useMemo(
+    () =>
+      findNextUpcomingOccurrenceId(
+        visibleGroups.flatMap((group) => group.occurrences),
+      ),
+    [visibleGroups],
+  );
+
+  const serviceFilterOptions = useMemo(
+    () => [
+      { label: "All services", value: ALL_SERVICES },
+      ...activeServices.map((service) => ({
+        label: service.name,
+        value: service.serviceId,
+      })),
+    ],
+    [activeServices],
+  );
+
+  const applyPreset = (preset: "4w" | "8w") => {
+    const next = rangeFromPreset(preset);
+    setWindowStart(next.start);
+    setWindowEnd(next.end);
+    setRangePreset(preset);
+  };
+
+  const setCustomStart = (value: string) => {
+    setWindowStart(value);
+    setRangePreset("custom");
+  };
+
+  const setCustomEnd = (value: string) => {
+    setWindowEnd(value);
+    setRangePreset("custom");
+  };
+
+  /**
+   * Open the schedule behind this plan, focused on one slot when given. The
+   * returnTo lands the user back on this same plan when they're done.
+   */
+  const openSchedule = useCallback(
+    ({
+      scheduleId,
+      slot,
+    }: {
+      scheduleId: string;
+      slot?: { occurrenceId: string; columnKey: string };
+    }) => {
+      if (!selection) return;
+      navigate(TEAMS_SECTION_PATHS.schedules, {
+        state: buildPlanToScheduleNavigationState({
+          returnTo: buildPlansReturnTo({
+            serviceId: selection.service.serviceId,
+            occurrenceId: selection.occurrence.occurrenceId,
+            date: getOccurrenceDate(selection.occurrence),
+          }),
+          restore: {
+            kind: "schedule",
+            scheduleId,
+            ...(slot ? { activeSlot: slot, slotPickerMode: "assign" as const } : {}),
+          },
+        }),
+      });
+    },
+    [navigate, selection],
+  );
+
+  /**
+   * Previous/next within the same service group and current date window —
+   * the same chronological sequence the Plans tiles show for that service.
+   */
+  const planNavigation = useMemo(() => {
+    if (!selection) return undefined;
+    const group = visibleGroups.find((entry) =>
+      entry.occurrences.some(
+        (occurrence) =>
+          occurrence.occurrenceId === selection.occurrence.occurrenceId,
+      ),
+    );
+    if (!group) return undefined;
+    const index = group.occurrences.findIndex(
+      (occurrence) =>
+        occurrence.occurrenceId === selection.occurrence.occurrenceId,
+    );
+    if (index < 0) return undefined;
+    const previous = group.occurrences[index - 1];
+    const next = group.occurrences[index + 1];
+    return {
+      onPrevious: previous
+        ? () => setSelection({ service: group.service, occurrence: previous })
+        : undefined,
+      onNext: next
+        ? () => setSelection({ service: group.service, occurrence: next })
+        : undefined,
+    };
+  }, [selection, visibleGroups]);
+
+  if (selection) {
+    const assignments = getOccurrenceAssignmentSummary({
+      occurrence: selection.occurrence,
+      schedules: pageData.schedules,
+      positions: pageData.positions,
+      members: pageData.members,
+      teams: pageData.teams,
+      services: pageData.services,
+    });
+    const assignmentTeams = groupAssignmentSummaryByTeam(assignments);
+
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+        <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <ServicePlanEditor
+              service={selection.service}
+              occurrence={selection.occurrence}
+              members={pageData.members}
+              canEdit={canEditTeams}
+              onBack={() => setSelection(null)}
+              planNavigation={planNavigation}
+            />
+          </div>
+          <aside className="flex w-full shrink-0 flex-col gap-2 rounded-xl border border-gray-700/80 bg-gray-950/70 p-3 lg:w-64">
+            <div className="flex items-center gap-2">
+              <Icon svg={Users} size="sm" className="text-orange-300" />
+              <h3 className="text-sm font-semibold">Who&apos;s serving</h3>
+            </div>
+            {assignmentTeams.length === 0 ? (
+              <p className="text-xs text-gray-400">
+                No positions required for this service yet. Add them in Service
+                settings.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {assignmentTeams.map((team) => {
+                  const scheduleId = team.scheduleId;
+                  const teamHeader = (
+                    <>
+                      <h4 className="truncate text-[11px] font-semibold uppercase tracking-wide text-orange-300/90">
+                        {team.teamName}
+                      </h4>
+                      <ScheduleFillBadge
+                        filled={team.filled.length}
+                        required={team.filled.length + team.unfilled.length}
+                      />
+                    </>
+                  );
+                  // No schedule covers this date for this team, so there is no
+                  // grid to open — list what the service needs instead.
+                  if (!scheduleId) {
+                    return (
+                      <section
+                        key={`${team.teamId}-unscheduled`}
+                        className="space-y-1.5"
+                      >
+                        <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
+                          {teamHeader}
+                        </div>
+                        <ul className="space-y-1.5">
+                          {summarizeNeededPositions(team.unfilled).map((need) => (
+                            <li
+                              key={need.positionId}
+                              className="flex items-center justify-between gap-2 px-1.5 text-xs"
+                            >
+                              <span className="truncate text-gray-400">
+                                {need.positionName}
+                              </span>
+                              <span className="shrink-0 tabular-nums text-gray-500">
+                                &times;{need.count}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="px-1.5 text-[11px] text-gray-500">
+                          Not scheduled yet
+                        </p>
+                      </section>
+                    );
+                  }
+                  return (
+                    <section
+                      key={`${team.teamId}-${scheduleId}`}
+                      className="space-y-1.5"
+                    >
+                      <button
+                        type="button"
+                        className={whosServingRowClassName}
+                        onClick={() => openSchedule({ scheduleId })}
+                        aria-label={`Open the schedule for ${team.teamName}`}
+                      >
+                        {teamHeader}
+                      </button>
+                      <ul className="space-y-1.5">
+                        {team.filled.map((row) => (
+                          <li key={`${scheduleId}-${row.columnKey}`}>
+                            <button
+                              type="button"
+                              className={whosServingRowClassName}
+                              onClick={() =>
+                                openSchedule({
+                                  scheduleId,
+                                  slot: {
+                                    occurrenceId: row.occurrenceId,
+                                    columnKey: row.columnKey,
+                                  },
+                                })
+                              }
+                              aria-label={`${row.memberName} on ${row.slotLabel} — open in the schedule`}
+                            >
+                              <span className="truncate text-xs text-gray-400">
+                                {row.slotLabel}
+                              </span>
+                              <span className="truncate text-xs font-medium text-gray-100">
+                                {row.memberName}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      {team.unfilled.length > 0 ? (
+                        <button
+                          type="button"
+                          className={cn(
+                            whosServingRowClassName,
+                            "justify-start gap-1 text-xs font-medium text-amber-300",
+                          )}
+                          onClick={() =>
+                            openSchedule({
+                              scheduleId,
+                              slot: {
+                                occurrenceId: team.unfilled[0].occurrenceId,
+                                columnKey: team.unfilled[0].columnKey,
+                              },
+                            })
+                          }
+                          aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
+                        >
+                          {team.unfilled.length} unfilled
+                          <Icon svg={ChevronRight} size="xs" />
+                        </button>
+                      ) : null}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </aside>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="shrink-0 space-y-4">
+        <div className="flex items-center gap-2">
+          <Icon svg={CalendarRange} size="md" className="text-orange-300" />
+          <h2 className="text-lg font-semibold">Plans</h2>
+        </div>
+        <p className="text-sm text-gray-400">
+          Pick a date to build or edit that service&apos;s order of service.
+        </p>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            {activeServices.length > 1 ? (
+              <Select
+                label="Service"
+                className="w-full sm:w-56"
+                value={serviceFilter}
+                onChange={setServiceFilter}
+                options={serviceFilterOptions}
+              />
+            ) : null}
+
+            <div className="flex flex-col gap-1.5">
+              <span className="px-1 text-sm font-semibold">Range</span>
+              <div
+                className="flex flex-wrap gap-1.5"
+                role="group"
+                aria-label="Date range presets"
+              >
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  isSelected={rangePreset === "4w"}
+                  className={cn(
+                    "text-xs",
+                    rangePreset === "4w" &&
+                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                  )}
+                  onClick={() => applyPreset("4w")}
+                >
+                  Next 4 weeks
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  isSelected={rangePreset === "8w"}
+                  className={cn(
+                    "text-xs",
+                    rangePreset === "8w" &&
+                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                  )}
+                  onClick={() => applyPreset("8w")}
+                >
+                  Next 8 weeks
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  isSelected={rangePreset === "custom"}
+                  className={cn(
+                    "text-xs",
+                    rangePreset === "custom" &&
+                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                  )}
+                  onClick={() => setRangePreset("custom")}
+                >
+                  Custom
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {rangePreset === "custom" ? (
+            <div className="grid max-w-xl gap-3 sm:grid-cols-2">
+              <DatePicker
+                label="From"
+                value={windowStart}
+                onChange={setCustomStart}
+              />
+              <DatePicker label="To" value={windowEnd} onChange={setCustomEnd} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {groups.length === 0 ? (
+        <p className="text-sm text-gray-400">
+          No services occur in this date range. Add a service or widen the range
+          above.
+        </p>
+      ) : visibleGroups.length === 0 ? (
+        <p className="text-sm text-gray-400">
+          No dates for this service in the selected range. Choose another
+          service or widen the range.
+        </p>
+      ) : (
+        <div
+          className={cn(
+            // Top padding leaves room for the absolute "Up next" badge so the
+            // Plans scrollport does not clip it (same pattern as schedule board).
+            "grid grid-cols-1 items-start gap-4 pt-3",
+            visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",
+          )}
+        >
+          {visibleGroups.map(({ key, name, service, occurrences }) => {
+            const shared = getSharedOccurrenceTiming(occurrences);
+            const plannedCount = occurrences.filter((occurrence) =>
+              planKeysWithPlans.has(getServicePlanKey(occurrence)),
+            ).length;
+            const months = groupOccurrencesByMonth(occurrences);
+            const timingLabel = serviceTimingLabel(shared);
+            const plannedRatio =
+              occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
+
+            return (
+              <section
+                key={key}
+                className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
+              >
+                <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+                      <Icon
+                        svg={CalendarDays}
+                        size="sm"
+                        className="text-orange-300"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate text-base font-semibold text-gray-50">
+                        {name}
+                      </h3>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                          {occurrences.length === 1
+                            ? "1 date"
+                            : `${occurrences.length} dates`}
+                        </span>
+                        <span
+                          className={cn(
+                            "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                            plannedCount > 0
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                              : "border-gray-700 bg-gray-900/70 text-gray-400",
+                          )}
+                        >
+                          {plannedCount === 0
+                            ? "None planned"
+                            : `${plannedCount} planned`}
+                        </span>
+                        {timingLabel ? (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
+                            <Icon
+                              svg={Clock}
+                              size="xs"
+                              className="text-amber-300"
+                            />
+                            {timingLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    className="h-1 overflow-hidden rounded-full bg-gray-800"
+                    aria-hidden
+                  >
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-[width]",
+                        plannedCount > 0 ? "bg-emerald-400/80" : "bg-transparent",
+                      )}
+                      style={{ width: `${Math.round(plannedRatio * 100)}%` }}
+                    />
+                  </div>
+                </header>
+
+                <div className="space-y-4 bg-black/20 p-3">
+                  {months.map((month) => (
+                    <div key={month.key} className="space-y-2">
+                      <div className="flex items-center gap-2 px-0.5">
+                        <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                          {month.label}
+                        </h4>
+                        <div className="h-px flex-1 bg-gray-800" aria-hidden />
+                        <span className="text-[11px] text-gray-500">
+                          {month.occurrences.length}
+                        </span>
+                      </div>
+                      <ul
+                        className={cn(
+                          "grid grid-cols-2 gap-2 sm:grid-cols-3",
+                          visibleGroups.length > 1
+                            ? "xl:grid-cols-2 2xl:grid-cols-3"
+                            : "lg:grid-cols-4 xl:grid-cols-5",
+                        )}
+                      >
+                        {month.occurrences.map((occurrence) => {
+                          const hasPlan = planKeysWithPlans.has(
+                            getServicePlanKey(occurrence),
+                          );
+                          const isPast =
+                            getOccurrenceDate(occurrence) <
+                            formatPlainDate(new Date());
+                          const isNextUpcoming =
+                            occurrence.occurrenceId === nextUpcomingOccurrenceId;
+                          const tile = getPlansTileParts(occurrence, shared);
+                          return (
+                            <li
+                              key={occurrence.occurrenceId}
+                              className="relative"
+                            >
+                              {isNextUpcoming ? (
+                                <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
+                                  <ScheduleUpNextBadge />
+                                </div>
+                              ) : null}
+                              <Button
+                                type="button"
+                                variant="tertiary"
+                                aria-label={
+                                  hasPlan
+                                    ? `Open plan for ${tile.label}${isNextUpcoming ? ", up next" : ""}`
+                                    : `Add plan for ${tile.label}${isNextUpcoming ? ", up next" : ""}`
+                                }
+                                className={cn(
+                                  "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
+                                  hasPlan
+                                    ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
+                                    : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
+                                  isNextUpcoming && scheduleUpNextBorderClassName,
+                                  isPast && !hasPlan && "opacity-55",
+                                )}
+                                onClick={() =>
+                                  setSelection({ service, occurrence })
+                                }
+                              >
+                                <span className="flex w-full items-center justify-between gap-1">
+                                  <span
+                                    className={cn(
+                                      "text-[11px] font-semibold uppercase tracking-wide",
+                                      hasPlan
+                                        ? "text-emerald-300/70"
+                                        : "text-gray-400",
+                                    )}
+                                  >
+                                    {tile.weekday}
+                                  </span>
+                                  {hasPlan ? (
+                                    <Icon
+                                      svg={Check}
+                                      size="xs"
+                                      className="shrink-0 text-emerald-300"
+                                    />
+                                  ) : (
+                                    <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
+                                  )}
+                                </span>
+                                <span className="mt-0.5 text-left text-lg font-semibold leading-none text-gray-100">
+                                  {tile.day}
+                                </span>
+                                <span className="mt-1 flex w-full items-center justify-between gap-1 text-left text-[11px] text-gray-400">
+                                  <span>{tile.month}</span>
+                                  {tile.time ? <span>{tile.time}</span> : null}
+                                </span>
+                              </Button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default TeamsPlansPage;

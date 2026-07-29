@@ -216,7 +216,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       }}
       canEdit={canEdit}
       title={editing ? "Edit service" : "Create service"}
-      sectionTitle="Services"
+      sectionTitle="Service settings"
       description="Manage service times used for scheduling."
       createLabel="Create service"
       list={

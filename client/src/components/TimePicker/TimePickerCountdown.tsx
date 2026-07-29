@@ -23,6 +23,7 @@ const MERIDIEMS: Meridiem[] = ["AM", "PM"];
 export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   label,
   labelLayout = "inline",
+  labelStyle = "default",
   hideLabel = false,
   labelClassName,
   value,
@@ -387,6 +388,7 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
     <TimePickerFieldLayout
       label={label}
       labelLayout={labelLayout}
+      labelStyle={labelStyle}
       hideLabel={hideLabel}
       labelClassName={labelClassName}
       fieldId={dropdownId}

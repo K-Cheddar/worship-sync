@@ -23,12 +23,15 @@ const ScheduleOccurrenceDateButton = ({
     iconSize="sm"
     padding="px-2 py-1"
     color="#67e8f9"
+    // Overflow on the flex button; ellipsis lives on the label span so the
+    // icon stays visible when the date/time string is wider than the card.
     truncate
+    title={label}
     className={cn(scheduleOccurrenceDateButtonClassName, className)}
     aria-label={ariaLabel}
     onClick={onClick}
   >
-    {label}
+    <span className="min-w-0 flex-1 truncate">{label}</span>
   </Button>
 );
 

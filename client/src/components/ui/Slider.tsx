@@ -19,7 +19,7 @@ function Slider({
     <SliderPrimitive.Root
       data-slot="slider"
       className={cn(
-        "relative flex w-full cursor-pointer touch-none select-none items-center data-disabled:pointer-events-none data-disabled:opacity-50",
+        "control-spacing relative flex w-full cursor-pointer touch-none select-none items-center data-disabled:pointer-events-none data-disabled:opacity-50",
         className,
       )}
       {...props}

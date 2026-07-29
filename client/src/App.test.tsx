@@ -179,7 +179,7 @@ jest.mock("./pages/RecoveryConfirm", () => () => (
 jest.mock("./pages/Account", () => () => (
   <div data-testid="account-page">Account Page</div>
 ));
-jest.mock("./pages/Teams/Teams", () => () => (
+jest.mock("./pages/Teams/TeamsAndServices", () => () => (
   <div data-testid="teams-page">Teams Page</div>
 ));
 

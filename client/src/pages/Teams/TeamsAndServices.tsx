@@ -24,7 +24,11 @@ import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnC
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
-import { getActiveTeamsNavSection, teamsNavSections } from "./teamsNavSections";
+import {
+  getActiveTeamsNavSection,
+  servicesNavSections,
+  teamsNavSections,
+} from "./teamsNavSections";
 
 const TeamsSchedulesPage = lazy(() => import("./pages/TeamsSchedulesPage"));
 const TeamsFormsPage = lazy(() => import("./pages/TeamsFormsPage"));
@@ -33,7 +37,8 @@ const TeamsPositionsPage = lazy(() => import("./pages/TeamsPositionsPage"));
 const TeamsGroupsPage = lazy(() => import("./pages/TeamsGroupsPage"));
 const TeamsRolesPage = lazy(() => import("./pages/TeamsRolesPage"));
 const TeamsQualificationsPage = lazy(() => import("./pages/TeamsQualificationsPage"));
-const TeamsServicesPage = lazy(() => import("./pages/TeamsServicesPage"));
+const TeamsPlansPage = lazy(() => import("./pages/TeamsPlansPage"));
+const TeamsServiceSettingsPage = lazy(() => import("./pages/TeamsServiceSettingsPage"));
 
 const TeamsSectionLoadingFallback = () => {
   const location = useLocation();
@@ -52,11 +57,11 @@ const TeamsSectionErrorFallback = () => (
         This section could not load.
       </h3>
       <p className="text-sm text-red-100/80">
-        Try again, or open another Teams section from the sidebar.
+        Try again, or open another section from the sidebar.
       </p>
     </div>
     <Button type="button" onClick={() => window.location.reload()}>
-      Reload Teams
+      Reload page
     </Button>
   </div>
 );
@@ -67,7 +72,7 @@ const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
   </ErrorBoundary>
 );
 
-const TeamsLayout = () => {
+const TeamsAndServicesLayout = () => {
   const { loading, toolbarLogoUrl, churchName, canEditAnyTeam } = useTeamsPage();
   const location = useLocation();
   useTeamsAbandonedReturnCleanup();
@@ -101,10 +106,11 @@ const TeamsLayout = () => {
         <section className="mx-auto mt-4 flex w-full max-w-5xl shrink-0 flex-col gap-3 text-center">
           <h1 className="flex items-center justify-center gap-2 text-3xl font-semibold">
             <Icon svg={Users} size="lg" className="text-orange-400" />
-            Teams
+            Teams and Services
           </h1>
           <p className="mx-auto max-w-3xl text-sm text-gray-200">
-            Manage scheduling roster people, positions, teams, services, and schedule assignments.
+            Manage scheduling roster, positions, teams, and schedule
+            assignments, plus service times and order-of-service plans.
           </p>
           {!canEditAnyTeam ? (
             <p className="mx-auto rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100">
@@ -119,7 +125,7 @@ const TeamsLayout = () => {
               variant="secondary"
               svg={PanelLeft}
               iconSize="sm"
-              aria-label="Open Teams sections"
+              aria-label="Open sections"
               onClick={() => setMobileNavOpen(true)}
             >
               Sections
@@ -152,7 +158,7 @@ const TeamsLayout = () => {
           aria-describedby={undefined}
         >
           <SheetHeader className="border-gray-700 bg-gray-950/95">
-            <SheetTitle>Teams sections</SheetTitle>
+            <SheetTitle>Sections</SheetTitle>
           </SheetHeader>
           <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4">
             <TeamsSidebarNav onNavigate={() => setMobileNavOpen(false)} />
@@ -163,9 +169,9 @@ const TeamsLayout = () => {
   );
 };
 
-const TeamsRoutes = () => (
+const TeamsAndServicesRoutes = () => (
   <Routes>
-    <Route element={<TeamsLayout />}>
+    <Route element={<TeamsAndServicesLayout />}>
       <Route index element={<Navigate to="schedules" replace />} />
       <Route
         path={teamsNavSections[0].routePath}
@@ -219,27 +225,40 @@ const TeamsRoutes = () => (
         path={teamsNavSections[6].routePath}
         element={
           <TeamsSectionRoute>
-            <TeamsServicesPage />
+            <TeamsFormsPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[7].routePath}
+        path={servicesNavSections[0].routePath}
         element={
           <TeamsSectionRoute>
-            <TeamsFormsPage />
+            <TeamsPlansPage />
           </TeamsSectionRoute>
         }
+      />
+      <Route
+        path={servicesNavSections[1].routePath}
+        element={
+          <TeamsSectionRoute>
+            <TeamsServiceSettingsPage />
+          </TeamsSectionRoute>
+        }
+      />
+      {/* Old path from before Services/Teams shared this page. */}
+      <Route
+        path="services"
+        element={<Navigate to={servicesNavSections[1].path} replace />}
       />
       <Route path="*" element={<Navigate to="schedules" replace />} />
     </Route>
   </Routes>
 );
 
-const TeamsPage = () => (
+const TeamsAndServicesPage = () => (
   <TeamsPageProvider>
-    <TeamsRoutes />
+    <TeamsAndServicesRoutes />
   </TeamsPageProvider>
 );
 
-export default TeamsPage;
+export default TeamsAndServicesPage;

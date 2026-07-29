@@ -23,6 +23,7 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
+import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -146,6 +147,7 @@ const TeamRoleManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
+    const saveToastMessage = formatTeamRoleSaveToast(wasEditing, payload);
     const optimisticRole: TeamRole = {
       churchId,
       roleId: localRoleId,
@@ -165,6 +167,7 @@ const TeamRoleManager = ({
       if (!wasEditing) {
         onSaved(response.role, localRoleId);
       }
+      showToast(saveToastMessage, "success");
       // Reached via a cross-section link: return to the origin. Otherwise keep
       // the panel open for back-to-back editing.
       if (returnTo) {

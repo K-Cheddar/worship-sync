@@ -32,7 +32,10 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
-import { formatQualificationLevelSaveToast } from "../teamsSaveToasts";
+import {
+  formatQualificationAreaSaveToast,
+  formatQualificationLevelSaveToast,
+} from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -216,6 +219,7 @@ const QualificationManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
+    const saveToastMessage = formatQualificationAreaSaveToast(wasEditing, payload);
     const optimisticArea: TeamQualificationArea = {
       churchId,
       areaId: localAreaId,
@@ -232,6 +236,7 @@ const QualificationManager = ({
       if (!wasEditing) {
         onAreaSaved(response.area, localAreaId);
       }
+      showToast(saveToastMessage, "success");
       // Reached via a cross-section link: return to the origin. Otherwise keep
       // the panel open. The operator may have switched areas while this save was
       // in flight, so only rebind the panel (and touch level drafts) when

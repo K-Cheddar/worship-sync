@@ -67,6 +67,11 @@ export type BuildAutoFillPlanArgs = {
  * eligible person to a well-supplied one filled earlier. Slots with no
  * eligible candidate are left empty and reported in `unfilledSlots` for the
  * scheduler to finish by hand — there is no backtracking or swap repair.
+ *
+ * On top of that shared ranking, this also hard-avoids picking someone for
+ * back-to-back occurrences (see the `nearestAssignmentDistance !== 1` check
+ * below) whenever a non-adjacent alternative exists, even if the ranking
+ * would otherwise prefer them on fairness grounds.
  */
 export const buildAutoFillPlan = ({
   occurrences,
@@ -213,7 +218,19 @@ export const buildAutoFillPlan = ({
         filterByQuery: false,
       });
 
-      const picked = rows.find((row) => row.eligible);
+      // The shared ranking checks fairness (fewest total assignments) before
+      // spacing, so someone significantly behind on overall assignments can
+      // still rank first immediately after being picked, getting placed on
+      // consecutive occurrences while auto-fill tries to catch them up to
+      // parity. The manual picker has a human reviewing "Recommended" before
+      // confirming, so that's a minor quirk there; auto-fill has no one
+      // reviewing it, so it must not do this on its own. Skip straight past
+      // anyone who'd be back-to-back (the immediately adjacent occurrence) as
+      // long as a non-adjacent eligible alternative exists.
+      const eligibleRows = rows.filter((row) => row.eligible);
+      const picked =
+        eligibleRows.find((row) => row.recommendationStats?.nearestAssignmentDistance !== 1) ??
+        eligibleRows[0];
       if (!picked) {
         unfilledSlots.push({ occurrenceId, columnKey: column.columnKey });
         return;

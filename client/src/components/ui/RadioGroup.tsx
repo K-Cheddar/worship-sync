@@ -12,7 +12,7 @@ const RadioGroup = ({
   return (
     <RadioGroupPrimitive.Root
       data-slot="radio-group"
-      className={cn(className)}
+      className={cn("control-spacing", className)}
       {...props}
     />
   );
