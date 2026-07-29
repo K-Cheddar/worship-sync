@@ -93,7 +93,9 @@ const MemberAccessSheet = () => {
         showBackdrop
         contentPadding="p-0"
         contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
-      />
+      >
+        {null}
+      </Drawer>
     );
   }
 

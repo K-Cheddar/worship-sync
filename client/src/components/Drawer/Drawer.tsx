@@ -21,10 +21,10 @@ export interface DrawerProps {
 }
 
 const sizeClasses = {
-  sm: "w-[20%]",
-  md: "w-[25%]",
-  lg: "w-[40%]",
-  xl: "w-[50%]",
+  sm: "w-full sm:w-[20%]",
+  md: "w-full sm:w-[25%]",
+  lg: "w-full sm:w-[40%]",
+  xl: "w-full sm:w-[50%]",
   full: "w-full",
 };
 
