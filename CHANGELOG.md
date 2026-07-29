@@ -1,3 +1,15 @@
+# [2.20.0](https://github.com/K-Cheddar/worship-sync/compare/v2.19.0...v2.20.0) (2026-07-29)
+
+
+### Bug Fixes
+
+* Close panel on saving in teams domain ([f37dc79](https://github.com/K-Cheddar/worship-sync/commit/f37dc79644ecc600e7c5a1763aff57948582a254))
+
+
+### Features
+
+* Adding the start of service planning ([17af0ee](https://github.com/K-Cheddar/worship-sync/commit/17af0ee99e89dba4f5a940fb00c97fe16c1e4018))
+
 # [2.19.0](https://github.com/K-Cheddar/worship-sync/compare/v2.18.1...v2.19.0) (2026-07-27)
 
 
