@@ -19,9 +19,9 @@
  * Apply `control-spacing` to a control's root; all its `h-*`/`p-*`/`size-*`
  * utilities then resolve against this fixed unit rather than the viewport.
  */
-@utility control-spacing {
+/* @utility control-spacing {
   --spacing: 0.25rem;
-}
+} */
 
 :root {
   --spacing: clamp(0.175rem, 0.4vw, 0.25rem);
