@@ -1,12 +1,34 @@
 import { useEffect, useRef } from "react";
 import { getApiBasePath } from "../../../utils/environment";
 import type { TeamSchedule } from "../../../api/authTypes";
+import type { ServicePlan } from "../../../types/servicePlan";
 
 export type TeamsStreamEvent =
   | { type: "connected"; churchId?: string }
   | { type: "schedule-updated"; schedule: TeamSchedule }
   | { type: "schedule-removed"; scheduleId: string }
+  | { type: "service-plan-updated"; servicePlan: ServicePlan }
+  | { type: "service-plan-removed"; planKey: string }
   | { type: string; [key: string]: unknown };
+
+export type ServicePlanUpdatedEvent = {
+  type: "service-plan-updated";
+  servicePlan: ServicePlan;
+};
+
+/**
+ * The union ends in an open `{ type: string; [key: string]: unknown }` member
+ * so unknown server events don't break consumers — but that also means a
+ * `event.type === "…"` check can't narrow, and the payload reads as `unknown`.
+ * This asserts the shape explicitly instead.
+ */
+export const isServicePlanUpdatedEvent = (
+  event: TeamsStreamEvent,
+): event is ServicePlanUpdatedEvent => {
+  if (event.type !== "service-plan-updated") return false;
+  const servicePlan = (event as { servicePlan?: unknown }).servicePlan;
+  return Boolean(servicePlan) && typeof servicePlan === "object";
+};
 
 /**
  * Subscribes to the church's Teams live channel (SSE). The server pushes

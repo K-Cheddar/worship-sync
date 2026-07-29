@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import Teams from "./Teams";
+import TeamsAndServices from "./TeamsAndServices";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { createMockGlobalContext } from "../../test/mocks";
@@ -12,6 +12,7 @@ import {
   createTeamSchedule,
   deleteTeamPosition,
   getTeamsBootstrap,
+  listServicePlans,
   updateTeam,
   updateTeamPosition,
   updateTeamScheduleAssignment,
@@ -52,6 +53,7 @@ jest.mock("./pages/TeamsFormsPage", () => ({
 
 jest.mock("../../api/auth", () => ({
   getTeamsBootstrap: jest.fn(),
+  listServicePlans: jest.fn(),
   createTeamPosition: jest.fn(),
   updateTeamPosition: jest.fn(),
   updateTeamScheduleAssignment: jest.fn(),
@@ -73,6 +75,7 @@ jest.mock("../../api/auth", () => ({
 }));
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
+const mockListServicePlans = jest.mocked(listServicePlans);
 const mockCreateTeamPosition = jest.mocked(createTeamPosition);
 const mockUpdateTeamPosition = jest.mocked(updateTeamPosition);
 const mockDeleteTeamPosition = jest.mocked(deleteTeamPosition);
@@ -234,7 +237,7 @@ const makeMockState = () => ({
 });
 
 const renderTeams = (
-  initialEntry = "/teams",
+  initialEntry = "/teams-and-services",
   contextOverrides: Record<string, unknown> = {},
 ) =>
   render(
@@ -248,7 +251,7 @@ const renderTeams = (
       >
         <ToastProvider>
           <Routes>
-            <Route path="/teams/*" element={<Teams />} />
+            <Route path="/teams-and-services/*" element={<TeamsAndServices />} />
           </Routes>
         </ToastProvider>
       </GlobalInfoContext.Provider>
@@ -262,7 +265,7 @@ const waitForTeamsBootstrap = async () => {
 const openTeamsSectionsNavIfNeeded = async (
   user: ReturnType<typeof userEvent.setup>,
 ) => {
-  const openButton = screen.queryByRole("button", { name: /Open Teams sections/i });
+  const openButton = screen.queryByRole("button", { name: /Open sections/i });
   if (openButton) {
     await user.click(openButton);
   }
@@ -295,16 +298,57 @@ describe("Teams", () => {
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(baseBootstrap),
     );
+    mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
   });
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia;
   });
 
+  it("switches the sidebar between the Teams and Services domains, keeping the other domain's sections out of view", async () => {
+    const user = userEvent.setup();
+    renderTeams();
+
+    await waitForTeamsBootstrap();
+    await openTeamsSectionsNavIfNeeded(user);
+    expect(screen.getByRole("tab", { name: "Teams" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Plans$/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Services" }));
+    expect(
+      await screen.findByRole("heading", { name: /^Plans$/i }, { timeout: 8000 }),
+    ).toBeInTheDocument();
+    await openTeamsSectionsNavIfNeeded(user);
+    expect(screen.getByRole("tab", { name: "Services" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("link", { name: /^Plans$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /^Service settings$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Schedules$/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Teams" }));
+    await waitForTeamsBootstrap();
+  });
+
   it("renders the empty schedule state after bootstrap loads", async () => {
     renderTeams();
 
-    expect(await screen.findByRole("heading", { name: /^Teams$/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /^Teams and Services$/i }),
+    ).toBeInTheDocument();
     await waitForTeamsBootstrap();
     expect(
       await screen.findByText(/Create a team, services, and a schedule/i),
@@ -321,11 +365,11 @@ describe("Teams", () => {
 
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
       "href",
-      "/teams/schedules",
+      "/teams-and-services/schedules",
     );
     expect(screen.getByRole("link", { name: /^Forms$/i })).toHaveAttribute(
       "href",
-      "/teams/forms",
+      "/teams-and-services/forms",
     );
     expect(screen.getByRole("link", { name: /^Forms$/i })).not.toHaveAttribute(
       "href",
@@ -363,16 +407,6 @@ describe("Teams", () => {
     );
 
     await openTeamsSectionsNavIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Services$/i }));
-    expect(
-      await screen.findByRole("button", { name: /Create service/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Services$/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-
-    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     expect(
       await screen.findByRole("heading", { name: /^Schedules$/i }),
@@ -386,9 +420,11 @@ describe("Teams", () => {
   it("contains a crash inside the active Teams section", async () => {
     const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
-    renderTeams("/teams/forms");
+    renderTeams("/teams-and-services/forms");
 
-    expect(await screen.findByRole("heading", { name: /^Teams$/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /^Teams and Services$/i }),
+    ).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /This section could not load/i,
     );
@@ -411,7 +447,7 @@ describe("Teams", () => {
       },
     } satisfies CreateTeamPositionResponse);
 
-    renderTeams("/teams/positions");
+    renderTeams("/teams-and-services/positions");
     await screen.findByRole("button", { name: /Create position/i });
 
     // Create form is gated: it is rendered but inert until "Create position" is clicked.
@@ -450,7 +486,7 @@ describe("Teams", () => {
       },
     } satisfies UpdateTeamResponse);
 
-    renderTeams("/teams/groups");
+    renderTeams("/teams-and-services/groups");
     await screen.findByRole("button", { name: /Edit Main Team/i });
     await user.click(screen.getByRole("button", { name: /Edit Main Team/i }));
     expect(
@@ -469,9 +505,42 @@ describe("Teams", () => {
         expect.objectContaining({ name: "Main Team Renamed" }),
       );
     });
-    // The panel stays open on save so the next team can be edited without
-    // reopening it.
+    // On desktop the panel stays open on save so the next team can be edited
+    // without reopening it.
     expect(screen.getByRole("heading", { name: /Edit team/i })).toBeInTheDocument();
+  });
+
+  it("closes the team editor after saving on narrow screens", async () => {
+    window.matchMedia = makeMatchMedia(true);
+    const user = userEvent.setup();
+    mockUpdateTeam.mockResolvedValue({
+      success: true,
+      team: {
+        teamId: "team-main",
+        churchId: "church-1",
+        name: "Main Team Renamed",
+        memberIds: [],
+      },
+    } satisfies UpdateTeamResponse);
+
+    renderTeams("/teams-and-services/groups");
+    await screen.findByRole("button", { name: /Edit Main Team/i });
+    await user.click(screen.getByRole("button", { name: /Edit Main Team/i }));
+    expect(
+      await screen.findByRole("heading", { name: /Edit team/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Save team/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeam).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("heading", { name: /Edit team/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Create team/i }),
+    ).toBeInTheDocument();
   });
 
   it("does not create duplicate positions when Save is double-clicked", async () => {
@@ -484,7 +553,7 @@ describe("Teams", () => {
         }),
     );
 
-    renderTeams("/teams/positions");
+    renderTeams("/teams-and-services/positions");
     await screen.findByRole("button", { name: /Create position/i });
     await user.click(screen.getByRole("button", { name: /Create position/i }));
     await user.type(screen.getByLabelText(/^Name/i), "Vocal");
@@ -544,7 +613,7 @@ describe("Teams", () => {
         }),
     );
 
-    renderTeams("/teams/positions");
+    renderTeams("/teams-and-services/positions");
     await screen.findByRole("button", { name: /Edit Vocal/i });
 
     // Edit Vocal, save, and leave the save in flight.
@@ -619,7 +688,7 @@ describe("Teams", () => {
       success: true,
     } satisfies DeleteTeamPositionResponse);
 
-    renderTeams("/teams/positions");
+    renderTeams("/teams-and-services/positions");
     await screen.findByRole("button", { name: /Edit Vocal/i });
 
     await user.click(screen.getByRole("button", { name: /Edit Vocal/i }));
@@ -1109,7 +1178,7 @@ describe("Teams", () => {
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
 
-    renderTeams("/teams", {
+    renderTeams("/teams-and-services", {
       role: "member",
       permissions: { teams: "view" },
       canViewTeams: true,
@@ -1132,7 +1201,7 @@ describe("Teams", () => {
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
 
-    renderTeams("/teams", {
+    renderTeams("/teams-and-services", {
       role: "member",
       permissions: { teams: "none", teamScopes: { "team-main": "edit" } },
       canViewTeams: true,

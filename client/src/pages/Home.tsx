@@ -98,10 +98,10 @@ const adminLinks: CardLink[] = [
     icon: Building2,
   },
   {
-    title: "Teams",
+    title: "Teams and Services",
     description:
-      "Manage scheduling roster people, roles, teams, services, and service assignments.",
-    to: "/teams",
+      "Manage scheduling roster, positions, teams, and schedule assignments, plus service times and order-of-service plans.",
+    to: "/teams-and-services",
     icon: Users,
   },
 ];
@@ -315,7 +315,7 @@ const Welcome = () => {
   const isLoggedIn = loginState === "success";
   const isAdmin = role === "admin";
   const visibleAdminLinks = adminLinks.filter(
-    (link) => isAdmin || (link.to === "/teams" && canViewTeams),
+    (link) => isAdmin || (link.to === "/teams-and-services" && canViewTeams),
   );
   const isMusicAccess = isLoggedIn && access === "music";
   const visiblePrimaryControllers = isMusicAccess

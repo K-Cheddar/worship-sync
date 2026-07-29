@@ -4,6 +4,14 @@ export interface EventData {
   elementType: string;
   title: string;
   ledBy: string;
+  /** 24-hour HH:mm schedule time when the printout provides one. */
+  startTime?: string;
+  /** Supports source durations such as 1m 30s without rounding them away. */
+  durationMinutes?: number;
+  /** Shared/default note for everyone viewing the service. */
+  note?: string;
+  /** Notes from custom printout columns, scoped to their column heading. */
+  teamNotes?: Array<{ teamName: string; note: string }>;
 }
 
 export interface ServicePlanningSection {
@@ -72,7 +80,40 @@ const getElementText = (element?: Element | null) =>
       : element?.textContent || "",
   );
 
-const buildAccordionRowEventData = (tds: NodeListOf<Element>) => {
+const getDirectTableCells = (row: Element) =>
+  Array.from(row.children).filter((child) => child.tagName.toLowerCase() === "td");
+
+const parsePlanningStartTime = (value: string): string | undefined => {
+  const match = normalizeCellText(value)
+    .toLowerCase()
+    .match(/^\s*(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap])?m?(?=\s|\(|$)/);
+  if (!match) return undefined;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  const period = match[3];
+  if (minutes > 59 || hours > 23 || hours === 0) return undefined;
+  if (period === "a" && hours === 12) hours = 0;
+  if (period === "p" && hours < 12) hours += 12;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+};
+
+const parsePlanningDurationMinutes = (value: string): number | undefined => {
+  const normalized = normalizeCellText(value).toLowerCase();
+  if (!normalized || normalized === "none") return undefined;
+  const minutes = Number(normalized.match(/(\d+(?:\.\d+)?)\s*m/)?.[1] || 0);
+  const seconds = Number(normalized.match(/(\d+(?:\.\d+)?)\s*s/)?.[1] || 0);
+  const total = minutes + seconds / 60;
+  return total > 0 ? total : undefined;
+};
+
+const getPlanningTimeFields = (value: string) => ({
+  startTime: parsePlanningStartTime(value),
+  durationMinutes: parsePlanningDurationMinutes(value),
+});
+
+// Annotated rather than inferred: the spread timing fields infer as
+// required-but-undefined, which isn't assignable to EventData's optional ones.
+const buildAccordionRowEventData = (tds: NodeListOf<Element>): EventData => {
   const middleCellLines = Array.from(tds[1].childNodes)
     .map((node) =>
       normalizeCellText(
@@ -88,10 +129,12 @@ const buildAccordionRowEventData = (tds: NodeListOf<Element>) => {
     .replace(/^-?\s*/, "")
     .trim();
 
+  const timing = getPlanningTimeFields(getElementText(tds[0]));
   return {
     elementType,
     title,
     ledBy: getElementText(tds[2]),
+    ...timing,
   };
 };
 
@@ -99,11 +142,32 @@ const buildWorshipFlowRowEventData = (tds: NodeListOf<Element>) => ({
   elementType: getElementText(tds[1]),
   title: getElementText(tds[2]),
   ledBy: getElementText(tds[3]),
+  note: getElementText(tds[4]) || undefined,
+  ...getPlanningTimeFields(getElementText(tds[0])),
 });
+
+const getMainRowOptionalFields = (tds: NodeListOf<Element>) => {
+  const startTime = parsePlanningStartTime(getElementText(tds[0]));
+  const durationMinutes = parsePlanningDurationMinutes(getElementText(tds[1]));
+  const note = getElementText(tds[5]);
+  return {
+    ...(startTime ? { startTime } : {}),
+    ...(durationMinutes ? { durationMinutes } : {}),
+    ...(note ? { note } : {}),
+  };
+};
 
 const parseEventData = (textHtml: string): EventData[] => {
   const el = document.createElement("html");
   el.innerHTML = stripResourceTagsForLocalParse(textHtml);
+
+  // Custom-columns printouts use a plain table rather than the classes below.
+  // Reuse the full parser so controller imports receive the same rows too.
+  if (getCustomColumnsLayout(el)) {
+    return parseServicePlanningImportFromHtml(textHtml).sections.flatMap(
+      (section) => section.rows,
+    );
+  }
 
   const data: EventData[] = [];
 
@@ -215,6 +279,87 @@ const parseTeamAssignments = (
   return assignments;
 };
 
+type CustomColumnsLayout = {
+  table: HTMLTableElement;
+  startTimeIndex: number;
+  durationIndex: number;
+  elementTypeIndex: number;
+  titleIndex: number;
+  ledByIndex: number;
+  noteIndex: number;
+  teamColumns: Array<{ index: number; teamName: string }>;
+};
+
+const getCustomColumnsLayout = (root: HTMLElement): CustomColumnsLayout | null => {
+  const table = Array.from(root.querySelectorAll("table")).find((candidate) => {
+    const headers = Array.from(candidate.querySelectorAll("thead th")).map((header) =>
+      getElementText(header).toLowerCase(),
+    );
+    return headers.includes("start time") &&
+      headers.includes("duration") &&
+      headers.includes("element type");
+  });
+  if (!(table instanceof HTMLTableElement)) return null;
+
+  const headers = Array.from(table.querySelectorAll("thead th")).map(getElementText);
+  const indexFor = (label: string) =>
+    headers.findIndex((header) => header.toLowerCase() === label);
+  const startTimeIndex = indexFor("start time");
+  const durationIndex = indexFor("duration");
+  const elementTypeIndex = indexFor("element type");
+  const titleIndex = indexFor("title");
+  const ledByIndex = indexFor("led by");
+  const noteIndex = indexFor("note");
+  if ([startTimeIndex, durationIndex, elementTypeIndex, titleIndex, ledByIndex, noteIndex].some((index) => index < 0)) {
+    return null;
+  }
+
+  const reserved = new Set([
+    startTimeIndex,
+    durationIndex,
+    elementTypeIndex,
+    titleIndex,
+    ledByIndex,
+    noteIndex,
+  ]);
+  return {
+    table,
+    startTimeIndex,
+    durationIndex,
+    elementTypeIndex,
+    titleIndex,
+    ledByIndex,
+    noteIndex,
+    teamColumns: headers
+      .map((teamName, index) => ({ index, teamName }))
+      .filter(({ index, teamName }) => !reserved.has(index) && Boolean(teamName)),
+  };
+};
+
+const buildCustomColumnsRowEventData = (
+  cells: Element[],
+  layout: CustomColumnsLayout,
+): EventData => {
+  const startTime = parsePlanningStartTime(getElementText(cells[layout.startTimeIndex]));
+  const durationMinutes = parsePlanningDurationMinutes(
+    getElementText(cells[layout.durationIndex]),
+  );
+  const note = getElementText(cells[layout.noteIndex]);
+  const teamNotes = layout.teamColumns
+    .map(({ index, teamName }) => ({ teamName, note: getElementText(cells[index]) }))
+    .filter((teamNote) => Boolean(teamNote.note));
+
+  return {
+    elementType: getElementText(cells[layout.elementTypeIndex]),
+    title: getElementText(cells[layout.titleIndex]),
+    ledBy: getElementText(cells[layout.ledByIndex]),
+    ...(startTime ? { startTime } : {}),
+    ...(durationMinutes ? { durationMinutes } : {}),
+    ...(note ? { note } : {}),
+    ...(teamNotes.length ? { teamNotes } : {}),
+  };
+};
+
 const extractPlanLabel = (root: HTMLElement): string => {
   const dateHeader = root.querySelector(".service-info-table-printout th.left");
   const direct = getElementText(dateHeader);
@@ -252,11 +397,28 @@ export const parseServicePlanningImportFromHtml = (
   const worshipFlowRows = el.querySelectorAll(
     "table.worship-flow-table tbody tr",
   );
+  const customColumnsLayout = getCustomColumnsLayout(el);
 
   // Detect format: does the table have tr.main-row at all?
   const hasMainRows = el.querySelectorAll("tr.main-row").length > 0;
 
-  if (hasMainRows) {
+  if (customColumnsLayout) {
+    for (const tr of Array.from(customColumnsLayout.table.querySelectorAll("tr"))) {
+      if (isDividerRow(tr)) {
+        if (current.rows.length > 0 || current.sectionName) {
+          sections.push(current);
+        }
+        current = {
+          sectionName: getElementText(tr),
+          rows: [],
+        };
+        continue;
+      }
+      const cells = getDirectTableCells(tr);
+      if (cells.length <= customColumnsLayout.noteIndex) continue;
+      current.rows.push(buildCustomColumnsRowEventData(cells, customColumnsLayout));
+    }
+  } else if (hasMainRows) {
     for (const tr of Array.from(allRows)) {
       if (isDividerRow(tr)) {
         if (current.rows.length > 0 || current.sectionName) {
@@ -275,6 +437,7 @@ export const parseServicePlanningImportFromHtml = (
         elementType: getElementText(tds[2]),
         title: getElementText(tds[3]),
         ledBy: getElementText(tds[4]),
+        ...getMainRowOptionalFields(tds),
       });
     }
   } else if (el.querySelectorAll("tr.accordion-toggle").length > 0) {

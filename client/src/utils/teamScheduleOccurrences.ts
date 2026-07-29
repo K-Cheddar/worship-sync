@@ -149,6 +149,32 @@ export const formatOccurrenceRowLabel = (
 export const getOccurrenceDate = (occurrence: TeamScheduleOccurrence) =>
   occurrence.startsAt.slice(0, 10);
 
+/** YYYY-MM-DD for `date` in `timeZone` (en-CA is ISO-like and stable). */
+export const calendarDateInTimeZone = (date: Date, timeZone: string): string =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+
+/**
+ * True when the occurrence falls on the same calendar day as `referenceDate`
+ * in `timeZone` — used to gate day-of-service controls like Make live.
+ */
+export const isOccurrenceOnCalendarDay = (
+  occurrence: TeamScheduleOccurrence,
+  timeZone: string,
+  referenceDate: Date = new Date(),
+): boolean => {
+  const startsAt = new Date(occurrence.startsAt);
+  if (Number.isNaN(startsAt.getTime())) return false;
+  return (
+    calendarDateInTimeZone(startsAt, timeZone) ===
+    calendarDateInTimeZone(referenceDate, timeZone)
+  );
+};
+
 const startOfTodayMs = () => {
   const now = new Date();
   now.setHours(0, 0, 0, 0);

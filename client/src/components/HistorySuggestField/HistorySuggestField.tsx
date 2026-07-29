@@ -70,6 +70,10 @@ export type HistorySuggestFieldProps = {
   hideLabel?: boolean;
   className?: string;
   labelClassName?: string;
+  /** Passed through to Input when multiline is false. */
+  labelStyle?: "default" | "compactLight";
+  /** Passed through to Input when multiline is false. */
+  inputClassName?: string;
   disabled?: boolean;
   /** Only for multiline: enable auto-resize on TextArea. */
   autoResize?: boolean;
@@ -89,6 +93,8 @@ const HistorySuggestField = ({
   hideLabel,
   className,
   labelClassName,
+  labelStyle,
+  inputClassName,
   disabled = false,
   autoResize = true,
   "data-ignore-undo": dataIgnoreUndo,
@@ -284,6 +290,8 @@ const HistorySuggestField = ({
             <Input
               ref={inputRef}
               {...commonFieldProps}
+              labelStyle={labelStyle}
+              inputClassName={inputClassName}
               onChange={
                 inputOnChange as React.FormEventHandler<HTMLInputElement> &
                 ((value: string | number) => void)

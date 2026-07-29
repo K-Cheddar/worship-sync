@@ -108,3 +108,31 @@ input[type="password"] {
 input[type="password"]::-ms-reveal {
   display: none;
 }
+
+/**
+ * Rich text editor block styling. These live in CSS rather than Tailwind
+ * arbitrary variants because the block attributes are written directly onto
+ * contentEditable children at runtime (see RichTextEditor.tsx), so there is no
+ * class in any source file for Tailwind to scan and generate from.
+ *
+ * Values are literal rather than theme vars so they cannot silently resolve to
+ * nothing, and must stay in step with ServiceFlowRichText's SIZE_CLASS so what
+ * an operator types matches what public viewers see.
+ */
+.rich-text-editable [data-block-size="small"] {
+  font-size: 0.75rem; /* text-xs */
+  line-height: 1rem;
+}
+.rich-text-editable [data-block-size="large"] {
+  font-size: 1rem; /* text-base */
+  line-height: 1.5rem;
+}
+.rich-text-editable [data-block-type="list-item"] {
+  padding-left: 1rem;
+}
+/* A pseudo-element, so it never appears in the block's childNodes and cannot
+   leak into the serialized document. */
+.rich-text-editable [data-block-type="list-item"]::before {
+  content: "•";
+  margin-right: 0.5rem;
+}

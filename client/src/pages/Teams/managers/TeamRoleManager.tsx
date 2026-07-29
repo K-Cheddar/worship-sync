@@ -23,8 +23,10 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
+import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 
 // Key used to track an in-flight save for the create form, which has no role id
@@ -68,6 +70,7 @@ const TeamRoleManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const isNarrowViewport = useTeamsNarrowViewport();
 
   const applyTeamId = useCallback((nextTeamId: string) => {
     setSelectedTeamId(nextTeamId);
@@ -146,6 +149,7 @@ const TeamRoleManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
+    const saveToastMessage = formatTeamRoleSaveToast(wasEditing, payload);
     const optimisticRole: TeamRole = {
       churchId,
       roleId: localRoleId,
@@ -165,9 +169,10 @@ const TeamRoleManager = ({
       if (!wasEditing) {
         onSaved(response.role, localRoleId);
       }
-      // Reached via a cross-section link: return to the origin. Otherwise keep
-      // the panel open for back-to-back editing.
-      if (returnTo) {
+      showToast(saveToastMessage, "success");
+      // Cross-section return, or mobile where the form covers the list: close.
+      // On desktop, keep the panel open for back-to-back editing.
+      if (returnTo || isNarrowViewport) {
         finishEditing(reset);
       } else if (wasEditing) {
         // The operator may have switched to a different role while this save was

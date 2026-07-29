@@ -41,6 +41,7 @@ import {
   isActive,
   positionMatchesListQuery,
 } from "../teamsUtils";
+import { formatPositionSaveToast } from "../teamsSaveToasts";
 import {
   TEAMS_POSITION_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -49,6 +50,7 @@ import {
   buildTeamsQualificationsPath,
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
 
@@ -112,6 +114,7 @@ const PositionManager = ({
   const [listQuery, setListQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditPositionIdRef = useRef<string | null>(null);
 
   const applyTeamId = useCallback((nextTeamId: string) => {
@@ -211,6 +214,7 @@ const PositionManager = ({
       qualificationAreaId: draft.qualificationAreaId || undefined,
       teamId: positionTeamId,
     };
+    const saveToastMessage = formatPositionSaveToast(wasEditing, payload);
     const optimisticPosition: TeamPosition = {
       churchId,
       positionId: localPositionId,
@@ -232,10 +236,10 @@ const PositionManager = ({
       if (!wasEditing) {
         onSaved(response.position, localPositionId);
       }
-      // When editing was reached via a cross-section link, saving should return
-      // the operator to where they came from. Otherwise keep the panel open so
-      // they can keep editing positions back-to-back without reopening it.
-      if (returnTo) {
+      showToast(saveToastMessage, "success");
+      // Cross-section return, or mobile where the form covers the list: close.
+      // On desktop, keep the panel open for back-to-back editing.
+      if (returnTo || isNarrowViewport) {
         finishEditing(reset);
       } else if (wasEditing) {
         // The operator may have switched to a different position while this save

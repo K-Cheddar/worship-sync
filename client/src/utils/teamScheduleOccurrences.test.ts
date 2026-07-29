@@ -7,6 +7,7 @@ import {
   generateScheduleOccurrences,
   getOccurrenceDate,
   getSharedOccurrenceTiming,
+  isOccurrenceOnCalendarDay,
   occurrenceIdsMatch,
 } from "./teamScheduleOccurrences";
 
@@ -537,5 +538,34 @@ describe("occurrenceIdsMatch", () => {
 
   it("flags a differing count", () => {
     expect(occurrenceIdsMatch([occ("first@2026-07-05")], [])).toBe(false);
+  });
+});
+
+describe("isOccurrenceOnCalendarDay", () => {
+  const occurrence: TeamScheduleOccurrence = {
+    occurrenceId: "svc@2026-07-28T14:00:00.000Z",
+    serviceId: "svc",
+    name: "Service",
+    startsAt: "2026-07-28T14:00:00.000Z",
+  };
+
+  it("is true when the reference date is the same calendar day in the timezone", () => {
+    expect(
+      isOccurrenceOnCalendarDay(
+        occurrence,
+        "UTC",
+        new Date("2026-07-28T08:00:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("is false on a different calendar day", () => {
+    expect(
+      isOccurrenceOnCalendarDay(
+        occurrence,
+        "UTC",
+        new Date("2026-07-27T23:00:00.000Z"),
+      ),
+    ).toBe(false);
   });
 });

@@ -30,6 +30,8 @@ describe("parseServicePlanningImportFromHtml", () => {
       elementType: "Welcome",
       title: "Welcome Song",
       ledBy: "Praise Team",
+      startTime: "10:00",
+      durationMinutes: 5,
     });
   });
 
@@ -76,6 +78,8 @@ describe("parseServicePlanningImportFromHtml", () => {
             elementType: "Mission Story",
             title: "Adventist.org",
             ledBy: "Media Team",
+            startTime: "10:50",
+            durationMinutes: 5,
           },
         ],
       },
@@ -86,6 +90,8 @@ describe("parseServicePlanningImportFromHtml", () => {
             elementType: "Sermon",
             title: "Developing The Inner Algorithm",
             ledBy: "Chadwick Anderson",
+            startTime: "11:46",
+            durationMinutes: 45,
           },
         ],
       },
@@ -155,6 +161,9 @@ describe("parseServicePlanningImportFromHtml", () => {
             elementType: "Pastoral Greetings / Announcements",
             title: "Chadwick Anderson",
             ledBy: "Pastoral Team",
+            startTime: "11:00",
+            durationMinutes: 10,
+            note: "All announcements/promotions",
           },
         ],
       },
@@ -165,6 +174,8 @@ describe("parseServicePlanningImportFromHtml", () => {
             elementType: "Sermon",
             title: "Developing The Inner Algorithm",
             ledBy: "Chadwick Anderson",
+            startTime: "11:46",
+            durationMinutes: 45,
           },
         ],
       },
@@ -176,5 +187,38 @@ describe("parseServicePlanningImportFromHtml", () => {
         name: "Kailyn Reid",
       },
     ]);
+  });
+
+  it("parses custom-column printouts with timing, a shared note, and team notes", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="custom-printout">
+        <thead><tr>
+          <th>Start Time</th><th>Duration</th><th>Element Type</th><th>Title</th>
+          <th>Led by</th><th>Note</th><th>Coordinators</th><th>Media Team</th><th>Praise Team</th>
+        </tr></thead>
+        <tbody>
+          <tr class="divider-1"><td colspan="9">Welcome</td></tr>
+          <tr>
+            <td>11:11a</td><td>1m 30s</td><td>Welcome Song</td><td>There's a Welcome Here (C)</td>
+            <td>Praise Team</td><td>Invite everyone to sing.</td><td>Ready the platform.</td>
+            <td>Capture the greetings.</td><td>Walk around and greet people.</td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+
+    expect(parsed.sections).toEqual([{ sectionName: "Welcome", rows: [{
+      startTime: "11:11",
+      durationMinutes: 1.5,
+      elementType: "Welcome Song",
+      title: "There's a Welcome Here (C)",
+      ledBy: "Praise Team",
+      note: "Invite everyone to sing.",
+      teamNotes: [
+        { teamName: "Coordinators", note: "Ready the platform." },
+        { teamName: "Media Team", note: "Capture the greetings." },
+        { teamName: "Praise Team", note: "Walk around and greet people." },
+      ],
+    }] }]);
   });
 });

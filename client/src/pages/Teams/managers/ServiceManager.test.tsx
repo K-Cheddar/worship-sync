@@ -11,6 +11,20 @@ jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) => selector({}),
 }));
 
+const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
+  jest.fn().mockImplementation((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })) as unknown as typeof window.matchMedia;
+
+let originalMatchMedia: typeof window.matchMedia;
+
 const service = (overrides: Partial<TeamService>): TeamService => ({
   id: overrides.serviceId || "service",
   serviceId: overrides.serviceId || "service",
@@ -61,6 +75,13 @@ const findActions = (calls: unknown[][], type: string) =>
 
 beforeEach(() => {
   mockDispatch.mockClear();
+  originalMatchMedia = window.matchMedia;
+  // Desktop default: max-width queries do not match, so the edit panel stays open.
+  window.matchMedia = makeMatchMedia(false);
+});
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
 });
 
 describe("ServiceManager combined services", () => {
@@ -104,6 +125,26 @@ describe("ServiceManager combined services", () => {
       screen.getByRole("heading", { name: "Edit service" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Early Service");
+  });
+
+  it("closes the editor after saving on narrow screens", async () => {
+    window.matchMedia = makeMatchMedia(true);
+    const user = userEvent.setup();
+    renderManager([sundayMorning, sundayLate, midweek]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    expect(
+      screen.getByRole("heading", { name: "Edit service" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+
+    expect(
+      screen.queryByRole("heading", { name: "Edit service" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create service" }),
+    ).toBeInTheDocument();
   });
 
   it("stamps a shared group id on the new service and its partner when saved", async () => {

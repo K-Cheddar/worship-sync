@@ -3,11 +3,12 @@
 import type { ReactNode } from "react";
 import Label from "@/components/ui/Label";
 import { cn } from "@/utils/cnHelper";
-import type { TimePickerLabelLayout } from "./types";
+import type { TimePickerLabelLayout, TimePickerLabelStyle } from "./types";
 
 type TimePickerFieldLayoutProps = {
   label?: string;
   labelLayout?: TimePickerLabelLayout;
+  labelStyle?: TimePickerLabelStyle;
   hideLabel?: boolean;
   labelClassName?: string;
   fieldId: string;
@@ -20,6 +21,7 @@ type TimePickerFieldLayoutProps = {
 const TimePickerFieldLayout = ({
   label,
   labelLayout = "inline",
+  labelStyle = "default",
   hideLabel = false,
   labelClassName,
   fieldId,
@@ -30,18 +32,23 @@ const TimePickerFieldLayout = ({
 }: TimePickerFieldLayoutProps) => {
   const showLabel = label != null;
   const isInlineLabel = labelLayout === "inline" && showLabel;
+  const isCompactLightLabel = labelStyle === "compactLight";
 
   const labelEl = showLabel ? (
     <Label
       htmlFor={fieldId}
       className={cn(
-        "p-1 text-sm font-semibold leading-none",
+        isCompactLightLabel
+          ? "text-xs font-medium text-white"
+          : "p-1 text-sm font-semibold",
         !isInlineLabel && "block",
+        isCompactLightLabel && "p-0",
         hideLabel && "sr-only",
         labelClassName,
       )}
     >
-      {label}:
+      {label}
+      {isCompactLightLabel ? "" : ":"}
     </Label>
   ) : null;
 

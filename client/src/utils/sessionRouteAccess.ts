@@ -51,7 +51,10 @@ const HUMAN_ALLOWED_EXACT = new Set([
   "/credits",
 ]);
 
-const TEAMS_ALLOWED_PREFIXES = ["/teams"];
+// "/teams" is kept alongside the current "/teams-and-services" prefix so the
+// compat redirect (old bookmarks/links) still renders instead of being
+// access-blocked before it can redirect.
+const TEAMS_ALLOWED_PREFIXES = ["/teams", "/teams-and-services"];
 
 const WORKSTATION_ALLOWED_PREFIXES = ["/controller"];
 

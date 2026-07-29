@@ -1,5 +1,16 @@
 import crypto from "node:crypto";
 import { emitTeamsEvent } from "./teamsSse.js";
+import {
+  addServiceFlowSseClient,
+  emitServiceFlowUpdated,
+  removeServiceFlowSseClient,
+} from "./serviceFlowSse.js";
+import { buildPublicServicePlanSnapshot } from "./servicePlanPublic.js";
+// ServicePlan element titles/notes reuse the exact rich text shape (and its
+// normalizer) that the ServiceFlow public "order of service" display already
+// validates, so a future ServicePlan -> ServiceFlow publish step needs no
+// translation.
+import { normalizeRichTextDocument } from "./serviceFlowService.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -175,6 +186,547 @@ export const createTeamsAuthHandlers = ({
       throw httpError(400, `${fieldLabel} must be a valid date and time.`);
     }
     return dateTime;
+  };
+
+  // Mirrors client/src/types.ts ServiceItem.type minus the presentation-only
+  // "timer"/"service-time" kinds, so mapping a plan into the live outline is 1:1.
+  const SERVICE_PLAN_ELEMENT_TYPES = new Set([
+    "song",
+    "video",
+    "image",
+    "bible",
+    "announcement",
+    "free",
+    "heading",
+  ]);
+
+  // Deterministic id so "does an occurrence already have a plan" is a single
+  // getDoc, with no query-and-filter needed (only one plan exists per occurrence).
+  const buildServicePlanDocId = (churchId, planKey) => `${churchId}::${planKey}`;
+
+  const MAX_SERVICE_PLAN_TEAM_NOTES = 12;
+
+  const isRichTextDocEmpty = (doc) =>
+    !doc?.blocks?.length ||
+    doc.blocks.every((block) => block.spans.every((span) => !span.text.trim()));
+
+  const normalizeServicePlanTeamNote = (raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const label = normalizeShortText(raw.label, { max: 80 });
+    if (!label) return null;
+    return {
+      id:
+        normalizeShortText(raw.id, { max: 160 }) ||
+        createId("servicePlanTeamNote"),
+      label,
+      note: normalizeRichTextDocument(raw.note),
+    };
+  };
+
+  const normalizeServicePlanSongRef = (raw) => {
+    if (!raw || typeof raw !== "object") return undefined;
+    if (raw.kind === "library") {
+      const songId = normalizeShortText(raw.songId, { max: 160 });
+      if (!songId) return undefined;
+      return {
+        kind: "library",
+        songId,
+        songName: normalizeShortText(raw.songName, { max: 300 }),
+      };
+    }
+    if (raw.kind === "pending") {
+      const title = normalizeShortText(raw.title, { max: 300 });
+      if (!title) return undefined;
+      return {
+        kind: "pending",
+        title,
+        lyricsText: normalizeLongText(raw.lyricsText, { max: 20000 }),
+      };
+    }
+    return undefined;
+  };
+
+  const SERVICE_PLAN_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const normalizeServicePlanStartTime = (raw) => {
+    const value = String(raw || "").trim();
+    return SERVICE_PLAN_TIME_PATTERN.test(value) ? value : undefined;
+  };
+
+  const normalizeServicePlanTimezone = (raw) => {
+    const timezone = normalizeShortText(raw, { max: 100 });
+    if (!timezone) return undefined;
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
+      return timezone;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const normalizeServicePlanDurationMinutes = (raw) => {
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 && value <= 1440
+      ? Math.round(value * 60) / 60
+      : undefined;
+  };
+
+  const normalizeServicePlanDurationSeconds = (rawSeconds, rawMinutes) => {
+    const seconds = Number(rawSeconds);
+    if (Number.isFinite(seconds) && seconds > 0 && seconds <= 86_400) {
+      return Math.round(seconds);
+    }
+    const minutes = normalizeServicePlanDurationMinutes(rawMinutes);
+    return minutes === undefined ? undefined : Math.round(minutes * 60);
+  };
+
+  const normalizeServicePlanElement = (raw) => {
+    const notes = normalizeRichTextDocument(raw?.notes);
+    const teamNotes = Array.isArray(raw?.teamNotes)
+      ? raw.teamNotes
+          .map(normalizeServicePlanTeamNote)
+          .filter(Boolean)
+          .slice(0, MAX_SERVICE_PLAN_TEAM_NOTES)
+      : undefined;
+    const durationSeconds = normalizeServicePlanDurationSeconds(
+      raw?.durationSeconds,
+      raw?.durationMinutes,
+    );
+    return {
+      id:
+        normalizeShortText(raw?.id, { max: 160 }) ||
+        createId("servicePlanElement"),
+      type: SERVICE_PLAN_ELEMENT_TYPES.has(raw?.type) ? raw.type : "free",
+      title: normalizeRichTextDocument(raw?.title),
+      ...(isRichTextDocEmpty(notes) ? {} : { notes }),
+      ...(teamNotes?.length ? { teamNotes } : {}),
+      startTime: normalizeServicePlanStartTime(raw?.startTime),
+      ...(durationSeconds === undefined ? {} : {
+        durationSeconds,
+        // Retained while older clients and integrations still read minutes.
+        durationMinutes: durationSeconds / 60,
+      }),
+      songRef: normalizeServicePlanSongRef(raw?.songRef),
+      assignedMemberId:
+        normalizeShortText(raw?.assignedMemberId, { max: 160 }) || undefined,
+      assignedName: normalizeShortText(raw?.assignedName, { max: 200 }) || undefined,
+      positionId: normalizeShortText(raw?.positionId, { max: 160 }) || undefined,
+      sourceLedByRaw:
+        normalizeShortText(raw?.sourceLedByRaw, { max: 200 }) || undefined,
+      pushedOutlineListId:
+        normalizeShortText(raw?.pushedOutlineListId, { max: 160 }) || undefined,
+    };
+  };
+
+  const normalizeServicePlanSection = (raw) => ({
+    id: normalizeShortText(raw?.id, { max: 160 }) || createId("servicePlanSection"),
+    name: normalizeShortText(raw?.name, { max: 200 }) || "Section",
+    elements: Array.isArray(raw?.elements)
+      ? raw.elements.map(normalizeServicePlanElement)
+      : [],
+  });
+
+  const validateServicePlanPayload = (body, { churchId, planKey }) => {
+    const serviceId = normalizeShortText(body?.serviceId, { max: 160 });
+    if (!serviceId) {
+      throw httpError(400, "A service is required.");
+    }
+    const date = assertPlainDate(body?.date, "Service plan date");
+    const name = normalizeShortText(body?.name, { max: 200 }) || "Service Plan";
+    const serviceIds = normalizeIdArray(
+      Array.isArray(body?.serviceIds) && body.serviceIds.length
+        ? body.serviceIds
+        : [serviceId],
+    );
+    const groupId = normalizeShortText(body?.groupId, { max: 160 }) || undefined;
+    const clonedFromPlanKey =
+      normalizeShortText(body?.clonedFromPlanKey, { max: 300 }) || undefined;
+    const rawStartsAt = String(body?.startsAt || "").trim();
+    const startsAt =
+      rawStartsAt && !Number.isNaN(Date.parse(rawStartsAt))
+        ? new Date(rawStartsAt).toISOString()
+        : undefined;
+    const timezone = normalizeServicePlanTimezone(body?.timezone);
+    const sections = Array.isArray(body?.sections)
+      ? body.sections.map(normalizeServicePlanSection)
+      : [];
+    const rawSourceImport = body?.sourceImport;
+    const sourceImport =
+      rawSourceImport && typeof rawSourceImport === "object"
+        ? {
+            source: "servicePlanning",
+            sourceUrl: normalizeShortText(rawSourceImport.sourceUrl, {
+              max: 2000,
+            }),
+            loadedAt: normalizeShortText(rawSourceImport.loadedAt, { max: 60 }),
+            planLabel: normalizeShortText(rawSourceImport.planLabel, {
+              max: 200,
+            }),
+          }
+        : undefined;
+    // Optional fields are written as explicit nulls rather than omitted:
+    // saves use `merge: true`, so an omitted key leaves the previous value in
+    // place and an operator clearing a start time / group / import would
+    // silently keep the old one.
+    return {
+      churchId,
+      planKey,
+      serviceId,
+      serviceIds,
+      groupId: groupId ?? null,
+      date,
+      name,
+      startsAt: startsAt ?? null,
+      timezone: timezone ?? null,
+      sections,
+      sourceImport: sourceImport ?? null,
+      ...(clonedFromPlanKey ? { clonedFromPlanKey } : {}),
+    };
+  };
+
+  const getServicePlanRevision = (plan) =>
+    Number.isSafeInteger(plan?.revision) && plan.revision >= 0
+      ? plan.revision
+      : 0;
+
+  const getServicePlanBaseRevision = (value) =>
+    Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+  const servicePlanConflict = (servicePlan) => {
+    const error = httpError(
+      409,
+      "This plan was updated by another editor. Review the latest changes before saving.",
+    );
+    error.servicePlanConflict = servicePlan;
+    return error;
+  };
+
+  const assertServicePlanRevision = (existing, baseRevision) => {
+    // Older clients can continue their current manual-save workflow during the
+    // rollout. Autosave clients always send a revision and receive conflicts
+    // instead of silently replacing another editor's full plan document.
+    if (baseRevision === undefined || !existing) return;
+    if (baseRevision !== getServicePlanRevision(existing)) {
+      throw servicePlanConflict(existing);
+    }
+  };
+
+  const buildServicePlanSaveDocument = ({
+    existing,
+    payload,
+    docId,
+    adminUid,
+    now,
+  }) => {
+    const resolvedPublicLive = normalizePublicLiveState(existing?.publicLive, {
+      ...existing,
+      ...payload,
+    });
+    const nextPublicLive =
+      existing?.publicLive?.mode === "manual" &&
+      resolvedPublicLive.mode === "schedule"
+        ? resolvedPublicLive
+        : null;
+    return {
+      ...payload,
+      planId: docId,
+      pushedToOutlineAt: existing?.pushedToOutlineAt || null,
+      published: Boolean(existing?.published),
+      ...(existing
+        ? nextPublicLive
+          ? { publicLive: nextPublicLive }
+          : {}
+        : { publicLive: { mode: "schedule" } }),
+      ...(existing?.publicLinkToken
+        ? {
+            publicLinkToken: existing.publicLinkToken,
+            publicTokenHash: existing.publicTokenHash,
+          }
+        : {}),
+      ...(existing?.publicGeneralLinkToken
+        ? {
+            publicGeneralLinkToken: existing.publicGeneralLinkToken,
+            publicGeneralTokenHash: existing.publicGeneralTokenHash,
+          }
+        : {}),
+      revision: getServicePlanRevision(existing) + 1,
+      updatedAt: now,
+      updatedByUid: adminUid,
+      ...(existing ? {} : { createdAt: now, createdByUid: adminUid }),
+    };
+  };
+
+  /** Templates hold structure only — no date, no live/public state, and the
+   * per-week specifics are stripped client-side before they get here. */
+  const validateServicePlanTemplatePayload = (body) => {
+    const name = normalizeShortText(body?.name, { max: 200 });
+    if (!name) {
+      throw httpError(400, "A template name is required.");
+    }
+    const serviceId = normalizeShortText(body?.serviceId, { max: 160 }) || undefined;
+    const sections = Array.isArray(body?.sections)
+      ? body.sections.map(normalizeServicePlanSection)
+      : [];
+    return {
+      name,
+      ...(serviceId ? { serviceId } : {}),
+      sections,
+    };
+  };
+
+  /**
+   * Raw share tokens are capabilities: anyone holding one can read the team
+   * view, operational notes included. They must never travel to a Teams
+   * *viewer*, and never over the church-wide Teams SSE stream, which every
+   * viewer is on. Hashes stay server-side too — they're the lookup key.
+   */
+  const SERVICE_PLAN_SECRET_FIELDS = [
+    "publicLinkToken",
+    "publicTokenHash",
+    "publicGeneralLinkToken",
+    "publicGeneralTokenHash",
+  ];
+
+  const withoutServicePlanSecrets = (plan) => {
+    if (!plan || typeof plan !== "object") return plan;
+    const safe = { ...plan };
+    for (const field of SERVICE_PLAN_SECRET_FIELDS) delete safe[field];
+    return safe;
+  };
+
+  /** Whether this request may edit Teams data, as a boolean rather than a throw. */
+  const hasTeamsEditAccess = async (req, churchId) => {
+    try {
+      await requireTeamsEdit(req, churchId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const createServicePlanPublicToken = () =>
+    crypto.randomBytes(24).toString("base64url");
+
+  const buildPublicServicePlanUrl = (token) =>
+    `${APP_BASE_URL}/#/services/${encodeURIComponent(String(token || "").trim())}`;
+
+  const ensureChurchCurrentServiceTokens = async (churchId, adminUid) => {
+    const church = await getDoc(COLLECTIONS.churches, churchId);
+    const currentTeamToken = normalizeShortText(church?.currentServiceTeamToken, {
+      max: 200,
+    });
+    const currentGeneralToken = normalizeShortText(church?.currentServiceGeneralToken, {
+      max: 200,
+    });
+    const teamToken = currentTeamToken || createServicePlanPublicToken();
+    const generalToken = currentGeneralToken || createServicePlanPublicToken();
+    if (!currentTeamToken || !currentGeneralToken) {
+      await setDoc(
+        COLLECTIONS.churches,
+        churchId,
+        {
+          ...(!currentTeamToken
+            ? {
+                currentServiceTeamToken: teamToken,
+                currentServiceTeamTokenHash: hashValue(teamToken),
+              }
+            : {}),
+          ...(!currentGeneralToken
+            ? {
+                currentServiceGeneralToken: generalToken,
+                currentServiceGeneralTokenHash: hashValue(generalToken),
+              }
+            : {}),
+          updatedAt: nowIso(),
+          updatedByUid: adminUid,
+        },
+        { merge: true },
+      );
+    }
+    return { teamToken, generalToken };
+  };
+
+  /**
+   * How long a plan still counts as "the current service" past its start when
+   * its own item durations don't say otherwise. Plans frequently carry no
+   * durations at all (imports often omit them), which would otherwise make
+   * every plan end the instant it starts — so a sticky "current service" link
+   * would skip straight past today's service to next week's.
+   */
+  const MIN_CURRENT_SERVICE_WINDOW_MS = 3 * 60 * 60_000;
+
+  const getServicePlanEndMs = (plan) => {
+    const startsAtMs = Date.parse(plan?.startsAt || "");
+    if (Number.isNaN(startsAtMs)) return null;
+    const durationMs = (plan?.sections || []).flatMap((section) => section?.elements || [])
+      .reduce((total, element) => {
+        const minutes = Number(element?.durationMinutes);
+        return total + (Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : 0);
+      }, 0);
+    return startsAtMs + Math.max(durationMs, MIN_CURRENT_SERVICE_WINDOW_MS);
+  };
+
+  /**
+   * How far ahead a church's sticky "current service" link will resolve. The
+   * link is meant to point at the service happening now or imminently; without
+   * a bound it would hand a leaked URL access to every future plan a church
+   * ever publishes.
+   */
+  const CURRENT_SERVICE_LOOKAHEAD_MS = 7 * 24 * 60 * 60_000;
+
+  const getCurrentPublishedServicePlan = async (churchId) => {
+    const plans = await queryDocs(
+      COLLECTIONS.servicePlans,
+      [{ field: "churchId", value: churchId }],
+      { limit: TEAM_COLLECTION_QUERY_LIMIT },
+    );
+    const now = Date.now();
+    const eligible = plans
+      .filter((plan) => plan?.published && plan?.publicLinkToken && plan?.startsAt)
+      .map((plan) => ({
+        plan,
+        startsAtMs: Date.parse(plan.startsAt),
+        endsAtMs: getServicePlanEndMs(plan),
+      }))
+      .filter(({ startsAtMs, endsAtMs }) => !Number.isNaN(startsAtMs) && endsAtMs !== null);
+    const active = eligible
+      .filter(({ startsAtMs, endsAtMs }) => startsAtMs <= now && now < endsAtMs)
+      .sort((left, right) => right.startsAtMs - left.startsAtMs)[0];
+    if (active) return active.plan;
+    const next = eligible
+      .filter(
+        ({ startsAtMs }) =>
+          startsAtMs > now && startsAtMs <= now + CURRENT_SERVICE_LOOKAHEAD_MS,
+      )
+      .sort((left, right) => left.startsAtMs - right.startsAtMs)[0];
+    if (next) return next.plan;
+    // Deliberately no fall back to the most recent past plan: that made a
+    // leaked link a permanent reader of the last service's team notes, and
+    // unpublishing the current plan would not revoke it.
+    return null;
+  };
+
+  const getPlanElementIds = (plan) =>
+    new Set(
+      (plan?.sections || [])
+        .flatMap((section) =>
+          (section?.elements || []).map((element) =>
+            String(element?.id || "").trim(),
+          ),
+        )
+        .filter(Boolean),
+    );
+
+  const normalizePublicLiveState = (raw, plan) => {
+    const currentElementId = normalizeShortText(raw?.currentElementId, {
+      max: 160,
+    });
+    if (raw?.mode === "manual" && getPlanElementIds(plan).has(currentElementId)) {
+      return { mode: "manual", currentElementId };
+    }
+    return { mode: "schedule" };
+  };
+
+  // `docId` is passed explicitly rather than read off `plan.planId`: a doc
+  // written before planId was stamped (or a partial one) would otherwise be
+  // written under the literal string "undefined", stranding the token hashes.
+  const ensureServicePlanPublicTokens = async (plan, adminUid, docId) => {
+    const existingTeamToken = normalizeShortText(plan?.publicLinkToken, {
+      max: 200,
+    });
+    const existingGeneralToken = normalizeShortText(plan?.publicGeneralLinkToken, {
+      max: 200,
+    });
+    const publicLinkToken = existingTeamToken || createServicePlanPublicToken();
+    const publicGeneralLinkToken = existingGeneralToken || createServicePlanPublicToken();
+    if (!existingTeamToken || !existingGeneralToken) {
+      await setDoc(
+        COLLECTIONS.servicePlans,
+        docId,
+        {
+          ...(!existingTeamToken
+            ? { publicLinkToken, publicTokenHash: hashValue(publicLinkToken) }
+            : {}),
+          ...(!existingGeneralToken
+            ? {
+                publicGeneralLinkToken,
+                publicGeneralTokenHash: hashValue(publicGeneralLinkToken),
+              }
+            : {}),
+          updatedAt: nowIso(),
+          updatedByUid: adminUid,
+        },
+        { merge: true },
+      );
+    }
+    return { publicLinkToken, publicGeneralLinkToken };
+  };
+
+  const getPublicServicePlanByToken = async (token) => {
+    const trimmed = String(token || "").trim();
+    if (!trimmed) throw httpError(404, "Service not found.");
+    const [teamPlan] = await queryDocs(
+      COLLECTIONS.servicePlans,
+      [{ field: "publicTokenHash", value: hashValue(trimmed) }],
+      { limit: 1 },
+    );
+    if (teamPlan?.published && teamPlan.publicLinkToken) {
+      return { plan: teamPlan, viewMode: "team", token: trimmed };
+    }
+    const [generalPlan] = await queryDocs(
+      COLLECTIONS.servicePlans,
+      [{ field: "publicGeneralTokenHash", value: hashValue(trimmed) }],
+      { limit: 1 },
+    );
+    if (!generalPlan?.published || !generalPlan.publicGeneralLinkToken) {
+      const [currentTeamChurch] = await queryDocs(
+        COLLECTIONS.churches,
+        [{ field: "currentServiceTeamTokenHash", value: hashValue(trimmed) }],
+        { limit: 1 },
+      );
+      if (currentTeamChurch?.currentServiceTeamToken) {
+        const plan = await getCurrentPublishedServicePlan(currentTeamChurch.churchId);
+        if (plan) return { plan, viewMode: "team", token: trimmed };
+      }
+      const [currentGeneralChurch] = await queryDocs(
+        COLLECTIONS.churches,
+        [{ field: "currentServiceGeneralTokenHash", value: hashValue(trimmed) }],
+        { limit: 1 },
+      );
+      if (currentGeneralChurch?.currentServiceGeneralToken) {
+        const plan = await getCurrentPublishedServicePlan(currentGeneralChurch.churchId);
+        if (plan) return { plan, viewMode: "general", token: trimmed };
+      }
+      throw httpError(404, "Service not found.");
+    }
+    return { plan: generalPlan, viewMode: "general", token: trimmed };
+  };
+
+  const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
+    const [church, churchLogoUrl] = await Promise.all([
+      getDoc(COLLECTIONS.churches, plan.churchId),
+      readChurchPublicBoardHeaderLogoUrl(plan.churchId),
+    ]);
+    return buildPublicServicePlanSnapshot({
+      plan,
+      churchName: church?.name || "WorshipSync",
+      churchLogoUrl,
+      viewMode,
+      shareId: token,
+    });
+  };
+
+  const emitPublicServicePlanUpdated = async (plan, revision) => {
+    if (!plan?.published) return;
+    const church = await getDoc(COLLECTIONS.churches, plan.churchId);
+    [
+      plan.publicLinkToken,
+      plan.publicGeneralLinkToken,
+      church?.currentServiceTeamToken,
+      church?.currentServiceGeneralToken,
+    ]
+      .map((token) => String(token || "").trim())
+      .filter((token, index, tokens) => token && tokens.indexOf(token) === index)
+      .forEach((token) => emitServiceFlowUpdated(token, revision));
   };
 
   const normalizeBlockoutDates = (value) => {
@@ -4328,6 +4880,506 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not delete this schedule.",
+        );
+      }
+    },
+
+    // Service Plans: the per-occurrence order-of-service content plan (build
+    // from scratch or import, then edit) — separate from ServiceTime (the
+    // recurring day/time/positions definition) and from the live PouchDB
+    // outline it eventually gets pushed into.
+    async listServicePlans(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const docs = await queryDocs(
+          COLLECTIONS.servicePlans,
+          [{ field: "churchId", value: churchId }],
+          { limit: TEAM_COLLECTION_QUERY_LIMIT },
+        );
+        // Lightweight projection for the Plans list — enough to show "does
+        // this date already have a plan" without shipping every plan's
+        // full section/element content down for a list view.
+        const servicePlans = docs.map((doc) => ({
+          planKey: doc.planKey,
+          serviceId: doc.serviceId,
+          serviceIds: doc.serviceIds,
+          groupId: doc.groupId,
+          date: doc.date,
+          name: doc.name,
+          published: Boolean(doc.published),
+        }));
+        return res.json({ success: true, servicePlans });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load service plans.");
+      }
+    },
+
+    async getServicePlan(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const docId = buildServicePlanDocId(churchId, planKey);
+        const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
+        if (!servicePlan || servicePlan.churchId !== churchId) {
+          return res.json({ success: true, servicePlan: null });
+        }
+        // Rebuild the share links for an already-published plan so reopening
+        // the editor still shows them — they used to exist only in the publish
+        // response, so a reload left an operator with no way to reach the
+        // links short of publishing again. Edit-gated: a share URL embeds the
+        // capability token, so a Teams *viewer* must not receive one.
+        const canEdit = await hasTeamsEditAccess(req, churchId);
+        let publicUrls;
+        if (canEdit && servicePlan.published && servicePlan.publicLinkToken) {
+          const church = await getDoc(COLLECTIONS.churches, churchId);
+          publicUrls = {
+            team: buildPublicServicePlanUrl(servicePlan.publicLinkToken),
+            ...(servicePlan.publicGeneralLinkToken
+              ? { general: buildPublicServicePlanUrl(servicePlan.publicGeneralLinkToken) }
+              : {}),
+            ...(church?.currentServiceTeamToken
+              ? { currentTeam: buildPublicServicePlanUrl(church.currentServiceTeamToken) }
+              : {}),
+            ...(church?.currentServiceGeneralToken
+              ? {
+                  currentGeneral: buildPublicServicePlanUrl(
+                    church.currentServiceGeneralToken,
+                  ),
+                }
+              : {}),
+          };
+        }
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+          ...(publicUrls ? { publicUrls } : {}),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load this service plan.",
+        );
+      }
+    },
+
+    async saveServicePlan(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const docId = buildServicePlanDocId(churchId, planKey);
+        const existing = await getDoc(COLLECTIONS.servicePlans, docId);
+        const payload = validateServicePlanPayload(req.body, {
+          churchId,
+          planKey,
+        });
+        const baseRevision = getServicePlanBaseRevision(req.body?.baseRevision);
+        const now = nowIso();
+        const db = requireFirestore();
+        let servicePlan;
+        if (db) {
+          servicePlan = await db.runTransaction(async (transaction) => {
+            const ref = db.collection(COLLECTIONS.servicePlans).doc(docId);
+            const snapshot = await transaction.get(ref);
+            const current = snapshot.exists
+              ? { planId: snapshot.id, ...snapshot.data() }
+              : null;
+            assertServicePlanRevision(current, baseRevision);
+            const nextPlan = buildServicePlanSaveDocument({
+              existing: current,
+              payload,
+              docId,
+              adminUid: admin.user.uid,
+              now,
+            });
+            transaction.set(ref, nextPlan, { merge: Boolean(current) });
+            return { ...current, ...nextPlan };
+          });
+        } else {
+          assertServicePlanRevision(existing, baseRevision);
+          const nextPlan = buildServicePlanSaveDocument({
+            existing,
+            payload,
+            docId,
+            adminUid: admin.user.uid,
+            now,
+          });
+          await setDoc(
+            COLLECTIONS.servicePlans,
+            docId,
+            nextPlan,
+            { merge: Boolean(existing) },
+          );
+          servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
+        }
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+        await emitPublicServicePlanUpdated(
+          servicePlan,
+          Date.parse(servicePlan?.updatedAt || "") || Date.now(),
+        );
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+      } catch (error) {
+        if (error?.servicePlanConflict) {
+          return res.status(409).json({
+            success: false,
+            conflict: true,
+            errorMessage: error.message,
+            servicePlan: withoutServicePlanSecrets(error.servicePlanConflict),
+          });
+        }
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this service plan.",
+        );
+      }
+    },
+
+    // Service plan templates: reusable order-of-service skeletons a plan can be
+    // built from. Church-scoped, optionally narrowed to one service.
+    async listServicePlanTemplates(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const docs = await queryDocs(
+          COLLECTIONS.servicePlanTemplates,
+          [{ field: "churchId", value: churchId }],
+          { limit: TEAM_COLLECTION_QUERY_LIMIT },
+        );
+        const templates = docs
+          .filter((doc) => doc?.churchId === churchId)
+          .sort((left, right) =>
+            String(left?.name || "").localeCompare(String(right?.name || "")),
+          );
+        return res.json({ success: true, templates });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load service plan templates.",
+        );
+      }
+    },
+
+    async saveServicePlanTemplate(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const payload = validateServicePlanTemplatePayload(req.body);
+        const requestedId = normalizeShortText(req.body?.templateId, { max: 200 });
+        const now = nowIso();
+
+        let templateId = requestedId;
+        let existing = null;
+        if (templateId) {
+          existing = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
+          // A template id from another church must never be overwritten.
+          if (existing && existing.churchId !== churchId) {
+            throw httpError(404, "Template not found.");
+          }
+        } else {
+          templateId = createId("servicePlanTemplate");
+        }
+
+        await setDoc(
+          COLLECTIONS.servicePlanTemplates,
+          templateId,
+          {
+            ...payload,
+            templateId,
+            churchId,
+            updatedAt: now,
+            updatedByUid: admin.user.uid,
+            ...(existing ? {} : { createdAt: now, createdByUid: admin.user.uid }),
+          },
+          { merge: Boolean(existing) },
+        );
+        const template = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
+        emitTeamsEvent(churchId, "service-plan-template-updated", { template });
+        return res.json({ success: true, template });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save this service plan template.",
+        );
+      }
+    },
+
+    async deleteServicePlanTemplate(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireTeamsEdit(req, churchId);
+        const templateId = decodeURIComponent(req.params.templateId);
+        const existing = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
+        if (!existing || existing.churchId !== churchId) {
+          throw httpError(404, "Template not found.");
+        }
+        await deleteDoc(COLLECTIONS.servicePlanTemplates, templateId);
+        emitTeamsEvent(churchId, "service-plan-template-removed", { templateId });
+        return res.json({ success: true });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not delete this service plan template.",
+        );
+      }
+    },
+
+    // Assignment history: free-text names typed into a plan element's
+    // "Assigned to" field, remembered per church so future elements can
+    // suggest them — same "members + history" suggestion pattern as
+    // Overlays/Credits, but stored in Firestore (one small doc per church)
+    // since ServicePlan is Firestore-backed, not PouchDB-backed.
+    async getServicePlanAssignmentHistory(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const doc = await getDoc(COLLECTIONS.servicePlanAssignmentHistory, churchId);
+        return res.json({ success: true, values: doc?.values || [] });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load assignment suggestions.",
+        );
+      }
+    },
+
+    async saveServicePlanAssignmentHistory(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireTeamsEdit(req, churchId);
+        const values = Array.isArray(req.body?.values)
+          ? [
+              ...new Set(
+                req.body.values
+                  .map((value) => String(value || "").trim())
+                  .filter(Boolean),
+              ),
+            ].slice(0, 500)
+          : [];
+        await setDoc(
+          COLLECTIONS.servicePlanAssignmentHistory,
+          churchId,
+          { churchId, values, updatedAt: nowIso() },
+          { merge: true },
+        );
+        return res.json({ success: true, values });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save assignment suggestions.",
+        );
+      }
+    },
+
+    async publishServicePlan(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const docId = buildServicePlanDocId(churchId, planKey);
+        const existing = await getDoc(COLLECTIONS.servicePlans, docId);
+        if (!existing || existing.churchId !== churchId) {
+          throw httpError(404, "Service plan not found.");
+        }
+        if (!existing.startsAt || Number.isNaN(Date.parse(existing.startsAt))) {
+          throw httpError(400, "Save the service start time before publishing.");
+        }
+        const { publicLinkToken, publicGeneralLinkToken } =
+          await ensureServicePlanPublicTokens(existing, admin.user.uid, docId);
+        const { teamToken: currentTeamToken, generalToken: currentGeneralToken } =
+          await ensureChurchCurrentServiceTokens(churchId, admin.user.uid);
+        const now = nowIso();
+        const nextPlan = {
+          ...existing,
+          publicLinkToken,
+          publicTokenHash: hashValue(publicLinkToken),
+          publicGeneralLinkToken,
+          publicGeneralTokenHash: hashValue(publicGeneralLinkToken),
+          published: true,
+          publicLive: normalizePublicLiveState(existing.publicLive, existing),
+          updatedAt: now,
+          updatedByUid: admin.user.uid,
+        };
+        await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, { merge: true });
+        const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+        await emitPublicServicePlanUpdated(servicePlan, Date.parse(now) || Date.now());
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+          publicUrl: buildPublicServicePlanUrl(publicLinkToken),
+          teamPublicUrl: buildPublicServicePlanUrl(publicLinkToken),
+          generalPublicUrl: buildPublicServicePlanUrl(publicGeneralLinkToken),
+          currentTeamPublicUrl: buildPublicServicePlanUrl(currentTeamToken),
+          currentGeneralPublicUrl: buildPublicServicePlanUrl(currentGeneralToken),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not publish this service plan.");
+      }
+    },
+
+    async unpublishServicePlan(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const docId = buildServicePlanDocId(churchId, planKey);
+        const existing = await getDoc(COLLECTIONS.servicePlans, docId);
+        if (!existing || existing.churchId !== churchId) {
+          throw httpError(404, "Service plan not found.");
+        }
+        const now = nowIso();
+        await setDoc(
+          COLLECTIONS.servicePlans,
+          docId,
+          { published: false, updatedAt: now, updatedByUid: admin.user.uid },
+          { merge: true },
+        );
+        const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+        await emitPublicServicePlanUpdated(
+          { ...existing, published: true },
+          Date.parse(now) || Date.now(),
+        );
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not unpublish this service plan.");
+      }
+    },
+
+    async updateServicePlanPublicLive(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const docId = buildServicePlanDocId(churchId, planKey);
+        const existing = await getDoc(COLLECTIONS.servicePlans, docId);
+        if (!existing || existing.churchId !== churchId) {
+          throw httpError(404, "Service plan not found.");
+        }
+        const publicLive = normalizePublicLiveState(req.body, existing);
+        const now = nowIso();
+        await setDoc(
+          COLLECTIONS.servicePlans,
+          docId,
+          { publicLive, updatedAt: now, updatedByUid: admin.user.uid },
+          { merge: true },
+        );
+        const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
+        emitTeamsEvent(churchId, "service-plan-updated", {
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+        await emitPublicServicePlanUpdated(servicePlan, Date.parse(now) || Date.now());
+        return res.json({
+          success: true,
+          servicePlan: withoutServicePlanSecrets(servicePlan),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not update live service progress.");
+      }
+    },
+
+    async getPublicServicePlan(req, res) {
+      try {
+        enforcePublicTokenRateLimit({
+          req,
+          scope: "service-plan-public",
+          token: req.query?.token,
+          limit: 60,
+          windowMs: 10 * 60 * 1000,
+          blockMs: 10 * 60 * 1000,
+        });
+        const publicPlan = await getPublicServicePlanByToken(req.query?.token);
+        const snapshot = await buildPublicServicePlan(publicPlan);
+        if (!snapshot) throw httpError(404, "Service not found.");
+        return res.json(snapshot);
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load this service.");
+      }
+    },
+
+    async openPublicServicePlanStream(req, res) {
+      try {
+        enforcePublicTokenRateLimit({
+          req,
+          scope: "service-plan-public-stream",
+          token: req.query?.token,
+          limit: 60,
+          windowMs: 10 * 60 * 1000,
+          blockMs: 10 * 60 * 1000,
+        });
+        const { token } = await getPublicServicePlanByToken(req.query?.token);
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+        addServiceFlowSseClient(token, res);
+        const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 25_000);
+        req.on("close", () => {
+          clearInterval(heartbeat);
+          removeServiceFlowSseClient(token, res);
+          res.end();
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not open service updates.");
+      }
+    },
+
+    async deleteServicePlan(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireTeamsEdit(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const docId = buildServicePlanDocId(churchId, planKey);
+        const existing = await getDoc(COLLECTIONS.servicePlans, docId);
+        await deleteDoc(COLLECTIONS.servicePlans, docId);
+        emitTeamsEvent(churchId, "service-plan-removed", { planKey });
+        // Deleting revokes public access just as unpublishing does, so already
+        // open viewers must be told to re-fetch (and get a 404) instead of
+        // sitting on a snapshot of now-deleted serving notes. `published` is
+        // forced because the emit helper skips unpublished plans, and the doc
+        // we are announcing is already gone.
+        if (existing?.churchId === churchId) {
+          await emitPublicServicePlanUpdated(
+            { ...existing, published: true },
+            Date.now(),
+          );
+        }
+        return res.json({ success: true });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not delete this service plan.",
         );
       }
     },

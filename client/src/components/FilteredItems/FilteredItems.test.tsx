@@ -183,4 +183,78 @@ describe("FilteredItems", () => {
       }),
     );
   });
+
+  it("supports attach mode without outline add, delete, or external lyrics chrome", async () => {
+    const onAddItem = jest.fn();
+    const store = createTestStore();
+    const controllerContext = createMockControllerContext();
+    const globalContext = createMockGlobalContext();
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={controllerContext as any}>
+          <GlobalInfoContext.Provider value={globalContext as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[
+                  {
+                    _id: "song-1",
+                    name: "Living Hope",
+                    type: "song",
+                    listId: "song-1",
+                    background: "",
+                  },
+                ]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[
+                  {
+                    _id: "song-1",
+                    name: "Living Hope",
+                    type: "song",
+                    arrangements: [
+                      {
+                        name: "Default",
+                        formattedLyrics: [
+                          { name: "Verse 1", words: "How great the chasm" },
+                        ],
+                      },
+                    ],
+                  } as never,
+                ]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+                onAddItem={onAddItem}
+                addButtonLabel="Attach"
+                showDelete={false}
+                showCreateAndExternal={false}
+                hideHeading
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Attach$/i })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /Add to outline/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Search external lyrics/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Create a new song/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /View lyrics/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Attach$/i }));
+
+    expect(onAddItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "song-1",
+        name: "Living Hope",
+        type: "song",
+      }),
+    );
+  });
 });

@@ -22,6 +22,7 @@ import type { BaseTimePickerProps, Segment } from "./types";
 export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
   label,
   labelLayout = "inline",
+  labelStyle = "default",
   hideLabel = false,
   labelClassName,
   value,
@@ -460,6 +461,7 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
     <TimePickerFieldLayout
       label={label}
       labelLayout={labelLayout}
+      labelStyle={labelStyle}
       hideLabel={hideLabel}
       labelClassName={labelClassName}
       fieldId={dropdownId}

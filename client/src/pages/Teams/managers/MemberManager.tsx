@@ -45,6 +45,7 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
+import { formatMemberSaveToast } from "../teamsSaveToasts";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -53,6 +54,7 @@ import {
   buildTeamsPositionEditPath,
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import {
   countActiveMemberListFilters,
   emptyMemberListFilters,
@@ -123,6 +125,7 @@ const MemberManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditMemberIdRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback((member: TeamRosterMember) => {
@@ -311,6 +314,15 @@ const MemberManager = ({
         (range) => range.startDate || range.endDate,
       ),
     };
+    const saveToastMessage = formatMemberSaveToast(wasEditing, body, {
+      positionNameById: new Map(
+        positions.map((position) => [position.positionId, position.name]),
+      ),
+      teamNameById: new Map(data.teams.map((team) => [team.teamId, team.name])),
+      roleNameById: new Map(
+        data.teamRoles.map((role) => [role.roleId, role.name]),
+      ),
+    });
     const localMemberId = wasEditing?.memberId || `local-member-${generateRandomId()}`;
     const optimisticMember: TeamRosterMember = {
       churchId,
@@ -337,9 +349,10 @@ const MemberManager = ({
       if (!wasEditing) {
         onSaved(response.member, localMemberId);
       }
-      // Reached via a cross-section link: return to the origin. Otherwise keep
-      // the panel open for back-to-back editing.
-      if (returnTo) {
+      showToast(saveToastMessage, "success");
+      // Cross-section return, or mobile where the form covers the list: close.
+      // On desktop, keep the panel open for back-to-back editing.
+      if (returnTo || isNarrowViewport) {
         finishEditing(reset);
       } else if (wasEditing) {
         // The operator may have switched to a different member while this save

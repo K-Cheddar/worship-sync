@@ -1,7 +1,7 @@
 import ServiceManager from "../managers/ServiceManager";
 import { useTeamsPage } from "../TeamsPageContext";
 
-const TeamsServicesPage = () => {
+const TeamsServiceSettingsPage = () => {
   const { pageData, canEditTeams } = useTeamsPage();
 
   return (
@@ -14,4 +14,4 @@ const TeamsServicesPage = () => {
   );
 };
 
-export default TeamsServicesPage;
+export default TeamsServiceSettingsPage;

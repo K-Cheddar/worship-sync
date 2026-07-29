@@ -72,6 +72,21 @@ type FilteredItemsProps = {
   setSearchValue: (value: string) => void;
   /** Rendered above the scrollable list — use for pinned virtual items (e.g. Upcoming Service). */
   pinnedTopContent?: React.ReactNode;
+  /**
+   * When set, primary row action calls this instead of adding to the live outline
+   * (plan-picker attach mode).
+   */
+  onAddItem?: (item: ServiceItem) => void;
+  /** Primary action label before the brief "Added." confirmation. */
+  addButtonLabel?: string;
+  /** When false, hide delete controls. Defaults to library mutate access. */
+  showDelete?: boolean;
+  /** When false, hide create + external lyrics chrome. Defaults to library mutate access. */
+  showCreateAndExternal?: boolean;
+  /** When true, omit the page heading (modal / embedded use). */
+  hideHeading?: boolean;
+  /** Merged onto the root layout wrapper. */
+  className?: string;
 };
 
 export type filteredItemsListType = ServiceItem & {
@@ -102,6 +117,12 @@ const FilteredItems = ({
   searchValue,
   setSearchValue,
   pinnedTopContent,
+  onAddItem,
+  addButtonLabel = "Add to outline",
+  showDelete,
+  showCreateAndExternal,
+  hideHeading = false,
+  className,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -280,6 +301,10 @@ const FilteredItems = ({
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateLibrary = access !== "view";
+  const allowDelete = showDelete ?? canMutateLibrary;
+  const allowCreateAndExternal = showCreateAndExternal ?? canMutateLibrary;
+  /** Attach mode always shows the primary action even for view-only library access. */
+  const allowAdd = onAddItem ? true : canMutateLibrary;
 
   // Memoize the search function. Runs synchronously on every debounced
   // keystroke, so it stays O(n): doc lookups go through `docsById` /
@@ -593,11 +618,18 @@ const FilteredItems = ({
       index={rowIndex}
       showWords={item.showWords ?? showWords}
       updateShowWords={updateShowWords}
-      addItemToList={(_item) => dispatch(addItemToItemList(_item))}
+      addItemToList={
+        onAddItem
+          ? (_item) => onAddItem(_item)
+          : (_item) => dispatch(addItemToItemList(_item))
+      }
       setItemToBeDeleted={setItemToBeDeleted}
       searchValue={searchValue}
       artistName={songArtistById.get(item._id)}
       canMutateLibrary={canMutateLibrary}
+      showAddButton={allowAdd}
+      showDelete={allowDelete}
+      addButtonLabel={addButtonLabel}
       onViewSongSections={
         type === "song" ? () => setViewSectionsSongId(item._id) : undefined
       }
@@ -642,7 +674,12 @@ const FilteredItems = ({
   };
 
   return (
-    <div className="flex h-full w-full max-w-none flex-col items-stretch px-2 py-4">
+    <div
+      className={cn(
+        "flex h-full w-full max-w-none flex-col items-stretch px-2 py-4",
+        className,
+      )}
+    >
       <DeleteModal
         isOpen={!!itemToBeDeleted}
         onClose={() => setItemToBeDeleted(null)}
@@ -663,7 +700,9 @@ const FilteredItems = ({
         searchHighlight={normalizedExternalSearchValue}
         onClose={() => setViewExternalLyricsCandidate(null)}
       />
-      <h2 className="mb-2 w-full text-center text-2xl">{heading}</h2>
+      {!hideHeading ? (
+        <h2 className="mb-2 w-full text-center text-2xl">{heading}</h2>
+      ) : null}
       {isLoading && (
         <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
@@ -685,7 +724,7 @@ const FilteredItems = ({
           {showWords ? "Hide" : "Show"} All{" "}
         </Button>
       </div>
-      {canMutateLibrary && (
+      {allowCreateAndExternal ? (
         <div className="mb-2 flex flex-col gap-3">
           <section className="text-sm flex flex-wrap gap-2 items-center justify-center">
             <p>Can't find what you're looking for?</p>
@@ -713,7 +752,7 @@ const FilteredItems = ({
             )}
           </section>
         </div>
-      )}
+      ) : null}
       {pinnedTopContent && (
         <div className="mb-2 px-1 sm:px-2">{pinnedTopContent}</div>
       )}

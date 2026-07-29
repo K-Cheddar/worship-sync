@@ -1,0 +1,409 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import type { ContextType } from "react";
+import TeamsPlansPage from "./TeamsPlansPage";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ToastProvider } from "../../../context/toastContext";
+import { createMockGlobalContext } from "../../../test/mocks";
+import {
+  getServicePlan,
+  getServicePlanAssignmentHistory,
+  listServicePlans,
+  saveServicePlan,
+} from "../../../api/auth";
+import type { TeamService } from "../../../api/authTypes";
+
+jest.mock("../../../api/auth", () => ({
+  listServicePlans: jest.fn(),
+  getServicePlan: jest.fn(),
+  getServicePlanAssignmentHistory: jest.fn(),
+  saveServicePlan: jest.fn(),
+  saveServicePlanAssignmentHistory: jest.fn(),
+}));
+
+jest.mock("../../../hooks", () => ({
+  useSelector: (selector: (state: unknown) => unknown) =>
+    selector({ allDocs: { allSongDocs: [] } }),
+  useDispatch: () => jest.fn(),
+}));
+
+const sabbath: TeamService = {
+  id: "sabbath",
+  serviceId: "sabbath",
+  churchId: "church-1",
+  name: "Sabbath Service",
+  timerType: "countdown",
+  reccurence: "weekly",
+  dayOfWeek: 6,
+  time: "10:00",
+};
+
+const easterOneTime: TeamService = {
+  id: "easter",
+  serviceId: "easter",
+  churchId: "church-1",
+  name: "Easter Sunday",
+  timerType: "countdown",
+  reccurence: "one_time",
+  dateTimeISO: "2026-08-01T14:00:00.000Z",
+};
+
+const mockUseTeamsPage = jest.fn();
+jest.mock("../TeamsPageContext", () => ({
+  useTeamsPage: () => mockUseTeamsPage(),
+}));
+
+const mockGetServicePlan = jest.mocked(getServicePlan);
+const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
+const mockListServicePlans = jest.mocked(listServicePlans);
+const mockSaveServicePlan = jest.mocked(saveServicePlan);
+
+const renderPage = () =>
+  render(
+    <GlobalInfoContext.Provider
+      value={
+        createMockGlobalContext({ churchId: "church-1" }) as ContextType<
+          typeof GlobalInfoContext
+        >
+      }
+    >
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/teams-and-services/plans"]}>
+          <Routes>
+            <Route path="/teams-and-services/plans" element={<TeamsPlansPage />} />
+            <Route
+              path="/teams-and-services/schedules"
+              element={<div>Schedules page</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    </GlobalInfoContext.Provider>,
+  );
+
+describe("TeamsPlansPage", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [sabbath, easterOneTime],
+        positions: [],
+        teams: [],
+        schedules: [],
+        members: [],
+      },
+      canEditTeams: true,
+    });
+    mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
+    mockSaveServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {} as never,
+    });
+  });
+
+  it("lists each service's occurrences as date tiles without repeating Add plan labels", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Plans" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Service/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Next 4 weeks/i })).toBeInTheDocument();
+    expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /Add plan for /i }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("marks an occurrence that already has a saved plan as Open plan", async () => {
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: "easter@2026-08-01",
+          serviceId: "easter",
+          date: "2026-08-01",
+          name: "Easter Sunday",
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByRole("button", { name: /Open plan for /i }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the plan editor for a clicked date and can navigate back to the list", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Easter Sunday" });
+    const addPlanButtons = screen.getAllByRole("button", { name: /Add plan for /i });
+    await user.click(addPlanButtons[addPlanButtons.length - 1]);
+
+    expect(
+      await screen.findByRole("button", { name: /Back to Plans/i }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Start from scratch/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Who's serving/i)).toBeInTheDocument();
+    // One-time Easter has a single occurrence in range — both ends disabled.
+    expect(screen.getByRole("button", { name: /Previous plan/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Next plan/i })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /Back to Plans/i }));
+    expect(await screen.findByRole("heading", { name: "Plans" })).toBeInTheDocument();
+  });
+
+  it("navigates to the previous and next plan for the same service from the header", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-20T12:00:00"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sabbath Service" });
+    const sabbathTiles = screen.getAllByRole("button", {
+      name: /Add plan for /i,
+    });
+    // Second Sabbath tile so both previous and next exist in the window.
+    expect(sabbathTiles.length).toBeGreaterThan(2);
+    await user.click(sabbathTiles[1]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Sabbath Service" }),
+    ).toBeInTheDocument();
+    const previous = screen.getByRole("button", { name: /Previous plan/i });
+    const next = screen.getByRole("button", { name: /Next plan/i });
+    expect(previous).toBeEnabled();
+    expect(next).toBeEnabled();
+
+    const dateBeforeNext = screen.getByText(/2026/).textContent;
+    await user.click(next);
+    await waitFor(() => {
+      expect(screen.getByText(/2026/).textContent).not.toBe(dateBeforeNext);
+    });
+    const dateAfterNext = screen.getByText(/2026/).textContent;
+
+    await user.click(screen.getByRole("button", { name: /Previous plan/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/2026/).textContent).toBe(dateBeforeNext);
+    });
+    expect(dateAfterNext).not.toBe(dateBeforeNext);
+
+    jest.useRealTimers();
+  });
+
+  it("summarizes who's serving with a fill count and links a row into the schedule", async () => {
+    const user = userEvent.setup();
+    const occurrenceId = "easter@2026-08-01T14:00:00.000Z";
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [
+          {
+            ...easterOneTime,
+            positionRequirements: [{ positionId: "position-vocal", count: 2 }],
+          },
+        ],
+        positions: [
+          {
+            positionId: "position-vocal",
+            churchId: "church-1",
+            teamId: "team-1",
+            name: "Vocal",
+          },
+        ],
+        teams: [
+          {
+            teamId: "team-1",
+            churchId: "church-1",
+            name: "Worship",
+            memberIds: [],
+          },
+        ],
+        members: [
+          {
+            memberId: "member-1",
+            churchId: "church-1",
+            firstName: "Avery",
+            lastName: "Stone",
+            positionIds: [],
+            blockoutDates: [],
+          },
+        ],
+        schedules: [
+          {
+            scheduleId: "schedule-1",
+            churchId: "church-1",
+            name: "August",
+            teamId: "team-1",
+            serviceIds: ["easter"],
+            occurrences: [
+              {
+                occurrenceId,
+                serviceId: "easter",
+                name: "Easter Sunday",
+                startsAt: "2026-08-01T14:00:00.000Z",
+              },
+            ],
+            assignments: {
+              [occurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-1" },
+              },
+            },
+          },
+        ],
+      },
+      canEditTeams: true,
+    });
+
+    renderPage();
+    const addPlanButtons = await screen.findAllByRole("button", {
+      name: /Add plan for /i,
+    });
+    await user.click(addPlanButtons[addPlanButtons.length - 1]);
+
+    expect(await screen.findByText("Avery Stone")).toBeInTheDocument();
+    // Both vocal slots are required, only one is filled.
+    expect(screen.getByLabelText("1 of 2 positions filled")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Fill 1 open position for Worship/i }),
+    );
+    expect(await screen.findByText("Schedules page")).toBeInTheDocument();
+  });
+
+  it("lists the positions the service needs when no schedule covers the date", async () => {
+    const user = userEvent.setup();
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [
+          {
+            ...easterOneTime,
+            positionRequirements: [
+              { positionId: "position-vocal", count: 2 },
+              { positionId: "position-foh", count: 1 },
+            ],
+          },
+        ],
+        positions: [
+          {
+            positionId: "position-vocal",
+            churchId: "church-1",
+            teamId: "team-1",
+            name: "Vocal",
+          },
+          {
+            positionId: "position-foh",
+            churchId: "church-1",
+            teamId: "team-2",
+            name: "Front of House",
+          },
+        ],
+        teams: [
+          { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] },
+          {
+            teamId: "team-2",
+            churchId: "church-1",
+            name: "Technical",
+            memberIds: [],
+          },
+        ],
+        members: [],
+        schedules: [],
+      },
+      canEditTeams: true,
+    });
+
+    renderPage();
+    const addPlanButtons = await screen.findAllByRole("button", {
+      name: /Add plan for /i,
+    });
+    await user.click(addPlanButtons[addPlanButtons.length - 1]);
+
+    // Requirements are grouped under the team that owns each position.
+    expect(await screen.findByText("Worship")).toBeInTheDocument();
+    expect(screen.getByText("Technical")).toBeInTheDocument();
+    expect(screen.getByText("Vocal")).toBeInTheDocument();
+    expect(screen.getByText("×2")).toBeInTheDocument();
+    expect(screen.getByText("Front of House")).toBeInTheDocument();
+    expect(screen.getAllByText("Not scheduled yet")).toHaveLength(2);
+    expect(screen.getByLabelText("0 of 2 positions filled")).toBeInTheDocument();
+    // Nothing to open, so the team header is not a link.
+    expect(
+      screen.queryByRole("button", { name: /Open the schedule for/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("fetches the plan summary list for the current church on mount", async () => {
+    renderPage();
+    await waitFor(() => expect(mockListServicePlans).toHaveBeenCalledWith("church-1"));
+  });
+
+  it("filters the list to a single service", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Easter Sunday" });
+    await user.click(screen.getByLabelText(/Service/i));
+    await user.click(await screen.findByRole("option", { name: "Sabbath Service" }));
+
+    expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Easter Sunday" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks the soonest upcoming occurrence with an Up next badge", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-20T12:00:00"));
+
+    renderPage();
+
+    expect(await screen.findByText(/Up next/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /up next/i }),
+    ).toBeInTheDocument();
+
+    jest.useRealTimers();
+  });
+
+  it("excludes a one-time service whose fixed date falls outside the selected range", async () => {
+    // Regression test: a one-time service's single occurrence used to always
+    // show regardless of the selected Range preset, since only recurring
+    // services were filtered by window — long-past one-time services (e.g.
+    // old test data) would leak into "Next 4 weeks" forever.
+    const longAgoOneTime: TeamService = {
+      id: "long-ago",
+      serviceId: "long-ago",
+      churchId: "church-1",
+      name: "Old Test Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2020-01-01T14:00:00.000Z",
+    };
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [sabbath, easterOneTime, longAgoOneTime],
+        positions: [],
+        teams: [],
+        schedules: [],
+        members: [],
+      },
+      canEditTeams: true,
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Easter Sunday" });
+    expect(
+      screen.queryByRole("heading", { name: "Old Test Service" }),
+    ).not.toBeInTheDocument();
+  });
+});

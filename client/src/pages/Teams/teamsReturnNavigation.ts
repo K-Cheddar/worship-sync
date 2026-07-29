@@ -10,14 +10,15 @@ export const TEAMS_MEMBER_EDIT_SEARCH_PARAM = "editMember";
 export const TEAMS_POSITION_EDIT_SEARCH_PARAM = "editPosition";
 
 export const TEAMS_SECTION_PATHS = {
-  schedules: "/teams/schedules",
-  members: "/teams/members",
-  positions: "/teams/positions",
-  groups: "/teams/groups",
-  roles: "/teams/roles",
-  qualifications: "/teams/qualifications",
-  services: "/teams/services",
-  forms: "/teams/forms",
+  plans: "/teams-and-services/plans",
+  schedules: "/teams-and-services/schedules",
+  members: "/teams-and-services/members",
+  positions: "/teams-and-services/positions",
+  groups: "/teams-and-services/groups",
+  roles: "/teams-and-services/roles",
+  qualifications: "/teams-and-services/qualifications",
+  services: "/teams-and-services/service-settings",
+  forms: "/teams-and-services/forms",
 } as const;
 
 export type TeamsSectionPath =
@@ -36,6 +37,19 @@ export type TeamsGroupsRestore = {
   editTeamId: string;
 };
 
+/**
+ * Reopens one plan's order-of-service editor. Carries the plain date as well as
+ * the occurrence id because Plans generates its occurrences from a date window
+ * the user controls — the date lets the page re-find (or widen to) the plan
+ * regardless of the range that happens to be selected on return.
+ */
+export type TeamsPlansRestore = {
+  kind: "plans";
+  serviceId: string;
+  occurrenceId: string;
+  date: string;
+};
+
 export type TeamsTeamScopedSection = "positions" | "roles" | "qualifications";
 
 export type TeamsTeamScopedRestore = {
@@ -47,6 +61,7 @@ export type TeamsTeamScopedRestore = {
 export type TeamsRestoreState =
   | TeamsScheduleRestore
   | TeamsGroupsRestore
+  | TeamsPlansRestore
   | TeamsTeamScopedRestore;
 
 export type TeamsReturnTo = {
@@ -78,6 +93,7 @@ const isPersistedTeamsReturnNavigation = (
 };
 
 const SECTION_BACK_LABELS: Record<TeamsSectionPath, string> = {
+  [TEAMS_SECTION_PATHS.plans]: "Back to plan",
   [TEAMS_SECTION_PATHS.schedules]: "Back to schedule",
   [TEAMS_SECTION_PATHS.members]: "Back to members",
   [TEAMS_SECTION_PATHS.positions]: "Back to positions",
@@ -108,6 +124,14 @@ export const readTeamsRestore = (state: unknown): TeamsRestoreState | null => {
     return restore;
   }
   if (restore.kind === "groups" && typeof restore.editTeamId === "string") {
+    return restore;
+  }
+  if (
+    restore.kind === "plans" &&
+    typeof restore.serviceId === "string" &&
+    typeof restore.occurrenceId === "string" &&
+    typeof restore.date === "string"
+  ) {
     return restore;
   }
   if (
@@ -221,6 +245,43 @@ export const buildScheduleReturnTo = ({
     slotPickerMode,
     membersPanelOpen,
   },
+});
+
+export const buildPlansReturnTo = ({
+  serviceId,
+  occurrenceId,
+  date,
+  label = SECTION_BACK_LABELS[TEAMS_SECTION_PATHS.plans],
+}: {
+  serviceId: string;
+  occurrenceId: string;
+  date: string;
+  label?: string;
+}): TeamsReturnTo => ({
+  label,
+  pathname: TEAMS_SECTION_PATHS.plans,
+  restore: {
+    kind: "plans",
+    serviceId,
+    occurrenceId,
+    date,
+  },
+});
+
+/**
+ * Navigation state for jumping from a plan into the schedule behind it: the
+ * schedule restore focuses the right cell on arrival, and the returnTo gets the
+ * user back to the same plan afterwards.
+ */
+export const buildPlanToScheduleNavigationState = ({
+  returnTo,
+  restore,
+}: {
+  returnTo: TeamsReturnTo;
+  restore: TeamsScheduleRestore;
+}): TeamsReturnNavigationState => ({
+  ...buildTeamsReturnNavigationState(returnTo, TEAMS_SECTION_PATHS.schedules),
+  ...buildTeamsRestoreNavigationState(restore),
 });
 
 export const buildGroupsReturnTo = (editTeamId: string): TeamsReturnTo => ({
