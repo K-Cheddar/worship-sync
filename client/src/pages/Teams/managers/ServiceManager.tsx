@@ -47,6 +47,7 @@ import {
   planServiceGroupUpdates,
 } from "../teamsUtils";
 import { formatServiceSaveToast } from "../teamsSaveToasts";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 
 type ServiceManagerProps = {
   services: TeamService[];
@@ -58,6 +59,7 @@ type ServiceManagerProps = {
 const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
+  const isNarrowViewport = useTeamsNarrowViewport();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState<Partial<ServiceTime>>(createEmptyServiceDraft);
@@ -135,10 +137,9 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       dispatch(updateService({ id, changes: { serviceGroupId } }));
     });
     showToast(saveToastMessage, "success");
-    if (editing) {
-      // Keep the panel open so services can be edited back-to-back. Re-seed the
-      // editor from the saved snapshot so a follow-up edit uses the fresh group
-      // id and requirements rather than stale pre-save values.
+    // On mobile the form covers the list, so close after save. On desktop keep
+    // the panel open for back-to-back editing and re-seed from the saved snapshot.
+    if (editing && !isNarrowViewport) {
       const nextEditing: TeamService = { ...editing, ...saved };
       setEditing(nextEditing);
       setDraft({ ...nextEditing });

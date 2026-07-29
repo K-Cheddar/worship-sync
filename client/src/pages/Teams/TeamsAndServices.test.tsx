@@ -505,9 +505,42 @@ describe("Teams", () => {
         expect.objectContaining({ name: "Main Team Renamed" }),
       );
     });
-    // The panel stays open on save so the next team can be edited without
-    // reopening it.
+    // On desktop the panel stays open on save so the next team can be edited
+    // without reopening it.
     expect(screen.getByRole("heading", { name: /Edit team/i })).toBeInTheDocument();
+  });
+
+  it("closes the team editor after saving on narrow screens", async () => {
+    window.matchMedia = makeMatchMedia(true);
+    const user = userEvent.setup();
+    mockUpdateTeam.mockResolvedValue({
+      success: true,
+      team: {
+        teamId: "team-main",
+        churchId: "church-1",
+        name: "Main Team Renamed",
+        memberIds: [],
+      },
+    } satisfies UpdateTeamResponse);
+
+    renderTeams("/teams-and-services/groups");
+    await screen.findByRole("button", { name: /Edit Main Team/i });
+    await user.click(screen.getByRole("button", { name: /Edit Main Team/i }));
+    expect(
+      await screen.findByRole("heading", { name: /Edit team/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Save team/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeam).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("heading", { name: /Edit team/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Create team/i }),
+    ).toBeInTheDocument();
   });
 
   it("does not create duplicate positions when Save is double-clicked", async () => {

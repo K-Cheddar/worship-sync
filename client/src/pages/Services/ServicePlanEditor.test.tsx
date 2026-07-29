@@ -472,8 +472,10 @@ describe("ServicePlanEditor", () => {
     await waitFor(() => {
       expect((startTimeInputs[0] as HTMLInputElement).value).toBeTruthy();
     });
-    // TimePicker displays 12-hour "h:mm AA" while the plan stores 24-hour,
-    // so the expected cascade result is computed in the displayed format.
+    // TimePicker displays 12-hour "hh:mm AA" (zero-padded hour) while the plan
+    // stores 24-hour, so the expected cascade result matches the display format.
+    // Derive from the first field so this stays valid across local timezones
+    // (occurrence start is absolute UTC; display is local).
     const firstStart = (startTimeInputs[0] as HTMLInputElement).value;
     const [, rawHour, rawMinute, meridiem] =
       firstStart.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i) || [];
@@ -481,7 +483,8 @@ describe("ServicePlanEditor", () => {
       (Number(rawHour) % 12) + (meridiem.toUpperCase() === "PM" ? 12 : 0);
     const totalMinutes = hour24 * 60 + Number(rawMinute) + 15;
     const nextHour24 = Math.floor(totalMinutes / 60) % 24;
-    const expectedSecondStart = `${nextHour24 % 12 === 0 ? 12 : nextHour24 % 12}:${String(
+    const nextHour12 = nextHour24 % 12 === 0 ? 12 : nextHour24 % 12;
+    const expectedSecondStart = `${String(nextHour12).padStart(2, "0")}:${String(
       totalMinutes % 60,
     ).padStart(2, "0")} ${nextHour24 >= 12 ? "PM" : "AM"}`;
     await waitFor(() => {

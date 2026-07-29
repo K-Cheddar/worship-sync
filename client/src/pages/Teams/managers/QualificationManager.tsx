@@ -38,6 +38,7 @@ import {
 } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 
 // Key used to track an in-flight save for the create form, which has no area id
@@ -91,6 +92,7 @@ const QualificationManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const isNarrowViewport = useTeamsNarrowViewport();
   // Mirrors `editing` so an in-flight save can tell, on completion, whether the
   // operator has since switched areas — without rebinding the panel or clobbering
   // the other area's level drafts.
@@ -237,11 +239,9 @@ const QualificationManager = ({
         onAreaSaved(response.area, localAreaId);
       }
       showToast(saveToastMessage, "success");
-      // Reached via a cross-section link: return to the origin. Otherwise keep
-      // the panel open. The operator may have switched areas while this save was
-      // in flight, so only rebind the panel (and touch level drafts) when
-      // they're still on the area this save belongs to.
-      if (returnTo) {
+      // Cross-section return, or mobile where the form covers the list: close.
+      // On desktop, keep the panel open for back-to-back editing.
+      if (returnTo || isNarrowViewport) {
         finishEditing(reset);
       } else if (wasEditing) {
         if (editingRef.current?.areaId === wasEditing.areaId) {

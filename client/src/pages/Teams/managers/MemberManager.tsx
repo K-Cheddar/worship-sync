@@ -54,6 +54,7 @@ import {
   buildTeamsPositionEditPath,
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import {
   countActiveMemberListFilters,
   emptyMemberListFilters,
@@ -124,6 +125,7 @@ const MemberManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditMemberIdRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback((member: TeamRosterMember) => {
@@ -348,9 +350,9 @@ const MemberManager = ({
         onSaved(response.member, localMemberId);
       }
       showToast(saveToastMessage, "success");
-      // Reached via a cross-section link: return to the origin. Otherwise keep
-      // the panel open for back-to-back editing.
-      if (returnTo) {
+      // Cross-section return, or mobile where the form covers the list: close.
+      // On desktop, keep the panel open for back-to-back editing.
+      if (returnTo || isNarrowViewport) {
         finishEditing(reset);
       } else if (wasEditing) {
         // The operator may have switched to a different member while this save

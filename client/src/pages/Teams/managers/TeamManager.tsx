@@ -31,6 +31,7 @@ import {
   buildTeamsRolesPath,
 } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import type { TeamsData } from "../types";
 
 // Key used to track an in-flight save for the create form, which has no team id
@@ -81,6 +82,7 @@ const TeamManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const isNarrowViewport = useTeamsNarrowViewport();
 
   const editingTeamPositions = useMemo(() => {
     if (!editing) return [];
@@ -192,9 +194,9 @@ const TeamManager = ({
         onSaved(response.team, localTeamId);
       }
       showToast(saveToastMessage, "success");
-      // Reached via a cross-section link: return to the origin. Otherwise keep
-      // the panel open for back-to-back editing.
-      if (returnTo) {
+      // Cross-section return, or mobile where the form covers the list: close.
+      // On desktop, keep the panel open for back-to-back editing.
+      if (returnTo || isNarrowViewport) {
         finishEditing(reset);
       } else if (wasEditing) {
         // The operator may have switched to a different team while this save was
