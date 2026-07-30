@@ -1,3 +1,10 @@
+## [2.20.2](https://github.com/K-Cheddar/worship-sync/compare/v2.20.1...v2.20.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* Improve service plan on mobile and public links ([130a309](https://github.com/K-Cheddar/worship-sync/commit/130a30923b6e44e5f8759e8160203d946e68c089))
+
 ## [2.20.1](https://github.com/K-Cheddar/worship-sync/compare/v2.20.0...v2.20.1) (2026-07-29)
 
 
