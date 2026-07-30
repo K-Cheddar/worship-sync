@@ -1,7 +1,5 @@
 import type { ServiceFlowRichText as ServiceFlowRichTextDocument } from "../../services/serviceFlowTypes";
-
-const safeColor = (color: string | undefined) =>
-  color && /^#[0-9a-f]{6}$/i.test(color) ? color : undefined;
+import { readableRichTextColorStyle } from "../../utils/richTextColorContrast";
 
 /** A fixed scale rather than an author-supplied font size, so notes stay
  * within the public page's type system. Base is the container's `text-sm`. */
@@ -16,7 +14,7 @@ const ServiceFlowRichText = ({ document }: { document: ServiceFlowRichTextDocume
   if (!document.blocks.length) return null;
 
   return (
-    <div className="space-y-1.5 text-sm leading-relaxed text-slate-300">
+    <div className="space-y-1.5 text-sm leading-relaxed text-white">
       {document.blocks.map((block, blockIndex) => {
         const contents = block.spans.map((span, spanIndex) => (
           <span
@@ -26,7 +24,7 @@ const ServiceFlowRichText = ({ document }: { document: ServiceFlowRichTextDocume
               span.italic ? "italic" : "",
               span.underline ? "underline underline-offset-2" : "",
             ].filter(Boolean).join(" ")}
-            style={{ color: safeColor(span.color) }}
+            style={readableRichTextColorStyle(span.color)}
           >
             {span.text}
           </span>

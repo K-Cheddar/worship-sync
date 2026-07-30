@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ContextType } from "react";
@@ -152,7 +152,10 @@ describe("TeamsPlansPage", () => {
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Who's serving/i)).toBeInTheDocument();
+    // Mobile opens Who's serving from a compact header control into a sheet.
+    expect(
+      screen.getByRole("button", { name: /Who's serving/i }),
+    ).toBeInTheDocument();
     // One-time Easter has a single occurrence in range — both ends disabled.
     expect(screen.getByRole("button", { name: /Previous plan/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Next plan/i })).toBeDisabled();
@@ -269,12 +272,21 @@ describe("TeamsPlansPage", () => {
     });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
 
-    expect(await screen.findByText("Avery Stone")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+
+    const servingSheet = await screen.findByRole("dialog", {
+      name: /Who's serving/i,
+    });
+    expect(within(servingSheet).getByText("Avery Stone")).toBeInTheDocument();
     // Both vocal slots are required, only one is filled.
-    expect(screen.getByLabelText("1 of 2 positions filled")).toBeInTheDocument();
+    expect(
+      within(servingSheet).getByLabelText("1 of 2 positions filled"),
+    ).toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: /Fill 1 open position for Worship/i }),
+      within(servingSheet).getByRole("button", {
+        name: /Fill 1 open position for Worship/i,
+      }),
     );
     expect(await screen.findByText("Schedules page")).toBeInTheDocument();
   });
@@ -327,17 +339,24 @@ describe("TeamsPlansPage", () => {
     });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
 
+    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+
+    const servingSheet = await screen.findByRole("dialog", {
+      name: /Who's serving/i,
+    });
     // Requirements are grouped under the team that owns each position.
-    expect(await screen.findByText("Worship")).toBeInTheDocument();
-    expect(screen.getByText("Technical")).toBeInTheDocument();
-    expect(screen.getByText("Vocal")).toBeInTheDocument();
-    expect(screen.getByText("×2")).toBeInTheDocument();
-    expect(screen.getByText("Front of House")).toBeInTheDocument();
-    expect(screen.getAllByText("Not scheduled yet")).toHaveLength(2);
-    expect(screen.getByLabelText("0 of 2 positions filled")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("Worship")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("Technical")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("Vocal")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("×2")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("Front of House")).toBeInTheDocument();
+    expect(within(servingSheet).getAllByText("Not scheduled yet")).toHaveLength(2);
+    expect(
+      within(servingSheet).getByLabelText("0 of 2 positions filled"),
+    ).toBeInTheDocument();
     // Nothing to open, so the team header is not a link.
     expect(
-      screen.queryByRole("button", { name: /Open the schedule for/i }),
+      within(servingSheet).queryByRole("button", { name: /Open the schedule for/i }),
     ).not.toBeInTheDocument();
   });
 

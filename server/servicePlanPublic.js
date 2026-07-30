@@ -34,9 +34,10 @@ const serializePublicTeamNotes = (teamNotes) =>
     .filter(Boolean);
 
 /**
- * The serving projection includes viewer-selectable team notes. The general
- * projection is deliberately built without any operational notes, so a
- * broadly shared link cannot reveal them through the client.
+ * The serving (detailed) projection includes viewer-selectable team notes and
+ * assignee credits. The general (simple) projection is deliberately built
+ * without any operational notes, so a broadly shared link cannot reveal them
+ * through the client. Assignee credits remain on both views.
  */
 export const buildPublicServicePlanSnapshot = ({
   plan,
@@ -88,7 +89,7 @@ export const buildPublicServicePlanSnapshot = ({
             ? { blocks: [] }
             : normalizeRichTextDocument(element.notes),
           teamNotes: isGeneralView ? [] : serializePublicTeamNotes(element.teamNotes),
-          ...(isGeneralView && String(element.assignedName || "").trim()
+          ...(String(element.assignedName || "").trim()
             ? { creditName: String(element.assignedName).trim() }
             : {}),
         })),

@@ -29,7 +29,9 @@
   input,
   textarea,
   select {
-    background-color: #ffffff;
+    /* Dark operator surfaces use bg-* utilities; keep text readable when
+       controls inherit body `text-foreground` (near-black in light tokens). */
+    color: inherit;
   }
 }
 

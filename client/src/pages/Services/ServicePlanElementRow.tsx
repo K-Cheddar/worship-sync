@@ -37,8 +37,10 @@ import {
   richTextToPlainText,
   type RichTextDocument,
 } from "../../types/richText";
+import { parseTimeCountdown } from "../../components/TimePicker/utils";
 import { cn } from "../../utils/cnHelper";
 import generateRandomId from "../../utils/generateRandomId";
+import { pad2 } from "../../constants";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ServicePlanScripturePopover, {
   SERVICE_PLAN_SCRIPTURE_ICON_CLASS,
@@ -47,9 +49,16 @@ import type { ServicePlanElement } from "../../types/servicePlan";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
 
+/** Match TimePicker's 12-hour display for compact view-mode rows. */
+export const formatPlanStartTimeDisplay = (startTime: string | undefined): string => {
+  const parsed = parseTimeCountdown(startTime);
+  if (!parsed?.hour || !parsed.minute || !parsed.meridiem) return startTime?.trim() || "";
+  return `${pad2(parsed.hour)}:${parsed.minute} ${parsed.meridiem}`;
+};
+
 /** Soft field chrome so inline editors sit closer to the row surface. */
 export const SERVICE_PLAN_INLINE_INPUT_CLASS =
-  "border-gray-700/40 bg-transparent shadow-none placeholder:text-gray-500";
+  "h-7 min-h-0 border-0 bg-gray-950/70 px-1 py-0.5 shadow-none placeholder:text-gray-500";
 
 export const SERVICE_PLAN_SONG_ICON_CLASS = "text-cyan-400";
 export const SERVICE_PLAN_NOTE_ICON_CLASS = "text-yellow-300";
@@ -65,14 +74,56 @@ export const SERVICE_PLAN_SCRIPTURE_CHIP_CLASS =
 export const SERVICE_PLAN_ATTACHMENT_CHIP_CLASS =
   "flex items-center gap-0.5 rounded border px-1.5 py-0 text-[11px] leading-5";
 
+/** Shared column header for the compact plan list. */
+export const ServicePlanElementColumnHeader = ({
+  isEditing = false,
+}: {
+  isEditing?: boolean;
+}) => (
+  <div
+    className={cn(
+      "flex items-center gap-3 border-b border-gray-700/80 px-1.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400",
+      isEditing && "max-md:hidden",
+    )}
+    aria-hidden
+  >
+    {isEditing ? <span className="w-7 shrink-0" /> : null}
+    <span
+      className={cn(
+        "shrink-0",
+        isEditing ? "w-14 sm:w-24" : "w-[3.75rem]",
+      )}
+    >
+      Time
+    </span>
+    <span
+      className={cn(
+        "shrink-0",
+        isEditing ? "w-12 sm:w-16" : "w-12",
+      )}
+    >
+      {isEditing ? "Length" : "Len"}
+    </span>
+    <span className="min-w-0 flex-1">Title</span>
+    {isEditing ? (
+      <>
+        <span className="w-20 shrink-0 sm:w-36">Assigned</span>
+        <span className="w-7 shrink-0" />
+      </>
+    ) : (
+      <span className="hidden w-28 shrink-0 md:block lg:w-36">Assigned</span>
+    )}
+  </div>
+);
+
 /** One-line plain preview of rich text for collapsed note rows. */
 export const richTextOneLinePreview = (
   doc: RichTextDocument | undefined | null,
 ): string => richTextToPlainText(doc).replace(/\s+/g, " ").trim();
 
 /**
- * Alternating neutral surfaces so stacked elements stay scannable.
- * Type color lives on song/scripture/note chips — not on the element frame.
+ * Alternating list surfaces — divider rows, not heavy cards, so more items
+ * fit on screen (Planning Center–style density).
  */
 export const getServicePlanElementSurfaceClassName = ({
   toneIndex,
@@ -83,13 +134,13 @@ export const getServicePlanElementSurfaceClassName = ({
 }): string => {
   const zebra =
     toneIndex % 2 === 0
-      ? "bg-gray-900/75"
-      : "bg-slate-950/90";
+      ? "bg-gray-900/50"
+      : "bg-transparent";
 
   return cn(
-    "rounded-md border border-gray-700/70",
+    "border-b border-gray-800/90",
     zebra,
-    isLive && "ring-1 ring-emerald-500/40",
+    isLive && "bg-emerald-950/30 ring-1 ring-inset ring-emerald-500/35",
   );
 };
 
@@ -144,17 +195,18 @@ const MinimizedNoteRow = ({
         {preview || emptyPreview}
       </span>
     </button>
-    <Button
-      type="button"
-      variant="tertiary"
-      iconSize="xs"
-      padding="p-0.5"
-      className="h-6 w-6 shrink-0 max-md:min-h-0"
-      svg={Trash2}
-      aria-label={removeLabel}
-      disabled={!canEdit}
-      onClick={onRemove}
-    />
+    {canEdit ? (
+      <Button
+        type="button"
+        variant="tertiary"
+        iconSize="xs"
+        padding="p-0.5"
+        className="h-6 w-6 shrink-0 max-md:min-h-0"
+        svg={Trash2}
+        aria-label={removeLabel}
+        onClick={onRemove}
+      />
+    ) : null}
   </div>
 );
 
@@ -207,12 +259,11 @@ const AddAttachmentMenu = ({
         type="button"
         variant="tertiary"
         svg={Plus}
-        iconSize="xs"
-        padding="px-1.5 py-0"
+        iconSize="sm"
         disabled={!canEdit}
         aria-haspopup="menu"
         aria-label={`Add to ${itemLabel}`}
-        className="h-6 max-md:min-h-0 border border-dashed border-gray-600/80 text-[11px] font-medium text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+        className="max-md:min-h-0 border border-dashed border-gray-600/80 text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
       >
         Add
       </Button>
@@ -289,6 +340,11 @@ type ServicePlanElementRowProps = {
   onResumePublicSchedule?: () => void;
   /** Hide shared and team notes (and note add options) without changing saved data. */
   hideNotes?: boolean;
+  /**
+   * When false, render a compact read-only row (view mode). When true and
+   * canEdit, show editable fields — stacked on small screens, columns on md+.
+   */
+  isEditing?: boolean;
 };
 
 /**
@@ -317,6 +373,7 @@ const ServicePlanElementRow = ({
   onMakePublicLive,
   onResumePublicSchedule,
   hideNotes = false,
+  isEditing = false,
 }: ServicePlanElementRowProps) => {
   const hasNotes = !isRichTextEmpty(element.notes);
   const [notesEditorOpen, setNotesEditorOpen] = useState(hasNotes);
@@ -333,6 +390,7 @@ const ServicePlanElementRow = ({
   useEffect(() => {
     setDurationText(formattedDuration);
   }, [formattedDuration]);
+  const allowEdit = canEdit && isEditing;
   const {
     attributes,
     listeners,
@@ -341,7 +399,7 @@ const ServicePlanElementRow = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: elementDndId(element.id), disabled: !canEdit });
+  } = useSortable({ id: elementDndId(element.id), disabled: !allowEdit });
 
   const teamNotes = element.teamNotes || [];
   const titleText = richTextToPlainText(element.title);
@@ -398,7 +456,7 @@ const ServicePlanElementRow = ({
   const addMenu = (
     <AddAttachmentMenu
       itemLabel={itemLabel}
-      canEdit={canEdit}
+      canEdit={allowEdit}
       canAddSong={canAddSong}
       canAddScripture={canAddScripture}
       canAddNote={canAddNote}
@@ -411,12 +469,12 @@ const ServicePlanElementRow = ({
   );
 
   let attachmentsTrailing: ReactNode = null;
-  if (canEdit && canAddAttachment) {
+  if (allowEdit && canAddAttachment) {
     attachmentsTrailing = canAddScripture ? (
       <ServicePlanScripturePopover
         open={scriptureOpen}
         onOpenChange={setScriptureOpen}
-        disabled={!canEdit}
+        disabled={!allowEdit}
         onSelect={(scriptureRef) => onUpdate({ scriptureRef })}
         anchor={<span className="inline-flex">{addMenu}</span>}
       />
@@ -424,6 +482,301 @@ const ServicePlanElementRow = ({
       addMenu
     );
   }
+
+  const liveControls = (
+    <>
+      {isLive ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-500 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+          aria-label={
+            isManualLive
+              ? `Live (pinned): ${itemLabel}`
+              : `Live on schedule: ${itemLabel}`
+          }
+        >
+          <Radio className="size-3" aria-hidden="true" />
+          Live
+        </span>
+      ) : null}
+      {showPublicLiveControls ? (
+        isManualLive ? (
+          <Button
+            type="button"
+            variant="secondary"
+            iconSize="sm"
+            className="shrink-0 max-md:min-h-0"
+            svg={Radio}
+            color={SERVICE_PLAN_MAKE_LIVE_ICON_COLOR}
+            disabled={!canEdit || publicLiveBusy}
+            onClick={onResumePublicSchedule}
+            aria-label={`Resume schedule (currently live: ${itemLabel})`}
+          >
+            {publicLiveBusy ? "Updating…" : "Follow schedule"}
+          </Button>
+        ) : !isLive ? (
+          <Button
+            type="button"
+            variant="tertiary"
+            iconSize="sm"
+            className="shrink-0 max-md:min-h-0"
+            svg={Radio}
+            color={SERVICE_PLAN_MAKE_LIVE_ICON_COLOR}
+            disabled={!canEdit || publicLiveBusy}
+            onClick={onMakePublicLive}
+            aria-label={`Make ${itemLabel} live`}
+          />
+        ) : null
+      ) : null}
+    </>
+  );
+
+  const attachmentChips = (songLabel || scriptureLabel || attachmentsTrailing) ? (
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-1 px-1.5 pb-1.5 md:pb-1",
+        allowEdit ? "pl-9" : "pl-1.5",
+      )}
+    >
+      {songLabel ? (
+        <span
+          className={cn(
+            SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+            SERVICE_PLAN_SONG_CHIP_CLASS,
+          )}
+        >
+          <Icon
+            svg={Music}
+            size="xs"
+            className={SERVICE_PLAN_SONG_ICON_CLASS}
+          />
+          <span className="max-w-44 truncate">{songLabel}</span>
+          {allowEdit ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              iconSize="xs"
+              padding="p-0"
+              className="h-4 w-4 max-md:min-h-0"
+              svg={X}
+              aria-label="Remove song"
+              onClick={() => onUpdate({ songRef: undefined })}
+            />
+          ) : null}
+        </span>
+      ) : null}
+      {scriptureLabel ? (
+        <span
+          className={cn(
+            SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+            SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
+          )}
+        >
+          <Icon
+            svg={BookOpen}
+            size="xs"
+            className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
+          />
+          <span className="max-w-44 truncate">{scriptureLabel}</span>
+          {allowEdit ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              iconSize="xs"
+              padding="p-0"
+              className="h-4 w-4 max-md:min-h-0"
+              svg={X}
+              aria-label="Remove scripture"
+              onClick={() => onUpdate({ scriptureRef: undefined })}
+            />
+          ) : null}
+        </span>
+      ) : null}
+      {attachmentsTrailing}
+    </div>
+  ) : null;
+
+  const notesBlock = showNotesEditor ? (
+    <div className="mx-1.5 mb-1.5 rounded-md border border-yellow-500/40 p-1.5 md:mb-1">
+      <ExpandableNotePanel
+        expanded={notesExpanded}
+        minimized={
+          <MinimizedNoteRow
+            icon={StickyNote}
+            iconClassName={SERVICE_PLAN_NOTE_ICON_CLASS}
+            title="Notes"
+            preview={richTextOneLinePreview(element.notes)}
+            emptyPreview="Empty note"
+            expandLabel="Expand notes"
+            removeLabel="Remove note"
+            canEdit={allowEdit}
+            onExpand={() => setNotesExpanded(true)}
+            onRemove={handleRemoveNote}
+          />
+        }
+      >
+        <RichTextEditor
+          label="Notes"
+          hideLabel
+          placeholder="Notes for this item (optional)"
+          value={element.notes || EMPTY_RICH_TEXT}
+          disabled={!allowEdit}
+          onChange={(notes) => onUpdate({ notes })}
+          toolbarLeading={
+            <div className="flex shrink-0 items-center gap-1 pt-0.5">
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={ChevronDown}
+                iconSize="xs"
+                padding="p-0.5"
+                className="h-6 w-6 max-md:min-h-0"
+                aria-expanded
+                aria-label="Minimize notes"
+                onClick={() => setNotesExpanded(false)}
+              />
+              <p className="flex items-center gap-1.5 text-xs font-medium text-white">
+                <StickyNote
+                  className={cn("size-3.5", SERVICE_PLAN_NOTE_ICON_CLASS)}
+                  aria-hidden
+                />
+                Notes
+              </p>
+            </div>
+          }
+          toolbarTrailing={
+            allowEdit ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="sm"
+                className="shrink-0 max-md:min-h-0"
+                svg={Trash2}
+                aria-label="Remove note"
+                onClick={handleRemoveNote}
+              />
+            ) : null
+          }
+        />
+      </ExpandableNotePanel>
+    </div>
+  ) : null;
+
+  const teamNotesBlock = !hideNotes && teamNotes.length > 0 ? (
+    <div className="space-y-1.5 px-1.5 pb-1.5 md:space-y-1 md:pb-1">
+      {teamNotes.map((teamNote) => {
+        const teamTitle = teamNote.label.trim() || "Team note";
+        const teamExpanded = expandedTeamNoteIds.has(teamNote.id);
+        return (
+          <div
+            key={teamNote.id}
+            className="rounded-md border border-emerald-500/40 p-1.5"
+          >
+            <ExpandableNotePanel
+              expanded={teamExpanded}
+              minimized={
+                <MinimizedNoteRow
+                  icon={Users}
+                  iconClassName={SERVICE_PLAN_TEAM_NOTE_ICON_CLASS}
+                  title={teamTitle}
+                  preview={richTextOneLinePreview(teamNote.note)}
+                  emptyPreview="Empty note"
+                  expandLabel={`Expand ${teamTitle}`}
+                  removeLabel={`Remove ${teamTitle}`}
+                  canEdit={allowEdit}
+                  onExpand={() => setTeamNoteExpanded(teamNote.id, true)}
+                  onRemove={() =>
+                    onUpdate({
+                      teamNotes: teamNotes.filter(
+                        (note) => note.id !== teamNote.id,
+                      ),
+                    })
+                  }
+                />
+              }
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={ChevronDown}
+                    iconSize="xs"
+                    padding="p-0.5"
+                    className="h-6 w-6 shrink-0 max-md:min-h-0"
+                    aria-expanded
+                    aria-label={`Minimize ${teamTitle}`}
+                    onClick={() => setTeamNoteExpanded(teamNote.id, false)}
+                  />
+                  <Users
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      SERVICE_PLAN_TEAM_NOTE_ICON_CLASS,
+                    )}
+                    aria-hidden
+                  />
+                  {allowEdit ? (
+                    <Input
+                      label="Team note label"
+                      hideLabel
+                      placeholder="e.g. Band, Media, Coordinators"
+                      className="min-w-0 flex-1"
+                      value={teamNote.label}
+                      onChange={(label) =>
+                        onUpdate({
+                          teamNotes: teamNotes.map((note) =>
+                            note.id === teamNote.id
+                              ? { ...note, label: String(label) }
+                              : note,
+                          ),
+                        })
+                      }
+                    />
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-sm text-white">
+                      {teamTitle}
+                    </span>
+                  )}
+                  {allowEdit ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      iconSize="sm"
+                      className="ml-auto shrink-0 max-md:min-h-0"
+                      svg={Trash2}
+                      aria-label={`Remove ${teamTitle}`}
+                      onClick={() =>
+                        onUpdate({
+                          teamNotes: teamNotes.filter(
+                            (note) => note.id !== teamNote.id,
+                          ),
+                        })
+                      }
+                    />
+                  ) : null}
+                </div>
+                <RichTextEditor
+                  label={`${teamTitle} note`}
+                  hideLabel
+                  placeholder="Only shown to this team"
+                  value={teamNote.note}
+                  disabled={!allowEdit}
+                  onChange={(note) =>
+                    onUpdate({
+                      teamNotes: teamNotes.map((existing) =>
+                        existing.id === teamNote.id
+                          ? { ...existing, note }
+                          : existing,
+                      ),
+                    })
+                  }
+                />
+              </div>
+            </ExpandableNotePanel>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -436,364 +789,122 @@ const ServicePlanElementRow = ({
       className={surfaceClassName}
       data-element-tone={toneIndex % 2 === 0 ? "even" : "odd"}
     >
-      <div className="flex items-end gap-1 py-1 pl-1 pr-1.5">
-        <Button
-          ref={setActivatorNodeRef}
-          type="button"
-          variant="tertiary"
-          iconSize="sm"
-          className="mb-0.5 shrink-0 touch-none"
-          svg={GripVertical}
-          aria-label="Drag to reorder"
-          disabled={!canEdit}
-          {...attributes}
-          {...listeners}
-        />
+      {allowEdit ? (
+        <div className="flex items-start gap-1 px-1.5 py-2 md:items-center md:py-1.5">
+          <Button
+            ref={setActivatorNodeRef}
+            type="button"
+            variant="tertiary"
+            iconSize="sm"
+            className="mt-0.5 shrink-0 touch-none max-md:min-h-0 md:mt-0"
+            svg={GripVertical}
+            aria-label="Drag to reorder"
+            {...attributes}
+            {...listeners}
+          />
 
-        <TimePicker
-          label="Time"
-          labelLayout="stacked"
-          labelStyle="compactLight"
-          className="w-30 shrink-0"
-          inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-          value={element.startTime || ""}
-          disabled={!canEdit}
-          onChange={(value) => value && onStartTimeChange(String(value))}
-        />
-        <Input
-          label="Duration"
-          labelStyle="compactLight"
-          placeholder="5 min"
-          className="w-24 shrink-0"
-          inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-          value={durationText}
-          disabled={!canEdit}
-          onChange={(value) => setDurationText(String(value))}
-          onBlur={(event) => {
-            const raw = event.currentTarget.value;
-            const seconds = parseServicePlanDuration(raw);
-            if (seconds === null) {
-              setDurationText(formatServicePlanDuration(element));
-              return;
-            }
-            setDurationText(raw);
-            onDurationChange(seconds);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
-        <Input
-          label="Title"
-          labelStyle="compactLight"
-          placeholder="Item name"
-          className="min-w-0 flex-1"
-          inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-          value={titleText}
-          disabled={!canEdit}
-          onChange={(value) => onUpdate({ title: plainTextToRichText(String(value)) })}
-        />
-        <HistorySuggestField
-          label="Assigned to"
-          labelStyle="compactLight"
-          placeholder="Assigned to"
-          multiline={false}
-          className="w-40 shrink-0"
-          inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-          value={element.assignedName || ""}
-          disabled={!canEdit}
-          onChange={(value) => onUpdate({ assignedName: value })}
-          historyValues={assignedToHistoryValues}
-        />
-        {isLive ? (
-          <span
-            className="mb-0.5 inline-flex shrink-0 items-center gap-1 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
-            aria-label={
-              isManualLive
-                ? `Live (pinned): ${itemLabel}`
-                : `Live on schedule: ${itemLabel}`
-            }
-          >
-            <Radio className="size-3" aria-hidden="true" />
-            Live
-          </span>
-        ) : null}
-        {showPublicLiveControls ? (
-          isManualLive ? (
-            <Button
-              type="button"
-              variant="secondary"
-              iconSize="sm"
-              className="mb-0.5 shrink-0"
-              svg={Radio}
-              color={SERVICE_PLAN_MAKE_LIVE_ICON_COLOR}
-              disabled={!canEdit || publicLiveBusy}
-              onClick={onResumePublicSchedule}
-              aria-label={`Resume schedule (currently live: ${itemLabel})`}
-            >
-              {publicLiveBusy ? "Updating…" : "Follow schedule"}
-            </Button>
-          ) : !isLive ? (
+          {/* Mobile: stack timing → title → assignee. Desktop: one compact row. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5 md:flex-row md:items-center md:gap-1.5">
+            <div className="flex w-full items-center gap-1.5 md:contents">
+              <TimePicker
+                label="Time"
+                hideLabel
+                labelLayout="inline"
+                className="min-w-0 flex-1 md:w-24 md:flex-none"
+                inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+                value={element.startTime || ""}
+                onChange={(value) => value && onStartTimeChange(String(value))}
+              />
+              <Input
+                label="Duration"
+                hideLabel
+                placeholder="5 min"
+                className="min-w-0 flex-1 md:w-16 md:flex-none"
+                inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+                value={durationText}
+                onChange={(value) => setDurationText(String(value))}
+                onBlur={(event) => {
+                  const raw = event.currentTarget.value;
+                  const seconds = parseServicePlanDuration(raw);
+                  if (seconds === null) {
+                    setDurationText(formatServicePlanDuration(element));
+                    return;
+                  }
+                  setDurationText(raw);
+                  onDurationChange(seconds);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            </div>
+            <Input
+              label="Title"
+              hideLabel
+              placeholder="Item name"
+              className="min-w-0 w-full md:flex-1"
+              inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+              value={titleText}
+              onChange={(value) =>
+                onUpdate({ title: plainTextToRichText(String(value)) })
+              }
+            />
+            <HistorySuggestField
+              label="Assigned to"
+              hideLabel
+              placeholder="Assigned to"
+              multiline={false}
+              className="w-full md:w-[6.5rem] md:shrink-0 lg:w-36"
+              inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+              value={element.assignedName || ""}
+              onChange={(value) => onUpdate({ assignedName: value })}
+              historyValues={assignedToHistoryValues}
+            />
+          </div>
+
+          <div className="flex shrink-0 flex-col items-end gap-0.5 md:flex-row md:items-center">
+            {liveControls}
             <Button
               type="button"
               variant="tertiary"
               iconSize="sm"
-              className="mb-0.5 shrink-0"
-              svg={Radio}
-              color={SERVICE_PLAN_MAKE_LIVE_ICON_COLOR}
-              disabled={!canEdit || publicLiveBusy}
-              onClick={onMakePublicLive}
-              aria-label={`Make ${itemLabel} live`}
-            >
-              Make live
-            </Button>
-          ) : null
-        ) : null}
-        <Button
-          type="button"
-          variant="tertiary"
-          iconSize="sm"
-          className="mb-0.5 shrink-0"
-          svg={Trash2}
-          aria-label={`Remove ${itemLabel}`}
-          disabled={!canEdit}
-          onClick={onRemove}
-        />
-      </div>
-
-      <div className="space-y-1.5 border-t border-gray-800/80 px-2 py-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {songLabel ? (
-            <span
-              className={cn(
-                SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-                SERVICE_PLAN_SONG_CHIP_CLASS,
-              )}
-            >
-              <Icon
-                svg={Music}
-                size="xs"
-                className={SERVICE_PLAN_SONG_ICON_CLASS}
-              />
-              <span className="max-w-44 truncate">{songLabel}</span>
-              <Button
-                type="button"
-                variant="tertiary"
-                iconSize="xs"
-                padding="p-0"
-                className="h-4 w-4 max-md:min-h-0"
-                svg={X}
-                aria-label="Remove song"
-                disabled={!canEdit}
-                onClick={() => onUpdate({ songRef: undefined })}
-              />
-            </span>
-          ) : null}
-          {scriptureLabel ? (
-            <span
-              className={cn(
-                SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-                SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
-              )}
-            >
-              <Icon
-                svg={BookOpen}
-                size="xs"
-                className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
-              />
-              <span className="max-w-44 truncate">{scriptureLabel}</span>
-              <Button
-                type="button"
-                variant="tertiary"
-                iconSize="xs"
-                padding="p-0"
-                className="h-4 w-4 max-md:min-h-0"
-                svg={X}
-                aria-label="Remove scripture"
-                disabled={!canEdit}
-                onClick={() => onUpdate({ scriptureRef: undefined })}
-              />
-            </span>
-          ) : null}
-          {attachmentsTrailing}
+              className="shrink-0 max-md:min-h-0"
+              svg={Trash2}
+              aria-label={`Remove ${itemLabel}`}
+              onClick={onRemove}
+            />
+          </div>
         </div>
-
-        {showNotesEditor ? (
-          <div className="rounded-md border border-yellow-500/40 p-2">
-            <ExpandableNotePanel
-              expanded={notesExpanded}
-              minimized={
-                <MinimizedNoteRow
-                  icon={StickyNote}
-                  iconClassName={SERVICE_PLAN_NOTE_ICON_CLASS}
-                  title="Notes"
-                  preview={richTextOneLinePreview(element.notes)}
-                  emptyPreview="Empty note"
-                  expandLabel="Expand notes"
-                  removeLabel="Remove note"
-                  canEdit={canEdit}
-                  onExpand={() => setNotesExpanded(true)}
-                  onRemove={handleRemoveNote}
-                />
-              }
-            >
-              <RichTextEditor
-                label="Notes"
-                hideLabel
-                placeholder="Notes for this item (optional)"
-                value={element.notes || EMPTY_RICH_TEXT}
-                disabled={!canEdit}
-                onChange={(notes) => onUpdate({ notes })}
-                toolbarLeading={
-                  <div className="flex shrink-0 items-center gap-1 pt-0.5">
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      svg={ChevronDown}
-                      iconSize="xs"
-                      padding="p-0.5"
-                      className="h-6 w-6 max-md:min-h-0"
-                      aria-expanded
-                      aria-label="Minimize notes"
-                      onClick={() => setNotesExpanded(false)}
-                    />
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-white">
-                      <StickyNote
-                        className={cn("size-3.5", SERVICE_PLAN_NOTE_ICON_CLASS)}
-                        aria-hidden
-                      />
-                      Notes
-                    </p>
-                  </div>
-                }
-                toolbarTrailing={
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    iconSize="sm"
-                    className="shrink-0"
-                    svg={Trash2}
-                    aria-label="Remove note"
-                    disabled={!canEdit}
-                    onClick={handleRemoveNote}
-                  />
-                }
-              />
-            </ExpandableNotePanel>
+      ) : (
+        <div className="flex items-start gap-3 px-1.5 py-2.5 md:py-1.5">
+          <span className="w-[3.75rem] shrink-0 whitespace-nowrap text-xs leading-4 tabular-nums text-gray-400">
+            {formatPlanStartTimeDisplay(element.startTime) || "—"}
+          </span>
+          <span className="w-12 shrink-0 whitespace-nowrap text-xs leading-4 tabular-nums text-gray-500">
+            {formattedDuration || "—"}
+          </span>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <p className="truncate text-xs font-medium leading-5 text-gray-50">
+              {titleText.trim() || "Untitled"}
+            </p>
+            {element.assignedName?.trim() ? (
+              <p className="truncate text-[11px] leading-4 text-gray-400 md:hidden">
+                {element.assignedName.trim()}
+              </p>
+            ) : null}
           </div>
-        ) : null}
-
-        {!hideNotes ? (
-          <div className="space-y-2">
-            {teamNotes.map((teamNote) => {
-              const teamTitle = teamNote.label.trim() || "Team note";
-              const teamExpanded = expandedTeamNoteIds.has(teamNote.id);
-              return (
-                <div
-                  key={teamNote.id}
-                  className="rounded-md border border-emerald-500/40 p-2"
-                >
-                  <ExpandableNotePanel
-                    expanded={teamExpanded}
-                    minimized={
-                      <MinimizedNoteRow
-                        icon={Users}
-                        iconClassName={SERVICE_PLAN_TEAM_NOTE_ICON_CLASS}
-                        title={teamTitle}
-                        preview={richTextOneLinePreview(teamNote.note)}
-                        emptyPreview="Empty note"
-                        expandLabel={`Expand ${teamTitle}`}
-                        removeLabel={`Remove ${teamTitle}`}
-                        canEdit={canEdit}
-                        onExpand={() => setTeamNoteExpanded(teamNote.id, true)}
-                        onRemove={() =>
-                          onUpdate({
-                            teamNotes: teamNotes.filter(
-                              (note) => note.id !== teamNote.id,
-                            ),
-                          })
-                        }
-                      />
-                    }
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          svg={ChevronDown}
-                          iconSize="xs"
-                          padding="p-0.5"
-                          className="h-6 w-6 shrink-0 max-md:min-h-0"
-                          aria-expanded
-                          aria-label={`Minimize ${teamTitle}`}
-                          onClick={() => setTeamNoteExpanded(teamNote.id, false)}
-                        />
-                        <Users
-                          className={cn(
-                            "size-3.5 shrink-0",
-                            SERVICE_PLAN_TEAM_NOTE_ICON_CLASS,
-                          )}
-                          aria-hidden
-                        />
-                        <Input
-                          label="Team note label"
-                          hideLabel
-                          placeholder="e.g. Band, Media, Coordinators"
-                          className="min-w-0 flex-1"
-                          value={teamNote.label}
-                          disabled={!canEdit}
-                          onChange={(label) =>
-                            onUpdate({
-                              teamNotes: teamNotes.map((note) =>
-                                note.id === teamNote.id
-                                  ? { ...note, label: String(label) }
-                                  : note,
-                              ),
-                            })
-                          }
-                        />
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          iconSize="sm"
-                          className="ml-auto shrink-0"
-                          svg={Trash2}
-                          aria-label={`Remove ${teamTitle}`}
-                          disabled={!canEdit}
-                          onClick={() =>
-                            onUpdate({
-                              teamNotes: teamNotes.filter(
-                                (note) => note.id !== teamNote.id,
-                              ),
-                            })
-                          }
-                        />
-                      </div>
-                      <RichTextEditor
-                        label={`${teamTitle} note`}
-                        hideLabel
-                        placeholder="Only shown to this team"
-                        value={teamNote.note}
-                        disabled={!canEdit}
-                        onChange={(note) =>
-                          onUpdate({
-                            teamNotes: teamNotes.map((existing) =>
-                              existing.id === teamNote.id
-                                ? { ...existing, note }
-                                : existing,
-                            ),
-                          })
-                        }
-                      />
-                    </div>
-                  </ExpandableNotePanel>
-                </div>
-              );
-            })}
+          <span className="hidden w-28 shrink-0 truncate text-xs leading-4 text-gray-400 md:block lg:w-36">
+            {element.assignedName?.trim() || ""}
+          </span>
+          <div className="flex shrink-0 items-center gap-0.5 self-center">
+            {liveControls}
           </div>
-        ) : null}
-      </div>
+        </div>
+      )}
+
+      {attachmentChips}
+      {notesBlock}
+      {teamNotesBlock}
 
       {songPickerOpen ? (
         <ServicePlanLibraryPicker

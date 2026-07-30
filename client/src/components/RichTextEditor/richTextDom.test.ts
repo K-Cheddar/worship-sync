@@ -1,4 +1,10 @@
-import { readRichTextFromElement, renderRichTextIntoElement } from "./richTextDom";
+import {
+  prepareRichTextColorsForBrowserCommand,
+  readRichTextFromElement,
+  renderRichTextIntoElement,
+  resolveAuthoredRichTextColorFromElement,
+} from "./richTextDom";
+import { applyReadableRichTextColorToElement } from "../../utils/richTextColorContrast";
 import type { RichTextDocument } from "../../types/richText";
 
 const makeContainer = () => document.createElement("div");
@@ -21,7 +27,7 @@ describe("renderRichTextIntoElement / readRichTextFromElement round-trip", () =>
           spans: [
             { text: "Plain " },
             { text: "bold", bold: true },
-            { text: " and ", },
+            { text: " and " },
             { text: "italic-underline", italic: true, underline: true },
           ],
         },
@@ -52,6 +58,86 @@ describe("renderRichTextIntoElement / readRichTextFromElement round-trip", () =>
     expect(readRichTextFromElement(el)).toEqual(doc);
   });
 
+  it("round-trips low-contrast chip colors as the authored hue, not chip ink", () => {
+    const doc: RichTextDocument = {
+      blocks: [
+        {
+          type: "paragraph",
+          spans: [
+            { text: "Black", color: "#000000" },
+            { text: " then " },
+            { text: "Blue", color: "#1d4ed8" },
+          ],
+        },
+      ],
+    };
+    const el = makeContainer();
+    renderRichTextIntoElement(el, doc);
+    // Near-black chips paint white ink into style.color; commits must still
+    // keep the operator's colors or the first word reverts to white.
+    expect(readRichTextFromElement(el)).toEqual(doc);
+  });
+
+  it("keeps authored chip colors when contrast decoration runs again", () => {
+    const doc: RichTextDocument = {
+      blocks: [
+        {
+          type: "paragraph",
+          spans: [
+            { text: "Black", color: "#000000" },
+            { text: " " },
+            { text: "Blue", color: "#1d4ed8" },
+          ],
+        },
+      ],
+    };
+    const el = makeContainer();
+    renderRichTextIntoElement(el, doc);
+
+    // Simulate coloring a second word: re-decorate every colored node the way
+    // the editor does after foreColor (must not treat white ink as authored).
+    el.querySelectorAll("span").forEach((node) => {
+      const hex = resolveAuthoredRichTextColorFromElement(node);
+      if (hex) applyReadableRichTextColorToElement(node, hex);
+    });
+
+    expect(readRichTextFromElement(el)).toEqual(doc);
+  });
+
+  it("clears stale chip metadata before recoloring an existing word", () => {
+    const el = makeContainer();
+    renderRichTextIntoElement(el, {
+      blocks: [
+        {
+          type: "paragraph",
+          spans: [{ text: "Black", color: "#000000" }],
+        },
+      ],
+    });
+
+    prepareRichTextColorsForBrowserCommand(el);
+    const coloredSpan = el.querySelector<HTMLElement>("span");
+    expect(coloredSpan).not.toBeNull();
+    expect(coloredSpan?.getAttribute("data-rich-text-color")).toBeNull();
+
+    // Simulate execCommand changing the selected span after preparation.
+    if (coloredSpan) {
+      coloredSpan.style.color = "#2563eb";
+      const nextColor = resolveAuthoredRichTextColorFromElement(coloredSpan);
+      if (nextColor)
+        applyReadableRichTextColorToElement(coloredSpan, nextColor);
+    }
+
+    expect(readRichTextFromElement(el)).toEqual({
+      blocks: [
+        {
+          type: "paragraph",
+          spans: [{ text: "Black", color: "#2563eb" }],
+        },
+      ],
+    });
+  });
+
   it("reads a legacy <font color> element (execCommand without styleWithCSS)", () => {
     const el = makeContainer();
     const block = document.createElement("div");
@@ -63,7 +149,9 @@ describe("renderRichTextIntoElement / readRichTextFromElement round-trip", () =>
     el.appendChild(block);
 
     expect(readRichTextFromElement(el)).toEqual({
-      blocks: [{ type: "paragraph", spans: [{ text: "Green", color: "#22c55e" }] }],
+      blocks: [
+        { type: "paragraph", spans: [{ text: "Green", color: "#22c55e" }] },
+      ],
     });
   });
 
@@ -86,7 +174,11 @@ describe("renderRichTextIntoElement / readRichTextFromElement round-trip", () =>
     const doc: RichTextDocument = {
       blocks: [
         { type: "paragraph", spans: [{ text: "Centered" }], align: "center" },
-        { type: "list-item", spans: [{ text: "Right bullet" }], align: "right" },
+        {
+          type: "list-item",
+          spans: [{ text: "Right bullet" }],
+          align: "right",
+        },
         { type: "paragraph", spans: [{ text: "Default" }] },
       ],
     };
@@ -164,7 +256,9 @@ describe("renderRichTextIntoElement / readRichTextFromElement round-trip", () =>
     el.appendChild(block);
 
     expect(readRichTextFromElement(el)).toEqual({
-      blocks: [{ type: "paragraph", spans: [{ text: "Hello world", bold: true }] }],
+      blocks: [
+        { type: "paragraph", spans: [{ text: "Hello world", bold: true }] },
+      ],
     });
   });
 
@@ -173,7 +267,10 @@ describe("renderRichTextIntoElement / readRichTextFromElement round-trip", () =>
     el.appendChild(document.createTextNode("Typed before any block wrapper"));
     expect(readRichTextFromElement(el)).toEqual({
       blocks: [
-        { type: "paragraph", spans: [{ text: "Typed before any block wrapper" }] },
+        {
+          type: "paragraph",
+          spans: [{ text: "Typed before any block wrapper" }],
+        },
       ],
     });
   });

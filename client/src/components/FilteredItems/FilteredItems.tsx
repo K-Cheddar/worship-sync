@@ -83,6 +83,19 @@ type FilteredItemsProps = {
   showDelete?: boolean;
   /** When false, hide create + external lyrics chrome. Defaults to library mutate access. */
   showCreateAndExternal?: boolean;
+  /**
+   * When set, "Create a new …" is a button that calls this instead of linking to
+   * `/controller/create` (e.g. plan picker modal that embeds create in-place).
+   */
+  onCreateNew?: () => void;
+  /**
+   * When set, external-lyrics "Create song" uses this instead of navigating to
+   * `/controller/create` with a prefilled draft.
+   */
+  onCreateFromExternal?: (candidate: NormalizedLrclibTrack) => void;
+  /** Passed through to SongSearchInput (dark modal surfaces need explicit colors). */
+  searchLabelClassName?: string;
+  searchInputClassName?: string;
   /** When true, omit the page heading (modal / embedded use). */
   hideHeading?: boolean;
   /** Merged onto the root layout wrapper. */
@@ -121,6 +134,10 @@ const FilteredItems = ({
   addButtonLabel = "Add to outline",
   showDelete,
   showCreateAndExternal,
+  onCreateNew,
+  onCreateFromExternal,
+  searchLabelClassName,
+  searchInputClassName,
   hideHeading = false,
   className,
 }: FilteredItemsProps) => {
@@ -505,6 +522,10 @@ const FilteredItems = ({
         lyricsImportError: "",
       }),
     );
+    if (onCreateFromExternal) {
+      onCreateFromExternal(candidate);
+      return;
+    }
     navigate("/controller/create");
   };
 
@@ -712,6 +733,8 @@ const FilteredItems = ({
           disabled={isLoading}
           onChange={setSearchValue}
           label="Search"
+          labelClassName={searchLabelClassName}
+          inputClassName={searchInputClassName}
           className="text-base flex flex-1 gap-2 items-center max-w-2xl"
           placeholder=""
           showSearchIconWhenEmpty={false}
@@ -728,16 +751,28 @@ const FilteredItems = ({
         <div className="mb-2 flex flex-col gap-3">
           <section className="text-sm flex flex-wrap gap-2 items-center justify-center">
             <p>Can't find what you're looking for?</p>
-            <Button
-              variant="secondary"
-              className="relative"
-              svg={FilePlus}
-              color="#84cc16"
-              component="link"
-              to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
-            >
-              Create a new {label}
-            </Button>
+            {onCreateNew ? (
+              <Button
+                variant="secondary"
+                className="relative"
+                svg={FilePlus}
+                color="#84cc16"
+                onClick={onCreateNew}
+              >
+                Create a new {label}
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                className="relative"
+                svg={FilePlus}
+                color="#84cc16"
+                component="link"
+                to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+              >
+                Create a new {label}
+              </Button>
+            )}
             {type === "song" && (
               <Button
                 variant="tertiary"

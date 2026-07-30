@@ -1,5 +1,11 @@
 {
-  "watch": ["server.js", "authService.js", "instrument.js", "email-templates"],
+  "watch": [
+    "server.js",
+    "authService.js",
+    "instrument.js",
+    "email-templates",
+    "server"
+  ],
   "ext": "js,tsx,json",
   "execMap": {
     "js": "tsx"

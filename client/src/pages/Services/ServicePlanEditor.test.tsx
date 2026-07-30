@@ -518,7 +518,10 @@ describe("ServicePlanEditor", () => {
 
     renderEditor();
 
-    expect(await screen.findByLabelText(/^Title/i)).toHaveValue("Living Hope");
+    // Existing plans open in compact view mode — titles are text, not inputs.
+    expect(await screen.findByText("Living Hope")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Start from scratch/i }),
     ).not.toBeInTheDocument();
@@ -575,6 +578,7 @@ describe("ServicePlanEditor", () => {
     const user = userEvent.setup();
     renderEditor();
 
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /Remove section Worship/i }),
@@ -648,6 +652,8 @@ describe("ServicePlanEditor", () => {
 
     const user = userEvent.setup();
     renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
 
     // Name, time, duration and assignee are all editable on the one-line row
     // itself — nothing has to be expanded to change them.
@@ -725,15 +731,17 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /^Hide notes$/i }));
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: /^Hide notes$/i }));
     expect(screen.queryByRole("button", { name: /Expand notes/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Expand Band/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Show notes$/i })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
 
-    await user.click(screen.getByRole("button", { name: /^Show notes$/i }));
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    const hideNotesItem = await screen.findByRole("menuitemcheckbox", {
+      name: /^Hide notes$/i,
+    });
+    expect(hideNotesItem).toHaveAttribute("aria-checked", "true");
+    await user.click(hideNotesItem);
     expect(
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
@@ -765,6 +773,7 @@ describe("ServicePlanEditor", () => {
     const user = userEvent.setup();
     renderEditor();
 
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await screen.findByLabelText(/^Title/i);
     expect(screen.getByRole("button", { name: /Add element/i })).toBeInTheDocument();
 
@@ -801,7 +810,8 @@ describe("ServicePlanEditor", () => {
 
     expect(screen.queryByRole("button", { name: /Save plan/i })).not.toBeInTheDocument();
     expect(await screen.findByText("Synced")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Add section/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add section/i })).not.toBeInTheDocument();
   });
 
   it("shares from the header menu and lets an editor make an item live from its row", async () => {
@@ -857,23 +867,26 @@ describe("ServicePlanEditor", () => {
 
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
     expect(
-      await screen.findByRole("menuitem", { name: /Copy serving link/i }),
+      await screen.findByRole("button", { name: /Copy detailed view link/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: /Copy public link/i }),
+      screen.getByRole("button", { name: /View detailed view/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Copy simple view link/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /View simple view/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /Save as template/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: /Open serving link/i }),
+      screen.getByRole("menuitem", { name: /Disable shared links/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: /Open public link/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: /Disable public link/i }),
-    ).toBeInTheDocument();
+      screen.queryByText(/Serving links include notes/i),
+    ).not.toBeInTheDocument();
 
     await user.keyboard("{Escape}");
 
@@ -924,13 +937,60 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Copy serving link/i }));
+    await user.click(await screen.findByRole("button", { name: /Copy detailed view link/i }));
     await waitFor(() => {
       expect(mockPublishServicePlan).toHaveBeenCalledWith(
         "church-1",
         "service-1@2026-07-26",
       );
     });
-    expect(await screen.findByText(/Serving link copied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Detailed view link copied/i)).toBeInTheDocument();
+  });
+
+  it("publishes and opens a view link for an unpublished plan", async () => {
+    const draftPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      published: false,
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: draftPlan });
+    mockPublishServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: { ...draftPlan, published: true },
+      publicUrl: "https://www.worshipsync.net/#/services/share-token",
+      teamPublicUrl: "https://www.worshipsync.net/#/services/share-token",
+      generalPublicUrl: "https://www.worshipsync.net/#/services/general-share-token",
+    });
+    const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("button", { name: /View simple view/i }));
+    await waitFor(() => {
+      expect(mockPublishServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-07-26",
+      );
+    });
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://www.worshipsync.net/#/services/general-share-token",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
   });
 });
