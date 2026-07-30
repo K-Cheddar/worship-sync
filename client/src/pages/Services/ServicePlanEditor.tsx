@@ -1,14 +1,13 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Eye,
-  EyeOff,
+  ExternalLink,
   GripVertical,
-  Link2,
   MoreHorizontal,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -25,12 +24,17 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
-import Button from "../../components/Button/Button";
+import {
+  Button,
+  ButtonGroup,
+  ButtonGroupItem,
+} from "../../components/Button";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import Input from "../../components/Input/Input";
 import TimePicker from "../../components/TimePicker/TimePicker";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -78,6 +82,8 @@ import ServicePlanTemplateModal, {
 } from "./ServicePlanTemplateModal";
 import ServicePlanElementRow, {
   elementDndId,
+  formatPlanStartTimeDisplay,
+  ServicePlanElementColumnHeader,
   SERVICE_PLAN_INLINE_INPUT_CLASS,
 } from "./ServicePlanElementRow";
 import {
@@ -184,12 +190,15 @@ type ServicePlanEditorProps = {
     onPrevious?: () => void;
     onNext?: () => void;
   };
+  /** Extra header controls (e.g. mobile Who's serving) rendered next to Actions. */
+  headerActions?: ReactNode;
 };
 
 type SortableSectionCardProps = {
   section: ServicePlanSection;
   sections: ServicePlanSection[];
   canEdit: boolean;
+  isEditing: boolean;
   onRename: (name: string) => void;
   onRemove: () => void;
   onAddElement: () => void;
@@ -213,6 +222,7 @@ const SortableSectionCard = ({
   section,
   sections,
   canEdit,
+  isEditing,
   onRename,
   onRemove,
   onAddElement,
@@ -230,6 +240,7 @@ const SortableSectionCard = ({
   onResumePublicSchedule,
   hideNotes = false,
 }: SortableSectionCardProps) => {
+  const allowEdit = canEdit && isEditing;
   const {
     attributes,
     listeners,
@@ -238,7 +249,7 @@ const SortableSectionCard = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: sectionDndId(section.id), disabled: !canEdit });
+  } = useSortable({ id: sectionDndId(section.id), disabled: !allowEdit });
   const [isExpanded, setIsExpanded] = useState(true);
 
   const elementIds = section.elements.map((element) => elementDndId(element.id));
@@ -251,60 +262,75 @@ const SortableSectionCard = ({
         transition,
         opacity: isDragging ? 0.6 : undefined,
       }}
-      className="overflow-hidden rounded-lg border border-gray-700 bg-gray-950/30"
+      className="overflow-hidden rounded-md border border-gray-700/80 bg-gray-950/40"
     >
-      <div className="flex items-center gap-1 border-b border-gray-700/80 bg-gray-800 px-1.5 py-1.5">
-        <Button
-          ref={setActivatorNodeRef}
-          type="button"
-          variant="tertiary"
-          iconSize="sm"
-          className="shrink-0 touch-none"
-          svg={GripVertical}
-          aria-label={`Drag to reorder ${section.name || "section"}`}
-          disabled={!canEdit}
-          {...attributes}
-          {...listeners}
-        />
+      <div className="flex items-center gap-1 bg-gray-800/95 px-1.5 py-1">
+        {allowEdit ? (
+          <Button
+            ref={setActivatorNodeRef}
+            type="button"
+            variant="tertiary"
+            iconSize="sm"
+            className="shrink-0 touch-none max-md:min-h-0"
+            svg={GripVertical}
+            aria-label={`Drag to reorder ${section.name || "section"}`}
+            {...attributes}
+            {...listeners}
+          />
+        ) : null}
         <ExpandCollapseChevronButton
           expanded={isExpanded}
           onExpandedChange={setIsExpanded}
           expandLabel="Expand section"
           collapseLabel="Collapse section"
-          className="mt-0 shrink-0"
+          className="mt-0 shrink-0 max-md:min-h-0"
         />
-        <Input
-          label="Section name"
-          hideLabel
-          value={section.name}
-          disabled={!canEdit}
-          onChange={(value) => onRename(String(value))}
-          className="flex-1"
-          inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-        />
-        <span className="shrink-0 text-xs text-gray-400">
+        {allowEdit ? (
+          <Input
+            label="Section name"
+            hideLabel
+            value={section.name}
+            onChange={(value) => onRename(String(value))}
+            className="min-w-0 flex-1"
+            inputClassName={cn(
+              SERVICE_PLAN_INLINE_INPUT_CLASS,
+              "font-semibold text-gray-100",
+            )}
+          />
+        ) : (
+          <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-gray-100">
+            {section.name.trim() || "Untitled section"}
+          </h3>
+        )}
+        <span className="shrink-0 tabular-nums text-[11px] text-gray-400">
           {section.elements.length}
         </span>
-        <Button
-          type="button"
-          variant="tertiary"
-          iconSize="sm"
-          svg={Trash2}
-          aria-label={`Remove section ${section.name || ""}`}
-          disabled={!canEdit}
-          onClick={onRemove}
-        />
+        {allowEdit ? (
+          <Button
+            type="button"
+            variant="tertiary"
+            iconSize="sm"
+            className="max-md:min-h-0"
+            svg={Trash2}
+            aria-label={`Remove section ${section.name || ""}`}
+            onClick={onRemove}
+          />
+        ) : null}
       </div>
 
       <AnimateCollapse open={isExpanded}>
-        <div className="space-y-2 px-2 pb-2 pt-2">
+        <div className="pb-1">
+          {section.elements.length > 0 ? (
+            <ServicePlanElementColumnHeader isEditing={allowEdit} />
+          ) : null}
           <SortableContext items={elementIds} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
+            <div>
               {section.elements.map((element, elementIndex) => (
                 <ServicePlanElementRow
                   key={element.id}
                   element={element}
                   canEdit={canEdit}
+                  isEditing={isEditing}
                   onRemove={() => onRemoveElement(element.id)}
                   onUpdate={(changes) => onUpdateElement(element.id, changes)}
                   onDurationChange={(durationSeconds) =>
@@ -326,16 +352,18 @@ const SortableSectionCard = ({
             </div>
           </SortableContext>
 
-          <Button
-            type="button"
-            variant="tertiary"
-            svg={Plus}
-            iconSize="sm"
-            disabled={!canEdit}
-            onClick={onAddElement}
-          >
-            Add element
-          </Button>
+          {allowEdit ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={Plus}
+              iconSize="sm"
+              className="mx-1 mt-1 max-md:min-h-0"
+              onClick={onAddElement}
+            >
+              Add element
+            </Button>
+          ) : null}
         </div>
       </AnimateCollapse>
     </section>
@@ -361,6 +389,7 @@ const ServicePlanEditor = ({
   onBack,
   backLabel = "Back to Plans",
   planNavigation,
+  headerActions,
 }: ServicePlanEditorProps) => {
   const { churchId } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
@@ -404,6 +433,9 @@ const ServicePlanEditor = ({
   const [conflictPlan, setConflictPlan] = useState<ServicePlan | null>(null);
   // View-only: collapses note chrome so operators can scan structure/timing.
   const [hideNotes, setHideNotes] = useState(false);
+  // Compact read layout by default; Edit switches to stacked/editable fields.
+  const [isEditing, setIsEditing] = useState(false);
+  const [planActionsOpen, setPlanActionsOpen] = useState(false);
 
   const markDraftChanged = useCallback(() => {
     setDraftChangeVersion((version) => version + 1);
@@ -435,6 +467,7 @@ const ServicePlanEditor = ({
     setPublicUrls(null);
     setConflictPlan(null);
     setDraftChangeVersion(0);
+    setIsEditing(false);
     if (!planKey || !churchId) return;
     let cancelled = false;
     setLoading(true);
@@ -622,6 +655,7 @@ const ServicePlanEditor = ({
   const startFromScratch = () => {
     updateDraftSections(createEmptyServicePlanSections());
     updateDraftName(occurrence.name || service.name || "");
+    setIsEditing(true);
   };
 
   const handleImportFromServicePlanning = async () => {
@@ -651,6 +685,7 @@ const ServicePlanEditor = ({
       markDraftChanged();
       setShowImport(false);
       setImportUrl("");
+      setIsEditing(true);
       showToast("Imported from Service Planning — review before saving.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not import from Service Planning.");
@@ -693,7 +728,10 @@ const ServicePlanEditor = ({
     return urls;
   };
 
-  const copyPublicLink = async (kind: "serving" | "public") => {
+  const sharePlanLink = async (
+    kind: "detailed" | "simple",
+    action: "copy" | "view",
+  ) => {
     if (!churchId || !planKey || !plan) return;
     setPublishing(true);
     try {
@@ -703,13 +741,17 @@ const ServicePlanEditor = ({
         return;
       }
       const url =
-        kind === "serving" ? urls.team : urls.general || urls.team;
-      const label = kind === "serving" ? "Serving link" : "Public link";
+        kind === "detailed" ? urls.team : urls.general || urls.team;
+      const label = kind === "detailed" ? "Detailed view" : "Simple view";
+      if (action === "view") {
+        window.open(url, "_blank", "noopener,noreferrer");
+        return;
+      }
       try {
         await navigator.clipboard?.writeText(url);
-        showToast(`${label} copied.`, "success");
+        showToast(`${label} link copied.`, "success");
       } catch {
-        showToast(`${label} is ready. Use Share to copy it again.`, "success");
+        showToast(`${label} link is ready. Use Plan actions to copy it again.`, "success");
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not publish this service plan.");
@@ -725,7 +767,7 @@ const ServicePlanEditor = ({
       const result = await unpublishServicePlan(churchId, planKey);
       setPlan(result.servicePlan);
       setPublicUrls(null);
-      showToast("Public service link disabled.", "success");
+      showToast("Shared links disabled.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not unpublish this service plan.");
     } finally {
@@ -742,7 +784,7 @@ const ServicePlanEditor = ({
         currentElementId: elementId,
       });
       setPlan(result.servicePlan);
-      showToast("Serving and public views are on this item.", "success");
+      showToast("Detailed and simple views are on this item.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update shared service progress.");
     } finally {
@@ -758,7 +800,7 @@ const ServicePlanEditor = ({
         mode: "schedule",
       });
       setPlan(result.servicePlan);
-      showToast("Serving and public views are following the schedule.", "success");
+      showToast("Detailed and simple views are following the schedule.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update shared service progress.");
     } finally {
@@ -768,7 +810,7 @@ const ServicePlanEditor = ({
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!canEdit || !over || active.id === over.id || !sections) return;
+    if (!canEdit || !isEditing || !over || active.id === over.id || !sections) return;
     const activeId = String(active.id);
     const overId = String(over.id);
 
@@ -833,26 +875,76 @@ const ServicePlanEditor = ({
     plan && sections
       ? getServicePlanLiveElementId({ ...plan, sections }, nowMs)
       : null;
-  const servingUrl = publicUrls?.team;
-  const publicUrl = publicUrls?.general || publicUrls?.team;
+  const shareActionsDisabled = !canEdit || publishing || !hasSections;
+
+  const shareViewActions = (
+    kind: "detailed" | "simple",
+    label: string,
+  ) => (
+    <div className="space-y-1.5 px-2 py-1.5">
+      <DropdownMenuLabel className="p-0 text-xs font-medium text-gray-300">
+        {label}
+      </DropdownMenuLabel>
+      <ButtonGroup className="w-full border-gray-500" display="flex">
+        <ButtonGroupItem
+          type="button"
+          iconSize="sm"
+          svg={Copy}
+          disabled={shareActionsDisabled}
+          className="max-md:min-h-0"
+          aria-label={`Copy ${label.toLowerCase()} link`}
+          onClick={() => {
+            setPlanActionsOpen(false);
+            void sharePlanLink(kind, "copy");
+          }}
+        >
+          Copy
+        </ButtonGroupItem>
+        <ButtonGroupItem
+          type="button"
+          iconSize="sm"
+          svg={ExternalLink}
+          disabled={shareActionsDisabled}
+          className="max-md:min-h-0"
+          aria-label={`View ${label.toLowerCase()}`}
+          onClick={() => {
+            setPlanActionsOpen(false);
+            void sharePlanLink(kind, "view");
+          }}
+        >
+          View
+        </ButtonGroupItem>
+      </ButtonGroup>
+    </div>
+  );
 
   const shareMenu =
     plan || hasSections ? (
-      <DropdownMenu>
+      <DropdownMenu open={planActionsOpen} onOpenChange={setPlanActionsOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
             variant="secondary"
             svg={MoreHorizontal}
             iconSize="sm"
+            className="max-md:min-h-0"
             disabled={publishing}
-            aria-label="Plan actions"
+            aria-label={publishing ? "Updating plan actions" : "Plan actions"}
             aria-haspopup="menu"
-          >
-            {publishing ? "Updating…" : "Actions"}
-          </Button>
+          />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
+          {hasSections ? (
+            <>
+              <DropdownMenuCheckboxItem
+                checked={hideNotes}
+                onCheckedChange={(checked) => setHideNotes(Boolean(checked))}
+              >
+                Hide notes
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator className="my-1 bg-gray-600" />
+            </>
+          ) : null}
           <DropdownMenuItem
             disabled={!canEdit || !hasSections}
             onSelect={() => setTemplateModal("save")}
@@ -860,49 +952,10 @@ const ServicePlanEditor = ({
             Save as template
           </DropdownMenuItem>
           <DropdownMenuSeparator className="my-1 bg-gray-600" />
-          <DropdownMenuLabel className="text-xs font-normal text-gray-400">
-            Serving links include notes. Public links show the program only.
-            Copying a link publishes this plan if it is not public yet.
-          </DropdownMenuLabel>
-          <DropdownMenuItem
-            disabled={!canEdit || publishing || !hasSections}
-            onSelect={() => {
-              void copyPublicLink("serving");
-            }}
-          >
-            <Copy className="size-4" />
-            Copy serving link
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!canEdit || publishing || !hasSections}
-            onSelect={() => {
-              void copyPublicLink("public");
-            }}
-          >
-            <Copy className="size-4" />
-            Copy public link
-          </DropdownMenuItem>
-          {publicSharingEnabled && servingUrl ? (
+          {shareViewActions("detailed", "Detailed view")}
+          {shareViewActions("simple", "Simple view")}
+          {publicSharingEnabled ? (
             <>
-              <DropdownMenuSeparator className="my-1 bg-gray-600" />
-              <DropdownMenuItem
-                onSelect={() => {
-                  window.open(servingUrl, "_blank", "noopener,noreferrer");
-                }}
-              >
-                <Link2 className="size-4" />
-                Open serving link
-              </DropdownMenuItem>
-              {publicUrl ? (
-                <DropdownMenuItem
-                  onSelect={() => {
-                    window.open(publicUrl, "_blank", "noopener,noreferrer");
-                  }}
-                >
-                  <Link2 className="size-4" />
-                  Open public link
-                </DropdownMenuItem>
-              ) : null}
               <DropdownMenuSeparator className="my-1 bg-gray-600" />
               <DropdownMenuItem
                 variant="destructive"
@@ -911,7 +964,7 @@ const ServicePlanEditor = ({
                   void handleUnpublish();
                 }}
               >
-                Disable public link
+                Disable shared links
               </DropdownMenuItem>
             </>
           ) : null}
@@ -922,14 +975,15 @@ const ServicePlanEditor = ({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/70">
       {showChrome || plan || hasSections ? (
-        <header className="shrink-0 space-y-3 border-b border-gray-800 px-4 py-3">
+        <header className="shrink-0 space-y-2 border-b border-gray-800 px-3 py-2">
           {showChrome ? (
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-2">
               <Button
                 type="button"
                 variant="tertiary"
                 svg={ArrowLeft}
                 iconSize="sm"
+                className="max-md:min-h-0"
                 onClick={onBack}
               >
                 {backLabel}
@@ -945,6 +999,7 @@ const ServicePlanEditor = ({
                     variant="secondary"
                     svg={ChevronLeft}
                     iconSize="sm"
+                    className="max-md:min-h-0"
                     aria-label="Previous plan"
                     disabled={!planNavigation.onPrevious}
                     onClick={planNavigation.onPrevious}
@@ -954,6 +1009,7 @@ const ServicePlanEditor = ({
                     variant="secondary"
                     svg={ChevronRight}
                     iconSize="sm"
+                    className="max-md:min-h-0"
                     aria-label="Next plan"
                     disabled={!planNavigation.onNext}
                     onClick={planNavigation.onNext}
@@ -962,26 +1018,26 @@ const ServicePlanEditor = ({
               ) : null}
             </div>
           ) : null}
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <h2 className="truncate text-lg font-semibold text-gray-50">
+              <h2 className="truncate text-base font-semibold text-gray-50 sm:text-lg">
                 {occurrence.name || service.name}
               </h2>
               <p className="mt-0.5 text-xs text-gray-400">{occurrenceTiming}</p>
             </div>
-            {plan || hasSections ? (
-              <div className="flex shrink-0 items-center gap-2">
-                {hasSections ? (
+            {plan || hasSections || headerActions ? (
+              <div className="flex shrink-0 items-center gap-1.5">
+                {headerActions}
+                {canEdit && hasSections ? (
                   <Button
                     type="button"
-                    variant="secondary"
-                    svg={hideNotes ? EyeOff : Eye}
+                    variant={isEditing ? "secondary" : "primary"}
+                    svg={isEditing ? undefined : Pencil}
                     iconSize="sm"
-                    isSelected={hideNotes}
-                    aria-pressed={hideNotes}
-                    onClick={() => setHideNotes((prev) => !prev)}
+                    className="max-md:min-h-0"
+                    onClick={() => setIsEditing((prev) => !prev)}
                   >
-                    {hideNotes ? "Show notes" : "Hide notes"}
+                    {isEditing ? "Done" : "Edit"}
                   </Button>
                 ) : null}
                 {shareMenu}
@@ -991,7 +1047,7 @@ const ServicePlanEditor = ({
         </header>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
         {loading ? <p className="text-sm text-gray-400">Loading plan…</p> : null}
 
         {!loading && isEmpty && canEdit ? (
@@ -1079,40 +1135,56 @@ const ServicePlanEditor = ({
         ) : null}
 
         {hasSections && sections ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <Input
-                label="Plan name"
-                className="min-w-0 flex-1"
-                value={planName}
-                disabled={!canEdit}
-                onChange={(value) => updateDraftName(String(value))}
-              />
-              <TimePicker
-                label="Service start time"
-                labelLayout="stacked"
-                className="w-full shrink-0 sm:w-40"
-                value={anchorStartTime}
-                disabled={!canEdit || sections.every((s) => s.elements.length === 0)}
-                onChange={(value) =>
-                  value && updateDraftSections(applyPlanAnchorStartTime(sections, String(value)))
-                }
-              />
-            </div>
-
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}
             >
               <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-                <div className="scrollbar-variable min-h-0 flex-1 space-y-3 overflow-y-auto">
+                <div className="scrollbar-variable min-h-0 flex-1 space-y-2 overflow-y-auto">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+                    {isEditing ? (
+                      <>
+                        <Input
+                          label="Plan name"
+                          className="min-w-0 w-full sm:max-w-md sm:flex-1"
+                          value={planName}
+                          disabled={!canEdit}
+                          onChange={(value) => updateDraftName(String(value))}
+                        />
+                        <TimePicker
+                          label="Service start time"
+                          labelLayout="stacked"
+                          className="w-full shrink-0 sm:w-40"
+                          value={anchorStartTime}
+                          disabled={!canEdit || sections.every((s) => s.elements.length === 0)}
+                          onChange={(value) =>
+                            value && updateDraftSections(applyPlanAnchorStartTime(sections, String(value)))
+                          }
+                        />
+                      </>
+                    ) : (
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-100">
+                          {planName.trim() || occurrence.name || service.name}
+                        </p>
+                        {anchorStartTime ? (
+                          <p className="mt-0.5 text-xs text-gray-400">
+                            Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+
                   {sections.map((section) => (
                     <SortableSectionCard
                       key={section.id}
                       section={section}
                       sections={sections}
                       canEdit={canEdit}
+                      isEditing={isEditing}
                       onRename={(name) =>
                         updateDraftSections(renameSection(sections, section.id, name))
                       }
@@ -1188,16 +1260,18 @@ const ServicePlanEditor = ({
             */}
 
             <div className="flex shrink-0 flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="tertiary"
-                svg={Plus}
-                iconSize="sm"
-                disabled={!canEdit}
-                onClick={() => updateDraftSections(addSection(sections))}
-              >
-                Add section
-              </Button>
+              {canEdit && isEditing ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={Plus}
+                  iconSize="sm"
+                  className="max-md:min-h-0"
+                  onClick={() => updateDraftSections(addSection(sections))}
+                >
+                  Add section
+                </Button>
+              ) : null}
               <div
                 className={cn(
                   "ml-auto flex min-h-9 items-center gap-2 rounded-md px-2.5 text-xs font-medium",
@@ -1243,6 +1317,7 @@ const ServicePlanEditor = ({
           onApply={(templateSections) => {
             updateDraftSections(templateSections);
             if (!planName) updateDraftName(occurrence.name || service.name || "");
+            setIsEditing(true);
           }}
         />
       ) : null}

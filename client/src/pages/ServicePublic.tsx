@@ -10,6 +10,12 @@ import { getServiceFlowProgress } from "../services/serviceFlowProgress";
 import type { PublicServiceFlowItem } from "../services/serviceFlowTypes";
 import { usePublicServiceFlow } from "../services/usePublicServiceFlow";
 import { cn } from "../utils/cnHelper";
+import { formatServicePlanDuration } from "./Services/servicePlanDuration";
+import {
+  readServicePublicNotesTeam,
+  writeServicePublicNotesTeam,
+} from "./servicePublicNotesTeam";
+import { publicPageScrollClassName } from "./Teams/teamsStyles";
 
 const formatServiceDate = (value: string, timezone: string) =>
   new Intl.DateTimeFormat(undefined, {
@@ -23,16 +29,29 @@ const formatServiceTime = (value: number, timezone: string) =>
 
 const itemHasNotes = (item: PublicServiceFlowItem, selectedTeam: string) => {
   if (item.notes.blocks.length) return true;
-  if (!selectedTeam) return false;
-  return Boolean(item.teamNotes?.some((note) => note.label === selectedTeam));
+  if (selectedTeam) {
+    return Boolean(item.teamNotes?.some((note) => note.label === selectedTeam));
+  }
+  return Boolean(item.teamNotes?.length);
 };
+
+const visibleTeamNotesForItem = (
+  item: PublicServiceFlowItem,
+  selectedTeam: string,
+) => {
+  const teamNotes = item.teamNotes || [];
+  if (!selectedTeam) return teamNotes;
+  return teamNotes.filter((note) => note.label === selectedTeam);
+};
+
+const pageShellClassName = cn(publicPageScrollClassName, "bg-neutral-950 text-neutral-100");
 
 const ServicePublic = () => {
   const { shareId = "" } = useParams();
   const { snapshot, error, loading, connection, revoked, refresh } = usePublicServiceFlow(shareId);
   const [clientNow, setClientNow] = useState(() => Date.now());
-  const [selectedTeam, setSelectedTeam] = useState("");
-  const [expandedNoteIds, setExpandedNoteIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
+  const [collapsedNoteIds, setCollapsedNoteIds] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     const interval = window.setInterval(() => setClientNow(Date.now()), 1000);
@@ -44,20 +63,9 @@ const ServicePublic = () => {
     () => snapshot ? getServiceFlowProgress(snapshot.service, clientNow + serverOffsetMs) : null,
     [clientNow, serverOffsetMs, snapshot],
   );
-  const currentItemId = progress?.current?.item.id;
-
-  useEffect(() => {
-    if (!currentItemId) return;
-    setExpandedNoteIds((prev) => {
-      if (prev.has(currentItemId)) return prev;
-      const next = new Set(prev);
-      next.add(currentItemId);
-      return next;
-    });
-  }, [currentItemId]);
 
   const toggleNotes = (itemId: string) => {
-    setExpandedNoteIds((prev) => {
+    setCollapsedNoteIds((prev) => {
       const next = new Set(prev);
       if (next.has(itemId)) next.delete(itemId);
       else next.add(itemId);
@@ -74,8 +82,24 @@ const ServicePublic = () => {
   }, [snapshot]);
 
   useEffect(() => {
-    if (selectedTeam && !teamLabels.includes(selectedTeam)) setSelectedTeam("");
+    if (!teamLabels.length) {
+      if (selectedTeam) setSelectedTeam("");
+      return;
+    }
+    if (selectedTeam && teamLabels.includes(selectedTeam)) return;
+    const stored = readServicePublicNotesTeam();
+    if (stored && teamLabels.includes(stored)) {
+      setSelectedTeam(stored);
+      return;
+    }
+    if (selectedTeam) setSelectedTeam("");
   }, [selectedTeam, teamLabels]);
+
+  const handleTeamNotesFilterChange = (value: string) => {
+    const next = value === "__everyone__" ? "" : value;
+    setSelectedTeam(next);
+    writeServicePublicNotesTeam(next);
+  };
 
   const jumpToCurrent = () => {
     if (!progress?.current) return;
@@ -85,17 +109,23 @@ const ServicePublic = () => {
   };
 
   if (loading && !snapshot) {
-    return <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-slate-100"><div className="flex items-center gap-3" aria-live="polite"><Spinner width="24px" borderWidth="3px" /> Loading service…</div></main>;
+    return (
+      <main className={cn(pageShellClassName, "flex items-center justify-center p-6")}>
+        <div className="flex items-center gap-3" aria-live="polite">
+          <Spinner width="24px" borderWidth="3px" /> Loading service…
+        </div>
+      </main>
+    );
   }
 
   if (!snapshot) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-slate-100">
-        <div className="max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-center shadow-xl">
+      <main className={cn(pageShellClassName, "flex items-center justify-center p-6")}>
+        <div className="max-w-md rounded-2xl border border-neutral-700 bg-neutral-900 p-6 text-center shadow-xl">
           <h1 className="text-xl font-semibold">
             {revoked ? "This service is no longer shared" : "Service unavailable"}
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-300">
+          <p className="mt-2 text-sm leading-relaxed text-neutral-300">
             {revoked
               ? "The link has been turned off or the service was removed. Ask your team for a new link."
               : error || "This service is not available."}
@@ -108,13 +138,31 @@ const ServicePublic = () => {
 
   const { service } = snapshot;
   const isGeneralView = service.viewMode === "general";
-  const statusLabel = progress?.isManual ? "Live update" : progress?.state === "complete" ? "Service complete" : progress?.state === "upcoming" ? "Starts soon" : "Live now";
+  let statusKind: "manual" | "complete" | "upcoming" | "live" = "live";
+  if (progress?.isManual) statusKind = "manual";
+  else if (progress?.state === "complete") statusKind = "complete";
+  else if (progress?.state === "upcoming") statusKind = "upcoming";
+  const statusLabelByKind = {
+    manual: "Live update",
+    complete: "Service complete",
+    upcoming: "Starts soon",
+    live: "Live now",
+  } as const;
+  const statusBadgeClassNameByKind = {
+    upcoming: "bg-sky-400/10 text-sky-200",
+    live: "bg-emerald-400/10 text-emerald-200",
+    manual: "bg-amber-400/10 text-amber-200",
+    complete: "bg-neutral-700/80 text-neutral-300",
+  } as const;
+  const statusLabel = statusLabelByKind[statusKind];
+  const statusBadgeClassName = statusBadgeClassNameByKind[statusKind];
+  const showTeamNotesFilter = !isGeneralView && teamLabels.length > 0;
 
   return (
-    <main className="min-h-screen overflow-y-auto bg-slate-950 text-slate-100">
+    <main className={pageShellClassName}>
       <div className="mx-auto max-w-3xl px-3 pb-10 pt-4 sm:px-5 sm:pb-12 sm:pt-6">
-        <header className="sticky top-0 z-20 -mx-3 border-b border-slate-800/90 bg-slate-950/95 px-3 pb-3 pt-1 backdrop-blur-sm sm:-mx-5 sm:px-5">
-          <div className="rounded-xl border border-slate-700/80 bg-slate-900/95 p-3 shadow-lg sm:p-4">
+        <header className="-mx-3 border-b border-neutral-800/90 px-3 pb-3 pt-1 sm:-mx-5 sm:px-5">
+          <div className="rounded-xl border border-neutral-700/80 bg-neutral-900/95 p-3 shadow-lg sm:p-4">
             <div className="flex items-start gap-3">
               <ChurchLogoImg
                 src={snapshot.churchLogoUrl || ""}
@@ -123,19 +171,39 @@ const ServicePublic = () => {
                 className="!mt-0 !size-11 !rounded-md sm:!size-12"
               />
               <div className="min-w-0 flex-1">
-                {snapshot.churchName ? <p className="text-xs font-medium text-cyan-300">{snapshot.churchName}</p> : null}
+                {snapshot.churchName ? <p className="text-xs font-medium text-neutral-400">{snapshot.churchName}</p> : null}
                 <h1 className="text-lg font-bold leading-snug tracking-tight sm:text-xl">{service.title}</h1>
-                <p className="mt-0.5 text-xs text-slate-400 sm:text-sm">
+                <p className="mt-0.5 text-xs text-neutral-400 sm:text-sm">
                   {formatServiceDate(service.startsAt, service.timezone)} · starts {formatServiceTime(Date.parse(service.startsAt), service.timezone)}
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-700/80 pt-3">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-200">
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-700/80 pt-3">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                  statusBadgeClassName,
+                )}
+              >
                 <Radio className="size-3.5" aria-hidden="true" /> {statusLabel}
               </span>
-              {connection === "reconnecting" ? <span className="text-xs text-slate-400" aria-live="polite">Updating…</span> : null}
+              {showTeamNotesFilter ? (
+                <Select
+                  label="Team notes"
+                  hideLabel
+                  className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
+                  selectClassName="min-h-0 py-1 text-xs"
+                  labelFontSize="text-xs"
+                  value={selectedTeam || "__everyone__"}
+                  onChange={handleTeamNotesFilterChange}
+                  options={[
+                    { value: "__everyone__", label: "All teams" },
+                    ...teamLabels.map((team) => ({ value: team, label: team })),
+                  ]}
+                />
+              ) : null}
+              {connection === "reconnecting" ? <span className="text-xs text-neutral-400" aria-live="polite">Updating…</span> : null}
               {progress?.current ? (
                 <Button variant="tertiary" svg={ChevronDown} className="ml-auto text-xs" onClick={jumpToCurrent}>
                   Jump to current
@@ -144,32 +212,18 @@ const ServicePublic = () => {
             </div>
 
             {progress?.current ? (
-              <div className="mt-2 rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-2" aria-label="Current service item">
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-200">Now</p>
-                <p className="text-sm font-semibold text-slate-50">{progress.current.item.title}</p>
+              <div className="mt-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2" aria-label="Current service item">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">Now</p>
+                <p className="text-sm font-semibold text-neutral-50">{progress.current.item.title}</p>
                 {progress.next ? (
-                  <p className="mt-0.5 text-xs text-slate-300">
-                    Up next: <span className="font-medium text-slate-100">{progress.next.item.title}</span>
+                  <p className="mt-0.5 text-xs text-neutral-300">
+                    Up next: <span className="font-medium text-neutral-100">{progress.next.item.title}</span>
                   </p>
                 ) : null}
               </div>
             ) : null}
           </div>
         </header>
-
-        {!isGeneralView && teamLabels.length ? (
-          <div className="mt-3 max-w-xs">
-            <Select
-              label="View notes for"
-              value={selectedTeam || "__everyone__"}
-              onChange={(value) => setSelectedTeam(value === "__everyone__" ? "" : value)}
-              options={[
-                { value: "__everyone__", label: "Everyone" },
-                ...teamLabels.map((team) => ({ value: team, label: team })),
-              ]}
-            />
-          </div>
-        ) : null}
 
         {error ? (
           <p className="mt-3 text-sm text-amber-200" role="status">
@@ -183,52 +237,64 @@ const ServicePublic = () => {
               {section.title ? (
                 <h2
                   id={`service-section-${section.id}`}
-                  className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400"
+                  className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400"
                 >
                   {section.title}
                 </h2>
               ) : null}
-              <ol className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-lg">
+              <ol className="overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-lg">
                 {section.items.map((item) => {
                   const timed = progress?.items.find((candidate) => candidate.item.id === item.id);
                   const isCurrent = progress?.current?.item.id === item.id;
                   const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
-                  const teamNote = selectedTeam
-                    ? item.teamNotes?.find((note) => note.label === selectedTeam)
-                    : null;
+                  const visibleTeamNotes = !isGeneralView
+                    ? visibleTeamNotesForItem(item, selectedTeam)
+                    : [];
                   const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam);
-                  const notesExpanded = expandedNoteIds.has(item.id);
+                  const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
+                  const durationLabel = item.durationSeconds > 0
+                    ? formatServicePlanDuration(item)
+                    : "";
                   return (
                     <li
                       key={item.id}
                       id={`service-item-${item.id}`}
                       className={cn(
-                        "border-b border-slate-700/80 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
-                        isCurrent && "bg-cyan-400/10 ring-1 ring-inset ring-cyan-400/45",
-                        isPast && "bg-slate-950/35 text-slate-400",
+                        "border-b border-l-2 border-l-transparent border-neutral-700/80 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
+                        isCurrent && "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20",
+                        isPast && "bg-neutral-950/40 text-neutral-400",
                       )}
                     >
                       <div className="flex items-baseline gap-2.5 sm:gap-3">
-                        <time className="w-[4.75rem] shrink-0 text-xs font-medium tabular-nums text-slate-400 sm:w-[5.25rem] sm:text-sm">
-                          {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
-                        </time>
+                        <div className="w-[4.75rem] shrink-0 sm:w-[5.25rem]">
+                          <time
+                            className={cn(
+                              "block text-xs font-medium tabular-nums sm:text-sm",
+                              isCurrent ? "text-emerald-300" : "text-neutral-300",
+                            )}
+                          >
+                            {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
+                          </time>
+                          {durationLabel ? (
+                            <p className="mt-0.5 text-[11px] tabular-nums text-neutral-500">{durationLabel}</p>
+                          ) : null}
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                            <h3 className="text-sm font-semibold leading-snug text-slate-100 sm:text-[15px]">
+                            <h3 className="text-sm font-semibold leading-snug text-neutral-100 sm:text-[15px]">
                               {item.title}
                             </h3>
                             {isCurrent ? (
-                              <span className="rounded bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-100">
+                              <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
                                 Current
                               </span>
                             ) : null}
+                            {item.creditName ? (
+                              <p className="ml-auto text-xs text-neutral-400">
+                                Led by <span className="font-medium text-neutral-300">{item.creditName}</span>
+                              </p>
+                            ) : null}
                           </div>
-
-                          {isGeneralView && item.creditName ? (
-                            <p className="mt-0.5 text-xs text-slate-400">
-                              Led by <span className="font-medium text-slate-300">{item.creditName}</span>
-                            </p>
-                          ) : null}
 
                           {hasNotes ? (
                             <div className="mt-1">
@@ -237,7 +303,7 @@ const ServicePublic = () => {
                                 svg={ChevronDown}
                                 iconSize="xs"
                                 className={cn(
-                                  "h-auto min-h-0 px-0 py-0 text-xs text-slate-400 hover:text-slate-200",
+                                  "h-auto min-h-0 px-0 py-0 text-xs text-neutral-400 hover:text-neutral-200",
                                   notesExpanded && "[&_svg]:rotate-180",
                                 )}
                                 aria-expanded={notesExpanded}
@@ -246,27 +312,29 @@ const ServicePublic = () => {
                                 {selectedTeam ? `${selectedTeam} notes` : "Notes"}
                               </Button>
                               {notesExpanded ? (
-                                <div className="mt-1.5 space-y-2 border-l border-slate-600/70 pl-2.5">
+                                <div className="mt-1.5 space-y-2 border-l border-neutral-600/70 pl-2.5 text-white">
                                   {item.notes.blocks.length ? (
                                     <div>
-                                      {selectedTeam ? (
-                                        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                      {visibleTeamNotes.length || selectedTeam ? (
+                                        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
                                           Shared notes
                                         </p>
                                       ) : null}
                                       <ServiceFlowRichText document={item.notes} />
                                     </div>
                                   ) : null}
-                                  {selectedTeam && teamNote ? (
-                                    <div>
-                                      <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200">
-                                        {selectedTeam} notes
+                                  {visibleTeamNotes.map((teamNote) => (
+                                    <div key={teamNote.label}>
+                                      <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-neutral-500">
+                                        {teamNote.label} notes
                                       </p>
                                       <ServiceFlowRichText document={teamNote.notes} />
                                     </div>
-                                  ) : null}
-                                  {selectedTeam && !teamNote ? (
-                                    <p className="text-xs text-slate-500">No {selectedTeam} notes for this item.</p>
+                                  ))}
+                                  {selectedTeam && visibleTeamNotes.length === 0 ? (
+                                    <p className="text-xs text-neutral-500">
+                                      No {selectedTeam} notes for this item.
+                                    </p>
                                   ) : null}
                                 </div>
                               ) : null}

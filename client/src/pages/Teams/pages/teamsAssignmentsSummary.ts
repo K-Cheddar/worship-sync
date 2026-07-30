@@ -47,6 +47,12 @@ export type TeamsAssignmentSummaryTeamGroup = {
   teamName: string;
   /** null when this team has no schedule covering the date — see the row type. */
   scheduleId: string | null;
+  /**
+   * Set only when the same team appears more than once for this occurrence, so
+   * the panel can say *which* schedule each block came from. Two identical
+   * "MEDIA" headings are otherwise indistinguishable.
+   */
+  scheduleName?: string;
   occurrenceId: string;
   /** Rows with someone assigned, listed in the panel. */
   filled: TeamsAssignmentSummaryRow[];
@@ -322,6 +328,7 @@ export const summarizeNeededPositions = (
  */
 export const groupAssignmentSummaryByTeam = (
   rows: TeamsAssignmentSummaryRow[],
+  schedules: TeamSchedule[] = [],
 ): TeamsAssignmentSummaryTeamGroup[] => {
   const groups = new Map<string, TeamsAssignmentSummaryTeamGroup>();
   for (const row of rows) {
@@ -341,5 +348,26 @@ export const groupAssignmentSummaryByTeam = (
     }
     groups.set(key, group);
   }
-  return [...groups.values()].sort((a, b) => a.teamName.localeCompare(b.teamName));
+  const ordered = [...groups.values()].sort((a, b) =>
+    a.teamName.localeCompare(b.teamName),
+  );
+
+  // A team can legitimately have several schedules covering one date (or two
+  // teams can share a name). Label those blocks with their schedule so the
+  // panel doesn't show the same heading twice with different numbers.
+  const nameCounts = new Map<string, number>();
+  for (const group of ordered) {
+    nameCounts.set(group.teamName, (nameCounts.get(group.teamName) || 0) + 1);
+  }
+  const scheduleNameById = new Map(
+    schedules.map((schedule) => [schedule.scheduleId, schedule.name]),
+  );
+  return ordered.map((group) =>
+    (nameCounts.get(group.teamName) || 0) > 1 && group.scheduleId
+      ? {
+          ...group,
+          scheduleName: scheduleNameById.get(group.scheduleId) || undefined,
+        }
+      : group,
+  );
 };

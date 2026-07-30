@@ -12,6 +12,12 @@ import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
 import DatePicker from "@/components/ui/DatePicker";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { listServicePlans } from "../../../api/auth";
 import { formatPlainDate } from "../../../utils/plainDate";
@@ -29,6 +35,7 @@ import {
   getOccurrenceAssignmentSummary,
   groupAssignmentSummaryByTeam,
   summarizeNeededPositions,
+  type TeamsAssignmentSummaryTeamGroup,
 } from "./teamsAssignmentsSummary";
 import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
 import {
@@ -51,6 +58,164 @@ const ALL_SERVICES = "all";
 /** Every "Who's serving" line is a link into that slot's schedule. */
 const whosServingRowClassName =
   "flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70";
+
+type WhosServingPanelProps = {
+  assignmentTeams: TeamsAssignmentSummaryTeamGroup[];
+  onOpenSchedule: (args: {
+    scheduleId: string;
+    slot?: { occurrenceId: string; columnKey: string };
+  }) => void;
+  /** When false, skip the panel title (e.g. a Sheet already provides one). */
+  showHeading?: boolean;
+};
+
+/**
+ * Read-only roster summary for the selected plan date. Each filled/unfilled
+ * row deep-links into the matching schedule slot.
+ */
+const WhosServingPanel = ({
+  assignmentTeams,
+  onOpenSchedule,
+  showHeading = true,
+}: WhosServingPanelProps) => (
+  <>
+    {showHeading ? (
+      <div className="flex items-center gap-2">
+        <Icon svg={Users} size="sm" className="text-orange-300" />
+        <h3 className="text-sm font-semibold">Who&apos;s serving</h3>
+      </div>
+    ) : null}
+    {assignmentTeams.length === 0 ? (
+      <p className="text-xs text-gray-400">
+        No positions required for this service yet. Add them in Service
+        settings.
+      </p>
+    ) : (
+      <div className="space-y-3">
+        {assignmentTeams.map((team) => {
+          const scheduleId = team.scheduleId;
+          const teamHeader = (
+            <>
+              <div className="min-w-0">
+                <h4 className="truncate text-[11px] font-semibold uppercase tracking-wide text-orange-300/90">
+                  {team.teamName}
+                </h4>
+                {/* Only set when this team has more than one schedule
+                    over this date — otherwise the heading repeats with
+                    different numbers and reads like a bug. */}
+                {team.scheduleName ? (
+                  <p className="truncate text-[11px] font-normal normal-case text-gray-500">
+                    {team.scheduleName}
+                  </p>
+                ) : null}
+              </div>
+              <ScheduleFillBadge
+                filled={team.filled.length}
+                required={team.filled.length + team.unfilled.length}
+              />
+            </>
+          );
+          // No schedule covers this date for this team, so there is no
+          // grid to open — list what the service needs instead.
+          if (!scheduleId) {
+            return (
+              <section
+                key={`${team.teamId}-unscheduled`}
+                className="space-y-1.5"
+              >
+                <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
+                  {teamHeader}
+                </div>
+                <ul className="space-y-1.5">
+                  {summarizeNeededPositions(team.unfilled).map((need) => (
+                    <li
+                      key={need.positionId}
+                      className="flex items-center justify-between gap-2 px-1.5 text-xs"
+                    >
+                      <span className="truncate text-gray-400">
+                        {need.positionName}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-gray-500">
+                        &times;{need.count}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="px-1.5 text-[11px] text-gray-500">
+                  Not scheduled yet
+                </p>
+              </section>
+            );
+          }
+          return (
+            <section
+              key={`${team.teamId}-${scheduleId}`}
+              className="space-y-1.5"
+            >
+              <button
+                type="button"
+                className={whosServingRowClassName}
+                onClick={() => onOpenSchedule({ scheduleId })}
+                aria-label={`Open the schedule for ${team.teamName}`}
+              >
+                {teamHeader}
+              </button>
+              <ul className="space-y-1.5">
+                {team.filled.map((row) => (
+                  <li key={`${scheduleId}-${row.columnKey}`}>
+                    <button
+                      type="button"
+                      className={whosServingRowClassName}
+                      onClick={() =>
+                        onOpenSchedule({
+                          scheduleId,
+                          slot: {
+                            occurrenceId: row.occurrenceId,
+                            columnKey: row.columnKey,
+                          },
+                        })
+                      }
+                      aria-label={`${row.memberName} on ${row.slotLabel} — open in the schedule`}
+                    >
+                      <span className="truncate text-xs text-gray-400">
+                        {row.slotLabel}
+                      </span>
+                      <span className="truncate text-xs font-medium text-gray-100">
+                        {row.memberName}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {team.unfilled.length > 0 ? (
+                <button
+                  type="button"
+                  className={cn(
+                    whosServingRowClassName,
+                    "justify-start gap-1 text-xs font-medium text-amber-300",
+                  )}
+                  onClick={() =>
+                    onOpenSchedule({
+                      scheduleId,
+                      slot: {
+                        occurrenceId: team.unfilled[0].occurrenceId,
+                        columnKey: team.unfilled[0].columnKey,
+                      },
+                    })
+                  }
+                  aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
+                >
+                  {team.unfilled.length} unfilled
+                  <Icon svg={ChevronRight} size="xs" />
+                </button>
+              ) : null}
+            </section>
+          );
+        })}
+      </div>
+    )}
+  </>
+);
 
 const rangeFromPreset = (preset: "4w" | "8w") => {
   const start = new Date();
@@ -184,6 +349,10 @@ const TeamsPlansPage = () => {
   } | null>(null);
   const [pendingPlanRestore, setPendingPlanRestore] =
     useState<TeamsPlansRestore | null>(null);
+  // Mobile: Who's serving opens in a sheet so the plan keeps the full viewport.
+  // Desktop keeps the side panel. Opening from the list leaves the sheet closed;
+  // returning from a schedule deep-link reopens it.
+  const [servingSheetOpen, setServingSheetOpen] = useState(false);
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
@@ -208,6 +377,7 @@ const TeamsPlansPage = () => {
     );
     if (!service) return;
     setSelection({ service, occurrence: match });
+    setServingSheetOpen(true);
     // Keep the list behind the editor showing this plan once the user backs out.
     if (date < windowStart) {
       setWindowStart(date);
@@ -404,147 +574,65 @@ const TeamsPlansPage = () => {
       teams: pageData.teams,
       services: pageData.services,
     });
-    const assignmentTeams = groupAssignmentSummaryByTeam(assignments);
+    const assignmentTeams = groupAssignmentSummaryByTeam(
+      assignments,
+      pageData.schedules,
+    );
 
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
-        <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3 lg:gap-3">
+        <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ServicePlanEditor
               service={selection.service}
               occurrence={selection.occurrence}
               members={pageData.members}
               canEdit={canEditTeams}
-              onBack={() => setSelection(null)}
+              onBack={() => {
+                setServingSheetOpen(false);
+                setSelection(null);
+              }}
               planNavigation={planNavigation}
+              headerActions={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  svg={Users}
+                  iconSize="sm"
+                  className="max-md:min-h-0 lg:hidden"
+                  aria-label="Who's serving"
+                  aria-haspopup="dialog"
+                  onClick={() => setServingSheetOpen(true)}
+                />
+              }
             />
           </div>
-          <aside className="flex w-full shrink-0 flex-col gap-2 rounded-xl border border-gray-700/80 bg-gray-950/70 p-3 lg:w-64">
-            <div className="flex items-center gap-2">
-              <Icon svg={Users} size="sm" className="text-orange-300" />
-              <h3 className="text-sm font-semibold">Who&apos;s serving</h3>
-            </div>
-            {assignmentTeams.length === 0 ? (
-              <p className="text-xs text-gray-400">
-                No positions required for this service yet. Add them in Service
-                settings.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {assignmentTeams.map((team) => {
-                  const scheduleId = team.scheduleId;
-                  const teamHeader = (
-                    <>
-                      <h4 className="truncate text-[11px] font-semibold uppercase tracking-wide text-orange-300/90">
-                        {team.teamName}
-                      </h4>
-                      <ScheduleFillBadge
-                        filled={team.filled.length}
-                        required={team.filled.length + team.unfilled.length}
-                      />
-                    </>
-                  );
-                  // No schedule covers this date for this team, so there is no
-                  // grid to open — list what the service needs instead.
-                  if (!scheduleId) {
-                    return (
-                      <section
-                        key={`${team.teamId}-unscheduled`}
-                        className="space-y-1.5"
-                      >
-                        <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
-                          {teamHeader}
-                        </div>
-                        <ul className="space-y-1.5">
-                          {summarizeNeededPositions(team.unfilled).map((need) => (
-                            <li
-                              key={need.positionId}
-                              className="flex items-center justify-between gap-2 px-1.5 text-xs"
-                            >
-                              <span className="truncate text-gray-400">
-                                {need.positionName}
-                              </span>
-                              <span className="shrink-0 tabular-nums text-gray-500">
-                                &times;{need.count}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="px-1.5 text-[11px] text-gray-500">
-                          Not scheduled yet
-                        </p>
-                      </section>
-                    );
-                  }
-                  return (
-                    <section
-                      key={`${team.teamId}-${scheduleId}`}
-                      className="space-y-1.5"
-                    >
-                      <button
-                        type="button"
-                        className={whosServingRowClassName}
-                        onClick={() => openSchedule({ scheduleId })}
-                        aria-label={`Open the schedule for ${team.teamName}`}
-                      >
-                        {teamHeader}
-                      </button>
-                      <ul className="space-y-1.5">
-                        {team.filled.map((row) => (
-                          <li key={`${scheduleId}-${row.columnKey}`}>
-                            <button
-                              type="button"
-                              className={whosServingRowClassName}
-                              onClick={() =>
-                                openSchedule({
-                                  scheduleId,
-                                  slot: {
-                                    occurrenceId: row.occurrenceId,
-                                    columnKey: row.columnKey,
-                                  },
-                                })
-                              }
-                              aria-label={`${row.memberName} on ${row.slotLabel} — open in the schedule`}
-                            >
-                              <span className="truncate text-xs text-gray-400">
-                                {row.slotLabel}
-                              </span>
-                              <span className="truncate text-xs font-medium text-gray-100">
-                                {row.memberName}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                      {team.unfilled.length > 0 ? (
-                        <button
-                          type="button"
-                          className={cn(
-                            whosServingRowClassName,
-                            "justify-start gap-1 text-xs font-medium text-amber-300",
-                          )}
-                          onClick={() =>
-                            openSchedule({
-                              scheduleId,
-                              slot: {
-                                occurrenceId: team.unfilled[0].occurrenceId,
-                                columnKey: team.unfilled[0].columnKey,
-                              },
-                            })
-                          }
-                          aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
-                        >
-                          {team.unfilled.length} unfilled
-                          <Icon svg={ChevronRight} size="xs" />
-                        </button>
-                      ) : null}
-                    </section>
-                  );
-                })}
-              </div>
-            )}
+          <aside className="hidden w-full shrink-0 flex-col gap-2 overflow-y-auto rounded-xl border border-gray-700/80 bg-gray-950/70 p-3 lg:flex lg:w-64">
+            <WhosServingPanel
+              assignmentTeams={assignmentTeams}
+              onOpenSchedule={openSchedule}
+            />
           </aside>
         </div>
+
+        <Sheet open={servingSheetOpen} onOpenChange={setServingSheetOpen}>
+          <SheetContent
+            side="right"
+            className="flex w-full max-w-sm flex-col border-gray-700 bg-gray-950/95 p-0"
+            aria-describedby={undefined}
+          >
+            <SheetHeader className="border-b border-gray-800">
+              <SheetTitle>Who&apos;s serving</SheetTitle>
+            </SheetHeader>
+            <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-4">
+              <WhosServingPanel
+                assignmentTeams={assignmentTeams}
+                onOpenSchedule={openSchedule}
+                showHeading={false}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
     );
   }
@@ -783,9 +871,10 @@ const TeamsPlansPage = () => {
                                   isNextUpcoming && scheduleUpNextBorderClassName,
                                   isPast && !hasPlan && "opacity-55",
                                 )}
-                                onClick={() =>
-                                  setSelection({ service, occurrence })
-                                }
+                                onClick={() => {
+                                  setServingSheetOpen(false);
+                                  setSelection({ service, occurrence });
+                                }}
                               >
                                 <span className="flex w-full items-center justify-between gap-1">
                                   <span

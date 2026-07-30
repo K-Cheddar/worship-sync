@@ -3,7 +3,31 @@ import RichTextEditor from "./RichTextEditor";
 import { plainTextToRichText } from "../../types/richText";
 import type { RichTextDocument } from "../../types/richText";
 
+const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
+  ((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })) as unknown as typeof window.matchMedia;
+
 describe("RichTextEditor", () => {
+  let originalMatchMedia: typeof window.matchMedia;
+
+  beforeEach(() => {
+    originalMatchMedia = window.matchMedia;
+    // Default to the compact (mobile) toolbar unless a test opts into desktop.
+    window.matchMedia = makeMatchMedia(false);
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
   it("renders the initial value's text", () => {
     render(
       <RichTextEditor
@@ -93,7 +117,9 @@ describe("RichTextEditor", () => {
         disabled
       />,
     );
-    expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "More formatting" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /text color/i }),
     ).not.toBeInTheDocument();
@@ -103,7 +129,7 @@ describe("RichTextEditor", () => {
     );
   });
 
-  it("offers a text color picker alongside bold/italic/underline", () => {
+  it("offers text size and color as primary toolbar controls", () => {
     render(
       <RichTextEditor
         label="Title"
@@ -111,7 +137,64 @@ describe("RichTextEditor", () => {
         onChange={jest.fn()}
       />,
     );
+    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Text color" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More formatting" }),
+    ).toBeInTheDocument();
+    // Bold / align stay behind More until opened.
+    expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
+  });
+
+  it("reflects the selected text's authored color in the picker control", () => {
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{
+          blocks: [
+            {
+              type: "paragraph",
+              spans: [
+                { text: "Plain " },
+                { text: "Gray", color: "#666666" },
+              ],
+            },
+          ],
+        }}
+        onChange={jest.fn()}
+      />,
+    );
+
+    const grayText = screen.getByText("Gray");
+    const range = document.createRange();
+    range.selectNodeContents(grayText);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+
+    expect(screen.getByRole("button", { name: "Text color" })).toHaveStyle({
+      borderColor: "#666666",
+    });
+  });
+
+  it("shows the full formatting toolbar on desktop widths", () => {
+    window.matchMedia = makeMatchMedia(true);
+    render(
+      <RichTextEditor
+        label="Title"
+        value={plainTextToRichText("Welcome")}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bulleted list" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Align center" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Text color" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "More formatting" }),
+    ).not.toBeInTheDocument();
   });
 
   /**
@@ -129,7 +212,13 @@ describe("RichTextEditor", () => {
     selection?.addRange(range);
   };
 
-  it("toggles the selected block between a bullet and a paragraph", () => {
+  const openMoreFormatting = async () => {
+    fireEvent.mouseDown(screen.getByRole("button", { name: "More formatting" }));
+    fireEvent.click(screen.getByRole("button", { name: "More formatting" }));
+    await screen.findByRole("button", { name: "Bold" });
+  };
+
+  it("toggles the selected block between a bullet and a paragraph", async () => {
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -140,6 +229,7 @@ describe("RichTextEditor", () => {
     );
     const editable = screen.getByRole("textbox", { name: "Notes" });
     selectInside(editable);
+    await openMoreFormatting();
 
     const listButton = screen.getByRole("button", { name: "Bulleted list" });
     expect(listButton).toHaveAttribute("aria-pressed", "false");
@@ -158,7 +248,7 @@ describe("RichTextEditor", () => {
     });
   });
 
-  it("aligns the selected block, storing left as no alignment", () => {
+  it("aligns the selected block, storing left as no alignment", async () => {
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -169,6 +259,7 @@ describe("RichTextEditor", () => {
     );
     const editable = screen.getByRole("textbox", { name: "Notes" });
     selectInside(editable);
+    await openMoreFormatting();
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "Align center" }));
     expect(handleChange).toHaveBeenLastCalledWith({
@@ -259,6 +350,9 @@ describe("RichTextEditor", () => {
       />,
     );
     expect(
+      screen.queryByRole("button", { name: "More formatting" }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.queryByRole("button", { name: "Bulleted list" }),
     ).not.toBeInTheDocument();
     expect(
@@ -283,6 +377,9 @@ describe("RichTextEditor", () => {
     );
     expect(screen.getByText("Notes heading")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove note" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More formatting" }),
+    ).toBeInTheDocument();
   });
 });

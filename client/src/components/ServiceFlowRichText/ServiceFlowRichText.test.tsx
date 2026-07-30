@@ -8,15 +8,53 @@ describe("ServiceFlowRichText", () => {
         document={{
           blocks: [{
             type: "paragraph",
-            spans: [{ text: "Red mic", color: "#dd0000", bold: true }],
+            spans: [{ text: "Amber cue", color: "#fbbf24", bold: true }],
           }],
         }}
       />,
     );
 
-    const text = screen.getByText("Red mic");
-    expect(text).toHaveStyle({ color: "rgb(221, 0, 0)" });
+    const text = screen.getByText("Amber cue");
+    // Bright colors keep plain colored text (no chip).
+    expect(text).toHaveStyle({ color: "rgb(251, 191, 36)" });
     expect(text).toHaveClass("font-semibold");
+    expect(text).not.toHaveStyle({ backgroundColor: "rgb(251, 191, 36)" });
+  });
+
+  it("keeps readable mid-tone colors as plain colored text", () => {
+    render(
+      <ServiceFlowRichText
+        document={{
+          blocks: [{
+            type: "paragraph",
+            spans: [{ text: "Gray", color: "#666666" }],
+          }],
+        }}
+      />,
+    );
+
+    const text = screen.getByText("Gray");
+    expect(text).toHaveStyle({ color: "rgb(102, 102, 102)" });
+    expect(text).not.toHaveStyle({ backgroundColor: "rgb(102, 102, 102)" });
+  });
+
+  it("chips only near-invisible colors on the dark note surface", () => {
+    render(
+      <ServiceFlowRichText
+        document={{
+          blocks: [{
+            type: "paragraph",
+            spans: [{ text: "Black", color: "#000000" }],
+          }],
+        }}
+      />,
+    );
+
+    const text = screen.getByText("Black");
+    expect(text).toHaveStyle({
+      color: "rgb(255, 255, 255)",
+      backgroundColor: "rgb(0, 0, 0)",
+    });
   });
 
   it("honors block alignment, and emits no alignment for the default", () => {

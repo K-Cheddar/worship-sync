@@ -96,7 +96,30 @@ const buildCreateItemOverrideState = (
 
 type MobileSongTab = "create" | "import";
 
-const CreateItem = () => {
+export type CreateItemProps = {
+  /**
+   * `embedded`: song-only form for modals (no type picker, no navigation after create).
+   * Defaults to the Controller create page.
+   */
+  variant?: "page" | "embedded";
+  /** Heading shown above the form. */
+  title?: string;
+  /** Embedded: back to the previous surface without creating. */
+  onCancel?: () => void;
+  /**
+   * Embedded: called after a successful create instead of opening the item editor.
+   * Still writes the library song (allItems + allDocs).
+   */
+  onCreated?: (item: ItemState) => void;
+};
+
+const CreateItem = ({
+  variant = "page",
+  title,
+  onCancel,
+  onCreated,
+}: CreateItemProps = {}) => {
+  const isEmbedded = variant === "embedded";
   const createItemDraft = useSelector((state: RootState) => state.createItem);
   const { list } = useSelector((state: RootState) => state.allItems);
 
@@ -156,9 +179,13 @@ const CreateItem = () => {
     [access]
   );
 
-  const selectedTypeLabel =
-    itemTypes.find((itemType) => itemType.type === selectedType)?.label ||
+  const selectedTypeLabel = isEmbedded
+    ? "Song"
+    : itemTypes.find((itemType) => itemType.type === selectedType)?.label ||
     "Item";
+
+  const heading =
+    title !== undefined ? title : isEmbedded ? "Create song" : "Create Item";
 
   const updateCreateItemDraft = (updates: Partial<CreateItemState>) => {
     dispatch(
@@ -199,6 +226,14 @@ const CreateItem = () => {
   }, [selectedType]);
 
   useEffect(() => {
+    if (!isEmbedded) return;
+    if (selectedType === "song") return;
+    updateCreateItemDraft({ type: "song" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lock embedded create to song
+  }, [isEmbedded, selectedType]);
+
+  useEffect(() => {
+    if (isEmbedded) return;
     const overrideType = searchParams.get("type");
     const overrideName = searchParams.get("name");
 
@@ -213,7 +248,7 @@ const CreateItem = () => {
       )
     );
     setSearchParams({}, { replace: true });
-  }, [dispatch, searchParams, setSearchParams]);
+  }, [dispatch, isEmbedded, searchParams, setSearchParams]);
 
   const applyLrclibImport = (candidate: NormalizedLrclibTrack) => {
     const lyricsText = getImportableLyricsFromTrack(candidate);
@@ -308,10 +343,16 @@ const CreateItem = () => {
       _id: item._id,
       listId: "",
     };
-    dispatch(setActiveItem(item));
-    const addedAction = dispatch(addItemToItemList(listItem));
     dispatch(addItemToAllItemsList(listItem));
     dispatch(upsertItemInAllDocs(item));
+
+    if (isEmbedded) {
+      onCreated?.(item);
+      return;
+    }
+
+    dispatch(setActiveItem(item));
+    const addedAction = dispatch(addItemToItemList(listItem));
     goToItem(item._id, addedAction.payload.listId);
   };
 
@@ -406,6 +447,13 @@ const CreateItem = () => {
     setTimeout(() => setJustAdded(false), 2000);
   };
 
+  let createButtonLabel = `Create ${selectedTypeLabel}`;
+  if (justCreated) {
+    createButtonLabel = "Created.";
+  } else if (isEmbedded) {
+    createButtonLabel = "Create and attach";
+  }
+
   const lyricsImportPanel = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden">
       <div className="flex items-start justify-between gap-2">
@@ -499,9 +547,27 @@ const CreateItem = () => {
         onClose={() => setViewLyricsCandidate(null)}
       />
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-        <h2 className="mt-2 shrink-0 px-4 text-center text-2xl font-semibold">
-          Create Item
-        </h2>
+        {isEmbedded && onCancel ? (
+          <div className="shrink-0 px-4 pt-1">
+            <Button
+              type="button"
+              variant="tertiary"
+              className="justify-start"
+              disabled={justCreated}
+              onClick={() => {
+                dispatch(resetCreateItem());
+                onCancel();
+              }}
+            >
+              Back to song search
+            </Button>
+          </div>
+        ) : null}
+        {heading ? (
+          <h2 className="mt-2 shrink-0 px-4 text-center text-2xl font-semibold">
+            {heading}
+          </h2>
+        ) : null}
         <div
           className={cn(
             "flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3 overflow-x-hidden px-4 pb-2 pt-2",
@@ -550,7 +616,7 @@ const CreateItem = () => {
                 className="text-base"
                 data-ignore-undo="true"
               />
-              {existingItem && (
+              {existingItem && !isEmbedded && (
                 <p className="flex w-full items-center rounded-md bg-neutral-700/90 p-1 text-sm text-cyan-400">
                   <span className="italic font-semibold mr-2">"{existingItem.name}"</span>
                   <span> already exists.</span>
@@ -565,33 +631,42 @@ const CreateItem = () => {
                   </Button>
                 </p>
               )}
-              <RadioGroup
-                value={selectedType}
-                onValueChange={(v) =>
-                  updateCreateItemDraft({ type: v as ItemType })
-                }
-                className="flex flex-col gap-2"
-              >
-                {itemTypes.map((itemType) => (
-                  <div
-                    key={itemType.type}
-                    className="flex w-full min-w-0 items-center gap-3"
-                  >
-                    <Icon
-                      className="size-6 shrink-0 self-center"
-                      svg={svgMap.get(itemType.type) || FileQuestion}
-                      color={iconColorMap.get(itemType.type)}
-                    />
-                    <RadioButton
-                      optionValue={itemType.type}
-                      label={itemType.label}
-                      textSize="text-base"
-                      className="min-w-0 flex-1"
-                      data-ignore-undo="true"
-                    />
-                  </div>
-                ))}
-              </RadioGroup>
+              {existingItem && isEmbedded && (
+                <p className="rounded-md bg-neutral-700/90 p-2 text-sm text-cyan-300">
+                  A song named &ldquo;{existingItem.name}&rdquo; already exists.
+                  You can still create another, or go back and attach the existing
+                  one.
+                </p>
+              )}
+              {!isEmbedded && (
+                <RadioGroup
+                  value={selectedType}
+                  onValueChange={(v) =>
+                    updateCreateItemDraft({ type: v as ItemType })
+                  }
+                  className="flex flex-col gap-2"
+                >
+                  {itemTypes.map((itemType) => (
+                    <div
+                      key={itemType.type}
+                      className="flex w-full min-w-0 items-center gap-3"
+                    >
+                      <Icon
+                        className="size-6 shrink-0 self-center"
+                        svg={svgMap.get(itemType.type) || FileQuestion}
+                        color={iconColorMap.get(itemType.type)}
+                      />
+                      <RadioButton
+                        optionValue={itemType.type}
+                        label={itemType.label}
+                        textSize="text-base"
+                        className="min-w-0 flex-1"
+                        data-ignore-undo="true"
+                      />
+                    </div>
+                  ))}
+                </RadioGroup>
+              )}
             </div>
 
             {selectedType === "song" && (
@@ -748,58 +823,60 @@ const CreateItem = () => {
               </div>
             )}
 
-            <div className="mt-4 shrink-0 rounded-lg border border-white/10 bg-gray-950/70 px-3 py-2">
-              <CollapsibleSectionTrigger
-                label="Advanced"
-                expanded={isAdvancedExpanded}
-                onExpandedChange={setIsAdvancedExpanded}
-                className="-mx-1 px-1"
-              />
-              {isAdvancedExpanded && (
-                <div className="mt-1 flex flex-col items-center gap-2 border-t border-white/10 pt-2">
-                  <p className="text-sm font-medium text-gray-200">Sends to:</p>
-                  <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-                    <Toggle
-                      label="Projector"
-                      value={shouldSendTo.projector}
-                      onChange={(val) =>
-                        setShouldSendTo((prev) => ({ ...prev, projector: val }))
-                      }
-                    />
-                    <Toggle
-                      label="Monitor"
-                      value={shouldSendTo.monitor}
-                      onChange={(val) =>
-                        setShouldSendTo((prev) => ({ ...prev, monitor: val }))
-                      }
-                    />
-                    <Toggle
-                      label="Stream"
-                      value={shouldSendTo.stream}
-                      onChange={(val) =>
-                        setShouldSendTo((prev) => ({ ...prev, stream: val }))
-                      }
-                    />
+            {!isEmbedded && (
+              <div className="mt-4 shrink-0 rounded-lg border border-white/10 bg-gray-950/70 px-3 py-2">
+                <CollapsibleSectionTrigger
+                  label="Advanced"
+                  expanded={isAdvancedExpanded}
+                  onExpandedChange={setIsAdvancedExpanded}
+                  className="-mx-1 px-1"
+                />
+                {isAdvancedExpanded && (
+                  <div className="mt-1 flex flex-col items-center gap-2 border-t border-white/10 pt-2">
+                    <p className="text-sm font-medium text-gray-200">Sends to:</p>
+                    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                      <Toggle
+                        label="Projector"
+                        value={shouldSendTo.projector}
+                        onChange={(val) =>
+                          setShouldSendTo((prev) => ({ ...prev, projector: val }))
+                        }
+                      />
+                      <Toggle
+                        label="Monitor"
+                        value={shouldSendTo.monitor}
+                        onChange={(val) =>
+                          setShouldSendTo((prev) => ({ ...prev, monitor: val }))
+                        }
+                      />
+                      <Toggle
+                        label="Stream"
+                        value={shouldSendTo.stream}
+                        onChange={(val) =>
+                          setShouldSendTo((prev) => ({ ...prev, stream: val }))
+                        }
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            )}
+            <div className="mt-3 flex shrink-0 flex-col gap-2">
+              <Button
+                disabled={
+                  !itemName ||
+                  (selectedType !== "song" && !!existingItem) ||
+                  justCreated
+                }
+                variant="cta"
+                className="w-full justify-center text-base"
+                onClick={createItem}
+                svg={justCreated ? Check : Plus}
+                color={justCreated ? "#84cc16" : undefined}
+              >
+                {createButtonLabel}
+              </Button>
             </div>
-            <Button
-              disabled={
-                !itemName ||
-                (selectedType !== "song" && !!existingItem) ||
-                justCreated
-              }
-              variant="cta"
-              className="mt-3 w-full shrink-0 justify-center text-base"
-              onClick={createItem}
-              svg={justCreated ? Check : Plus}
-              color={justCreated ? "#84cc16" : undefined}
-            >
-              {justCreated
-                ? "Created."
-                : `Create ${selectedTypeLabel}`}
-            </Button>
           </div>
           {showLyricsImportPanel && (
             <div

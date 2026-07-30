@@ -1,4 +1,4 @@
-import { ReactElement } from "react";
+import { ReactElement, type ComponentProps } from "react";
 import {
   Popover,
   PopoverClose,
@@ -23,6 +23,15 @@ type PopOverProps = {
   align?: "start" | "center" | "end";
   side?: "top" | "right" | "bottom" | "left";
   sideOffset?: number;
+  /**
+   * Forwarded to Radix PopoverContent. Use e.g. onFocusOutside preventDefault
+   * when a child (color wheel) must restore selection into another field
+   * without dismissing the popover.
+   */
+  onFocusOutside?: ComponentProps<typeof PopoverContent>["onFocusOutside"];
+  onPointerDownOutside?: ComponentProps<typeof PopoverContent>["onPointerDownOutside"];
+  onInteractOutside?: ComponentProps<typeof PopoverContent>["onInteractOutside"];
+  onOpenAutoFocus?: ComponentProps<typeof PopoverContent>["onOpenAutoFocus"];
 };
 
 const PopOver = ({
@@ -35,6 +44,10 @@ const PopOver = ({
   align = "end",
   side = "bottom",
   sideOffset = 4,
+  onFocusOutside,
+  onPointerDownOutside,
+  onInteractOutside,
+  onOpenAutoFocus,
 }: PopOverProps) => {
   return (
     <Popover onOpenChange={onOpenChange}>
@@ -47,6 +60,10 @@ const PopOver = ({
           "w-auto max-w-[85vw] overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-0 text-white shadow-md",
           contentClassName,
         )}
+        onFocusOutside={onFocusOutside}
+        onPointerDownOutside={onPointerDownOutside}
+        onInteractOutside={onInteractOutside}
+        onOpenAutoFocus={onOpenAutoFocus}
       >
         <div
           className={cn("flex justify-end pr-2 pt-2", headerRowClassName)}

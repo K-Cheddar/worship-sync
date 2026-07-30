@@ -8,6 +8,7 @@ import {
   Bold,
   Italic,
   List,
+  MoreHorizontal,
   Underline,
 } from "lucide-react";
 import Label from "@/components/ui/Label";
@@ -16,6 +17,7 @@ import Button from "../Button/Button";
 import { BrandAwareColorPicker } from "../ColorField/ColorField";
 import PopOver from "../PopOver/PopOver";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
   EMPTY_RICH_TEXT,
   isRichTextEmpty,
@@ -30,12 +32,17 @@ import {
   blockSizeOf,
   blockTypeOf,
   getBlockElements,
+  prepareRichTextColorsForBrowserCommand,
   readRichTextFromElement,
   renderRichTextIntoElement,
+  resolveAuthoredRichTextColorFromElement,
 } from "./richTextDom";
+import { applyReadableRichTextColorToElement } from "../../utils/richTextColorContrast";
 
 /** Matches the editor's own base text color (`text-neutral-100`). */
 const DEFAULT_TEXT_COLOR = "#f4f4f5";
+/** Pause between color-wheel samples before rewriting the selection (matches ColorField). */
+const TEXT_COLOR_APPLY_DEBOUNCE_MS = 80;
 
 const SIZE_OPTIONS: { value: RichTextSize | "normal"; label: string }[] = [
   { value: "small", label: "Small" },
@@ -136,6 +143,32 @@ const getSelectedBlocks = (container: HTMLElement): HTMLElement[] => {
 };
 
 /**
+ * The authored color at the caret or start of the selection. Start color is
+ * the conventional toolbar behavior for a selection spanning mixed colors.
+ */
+const getSelectedTextColor = (
+  container: HTMLElement,
+): string | undefined => {
+  if (typeof window === "undefined") return undefined;
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return undefined;
+  const range = selection.getRangeAt(0);
+  if (!container.contains(range.startContainer)) return undefined;
+
+  let element =
+    range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.startContainer as HTMLElement)
+      : range.startContainer.parentElement;
+
+  while (element && element !== container) {
+    const color = resolveAuthoredRichTextColorFromElement(element);
+    if (color) return color;
+    element = element.parentElement;
+  }
+  return undefined;
+};
+
+/**
  * Minimal rich text editor (bold/italic/underline/color, paragraphs/list items)
  * backed by a plain `contentEditable` div. Serializes to/from the structured
  * `RichTextDocument` shape (see richTextDom.ts) — never HTML strings — on
@@ -165,6 +198,9 @@ const RichTextEditor = ({
    * focus, which clears the live selection in a real browser, so block
    * commands issued from one can't rely on restoring it. */
   const savedBlocksRef = useRef<HTMLElement[]>([]);
+  const textColorApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTextColorRef = useRef<string | null>(null);
+  const applyingTextColorRef = useRef(false);
   const [focused, setFocused] = useState(false);
   const [textColor, setTextColor] = useState(DEFAULT_TEXT_COLOR);
   const [activeMarks, setActiveMarks] = useState({
@@ -179,6 +215,8 @@ const RichTextEditor = ({
   }>({ isList: false, align: "left", size: "normal" });
   const { churchBranding } = useContext(GlobalInfoContext) || {};
   const brandColors = churchBranding?.colors || [];
+  // Full toolbar from the md breakpoint up; compact size/color/More on phones.
+  const showFullToolbar = useMediaQuery("(min-width: 768px)");
 
   useEffect(() => {
     const container = containerRef.current;
@@ -218,6 +256,76 @@ const RichTextEditor = ({
     selection.addRange(range);
   };
 
+  /** Display-only contrast helpers on colored spans (not part of the model). */
+  const decorateColoredSpansInEditor = () => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll<HTMLElement>("span, font").forEach((el) => {
+      // Must not re-read style.color after chips rewrite it to white/black ink —
+      // that was overwriting the first word's authored color on the next paint.
+      const hex = resolveAuthoredRichTextColorFromElement(el);
+      if (!hex) return;
+      applyReadableRichTextColorToElement(el, hex);
+    });
+  };
+
+  const applyTextColorToSelection = (nextColor: string) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    applyingTextColorRef.current = true;
+    restoreSelection();
+    // Remove display-only chip ink/metadata before the browser rewrites the
+    // selection. Otherwise a stale authored-color attribute can win over the
+    // newly applied style during the following decoration pass.
+    prepareRichTextColorsForBrowserCommand(container);
+    applyColorFormat(nextColor);
+    saveSelection();
+    decorateColoredSpansInEditor();
+    // Radix emits focus-outside synchronously when selection restoration moves
+    // focus back to the editor. Keep that internal move from dismissing the
+    // picker, but let a later real click in the editor close it normally.
+    queueMicrotask(() => {
+      applyingTextColorRef.current = false;
+    });
+  };
+
+  const flushPendingTextColor = () => {
+    if (textColorApplyTimerRef.current) {
+      clearTimeout(textColorApplyTimerRef.current);
+      textColorApplyTimerRef.current = null;
+    }
+    const pending = pendingTextColorRef.current;
+    if (pending == null) return;
+    pendingTextColorRef.current = null;
+    applyTextColorToSelection(pending);
+  };
+
+  const scheduleTextColorApply = (nextColor: string) => {
+    // Keep the picker + toolbar border live while dragging; only the selection
+    // rewrite is debounced (execCommand + contrast decoration).
+    setTextColor(nextColor);
+    pendingTextColorRef.current = nextColor;
+    if (textColorApplyTimerRef.current) {
+      clearTimeout(textColorApplyTimerRef.current);
+    }
+    textColorApplyTimerRef.current = setTimeout(() => {
+      textColorApplyTimerRef.current = null;
+      const pending = pendingTextColorRef.current;
+      pendingTextColorRef.current = null;
+      if (pending != null) applyTextColorToSelection(pending);
+    }, TEXT_COLOR_APPLY_DEBOUNCE_MS);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (textColorApplyTimerRef.current) {
+        clearTimeout(textColorApplyTimerRef.current);
+        textColorApplyTimerRef.current = null;
+      }
+    };
+  }, []);
+
   /** Blocks the commands and the toolbar state both operate on: the live
    * selection when there is one, otherwise whatever was selected when a
    * popover took focus. */
@@ -232,6 +340,11 @@ const RichTextEditor = ({
   const syncToolbarState = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
+    // Do not let selection restoration during a pending wheel drag overwrite
+    // the picker's live draft color.
+    if (pendingTextColorRef.current == null) {
+      setTextColor(getSelectedTextColor(container) || DEFAULT_TEXT_COLOR);
+    }
     setActiveMarks({
       bold: isInlineFormatActive("bold"),
       italic: isInlineFormatActive("italic"),
@@ -355,6 +468,95 @@ const RichTextEditor = ({
       onApply: () => applyAlign(align),
     });
 
+  const moreFormattingActive =
+    activeMarks.bold ||
+    activeMarks.italic ||
+    activeMarks.underline ||
+    activeBlock.isList ||
+    activeBlock.align !== "left";
+
+  const renderTextSizeControl = () => (
+    <PopOver
+      align="start"
+      TriggeringButton={
+        <Button
+          type="button"
+          variant="tertiary"
+          iconSize="sm"
+          svg={ALargeSmall}
+          aria-label="Text size"
+          className={cn(
+            activeBlock.size !== "normal" && "bg-gray-600 text-white",
+          )}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            saveSelection();
+          }}
+        />
+      }
+    >
+      <div className="flex flex-col gap-1 p-1">
+        {SIZE_OPTIONS.map((option) => (
+          <Button
+            key={option.value}
+            type="button"
+            variant="tertiary"
+            className={cn(
+              "justify-start",
+              activeBlock.size === option.value && "bg-gray-600 text-white",
+            )}
+            aria-pressed={activeBlock.size === option.value}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              restoreSelection();
+              applySize(option.value);
+            }}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+    </PopOver>
+  );
+
+  const renderTextColorControl = () => (
+    <PopOver
+      align="start"
+      // Color changes restore the contentEditable selection so foreColor can
+      // run. That moves focus out of the popover; without this, Radix closes
+      // the picker on the first wheel click.
+      onFocusOutside={(event) => {
+        if (applyingTextColorRef.current) event.preventDefault();
+      }}
+      onOpenChange={(open) => {
+        if (!open) flushPendingTextColor();
+      }}
+      TriggeringButton={
+        <Button
+          type="button"
+          variant="tertiary"
+          iconSize="sm"
+          svg={Baseline}
+          aria-label="Text color"
+          className="border-b-2"
+          style={{ borderColor: textColor }}
+          // Keep the contentEditable selection while opening the picker,
+          // same as bold/italic/underline.
+          onMouseDown={(event) => {
+            event.preventDefault();
+            saveSelection();
+          }}
+        />
+      }
+    >
+      <BrandAwareColorPicker
+        color={textColor}
+        colors={brandColors}
+        onChange={scheduleTextColorApply}
+      />
+    </PopOver>
+  );
+
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
       {label != null ? (
@@ -370,95 +572,67 @@ const RichTextEditor = ({
           {toolbarLeading}
           {!disabled ? (
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-              {markButton("bold", Bold, "Bold")}
-              {markButton("italic", Italic, "Italic")}
-              {markButton("underline", Underline, "Underline")}
-              <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
-              {commandButton({
-                Icon: List,
-                ariaLabel: "Bulleted list",
-                isActive: activeBlock.isList,
-                onApply: toggleList,
-              })}
-              {/* A menu rather than three more buttons — the toolbar sits inside a
-                  notes field and is already dense. */}
-              <PopOver
-                align="start"
-                TriggeringButton={
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    iconSize="sm"
-                    svg={ALargeSmall}
-                    aria-label="Text size"
-                    className={cn(
-                      activeBlock.size !== "normal" && "bg-gray-600 text-white",
-                    )}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      saveSelection();
-                    }}
-                  />
-                }
-              >
-                <div className="flex flex-col gap-1 p-1">
-                  {SIZE_OPTIONS.map((option) => (
-                    <Button
-                      key={option.value}
-                      type="button"
-                      variant="tertiary"
-                      className={cn(
-                        "justify-start",
-                        activeBlock.size === option.value && "bg-gray-600 text-white",
-                      )}
-                      aria-pressed={activeBlock.size === option.value}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        restoreSelection();
-                        applySize(option.value);
-                      }}
-                    >
-                      {option.label}
-                    </Button>
-                  ))}
-                </div>
-              </PopOver>
-              <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
-              {alignButton("left", AlignLeft, "Align left")}
-              {alignButton("center", AlignCenter, "Align center")}
-              {alignButton("right", AlignRight, "Align right")}
-              <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
-              <PopOver
-                align="start"
-                TriggeringButton={
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    iconSize="sm"
-                    svg={Baseline}
-                    aria-label="Text color"
-                    className="border-b-2"
-                    style={{ borderColor: textColor }}
-                    // Keep the contentEditable selection while opening the picker,
-                    // same as bold/italic/underline.
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      saveSelection();
-                    }}
-                  />
-                }
-              >
-                <BrandAwareColorPicker
-                  color={textColor}
-                  colors={brandColors}
-                  onChange={(nextColor) => {
-                    setTextColor(nextColor);
-                    restoreSelection();
-                    applyColorFormat(nextColor);
-                    saveSelection();
-                  }}
-                />
-              </PopOver>
+              {showFullToolbar ? (
+                <>
+                  {markButton("bold", Bold, "Bold")}
+                  {markButton("italic", Italic, "Italic")}
+                  {markButton("underline", Underline, "Underline")}
+                  <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
+                  {commandButton({
+                    Icon: List,
+                    ariaLabel: "Bulleted list",
+                    isActive: activeBlock.isList,
+                    onApply: toggleList,
+                  })}
+                  {renderTextSizeControl()}
+                  <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
+                  {alignButton("left", AlignLeft, "Align left")}
+                  {alignButton("center", AlignCenter, "Align center")}
+                  {alignButton("right", AlignRight, "Align right")}
+                  <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
+                  {renderTextColorControl()}
+                </>
+              ) : (
+                <>
+                  {renderTextSizeControl()}
+                  {renderTextColorControl()}
+                  <PopOver
+                    align="start"
+                    TriggeringButton={
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        iconSize="sm"
+                        svg={MoreHorizontal}
+                        aria-label="More formatting"
+                        aria-pressed={moreFormattingActive}
+                        className={cn(moreFormattingActive && "bg-gray-600 text-white")}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          saveSelection();
+                        }}
+                      />
+                    }
+                  >
+                    <div className="flex flex-wrap items-center gap-1 p-1.5">
+                      {markButton("bold", Bold, "Bold")}
+                      {markButton("italic", Italic, "Italic")}
+                      {markButton("underline", Underline, "Underline")}
+                      <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
+                      {commandButton({
+                        Icon: List,
+                        ariaLabel: "Bulleted list",
+                        isActive: activeBlock.isList,
+                        onApply: toggleList,
+                      })}
+                      <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
+                      {alignButton("left", AlignLeft, "Align left")}
+                      {alignButton("center", AlignCenter, "Align center")}
+                      {alignButton("right", AlignRight, "Align right")}
+                    </div>
+                  </PopOver>
+                </>
+              )}
             </div>
           ) : (
             <div className="min-w-0 flex-1" />
@@ -492,6 +666,7 @@ const RichTextEditor = ({
           onFocus={() => setFocused(true)}
           onBlur={() => {
             setFocused(false);
+            flushPendingTextColor();
             commitChange();
           }}
           onKeyDown={handleKeyDown}

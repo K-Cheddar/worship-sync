@@ -7,6 +7,10 @@ import { HexAlphaColorPicker, HexColorInput, HexColorPicker } from "react-colorf
 import cn from "classnames";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchBrandColorLabel } from "../../utils/churchBranding";
+import {
+  addRecentColor,
+  readRecentColors,
+} from "../../utils/recentColors";
 
 interface ColorFieldProps {
   className?: string;
@@ -99,6 +103,41 @@ export const ChurchBrandColorSwatches: React.FC<
   );
 };
 
+type RecentColorSwatchesProps = {
+  colors: string[];
+  onSelect: (value: string) => void;
+};
+
+export const RecentColorSwatches: React.FC<RecentColorSwatchesProps> = ({
+  colors,
+  onSelect,
+}) => {
+  if (colors.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-300">
+        Recent
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {colors.map((swatch) => (
+          <Button
+            key={swatch}
+            variant="tertiary"
+            aria-label={`Recent color ${swatch}`}
+            padding="p-0"
+            className="size-6 aspect-square shrink-0 min-h-0 max-md:min-h-0 border border-white/25"
+            style={{ backgroundColor: swatch }}
+            onClick={() => onSelect(swatch)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+
 type BrandAwareColorPickerProps = {
   color: string;
   onChange: (value: string) => void;
@@ -114,6 +153,24 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
 }) => {
   const PickerComponent = alpha ? HexAlphaColorPicker : HexColorPicker;
   const inputProps = alpha ? { alpha: true } : {};
+  const [recentColors] = useState(readRecentColors);
+  const lastColorRef = useRef(color);
+
+  useEffect(() => {
+    lastColorRef.current = color;
+  }, [color]);
+
+  // PopOver unmounts content on close; persist only the final color then.
+  useEffect(() => {
+    return () => {
+      addRecentColor(lastColorRef.current);
+    };
+  }, []);
+
+  const handleChange = (next: string) => {
+    lastColorRef.current = next;
+    onChange(next);
+  };
 
   return (
     <div className="rounded-md bg-slate-700/30 p-2">
@@ -125,22 +182,27 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
           )}
         >
           <div className="[&_.react-colorful]:h-[180px] [&_.react-colorful]:w-full [&_.react-colorful]:rounded-md [&_.react-colorful]:border [&_.react-colorful]:border-white/15 [&_.react-colorful__hue]:mt-2 [&_.react-colorful__alpha]:mt-2">
-            <PickerComponent color={color} onChange={onChange} />
+            <PickerComponent color={color} onChange={handleChange} />
           </div>
           <HexColorInput
             color={color}
             prefixed
-            onChange={onChange}
+            onChange={handleChange}
             className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm font-medium text-neutral-100 placeholder:text-neutral-400"
             {...inputProps}
           />
         </div>
         {colors.length > 0 && (
           <div className="w-fit pl-1">
-            <ChurchBrandColorSwatches colors={colors} onSelect={onChange} />
+            <ChurchBrandColorSwatches colors={colors} onSelect={handleChange} />
           </div>
         )}
       </div>
+      {recentColors.length > 0 && (
+        <div className="mt-3 border-t border-white/15 pt-3">
+          <RecentColorSwatches colors={recentColors} onSelect={handleChange} />
+        </div>
+      )}
     </div>
   );
 };

@@ -381,6 +381,46 @@ describe("summarizeNeededPositions", () => {
 });
 
 describe("groupAssignmentSummaryByTeam", () => {
+  it("names the schedule when one team has two of them over the same date", () => {
+    // Two schedules for the same team and date render as two identically
+    // titled blocks with different fill counts, which reads as a duplicate
+    // until each says which schedule it came from.
+    const schedules = [
+      schedule({
+        [occurrence.occurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-2" },
+        },
+      }),
+      schedule(
+        {},
+        { scheduleId: "schedule-dup", name: "July (rebuild)" },
+      ),
+    ];
+
+    const groups = groupAssignmentSummaryByTeam(summaryFor(schedules), schedules);
+    const worship = groups.filter((group) => group.teamName === "Worship");
+
+    expect(worship).toHaveLength(2);
+    expect(worship.map((group) => group.scheduleName).sort()).toEqual([
+      "July",
+      "July (rebuild)",
+    ]);
+  });
+
+  it("leaves the schedule name off when a team only has one", () => {
+    const schedules = [
+      schedule({
+        [occurrence.occurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-2" },
+        },
+      }),
+    ];
+
+    const groups = groupAssignmentSummaryByTeam(summaryFor(schedules), schedules);
+
+    expect(groups.every((group) => group.scheduleName === undefined)).toBe(true);
+  });
+
   it("splits filled from unfilled under each team, in team name order", () => {
     const groups = groupAssignmentSummaryByTeam(
       summaryFor([

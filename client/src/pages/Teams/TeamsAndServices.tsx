@@ -103,12 +103,12 @@ const TeamsAndServicesLayout = () => {
           </div>
         </div>
 
-        <section className="mx-auto mt-4 flex w-full max-w-5xl shrink-0 flex-col gap-3 text-center">
-          <h1 className="flex items-center justify-center gap-2 text-3xl font-semibold">
-            <Icon svg={Users} size="lg" className="text-orange-400" />
+        <section className="mx-auto mt-1.5 flex w-full max-w-5xl shrink-0 flex-col gap-1 text-center lg:mt-3 lg:gap-2">
+          <h1 className="flex items-center justify-center gap-2 text-lg font-semibold lg:text-2xl">
+            <Icon svg={Users} size="md" className="text-orange-400" />
             Teams and Services
           </h1>
-          <p className="mx-auto max-w-3xl text-sm text-gray-200">
+          <p className="mx-auto hidden max-w-3xl text-sm text-gray-200 lg:block">
             Manage scheduling roster, positions, teams, and schedule
             assignments, plus service times and order-of-service plans.
           </p>
@@ -119,12 +119,13 @@ const TeamsAndServicesLayout = () => {
           ) : null}
         </section>
 
-        <section className="mx-auto mt-6 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-3 lg:hidden">
+        <section className="mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-2 lg:hidden">
             <Button
               variant="secondary"
               svg={PanelLeft}
               iconSize="sm"
+              className="max-md:min-h-0"
               aria-label="Open sections"
               onClick={() => setMobileNavOpen(true)}
             >

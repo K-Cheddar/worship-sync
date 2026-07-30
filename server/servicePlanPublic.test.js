@@ -30,13 +30,15 @@ const plan = {
 
 test("public service plan snapshot exposes display-only team notes but omits editor fields", () => {
   const snapshot = buildPublicServicePlanSnapshot({ plan, churchName: "Northside" });
-  assert.equal(snapshot.service.sections[0].items[0].title, "Welcome");
-  assert.equal(snapshot.service.sections[0].items[0].durationSeconds, 300);
-  assert.deepEqual(snapshot.service.sections[0].items[0].teamNotes, [{
+  const item = snapshot.service.sections[0].items[0];
+  assert.equal(item.title, "Welcome");
+  assert.equal(item.durationSeconds, 300);
+  assert.deepEqual(item.teamNotes, [{
     label: "Media",
     notes: { blocks: [{ type: "paragraph", spans: [{ text: "Capture the greeting" }] }] },
   }]);
-  assert.equal(snapshot.service.sections[0].items[0].assignedMemberId, undefined);
+  assert.equal(item.creditName, "Jamie Rivera");
+  assert.equal(item.assignedMemberId, undefined);
   assert.equal(snapshot.service.viewMode, "team");
   assert.deepEqual(snapshot.service.live, { mode: "manual", currentItemId: "welcome" });
 });

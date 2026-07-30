@@ -11,23 +11,24 @@ import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlanElement } from "../../types/servicePlan";
 
 describe("getServicePlanElementSurfaceClassName", () => {
-  it("alternates row backgrounds without type-colored element borders", () => {
+  it("alternates list-row backgrounds without type-colored borders", () => {
     const even = getServicePlanElementSurfaceClassName({ toneIndex: 0 });
     const odd = getServicePlanElementSurfaceClassName({ toneIndex: 1 });
-    expect(even).toContain("bg-gray-900/75");
-    expect(odd).toContain("bg-slate-950/90");
+    expect(even).toContain("bg-gray-900/50");
+    expect(odd).toContain("bg-transparent");
+    expect(even).toContain("border-b");
     expect(even).not.toContain("border-l-4");
     expect(even).not.toContain("border-l-cyan");
     expect(even).not.toEqual(odd);
   });
 
-  it("marks live rows with a subtle emerald ring only", () => {
+  it("marks live rows with a subtle emerald inset ring", () => {
     const live = getServicePlanElementSurfaceClassName({
       toneIndex: 1,
       isLive: true,
     });
-    expect(live).toContain("ring-emerald-500/40");
-    expect(live).toContain("bg-slate-950/90");
+    expect(live).toContain("ring-emerald-500/35");
+    expect(live).toContain("bg-emerald-950/30");
     expect(live).not.toContain("border-l-emerald");
   });
 });
@@ -62,10 +63,12 @@ const renderRow = (
     isLive?: boolean;
     isManualLive?: boolean;
     canEdit?: boolean;
+    isEditing?: boolean;
     hideNotes?: boolean;
   } = {},
 ) => {
   const element = overrides.element ?? baseElement;
+  const canEdit = overrides.canEdit ?? true;
   return render(
     <DndContext onDragEnd={() => { }}>
       <SortableContext
@@ -74,7 +77,8 @@ const renderRow = (
       >
         <ServicePlanElementRow
           element={element}
-          canEdit={overrides.canEdit ?? true}
+          canEdit={canEdit}
+          isEditing={overrides.isEditing ?? canEdit}
           onRemove={jest.fn()}
           onUpdate={jest.fn()}
           onDurationChange={jest.fn()}
@@ -95,6 +99,27 @@ const renderRow = (
 };
 
 describe("ServicePlanElementRow", () => {
+  let originalMatchMedia: typeof window.matchMedia;
+
+  beforeEach(() => {
+    originalMatchMedia = window.matchMedia;
+    // Keep the compact note toolbar stable in jsdom (same as RichTextEditor tests).
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
   it("collapses attachment actions into one Add menu with colored options", async () => {
     const user = userEvent.setup();
     renderRow();
@@ -127,6 +152,7 @@ describe("ServicePlanElementRow", () => {
           <ServicePlanElementRow
             element={baseElement}
             canEdit
+            isEditing
             onRemove={jest.fn()}
             onUpdate={jest.fn()}
             onDurationChange={jest.fn()}
@@ -166,10 +192,16 @@ describe("ServicePlanElementRow", () => {
     expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Notes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "More formatting" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Expand notes/i }));
     expect(await screen.findByRole("textbox", { name: "Notes" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More formatting" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Minimize notes/i }));
     // After minimize, the editor panel is aria-hidden; the preview control returns.
@@ -214,5 +246,27 @@ describe("ServicePlanElementRow", () => {
     expect(
       screen.queryByRole("menuitem", { name: /Team-specific note/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders a compact read-only row in view mode", () => {
+    renderRow({
+      isEditing: false,
+      element: {
+        ...baseElement,
+        assignedName: "Pastoral Team",
+        notes: plainTextToRichText("Panel Discussion"),
+      },
+    });
+
+    expect(screen.getByText("Pastoral Greetings")).toBeInTheDocument();
+    expect(screen.getAllByText("Pastoral Team").length).toBeGreaterThan(0);
+    expect(screen.getByText("10:00 AM")).toBeInTheDocument();
+    expect(screen.getByText("5 min")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Drag to reorder/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Add to Pastoral Greetings/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove note/i })).not.toBeInTheDocument();
   });
 });

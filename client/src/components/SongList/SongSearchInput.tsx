@@ -9,6 +9,7 @@ type SongSearchInputProps = {
   hideLabel?: boolean;
   label?: string;
   labelClassName?: string;
+  inputClassName?: string;
   className?: string;
   /** When false, no trailing icon if the field is empty (matches library page). */
   showSearchIconWhenEmpty?: boolean;
@@ -25,6 +26,7 @@ const SongSearchInput = ({
   hideLabel = false,
   label = "Search",
   labelClassName,
+  inputClassName,
   className = "shrink-0",
   showSearchIconWhenEmpty = true,
 }: SongSearchInputProps) => {
@@ -42,6 +44,7 @@ const SongSearchInput = ({
     <Input
       label={label}
       labelClassName={labelClassName}
+      inputClassName={inputClassName}
       hideLabel={hideLabel}
       className={className}
       value={value}

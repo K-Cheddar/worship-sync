@@ -5,6 +5,10 @@ import type {
   RichTextSize,
   RichTextSpan,
 } from "../../types/richText";
+import {
+  applyReadableRichTextColorToElement,
+  RICH_TEXT_COLOR_ATTR,
+} from "../../utils/richTextColorContrast";
 
 export const BLOCK_TYPE_ATTR = "data-block-type";
 /** Size rides on an attribute rather than an inline font-size so it round-trips
@@ -12,7 +16,9 @@ export const BLOCK_TYPE_ATTR = "data-block-type";
 export const BLOCK_SIZE_ATTR = "data-block-size";
 
 const toHexPair = (value: number) =>
-  Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+  Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, "0");
 
 /**
  * Browsers normalize `element.style.color` to `rgb(r, g, b)` regardless of the
@@ -44,6 +50,58 @@ export const normalizeCssColorToHex = (raw: string): string | undefined => {
 };
 
 /**
+ * Resolve the operator-authored color for a colored span/font. Contrast chips
+ * may rewrite `style.color` to white/black ink; prefer the data attr, then
+ * chip fill / font color, and only then style.color.
+ */
+export const resolveAuthoredRichTextColorFromElement = (
+  el: HTMLElement,
+): string | undefined => {
+  const fromAttr = normalizeCssColorToHex(
+    el.getAttribute(RICH_TEXT_COLOR_ATTR) || "",
+  );
+  if (fromAttr) return fromAttr;
+
+  if (el.tagName.toLowerCase() === "font") {
+    const fromFont = normalizeCssColorToHex(el.getAttribute("color") || "");
+    if (fromFont) return fromFont;
+  }
+
+  // Chip fill is the authored hue when display ink replaced style.color.
+  if (el.style.backgroundColor) {
+    const fromBg = normalizeCssColorToHex(el.style.backgroundColor);
+    if (fromBg) return fromBg;
+  }
+
+  if (el.style.color) return normalizeCssColorToHex(el.style.color);
+  return undefined;
+};
+
+/**
+ * Restore authored colors before execCommand applies a new one. Contrast chips
+ * replace style.color with readable ink and retain the hue in a data attribute;
+ * leaving that stale attribute in place can make a later decoration pass undo
+ * a recolor. This keeps the DOM flat/stable while making style.color authoritative
+ * for the next browser command.
+ */
+export const prepareRichTextColorsForBrowserCommand = (
+  container: HTMLElement,
+): void => {
+  container.querySelectorAll<HTMLElement>("span, font").forEach((el) => {
+    const authoredColor = resolveAuthoredRichTextColorFromElement(el);
+    if (!authoredColor) return;
+
+    el.removeAttribute(RICH_TEXT_COLOR_ATTR);
+    el.style.color = authoredColor;
+    el.style.backgroundColor = "";
+    el.style.borderRadius = "";
+    el.style.padding = "";
+    el.style.boxShadow = "";
+    el.style.textShadow = "";
+  });
+};
+
+/**
  * Renders a RichTextDocument into `container` as real DOM nodes (never via
  * innerHTML/string concatenation — nothing here parses untrusted markup).
  * One top-level element per block; list-item blocks get a bullet drawn by
@@ -55,7 +113,9 @@ export const renderRichTextIntoElement = (
   doc: RichTextDocument,
 ): void => {
   container.textContent = "";
-  const blocks = doc.blocks.length ? doc.blocks : [{ type: "paragraph" as const, spans: [] }];
+  const blocks = doc.blocks.length
+    ? doc.blocks
+    : [{ type: "paragraph" as const, spans: [] }];
   blocks.forEach((block) => {
     const blockEl = document.createElement("div");
     blockEl.setAttribute(BLOCK_TYPE_ATTR, block.type);
@@ -83,7 +143,7 @@ export const renderRichTextIntoElement = (
       }
       if (span.color) {
         const el = document.createElement("span");
-        el.style.color = span.color;
+        applyReadableRichTextColorToElement(el, span.color);
         el.appendChild(node);
         node = el;
       }
@@ -108,15 +168,10 @@ const collectSpansFromInlineNode = (
   if (tag === "strong" || tag === "b") nextFormatting.bold = true;
   if (tag === "em" || tag === "i") nextFormatting.italic = true;
   if (tag === "u") nextFormatting.underline = true;
-  if (tag === "span" && el.style.color) {
-    const color = normalizeCssColorToHex(el.style.color);
-    if (color) nextFormatting.color = color;
-  }
-  // execCommand("foreColor") without styleWithCSS emits <font color="…">.
-  if (tag === "font" && el.getAttribute("color")) {
-    const color = normalizeCssColorToHex(el.getAttribute("color") || "");
-    if (color) nextFormatting.color = color;
-  }
+  // Prefer the authored color attr — contrast chips may rewrite style.color to
+  // white/black ink for readability without changing what we persist.
+  const authoredColor = resolveAuthoredRichTextColorFromElement(el);
+  if (authoredColor) nextFormatting.color = authoredColor;
   if (tag === "br") return [];
   return Array.from(el.childNodes).flatMap((child) =>
     collectSpansFromInlineNode(child, nextFormatting),
@@ -171,7 +226,9 @@ export const getBlockElements = (container: HTMLElement): HTMLElement[] =>
  * browser's own editing/execCommand). Tolerates a bare, unwrapped text node
  * or <div>/<br> at the top level (what a fresh contentEditable produces
  * before any block wrapper exists) by treating it as a single paragraph. */
-export const readRichTextFromElement = (container: HTMLElement): RichTextDocument => {
+export const readRichTextFromElement = (
+  container: HTMLElement,
+): RichTextDocument => {
   const topLevelBlocks = getBlockElements(container);
 
   if (topLevelBlocks.length === 0) {
@@ -180,7 +237,9 @@ export const readRichTextFromElement = (container: HTMLElement): RichTextDocumen
         collectSpansFromInlineNode(child, {}),
       ),
     );
-    return spans.length ? { blocks: [{ type: "paragraph", spans }] } : { blocks: [] };
+    return spans.length
+      ? { blocks: [{ type: "paragraph", spans }] }
+      : { blocks: [] };
   }
 
   const blocks = topLevelBlocks.map((blockEl) => {
