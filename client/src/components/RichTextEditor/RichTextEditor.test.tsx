@@ -1,4 +1,5 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import RichTextEditor from "./RichTextEditor";
 import { plainTextToRichText } from "../../types/richText";
 import type { RichTextDocument } from "../../types/richText";
@@ -68,34 +69,35 @@ describe("RichTextEditor", () => {
     expect(screen.queryByText("Add notes…")).not.toBeInTheDocument();
   });
 
-  it("commits the edited content as a RichTextDocument on blur", () => {
+  it("emits edited content immediately as a RichTextDocument", async () => {
+    const user = userEvent.setup();
     const handleChange = jest.fn();
     render(
       <RichTextEditor label="Title" value={{ blocks: [] }} onChange={handleChange} />,
     );
     const editable = screen.getByRole("textbox", { name: "Title" });
 
-    // Simulate the browser having inserted text while the user typed (jsdom
-    // doesn't implement real contentEditable text insertion, so we mutate the
-    // DOM directly the way a real edit would leave it, then blur — exercising
-    // the same read-DOM-on-blur code path a real edit triggers).
-    editable.textContent = "Great Are You Lord";
-    fireEvent.blur(editable);
+    await user.click(editable);
+    await user.keyboard("Great Are You Lord");
 
-    expect(handleChange).toHaveBeenCalledWith({
-      blocks: [{ type: "paragraph", spans: [{ text: "Great Are You Lord" }] }],
-    } satisfies RichTextDocument);
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "Great Are You Lord" }] }],
+      } satisfies RichTextDocument),
+    );
   });
 
-  it("does not re-render the DOM from a prop value that matches what it just emitted", () => {
+  it("does not re-render the DOM from a prop value that matches what it just emitted", async () => {
+    const user = userEvent.setup();
     const handleChange = jest.fn();
     const { rerender } = render(
       <RichTextEditor label="Title" value={{ blocks: [] }} onChange={handleChange} />,
     );
     const editable = screen.getByRole("textbox", { name: "Title" });
-    editable.textContent = "Typed live";
-    fireEvent.blur(editable);
-    const emitted = handleChange.mock.calls[0][0];
+    await user.click(editable);
+    await user.keyboard("Typed live");
+    await waitFor(() => expect(handleChange).toHaveBeenCalled());
+    const emitted = handleChange.mock.calls.at(-1)?.[0];
 
     // Parent re-renders with exactly the value we just emitted (as a fresh
     // object, since Redux/useState always produce a new reference).
@@ -105,6 +107,224 @@ describe("RichTextEditor", () => {
 
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveTextContent(
       "Typed live",
+    );
+  });
+
+  it("keeps live text when a normalized autosave echo arrives while focused", async () => {
+    const user = userEvent.setup();
+    const handleChange = jest.fn();
+    const { rerender } = render(
+      <RichTextEditor
+        label="Notes"
+        value={{
+          blocks: [
+            { type: "paragraph", spans: [{ text: "Keep typing" }] },
+            { type: "paragraph", spans: [{ text: " " }] },
+          ],
+        }}
+        onChange={handleChange}
+      />,
+    );
+    const editable = screen.getByRole("textbox", { name: "Notes" });
+    await user.click(editable);
+    expect(editable).toHaveFocus();
+
+    // Server normalize turns space-only paragraphs into spans: [].
+    rerender(
+      <RichTextEditor
+        label="Notes"
+        value={{
+          blocks: [
+            { type: "paragraph", spans: [{ text: "Keep typing" }] },
+            { type: "paragraph", spans: [] },
+          ],
+        }}
+        onChange={handleChange}
+      />,
+    );
+
+    expect(editable).toHaveFocus();
+    expect(editable).toHaveTextContent("Keep typing");
+  });
+
+  it("applies a genuinely external value update", () => {
+    const { rerender } = render(
+      <RichTextEditor
+        label="Title"
+        value={plainTextToRichText("Before")}
+        onChange={jest.fn()}
+      />,
+    );
+
+    rerender(
+      <RichTextEditor
+        label="Title"
+        value={plainTextToRichText("After")}
+        onChange={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveTextContent(
+      "After",
+    );
+  });
+
+  it("turns dash input into a bullet and Tab nests the next item", async () => {
+    const user = userEvent.setup();
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{ blocks: [] }}
+        onChange={handleChange}
+      />,
+    );
+    const editable = screen.getByRole("textbox", { name: "Notes" });
+
+    await user.click(editable);
+    await user.keyboard("- Parent{Enter}Child{Tab}");
+
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [
+          { type: "list-item", spans: [{ text: "Parent" }] },
+          { type: "list-item", indent: 1, spans: [{ text: "Child" }] },
+        ],
+      }),
+    );
+  });
+
+  it("turns numbered input into an ordered list", async () => {
+    const user = userEvent.setup();
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{ blocks: [] }}
+        onChange={handleChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("textbox", { name: "Notes" }));
+    await user.keyboard("1. First{Enter}Second");
+
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [
+          {
+            type: "list-item",
+            listStyle: "ordered",
+            spans: [{ text: "First" }],
+          },
+          {
+            type: "list-item",
+            listStyle: "ordered",
+            spans: [{ text: "Second" }],
+          },
+        ],
+      }),
+    );
+  });
+
+  it("supports keyboard undo without waiting for blur", async () => {
+    const user = userEvent.setup();
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{ blocks: [] }}
+        onChange={handleChange}
+      />,
+    );
+    const editable = screen.getByRole("textbox", { name: "Notes" });
+
+    await user.click(editable);
+    await user.keyboard("A");
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "A" }] }],
+      }),
+    );
+    await user.keyboard("{Control>}z{/Control}");
+
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({ blocks: [] }),
+    );
+    await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "A" }] }],
+      }),
+    );
+  });
+
+  it("sanitizes pasted HTML to the supported schema", async () => {
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{ blocks: [] }}
+        onChange={handleChange}
+      />,
+    );
+    const editable = screen.getByRole("textbox", { name: "Notes" });
+    fireEvent.focus(editable);
+
+    fireEvent.paste(editable, {
+      clipboardData: {
+        files: [],
+        items: [],
+        types: ["text/html", "text/plain"],
+        getData: (type: string) =>
+          type === "text/html"
+            ? '<p>Safe <a href="https://bad.test">link</a><img src="bad"></p>'
+            : "Safe link",
+      },
+    });
+
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{
+          type: "paragraph",
+          spans: [{ text: "Safe link" }],
+        }],
+      }),
+    );
+  });
+
+  it("pastes public contrast-chip HTML as the authored hue, not ink", async () => {
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{ blocks: [] }}
+        onChange={handleChange}
+      />,
+    );
+    const editable = screen.getByRole("textbox", { name: "Notes" });
+    fireEvent.focus(editable);
+
+    // Public chips rewrite style.color to white/black and keep the hue only
+    // as background (and, after the fix, also as data-rich-text-color).
+    fireEvent.paste(editable, {
+      clipboardData: {
+        files: [],
+        items: [],
+        types: ["text/html", "text/plain"],
+        getData: (type: string) =>
+          type === "text/html"
+            ? '<p><span style="color: #ffffff; background-color: #000000;">Black cue</span></p>'
+            : "Black cue",
+      },
+    });
+
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{
+          type: "paragraph",
+          spans: [{ text: "Black cue", color: "#000000" }],
+        }],
+      }),
     );
   });
 
@@ -146,7 +366,8 @@ describe("RichTextEditor", () => {
     expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
   });
 
-  it("reflects the selected text's authored color in the picker control", () => {
+  it("reflects the selected text's authored color in the picker control", async () => {
+    const user = userEvent.setup();
     render(
       <RichTextEditor
         label="Notes"
@@ -154,10 +375,7 @@ describe("RichTextEditor", () => {
           blocks: [
             {
               type: "paragraph",
-              spans: [
-                { text: "Plain " },
-                { text: "Gray", color: "#666666" },
-              ],
+              spans: [{ text: "Gray", color: "#666666" }],
             },
           ],
         }}
@@ -165,17 +383,55 @@ describe("RichTextEditor", () => {
       />,
     );
 
-    const grayText = screen.getByText("Gray");
-    const range = document.createRange();
-    range.selectNodeContents(grayText);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    fireEvent(document, new Event("selectionchange"));
+    await user.click(screen.getByText("Gray"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Text color" })).toHaveStyle({
+        borderColor: "#666666",
+      }),
+    );
+  });
 
-    expect(screen.getByRole("button", { name: "Text color" })).toHaveStyle({
-      borderColor: "#666666",
-    });
+  it("keeps the text color picker open while applying a color", async () => {
+    // Regression: TipTap defers focus() to rAF. Calling focus on every color
+    // sample used to dismiss the Radix popover before the operator could drag.
+    window.matchMedia = makeMatchMedia(true);
+    const user = userEvent.setup();
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={plainTextToRichText("Colored")}
+        onChange={handleChange}
+      />,
+    );
+
+    await user.tripleClick(screen.getByText("Colored"));
+    await user.click(screen.getByRole("button", { name: "Text color" }));
+    expect(
+      screen.getByRole("button", { name: "Close popover" }),
+    ).toBeInTheDocument();
+
+    const notes = screen.getByRole("textbox", { name: "Notes" });
+    const pickerInput = screen
+      .getAllByRole("textbox")
+      .find((el) => el !== notes);
+    expect(pickerInput).toBeTruthy();
+    fireEvent.change(pickerInput!, { target: { value: "#ef4444" } });
+
+    // TipTap focus is async (rAF); color apply is also debounced (~80ms).
+    expect(
+      await screen.findByRole("button", { name: "Close popover" }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(handleChange).toHaveBeenCalled());
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [
+          expect.objectContaining({
+            spans: [expect.objectContaining({ color: "#ef4444" })],
+          }),
+        ],
+      }),
+    );
   });
 
   it("shows the full formatting toolbar on desktop widths", () => {
@@ -189,6 +445,7 @@ describe("RichTextEditor", () => {
     );
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bulleted list" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Numbered list" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Align center" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Text color" })).toBeInTheDocument();
@@ -197,28 +454,8 @@ describe("RichTextEditor", () => {
     ).not.toBeInTheDocument();
   });
 
-  /**
-   * Block commands don't go through execCommand (which jsdom lacks anyway) —
-   * they mutate the block elements directly, so these exercise the real code
-   * path rather than a stub.
-   */
-  const selectInside = (editable: HTMLElement) => {
-    // Selecting the editable's whole contents reaches every block inside it,
-    // which is what the block commands operate on.
-    const range = document.createRange();
-    range.selectNodeContents(editable);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  };
-
-  const openMoreFormatting = async () => {
-    fireEvent.mouseDown(screen.getByRole("button", { name: "More formatting" }));
-    fireEvent.click(screen.getByRole("button", { name: "More formatting" }));
-    await screen.findByRole("button", { name: "Bold" });
-  };
-
   it("toggles the selected block between a bullet and a paragraph", async () => {
+    window.matchMedia = makeMatchMedia(true);
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -227,28 +464,31 @@ describe("RichTextEditor", () => {
         onChange={handleChange}
       />,
     );
-    const editable = screen.getByRole("textbox", { name: "Notes" });
-    selectInside(editable);
-    await openMoreFormatting();
+    fireEvent.focus(screen.getByRole("textbox", { name: "Notes" }));
 
     const listButton = screen.getByRole("button", { name: "Bulleted list" });
     expect(listButton).toHaveAttribute("aria-pressed", "false");
 
     fireEvent.mouseDown(listButton);
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [{ type: "list-item", spans: [{ text: "Remember this" }] }],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "list-item", spans: [{ text: "Remember this" }] }],
+      }),
+    );
     expect(
       screen.getByRole("button", { name: "Bulleted list" }),
     ).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "Bulleted list" }));
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [{ type: "paragraph", spans: [{ text: "Remember this" }] }],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "Remember this" }] }],
+      }),
+    );
   });
 
   it("aligns the selected block, storing left as no alignment", async () => {
+    window.matchMedia = makeMatchMedia(true);
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -257,16 +497,16 @@ describe("RichTextEditor", () => {
         onChange={handleChange}
       />,
     );
-    const editable = screen.getByRole("textbox", { name: "Notes" });
-    selectInside(editable);
-    await openMoreFormatting();
+    fireEvent.focus(screen.getByRole("textbox", { name: "Notes" }));
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "Align center" }));
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [
-        { type: "paragraph", align: "center", spans: [{ text: "Centered line" }] },
-      ],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [
+          { type: "paragraph", align: "center", spans: [{ text: "Centered line" }] },
+        ],
+      }),
+    );
     expect(screen.getByRole("button", { name: "Align center" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -274,9 +514,11 @@ describe("RichTextEditor", () => {
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "Align left" }));
     // Back to the default, which the model represents as no `align` at all.
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [{ type: "paragraph", spans: [{ text: "Centered line" }] }],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "Centered line" }] }],
+      }),
+    );
   });
 
   it("sets the selected block's size, storing normal as no size", async () => {
@@ -288,30 +530,30 @@ describe("RichTextEditor", () => {
         onChange={handleChange}
       />,
     );
-    const editable = screen.getByRole("textbox", { name: "Notes" });
-    selectInside(editable);
+    fireEvent.focus(screen.getByRole("textbox", { name: "Notes" }));
 
     // The trigger is a Radix popover — it opens on click, while the
     // mousedown handler is what preserves the selection.
     fireEvent.mouseDown(screen.getByRole("button", { name: "Text size" }));
     fireEvent.click(screen.getByRole("button", { name: "Text size" }));
     fireEvent.mouseDown(await screen.findByRole("button", { name: "Large" }));
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [{ type: "paragraph", size: "large", spans: [{ text: "Headline" }] }],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", size: "large", spans: [{ text: "Headline" }] }],
+      }),
+    );
 
+    fireEvent.click(screen.getByRole("button", { name: "Text size" }));
     fireEvent.mouseDown(screen.getByRole("button", { name: "Normal" }));
     // Back to the default, which the model represents as no `size` at all.
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [{ type: "paragraph", spans: [{ text: "Headline" }] }],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "Headline" }] }],
+      }),
+    );
   });
 
-  it("still applies a popover command after the popover clears the live selection", async () => {
-    // Regression: opening a popover moves focus, and a real browser drops the
-    // contentEditable's selection when it does — so the command found no
-    // blocks and silently did nothing. jsdom keeps the selection, so the lost
-    // selection is simulated explicitly here.
+  it("applies a popover command after its trigger moves focus", async () => {
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -321,20 +563,20 @@ describe("RichTextEditor", () => {
       />,
     );
     const editable = screen.getByRole("textbox", { name: "Notes" });
-    selectInside(editable);
+    fireEvent.focus(editable);
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "Text size" }));
-    fireEvent.blur(editable);
     fireEvent.click(screen.getByRole("button", { name: "Text size" }));
-    window.getSelection()?.removeAllRanges();
-
     fireEvent.mouseDown(await screen.findByRole("button", { name: "Large" }));
 
-    expect(handleChange).toHaveBeenLastCalledWith({
-      blocks: [{ type: "paragraph", size: "large", spans: [{ text: "Headline" }] }],
-    });
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", size: "large", spans: [{ text: "Headline" }] }],
+      }),
+    );
     // The toolbar must reflect it too, rather than snapping back to Normal.
-    expect(screen.getByRole("button", { name: "Large" })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("button", { name: "Text size" }));
+    expect(await screen.findByRole("button", { name: "Large" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );

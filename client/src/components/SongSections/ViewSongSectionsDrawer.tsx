@@ -8,7 +8,6 @@ import { DBItem } from "../../types";
 type ViewSongSectionsDrawerProps = {
   song: DBItem | null;
   isOpen: boolean;
-  isMobile: boolean;
   searchHighlight?: string;
   onClose: () => void;
 };
@@ -16,7 +15,6 @@ type ViewSongSectionsDrawerProps = {
 const ViewSongSectionsDrawer = ({
   song,
   isOpen,
-  isMobile,
   searchHighlight,
   onClose,
 }: ViewSongSectionsDrawerProps) => {
@@ -48,7 +46,7 @@ const ViewSongSectionsDrawer = ({
       onClose={onClose}
       title={`Sections — ${song.name}`}
       size="xl"
-      position={isMobile ? "bottom" : "right"}
+      position="right"
       contentClassName="flex min-h-0 flex-col"
       contentPadding="p-0"
     >

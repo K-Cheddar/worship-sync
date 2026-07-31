@@ -7,7 +7,7 @@ import {
   updateChurchInviteAccess,
   updateChurchMemberAccess,
 } from "../../../api/auth";
-import type { TeamsPermission } from "../../../api/authTypes";
+import type { ServicesPermission, TeamsPermission } from "../../../api/authTypes";
 import { ACCOUNT_CONTROL_SELECT_CLASSNAME } from "../../Controller/AccountFormSections";
 import { useAccountPage } from "../AccountPageContext";
 import {
@@ -18,6 +18,10 @@ import {
 } from "../accountInviteAccess";
 import { memberAccessOptions, toMemberAccessOption } from "../accountUtils";
 import { teamsPageAccessOptions } from "../accountTeamsAccess";
+import {
+  serviceEditingAccessOptions,
+  toServicesAccessOption,
+} from "../accountServicesAccess";
 import type {
   AccessSheetTarget,
   InviteAccessDraft,
@@ -35,6 +39,7 @@ const MemberAccessSheet = () => {
     inviteAccessDraft,
     setMemberAccessDrafts,
     setMemberTeamsAccessDrafts,
+    setMemberServicesAccessDrafts,
     setMemberTeamScopeDrafts,
     setInviteAccessDraft,
     setInvitePendingAccessDrafts,
@@ -44,6 +49,7 @@ const MemberAccessSheet = () => {
     closeAccessSheet,
     getMemberAccessValue,
     getMemberTeamsAccessValue,
+    getMemberServicesAccessValue,
     getMemberTeamScopeValue,
     getInvitePendingAccessValue,
     toTeamsAccessOption,
@@ -118,17 +124,26 @@ const MemberAccessSheet = () => {
   const selectedTeamsAccess = member
     ? getMemberTeamsAccessValue(member)
     : inviteDraft.teamsAccess;
+  const selectedServicesAccess = member
+    ? getMemberServicesAccessValue(member)
+    : inviteDraft.servicesAccess;
+  const currentServicesAccess = member
+    ? toServicesAccessOption(member.permissions, member.role)
+    : inviteDraft.servicesAccess;
 
   const memberAccessChanged =
     isMemberTarget && selectedMemberAccess !== currentMemberAccess;
   const memberTeamsAccessChanged =
     isMemberTarget && selectedTeamsAccess !== currentTeamsAccess;
+  const memberServicesAccessChanged =
+    isMemberTarget && selectedServicesAccess !== currentServicesAccess;
 
   const hasChanges = isInviteDraftTarget
     ? true
     : isMemberTarget
       ? memberAccessChanged ||
       memberTeamsAccessChanged ||
+      memberServicesAccessChanged ||
       memberTeamScopesChanged
       : inviteAccessChanged;
 
@@ -143,6 +158,10 @@ const MemberAccessSheet = () => {
     teams.length > 0 &&
     (isMemberTarget || selectedInviteAccess !== "admin");
   const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
+  const servicesEditingIncluded =
+    isAdminInviteAccess ||
+    selectedTeamsAccess === "edit" ||
+    member?.role === "admin";
 
   const headerTitle = isMemberTarget
     ? memberLabel
@@ -163,6 +182,11 @@ const MemberAccessSheet = () => {
       return next;
     });
     setMemberTeamsAccessDrafts((prev) => {
+      const next = { ...prev };
+      delete next[membershipId];
+      return next;
+    });
+    setMemberServicesAccessDrafts((prev) => {
       const next = { ...prev };
       delete next[membershipId];
       return next;
@@ -217,6 +241,7 @@ const MemberAccessSheet = () => {
       void runMemberAction(saveAccessKey, async () => {
         await updateChurchMemberAccess(churchId, targetUserId, selectedMemberAccess, {
           teams: selectedTeamsAccess,
+          services: selectedServicesAccess,
           teamScopes:
             selectedTeamsAccess === "edit"
               ? {}
@@ -287,6 +312,17 @@ const MemberAccessSheet = () => {
       teamsAccess: value,
       ...(value === "edit" ? { teamScopeIds: [] } : {}),
     });
+  };
+
+  const handleServicesAccessChange = (value: ServicesPermission) => {
+    if (isMemberTarget && member) {
+      setMemberServicesAccessDrafts((prev) => ({
+        ...prev,
+        [member.membershipId]: value,
+      }));
+      return;
+    }
+    updateInviteDraft({ servicesAccess: value });
   };
 
   const handleTeamScopeToggle = (
@@ -364,6 +400,7 @@ const MemberAccessSheet = () => {
               <p className="mt-1 text-xs text-gray-400">
                 Global access applies to the whole Teams area. Per-team checkboxes
                 can grant edit access to specific teams without opening all of Teams.
+                Edit all teams also includes service plans and service settings.
               </p>
             </div>
 
@@ -381,7 +418,7 @@ const MemberAccessSheet = () => {
 
             {selectedTeamsAccess === "edit" || isAdminInviteAccess ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
-                Edit all teams includes every team. Per-team rules are not used.
+                Edit all teams includes every team plus service plans and service settings. Per-team rules are not used.
               </p>
             ) : null}
 
@@ -429,6 +466,33 @@ const MemberAccessSheet = () => {
               </fieldset>
             ) : null}
           </section>
+
+          <section className="space-y-3 border-t border-gray-700/70 pt-5">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Services</h3>
+              <p className="mt-1 text-xs text-gray-400">
+                Allows service settings, service plans, publishing, imports, and live plan controls. It does not allow team, people, or position management.
+              </p>
+            </div>
+            <Select
+              id={getServicesAccessFieldId(target)}
+              label="Service editing"
+              value={servicesEditingIncluded ? "edit" : selectedServicesAccess}
+              options={serviceEditingAccessOptions}
+              selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+              disabled={servicesEditingIncluded}
+              onChange={(value) =>
+                handleServicesAccessChange(value as ServicesPermission)
+              }
+            />
+            {servicesEditingIncluded ? (
+              <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
+                {member?.role === "admin" || isAdminInviteAccess
+                  ? "Admin access includes service editing."
+                  : "Edit all teams includes service editing."}
+              </p>
+            ) : null}
+          </section>
         </div>
 
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-gray-700 px-5 py-4">
@@ -470,6 +534,16 @@ const getTeamsAccessFieldId = (target: AccessSheetTarget) => {
     return `invite-teams-access-sheet-${target.invite.inviteId}`;
   }
   return "invite-draft-teams-access-sheet";
+};
+
+const getServicesAccessFieldId = (target: AccessSheetTarget) => {
+  if (target.kind === "member") {
+    return `member-services-access-sheet-${target.member.membershipId}`;
+  }
+  if (target.kind === "invite") {
+    return `invite-services-access-sheet-${target.invite.inviteId}`;
+  }
+  return "invite-draft-services-access-sheet";
 };
 
 export default MemberAccessSheet;

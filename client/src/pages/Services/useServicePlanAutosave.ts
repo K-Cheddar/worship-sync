@@ -160,8 +160,15 @@ export const useServicePlanAutosave = ({
   const flush = useCallback(async () => {
     clearTimers();
     while (changeVersionRef.current > savedVersionRef.current) {
+      const targetVersion = changeVersionRef.current;
       const saved = await saveLatest();
       if (!saved) return false;
+      // `saveLatest` also resolves true for "nothing I can do": autosave is
+      // disabled, or the draft can't build a payload yet. Neither clears by
+      // trying again, so re-testing the same condition would spin the loop
+      // forever. Report the failure instead of hanging the tab. A version that
+      // grew past `targetVersion` mid-save is a real edit — keep going.
+      if (savedVersionRef.current < targetVersion) return false;
     }
     return true;
   }, [clearTimers, saveLatest]);
@@ -179,6 +186,21 @@ export const useServicePlanAutosave = ({
   }, []);
 
   const getRevision = useCallback(() => revisionRef.current, []);
+
+  /**
+   * The server broadcasts a successful write before its HTTP response returns.
+   * Consumers use this to recognize that one-revision-ahead SSE message as the
+   * acknowledgement for their own in-flight save, rather than a second editor.
+   */
+  const getInFlightExpectedRevision = useCallback(
+    () => (inFlightRef.current ? revisionRef.current + 1 : null),
+    [],
+  );
+
+  const markConflict = useCallback(() => {
+    clearTimers();
+    setState("conflict");
+  }, [clearTimers]);
 
   useEffect(() => {
     if (resetKeyRef.current === resetKey) return;
@@ -199,6 +221,48 @@ export const useServicePlanAutosave = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
 
+  // The editor mounts before its plan fetch completes. Once that clean draft
+  // receives the fetched plan, adopt its real revision so the first edit is
+  // checked against the document the operator is looking at. Never replace a
+  // revision after local work has started: that must still use conflict safety.
+  useEffect(() => {
+    const hasUnsavedWork = changeVersionRef.current > savedVersionRef.current;
+    if (
+      baseRevision === revisionRef.current
+      || hasUnsavedWork
+      || inFlightRef.current
+      || pendingRef.current
+      || state !== "saved"
+    ) {
+      return;
+    }
+    revisionRef.current = baseRevision;
+  }, [baseRevision, state]);
+
+  /**
+   * Mirrors the newest unsaved draft, deliberately separate from scheduling.
+   * An editor that has stopped scheduling saves still accumulates edits — the
+   * retry budget can be spent, or a conflict can be waiting on the operator —
+   * and those edits are exactly the ones the unmount flush has to carry.
+   * Snapshotting inside the scheduler left this holding the pre-failure draft,
+   * so leaving the page wrote that stale copy over everything typed since.
+   *
+   * `state` is a dependency because a completed save clears the snapshot: the
+   * following "dirty" transition is what re-captures an edit made in flight.
+   */
+  useEffect(() => {
+    if (!enabled || changeVersion <= savedVersionRef.current) return;
+    const payload = buildPayloadRef.current();
+    if (!payload) return;
+    pendingRef.current = {
+      payload,
+      // Stale during a conflict, and intentionally so: the flush must lose the
+      // server's revision check rather than clobber the other editor's work.
+      baseRevision: revisionRef.current,
+      save: saveRef.current,
+    };
+  }, [changeVersion, enabled, state]);
+
   useEffect(() => {
     if (
       !enabled ||
@@ -211,14 +275,6 @@ export const useServicePlanAutosave = ({
       return;
     }
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    const payload = buildPayloadRef.current();
-    if (payload) {
-      pendingRef.current = {
-        payload,
-        baseRevision: revisionRef.current,
-        save: saveRef.current,
-      };
-    }
     setState("dirty");
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
@@ -243,5 +299,13 @@ export const useServicePlanAutosave = ({
     [clearTimers, flushPendingForPreviousPlan],
   );
 
-  return { state, flush, retry, acceptRemoteRevision, getRevision };
+  return {
+    state,
+    flush,
+    retry,
+    acceptRemoteRevision,
+    getRevision,
+    getInFlightExpectedRevision,
+    markConflict,
+  };
 };

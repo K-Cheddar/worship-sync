@@ -1,7 +1,10 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
-import ServicePlanEditor from "./ServicePlanEditor";
+import ServicePlanEditor, {
+  collectServicePlanRoleNoteFilterOptions,
+  collectServicePlanTeamNoteLabels,
+} from "./ServicePlanEditor";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { createMockGlobalContext } from "../../test/mocks";
@@ -23,8 +26,12 @@ import type {
   TeamService,
 } from "../../api/authTypes";
 import type { ServicePlan } from "../../types/servicePlan";
-import { plainTextToRichText } from "../../types/richText";
+import {
+  plainTextToRichText,
+  richTextToPlainText,
+} from "../../types/richText";
 import { calendarDateInTimeZone } from "../../utils/teamScheduleOccurrences";
+import * as generalUtils from "../../utils/generalUtils";
 
 jest.mock("../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`, so the
@@ -45,14 +52,41 @@ jest.mock("../../api/auth", () => ({
   updateServicePlanPublicLive: jest.fn(),
 }));
 
+// Song attach/create modal — row contract is covered in ElementRow tests; keep
+// this light so editor flows can assert open/seed without CreateItem chrome.
+jest.mock("./ServicePlanLibraryPicker", () => ({
+  __esModule: true,
+  default: ({
+    initialQuery,
+    initialLyrics,
+    startInCreate,
+  }: {
+    initialQuery?: string;
+    initialLyrics?: string;
+    startInCreate?: boolean;
+  }) => (
+    <div
+      data-testid="song-picker"
+      data-initial-query={initialQuery ?? ""}
+      data-initial-lyrics={initialLyrics ?? ""}
+      data-start-in-create={startInCreate ? "true" : "false"}
+    />
+  ),
+}));
+
 jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
 
-// The library picker reads the song library via useSelector.
+// The library picker, the song suggestion popover, and the plan song lyrics
+// viewer all read songs via useSelector.
+let mockAllSongDocs: Array<Record<string, unknown>> = [];
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
-    selector({ allDocs: { allSongDocs: [] } }),
+    selector({
+      allDocs: { allSongDocs: mockAllSongDocs },
+      allItems: { list: [], isAllItemsLoading: false },
+    }),
   useDispatch: () => jest.fn(),
 }));
 
@@ -127,9 +161,125 @@ const renderEditor = ({
     </GlobalInfoContext.Provider>,
   );
 
+describe("collectServicePlanTeamNoteLabels", () => {
+  it("returns sorted unique non-empty team note labels", () => {
+    expect(
+      collectServicePlanTeamNoteLabels([
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "el-1",
+              type: "free",
+              title: plainTextToRichText("One"),
+              teamNotes: [
+                { id: "tn-1", label: "Media Team", note: plainTextToRichText("a") },
+                { id: "tn-2", label: "Band", note: plainTextToRichText("b") },
+                { id: "tn-3", label: "  ", note: plainTextToRichText("c") },
+                { id: "tn-4", label: "Band", note: plainTextToRichText("d") },
+              ],
+            },
+          ],
+        },
+      ]),
+    ).toEqual(["Band", "Media Team"]);
+  });
+});
+
+describe("collectServicePlanRoleNoteFilterOptions", () => {
+  it("keeps the filter focused on roles that have a role note", () => {
+    const allRoles = [
+      {
+        positionId: "camera",
+        label: "Media Team · Camera",
+        teamId: "media",
+        teamName: "Media Team",
+      },
+      {
+        positionId: "lyrics",
+        label: "Media Team · Lyrics",
+        teamId: "media",
+        teamName: "Media Team",
+      },
+    ];
+
+    expect(
+      collectServicePlanRoleNoteFilterOptions([
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "el-1",
+              type: "free",
+              title: plainTextToRichText("One"),
+              teamNotes: [{
+                id: "note-1",
+                scope: "role",
+                positionId: "camera",
+                label: "Media Team · Camera",
+                note: plainTextToRichText("Hold the wide shot."),
+              }],
+            },
+          ],
+        },
+      ], allRoles),
+    ).toEqual([allRoles[0]]);
+  });
+
+  it("scopes all-role choices to the selected team", () => {
+    const allRoles = [
+      {
+        positionId: "director",
+        label: "Media Team · Director",
+        teamId: "media",
+        teamName: "Media Team",
+      },
+      {
+        positionId: "lead-coordinator",
+        label: "Coordinators · Lead Coordinator",
+        teamId: "coordinators",
+        teamName: "Coordinators",
+      },
+    ];
+
+    expect(
+      collectServicePlanRoleNoteFilterOptions([{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "el-1",
+          type: "free",
+          title: plainTextToRichText("One"),
+          teamNotes: [
+            {
+              id: "note-1",
+              scope: "role",
+              positionId: "director",
+              label: "Media Team · Director",
+              teamName: "Media Team",
+              note: plainTextToRichText("Check the camera."),
+            },
+            {
+              id: "note-2",
+              scope: "role",
+              positionId: "lead-coordinator",
+              label: "Coordinators · Lead Coordinator",
+              teamName: "Coordinators",
+              note: plainTextToRichText("Give the go-live cue."),
+            },
+          ],
+        }],
+      }], allRoles, "Coordinators"),
+    ).toEqual([allRoles[1]]);
+  });
+});
+
 describe("ServicePlanEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAllSongDocs = [];
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
@@ -330,6 +480,98 @@ describe("ServicePlanEditor", () => {
     expect(body.sections[0].elements[0].assignedName).toBeUndefined();
   });
 
+  it("shows every team's imported notes even when a team filter was saved", async () => {
+    // The operator once focused "Coordinators" on the public plan view; that
+    // preference is shared with this editor and outlives the session.
+    localStorage.setItem("worshipsyncServicePublicNotesTeam", "Coordinators");
+    mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
+      planLabel: "Sat, Aug 1 - 10 AM",
+      sections: [
+        {
+          sectionName: "Teaching & Mission",
+          rows: [{
+            elementType: "Sabbath School Lesson Study",
+            title: "Panel",
+            ledBy: "Greg Baldeo",
+            teamNotes: [
+              { teamName: "Media Team", note: "3 or 4 headsets" },
+              { teamName: "Sabbath School Panel (g)", note: "Begin after the countdown." },
+              { teamName: "Coordinators", note: "Prep the platform." },
+            ],
+          }],
+        },
+      ],
+      teamAssignments: [],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Import from Service Planning/i }),
+    );
+    await user.type(
+      screen.getByLabelText(/Planning URL/i),
+      "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc",
+    );
+    await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
+
+    // All three teams' notes are visible, not just the saved one.
+    expect(await screen.findByText("Media Team")).toBeInTheDocument();
+    expect(screen.getByText("Sabbath School Panel (g)")).toBeInTheDocument();
+    expect(screen.getByText("Coordinators")).toBeInTheDocument();
+
+    // And all three are what actually gets saved.
+    await waitFor(() => {
+      expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
+    }, { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls[0];
+    expect(
+      body.sections[0].elements[0].teamNotes.map((note: { label: string }) => note.label),
+    ).toEqual(["Media Team", "Sabbath School Panel (g)", "Coordinators"]);
+  });
+
+  it("replaces an untouched scratch draft on import instead of leaving its blank section", async () => {
+    mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
+      planLabel: "Sunday, Jul 26",
+      sections: [
+        {
+          sectionName: "Welcome & Connection",
+          rows: [{ elementType: "Welcome", title: "Pastoral Greetings", ledBy: "Jane" }],
+        },
+      ],
+      teamAssignments: [],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    // Starting from scratch seeds one empty "Service" section. Importing over
+    // it must not treat that as a plan to reconcile.
+    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    // Set the URL in one event — typing it character by character is the
+    // slowest thing in this test, and this suite runs close to its budget.
+    fireEvent.change(screen.getByLabelText(/Planning URL/i), {
+      target: { value: "https://services.planningcenteronline.com/plans/123" },
+    });
+    await user.click(screen.getByRole("button", { name: /Apply updates/i }));
+
+    expect(await screen.findByDisplayValue("Welcome & Connection")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Service")).not.toBeInTheDocument();
+
+    // Let the autosave this import queued actually land, both to assert what
+    // was persisted and so its timer can't fire during the next test.
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    const [, , body] = mockSaveServicePlan.mock.calls[0];
+    expect(body.sections.map((section) => section.name)).toEqual([
+      "Welcome & Connection",
+    ]);
+  });
+
   it("imports a plan from a Service Planning URL into editable sections", async () => {
     mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
       planLabel: "Sunday, Jul 26",
@@ -381,6 +623,76 @@ describe("ServicePlanEditor", () => {
     // Regression: imported elements previously landed with no start time at
     // all (only "Start from scratch" seeded the timing anchor).
     expect(body.sections[0].elements[0].startTime).toBeTruthy();
+  });
+
+  it("refreshes an existing plan with only the selected Service Planning fields", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "servicePlanning",
+          sourceUrl: "https://services.planningcenteronline.com/plans/123",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday, Jul 26",
+        },
+        sections: [
+          {
+            id: "section-1",
+            sourcePlanningManaged: true,
+            name: "Worship",
+            elements: [
+              {
+                id: "element-1",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Old welcome"),
+                startTime: "09:00",
+                assignedName: "Avery",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
+      planLabel: "Sunday, Jul 26",
+      sections: [
+        {
+          sectionName: "Worship",
+          rows: [{ elementType: "Welcome", title: "Welcome home", ledBy: "Blair", startTime: "09:05" }],
+        },
+      ],
+      teamAssignments: [],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    expect(screen.getByLabelText(/Planning URL/i)).toHaveValue(
+      "https://services.planningcenteronline.com/plans/123",
+    );
+    expect(screen.getByRole("checkbox", { name: /Titles and content/i })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /Start times and durations/i }));
+    await user.click(screen.getByRole("button", { name: /Apply updates/i }));
+    expect(await screen.findByText(/1 change ready to apply/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Apply 1 change/i }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls[0];
+    expect(body.sections[0].elements[0]).toMatchObject({
+      id: "element-1",
+      startTime: "09:00",
+      assignedName: "Blair",
+    });
+    expect(body.sections[0].elements[0].title.blocks[0].spans[0].text).toBe("Welcome home");
   });
 
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
@@ -492,6 +804,198 @@ describe("ServicePlanEditor", () => {
         (screen.getAllByLabelText(/^Time/i)[1] as HTMLInputElement).value,
       ).toBe(expectedSecondStart);
     });
+  });
+
+  const planWithTwoSections: ServicePlan = {
+    planId: "church-1::service-1@2026-07-26",
+    churchId: "church-1",
+    planKey: "service-1@2026-07-26",
+    serviceId: "service-1",
+    date: "2026-07-26",
+    name: "Easter Sunday",
+    sections: [
+      { id: "section-1", name: "Worship", elements: [] },
+      { id: "section-2", name: "Word", elements: [] },
+    ],
+  };
+
+  it("undoes and redoes a structural edit, and autosaves the restored plan", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
+    // Nothing edited yet, so neither control is live.
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
+
+    await user.click(
+      screen.getByRole("button", { name: /Remove section Worship/i }),
+    );
+    expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+
+    // The undone plan is the plan of record — autosave persists it.
+    await waitFor(() => {
+      expect(
+        mockSaveServicePlan.mock.calls
+          .at(-1)?.[2]
+          .sections.map((section) => section.name),
+      ).toEqual(["Worship", "Word"]);
+    }, { timeout: 3_000 });
+
+    await user.click(screen.getByRole("button", { name: "Redo" }));
+    expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
+  });
+
+  it("undoes with the keyboard and clears history when the operator clicks Done", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Remove section Word/i }),
+    );
+    expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true });
+    expect(await screen.findByDisplayValue("Word")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true, shiftKey: true });
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
+    });
+
+    // Done commits the editing session, so there is nothing left to step back
+    // through when the operator returns to Edit.
+    await user.click(screen.getByRole("button", { name: /^Done$/i }));
+    await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
+  });
+
+  it("collapses a typing burst on one field into a single undo step", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    const sectionName = await screen.findByDisplayValue("Worship");
+    await user.clear(sectionName);
+    await user.type(sectionName, "Opening");
+    expect(await screen.findByDisplayValue("Opening")).toBeInTheDocument();
+
+    // One press returns the whole burst — including the clear, which shares the
+    // field's coalesce key — rather than one character.
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+  });
+
+  it("keeps removing a note its own undo step, even right after typing in it", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "free",
+                title: plainTextToRichText("Welcome"),
+                notes: plainTextToRichText("Original"),
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(screen.getByRole("button", { name: /Expand notes/i }));
+    await user.click(await screen.findByRole("textbox", { name: "Notes" }));
+    await user.keyboard("X");
+
+    // Removing lands immediately after the typing burst and writes the same
+    // `notes` shape, so only the row can say it is a discrete action.
+    await user.click(screen.getByRole("button", { name: /Remove note/i }));
+    await waitFor(() => {
+      expect(
+        richTextToPlainText(
+          mockSaveServicePlan.mock.calls.at(-1)![2].sections[0].elements[0].notes,
+        ),
+      ).not.toContain("X");
+    }, { timeout: 3_000 });
+    mockSaveServicePlan.mockClear();
+
+    // Undo must land on the typed note, not jump back past the typing too.
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => {
+      expect(
+        richTextToPlainText(
+          mockSaveServicePlan.mock.calls.at(-1)![2].sections[0].elements[0].notes,
+        ),
+      ).toContain("X");
+    }, { timeout: 3_000 });
+  });
+
+  it("leaves undo alone for a field that owns its own history", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Remove section Word/i }),
+    );
+
+    // Plain inputs carry data-ignore-undo so the browser's own character-level
+    // undo still applies inside them; the plan-level step must not also fire.
+    fireEvent.keyDown(await screen.findByDisplayValue("Worship"), {
+      key: "z",
+      ctrlKey: true,
+    });
+    expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
+
+    // A rich-text field marks the keystroke handled before it reaches us.
+    const markHandled = (event: Event) => event.preventDefault();
+    document.addEventListener("keydown", markHandled, true);
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true, cancelable: true });
+    document.removeEventListener("keydown", markHandled, true);
+    expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
   });
 
   it("loads an existing plan for the occurrence instead of offering to start from scratch", async () => {
@@ -689,6 +1193,50 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
   });
 
+  it("autosaves note typing without requiring the editor to blur", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{
+            id: "el-1",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            notes: plainTextToRichText("Original"),
+          }],
+        }],
+      },
+    });
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(screen.getByRole("button", { name: /Expand notes/i }));
+    const notes = await screen.findByRole("textbox", { name: "Notes" });
+    mockSaveServicePlan.mockClear();
+
+    await user.click(notes);
+    await user.keyboard("X");
+
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalled(),
+      { timeout: 2_500 },
+    );
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(
+      richTextToPlainText(body.sections[0].elements[0].notes),
+    ).toContain("X");
+    expect(notes).toHaveFocus();
+  });
+
   it("hides notes from the plan view without changing saved content", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
@@ -746,6 +1294,65 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
+  });
+
+  it("filters the plan view to one team's notes", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+                notes: plainTextToRichText("Slow the tempo down."),
+                teamNotes: [
+                  {
+                    id: "tn-1",
+                    label: "Band",
+                    note: plainTextToRichText("Watch the bridge cue."),
+                  },
+                  {
+                    id: "tn-2",
+                    label: "Media Team",
+                    note: plainTextToRichText("Lower house lights."),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    expect(
+      await screen.findByRole("button", { name: /Expand Band/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand Media Team/i }),
+    ).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /^Band$/i }));
+
+    expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Expand Media Team/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Expand notes/i })).toBeInTheDocument();
   });
 
   it("collapses and expands a whole section, hiding its elements and Add element", async () => {
@@ -854,13 +1461,36 @@ describe("ServicePlanEditor", () => {
         general: "https://www.worshipsync.net/#/services/general-share-token",
       },
     });
-    mockUpdateServicePlanPublicLive.mockResolvedValue({
-      success: true,
-      servicePlan: {
-        ...publishedPlan,
-        publicLive: { mode: "manual", currentElementId: "welcome" },
-      },
-    });
+    mockUpdateServicePlanPublicLive
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
+          publicLive: {
+            mode: "anchored",
+            currentElementId: "welcome",
+            startedAt: new Date().toISOString(),
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
+          publicLive: { mode: "manual", currentElementId: "welcome" },
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
+          publicLive: {
+            mode: "anchored",
+            currentElementId: "welcome",
+            startedAt: new Date().toISOString(),
+          },
+        },
+      });
 
     const user = userEvent.setup();
     renderEditor({ occurrence: todayOccurrence });
@@ -895,15 +1525,142 @@ describe("ServicePlanEditor", () => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledWith(
         "church-1",
         planKey,
-        { mode: "manual", currentElementId: "welcome" },
+        { mode: "anchored", currentElementId: "welcome" },
       );
     });
     expect(
-      await screen.findByRole("button", {
-        name: /Resume schedule \(currently live: Welcome\)/i,
-      }),
+      await screen.findByLabelText(/Live, started .*: Welcome/i),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText(/Live \(pinned\): Welcome/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    expect(
+      await screen.findByRole("menuitem", { name: /Pause automatic advance/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /Return to planned schedule/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: /Pause automatic advance/i }));
+    await waitFor(() => {
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
+        "church-1",
+        planKey,
+        { mode: "manual", currentElementId: "welcome" },
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    expect(
+      await screen.findByRole("menuitem", { name: /Continue automatic timing/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: /Continue automatic timing/i }));
+    await waitFor(() => {
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
+        "church-1",
+        planKey,
+        { mode: "anchored", currentElementId: "welcome" },
+      );
+    });
+  });
+
+  it("scrolls to the live item in view mode when the live element changes", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const publishedPlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      published: true,
+      publicLive: { mode: "schedule" },
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+            { id: "message", type: "free", title: plainTextToRichText("Message") },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: publishedPlan,
+    });
+    mockUpdateServicePlanPublicLive
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
+          publicLive: {
+            mode: "anchored",
+            currentElementId: "welcome",
+            startedAt: new Date().toISOString(),
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
+          publicLive: {
+            mode: "anchored",
+            currentElementId: "message",
+            startedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockReturnValue(true);
+
+    const user = userEvent.setup();
+    renderEditor({ occurrence: todayOccurrence });
+
+    await user.click(await screen.findByRole("button", { name: /Make Welcome live/i }));
+    await waitFor(() => {
+      expect(keepInView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shouldScrollToCenter: true,
+        }),
+      );
+    });
+    expect(screen.getByLabelText(/Live, started .*: Welcome/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Service plan" })).toBeInTheDocument();
+
+    keepInView.mockClear();
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(await screen.findByRole("button", { name: /Make Message live/i }));
+    await waitFor(() => {
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
+        "church-1",
+        planKey,
+        { mode: "anchored", currentElementId: "message" },
+      );
+    });
+    // Still editing — do not follow live yet.
+    expect(keepInView).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /^Done$/i }));
+    await waitFor(() => {
+      expect(keepInView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shouldScrollToCenter: true,
+        }),
+      );
+    });
+    keepInView.mockRestore();
   });
 
   it("publishes when copying a share link for an unpublished plan", async () => {
@@ -992,5 +1749,197 @@ describe("ServicePlanEditor", () => {
       "noopener,noreferrer",
     );
     openSpy.mockRestore();
+  });
+
+  it("opens library song lyrics from a plan song badge", async () => {
+    mockAllSongDocs = [
+      {
+        _id: "song-1",
+        name: "Living Hope",
+        type: "song",
+        selectedArrangement: 0,
+        arrangements: [
+          {
+            name: "Master",
+            formattedLyrics: [
+              { id: "v1", name: "Verse 1", words: "Who am I that the highest King" },
+            ],
+          },
+        ],
+      },
+    ];
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+                songRef: {
+                  kind: "library",
+                  songId: "song-1",
+                  songName: "Living Hope",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor({ canEdit: false });
+
+    await user.click(
+      await screen.findByRole("button", { name: /View lyrics for Living Hope/i }),
+    );
+
+    expect(
+      await screen.findByText("Sections — Living Hope"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Verse 1")).toBeInTheDocument();
+    expect(screen.getByText("Who am I that the highest King")).toBeInTheDocument();
+  });
+
+  it("does not open plain lyrics for a pending plan song without edit access", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Response",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Appeal Song"),
+                songRef: {
+                  kind: "pending",
+                  title: "Appeal Song",
+                  lyricsText: "Come as you are",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    renderEditor({ canEdit: false });
+
+    expect(await screen.findByText(/Not in library/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /View lyrics for Appeal Song/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
+  });
+
+  it("opens create song for a pending plan song when the operator can create library songs", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Response",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Appeal Song"),
+                songRef: {
+                  kind: "pending",
+                  title: "Appeal Song",
+                  lyricsText: "Come as you are",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor({ canEdit: true });
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Create Appeal Song in the library/i,
+      }),
+    );
+
+    const picker = await screen.findByTestId("song-picker");
+    expect(picker).toHaveAttribute("data-start-in-create", "true");
+    expect(picker).toHaveAttribute("data-initial-query", "Appeal Song");
+    expect(picker).toHaveAttribute("data-initial-lyrics", "Come as you are");
+    expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
+  });
+
+  it("explains when a library song badge cannot be resolved", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Missing Song"),
+                songRef: {
+                  kind: "library",
+                  songId: "deleted-song",
+                  songName: "Missing Song",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor({ canEdit: false });
+
+    await user.click(
+      await screen.findByRole("button", { name: /View lyrics for Missing Song/i }),
+    );
+
+    expect(await screen.findByText("Lyrics — Missing Song")).toBeInTheDocument();
+    expect(
+      screen.getByText(/This song is not in the library right now/i),
+    ).toBeInTheDocument();
   });
 });

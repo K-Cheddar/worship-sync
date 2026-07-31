@@ -499,7 +499,7 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
         </PopoverTrigger>
         {!disabled && (
           <PopoverContent
-            className="z-110 w-auto p-3 bg-card"
+            className="z-110 w-auto rounded-md border border-gray-700 bg-gray-900 p-3 shadow-xl"
             align="start"
             onOpenAutoFocus={(e) => e.preventDefault()}
             portal={portal}

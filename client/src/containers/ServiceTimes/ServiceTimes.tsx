@@ -22,6 +22,7 @@ import Button from "../../components/Button/Button";
 import ServiceTimesForm from "./ServiceTimesForm";
 import ServiceTimesList from "./ServiceTimesList";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
@@ -53,6 +54,12 @@ const ServiceTimes = () => {
   const [mobileTab, setMobileTab] = useState<"services" | "edit">("services");
 
   const { updater, isMobile } = useContext(ControllerInfoContext) || {};
+  const globalInfo = useContext(GlobalInfoContext);
+  // Service timers are service settings. A missing context only occurs in
+  // isolated embedded/test renders; authenticated app pages always provide it.
+  const canEdit = globalInfo
+    ? Boolean(globalInfo.canEditServices ?? globalInfo.canEditTeams)
+    : true;
 
   const editingService = useMemo(
     () => services.find((s) => s.id === editingId) ?? null,
@@ -149,10 +156,11 @@ const ServiceTimes = () => {
       onDelete={(id) => dispatch(removeService(id))}
       upcomingService={upcomingService}
       upcomingServiceTimeText={upcomingServiceTimeText}
+      canEdit={canEdit}
     />
   );
 
-  const editorLayout = isFormOpen ? (
+  const editorLayout = isFormOpen && canEdit ? (
     <ServiceTimesForm
       editingId={editingId}
       initialValues={editingService}
@@ -164,15 +172,19 @@ const ServiceTimes = () => {
   const editTabPlaceholder = (
     <div className="rounded-md border border-white/12 bg-black/30 p-4 text-gray-200">
       <p className="text-sm">
-        Open the Services tab to add a timer or choose one to edit.
+        {canEdit
+          ? "Open the Services tab to add a timer or choose one to edit."
+          : "Service editing access is required to change timers."}
       </p>
-      <Button
-        variant="secondary"
-        className="mt-3 w-full justify-center sm:w-fit"
-        onClick={() => setMobileTab("services")}
-      >
-        Go to Services
-      </Button>
+      {canEdit ? (
+        <Button
+          variant="secondary"
+          className="mt-3 w-full justify-center sm:w-fit"
+          onClick={() => setMobileTab("services")}
+        >
+          Go to Services
+        </Button>
+      ) : null}
     </div>
   );
 
@@ -213,15 +225,17 @@ const ServiceTimes = () => {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="services" forceMount className={tabsContentClass}>
-            <Button
-              className="w-fit shrink-0"
-              svg={Plus}
-              iconSize="sm"
-              variant="cta"
-              onClick={startCreate}
-            >
-              Add Service Timer
-            </Button>
+            {canEdit ? (
+              <Button
+                className="w-fit shrink-0"
+                svg={Plus}
+                iconSize="sm"
+                variant="cta"
+                onClick={startCreate}
+              >
+                Add Service Timer
+              </Button>
+            ) : null}
             {listSection}
           </TabsContent>
           <TabsContent value="edit" forceMount className={tabsContentClass}>
@@ -230,17 +244,19 @@ const ServiceTimes = () => {
         </Tabs>
       ) : (
         <>
-          <section className="flex shrink-0 gap-2">
-            <Button
-              className="w-fit"
-              svg={Plus}
-              iconSize="sm"
-              onClick={startCreate}
-              variant="cta"
-            >
-              Add Service Timer
-            </Button>
-          </section>
+          {canEdit ? (
+            <section className="flex shrink-0 gap-2">
+              <Button
+                className="w-fit"
+                svg={Plus}
+                iconSize="sm"
+                onClick={startCreate}
+                variant="cta"
+              >
+                Add Service Timer
+              </Button>
+            </section>
+          ) : null}
           {editorLayout}
           {listSection}
         </>

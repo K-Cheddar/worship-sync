@@ -1,4 +1,8 @@
-import type { MemberPermissions, TeamsPermission } from "../../api/authTypes";
+import type {
+  MemberPermissions,
+  ServicesPermission,
+  TeamsPermission,
+} from "../../api/authTypes";
 
 export type Member = {
   membershipId: string;
@@ -50,6 +54,7 @@ export type InviteAccessOption = "admin" | MemberAccessOption;
 export type InviteAccessDraft = {
   access: InviteAccessOption;
   teamsAccess: TeamsPermission;
+  servicesAccess: ServicesPermission;
   teamScopeIds: string[];
 };
 

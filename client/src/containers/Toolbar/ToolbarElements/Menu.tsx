@@ -10,16 +10,15 @@ import {
   Monitor,
   SquarePen,
   Presentation,
-  RotateCcw,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
+import { interfaceZoomMenuItem } from "../../../components/InterfaceZoomMenuControl/InterfaceZoomMenuControl";
 import { MenuItemType } from "../../../types";
-import { useState, useEffect, useContext } from "react";
+import { useContext } from "react";
 import { useAboutChangelogMenu } from "../../../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
 import { useIdentifyOnHover } from "../../../hooks/useIdentifyOnHover";
+import { useInterfaceZoom } from "../../../hooks/useInterfaceZoom";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
 import {
@@ -28,7 +27,6 @@ import {
 } from "../../../boards/boardUtils";
 import { useResolvedBoardDisplayAlias } from "../../../boards/useResolvedBoardDisplayAlias";
 import type { WindowType } from "../../../types/electron";
-import { Slider } from "../../../components/ui/Slider";
 import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
 
 const ToolbarMenu = ({
@@ -43,10 +41,8 @@ const ToolbarMenu = ({
     aboutChangelogModals,
     updateReadyVersion,
   } = useAboutChangelogMenu();
-  const [zoomLevel, setZoomLevel] = useState(100);
-  const zoomStep = 10;
-  const zoomMin = 50;
-  const zoomMax = 200;
+  // Keep zoom applied while the controller menu is mounted (shared across domains).
+  useInterfaceZoom();
   const navigate = useNavigate();
   const {
     isElectron,
@@ -105,30 +101,6 @@ const ToolbarMenu = ({
   const resolvedBoardAliasId = useResolvedBoardDisplayAlias({
     enabled: canManageDisplays,
   });
-
-  useEffect(() => {
-    // Base font size from index.css (92.5%)
-    const baseFontSize = 100;
-    const scale = zoomLevel / 100;
-    const newFontSize = baseFontSize * scale;
-
-    // Apply zoom by adjusting the root font size
-    // This scales all rem-based units (which Tailwind uses)
-    document.documentElement.style.fontSize = `${newFontSize}%`;
-
-    // Cleanup function to reset font size when component unmounts
-    return () => {
-      document.documentElement.style.fontSize = `${baseFontSize}%`;
-    };
-  }, [zoomLevel]);
-
-  const setZoomWithinBounds = (nextZoom: number) => {
-    setZoomLevel(Math.min(zoomMax, Math.max(zoomMin, nextZoom)));
-  };
-
-  const handleReset = () => {
-    setZoomLevel(100);
-  };
 
   const handleBack = () => {
     const historyIndex =
@@ -332,62 +304,7 @@ const ToolbarMenu = ({
       ]),
 
     ...aboutChangelogMenuItems,
-    {
-      element: (
-        <div className="flex flex-col gap-2 w-full py-1.5 px-2 min-w-52">
-          <div className="flex items-center justify-center gap-2">
-            <span className="text-xs font-semibold min-w-12 text-center">
-              {zoomLevel}%
-            </span>
-            <Button
-              svg={RotateCcw}
-              onClick={handleReset}
-              className="justify-center"
-              disabled={zoomLevel === 100}
-              variant="secondary"
-            ></Button>
-          </div>
-          <div className="flex w-full items-center justify-center gap-1 px-0.5">
-            <Button
-              variant="tertiary"
-              className="min-h-0 h-7 w-7 justify-center p-0"
-              svg={ZoomOut}
-              color="#ffffff"
-              title="Zoom out"
-              aria-label="Zoom out interface"
-              disabled={zoomLevel <= zoomMin}
-              onClick={() => setZoomWithinBounds(zoomLevel - zoomStep)}
-            />
-            <div className="w-36 shrink-0">
-              <Slider
-                value={[zoomLevel]}
-                onValueChange={(v: number[]) =>
-                  setZoomWithinBounds(v[0] ?? 100)
-                }
-                min={zoomMin}
-                max={zoomMax}
-                step={zoomStep}
-                className="w-full"
-                aria-label="Interface zoom"
-              />
-            </div>
-            <Button
-              variant="tertiary"
-              className="min-h-0 h-7 w-7 justify-center p-0"
-              svg={ZoomIn}
-              color="#ffffff"
-              title="Zoom in"
-              aria-label="Zoom in interface"
-              disabled={zoomLevel >= zoomMax}
-              onClick={() => setZoomWithinBounds(zoomLevel + zoomStep)}
-            />
-          </div>
-        </div>
-      ),
-      className:
-        "p-0 hover:bg-transparent focus:bg-transparent hover:text-inherit focus:text-inherit",
-      preventClose: true,
-    },
+    interfaceZoomMenuItem,
   ];
 
   return (

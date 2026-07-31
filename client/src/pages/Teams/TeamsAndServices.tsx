@@ -73,7 +73,7 @@ const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
 );
 
 const TeamsAndServicesLayout = () => {
-  const { loading, toolbarLogoUrl, churchName, canEditAnyTeam } = useTeamsPage();
+  const { loading, toolbarLogoUrl, churchName } = useTeamsPage();
   const location = useLocation();
   useTeamsAbandonedReturnCleanup();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -86,8 +86,12 @@ const TeamsAndServicesLayout = () => {
     <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white">
       <div className="mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col px-4 pb-6 lg:px-6">
         <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-3 text-lg">
-          <div className="flex flex-wrap items-center gap-2 justify-self-start">
+          <div className="flex flex-wrap items-center gap-3 justify-self-start">
             <HomeToolbarMenu />
+            <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
+              <Icon svg={Users} size="md" className="text-orange-400" />
+              Teams and Services
+            </h1>
           </div>
           <div className="flex max-w-[min(22rem,calc(100vw-6rem))] justify-center justify-self-center px-1 sm:max-w-[min(26rem,calc(100vw-10rem))]">
             {toolbarLogoUrl ? (
@@ -102,22 +106,6 @@ const TeamsAndServicesLayout = () => {
             <UserSection />
           </div>
         </div>
-
-        <section className="mx-auto mt-1.5 flex w-full max-w-5xl shrink-0 flex-col gap-1 text-center lg:mt-3 lg:gap-2">
-          <h1 className="flex items-center justify-center gap-2 text-lg font-semibold lg:text-2xl">
-            <Icon svg={Users} size="md" className="text-orange-400" />
-            Teams and Services
-          </h1>
-          <p className="mx-auto hidden max-w-3xl text-sm text-gray-200 lg:block">
-            Manage scheduling roster, positions, teams, and schedule
-            assignments, plus service times and order-of-service plans.
-          </p>
-          {!canEditAnyTeam ? (
-            <p className="mx-auto rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-100">
-              View-only Teams access
-            </p>
-          ) : null}
-        </section>
 
         <section className="mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-2 lg:hidden">
@@ -136,7 +124,7 @@ const TeamsAndServicesLayout = () => {
             </p>
           </div>
 
-          <aside className="hidden min-h-0 border-gray-700 bg-gray-950/70 lg:block lg:border-r lg:p-4">
+          <aside className="hidden min-h-0 flex-col overflow-hidden border-gray-700 bg-gray-950/70 lg:flex lg:border-r lg:p-4">
             <TeamsSidebarNav />
           </aside>
 
@@ -161,7 +149,7 @@ const TeamsAndServicesLayout = () => {
           <SheetHeader className="border-gray-700 bg-gray-950/95">
             <SheetTitle>Sections</SheetTitle>
           </SheetHeader>
-          <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
             <TeamsSidebarNav onNavigate={() => setMobileNavOpen(false)} />
           </div>
         </SheetContent>

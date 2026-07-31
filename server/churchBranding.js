@@ -218,6 +218,43 @@ export const pickPublicBoardHeaderLogoUrl = (brandingValue) => {
   );
 };
 
+const listUsablePublicBrandColors = (brandingValue) => {
+  if (!isRecord(brandingValue)) return [];
+  const colors = Array.isArray(brandingValue.colors)
+    ? brandingValue.colors
+    : [];
+  return colors
+    .map((color) => {
+      if (!isRecord(color)) return null;
+      const value = String(color.value || "").trim();
+      if (!BRAND_HEX_COLOR_RE.test(value)) return null;
+      return {
+        label: String(color.label || "")
+          .trim()
+          .toLowerCase(),
+        value,
+      };
+    })
+    .filter(Boolean);
+};
+
+/**
+ * First usable brand swatch for public chrome. Prefers a color labeled
+ * "Primary", otherwise the first saved color in the palette.
+ */
+export const pickPublicPrimaryBrandColor = (brandingValue) => {
+  const usable = listUsablePublicBrandColors(brandingValue);
+  const labeledPrimary = usable.find((color) => color.label === "primary");
+  return (labeledPrimary || usable[0])?.value || "";
+};
+
+/**
+ * Second usable brand swatch (Color 2) for public chrome accents such as
+ * simple-view section titles. Empty when fewer than two colors are saved.
+ */
+export const pickPublicSecondaryBrandColor = (brandingValue) =>
+  listUsablePublicBrandColors(brandingValue)[1]?.value || "";
+
 export const normalizeChurchBrandingForStorage = (input) => {
   const source =
     isRecord(input) && isRecord(input.branding) ? input.branding : input;

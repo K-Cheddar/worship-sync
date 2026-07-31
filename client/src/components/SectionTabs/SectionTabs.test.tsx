@@ -47,4 +47,34 @@ describe("SectionTabs", () => {
 
     consoleErrorSpy.mockRestore();
   });
+
+  it("keeps inactive tab content mounted when keepMounted is set", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <SectionTabs
+        keepMounted
+        items={[
+          {
+            value: "one",
+            label: "One",
+            content: <div>First panel</div>,
+          },
+          {
+            value: "two",
+            label: "Two",
+            content: <div>Second panel</div>,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("First panel")).toBeInTheDocument();
+    expect(screen.getByText("Second panel")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /^Two$/i }));
+
+    expect(screen.getByText("First panel")).toBeInTheDocument();
+    expect(screen.getByText("Second panel")).toBeInTheDocument();
+  });
 });

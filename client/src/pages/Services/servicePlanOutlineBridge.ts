@@ -28,7 +28,11 @@ import type { ServiceItem } from "../../types";
 import { createNewFreeForm, createNewHeading } from "../../utils/itemUtil";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import generateRandomId from "../../utils/generateRandomId";
-import { richTextToPlainText } from "../../types/richText";
+import { resolveServicePlanSongRef } from "./servicePlanSongResolution";
+import {
+  richTextToFormattedPlainText,
+  richTextToPlainText,
+} from "../../types/richText";
 import type {
   ServicePlan,
   ServicePlanElement,
@@ -65,27 +69,33 @@ const buildOutlineItemForElement = async ({
   list,
   db,
   bibleDb,
+  songs,
 }: {
   element: ServicePlanElement;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   bibleDb: PouchDB.Database | undefined;
+  songs: ServiceItem[];
 }): Promise<{ item: ServiceItem | null; skippedTitle: string | null }> => {
   const title = richTextToPlainText(element.title).trim() || "Untitled";
 
   if (element.songRef) {
-    if (element.songRef.kind === "library") {
+    // A song the import couldn't find may have been added to the library since,
+    // so the stored reference is re-checked rather than trusted — otherwise a
+    // song that plainly exists is dropped on its way to the screen.
+    const songRef = resolveServicePlanSongRef(element.songRef, songs);
+    if (songRef?.kind === "library") {
       return {
         item: {
-          _id: element.songRef.songId,
-          name: element.songRef.songName,
+          _id: songRef.songId,
+          name: songRef.songName,
           type: "song",
           listId: generateRandomId(),
         },
         skippedTitle: null,
       };
     }
-    // A "pending" (not-yet-created) song has no library doc to reference.
+    // Still nothing in the library to reference.
     return { item: null, skippedTitle: title };
   }
 
@@ -126,7 +136,7 @@ const buildOutlineItemForElement = async ({
 
   const result = await createNewFreeForm({
     name: title,
-    text: richTextToPlainText(element.notes),
+    text: richTextToFormattedPlainText(element.notes),
     list,
     db,
     background: "",
@@ -149,11 +159,15 @@ export const buildServicePlanOutlineItems = async ({
   currentList,
   db,
   bibleDb,
+  songs,
 }: {
   plan: ServicePlan;
   currentList: ServiceItem[];
   db: PouchDB.Database | undefined;
   bibleDb?: PouchDB.Database | undefined;
+  /** The song library as it stands now, for re-checking unmatched imports.
+   * Required rather than defaulted: omitting it silently drops songs. */
+  songs: ServiceItem[];
 }): Promise<ServicePlanOutlinePushResult> => {
   const items: ServiceItem[] = [];
   const skippedTitles: string[] = [];
@@ -196,6 +210,7 @@ export const buildServicePlanOutlineItems = async ({
         list: workingList,
         db,
         bibleDb,
+        songs,
       });
 
       if (skippedTitle) {

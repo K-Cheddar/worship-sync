@@ -1,9 +1,10 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   CalendarRange,
   Check,
+  ChevronLeft,
   ChevronRight,
   Clock,
   Users,
@@ -334,7 +335,8 @@ const serviceTimingLabel = (shared: SharedOccurrenceTiming) => {
  * Planning Center's Plans tab, which many users will already know.
  */
 const TeamsPlansPage = () => {
-  const { churchId } = useContext(GlobalInfoContext) || {};
+  const { churchId, canEditServices, canEditTeams: canEditTeamsFromContext } =
+    useContext(GlobalInfoContext) || {};
   const { pageData, canEditTeams, servicePlansRevision } = useTeamsPage();
   const navigate = useNavigate();
   const initialRange = useMemo(() => defaultRange(), []);
@@ -343,6 +345,10 @@ const TeamsPlansPage = () => {
   const [rangePreset, setRangePreset] = useState<RangePreset>("4w");
   const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
+  // Mild placeholders for planned chips / progress / checks until listServicePlans
+  // resolves. Stays false on revision refreshes so badges do not flash.
+  const [planStatusLoading, setPlanStatusLoading] = useState(Boolean(churchId));
+  const planStatusChurchIdRef = useRef<string | null>(null);
   const [selection, setSelection] = useState<{
     service: TeamService;
     occurrence: TeamScheduleOccurrence;
@@ -353,6 +359,7 @@ const TeamsPlansPage = () => {
   // Desktop keeps the side panel. Opening from the list leaves the sheet closed;
   // returning from a schedule deep-link reopens it.
   const [servingSheetOpen, setServingSheetOpen] = useState(false);
+  const [servingPanelOpen, setServingPanelOpen] = useState(true);
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
@@ -390,15 +397,36 @@ const TeamsPlansPage = () => {
   }, [pendingPlanRestore, pageData.services, windowStart, windowEnd]);
 
   useEffect(() => {
-    if (!churchId) return;
+    if (!churchId) {
+      planStatusChurchIdRef.current = null;
+      setPlanKeysWithPlans(new Set());
+      setPlanStatusLoading(false);
+      return;
+    }
     let cancelled = false;
+    const isNewChurch = planStatusChurchIdRef.current !== churchId;
+    if (isNewChurch) {
+      setPlanStatusLoading(true);
+      // Drop the previous church's badges; skip the empty initial mount set.
+      if (planStatusChurchIdRef.current !== null) {
+        setPlanKeysWithPlans(new Set());
+      }
+    }
     listServicePlans(churchId)
       .then((res) => {
         if (cancelled) return;
-        setPlanKeysWithPlans(new Set(res.servicePlans.map((plan) => plan.planKey)));
+        setPlanKeysWithPlans(
+          new Set(res.servicePlans.map((plan) => plan.planKey)),
+        );
+        planStatusChurchIdRef.current = churchId;
       })
       .catch(() => {
-        // The list still works without plan-status badges if this fails.
+        if (cancelled) return;
+        // Settle without badges rather than spinning forever.
+        planStatusChurchIdRef.current = churchId;
+      })
+      .finally(() => {
+        if (!cancelled) setPlanStatusLoading(false);
       });
     return () => {
       cancelled = true;
@@ -587,7 +615,9 @@ const TeamsPlansPage = () => {
               service={selection.service}
               occurrence={selection.occurrence}
               members={pageData.members}
-              canEdit={canEditTeams}
+              positions={pageData.positions}
+              teams={pageData.teams}
+              canEdit={Boolean(canEditServices ?? canEditTeamsFromContext ?? canEditTeams)}
               onBack={() => {
                 setServingSheetOpen(false);
                 setSelection(null);
@@ -607,11 +637,47 @@ const TeamsPlansPage = () => {
               }
             />
           </div>
-          <aside className="hidden w-full shrink-0 flex-col gap-2 overflow-y-auto rounded-xl border border-gray-700/80 bg-gray-950/70 p-3 lg:flex lg:w-64">
-            <WhosServingPanel
-              assignmentTeams={assignmentTeams}
-              onOpenSchedule={openSchedule}
-            />
+          <aside
+            className={cn(
+              "relative hidden min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700/80 bg-gray-950/70 transition-[width] duration-300 ease-in-out lg:flex",
+              servingPanelOpen ? "w-64" : "w-10",
+            )}
+            aria-label="Who's serving"
+          >
+            <Button
+              type="button"
+              variant="tertiary"
+              padding="p-0"
+              className="absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-950 shadow-sm"
+              aria-expanded={servingPanelOpen}
+              aria-label={
+                servingPanelOpen ? "Hide serving panel" : "Show serving panel"
+              }
+              onClick={() => setServingPanelOpen((open) => !open)}
+            >
+              {servingPanelOpen ? (
+                <ChevronRight className="size-4 shrink-0" aria-hidden />
+              ) : (
+                <ChevronLeft className="size-4 shrink-0" aria-hidden />
+              )}
+            </Button>
+            {servingPanelOpen ? (
+              <div className="scrollbar-variable flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
+                <WhosServingPanel
+                  assignmentTeams={assignmentTeams}
+                  onOpenSchedule={openSchedule}
+                />
+              </div>
+            ) : (
+              <div className="flex h-full w-10 flex-col items-center py-3">
+                <Icon
+                  svg={Users}
+                  size="sm"
+                  className="text-orange-300"
+                  alt="Who's serving"
+                />
+              </div>
+            )}
           </aside>
         </div>
 
@@ -741,6 +807,13 @@ const TeamsPlansPage = () => {
             "grid grid-cols-1 items-start gap-4 pt-3",
             visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",
           )}
+          {...(planStatusLoading
+            ? {
+              role: "status" as const,
+              "aria-busy": true,
+              "aria-label": "Loading plan status",
+            }
+            : {})}
         >
           {visibleGroups.map(({ key, name, service, occurrences }) => {
             const shared = getSharedOccurrenceTiming(occurrences);
@@ -776,18 +849,25 @@ const TeamsPlansPage = () => {
                             ? "1 date"
                             : `${occurrences.length} dates`}
                         </span>
-                        <span
-                          className={cn(
-                            "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                            plannedCount > 0
-                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                              : "border-gray-700 bg-gray-900/70 text-gray-400",
-                          )}
-                        >
-                          {plannedCount === 0
-                            ? "None planned"
-                            : `${plannedCount} planned`}
-                        </span>
+                        {planStatusLoading ? (
+                          <span
+                            className="inline-block h-[22px] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                            aria-hidden
+                          />
+                        ) : (
+                          <span
+                            className={cn(
+                              "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                              plannedCount > 0
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                : "border-gray-700 bg-gray-900/70 text-gray-400",
+                            )}
+                          >
+                            {plannedCount === 0
+                              ? "None planned"
+                              : `${plannedCount} planned`}
+                          </span>
+                        )}
                         {timingLabel ? (
                           <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
                             <Icon
@@ -802,16 +882,27 @@ const TeamsPlansPage = () => {
                     </div>
                   </div>
                   <div
-                    className="h-1 overflow-hidden rounded-full bg-gray-800"
+                    className={cn(
+                      "h-1 overflow-hidden rounded-full bg-gray-800",
+                      planStatusLoading && "animate-pulse",
+                    )}
                     aria-hidden
                   >
-                    <div
-                      className={cn(
-                        "h-full rounded-full transition-[width]",
-                        plannedCount > 0 ? "bg-emerald-400/80" : "bg-transparent",
-                      )}
-                      style={{ width: `${Math.round(plannedRatio * 100)}%` }}
-                    />
+                    {planStatusLoading ? (
+                      <div className="h-full w-2/5 rounded-full bg-white/10" />
+                    ) : (
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-[width]",
+                          plannedCount > 0
+                            ? "bg-emerald-400/80"
+                            : "bg-transparent",
+                        )}
+                        style={{
+                          width: `${Math.round(plannedRatio * 100)}%`,
+                        }}
+                      />
+                    )}
                   </div>
                 </header>
 
@@ -836,15 +927,23 @@ const TeamsPlansPage = () => {
                         )}
                       >
                         {month.occurrences.map((occurrence) => {
-                          const hasPlan = planKeysWithPlans.has(
-                            getServicePlanKey(occurrence),
-                          );
+                          const hasPlan =
+                            !planStatusLoading &&
+                            planKeysWithPlans.has(
+                              getServicePlanKey(occurrence),
+                            );
                           const isPast =
                             getOccurrenceDate(occurrence) <
                             formatPlainDate(new Date());
                           const isNextUpcoming =
                             occurrence.occurrenceId === nextUpcomingOccurrenceId;
                           const tile = getPlansTileParts(occurrence, shared);
+                          let planActionLabel = `Add plan for ${tile.label}`;
+                          if (planStatusLoading) {
+                            planActionLabel = `Plan for ${tile.label}`;
+                          } else if (hasPlan) {
+                            planActionLabel = `Open plan for ${tile.label}`;
+                          }
                           return (
                             <li
                               key={occurrence.occurrenceId}
@@ -858,18 +957,17 @@ const TeamsPlansPage = () => {
                               <Button
                                 type="button"
                                 variant="tertiary"
-                                aria-label={
-                                  hasPlan
-                                    ? `Open plan for ${tile.label}${isNextUpcoming ? ", up next" : ""}`
-                                    : `Add plan for ${tile.label}${isNextUpcoming ? ", up next" : ""}`
-                                }
+                                aria-label={`${planActionLabel}${isNextUpcoming ? ", up next" : ""}`}
+                                aria-busy={planStatusLoading || undefined}
                                 className={cn(
                                   "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
-                                  hasPlan
-                                    ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
-                                    : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
+                                  planStatusLoading
+                                    ? "border-gray-600/70 bg-gray-800/70 hover:border-gray-500/50 hover:bg-gray-800"
+                                    : hasPlan
+                                      ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
+                                      : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
                                   isNextUpcoming && scheduleUpNextBorderClassName,
-                                  isPast && !hasPlan && "opacity-55",
+                                  isPast && !hasPlan && !planStatusLoading && "opacity-55",
                                 )}
                                 onClick={() => {
                                   setServingSheetOpen(false);
@@ -887,7 +985,12 @@ const TeamsPlansPage = () => {
                                   >
                                     {tile.weekday}
                                   </span>
-                                  {hasPlan ? (
+                                  {planStatusLoading ? (
+                                    <span
+                                      className="size-3 shrink-0 animate-pulse rounded-sm bg-white/10"
+                                      aria-hidden
+                                    />
+                                  ) : hasPlan ? (
                                     <Icon
                                       svg={Check}
                                       size="xs"

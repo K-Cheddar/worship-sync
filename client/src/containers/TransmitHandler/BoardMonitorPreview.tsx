@@ -7,6 +7,7 @@ import { useBoardPresentationFontScale } from "../../boards/useBoardPresentation
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
 import { setMonitorBoardAliasId } from "../../store/presentationSlice";
+import { cn } from "../../utils/cnHelper";
 
 type BoardMonitorPreviewProps = {
   /**
@@ -25,6 +26,8 @@ type BoardMonitorPreviewProps = {
   isMobile?: boolean;
   /** DisplayWindow width multiplier (1 = default 14vw / 32vw mobile). */
   previewScale?: number;
+  /** Fill parent width with a true 16:9 stage instead of a vw-based size. */
+  fillWidth?: boolean;
 };
 
 /**
@@ -37,6 +40,7 @@ const BoardMonitorPreview = ({
   isOpen,
   isMobile = false,
   previewScale = 1,
+  fillWidth = false,
 }: BoardMonitorPreviewProps) => {
   const dispatch = useDispatch();
   const monitorBoardAliasId = useSelector(
@@ -78,10 +82,22 @@ const BoardMonitorPreview = ({
 
   return (
     <div className="flex shrink-0 flex-col gap-2">
-      <div className="flex items-start gap-2">
+      <div
+        className={cn(
+          "flex gap-2",
+          fillWidth ? "w-full flex-col" : "items-start",
+        )}
+      >
         <div
-          className="flex shrink-0 min-w-0 flex-col"
-          style={{ width: `${previewWidthVw}vw`, maxWidth: "100%" }}
+          className={cn(
+            "flex min-w-0 flex-col",
+            fillWidth ? "w-full" : "shrink-0",
+          )}
+          style={
+            fillWidth
+              ? { width: "100%" }
+              : { width: `${previewWidthVw}vw`, maxWidth: "100%" }
+          }
           data-testid="board-monitor-preview-stage"
         >
           <ScaledBoardPreview
@@ -90,7 +106,12 @@ const BoardMonitorPreview = ({
             missingAliasDescription="Pick a board in moderation to preview it here."
           />
         </div>
-        <div className="@container flex min-w-0 flex-1 flex-col items-center justify-center gap-2 py-1">
+        <div
+          className={cn(
+            "@container flex min-w-0 flex-col items-center justify-center gap-2 py-1",
+            fillWidth ? "w-full flex-row flex-wrap" : "flex-1",
+          )}
+        >
           <Toggle
             label="On monitor"
             labelClassName="min-w-0 shrink truncate text-xs"

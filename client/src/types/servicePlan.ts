@@ -27,10 +27,23 @@ export type ServicePlanElementType =
 /** A note scoped to one team/role (e.g. Band, Coordinators, Media) rather than
  * shown to everyone — the label is free text, not a real Teams team id, since
  * an element may need notes for a team that has no roster record at all. */
+/** Audience for an operational note attached to a service-plan element. */
+export type ServicePlanNoteScope = "team" | "role";
+
+/**
+ * A note intended for one team or one role. Team notes created before role
+ * notes existed have no scope and are treated as team notes for compatibility.
+ */
 export type ServicePlanTeamNote = {
   id: string;
   label: string;
   note: RichTextDocument;
+  scope?: ServicePlanNoteScope;
+  /** Stable Teams position id for a role-scoped note. */
+  positionId?: string;
+  /** Team identity is stored with role notes to make role filtering practical. */
+  teamId?: string;
+  teamName?: string;
 };
 
 /**
@@ -61,6 +74,9 @@ export type ServicePlanScriptureReference = {
 
 export type ServicePlanElement = {
   id: string;
+  /** Internal provenance flag used to safely reconcile later Service Planning
+   * refreshes without treating operator-created items as source items. */
+  sourcePlanningManaged?: boolean;
   /**
    * Derived, not operator-chosen: an element is just a titled item, and its
    * kind follows from what's attached to it (song → "song", scripture →
@@ -71,6 +87,7 @@ export type ServicePlanElement = {
   type: ServicePlanElementType;
   title: RichTextDocument;
   notes?: RichTextDocument;
+  /** Operational notes scoped to a team or specific role. */
   teamNotes?: ServicePlanTeamNote[];
   /** Plain HH:mm (24h) start time within the service, derived by the timing
    * cascade when a duration is set instead (see servicePlanTimingUtils.ts). */
@@ -91,6 +108,15 @@ export type ServicePlanElement = {
   positionId?: string;
   /** Raw scraped "led by" text, kept for traceability and re-import diffing. */
   sourceLedByRaw?: string;
+  /**
+   * Raw scraped element-type text (e.g. "Scripture Reading", "Worship Set").
+   * The source column is free text, and `type` above is a lossy derived enum,
+   * so the original string is kept: the Controller's overlay rules match on it
+   * (`matchElementType`), and without it a plan-sourced preview would stop
+   * matching overlays that a URL-sourced one matches. Absent on
+   * operator-created elements and on plans imported before this was stored.
+   */
+  sourceElementTypeRaw?: string;
   /** Set once this element has been pushed into the live outline, so a re-push
    * can detect it's already present instead of duplicating it. */
   pushedOutlineListId?: string;
@@ -113,6 +139,8 @@ export const getServicePlanElementType = (
 
 export type ServicePlanSection = {
   id: string;
+  /** See ServicePlanElement.sourcePlanningManaged. */
+  sourcePlanningManaged?: boolean;
   name: string;
   elements: ServicePlanElement[];
 };
@@ -170,8 +198,15 @@ export type ServicePlan = {
   sections: ServicePlanSection[];
   /** Public visibility is explicit; unlisted plans remain private. */
   published?: boolean;
-  /** Manual selection wins over the calculated service schedule until resumed. */
-  publicLive?: { mode: "schedule" } | { mode: "manual"; currentElementId: string };
+  /**
+   * The service-day timeline. `manual` is retained for plans written before
+   * timeline re-anchoring; new Make live actions use `anchored` so following
+   * items continue automatically from the selected item's server start time.
+   */
+  publicLive?:
+    | { mode: "schedule" }
+    | { mode: "manual"; currentElementId: string }
+    | { mode: "anchored"; currentElementId: string; startedAt: string };
   sourceImport?: ServicePlanSourceImport;
   /** planKey of the template plan this was generated from, if any (traceability only). */
   clonedFromPlanKey?: string;

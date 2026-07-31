@@ -46,9 +46,11 @@ export type ChurchBranding = {
 
 export type TeamsPermission = "none" | "view" | "edit";
 export type TeamScopedPermission = Exclude<TeamsPermission, "none">;
+export type ServicesPermission = "none" | "edit";
 
 export type MemberPermissions = {
   teams: TeamsPermission;
+  services?: ServicesPermission;
   teamScopes?: Record<string, TeamScopedPermission>;
 };
 

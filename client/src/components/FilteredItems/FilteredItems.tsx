@@ -710,7 +710,6 @@ const FilteredItems = ({
       <ViewSongSectionsDrawer
         song={viewSongDoc}
         isOpen={Boolean(viewSectionsSongId && viewSongDoc)}
-        isMobile={isMobile}
         searchHighlight={searchValue}
         onClose={() => setViewSectionsSongId(null)}
       />

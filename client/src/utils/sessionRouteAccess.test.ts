@@ -56,6 +56,17 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
+  it("allows teams routes for human sessions with Services edit access", () => {
+    expect(
+      isRouteAllowedForSession("/teams-and-services/plans", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "none", services: "edit" },
+      }),
+    ).toBe(true);
+  });
+
   it("allows teams routes for human sessions with scoped Teams access", () => {
     expect(
       isRouteAllowedForSession("/teams/schedules", {

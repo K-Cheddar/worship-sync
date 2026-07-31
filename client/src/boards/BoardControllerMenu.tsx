@@ -2,9 +2,11 @@ import { CircleAlert, Home, Menu as MenuIcon, Presentation } from "lucide-react"
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import Menu from "../components/Menu/Menu";
+import { interfaceZoomMenuItem } from "../components/InterfaceZoomMenuControl/InterfaceZoomMenuControl";
 import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../hooks/useElectronWindows";
 import { useIdentifyOnHover } from "../hooks/useIdentifyOnHover";
+import { useInterfaceZoom } from "../hooks/useInterfaceZoom";
 import { buildBoardDisplayRoute, buildBoardDisplayUrl } from "./boardUtils";
 import { getDisplayLabel } from "../utils/displayUtils";
 import { isElectronDisplayWindowOpen } from "../utils/isElectronDisplayWindowOpen";
@@ -25,6 +27,7 @@ export const BoardControllerMenu = ({
     aboutChangelogModals,
     updateReadyVersion,
   } = useAboutChangelogMenu();
+  useInterfaceZoom();
   const {
     isElectron,
     displays,
@@ -158,6 +161,7 @@ export const BoardControllerMenu = ({
         disabled: true,
       },
     ...aboutChangelogMenuItems,
+    interfaceZoomMenuItem,
   ];
 
   return (

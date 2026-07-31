@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import cn from "classnames";
-import { Send } from "lucide-react";
+import { MessageSquarePlus, Send, X } from "lucide-react";
 import Button from "../components/Button/Button";
 import TextArea from "../components/TextArea/TextArea";
 import { createBoardPost } from "./api";
@@ -25,12 +25,23 @@ export const BoardDiscussionPostComposer = ({
   userId,
   pullFromRemote,
 }: BoardDiscussionPostComposerProps) => {
+  const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const authorId = useMemo(
     () => buildWorshipSyncModeratorBoardPostAuthorId(userId),
     [userId],
   );
+
+  useEffect(() => {
+    if (!expanded) return;
+    textareaRef.current?.focus();
+  }, [expanded]);
+
+  const collapse = useCallback(() => {
+    setExpanded(false);
+  }, []);
 
   const handlePost = useCallback(async () => {
     const trimmed = text.trim();
@@ -50,6 +61,7 @@ export const BoardDiscussionPostComposer = ({
         text: trimmed,
       });
       setText("");
+      setExpanded(false);
       await Promise.resolve(pullFromRemote?.());
       showToast("Message posted to the discussion board.", "success");
     } catch (nextError) {
@@ -64,10 +76,52 @@ export const BoardDiscussionPostComposer = ({
     }
   }, [aliasId, authorId, busy, text, showToast, pullFromRemote]);
 
+  if (!expanded) {
+    return (
+      <div className="sticky bottom-0 z-10 shrink-0">
+        <Button
+          variant="tertiary"
+          svg={MessageSquarePlus}
+          className="w-full justify-start rounded-xl border border-gray-600 bg-gray-900/95 px-3 py-2.5 text-left shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+          onClick={() => setExpanded(true)}
+          disabled={!aliasId}
+        >
+          {text.trim()
+            ? "Continue drafting…"
+            : "Add to discussion board"}
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="sticky bottom-0 z-10 shrink-0 rounded-xl border border-gray-600 bg-gray-900/95 p-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+    <div
+      className="sticky bottom-0 z-10 shrink-0 rounded-xl border border-gray-600 bg-gray-900/95 p-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          collapse();
+        }
+      }}
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-gray-200">
+          Add to discussion board
+        </p>
+        <Button
+          variant="tertiary"
+          svg={X}
+          padding="p-1.5"
+          className="min-h-0!"
+          aria-label="Close composer"
+          onClick={collapse}
+          disabled={busy}
+        />
+      </div>
       <TextArea
+        ref={textareaRef}
         label="Add to discussion board"
+        hideLabel
         labelClassName="text-xs font-semibold text-gray-200"
         value={text}
         onChange={(value) => setText(value)}

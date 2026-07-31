@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import cn from "classnames";
-import { LoaderCircle, Sparkles, StarOff } from "lucide-react";
+import { Sparkles, StarOff } from "lucide-react";
 import Button from "../components/Button/Button";
-import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 import { updateRestreamMessageHighlighted } from "./api";
-import { BoardModeratorReplyBadge } from "./BoardModeratorReplyBadge";
+import { BoardActivitySourceBadge } from "./BoardActivitySourceBadge";
 import { BoardPostMessage } from "./BoardPostMessage";
 import { formatBoardTimestamp, getBoardAuthorNameColorClass } from "./boardUtils";
 import type { RestreamMessage } from "../types";
-import type { UseRestreamSessionResult } from "./useRestreamSession";
 
 /** Legacy rows from earlier Restream reply lifecycle handling; no longer stored server-side. */
 const isLegacyModeratorPipelineRow = (message: RestreamMessage) => {
@@ -42,308 +40,151 @@ const formatRestreamReplyFailureReason = (reason: string) => {
   return hints[key] || reason;
 };
 
-export type RestreamTabContentProps = {
+export type RestreamActivityCardProps = {
   churchId: string;
+  message: RestreamMessage;
   showToast: (message: string, variant: "success" | "error") => void;
-  restreamSession: UseRestreamSessionResult;
+  reload: () => void | Promise<void>;
 };
 
-export const RestreamTabContent = ({
+/** A single Restream row, reusable in the unified live activity feed. */
+export const RestreamActivityCard = ({
   churchId,
+  message,
   showToast,
-  restreamSession,
-}: RestreamTabContentProps) => {
-  const {
-    session,
-    messages,
-    isLoading,
-    error,
-    oauthConfigured,
-    reload,
-    isOffline,
-  } = restreamSession;
-  const [localMessages, setLocalMessages] = useState<RestreamMessage[]>([]);
-  const [actingIds, setActingIds] = useState<Set<string>>(new Set());
+  reload,
+}: RestreamActivityCardProps) => {
+  const [localMessage, setLocalMessage] = useState(message);
+  const [isActing, setIsActing] = useState(false);
 
   useEffect(() => {
-    setLocalMessages(filterRestreamMessagesForDisplay(messages));
-  }, [messages]);
+    setLocalMessage(message);
+  }, [message]);
 
-  const displayMessages = useMemo(() => {
-    return [...localMessages].sort((a, b) => {
-      const at = a.postedAt ?? 0;
-      const bt = b.postedAt ?? 0;
-      if (at !== bt) return at - bt;
-      return String(a.id).localeCompare(String(b.id));
-    });
-  }, [localMessages]);
-
-  const restreamScrollTrigger = useMemo(
-    () =>
-      displayMessages
-        .map((m) => `${m.id}:${m.isHighlighted ? 1 : 0}:${m.hidden ? 1 : 0}`)
-        .join("|"),
-    [displayMessages],
-  );
-
-  const restreamScrollResetKey = `${churchId}:${session?.sessionId ?? ""}`;
-
-  const {
-    scrollRef: restreamScrollRef,
-    endRef: restreamEndRef,
-    onScroll: onRestreamScroll,
-  } = useStickToBottomScroll({
-    scrollTrigger: restreamScrollTrigger,
-    resetKey: restreamScrollResetKey,
-  });
-
-  const runMessageAction = useCallback(
-    async (
-      messageId: string,
-      optimisticFn: (message: RestreamMessage) => RestreamMessage,
-      request: () => Promise<unknown>,
-    ) => {
-      setActingIds((prev) => new Set(prev).add(messageId));
-      setLocalMessages((prev) =>
-        prev.map((message) =>
-          message.id === messageId ? optimisticFn(message) : message,
-        ),
+  const handleHighlight = useCallback(async () => {
+    if (isActing || localMessage.kind === "moderator_reply") return;
+    const nextHighlighted = !localMessage.isHighlighted;
+    setIsActing(true);
+    setLocalMessage((current) => ({
+      ...current,
+      isHighlighted: nextHighlighted,
+    }));
+    try {
+      await updateRestreamMessageHighlighted(
+        churchId,
+        localMessage.id,
+        nextHighlighted,
       );
-      try {
-        await request();
-      } catch (nextError) {
-        await reload();
-        showToast(
-          nextError instanceof Error
-            ? nextError.message
-            : "Could not update the Restream message.",
-          "error",
-        );
-      } finally {
-        setActingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(messageId);
-          return next;
-        });
-      }
-    },
-    [reload, showToast],
-  );
-
-  const renderRestreamMainBody = () => {
-    if (isLoading) {
-      return (
-        <div className="flex shrink-0 items-center gap-2 text-gray-300">
-          <LoaderCircle className="animate-spin" size={18} />
-          Loading Restream messages…
-        </div>
+    } catch (nextError) {
+      await reload();
+      showToast(
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not update the Restream message.",
+        "error",
       );
+    } finally {
+      setIsActing(false);
     }
-    if (error) {
-      return (
-        <div className="shrink-0 rounded-xl border border-red-300/25 bg-red-950/20 p-4 text-sm text-red-100">
-          {error}
-        </div>
-      );
-    }
-    if (!session?.enabled) {
-      return (
-        <div className="shrink-0 rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
-          <p className="text-lg font-semibold">Restream is not connected.</p>
-          <p className="mt-2 text-sm text-gray-300">
-            Ask a church admin to connect Restream in Church administration under Integrations.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-        <div
-          ref={restreamScrollRef}
-          onScroll={onRestreamScroll}
-          className="scrollbar-variable flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
-        >
-          {displayMessages.length === 0 ? (
-            <div className="flex min-h-full flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
-              <p className="text-lg font-semibold">No Restream messages yet.</p>
-              <p className="mt-2 text-sm text-gray-300">
-                New live comments will appear here as this server receives them.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3 pr-0.5 pb-1">
-              {displayMessages.map((message) => {
-                const isModeratorReply = message.kind === "moderator_reply";
-                return (
-                  <article
-                    key={message.id}
-                    className={cn(
-                      "rounded-xl border p-4",
-                      message.hidden &&
-                      "border-gray-600 bg-gray-800/60 opacity-75",
-                      !message.hidden &&
-                      !isModeratorReply &&
-                      "border-gray-500 bg-gray-800/90",
-                      isModeratorReply && "border-amber-500/20 bg-gray-800/90",
-                    )}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            "font-semibold",
-                            message.hidden
-                              ? "text-gray-400"
-                              : getBoardAuthorNameColorClass(message),
-                          )}
-                        >
-                          {message.author}
-                        </span>
-                        {isModeratorReply ? (
-                          <BoardModeratorReplyBadge />
-                        ) : (
-                          <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-xs font-semibold text-cyan-100">
-                            Restream · {message.platform}
-                          </span>
-                        )}
-                        <span className="text-xs text-gray-300">
-                          {formatBoardTimestamp(message.postedAt)}
-                        </span>
-                        {message.isHighlighted ? (
-                          <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
-                            Highlighted
-                          </span>
-                        ) : null}
-                        {message.hidden ? (
-                          <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
-                            Hidden
-                          </span>
-                        ) : null}
-                        {isModeratorReply &&
-                          message.replyDeliveryStatus === "sending" ? (
-                          <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-semibold text-sky-100">
-                            Sending…
-                          </span>
-                        ) : null}
-                        {isModeratorReply &&
-                          message.replyDeliveryStatus === "sent" ? (
-                          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-100">
-                            Sent
-                          </span>
-                        ) : null}
-                        {isModeratorReply &&
-                          message.replyDeliveryStatus === "failed" ? (
-                          <span
-                            className="max-w-full rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-semibold text-red-100"
-                            title={
-                              message.replyFailureReason
-                                ? formatRestreamReplyFailureReason(
-                                  message.replyFailureReason,
-                                )
-                                : undefined
-                            }
-                          >
-                            Failed
-                          </span>
-                        ) : null}
-                      </div>
-                      {!isModeratorReply ? (
-                        <div className="flex shrink-0 gap-2">
-                          <Button
-                            variant="tertiary"
-                            svg={message.isHighlighted ? StarOff : Sparkles}
-                            onClick={() =>
-                              void runMessageAction(
-                                message.id,
-                                (current) => ({
-                                  ...current,
-                                  isHighlighted: !current.isHighlighted,
-                                }),
-                                () =>
-                                  updateRestreamMessageHighlighted(
-                                    churchId,
-                                    message.id,
-                                    !message.isHighlighted,
-                                  ),
-                              )
-                            }
-                            disabled={
-                              actingIds.has(message.id) || message.hidden
-                            }
-                          >
-                            {message.isHighlighted ? "Unhighlight" : "Highlight"}
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                    {isModeratorReply &&
-                      message.replyDeliveryStatus === "failed" &&
-                      message.replyFailureReason ? (
-                      <p className="mt-2 text-xs text-red-100/90">
-                        {formatRestreamReplyFailureReason(
-                          message.replyFailureReason,
-                        )}
-                      </p>
-                    ) : null}
-                    <div className="mt-3 min-w-0">
-                      <BoardPostMessage
-                        text={message.text}
-                        isMine={false}
-                        tone="moderator"
-                      />
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-          <div
-            ref={restreamEndRef}
-            className="h-px shrink-0"
-            aria-hidden
-          />
-        </div>
-      </div>
-    );
-  };
+  }, [churchId, isActing, localMessage, reload, showToast]);
+
+  const isModeratorReply = localMessage.kind === "moderator_reply";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="shrink-0 space-y-2">
-        {isOffline ? (
-          <p className="text-xs text-amber-100/90">
-            You appear to be offline. Live messages may not update until you reconnect.
-          </p>
-        ) : null}
-        {session?.streamTitle ? (
-          <p className="text-sm text-gray-200">
-            Stream name:{" "}
-            <span className="font-semibold text-white">{session.streamTitle}</span>
-          </p>
-        ) : null}
-        {!oauthConfigured ? (
-          <p className="text-xs text-amber-100/90">
-            Restream is not configured yet.
-          </p>
-        ) : null}
-        {session?.connectionIssues?.length ? (
-          <div className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-100/90">
-              Connection issues
-            </p>
-            <div className="mt-2 space-y-1 text-xs text-amber-100/90">
-              {session.connectionIssues.map((issue) => (
-                <p key={issue}>{issue}</p>
-              ))}
-            </div>
+    <article
+      aria-label={
+        isModeratorReply
+          ? "Moderator Restream reply"
+          : `Restream · ${localMessage.platform}`
+      }
+      className={cn(
+        "relative rounded-lg border px-3 py-2.5",
+        localMessage.hidden && "border-gray-600 bg-gray-800/60 opacity-75",
+        !localMessage.hidden && "border-gray-500 bg-gray-800/90",
+      )}
+    >
+      <BoardActivitySourceBadge
+        kind={isModeratorReply ? "moderator" : "restream"}
+        detail={isModeratorReply ? undefined : localMessage.platform}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span
+            className={cn(
+              "text-sm font-semibold",
+              localMessage.hidden
+                ? "text-gray-400"
+                : getBoardAuthorNameColorClass(localMessage),
+            )}
+          >
+            {localMessage.author}
+          </span>
+          <span className="text-[11px] text-gray-300">
+            {formatBoardTimestamp(localMessage.postedAt)}
+          </span>
+          {localMessage.isHighlighted ? (
+            <span className="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200">
+              Highlighted
+            </span>
+          ) : null}
+          {localMessage.hidden ? (
+            <span className="rounded-full bg-gray-600 px-1.5 py-0.5 text-[11px] font-semibold text-gray-100">
+              Hidden
+            </span>
+          ) : null}
+          {isModeratorReply &&
+            localMessage.replyDeliveryStatus === "sending" ? (
+            <span className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-sky-100">
+              Sending…
+            </span>
+          ) : null}
+          {isModeratorReply && localMessage.replyDeliveryStatus === "sent" ? (
+            <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-100">
+              Sent
+            </span>
+          ) : null}
+          {isModeratorReply && localMessage.replyDeliveryStatus === "failed" ? (
+            <span
+              className="max-w-full rounded-full bg-red-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-red-100"
+              title={
+                localMessage.replyFailureReason
+                  ? formatRestreamReplyFailureReason(
+                    localMessage.replyFailureReason,
+                  )
+                  : undefined
+              }
+            >
+              Failed
+            </span>
+          ) : null}
+        </div>
+        {!isModeratorReply ? (
+          <div className="flex shrink-0 gap-1.5">
+            <Button
+              variant="tertiary"
+              svg={localMessage.isHighlighted ? StarOff : Sparkles}
+              onClick={() => void handleHighlight()}
+              disabled={isActing || localMessage.hidden}
+            >
+              {localMessage.isHighlighted ? "Unhighlight" : "Highlight"}
+            </Button>
           </div>
         ) : null}
-        {session?.lastError ? (
-          <p className="text-xs text-amber-100/90">{session.lastError}</p>
-        ) : null}
       </div>
-
-      {renderRestreamMainBody()}
-    </div>
+      {isModeratorReply &&
+        localMessage.replyDeliveryStatus === "failed" &&
+        localMessage.replyFailureReason ? (
+        <p className="mt-1.5 text-[11px] text-red-100/90">
+          {formatRestreamReplyFailureReason(localMessage.replyFailureReason)}
+        </p>
+      ) : null}
+      <div className="min-w-0">
+        <BoardPostMessage
+          text={localMessage.text}
+          isMine={false}
+          tone="moderator"
+        />
+      </div>
+    </article>
   );
 };

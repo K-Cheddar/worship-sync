@@ -30,6 +30,9 @@ export type SelectProps = {
   suppressCloseAutoFocus?: boolean;
   /** Extra classes for the dropdown panel (for example max height). */
   contentClassName?: string;
+  /** Render the menu inline instead of in a portal. Needed inside a
+   * FloatingWindow, whose stacking context a portaled menu escapes. */
+  disablePortal?: boolean;
   /** Controlled open state (forwarded to Radix Select root). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -54,6 +57,7 @@ const Select = ({
   id: idProp,
   suppressCloseAutoFocus = false,
   contentClassName,
+  disablePortal,
   open,
   onOpenChange,
   ...rest
@@ -97,6 +101,7 @@ const Select = ({
         </SelectTrigger>
         <SelectContent
           className={contentClassName}
+          portal={!disablePortal}
           contentBackgroundColor={contentBackgroundColor}
           contentTextColor={contentTextColor}
           onCloseAutoFocus={

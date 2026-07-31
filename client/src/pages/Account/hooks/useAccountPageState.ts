@@ -14,7 +14,11 @@ import {
   revokeTrustedDevice,
   revokeWorkstation,
 } from "../../../api/auth";
-import type { TeamRecord, TeamsPermission } from "../../../api/authTypes";
+import type {
+  ServicesPermission,
+  TeamRecord,
+  TeamsPermission,
+} from "../../../api/authTypes";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { useApiErrorToast } from "../../../hooks/useApiErrorToast";
@@ -45,6 +49,7 @@ import {
   teamsPageAccessOptions,
   toTeamsAccessOption,
 } from "../accountTeamsAccess";
+import { toServicesAccessOption } from "../accountServicesAccess";
 import {
   DEFAULT_INVITE_ACCESS_DRAFT,
   inviteAccessDraftFromInvite,
@@ -86,6 +91,9 @@ export const useAccountPageState = () => {
   >({});
   const [memberTeamsAccessDrafts, setMemberTeamsAccessDrafts] = useState<
     Record<string, TeamsPermission>
+  >({});
+  const [memberServicesAccessDrafts, setMemberServicesAccessDrafts] = useState<
+    Record<string, ServicesPermission>
   >({});
   const [memberTeamScopeDrafts, setMemberTeamScopeDrafts] = useState<
     Record<string, string[]>
@@ -402,6 +410,13 @@ export const useAccountPageState = () => {
     [memberTeamsAccessDrafts],
   );
 
+  const getMemberServicesAccessValue = useCallback(
+    (member: Member): ServicesPermission =>
+      memberServicesAccessDrafts[member.membershipId] ||
+      toServicesAccessOption(member.permissions, member.role),
+    [memberServicesAccessDrafts],
+  );
+
   const getMemberTeamScopeValue = useCallback(
     (member: Member): string[] =>
       memberTeamScopeDrafts[member.membershipId] ||
@@ -475,6 +490,7 @@ export const useAccountPageState = () => {
     setDisplayPairingResetSignal,
     setMemberAccessDrafts,
     setMemberTeamsAccessDrafts,
+    setMemberServicesAccessDrafts,
     setMemberTeamScopeDrafts,
     setInviteAccessDraft,
     setInvitePendingAccessDrafts,
@@ -491,6 +507,7 @@ export const useAccountPageState = () => {
     handleDestructiveConfirm,
     getMemberAccessValue,
     getMemberTeamsAccessValue,
+    getMemberServicesAccessValue,
     getMemberTeamScopeValue,
     getInvitePendingAccessValue,
     toTeamsAccessOption,

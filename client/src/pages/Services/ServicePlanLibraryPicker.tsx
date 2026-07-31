@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import FilteredItems from "../../components/FilteredItems/FilteredItems";
 import Modal from "../../components/Modal/Modal";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -10,6 +10,7 @@ import {
 } from "../../store/createItemSlice";
 import type { ItemState, ServiceItem } from "../../types";
 import type { ServicePlanSongReference } from "../../types/servicePlan";
+import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
 
 /** Modal surface is dark and often portaled outside Teams `text-white` wrappers. */
 const FIELD_LABEL_CLASS = "text-neutral-100";
@@ -19,6 +20,12 @@ type ServicePlanLibraryPickerProps = {
   isOpen: boolean;
   onClose: () => void;
   onSelectSong: (songRef: ServicePlanSongReference) => void;
+  /** Seeds the song search, e.g. the title of an import that found no match. */
+  initialQuery?: string;
+  /** Opens on the Create song form with the query (and optional lyrics) seeded. */
+  startInCreate?: boolean;
+  /** Pasted/imported lyrics to seed when `startInCreate` is true. */
+  initialLyrics?: string;
 };
 
 /**
@@ -33,37 +40,35 @@ const ServicePlanLibraryPicker = ({
   isOpen,
   onClose,
   onSelectSong,
+  initialQuery = "",
+  startInCreate = false,
+  initialLyrics = "",
 }: ServicePlanLibraryPickerProps) => {
   const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
-  const allItems = useSelector((state) => state.allItems.list);
-  const isAllItemsLoading = useSelector(
-    (state) => state.allItems.isAllItemsLoading,
-  );
+  const { songs: songList, isLoading: songsLoading } = useServicePlanSongLibrary();
 
-  /**
-   * FilteredItems expects a ServiceItem list (Controller allItems). Teams/Services
-   * sessions often never run Controller lifecycle, so allItems stays "loading"
-   * forever with an empty list — derive song rows from allSongDocs instead
-   * (already refreshed by ServicePlanEditor via updateAllDocs).
-   */
-  const songList = useMemo((): ServiceItem[] => {
-    const fromAllItems = allItems.filter((item) => item.type === "song");
-    if (fromAllItems.length > 0) return fromAllItems;
-    return allSongDocs.map((doc) => ({
-      _id: doc._id,
-      name: doc.name,
-      type: "song",
-      listId: doc._id,
-      background: typeof doc.background === "string" ? doc.background : "",
-    }));
-  }, [allItems, allSongDocs]);
+  const [songQuery, setSongQuery] = useState(initialQuery.trim());
+  const [showCreateSong, setShowCreateSong] = useState(startInCreate);
 
-  const songsLoading =
-    isAllItemsLoading && songList.length === 0 && allSongDocs.length === 0;
-
-  const [songQuery, setSongQuery] = useState("");
-  const [showCreateSong, setShowCreateSong] = useState(false);
+  useEffect(() => {
+    if (!isOpen) return;
+    const seededName = initialQuery.trim();
+    setSongQuery(seededName);
+    if (startInCreate) {
+      dispatch(
+        setCreateItem({
+          ...initialCreateItemState,
+          name: seededName,
+          type: "song",
+          text: initialLyrics,
+        }),
+      );
+      setShowCreateSong(true);
+      return;
+    }
+    setShowCreateSong(false);
+  }, [dispatch, initialLyrics, initialQuery, isOpen, startInCreate]);
 
   const resetAndClose = () => {
     setSongQuery("");
@@ -111,10 +116,16 @@ const ServicePlanLibraryPicker = ({
       isOpen={isOpen}
       onClose={resetAndClose}
       title={showCreateSong ? "Create song" : "Add song"}
-      size="2xl"
+      size={showCreateSong ? "full" : "2xl"}
       contentPadding="p-4 pt-0"
     >
-      <div className="flex h-[calc(90vh-9rem)] min-h-[28rem] max-h-[52rem] flex-col gap-3 text-neutral-100">
+      <div
+        className={
+          showCreateSong
+            ? "flex h-full min-h-0 flex-col gap-3 text-neutral-100"
+            : "flex h-[calc(90vh-9rem)] min-h-[28rem] max-h-[52rem] flex-col gap-3 text-neutral-100"
+        }
+      >
         {showCreateSong ? (
           <div className="min-h-0 flex-1 overflow-hidden">
             <CreateItem

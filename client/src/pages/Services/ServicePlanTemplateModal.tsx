@@ -138,25 +138,28 @@ const ServicePlanTemplateModal = ({
           <div className="space-y-3">
             <Input
               label="Template name"
+              labelClassName="text-gray-100"
               placeholder="e.g. Standard Sabbath"
               value={name}
               disabled={saving}
               onChange={(value) => setName(String(value))}
             />
             <Checkbox
-              label={`Only offer this for ${serviceName}`}
+              label={`Prefer for ${serviceName}`}
               checked={scopeToService}
               disabled={saving}
               onCheckedChange={setScopeToService}
             />
             <p className="text-xs text-gray-400">
-              Saves the section and item structure, timings and notes. Songs,
-              scripture and assignments aren&apos;t included — those belong to a
-              single week.
+              Checked templates sort first for this service. Uncheck to use with
+              any service. Saves structure, timings and notes — not songs,
+              scripture or assignments.
             </p>
             {ordered.length > 0 ? (
               <div className="space-y-1">
-                <p className="text-sm font-semibold">Or replace an existing one</p>
+                <p className="text-sm font-semibold text-gray-100">
+                  Or replace an existing one
+                </p>
                 <ul className="scrollbar-variable max-h-40 space-y-1 overflow-y-auto rounded-md border border-gray-700 bg-gray-950/60 p-1">
                   {ordered.map((template) => (
                     <li key={template.templateId}>

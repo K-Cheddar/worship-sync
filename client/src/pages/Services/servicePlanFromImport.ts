@@ -9,11 +9,11 @@
  */
 import type { EventData, ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
-import { getServicePlanningSongMatchScore } from "../../integrations/servicePlanning/findServicePlanningSongMatch";
+import { findBestSongMatchByName } from "../../integrations/servicePlanning/findServicePlanningSongMatch";
 import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
 import generateRandomId from "../../utils/generateRandomId";
-import { plainTextToRichText } from "../../types/richText";
+import { multilineTextToRichText, plainTextToRichText } from "../../types/richText";
 import { getServicePlanElementType } from "../../types/servicePlan";
 import type {
   ServicePlanElement,
@@ -22,8 +22,24 @@ import type {
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
 
-const SONG_MATCH_THRESHOLD = 1;
-const SONG_MATCH_MIN_RATIO = 0.75;
+/** Words that name a song outright, wherever they appear in the row. */
+const SONG_WORDS = /\b(song|hymn|chorus|anthem)\b/;
+
+/** "Praise" and "worship" only sometimes name a song: "Worship" is a set, but
+ * "Call to Praise" is a spoken invitation and "Praise Report" is a testimony. */
+const AMBIGUOUS_SONG_WORDS = /\b(praise|worship)\b/;
+
+/** Rows whose only song-ish word is an ambiguous one and that read like one of
+ * these are not songs. The bias is deliberate: attaching a song to a plain item
+ * is one click, while a song wrongly attached during import has to be noticed
+ * first and then removed. */
+const NON_SONG_PHRASES =
+  /\bcall to \w+|\bpraise report\b|\bworship (leader|cent(er|re))\b/;
+
+/** Whether a row names a song, given that "praise"/"worship" alone don't. */
+const readsAsSong = (text: string): boolean =>
+  SONG_WORDS.test(text) ||
+  (AMBIGUOUS_SONG_WORDS.test(text) && !NON_SONG_PHRASES.test(text));
 
 /** Best-effort classification of a raw Service Planning row into our broader
  * element type vocabulary — the source's own "element type" column is free
@@ -32,9 +48,11 @@ const SONG_MATCH_MIN_RATIO = 0.75;
 export const guessServicePlanElementType = (
   elementType: string,
   title: string,
+  /** Set when the source marked its own songs, so wording must not add more. */
+  { skipSongWords = false }: { skipSongWords?: boolean } = {},
 ): ServicePlanElementType => {
   const text = `${elementType} ${title}`.toLowerCase();
-  if (/\b(song|hymn|worship|chorus|praise)\b/.test(text)) return "song";
+  if (!skipSongWords && readsAsSong(text)) return "song";
   if (/\b(video|clip|film)\b/.test(text)) return "video";
   if (/\b(image|photo|slide|graphic)\b/.test(text)) return "image";
   if (/\b(scripture|bible|reading|verse)\b/.test(text)) return "bible";
@@ -43,43 +61,27 @@ export const guessServicePlanElementType = (
   return "free";
 };
 
-/** Same scoring/threshold as findBestServicePlanningSongMatch, but against a
- * minimal {_id, name} shape so callers don't need a full ServiceItem[] (the
- * presentation library's song docs aren't shaped like ServiceItem). */
-const findBestSongDocMatch = <T extends { _id: string; name: string }>(
-  planningTitle: string,
-  songs: T[],
-): T | null => {
-  const termCount = cleanPlanningTitle(planningTitle)
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean).length;
-  const threshold = Math.max(SONG_MATCH_THRESHOLD, termCount * SONG_MATCH_MIN_RATIO);
-
-  let best: T | null = null;
-  let bestScore = threshold;
-  for (const song of songs) {
-    const score = getServicePlanningSongMatchScore(planningTitle, song.name);
-    if (score > bestScore) {
-      bestScore = score;
-      best = song;
-    }
-  }
-  return best;
-};
-
 const buildElementFromRow = <T extends { _id: string; name: string }>(
   row: EventData,
   songs: T[],
+  sourceMarksSongs: boolean,
 ): ServicePlanElement => {
-  const type = guessServicePlanElementType(row.elementType, row.title);
+  const type = row.songTitle
+    ? "song"
+    : guessServicePlanElementType(row.elementType, row.title, {
+      skipSongWords: sourceMarksSongs,
+    });
   const rawTitle = row.title?.trim() || row.elementType?.trim() || "Untitled";
   const ledBy = row.ledBy?.trim();
 
   const element: ServicePlanElement = {
     id: generateRandomId(),
+    sourcePlanningManaged: true,
     type,
     title: plainTextToRichText(rawTitle),
+    ...(row.elementType?.trim()
+      ? { sourceElementTypeRaw: row.elementType.trim() }
+      : {}),
     ...(ledBy ? { assignedName: ledBy, sourceLedByRaw: ledBy } : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),
     ...(typeof row.durationMinutes === "number"
@@ -88,21 +90,27 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
         durationMinutes: row.durationMinutes,
       }
       : {}),
-    ...(row.note ? { notes: plainTextToRichText(row.note) } : {}),
+    // Notes are the one imported field that carries line structure (bullet
+    // lists of mic assignments and the like), so they keep their own blocks
+    // rather than collapsing into a single run-on paragraph.
+    ...(row.note ? { notes: multilineTextToRichText(row.note) } : {}),
     ...(row.teamNotes?.length
       ? {
           teamNotes: row.teamNotes.map((teamNote) => ({
             id: generateRandomId(),
             label: teamNote.teamName,
-            note: plainTextToRichText(teamNote.note),
+            note: multilineTextToRichText(teamNote.note),
           })),
         }
       : {}),
   };
 
   if (type === "song") {
-    const cleanedTitle = cleanPlanningTitle(rawTitle);
-    const matched = findBestSongDocMatch(cleanedTitle, songs);
+    // The marker names the song on its own; the row title can also carry the
+    // element type ("Welcome Song") or a second line, so it only stands in
+    // when the source marked nothing.
+    const cleanedTitle = cleanPlanningTitle(row.songTitle?.trim() || rawTitle);
+    const matched = findBestSongMatchByName(cleanedTitle, songs);
     element.songRef = matched
       ? { kind: "library", songId: matched._id, songName: matched.name }
       : { kind: "pending", title: cleanedTitle, lyricsText: "" };
@@ -135,12 +143,24 @@ export const buildServicePlanSectionsFromImport = <
 >(
   data: ServicePlanningImportData,
   songs: T[],
-): ServicePlanSection[] =>
-  data.sections.map((section) => ({
+): ServicePlanSection[] => {
+  // Service Planning marks its own songs with a music icon. When a plan uses
+  // those markers they settle the question completely — an unmarked row is not
+  // a song, whatever it is called. Wording only decides it for the older
+  // layouts that mark nothing.
+  const sourceMarksSongs = data.sections.some((section) =>
+    section.rows.some((row) => Boolean(row.songTitle)),
+  );
+
+  return data.sections.map((section) => ({
     id: generateRandomId(),
+    sourcePlanningManaged: true,
     name: section.sectionName?.trim() || "Section",
-    elements: section.rows.map((row) => buildElementFromRow(row, songs)),
+    elements: section.rows.map((row) =>
+      buildElementFromRow(row, songs, sourceMarksSongs),
+    ),
   }));
+};
 
 export const buildServicePlanSourceImport = (
   data: ServicePlanningImportData,

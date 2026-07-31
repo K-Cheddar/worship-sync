@@ -6,6 +6,7 @@ import { ScrollToPlugin } from "gsap/ScrollToPlugin";
 import Home from "./pages/Home";
 import AppEntry from "./pages/AppEntry";
 import Controller from "./pages/Controller/Controller";
+import CurrentServiceWorkspace from "./pages/Controller/CurrentServiceWorkspace";
 import OverlayController from "./pages/OverlayController/OverlayController";
 import Projector from "./pages/Projector";
 import Monitor from "./pages/Monitor";
@@ -75,6 +76,7 @@ const isBootstrapSplashRoute = (pathname: string) => {
   /** Root entry: avoid flashing the entry screen before Navigate (e.g. workstation → operator). */
   if (pathname === "/" || pathname === "") return true;
   if (pathname === "/home") return true;
+  if (pathname === "/current-service") return true;
   if (pathname.startsWith("/controller")) return true;
   if (pathname === "/overlay-controller") return true;
   if (pathname === "/boards/controller") return true;
@@ -186,6 +188,16 @@ const AppRoutes = () => {
             element={
               <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
                 <Controller />
+              </AuthGate>
+            }
+          />
+          <Route
+            path="/current-service"
+            element={
+              <AuthGate allowedKinds={["human", "workstation"]}>
+                <TeamsAccessGuard>
+                  <CurrentServiceWorkspace />
+                </TeamsAccessGuard>
               </AuthGate>
             }
           />

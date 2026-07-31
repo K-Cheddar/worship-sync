@@ -1,22 +1,15 @@
 import { useCallback, useContext } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
+import { getServicePlanningImportDataFromUrl } from "../containers/Overlays/eventParser";
+import { servicePlanToImportData } from "../integrations/servicePlanning/servicePlanToImportData";
+import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
 import {
-  getServicePlanningImportDataFromUrl,
-  type EventData,
-} from "../containers/Overlays/eventParser";
-import {
-  findBestMatchingElementRule,
-  mapServicePlanningRows,
-  type ServicePlanningMappedRow,
-} from "../integrations/servicePlanning/mapServicePlanningToOverlays";
+  buildServicePlanningPreview,
+  getChangedOverlayPatch,
+  normalizeOverlayEvent,
+} from "../integrations/servicePlanning/buildServicePlanningPreview";
 import { findOverlayForServicePlanningCandidate } from "../integrations/servicePlanning/findBestOverlayMatch";
-import { findBestServicePlanningSongMatch } from "../integrations/servicePlanning/findServicePlanningSongMatch";
-import { cleanPlanningTitle } from "../integrations/servicePlanning/cleanPlanningTitle";
-import {
-  parseBibleReference,
-  type ParsedBibleRef,
-} from "../integrations/servicePlanning/parseBibleReference";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import {
@@ -40,19 +33,19 @@ import {
 import { moveOverlayAfterServicePlanningAnchor } from "../integrations/servicePlanning/servicePlanningOverlayOrder";
 import generateRandomId from "../utils/generateRandomId";
 import { setActiveItemInList, updateItemList } from "../store/itemListSlice";
-import type { OverlayInfo, ServiceItem } from "../types";
+import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
 import type {
   OutlineItemCandidate,
   OverlaySyncPlanItem,
-  ServicePlanningLineItem,
   ServicePlanningPreview,
+  ServicePlanningTeamAssignment,
 } from "../types/servicePlanningImport";
 import type { ServiceOutline } from "../types/importedPlan";
+import type { ServicePlan } from "../types/servicePlan";
 import {
   executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
   insertServicePlanningOutlineCandidates,
-  isOutlineCandidatePresentInList,
   planServicePlanningOutlineSyncSteps,
   type ServicePlanningOutlineSyncStep,
 } from "../utils/servicePlanningOutlineImport";
@@ -103,143 +96,17 @@ const SERVICE_PLANNING_LOADING_MESSAGE =
   "Integrations are still loading. Try again in a moment.";
 const OVERLAY_SELECTION_SCROLL_DELAY_MS = 500;
 
-const OVERLAY_PATCH_FIELDS = ["name", "title", "event"] as const;
-
-/** Normalize an overlay event for exact-duplicate comparison. */
-const normalizeOverlayEvent = (event?: string): string =>
-  (event || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-export const getChangedOverlayPatch = (
-  overlay: OverlayInfo,
-  patch: OverlaySyncPlanItem["patch"],
-): OverlaySyncPlanItem["patch"] => {
-  const changed: OverlaySyncPlanItem["patch"] = {};
-
-  for (const field of OVERLAY_PATCH_FIELDS) {
-    if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
-    const currentValue = overlay[field] ?? "";
-    const nextValue = patch[field] ?? "";
-    if (currentValue !== nextValue) {
-      changed[field] = patch[field];
-    }
-  }
-
-  return changed;
-};
-
-const matchesSectionName = (
-  sectionName: string,
-  matchSectionName: string,
-  matchMode: "contains" | "exact" | "normalize",
-): boolean => {
-  const a = sectionName.toLowerCase().replace(/\s+/g, " ").trim();
-  const b = matchSectionName.toLowerCase().replace(/\s+/g, " ").trim();
-  if (!b || !a) return false;
-  if (matchMode === "exact") return a === b;
-  if (matchMode === "normalize") {
-    const na = a.replace(/[^a-z0-9 ]/g, "");
-    const nb = b.replace(/[^a-z0-9 ]/g, "");
-    return na.includes(nb) || nb.includes(na);
-  }
-  return a.includes(b) || b.includes(a);
-};
-
-export const dedupeOutlineCandidatesForPreview = (
-  candidates: OutlineItemCandidate[],
-): OutlineItemCandidate[] => {
-  const seenSongKeys = new Set<string>();
-
-  return candidates.filter((candidate) => {
-    if (candidate.outlineItemType !== "song") {
-      return true;
-    }
-
-    const dedupeKey = [
-      candidate.headingName?.toLowerCase() || "__no_heading__",
-      candidate.matchedLibraryItem?.name.toLowerCase() ||
-        candidate.cleanedTitle.toLowerCase(),
-    ].join("::");
-
-    if (seenSongKeys.has(dedupeKey)) {
-      return false;
-    }
-
-    seenSongKeys.add(dedupeKey);
-    return true;
-  });
-};
-
-export const getRepeatedOverlayDedupeKey = (
-  block: Pick<ServicePlanningMappedRow, "rule">,
-  candidate: Pick<OverlaySyncPlanItem, "patch">,
-): string | null => {
-  if (!block.rule.dedupeRepeatedOverlays) {
-    return null;
-  }
-
-  return [
-    block.rule.id,
-    candidate.patch.name ?? "",
-    candidate.patch.title ?? "",
-    candidate.patch.event ?? "",
-  ].join("::");
-};
-
 /**
- * Whether the overlay plan would actually change anything against the *current*
- * overlays list. Mirrors the execution-time idempotency in executeOverlaySyncStep
- * so a stale preview (e.g. plan built before overlays loaded) doesn't enable a
- * sync or count steps that would be no-ops. Returns true as soon as one plan item
- * would create, clone, or update an overlay.
+ * These moved to buildServicePlanningPreview.ts so the preview can be built
+ * from a saved ServicePlan as well as a scraped URL. Re-exported here because
+ * the Controller panels (and their test mocks) import them from this module.
  */
-export const overlayPlanHasExecutableChange = (
-  overlayPlan: OverlaySyncPlanItem[],
-  overlays: OverlayInfo[],
-): boolean => {
-  const claimed = new Set<string>();
-  for (const item of overlayPlan) {
-    if (item.action === "skip") continue;
-
-    if (item.action === "update") {
-      const target = overlays.find((o) => o.id === item.targetOverlayId);
-      if (target) {
-        if (
-          Object.keys(getChangedOverlayPatch(target, item.patch)).length > 0
-        ) {
-          return true;
-        }
-        claimed.add(target.id);
-        continue;
-      }
-      // Target overlay is gone — fall through to the existence check below.
-    }
-
-    const targetEvent = normalizeOverlayEvent(item.patch.event);
-    const existing = targetEvent
-      ? overlays.find(
-          (o) =>
-            (o.type ?? "participant") === "participant" &&
-            o.id !== item.targetOverlayId &&
-            !claimed.has(o.id) &&
-            normalizeOverlayEvent(o.event) === targetEvent,
-        )
-      : undefined;
-
-    if (existing) {
-      if (
-        Object.keys(getChangedOverlayPatch(existing, item.patch)).length > 0
-      ) {
-        return true;
-      }
-      claimed.add(existing.id);
-      continue;
-    }
-
-    // No existing overlay matches — this item will create/clone a new one.
-    return true;
-  }
-  return false;
-};
+export {
+  dedupeOutlineCandidatesForPreview,
+  getChangedOverlayPatch,
+  getRepeatedOverlayDedupeKey,
+  overlayPlanHasExecutableChange,
+} from "../integrations/servicePlanning/buildServicePlanningPreview";
 
 const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   !candidate.outlineAlreadyPresent &&
@@ -285,265 +152,14 @@ export const useServicePlanningImport = () => {
       }
 
       const importData = await getServicePlanningImportDataFromUrl(url);
-      const sections = importData.sections;
-      const sectionNameByRow = new WeakMap<EventData, string>();
-      const sectionRowIndexByRow = new WeakMap<EventData, number>();
-      sections.forEach((section) => {
-        section.rows.forEach((row, index) => {
-          sectionNameByRow.set(row, section.sectionName);
-          sectionRowIndexByRow.set(row, index);
-        });
+      const state = store.getState();
+      const preview = buildServicePlanningPreview({
+        importData,
+        servicePlanning: sp,
+        overlays: state.undoable.present.overlays.list,
+        allItems,
+        activeOutlineList: state.undoable.present.itemList.list,
       });
-      const allRows = sections.flatMap((s) => s.rows);
-      const overlayCandidates = mapServicePlanningRows(allRows, sp);
-      const previewOverlays = store.getState().undoable.present.overlays.list;
-      const previewUsedOverlayIds = new Set<string>();
-      const repeatedOverlayKeys = new Set<string>();
-      const overlayReadyByRow = new WeakMap<EventData, boolean>();
-      const overlayPlan: OverlaySyncPlanItem[] = [];
-
-      for (const block of overlayCandidates) {
-        let allCandidatesResolvable = true;
-        const sectionName = sectionNameByRow.get(block.source) ?? "";
-        const sourceRowIndex = sectionRowIndexByRow.get(block.source) ?? -1;
-        for (const candidate of block.candidates) {
-          const repeatedOverlayKey = getRepeatedOverlayDedupeKey(
-            block,
-            candidate,
-          );
-          if (
-            repeatedOverlayKey &&
-            repeatedOverlayKeys.has(repeatedOverlayKey)
-          ) {
-            overlayPlan.push({
-              sectionName,
-              sourceRowIndex,
-              elementType: block.source.elementType,
-              title: block.source.title,
-              ledBy: block.source.ledBy,
-              personIndex: candidate.personIndex,
-              rawNameToken: candidate.rawNameToken,
-              action: "skip",
-              patch: { ...candidate.patch },
-              reason:
-                "An identical overlay for this rule is already planned earlier in the service.",
-            });
-            continue;
-          }
-
-          const target = findOverlayForServicePlanningCandidate(
-            block.source.elementType,
-            candidate.patch.event,
-            previewOverlays,
-            previewUsedOverlayIds,
-          );
-          if (target) {
-            previewUsedOverlayIds.add(target.id);
-            const changedPatch = getChangedOverlayPatch(
-              target,
-              candidate.patch,
-            );
-            const hasFieldChanges = Object.keys(changedPatch).length > 0;
-            if (!hasFieldChanges) {
-              overlayPlan.push({
-                sectionName,
-                sourceRowIndex,
-                elementType: block.source.elementType,
-                title: block.source.title,
-                ledBy: block.source.ledBy,
-                personIndex: candidate.personIndex,
-                rawNameToken: candidate.rawNameToken,
-                action: "update",
-                placementOnly: true,
-                targetOverlayId: target.id,
-                targetOverlayName: target.name || undefined,
-                targetOverlayEvent: target.event || undefined,
-                patch: { ...candidate.patch },
-                reason: "Existing overlay is already up to date.",
-              });
-              if (repeatedOverlayKey) {
-                repeatedOverlayKeys.add(repeatedOverlayKey);
-              }
-              continue;
-            }
-            overlayPlan.push({
-              sectionName,
-              sourceRowIndex,
-              elementType: block.source.elementType,
-              title: block.source.title,
-              ledBy: block.source.ledBy,
-              personIndex: candidate.personIndex,
-              rawNameToken: candidate.rawNameToken,
-              action: "update",
-              targetOverlayId: target.id,
-              targetOverlayName: target.name || undefined,
-              targetOverlayEvent: target.event || undefined,
-              patch: changedPatch,
-            });
-            if (repeatedOverlayKey) {
-              repeatedOverlayKeys.add(repeatedOverlayKey);
-            }
-            continue;
-          }
-
-          const template = findParticipantTemplateForSync(
-            previewOverlays,
-            candidate.patch.event,
-          );
-          if (template) {
-            overlayPlan.push({
-              sectionName,
-              sourceRowIndex,
-              elementType: block.source.elementType,
-              title: block.source.title,
-              ledBy: block.source.ledBy,
-              personIndex: candidate.personIndex,
-              rawNameToken: candidate.rawNameToken,
-              action: "clone",
-              targetOverlayId: template.id,
-              targetOverlayName: template.name || undefined,
-              targetOverlayEvent: template.event || undefined,
-              patch: { ...candidate.patch },
-            });
-            if (repeatedOverlayKey) {
-              repeatedOverlayKeys.add(repeatedOverlayKey);
-            }
-            continue;
-          }
-
-          overlayPlan.push({
-            sectionName,
-            sourceRowIndex,
-            elementType: block.source.elementType,
-            title: block.source.title,
-            ledBy: block.source.ledBy,
-            personIndex: candidate.personIndex,
-            rawNameToken: candidate.rawNameToken,
-            action: "create",
-            patch: { ...candidate.patch },
-            reason: `Create overlay for "${candidate.patch.event || block.source.elementType}"`,
-          });
-          if (repeatedOverlayKey) {
-            repeatedOverlayKeys.add(repeatedOverlayKey);
-          }
-        }
-
-        overlayReadyByRow.set(block.source, allCandidatesResolvable);
-      }
-
-      const songs = allItems.filter((item) => item.type === "song");
-      const outlineCandidates: OutlineItemCandidate[] = [];
-      const lineItems: ServicePlanningLineItem[] = [];
-
-      for (const section of sections) {
-        const sectionRule = sp.sectionRules.find((r) =>
-          matchesSectionName(
-            section.sectionName,
-            r.matchSectionName,
-            r.matchMode,
-          ),
-        );
-        const headingName = sectionRule?.headingName ?? null;
-
-        for (const [sourceRowIndex, row] of section.rows.entries()) {
-          const elementRule = findBestMatchingElementRule(
-            row.elementType,
-            sp.elementRules,
-            {
-              filter: (rule) => rule.outlineSync?.enabled ?? false,
-            },
-          );
-          const outlineItemType = elementRule?.outlineSync?.itemType ?? "none";
-          let matchedLibraryItem: ServiceItem | null = null;
-          let parsedRef: ParsedBibleRef | null = null;
-          const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
-
-          if (outlineItemType === "song") {
-            matchedLibraryItem = findBestServicePlanningSongMatch(
-              cleanedTitle,
-              songs,
-            );
-          } else if (outlineItemType === "bible") {
-            parsedRef = parseBibleReference(row.title);
-          }
-
-          const baseCandidate = {
-            sectionName: section.sectionName,
-            headingName,
-            sourceRowIndex,
-            elementType: row.elementType,
-            title: row.title,
-            cleanedTitle,
-            ledBy: row.ledBy,
-            outlineItemType,
-            matchedLibraryItem,
-            parsedRef,
-            overlayReady: overlayReadyByRow.get(row) ?? false,
-            outlineAlreadyPresent: false,
-          };
-
-          lineItems.push({
-            ...baseCandidate,
-            selectedForOutline:
-              Boolean(elementRule?.outlineSync) && outlineItemType !== "none",
-          });
-
-          if (
-            !elementRule?.outlineSync ||
-            elementRule.outlineSync.itemType === "none"
-          ) {
-            continue;
-          }
-
-          outlineCandidates.push({
-            ...baseCandidate,
-            cleanedTitle,
-          });
-        }
-      }
-
-      const activeOutlineList = store.getState().undoable.present.itemList.list;
-      const dedupedOutlineCandidates = dedupeOutlineCandidatesForPreview(
-        outlineCandidates,
-      ).map((candidate) => ({
-        ...candidate,
-        outlineAlreadyPresent: candidate.headingName
-          ? isOutlineCandidatePresentInList(
-              activeOutlineList,
-              candidate.headingName,
-              candidate,
-            )
-          : false,
-      }));
-
-      const preview: ServicePlanningPreview = {
-        overlayCandidates,
-        overlayPlan,
-        outlineCandidates: dedupedOutlineCandidates,
-        lineItems: lineItems.map((item) => {
-          if (!item.selectedForOutline || !item.headingName) {
-            return item;
-          }
-
-          const matchingOutlineCandidate = dedupedOutlineCandidates.find(
-            (candidate) =>
-              candidate.sectionName === item.sectionName &&
-              candidate.headingName === item.headingName &&
-              candidate.elementType === item.elementType &&
-              candidate.title === item.title &&
-              candidate.outlineItemType === item.outlineItemType,
-          );
-
-          return matchingOutlineCandidate
-            ? {
-                ...item,
-                outlineAlreadyPresent:
-                  matchingOutlineCandidate.outlineAlreadyPresent,
-              }
-            : item;
-        }),
-        teamAssignments: importData.teamAssignments,
-      };
 
       const serviceOutline: ServiceOutline = {
         source: "servicePlanning",
@@ -573,6 +189,53 @@ export const useServicePlanningImport = () => {
       selectedItemList?._id,
       store,
     ],
+  );
+
+  /**
+   * The plan-sourced twin of `loadPreview`: same matching rules, same preview
+   * shape, but built from the Teams ServicePlan the Services page owns instead
+   * of a freshly scraped URL.
+   *
+   * Deliberately does *not* call `persistItemListServiceOutline`. A plan-sourced
+   * preview is rebuilt on every `service-plan-updated` event, and the Services
+   * editor autosaves as the operator types — mirroring each of those into a
+   * PouchDB write would put storage churn on a live surface for no gain, since
+   * the plan is already durable server-side and re-derived on mount.
+   */
+  const loadPlanPreview = useCallback(
+    async (
+      plan: Pick<ServicePlan, "name" | "sections" | "sourceImport">,
+      teamAssignments: ServicePlanningTeamAssignment[],
+    ): Promise<ServiceOutline> => {
+      if (churchIntegrationsStatus !== "ready" || !churchIntegrations) {
+        throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
+      }
+      const sp = churchIntegrations.servicePlanning;
+      if (!sp.enabled) {
+        throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
+      }
+
+      const importData = servicePlanToImportData(plan);
+      const state = store.getState();
+      const preview = buildServicePlanningPreview({
+        importData,
+        servicePlanning: sp,
+        overlays: state.undoable.present.overlays.list,
+        allItems,
+        activeOutlineList: state.undoable.present.itemList.list,
+        teamAssignments,
+      });
+
+      return {
+        source: "servicePlanning",
+        loadedAt: new Date().toISOString(),
+        // Provenance only — where this plan was originally imported from.
+        sourceUrl: plan.sourceImport?.sourceUrl ?? "",
+        planLabel: importData.planLabel,
+        preview,
+      };
+    },
+    [allItems, churchIntegrations, churchIntegrationsStatus, store],
   );
 
   const applyPersistedOverlayUpdate = useCallback(
@@ -1164,6 +827,7 @@ export const useServicePlanningImport = () => {
 
   return {
     loadPreview,
+    loadPlanPreview,
     runImport,
     planOutlineSyncSteps,
     planSyncItemsInOrder,

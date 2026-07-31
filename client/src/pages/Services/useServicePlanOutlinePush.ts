@@ -14,11 +14,13 @@ import {
   buildServicePlanOutlineItems,
   type ServicePlanOutlinePushResult,
 } from "./servicePlanOutlineBridge";
+import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
 import type { ServicePlan } from "../../types/servicePlan";
 
 export const useServicePlanOutlinePush = () => {
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const dispatch = useDispatch();
+  const { songs } = useServicePlanSongLibrary();
   const currentList = useSelector(
     (state) => state.undoable.present.itemList.list,
   );
@@ -36,13 +38,14 @@ export const useServicePlanOutlinePush = () => {
         currentList,
         db,
         bibleDb,
+        songs,
       });
       if (result.items.length > 0) {
         dispatch(updateItemList([...currentList, ...result.items]));
       }
       return result;
     },
-    [currentList, db, bibleDb, dispatch, selectedList],
+    [currentList, db, bibleDb, dispatch, selectedList, songs],
   );
 
   return { pushPlanToOutline, selectedListName: selectedList?.name };

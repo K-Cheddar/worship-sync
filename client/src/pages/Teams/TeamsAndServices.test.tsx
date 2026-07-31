@@ -1122,7 +1122,8 @@ describe("Teams", () => {
 
     renderTeams();
     await waitForScheduleGrid();
-    await user.click(screen.getByRole("button", { name: /Edit schedule/i }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Edit schedule/i }));
 
     expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("July");
   });
@@ -1153,7 +1154,8 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    await user.click(screen.getByRole("button", { name: /Copy schedule/i }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Copy schedule/i }));
 
     // The copy seeds a "create" form that must already hold the copied data.
     expect(
@@ -1187,30 +1189,12 @@ describe("Teams", () => {
     });
     await waitForScheduleGrid();
 
-    expect(screen.getByText("View-only Teams access")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /New schedule/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Edit schedule/i }),
+      screen.queryByRole("button", { name: /More schedule options/i }),
     ).not.toBeInTheDocument();
-  });
-
-  it("hides the view-only badge when the user has scoped team edit access", async () => {
-    mockGetTeamsBootstrap.mockResolvedValue(
-      asTeamsBootstrapResponse(scheduleBootstrap),
-    );
-
-    renderTeams("/teams-and-services", {
-      role: "member",
-      permissions: { teams: "none", teamScopes: { "team-main": "edit" } },
-      canViewTeams: true,
-      canEditTeams: false,
-      canEditTeam: jest.fn((teamId: string) => teamId === "team-main"),
-    });
-    await waitForScheduleGrid();
-
-    expect(screen.queryByText("View-only Teams access")).not.toBeInTheDocument();
   });
 
   it("keeps the saved schedule name when a cached edit draft is blank", () => {

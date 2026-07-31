@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useState } from "react";
-import cn from "classnames";
 import { MessageSquarePlus, RotateCcw } from "lucide-react";
 import Button from "../components/Button/Button";
 import DeleteModal from "../components/Modal/DeleteModal";
@@ -16,7 +15,6 @@ import type { DBBoard, DBBoardAlias, Option } from "../types";
 import type { UseRestreamSessionResult } from "./useRestreamSession";
 
 export type BoardToolsPanelBodyProps = {
-  isMobileStack: boolean;
   churchId: string;
   restreamSession: UseRestreamSessionResult;
   handleCopy: (value: string, label: string) => Promise<void>;
@@ -38,7 +36,6 @@ export type BoardToolsPanelBodyProps = {
 };
 
 export const BoardToolsPanelBody = ({
-  isMobileStack,
   churchId,
   restreamSession,
   handleCopy,
@@ -104,7 +101,7 @@ export const BoardToolsPanelBody = ({
         />
       ) : null}
 
-      <div className="xl:hidden">
+      <div>
         <p className="text-sm font-semibold text-gray-100" id="board-tools-share-label">
           Share links
         </p>
@@ -131,11 +128,7 @@ export const BoardToolsPanelBody = ({
         </div>
       </div>
 
-      <div
-        className={cn(
-          isMobileStack && "mt-6 border-t border-gray-600 pt-6",
-        )}
-      >
+      <div className="mt-6 border-t border-gray-600 pt-6">
         <label
           className="text-sm font-semibold text-gray-100"
           htmlFor="board-history-select"

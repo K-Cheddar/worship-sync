@@ -41,7 +41,9 @@ export const createTeamsAuthHandlers = ({
   queryDocs,
   randomSecret,
   readChurchPublicBoardHeaderLogoUrl,
+  readChurchPublicBrandingChrome,
   requireAdminSession,
+  requireServicesEditSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,
@@ -49,6 +51,7 @@ export const createTeamsAuthHandlers = ({
   setDoc,
 }) => {
   const requireTeamsEdit = requireTeamsEditSession || requireAdminSession;
+  const requireServicesEdit = requireServicesEditSession || requireTeamsEdit;
   const requireTeamsEditForTeam =
     requireTeamsEditForTeamSession ||
     ((req, churchId) => requireTeamsEdit(req, churchId));
@@ -202,7 +205,8 @@ export const createTeamsAuthHandlers = ({
 
   // Deterministic id so "does an occurrence already have a plan" is a single
   // getDoc, with no query-and-filter needed (only one plan exists per occurrence).
-  const buildServicePlanDocId = (churchId, planKey) => `${churchId}::${planKey}`;
+  const buildServicePlanDocId = (churchId, planKey) =>
+    `${churchId}::${planKey}`;
 
   const MAX_SERVICE_PLAN_TEAM_NOTES = 12;
 
@@ -214,12 +218,25 @@ export const createTeamsAuthHandlers = ({
     if (!raw || typeof raw !== "object") return null;
     const label = normalizeShortText(raw.label, { max: 80 });
     if (!label) return null;
+    const scope = raw.scope === "role" ? "role" : "team";
+    const positionId = normalizeShortText(raw.positionId, { max: 160 });
+    const teamId = normalizeShortText(raw.teamId, { max: 160 });
+    const teamName = normalizeShortText(raw.teamName, { max: 80 });
+    if (scope === "role" && !positionId) return null;
     return {
       id:
         normalizeShortText(raw.id, { max: 160 }) ||
         createId("servicePlanTeamNote"),
       label,
       note: normalizeRichTextDocument(raw.note),
+      ...(scope === "role"
+        ? {
+            scope,
+            positionId,
+            ...(teamId ? { teamId } : {}),
+            ...(teamName ? { teamName } : {}),
+          }
+        : {}),
     };
   };
 
@@ -244,6 +261,23 @@ export const createTeamsAuthHandlers = ({
       };
     }
     return undefined;
+  };
+
+  /** A parsed passage reference, not verse text — the Bible item is built from
+   * it at push-to-outline time. `book` and `chapter` are the minimum needed to
+   * rebuild a reference, so a partial ref is dropped rather than half-stored. */
+  const normalizeServicePlanScriptureRef = (raw) => {
+    if (!raw || typeof raw !== "object") return undefined;
+    const book = normalizeShortText(raw.book, { max: 100 });
+    const chapter = normalizeShortText(raw.chapter, { max: 20 });
+    if (!book || !chapter) return undefined;
+    return {
+      label: normalizeShortText(raw.label, { max: 300 }),
+      book,
+      chapter,
+      verseRange: normalizeShortText(raw.verseRange, { max: 50 }),
+      version: normalizeShortText(raw.version, { max: 50 }),
+    };
   };
 
   const SERVICE_PLAN_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -295,30 +329,46 @@ export const createTeamsAuthHandlers = ({
       id:
         normalizeShortText(raw?.id, { max: 160 }) ||
         createId("servicePlanElement"),
+      ...(raw?.sourcePlanningManaged === true
+        ? { sourcePlanningManaged: true }
+        : {}),
       type: SERVICE_PLAN_ELEMENT_TYPES.has(raw?.type) ? raw.type : "free",
       title: normalizeRichTextDocument(raw?.title),
       ...(isRichTextDocEmpty(notes) ? {} : { notes }),
       ...(teamNotes?.length ? { teamNotes } : {}),
       startTime: normalizeServicePlanStartTime(raw?.startTime),
-      ...(durationSeconds === undefined ? {} : {
-        durationSeconds,
-        // Retained while older clients and integrations still read minutes.
-        durationMinutes: durationSeconds / 60,
-      }),
+      ...(durationSeconds === undefined
+        ? {}
+        : {
+            durationSeconds,
+            // Retained while older clients and integrations still read minutes.
+            durationMinutes: durationSeconds / 60,
+          }),
       songRef: normalizeServicePlanSongRef(raw?.songRef),
+      scriptureRef: normalizeServicePlanScriptureRef(raw?.scriptureRef),
       assignedMemberId:
         normalizeShortText(raw?.assignedMemberId, { max: 160 }) || undefined,
-      assignedName: normalizeShortText(raw?.assignedName, { max: 200 }) || undefined,
-      positionId: normalizeShortText(raw?.positionId, { max: 160 }) || undefined,
+      assignedName:
+        normalizeShortText(raw?.assignedName, { max: 200 }) || undefined,
+      positionId:
+        normalizeShortText(raw?.positionId, { max: 160 }) || undefined,
       sourceLedByRaw:
         normalizeShortText(raw?.sourceLedByRaw, { max: 200 }) || undefined,
+      sourceElementTypeRaw:
+        normalizeShortText(raw?.sourceElementTypeRaw, { max: 200 }) ||
+        undefined,
       pushedOutlineListId:
         normalizeShortText(raw?.pushedOutlineListId, { max: 160 }) || undefined,
     };
   };
 
   const normalizeServicePlanSection = (raw) => ({
-    id: normalizeShortText(raw?.id, { max: 160 }) || createId("servicePlanSection"),
+    id:
+      normalizeShortText(raw?.id, { max: 160 }) ||
+      createId("servicePlanSection"),
+    ...(raw?.sourcePlanningManaged === true
+      ? { sourcePlanningManaged: true }
+      : {}),
     name: normalizeShortText(raw?.name, { max: 200 }) || "Section",
     elements: Array.isArray(raw?.elements)
       ? raw.elements.map(normalizeServicePlanElement)
@@ -337,7 +387,8 @@ export const createTeamsAuthHandlers = ({
         ? body.serviceIds
         : [serviceId],
     );
-    const groupId = normalizeShortText(body?.groupId, { max: 160 }) || undefined;
+    const groupId =
+      normalizeShortText(body?.groupId, { max: 160 }) || undefined;
     const clonedFromPlanKey =
       normalizeShortText(body?.clonedFromPlanKey, { max: 300 }) || undefined;
     const rawStartsAt = String(body?.startsAt || "").trim();
@@ -422,7 +473,8 @@ export const createTeamsAuthHandlers = ({
       ...payload,
     });
     const nextPublicLive =
-      existing?.publicLive?.mode === "manual" &&
+      (existing?.publicLive?.mode === "manual" ||
+        existing?.publicLive?.mode === "anchored") &&
       resolvedPublicLive.mode === "schedule"
         ? resolvedPublicLive
         : null;
@@ -462,7 +514,8 @@ export const createTeamsAuthHandlers = ({
     if (!name) {
       throw httpError(400, "A template name is required.");
     }
-    const serviceId = normalizeShortText(body?.serviceId, { max: 160 }) || undefined;
+    const serviceId =
+      normalizeShortText(body?.serviceId, { max: 160 }) || undefined;
     const sections = Array.isArray(body?.sections)
       ? body.sections.map(normalizeServicePlanSection)
       : [];
@@ -494,9 +547,9 @@ export const createTeamsAuthHandlers = ({
   };
 
   /** Whether this request may edit Teams data, as a boolean rather than a throw. */
-  const hasTeamsEditAccess = async (req, churchId) => {
+  const hasServicesEditAccess = async (req, churchId) => {
     try {
-      await requireTeamsEdit(req, churchId);
+      await requireServicesEdit(req, churchId);
       return true;
     } catch {
       return false;
@@ -511,12 +564,18 @@ export const createTeamsAuthHandlers = ({
 
   const ensureChurchCurrentServiceTokens = async (churchId, adminUid) => {
     const church = await getDoc(COLLECTIONS.churches, churchId);
-    const currentTeamToken = normalizeShortText(church?.currentServiceTeamToken, {
-      max: 200,
-    });
-    const currentGeneralToken = normalizeShortText(church?.currentServiceGeneralToken, {
-      max: 200,
-    });
+    const currentTeamToken = normalizeShortText(
+      church?.currentServiceTeamToken,
+      {
+        max: 200,
+      },
+    );
+    const currentGeneralToken = normalizeShortText(
+      church?.currentServiceGeneralToken,
+      {
+        max: 200,
+      },
+    );
     const teamToken = currentTeamToken || createServicePlanPublicToken();
     const generalToken = currentGeneralToken || createServicePlanPublicToken();
     if (!currentTeamToken || !currentGeneralToken) {
@@ -557,10 +616,14 @@ export const createTeamsAuthHandlers = ({
   const getServicePlanEndMs = (plan) => {
     const startsAtMs = Date.parse(plan?.startsAt || "");
     if (Number.isNaN(startsAtMs)) return null;
-    const durationMs = (plan?.sections || []).flatMap((section) => section?.elements || [])
+    const durationMs = (plan?.sections || [])
+      .flatMap((section) => section?.elements || [])
       .reduce((total, element) => {
         const minutes = Number(element?.durationMinutes);
-        return total + (Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : 0);
+        return (
+          total +
+          (Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : 0)
+        );
       }, 0);
     return startsAtMs + Math.max(durationMs, MIN_CURRENT_SERVICE_WINDOW_MS);
   };
@@ -581,13 +644,18 @@ export const createTeamsAuthHandlers = ({
     );
     const now = Date.now();
     const eligible = plans
-      .filter((plan) => plan?.published && plan?.publicLinkToken && plan?.startsAt)
+      .filter(
+        (plan) => plan?.published && plan?.publicLinkToken && plan?.startsAt,
+      )
       .map((plan) => ({
         plan,
         startsAtMs: Date.parse(plan.startsAt),
         endsAtMs: getServicePlanEndMs(plan),
       }))
-      .filter(({ startsAtMs, endsAtMs }) => !Number.isNaN(startsAtMs) && endsAtMs !== null);
+      .filter(
+        ({ startsAtMs, endsAtMs }) =>
+          !Number.isNaN(startsAtMs) && endsAtMs !== null,
+      );
     const active = eligible
       .filter(({ startsAtMs, endsAtMs }) => startsAtMs <= now && now < endsAtMs)
       .sort((left, right) => right.startsAtMs - left.startsAtMs)[0];
@@ -620,7 +688,22 @@ export const createTeamsAuthHandlers = ({
     const currentElementId = normalizeShortText(raw?.currentElementId, {
       max: 160,
     });
-    if (raw?.mode === "manual" && getPlanElementIds(plan).has(currentElementId)) {
+    const startedAtMs = Date.parse(String(raw?.startedAt || ""));
+    if (
+      raw?.mode === "anchored" &&
+      getPlanElementIds(plan).has(currentElementId) &&
+      Number.isFinite(startedAtMs)
+    ) {
+      return {
+        mode: "anchored",
+        currentElementId,
+        startedAt: new Date(startedAtMs).toISOString(),
+      };
+    }
+    if (
+      raw?.mode === "manual" &&
+      getPlanElementIds(plan).has(currentElementId)
+    ) {
       return { mode: "manual", currentElementId };
     }
     return { mode: "schedule" };
@@ -633,11 +716,15 @@ export const createTeamsAuthHandlers = ({
     const existingTeamToken = normalizeShortText(plan?.publicLinkToken, {
       max: 200,
     });
-    const existingGeneralToken = normalizeShortText(plan?.publicGeneralLinkToken, {
-      max: 200,
-    });
+    const existingGeneralToken = normalizeShortText(
+      plan?.publicGeneralLinkToken,
+      {
+        max: 200,
+      },
+    );
     const publicLinkToken = existingTeamToken || createServicePlanPublicToken();
-    const publicGeneralLinkToken = existingGeneralToken || createServicePlanPublicToken();
+    const publicGeneralLinkToken =
+      existingGeneralToken || createServicePlanPublicToken();
     if (!existingTeamToken || !existingGeneralToken) {
       await setDoc(
         COLLECTIONS.servicePlans,
@@ -684,16 +771,25 @@ export const createTeamsAuthHandlers = ({
         { limit: 1 },
       );
       if (currentTeamChurch?.currentServiceTeamToken) {
-        const plan = await getCurrentPublishedServicePlan(currentTeamChurch.churchId);
+        const plan = await getCurrentPublishedServicePlan(
+          currentTeamChurch.churchId,
+        );
         if (plan) return { plan, viewMode: "team", token: trimmed };
       }
       const [currentGeneralChurch] = await queryDocs(
         COLLECTIONS.churches,
-        [{ field: "currentServiceGeneralTokenHash", value: hashValue(trimmed) }],
+        [
+          {
+            field: "currentServiceGeneralTokenHash",
+            value: hashValue(trimmed),
+          },
+        ],
         { limit: 1 },
       );
       if (currentGeneralChurch?.currentServiceGeneralToken) {
-        const plan = await getCurrentPublishedServicePlan(currentGeneralChurch.churchId);
+        const plan = await getCurrentPublishedServicePlan(
+          currentGeneralChurch.churchId,
+        );
         if (plan) return { plan, viewMode: "general", token: trimmed };
       }
       throw httpError(404, "Service not found.");
@@ -702,14 +798,16 @@ export const createTeamsAuthHandlers = ({
   };
 
   const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
-    const [church, churchLogoUrl] = await Promise.all([
+    const [church, brandingChrome] = await Promise.all([
       getDoc(COLLECTIONS.churches, plan.churchId),
-      readChurchPublicBoardHeaderLogoUrl(plan.churchId),
+      readChurchPublicBrandingChrome(plan.churchId),
     ]);
     return buildPublicServicePlanSnapshot({
       plan,
       churchName: church?.name || "WorshipSync",
-      churchLogoUrl,
+      churchLogoUrl: brandingChrome.logoUrl,
+      churchPrimaryColor: brandingChrome.primaryColor,
+      churchSecondaryColor: brandingChrome.secondaryColor,
       viewMode,
       shareId: token,
     });
@@ -725,7 +823,9 @@ export const createTeamsAuthHandlers = ({
       church?.currentServiceGeneralToken,
     ]
       .map((token) => String(token || "").trim())
-      .filter((token, index, tokens) => token && tokens.indexOf(token) === index)
+      .filter(
+        (token, index, tokens) => token && tokens.indexOf(token) === index,
+      )
       .forEach((token) => emitServiceFlowUpdated(token, revision));
   };
 
@@ -4930,17 +5030,25 @@ export const createTeamsAuthHandlers = ({
         // response, so a reload left an operator with no way to reach the
         // links short of publishing again. Edit-gated: a share URL embeds the
         // capability token, so a Teams *viewer* must not receive one.
-        const canEdit = await hasTeamsEditAccess(req, churchId);
+        const canEdit = await hasServicesEditAccess(req, churchId);
         let publicUrls;
         if (canEdit && servicePlan.published && servicePlan.publicLinkToken) {
           const church = await getDoc(COLLECTIONS.churches, churchId);
           publicUrls = {
             team: buildPublicServicePlanUrl(servicePlan.publicLinkToken),
             ...(servicePlan.publicGeneralLinkToken
-              ? { general: buildPublicServicePlanUrl(servicePlan.publicGeneralLinkToken) }
+              ? {
+                  general: buildPublicServicePlanUrl(
+                    servicePlan.publicGeneralLinkToken,
+                  ),
+                }
               : {}),
             ...(church?.currentServiceTeamToken
-              ? { currentTeam: buildPublicServicePlanUrl(church.currentServiceTeamToken) }
+              ? {
+                  currentTeam: buildPublicServicePlanUrl(
+                    church.currentServiceTeamToken,
+                  ),
+                }
               : {}),
             ...(church?.currentServiceGeneralToken
               ? {
@@ -4969,7 +5077,7 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
+        const admin = await requireServicesEdit(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -5008,12 +5116,9 @@ export const createTeamsAuthHandlers = ({
             adminUid: admin.user.uid,
             now,
           });
-          await setDoc(
-            COLLECTIONS.servicePlans,
-            docId,
-            nextPlan,
-            { merge: Boolean(existing) },
-          );
+          await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, {
+            merge: Boolean(existing),
+          });
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
         emitTeamsEvent(churchId, "service-plan-updated", {
@@ -5074,9 +5179,11 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
+        const admin = await requireServicesEdit(req, churchId);
         const payload = validateServicePlanTemplatePayload(req.body);
-        const requestedId = normalizeShortText(req.body?.templateId, { max: 200 });
+        const requestedId = normalizeShortText(req.body?.templateId, {
+          max: 200,
+        });
         const now = nowIso();
 
         let templateId = requestedId;
@@ -5100,11 +5207,16 @@ export const createTeamsAuthHandlers = ({
             churchId,
             updatedAt: now,
             updatedByUid: admin.user.uid,
-            ...(existing ? {} : { createdAt: now, createdByUid: admin.user.uid }),
+            ...(existing
+              ? {}
+              : { createdAt: now, createdByUid: admin.user.uid }),
           },
           { merge: Boolean(existing) },
         );
-        const template = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
+        const template = await getDoc(
+          COLLECTIONS.servicePlanTemplates,
+          templateId,
+        );
         emitTeamsEvent(churchId, "service-plan-template-updated", { template });
         return res.json({ success: true, template });
       } catch (error) {
@@ -5120,14 +5232,19 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        await requireTeamsEdit(req, churchId);
+        await requireServicesEdit(req, churchId);
         const templateId = decodeURIComponent(req.params.templateId);
-        const existing = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
+        const existing = await getDoc(
+          COLLECTIONS.servicePlanTemplates,
+          templateId,
+        );
         if (!existing || existing.churchId !== churchId) {
           throw httpError(404, "Template not found.");
         }
         await deleteDoc(COLLECTIONS.servicePlanTemplates, templateId);
-        emitTeamsEvent(churchId, "service-plan-template-removed", { templateId });
+        emitTeamsEvent(churchId, "service-plan-template-removed", {
+          templateId,
+        });
         return res.json({ success: true });
       } catch (error) {
         return sendTeamsJsonError(
@@ -5147,7 +5264,10 @@ export const createTeamsAuthHandlers = ({
       try {
         const churchId = req.params.churchId;
         await requireTeamsView(req, churchId);
-        const doc = await getDoc(COLLECTIONS.servicePlanAssignmentHistory, churchId);
+        const doc = await getDoc(
+          COLLECTIONS.servicePlanAssignmentHistory,
+          churchId,
+        );
         return res.json({ success: true, values: doc?.values || [] });
       } catch (error) {
         return sendTeamsJsonError(
@@ -5162,7 +5282,7 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        await requireTeamsEdit(req, churchId);
+        await requireServicesEdit(req, churchId);
         const values = Array.isArray(req.body?.values)
           ? [
               ...new Set(
@@ -5192,7 +5312,7 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
+        const admin = await requireServicesEdit(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -5200,12 +5320,17 @@ export const createTeamsAuthHandlers = ({
           throw httpError(404, "Service plan not found.");
         }
         if (!existing.startsAt || Number.isNaN(Date.parse(existing.startsAt))) {
-          throw httpError(400, "Save the service start time before publishing.");
+          throw httpError(
+            400,
+            "Save the service start time before publishing.",
+          );
         }
         const { publicLinkToken, publicGeneralLinkToken } =
           await ensureServicePlanPublicTokens(existing, admin.user.uid, docId);
-        const { teamToken: currentTeamToken, generalToken: currentGeneralToken } =
-          await ensureChurchCurrentServiceTokens(churchId, admin.user.uid);
+        const {
+          teamToken: currentTeamToken,
+          generalToken: currentGeneralToken,
+        } = await ensureChurchCurrentServiceTokens(churchId, admin.user.uid);
         const now = nowIso();
         const nextPlan = {
           ...existing,
@@ -5218,12 +5343,17 @@ export const createTeamsAuthHandlers = ({
           updatedAt: now,
           updatedByUid: admin.user.uid,
         };
-        await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, { merge: true });
+        await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, {
+          merge: true,
+        });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
           servicePlan: withoutServicePlanSecrets(servicePlan),
         });
-        await emitPublicServicePlanUpdated(servicePlan, Date.parse(now) || Date.now());
+        await emitPublicServicePlanUpdated(
+          servicePlan,
+          Date.parse(now) || Date.now(),
+        );
         return res.json({
           success: true,
           servicePlan: withoutServicePlanSecrets(servicePlan),
@@ -5231,10 +5361,15 @@ export const createTeamsAuthHandlers = ({
           teamPublicUrl: buildPublicServicePlanUrl(publicLinkToken),
           generalPublicUrl: buildPublicServicePlanUrl(publicGeneralLinkToken),
           currentTeamPublicUrl: buildPublicServicePlanUrl(currentTeamToken),
-          currentGeneralPublicUrl: buildPublicServicePlanUrl(currentGeneralToken),
+          currentGeneralPublicUrl:
+            buildPublicServicePlanUrl(currentGeneralToken),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not publish this service plan.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not publish this service plan.",
+        );
       }
     },
 
@@ -5242,7 +5377,7 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
+        const admin = await requireServicesEdit(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -5269,7 +5404,11 @@ export const createTeamsAuthHandlers = ({
           servicePlan: withoutServicePlanSecrets(servicePlan),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not unpublish this service plan.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not unpublish this service plan.",
+        );
       }
     },
 
@@ -5277,15 +5416,21 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
+        const admin = await requireServicesEdit(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
         if (!existing || existing.churchId !== churchId) {
           throw httpError(404, "Service plan not found.");
         }
-        const publicLive = normalizePublicLiveState(req.body, existing);
         const now = nowIso();
+        // A client may request a timeline re-anchor, but only the server sets
+        // the start timestamp so every editor/viewer follows the same clock.
+        const requestedLive =
+          req.body?.mode === "anchored"
+            ? { ...req.body, startedAt: now }
+            : req.body;
+        const publicLive = normalizePublicLiveState(requestedLive, existing);
         await setDoc(
           COLLECTIONS.servicePlans,
           docId,
@@ -5296,13 +5441,20 @@ export const createTeamsAuthHandlers = ({
         emitTeamsEvent(churchId, "service-plan-updated", {
           servicePlan: withoutServicePlanSecrets(servicePlan),
         });
-        await emitPublicServicePlanUpdated(servicePlan, Date.parse(now) || Date.now());
+        await emitPublicServicePlanUpdated(
+          servicePlan,
+          Date.parse(now) || Date.now(),
+        );
         return res.json({
           success: true,
           servicePlan: withoutServicePlanSecrets(servicePlan),
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not update live service progress.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update live service progress.",
+        );
       }
     },
 
@@ -5342,14 +5494,21 @@ export const createTeamsAuthHandlers = ({
         res.flushHeaders?.();
         res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
         addServiceFlowSseClient(token, res);
-        const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 25_000);
+        const heartbeat = setInterval(
+          () => res.write(": keep-alive\n\n"),
+          25_000,
+        );
         req.on("close", () => {
           clearInterval(heartbeat);
           removeServiceFlowSseClient(token, res);
           res.end();
         });
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not open service updates.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open service updates.",
+        );
       }
     },
 
@@ -5357,7 +5516,7 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        await requireTeamsEdit(req, churchId);
+        await requireServicesEdit(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);

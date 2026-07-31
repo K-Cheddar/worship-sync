@@ -7,6 +7,7 @@ import { cn } from "@/utils/cnHelper";
 import { alternatingAdminListRowBg } from "../../../utils/listRowStripes";
 import MemberAccessSheet from "../components/MemberAccessSheet";
 import { formatMemberTeamsAccessSummary } from "../accountTeamsAccess";
+import { formatMemberServicesAccessSummary } from "../accountServicesAccess";
 
 const AccountPeoplePage = () => {
   const accountPage = useAccountPage();
@@ -53,6 +54,10 @@ const AccountPeoplePage = () => {
               getEditableTeamScopeIds(invite.permissions),
               teams,
             );
+            const servicesAccessSummary = formatMemberServicesAccessSummary(
+              invite.permissions,
+              invite.role,
+            );
             const expiresLabel = invite.expiresAt
               ? new Date(invite.expiresAt).toLocaleString()
               : "Unknown";
@@ -75,7 +80,7 @@ const AccountPeoplePage = () => {
                 <div className="min-w-0">
                   <p className="font-semibold">{invite.email}</p>
                   <p className="text-sm text-gray-300">
-                    {accessLabel} | Teams: {teamsAccessSummary} | Sent {createdLabel}
+                    {accessLabel} | Teams: {teamsAccessSummary} | Services: {servicesAccessSummary} | Sent {createdLabel}
                   </p>
                   <p className="text-sm text-gray-400">Expires {expiresLabel}</p>
                 </div>
@@ -140,6 +145,10 @@ const AccountPeoplePage = () => {
               currentTeamScopeIds,
               teams,
             );
+            const servicesAccessSummary = formatMemberServicesAccessSummary(
+              member.permissions,
+              member.role,
+            );
 
             return (
               <div
@@ -176,6 +185,14 @@ const AccountPeoplePage = () => {
                       )}
                     >
                       Teams: {teamsAccessSummary}
+                    </p>
+                    <p
+                      className={cn(
+                        "text-sm",
+                        isSelf ? "text-cyan-100/80" : "text-gray-400",
+                      )}
+                    >
+                      Services: {servicesAccessSummary}
                     </p>
                     {memberEmail ? (
                       <p className="text-xs text-gray-400">{memberEmail}</p>

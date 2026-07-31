@@ -13,6 +13,7 @@ type SessionKind = "human" | "workstation" | "display" | null | undefined;
 type Access = "full" | "music" | "view" | null | undefined;
 type TeamsPermission = "none" | "view" | "edit" | null | undefined;
 type TeamScopedPermission = "view" | "edit";
+type ServicesPermission = "none" | "edit" | null | undefined;
 
 type RouteSessionContext = {
   loginState?: LoginState;
@@ -21,6 +22,7 @@ type RouteSessionContext = {
   role?: string | null;
   permissions?: {
     teams?: TeamsPermission;
+    services?: ServicesPermission;
     teamScopes?: Record<string, TeamScopedPermission>;
   } | null;
   operatorName?: string | null;
@@ -131,6 +133,7 @@ const hasTeamsViewAccess = (context: RouteSessionContext) =>
   context.role === "admin" ||
   context.permissions?.teams === "view" ||
   context.permissions?.teams === "edit" ||
+  context.permissions?.services === "edit" ||
   Object.keys(context.permissions?.teamScopes || {}).length > 0;
 
 export const isRouteAllowedForSession = (

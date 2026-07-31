@@ -31,6 +31,11 @@ export type SectionTabsProps<T extends string> = {
   triggerClassName?: string;
   descriptionClassName?: string;
   tabsContentClassName?: string;
+  /**
+   * Keep every tab panel mounted and hide inactive ones with CSS.
+   * Use when tab content is expensive to remount (previews, editors).
+   */
+  keepMounted?: boolean;
   value?: T;
   defaultValue?: T;
   onValueChange?: (value: T) => void;
@@ -44,6 +49,7 @@ export function SectionTabs<T extends string>({
   triggerClassName,
   descriptionClassName,
   tabsContentClassName,
+  keepMounted = false,
   value,
   defaultValue,
   onValueChange,
@@ -113,8 +119,10 @@ export function SectionTabs<T extends string>({
           <TabsContent
             key={item.value}
             value={item.value}
+            forceMount={keepMounted || undefined}
             className={cn(
               "outline-none",
+              keepMounted && "data-[state=inactive]:hidden",
               item.contentClassName ?? "space-y-4",
             )}
           >

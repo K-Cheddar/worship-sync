@@ -10,7 +10,7 @@ export const BoardModeratorReplyBadge = ({
 }: BoardModeratorReplyBadgeProps) => (
   <span
     className={cn(
-      "rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-50",
+      "rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-50",
       className,
     )}
   >

@@ -28,6 +28,7 @@ import {
   Undo2,
   UserX,
   Wand2,
+  Pencil,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
@@ -43,6 +44,11 @@ import {
   lineTabsListShellClassName,
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+} from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
 import {
   findNextUpcomingOccurrenceId,
@@ -110,7 +116,6 @@ import {
   scheduleWorkspaceTabsClassName,
   teamsCreatePanelFormClassName,
   teamsCreatePanelFormOpenMobileClassName,
-  teamsCreatePanelListClosedClassName,
   teamsManagerPageRootClassName,
 } from "../teamsStyles";
 import type {
@@ -511,6 +516,7 @@ const ScheduleTab = ({
     () => new Set(),
   );
   const [autoFilling, setAutoFilling] = useState(false);
+  const [autoFillPopoverOpen, setAutoFillPopoverOpen] = useState(false);
   // Synchronous double-click guard for handleAutoFillSchedule — see there.
   const autoFillRunningRef = useRef(false);
   const pendingScheduleSlotRestoreRef = useRef<{
@@ -1735,9 +1741,8 @@ const ScheduleTab = ({
     // two can never both fire for the same run.
     const totalOpenSlots = entries.length + unfilledCount;
     const gapLabel = unfilledCount
-      ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${
-          unfilledCount === 1 ? "needs" : "need"
-        } a person you'll have to assign manually.`
+      ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${unfilledCount === 1 ? "needs" : "need"
+      } a person you'll have to assign manually.`
       : "";
     void enqueueAssignmentSave(async () => {
       try {
@@ -3497,14 +3502,8 @@ const ScheduleTab = ({
         </div>
       ) : (
         <>
-          <section
-            className={cn(
-              panelShellClassName,
-              "w-full shrink-0",
-              teamsCreatePanelListClosedClassName,
-            )}
-          >
-            <div className={cn(panelHeaderPaddingClassName, "pb-4")}>
+          <section className={cn(panelShellClassName, "w-full shrink-0")}>
+            <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
               {scheduleReturnTo ? (
                 <div className="mb-2">
                   <TeamsReturnBackButton
@@ -3513,63 +3512,75 @@ const ScheduleTab = ({
                   />
                 </div>
               ) : null}
-              <h2 className="text-lg font-semibold">Schedules</h2>
-              <p className="mt-1 text-sm text-gray-400">
-                Assign people to services by position.
-              </p>
-              <div className="mt-4 flex flex-wrap items-end gap-3">
-                <Select
-                  className="min-w-56"
-                  label="Open schedule"
-                  value={selectedSchedule?.scheduleId || ""}
-                  onChange={(scheduleId) => {
-                    setSelectedScheduleId(scheduleId);
-                    setShowForm(false);
-                  }}
-                  options={schedules.map((schedule) => ({
-                    label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
-                    value: schedule.scheduleId,
-                  }))}
-                />
-                {canEdit ? (
-                  <Button
-                    variant="secondary"
-                    svg={Plus}
-                    iconSize="sm"
-                    onClick={() => {
-                      setSelectedScheduleId("");
-                      setShowForm(true);
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">Schedules</h2>
+                  <p className="mt-0.5 text-sm text-gray-400">
+                    Assign people to services by position.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <Select
+                    className="min-w-48"
+                    label="Open schedule"
+                    hideLabel
+                    value={selectedSchedule?.scheduleId || ""}
+                    onChange={(scheduleId) => {
+                      setSelectedScheduleId(scheduleId);
+                      setShowForm(false);
                     }}
-                  >
-                    New schedule
-                  </Button>
-                ) : null}
-                {canEdit && selectedSchedule ? (
-                  <Button variant="tertiary" iconSize="sm" onClick={() => setShowForm(true)}>
-                    Edit schedule
-                  </Button>
-                ) : null}
-                {canEdit && selectedSchedule ? (
-                  <Button
-                    variant="tertiary"
-                    svg={Copy}
-                    iconSize="sm"
-                    onClick={handleCopySchedule}
-                  >
-                    Copy schedule
-                  </Button>
-                ) : null}
-                {canEdit && selectedSchedule && canShowScheduleWorkspace ? (
-                  <Button
-                    variant="tertiary"
-                    svg={Wand2}
-                    iconSize="sm"
-                    disabled={autoFilling}
-                    onClick={() => void handleAutoFillSchedule()}
-                  >
-                    {autoFilling ? "Auto-filling…" : "Auto-fill schedule"}
-                  </Button>
-                ) : null}
+                    options={schedules.map((schedule) => ({
+                      label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
+                      value: schedule.scheduleId,
+                    }))}
+                  />
+                  {canEdit ? (
+                    <Button
+                      variant="secondary"
+                      svg={Plus}
+                      iconSize="sm"
+                      onClick={() => {
+                        setSelectedScheduleId("");
+                        setShowForm(true);
+                      }}
+                    >
+                      New schedule
+                    </Button>
+                  ) : null}
+                  {canEdit && selectedSchedule ? (
+                    <Menu
+                      align="end"
+                      menuItems={[
+                        {
+                          element: (
+                            <span className="flex items-center gap-2">
+                              <Pencil className="h-4 w-4" aria-hidden />
+                              Edit schedule
+                            </span>
+                          ),
+                          onClick: () => setShowForm(true),
+                        },
+                        {
+                          element: (
+                            <span className="flex items-center gap-2">
+                              <Copy className="h-4 w-4" aria-hidden />
+                              Copy schedule
+                            </span>
+                          ),
+                          onClick: handleCopySchedule,
+                        },
+                      ]}
+                      TriggeringButton={
+                        <Button
+                          variant="tertiary"
+                          svg={MoreHorizontal}
+                          iconSize="sm"
+                          aria-label="More schedule options"
+                        />
+                      }
+                    />
+                  ) : null}
+                </div>
               </div>
             </div>
           </section>
@@ -3673,57 +3684,107 @@ const ScheduleTab = ({
                           </>
                         ) : null}
 
-                        {/* View, export & share: infrequent actions in an overflow menu. */}
-                        <Menu
-                          align="end"
-                          menuItems={[
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <LayoutGrid className="h-4 w-4" aria-hidden />
-                                  Layout
-                                </span>
-                              ),
-                              subItems: scheduleLayoutOptions.map((option) => ({
-                                text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                                onClick: () => changeScheduleLayout(option.value),
-                              })),
-                            },
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <Printer className="h-4 w-4" aria-hidden />
-                                  Save as PDF
-                                </span>
-                              ),
-                              onClick: () => setPdfPreviewOpen(true),
-                              disabled: !scheduleExportModel,
-                            },
-                            ...(canEdit
-                              ? [
-                                {
-                                  element: (
-                                    <span className="flex items-center gap-2">
-                                      <Link2 className="h-4 w-4" aria-hidden />
-                                      {copyingLink ? "Copying…" : "Copy view-only link"}
-                                    </span>
-                                  ),
-                                  onClick: () => void copyPublicLink(),
-                                  disabled: copyingLink,
-                                  preventClose: copyingLink,
-                                },
-                              ]
-                              : []),
-                          ] as MenuItemType[]}
-                          TriggeringButton={
+                        {/* Infrequent schedule actions, including auto-fill. */}
+                        <Popover
+                          open={autoFillPopoverOpen}
+                          onOpenChange={setAutoFillPopoverOpen}
+                        >
+                          <PopoverAnchor asChild>
+                            <span className="inline-flex">
+                              <Menu
+                                align="end"
+                                menuItems={[
+                                  ...(canEdit
+                                    ? [
+                                      {
+                                        element: (
+                                          <span className="flex items-center gap-2">
+                                            <Wand2 className="h-4 w-4" aria-hidden />
+                                            {autoFilling
+                                              ? "Auto-filling…"
+                                              : "Auto-fill"}
+                                          </span>
+                                        ),
+                                        onClick: () => setAutoFillPopoverOpen(true),
+                                        disabled: autoFilling,
+                                      },
+                                    ]
+                                    : []),
+                                  {
+                                    element: (
+                                      <span className="flex items-center gap-2">
+                                        <LayoutGrid className="h-4 w-4" aria-hidden />
+                                        Layout
+                                      </span>
+                                    ),
+                                    subItems: scheduleLayoutOptions.map((option) => ({
+                                      text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
+                                      onClick: () => changeScheduleLayout(option.value),
+                                    })),
+                                  },
+                                  {
+                                    element: (
+                                      <span className="flex items-center gap-2">
+                                        <Printer className="h-4 w-4" aria-hidden />
+                                        Save as PDF
+                                      </span>
+                                    ),
+                                    onClick: () => setPdfPreviewOpen(true),
+                                    disabled: !scheduleExportModel,
+                                  },
+                                  ...(canEdit
+                                    ? [
+                                      {
+                                        element: (
+                                          <span className="flex items-center gap-2">
+                                            <Link2 className="h-4 w-4" aria-hidden />
+                                            {copyingLink
+                                              ? "Copying…"
+                                              : "Copy view-only link"}
+                                          </span>
+                                        ),
+                                        onClick: () => void copyPublicLink(),
+                                        disabled: copyingLink,
+                                        preventClose: copyingLink,
+                                      },
+                                    ]
+                                    : []),
+                                ] as MenuItemType[]}
+                                TriggeringButton={
+                                  <Button
+                                    variant="tertiary"
+                                    svg={MoreHorizontal}
+                                    iconSize="sm"
+                                    aria-label="More schedule actions"
+                                  />
+                                }
+                              />
+                            </span>
+                          </PopoverAnchor>
+                          <PopoverContent
+                            align="end"
+                            className="w-72 border-gray-700 bg-gray-900 p-4 text-gray-100"
+                          >
+                            <p className="text-sm font-semibold text-white">
+                              Auto-fill
+                            </p>
+                            <p className="mt-2 text-sm leading-snug text-gray-300">
+                              Fills empty slots with eligible team members.
+                              Existing assignments stay as they are, and you can
+                              undo afterward.
+                            </p>
                             <Button
-                              variant="tertiary"
-                              svg={MoreHorizontal}
-                              iconSize="sm"
-                              aria-label="More schedule actions"
-                            />
-                          }
-                        />
+                              className="mt-4 w-full"
+                              disabled={autoFilling}
+                              onClick={() => {
+                                setAutoFillPopoverOpen(false);
+                                void handleAutoFillSchedule();
+                              }}
+                            >
+                              Continue
+                            </Button>
+                          </PopoverContent>
+                        </Popover>
                         <SchedulePdfExportButton
                           model={scheduleExportModel}
                           layout={toScheduleExportLayout(scheduleLayout)}

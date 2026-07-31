@@ -8,8 +8,22 @@ import { timersSlice } from "../../store/timersSlice";
 
 jest.mock("../../components/Presentation/PresentationPreview", () => ({
   __esModule: true,
-  default: ({ name }: { name: string }) => (
-    <div data-testid={`presentation-${name.toLowerCase()}`}>{name}</div>
+  default: ({
+    name,
+    hideQuickLinks,
+    minimalHeader,
+  }: {
+    name: string;
+    hideQuickLinks?: boolean;
+    minimalHeader?: boolean;
+  }) => (
+    <div
+      data-testid={`presentation-${name.toLowerCase()}`}
+      data-hide-quick-links={hideQuickLinks}
+      data-minimal-header={minimalHeader}
+    >
+      {name}
+    </div>
   ),
 }));
 
@@ -63,6 +77,26 @@ describe("TransmitHandler", () => {
     expect(screen.getByTestId("presentation-stream")).toBeInTheDocument();
     expect(screen.getByTestId("presentation-projector")).toBeInTheDocument();
     expect(screen.getByTestId("presentation-monitor")).toBeInTheDocument();
+  });
+
+  it("renders previews without live controls in read-only mode", () => {
+    const store = createStore();
+    render(
+      <Provider store={store}>
+        <TransmitHandler readOnly />
+      </Provider>
+    );
+
+    expect(screen.queryByText("Clear All")).not.toBeInTheDocument();
+    expect(screen.queryByText("Live on All:")).not.toBeInTheDocument();
+    expect(screen.getByTestId("presentation-stream")).toHaveAttribute(
+      "data-hide-quick-links",
+      "true",
+    );
+    expect(screen.getByTestId("presentation-stream")).toHaveAttribute(
+      "data-minimal-header",
+      "true",
+    );
   });
 
   it("hides overlay-only controls by default", () => {

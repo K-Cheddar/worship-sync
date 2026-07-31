@@ -1,5 +1,6 @@
 import {
   buildPermissionsFromAccessDraft,
+  getInviteAccessSummaryLabel,
   inviteAccessDraftFromInvite,
   resolveInviteAccessPayload,
 } from "./accountInviteAccess";
@@ -10,10 +11,12 @@ describe("accountInviteAccess", () => {
       buildPermissionsFromAccessDraft({
         access: "full",
         teamsAccess: "none",
+        servicesAccess: "none",
         teamScopeIds: ["team-a", "team-b"],
       }),
     ).toEqual({
       teams: "none",
+      services: "none",
       teamScopes: {
         "team-a": "edit",
         "team-b": "edit",
@@ -26,10 +29,12 @@ describe("accountInviteAccess", () => {
       buildPermissionsFromAccessDraft({
         access: "full",
         teamsAccess: "edit",
+        servicesAccess: "none",
         teamScopeIds: ["team-a"],
       }),
     ).toEqual({
       teams: "edit",
+      services: "none",
       teamScopes: {},
     });
   });
@@ -39,6 +44,7 @@ describe("accountInviteAccess", () => {
       resolveInviteAccessPayload({
         access: "admin",
         teamsAccess: "none",
+        servicesAccess: "none",
         teamScopeIds: [],
       }),
     ).toEqual({
@@ -46,6 +52,7 @@ describe("accountInviteAccess", () => {
       appAccess: "full",
       permissions: {
         teams: "edit",
+        services: "edit",
         teamScopes: {},
       },
     });
@@ -64,7 +71,19 @@ describe("accountInviteAccess", () => {
     ).toEqual({
       access: "full",
       teamsAccess: "none",
+      servicesAccess: "none",
       teamScopeIds: ["team-main"],
     });
+  });
+
+  it("identifies standalone service editing in the invite summary", () => {
+    expect(
+      getInviteAccessSummaryLabel({
+        access: "full",
+        teamsAccess: "none",
+        servicesAccess: "edit",
+        teamScopeIds: [],
+      }),
+    ).toBe("Full access · No Teams access · Edit services and plans");
   });
 });

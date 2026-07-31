@@ -129,8 +129,12 @@ const AccountShell = () => {
     >
       <div className="mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col px-4 pb-6 lg:px-6">
         <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-3 text-lg">
-          <div className="flex flex-wrap items-center gap-2 justify-self-start">
+          <div className="flex flex-wrap items-center gap-3 justify-self-start">
             <HomeToolbarMenu />
+            <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
+              <Icon svg={Building2} size="md" className="text-cyan-400" />
+              Church administration
+            </h1>
           </div>
           <div className="flex max-w-[min(22rem,calc(100vw-6rem))] justify-center justify-self-center px-1 sm:max-w-[min(26rem,calc(100vw-10rem))]">
             {toolbarLogoUrl ? (
@@ -160,21 +164,9 @@ const AccountShell = () => {
           </div>
         </div>
 
-        <section className="mx-auto mt-4 flex w-full max-w-5xl shrink-0 flex-col gap-3 text-center">
-          <h1 className="flex items-center justify-center gap-2 text-3xl font-semibold">
-            <Icon svg={Building2} size="lg" className="text-cyan-400" />
-            Church administration
-          </h1>
-          <p className="mx-auto max-w-3xl text-sm text-gray-200">
-            Invite people, manage access, pair workstations and displays, handle
-            recovery and trusted devices, and set branding—all in one place for
-            this church.
-          </p>
-        </section>
-
         <section
           className={cn(
-            "mx-auto mt-6 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40",
+            "mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4",
             canManage && "lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]",
           )}
         >

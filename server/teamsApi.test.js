@@ -234,6 +234,42 @@ test("teams bootstrap allows view permission but mutations require edit", async 
   assert.equal(create.payload.success, false);
 });
 
+test("Services edit can change service plans but not team records", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const adminContext = await createAdminContext("services_edit_permission");
+  const servicesEditor = await createHumanContext("services_edit_permission_member", {
+    userId: "teams_api_services_editor",
+    email: "teams-api-services-editor@example.com",
+    churchId: adminContext.churchId,
+    role: "member",
+    appAccess: "full",
+    permissions: { teams: "none", services: "edit" },
+  });
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: servicesEditor,
+  });
+  assert.equal(bootstrap.statusCode, 200);
+
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context: servicesEditor,
+    params: { planKey: "services-editor@2026-08-02" },
+    body: {
+      serviceId: "service-1",
+      date: "2026-08-02",
+      name: "Sunday Service",
+      sections: [],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+
+  const teamWrite = await callHandler(authHandlers.createTeam, {
+    context: servicesEditor,
+    body: { name: "Blocked Team", memberIds: [] },
+  });
+  assert.equal(teamWrite.statusCode, 403);
+});
+
 test("removing admin access clears implicit Teams edit permission", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("remove_admin_permissions");
@@ -2865,10 +2901,12 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       sections: [
         {
           id: "section-1",
+          sourcePlanningManaged: true,
           name: "Worship",
           elements: [
             {
               id: "el-1",
+              sourcePlanningManaged: true,
               type: "song",
               title: richText("Great Are You Lord"),
               durationMinutes: 5,
@@ -2887,6 +2925,11 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.deepEqual(
     created.payload.servicePlan.sections[0].elements[0].title,
     richText("Great Are You Lord"),
+  );
+  assert.equal(created.payload.servicePlan.sections[0].sourcePlanningManaged, true);
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourcePlanningManaged,
+    true,
   );
 
   await flushAsyncWork();
@@ -3052,16 +3095,19 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   addServiceFlowSseClient(publicToken, publicSseClient);
   addServiceFlowSseClient(generalPublicToken, generalPublicSseClient);
   addServiceFlowSseClient(currentTeamToken, currentTeamSseClient);
-  const manualLive = await callHandler(authHandlers.updateServicePlanPublicLive, {
+  const anchoredLive = await callHandler(authHandlers.updateServicePlanPublicLive, {
     context,
     params: { planKey },
-    body: { mode: "manual", currentElementId: "el-2" },
+    body: { mode: "anchored", currentElementId: "el-2" },
   });
-  assert.equal(manualLive.statusCode, 200);
-  assert.deepEqual(manualLive.payload.servicePlan.publicLive, {
-    mode: "manual",
-    currentElementId: "el-2",
-  });
+  assert.equal(anchoredLive.statusCode, 200);
+  assert.equal(anchoredLive.payload.servicePlan.publicLive.mode, "anchored");
+  assert.equal(anchoredLive.payload.servicePlan.publicLive.currentElementId, "el-2");
+  assert.equal(
+    Number.isFinite(Date.parse(anchoredLive.payload.servicePlan.publicLive.startedAt)),
+    true,
+  );
+  const anchoredStartedAt = anchoredLive.payload.servicePlan.publicLive.startedAt;
   const publicEvents = publicSseClient.events();
   assert.equal(publicEvents.at(-1).type, "service-updated");
   assert.equal("servicePlan" in publicEvents.at(-1), false);
@@ -3071,14 +3117,15 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   removeServiceFlowSseClient(generalPublicToken, generalPublicSseClient);
   removeServiceFlowSseClient(currentTeamToken, currentTeamSseClient);
 
-  const manualPublicSnapshotRes = createRes();
+  const anchoredPublicSnapshotRes = createRes();
   await authHandlers.getPublicServicePlan(
     { ...createReq(), query: { token: publicToken } },
-    manualPublicSnapshotRes,
+    anchoredPublicSnapshotRes,
   );
-  assert.deepEqual(manualPublicSnapshotRes.payload.service.live, {
-    mode: "manual",
+  assert.deepEqual(anchoredPublicSnapshotRes.payload.service.live, {
+    mode: "anchored",
     currentItemId: "el-2",
+    startedAt: anchoredStartedAt,
   });
 
   // Reopening the editor must restore the share links; they used to live only
@@ -3127,8 +3174,9 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(concurrentSave.statusCode, 200);
   assert.deepEqual(concurrentSave.payload.servicePlan.publicLive, {
-    mode: "manual",
+    mode: "anchored",
     currentElementId: "el-2",
+    startedAt: anchoredStartedAt,
   });
 
   // Removing the selected element does still have to reset it, or the public
@@ -3398,6 +3446,65 @@ test("saving a service plan clears optional fields that are left out", async (t)
     params: { planKey },
   });
   assert.equal(publishAttempt.statusCode, 400);
+});
+
+test("service plan elements round-trip scripture refs and raw source strings", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_element_source_fields");
+  const planKey = "svc1@2026-08-02";
+
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-08-02",
+      name: "Sabbath Service",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "element-1",
+              type: "bible",
+              title: { type: "doc", content: [] },
+              scriptureRef: {
+                label: "John 3:16-18 (NIV)",
+                book: "John",
+                chapter: "3",
+                verseRange: "16-18",
+                version: "NIV",
+              },
+              sourceElementTypeRaw: "Scripture Reading",
+              sourceLedByRaw: "Dana R.",
+            },
+            {
+              id: "element-2",
+              type: "free",
+              title: { type: "doc", content: [] },
+              // Missing a chapter, so there is nothing to rebuild a reference
+              // from — this must be dropped rather than half-stored.
+              scriptureRef: { label: "Somewhere", book: "John" },
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.equal(saved.statusCode, 200);
+  const [first, second] = saved.payload.servicePlan.sections[0].elements;
+  assert.deepEqual(first.scriptureRef, {
+    label: "John 3:16-18 (NIV)",
+    book: "John",
+    chapter: "3",
+    verseRange: "16-18",
+    version: "NIV",
+  });
+  assert.equal(first.sourceElementTypeRaw, "Scripture Reading");
+  assert.equal(first.sourceLedByRaw, "Dana R.");
+  assert.ok(!second.scriptureRef, "a partial scripture ref is dropped");
 });
 
 test("service plan templates: create, update in place, list, scope, and delete", async (t) => {

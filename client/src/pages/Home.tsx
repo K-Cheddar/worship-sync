@@ -9,6 +9,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import {
   Building2,
+  CalendarClock,
   Info,
   Layers,
   LayoutDashboard,
@@ -71,6 +72,14 @@ const primaryControllers: CardLink[] = [
     icon: Layers,
   },
 ];
+
+const currentPlanLink: CardLink = {
+  title: "Service Workspace",
+  description:
+    "Open the live workspace for the current service, with service plan and display previews together.",
+  to: "/current-service",
+  icon: CalendarClock,
+};
 
 const secondaryControllers: CardLink[] = [
   {
@@ -321,6 +330,9 @@ const Welcome = () => {
   const visiblePrimaryControllers = isMusicAccess
     ? primaryControllers.filter((link) => link.to === "/controller")
     : primaryControllers;
+  const visibleControllerLinks = canViewTeams
+    ? [...visiblePrimaryControllers, currentPlanLink]
+    : visiblePrimaryControllers;
   const visibleSecondaryControllers = isMusicAccess
     ? []
     : isLoggedIn
@@ -531,7 +543,7 @@ const Welcome = () => {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {visiblePrimaryControllers.map((link) => (
+            {visibleControllerLinks.map((link) => (
               <HomeLinkCard key={link.to} {...link} />
             ))}
           </div>
