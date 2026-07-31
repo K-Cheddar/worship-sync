@@ -45,6 +45,15 @@ type TransmitHandlerProps = {
   visibleScreens?: TransmitScreen[];
   /** DisplayWindow width multiplier (1 = default 14vw / 32vw mobile). */
   previewScale?: number;
+  /**
+   * Fill the parent width with true 16:9 stages (like ItemSlides). Prefer this
+   * over a large previewScale when previews should use the full column.
+   */
+  fillWidth?: boolean;
+  /** Arrange projector / monitor / stream previews in 1 or 2 columns. */
+  columns?: 1 | 2;
+  /** Renders live output previews without any transmit, clear, or quick-link controls. */
+  readOnly?: boolean;
   variant?: "default" | "overlayStreamFocus";
   showStreamOverlayOnlyToggle?: boolean;
   showClearStreamOverlaysButton?: boolean;
@@ -55,6 +64,9 @@ type TransmitHandlerProps = {
 const TransmitHandler = ({
   visibleScreens = DEFAULT_TRANSMIT_SCREENS,
   previewScale = 1,
+  fillWidth = false,
+  columns = 1,
+  readOnly = false,
   variant = "default",
   showStreamOverlayOnlyToggle = false,
   showClearStreamOverlaysButton = false,
@@ -104,7 +116,7 @@ const TransmitHandler = ({
   // tile shows even on a device that has never opened the board. Collapsed by
   // default so it stays out of the way until needed.
   const boardAliasId = useResolvedBoardDisplayAlias({
-    enabled: variant === "default" && showMonitor,
+    enabled: !readOnly && variant === "default" && showMonitor,
   });
   // A board that's already live on the monitor must always keep its section (and
   // its "off" switch) rendered, even if the inputs that normally reveal it — a
@@ -113,12 +125,13 @@ const TransmitHandler = ({
   // stays on the monitor, leaving no way to remove it.
   const isBoardLiveOnMonitor = monitorBoardAliasId !== "";
   const showBoardSection =
+    !readOnly &&
     variant === "default" &&
     (isBoardLiveOnMonitor || (showMonitor && Boolean(boardAliasId)));
   const showBulkControls =
-    showProjector && showMonitor && showStream;
+    !readOnly && showProjector && showMonitor && showStream;
   const showFocusedStreamControls =
-    showStream && (showStreamOverlayOnlyToggle || showClearStreamOverlaysButton);
+    !readOnly && showStream && (showStreamOverlayOnlyToggle || showClearStreamOverlaysButton);
 
   useEffect(() => {
     if (!showBulkControls) return;
@@ -190,7 +203,7 @@ const TransmitHandler = ({
       <div
         className={cn(
           "transition-all relative flex flex-col min-h-0",
-          isMediaExpanded ? "h-0 z-0 opacity-0 flex-none" : "flex-1 opacity-100"
+          !readOnly && isMediaExpanded ? "h-0 z-0 opacity-0 flex-none" : "flex-1 opacity-100"
         )}
         data-is-media-expanded={isMediaExpanded}
       >
@@ -280,13 +293,22 @@ const TransmitHandler = ({
               )}
             </div>
           )}
-          <div className="scrollbar-variable overflow-y-auto flex-1 min-h-0 flex flex-col gap-2">
+          <div
+            className={cn(
+              "scrollbar-variable overflow-y-auto flex-1 min-h-0 gap-2",
+              columns === 2
+                ? "grid grid-cols-2 content-start"
+                : "flex flex-col"
+            )}
+          >
             {showProjector && (
               <ProjectorPresentationPreview
                 toggleIsTransmitting={toggleProjector}
                 quickLinks={projectorQuickLinks}
                 isMobile={isMobile}
                 previewScale={previewScale}
+                fillWidth={fillWidth}
+                readOnly={readOnly}
               />
             )}
             {showMonitor && (
@@ -295,6 +317,8 @@ const TransmitHandler = ({
                 quickLinks={monitorQuickLinks}
                 isMobile={isMobile}
                 previewScale={previewScale}
+                fillWidth={fillWidth}
+                readOnly={readOnly}
               />
             )}
             {showBoardSection && (
@@ -337,6 +361,7 @@ const TransmitHandler = ({
                         isOpen={isBoardSectionOpen}
                         isMobile={isMobile}
                         previewScale={previewScale}
+                        fillWidth={fillWidth}
                       />
                     </div>
                   </div>
@@ -352,6 +377,8 @@ const TransmitHandler = ({
                   showFocusedStreamControls={showFocusedStreamControls}
                   isMobile={isMobile}
                   previewScale={previewScale}
+                  fillWidth={fillWidth}
+                  readOnly={readOnly}
                 />
                 {variant === "overlayStreamFocus" &&
                   overlayStreamQuickLinksBelowPreview.length > 0 && (

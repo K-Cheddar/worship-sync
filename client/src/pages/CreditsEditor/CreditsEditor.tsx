@@ -99,6 +99,8 @@ import { setServicePlanningFloatingWindowDismissed, setServicePlanningServiceOut
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 import GeneratedCreditsFloatingWindow from "./GeneratedCreditsFloatingWindow";
 import { useAboutChangelogMenu } from "../../hooks/useAboutChangelogMenu";
+import { useInterfaceZoom } from "../../hooks/useInterfaceZoom";
+import { interfaceZoomMenuItem } from "../../components/InterfaceZoomMenuControl/InterfaceZoomMenuControl";
 
 const cleanForRtdb = (obj: object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -117,6 +119,7 @@ const CreditsEditor = ({
     aboutChangelogModals,
     updateReadyVersion,
   } = useAboutChangelogMenu();
+  useInterfaceZoom();
   const { list, isInitialized: creditsInitialized, isLoading: creditsLoading } =
     useSelector((state) => state.undoable.present.credits);
   /** Which outline's credits we edit (Outlines dropdown updates `selectedList`). */
@@ -668,6 +671,7 @@ const CreditsEditor = ({
         to: "/overlay-controller",
       },
       ...aboutChangelogMenuItems,
+      interfaceZoomMenuItem,
       ...(canEditCredits
         ? [
           {

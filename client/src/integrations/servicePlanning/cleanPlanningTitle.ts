@@ -21,8 +21,10 @@ export const cleanPlanningTitle = (title: string): string => {
     s = s.replace(/\s*\([A-G][#b]?\)\s*$/i, "");
   } while (s !== prev);
 
-  // Strip suffixes like "Hymn #341" after removing the trailing key.
+  // Strip suffixes like "Hymn #341" after removing the trailing key, plus the
+  // bare hymnal number the printout prints on its own ("He Hideth My Soul #520").
   s = s.replace(/\s+hymn\s*#?\s*\d+\s*$/i, "");
+  s = s.replace(/\s+#\s*\d+\s*$/, "");
 
   return s.replace(/\s{2,}/g, " ").trim();
 };

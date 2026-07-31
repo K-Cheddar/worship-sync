@@ -5,8 +5,8 @@ import { SquarePen, Trash2 } from "lucide-react";
 
 type Props = {
   service?: ServiceTime;
-  onEdit: (id: string) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (id: string) => void;
+  onDelete?: (id: string) => void;
 };
 
 const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
@@ -45,24 +45,26 @@ const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
               )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <Button
-            variant="secondary"
-            svg={SquarePen}
-            iconSize="sm"
-            onClick={() => onEdit(service.id)}
-          >
-            Update
-          </Button>
-          <Button
-            variant="destructive"
-            svg={Trash2}
-            iconSize="sm"
-            onClick={() => onDelete(service.id)}
-          >
-            Delete
-          </Button>
-        </div>
+        {onEdit && onDelete ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button
+              variant="secondary"
+              svg={SquarePen}
+              iconSize="sm"
+              onClick={() => onEdit(service.id)}
+            >
+              Update
+            </Button>
+            <Button
+              variant="destructive"
+              svg={Trash2}
+              iconSize="sm"
+              onClick={() => onDelete(service.id)}
+            >
+              Delete
+            </Button>
+          </div>
+        ) : null}
       </div>
     </li>
   );

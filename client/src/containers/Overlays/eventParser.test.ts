@@ -98,6 +98,161 @@ describe("parseServicePlanningImportFromHtml", () => {
     ]);
   });
 
+  it("parses general and team notes from accordion detail panels", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <body>
+        <table class="table">
+          <tr><th>Start Time</th><th>Element</th><th>Led By</th></tr>
+          <tr class="divider-1053771"><td colspan="3">Teaching &amp; Mission</td></tr>
+          <tr class="accordion-toggle" data-toggle="collapse" data-target="#collapse11282024" data-id="11282024">
+            <td>10:00&nbsp;<span>(50<span class="text-muted">m</span>)</span></td>
+            <td>Sabbath School Lesson Study<br> - Javar Baldeo</td>
+            <td>Greg Baldeo</td>
+          </tr>
+          <tr>
+            <td colspan="3">
+              <div id="collapse11282024" class="collapse in">
+                <br />&nbsp;<br />General Notes:<br /> Panel Discussion<br/>
+                <br />&nbsp;<br />Specific Notes:
+                <table>
+                  <tbody>
+                    <tr><td>Media Team </td><td>3 or 4 headsets</td></tr>
+                    <tr><td>Coordinators</td><td></td></tr>
+                    <tr><td>Sabbath School Panel (g)</td><td>Begin after the countdown.</td></tr>
+                  </tbody>
+                </table>
+                <br />
+              </div>
+            </td>
+          </tr>
+          <tr class="accordion-toggle" data-toggle="collapse" data-target="#collapse11282036" data-id="11282036">
+            <td>11:16&nbsp;<span>(<span class="text-muted">none</span>)</span></td>
+            <td>Song of Praise<br> <b>How Great is Our God</b> (E)</td>
+            <td>Praise Team</td>
+          </tr>
+          <tr>
+            <td colspan="3">
+              <div id="collapse11282036" class="collapse in">
+                <a href="https://planning.myamplify.io/dashboard.cfm">Log in for more song info.</a> <br />
+                <br />&nbsp;<br />Specific Notes:
+                <table>
+                  <tbody>
+                    <tr><td>Band</td><td>Follow the Worship Leader</td></tr>
+                    <tr><td>Media Team </td><td></td></tr>
+                  </tbody>
+                </table>
+                <br />
+              </div>
+            </td>
+          </tr>
+        </table>
+      </body>
+    `);
+
+    expect(parsed.sections).toEqual([
+      {
+        sectionName: "Teaching & Mission",
+        rows: [
+          {
+            elementType: "Sabbath School Lesson Study",
+            title: "Javar Baldeo",
+            ledBy: "Greg Baldeo",
+            startTime: "10:00",
+            durationMinutes: 50,
+            note: "Panel Discussion",
+            teamNotes: [
+              { teamName: "Media Team", note: "3 or 4 headsets" },
+              { teamName: "Sabbath School Panel (g)", note: "Begin after the countdown." },
+            ],
+          },
+          {
+            elementType: "Song of Praise",
+            title: "How Great is Our God (E)",
+            ledBy: "Praise Team",
+            startTime: "11:16",
+            teamNotes: [{ teamName: "Band", note: "Follow the Worship Leader" }],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps note line breaks and drops the unassigned Led By placeholder", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <body>
+        <table class="table">
+          <tr class="accordion-toggle" data-toggle="collapse" data-target="#collapse1" data-id="1">
+            <td>11:12&nbsp;<span>(2m)</span></td>
+            <td>Call to Praise<br></td>
+            <td><span>[Not Specified]</span></td>
+          </tr>
+          <tr>
+            <td colspan="3">
+              <div id="collapse1" class="collapse in">
+                <br />&nbsp;<br />General Notes:<br /> Set the tone<br />Then hand over<br/>
+                <br />&nbsp;<br />Specific Notes:
+                <table><tbody>
+                  <tr><td>Media Team</td><td>3 or 4 headsets:
+
+- Host: Gray
+- Co-Host: Blue</td></tr>
+                </tbody></table>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </body>
+    `);
+
+    expect(parsed.sections[0].rows[0]).toEqual({
+      elementType: "Call to Praise",
+      title: "",
+      ledBy: "",
+      startTime: "11:12",
+      durationMinutes: 2,
+      note: "Set the tone\nThen hand over",
+      teamNotes: [
+        {
+          teamName: "Media Team",
+          note: "3 or 4 headsets:\n- Host: Gray\n- Co-Host: Blue",
+        },
+      ],
+    });
+  });
+
+  it("keeps note line breaks in custom-column printouts", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="custom-printout">
+        <thead><tr>
+          <th>Start Time</th><th>Duration</th><th>Element Type</th><th>Title</th>
+          <th>Led by</th><th>Note</th><th>Media Team</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td>11:11a</td><td>1m</td><td>Welcome Song</td><td>There's a Welcome Here</td>
+            <td></td><td>Line one
+Line two</td><td>Mics:
+
+- Lead: Gray
+- Backup: Blue</td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+
+    expect(parsed.sections[0].rows[0]).toEqual({
+      startTime: "11:11",
+      durationMinutes: 1,
+      elementType: "Welcome Song",
+      title: "There's a Welcome Here",
+      ledBy: "",
+      note: "Line one\nLine two",
+      teamNotes: [
+        { teamName: "Media Team", note: "Mics:\n- Lead: Gray\n- Backup: Blue" },
+      ],
+    });
+  });
+
   it("parses worship-flow rows and ignores team role tables", () => {
     const parsed = parseServicePlanningImportFromHtml(`
       <body>
@@ -220,5 +375,103 @@ describe("parseServicePlanningImportFromHtml", () => {
         { teamName: "Praise Team", note: "Walk around and greet people." },
       ],
     }] }]);
+  });
+
+  it("reads the song from the source's music marker on a share link", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <body>
+        <table class="table">
+          <tr class="divider-1"><td colspan="3">Praise &amp; Prayer</td></tr>
+          <tr class="accordion-toggle" data-toggle="collapse">
+            <td>11:11&nbsp;<span>(1m30s)</span></td>
+            <td>
+              Welcome Song<br>
+              <span class="fa fa-music text-grey"></span>&nbsp;<b>There's a Welcome Here</b>
+              (C)
+            </td>
+            <td>Praise Team</td>
+          </tr>
+          <tr class="accordion-toggle" data-toggle="collapse">
+            <td>11:12&nbsp;<span>(2m)</span></td>
+            <td>
+              Call to Praise<br>
+            </td>
+            <td><span>[Not Specified]</span></td>
+          </tr>
+        </table>
+      </body>
+    `);
+
+    expect(parsed.sections[0].rows).toEqual([
+      {
+        startTime: "11:11",
+        durationMinutes: 1.5,
+        elementType: "Welcome Song",
+        title: "There's a Welcome Here (C)",
+        ledBy: "Praise Team",
+        songTitle: "There's a Welcome Here (C)",
+      },
+      // No marker: the source is not calling this a song, however it reads.
+      {
+        startTime: "11:12",
+        durationMinutes: 2,
+        elementType: "Call to Praise",
+        title: "",
+        ledBy: "",
+      },
+    ]);
+  });
+
+  it("reads the song from the music marker in a custom-columns printout", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="custom-printout">
+        <thead><tr>
+          <th>Start Time</th><th>Duration</th><th>Element Type</th><th>Title</th>
+          <th>Led by</th><th>Note</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td>11:40a</td><td>4m</td><td>Congregational Hymn</td>
+            <td><span class="fa fa-music"></span> He Hideth My Soul #520 (Bb)</td>
+            <td>Praise Team</td><td></td>
+          </tr>
+          <tr>
+            <td>11:44a</td><td>2m</td><td>Scripture Reading</td>
+            <td>Psalm 89: 26 - 52 NIV</td>
+            <td>Javar Baldeo</td><td></td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+
+    expect(parsed.sections[0].rows[0]).toMatchObject({
+      elementType: "Congregational Hymn",
+      title: "He Hideth My Soul #520 (Bb)",
+      songTitle: "He Hideth My Soul #520 (Bb)",
+    });
+    expect(parsed.sections[0].rows[1].songTitle).toBeUndefined();
+  });
+
+  it("stops a marked song title at the next song in a medley cell", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="custom-printout">
+        <thead><tr>
+          <th>Start Time</th><th>Duration</th><th>Element Type</th><th>Title</th>
+          <th>Led by</th><th>Note</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td>11:20a</td><td>6m</td><td>Song of Praise</td>
+            <td>
+              <span class="fa fa-music"></span> Shall Not Want (Eb)
+              <span class="fa fa-music"></span> Bless Me (C#)
+            </td>
+            <td>Praise Team</td><td></td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+
+    expect(parsed.sections[0].rows[0].songTitle).toBe("Shall Not Want (Eb)");
   });
 });

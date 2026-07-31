@@ -18,7 +18,7 @@ const getEditableTeamScopeIds = (permissions) =>
  * @param {{
  *   role?: string,
  *   appAccess?: string,
- *   permissions?: { teams?: string, teamScopes?: Record<string, string> },
+ *   permissions?: { teams?: string, services?: string, teamScopes?: Record<string, string> },
  *   scopedTeamNames?: string[],
  * }} params
  * @returns {string[]}
@@ -34,6 +34,7 @@ export const buildInviteAcceptedAccessLines = ({
     ? "Admin"
     : APP_ACCESS_LABELS[appAccess] || APP_ACCESS_LABELS.full;
   const teamsAccess = isAdmin ? "edit" : permissions?.teams || "none";
+  const servicesAccess = isAdmin ? "edit" : permissions?.services || "none";
   const scopedIds = isAdmin ? [] : getEditableTeamScopeIds(permissions);
   const names = scopedTeamNames
     .map((name) => String(name || "").trim())
@@ -58,7 +59,16 @@ export const buildInviteAcceptedAccessLines = ({
     teamsLabel = "Per-team edit only";
   }
 
-  return [`Access: ${accessLabel}`, `Teams: ${teamsLabel}`];
+  const servicesLabel =
+    servicesAccess === "edit" || teamsAccess === "edit"
+      ? "Edit services and plans"
+      : "No service editing";
+
+  return [
+    `Access: ${accessLabel}`,
+    `Teams: ${teamsLabel}`,
+    `Services: ${servicesLabel}`,
+  ];
 };
 
 export const listEditableTeamScopeIds = getEditableTeamScopeIds;

@@ -70,4 +70,64 @@ describe("getServiceFlowProgress", () => {
     expect(resumed.isManual).toBe(false);
     expect(resumed.current?.item.id).toBe("song");
   });
+
+  it("re-anchors the selected item and continues through following items automatically", () => {
+    const adjusted: PublicServiceFlow = {
+      ...service,
+      sections: [{
+        ...service.sections[0],
+        items: [
+          ...service.sections[0].items,
+          { id: "closing", title: "Closing", durationSeconds: 120, notes: { blocks: [] } },
+        ],
+      }],
+      live: {
+        mode: "anchored",
+        currentItemId: "song",
+        startedAt: "2026-07-26T14:02:00.000Z",
+      },
+    };
+
+    const duringSong = getServiceFlowProgress(
+      adjusted,
+      Date.parse("2026-07-26T14:04:00.000Z"),
+    );
+    const afterSong = getServiceFlowProgress(
+      adjusted,
+      Date.parse("2026-07-26T14:06:30.000Z"),
+    );
+
+    expect(duringSong.current?.item.id).toBe("song");
+    expect(duringSong.items.find((item) => item.item.id === "song")?.startsAtMs).toBe(
+      Date.parse("2026-07-26T14:02:00.000Z"),
+    );
+    expect(afterSong.current?.item.id).toBe("closing");
+    expect(afterSong.isAdjusted).toBe(true);
+    expect(afterSong.isManual).toBe(false);
+  });
+
+  it("uses an early anchor as the live timeline boundary and completes from it", () => {
+    const earlyAnchor: PublicServiceFlow = {
+      ...service,
+      live: {
+        mode: "anchored",
+        currentItemId: "song",
+        startedAt: "2026-07-26T13:00:00.000Z",
+      },
+    };
+
+    const duringSong = getServiceFlowProgress(
+      earlyAnchor,
+      Date.parse("2026-07-26T13:02:00.000Z"),
+    );
+    const complete = getServiceFlowProgress(
+      earlyAnchor,
+      Date.parse("2026-07-26T13:04:00.000Z"),
+    );
+
+    expect(duringSong.state).toBe("live");
+    expect(duringSong.current?.item.id).toBe("song");
+    expect(complete.state).toBe("complete");
+    expect(complete.current).toBeNull();
+  });
 });

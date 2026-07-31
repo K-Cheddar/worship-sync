@@ -39,6 +39,8 @@ import {
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
   pickPublicBoardHeaderLogoUrl,
+  pickPublicPrimaryBrandColor,
+  pickPublicSecondaryBrandColor,
 } from "./server/churchBranding.js";
 import {
   getChurchIntegrationsPath,
@@ -134,6 +136,7 @@ const hashValue = (value) =>
 const randomSecret = (bytes = 32) => crypto.randomBytes(bytes).toString("hex");
 const APP_ACCESS_VALUES = new Set(["full", "music", "view"]);
 const TEAM_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
+const SERVICES_PERMISSION_VALUES = new Set(["none", "edit"]);
 const DESKTOP_AUTH_PROVIDER_VALUES = new Set(["google", "microsoft"]);
 const DESKTOP_AUTH_STATUS_PENDING = "pending";
 const DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE = "awaiting_exchange";
@@ -152,6 +155,12 @@ const normalizeTeamPermission = (value, fallback = "none") => {
     .trim()
     .toLowerCase();
   return TEAM_PERMISSION_VALUES.has(normalized) ? normalized : fallback;
+};
+const normalizeServicesPermission = (value, fallback = "none") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return SERVICES_PERMISSION_VALUES.has(normalized) ? normalized : fallback;
 };
 const normalizeTeamScopePermission = (value) => {
   const normalized = normalizeTeamPermission(value, "none");
@@ -176,10 +185,11 @@ const normalizeTeamScopes = (teamScopes) => {
 };
 const normalizeMembershipPermissions = (permissions, role = "member") => {
   if (role === "admin") {
-    return { teams: "edit", teamScopes: {} };
+    return { teams: "edit", services: "edit", teamScopes: {} };
   }
   return {
     teams: normalizeTeamPermission(permissions?.teams, "none"),
+    services: normalizeServicesPermission(permissions?.services, "none"),
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
   };
 };
@@ -416,21 +426,32 @@ export const authRuntimeInfo = {
 
 /** Logo URL for public board attendee / presentation views (RTDB branding by church id). */
 export const readChurchPublicBoardHeaderLogoUrl = async (churchId) => {
+  const chrome = await readChurchPublicBrandingChrome(churchId);
+  return chrome.logoUrl;
+};
+
+/** Public-safe branding chrome: header logo URL and optional brand colors. */
+export const readChurchPublicBrandingChrome = async (churchId) => {
   const trimmed = String(churchId || "").trim();
   if (!trimmed || !firebaseRuntime?.rtdb) {
-    return "";
+    return { logoUrl: "", primaryColor: "", secondaryColor: "" };
   }
   try {
     const snap = await firebaseRuntime.rtdb
       .ref(getChurchBrandingPath(trimmed))
       .once("value");
-    return pickPublicBoardHeaderLogoUrl(snap.val());
+    const branding = snap.val();
+    return {
+      logoUrl: pickPublicBoardHeaderLogoUrl(branding),
+      primaryColor: pickPublicPrimaryBrandColor(branding),
+      secondaryColor: pickPublicSecondaryBrandColor(branding),
+    };
   } catch (error) {
-    logAuthEvent("warn", "board.public_header_logo.read_failed", {
+    logAuthEvent("warn", "church.public_branding_chrome.read_failed", {
       churchId: trimmed,
       message: error instanceof Error ? error.message : String(error),
     });
-    return "";
+    return { logoUrl: "", primaryColor: "", secondaryColor: "" };
   }
 };
 
@@ -485,7 +506,8 @@ const collectionMap = {
   [COLLECTIONS.teamIntakeSubmissions]: memoryState.teamIntakeSubmissions,
   [COLLECTIONS.servicePlans]: memoryState.servicePlans,
   [COLLECTIONS.servicePlanTemplates]: memoryState.servicePlanTemplates,
-  [COLLECTIONS.servicePlanAssignmentHistory]: memoryState.servicePlanAssignmentHistory,
+  [COLLECTIONS.servicePlanAssignmentHistory]:
+    memoryState.servicePlanAssignmentHistory,
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
@@ -3024,6 +3046,7 @@ export const requireTeamsViewSession = async (req, churchId) => {
     (bootstrap.role !== "admin" &&
       teamsPermission !== "view" &&
       teamsPermission !== "edit" &&
+      bootstrap.permissions?.services !== "edit" &&
       !hasAnyTeamScope(bootstrap.permissions))
   ) {
     throw httpError(403, "Teams access required");
@@ -3038,6 +3061,19 @@ const requireTeamsEditSession = async (req, churchId) => {
     (bootstrap.role !== "admin" && bootstrap.permissions?.teams !== "edit")
   ) {
     throw httpError(403, "Teams edit access required");
+  }
+  return bootstrap;
+};
+
+const requireServicesEditSession = async (req, churchId) => {
+  const bootstrap = await requireHumanSession(req);
+  if (
+    bootstrap.churchId !== churchId ||
+    (bootstrap.role !== "admin" &&
+      bootstrap.permissions?.teams !== "edit" &&
+      bootstrap.permissions?.services !== "edit")
+  ) {
+    throw httpError(403, "Services edit access required");
   }
   return bootstrap;
 };
@@ -3406,7 +3442,9 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   queryDocs,
   randomSecret,
   readChurchPublicBoardHeaderLogoUrl,
+  readChurchPublicBrandingChrome,
   requireAdminSession,
+  requireServicesEditSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,

@@ -12,6 +12,7 @@ type Props = {
   onDelete: (id: string) => void;
   upcomingService: { service: ServiceTime; nextAt: Date } | null;
   upcomingServiceTimeText: string | null;
+  canEdit?: boolean;
 };
 
 const ServiceTimesList = ({
@@ -20,6 +21,7 @@ const ServiceTimesList = ({
   onDelete,
   upcomingService,
   upcomingServiceTimeText,
+  canEdit = true,
 }: Props) => {
   const otherServices = useMemo(() => {
     const now = serverDate();
@@ -47,14 +49,15 @@ const ServiceTimesList = ({
               <p>Upcoming service</p>
               <ServiceItem
                 service={upcomingService.service}
-                onEdit={onEdit}
-                onDelete={onDelete}
+                {...(canEdit ? { onEdit, onDelete } : {})}
               />
               <NextServiceLiveCountdown
                 service={upcomingService.service}
                 timeText={upcomingServiceTimeText}
               />
-              <TimeAdjuster serviceId={upcomingService.service.id} />
+              {canEdit ? (
+                <TimeAdjuster serviceId={upcomingService.service.id} />
+              ) : null}
             </div>
           )}
 
@@ -64,8 +67,7 @@ const ServiceTimesList = ({
                 <ServiceItem
                   key={s.id}
                   service={s}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
+                  {...(canEdit ? { onEdit, onDelete } : {})}
                 />
               ))}
             </ul>

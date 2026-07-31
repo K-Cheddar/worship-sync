@@ -41,6 +41,11 @@ type PresentationPreviewProps = {
   streamItemContentBlocked?: boolean;
   /** Multiplier for DisplayWindow width (vw). Default 1; use 2 for double-size previews. */
   previewScale?: number;
+  /**
+   * Fill the parent width with a true 16:9 stage (like ItemSlides / SlideEditor).
+   * Prefer this over a large previewScale when the preview must use the full column.
+   */
+  fillWidth?: boolean;
   /** Replaces the live DisplayWindow preview (keeps the card header/controls). Used
    * by the monitor preview to show the discussion board while it's on the monitor. */
   previewOverride?: ReactNode;
@@ -65,6 +70,7 @@ const PresentationPreview = ({
   showMonitorClockTimer = false,
   streamItemContentBlocked = false,
   previewScale = 1,
+  fillWidth = false,
   previewOverride,
 }: PresentationPreviewProps) => {
   const dispatch = useDispatch();
@@ -158,7 +164,7 @@ const PresentationPreview = ({
     nextBoxes: info.nextSlide?.boxes ?? [],
     prevNextBoxes: prevInfo.nextSlide?.boxes ?? [],
     bibleInfoBox: info.bibleInfoBox,
-    width: previewWidthVw,
+    ...(fillWidth ? {} : { width: previewWidthVw }),
     showBorder,
     displayType: info.displayType,
     participantOverlayInfo: info.participantOverlayInfo,
@@ -202,15 +208,19 @@ const PresentationPreview = ({
           <div
             className={cn(
               "flex flex-col",
-              hideQuickLinks && "w-full items-center min-w-0",
+              (hideQuickLinks || fillWidth) && "w-full min-w-0",
+              fillWidth && "items-stretch",
+              hideQuickLinks && !fillWidth && "items-center",
               // Match DisplayWindow width so the header never exceeds the preview (w-fit used the
               // header’s intrinsic width and could overflow past the aspect-video box below).
-              !hideQuickLinks && "shrink-0 min-w-0"
+              !hideQuickLinks && !fillWidth && "shrink-0 min-w-0"
             )}
             style={
-              !hideQuickLinks
-                ? { width: `${previewWidthVw}vw`, maxWidth: "100%" }
-                : undefined
+              fillWidth
+                ? { width: "100%" }
+                : !hideQuickLinks
+                  ? { width: `${previewWidthVw}vw`, maxWidth: "100%" }
+                  : undefined
             }
           >
             {!hideHeader && (

@@ -9,6 +9,8 @@ type MonitorPresentationPreviewProps = {
   quickLinks: PresentationQuickLinks;
   isMobile?: boolean;
   previewScale?: number;
+  fillWidth?: boolean;
+  readOnly?: boolean;
   toggleIsTransmitting: () => void;
 };
 
@@ -17,6 +19,8 @@ const MonitorPresentationPreview = memo(
     quickLinks,
     isMobile,
     previewScale,
+    fillWidth,
+    readOnly = false,
     toggleIsTransmitting,
   }: MonitorPresentationPreviewProps) => {
     const info = useSelector((state) => state.presentation.monitorInfo);
@@ -48,9 +52,12 @@ const MonitorPresentationPreview = memo(
         isTransmitting={isTransmitting}
         toggleIsTransmitting={toggleIsTransmitting}
         quickLinks={quickLinks}
+        hideQuickLinks={readOnly}
+        minimalHeader={readOnly}
         isMobile={isMobile}
         showMonitorClockTimer
         previewScale={previewScale}
+        fillWidth={fillWidth}
         previewOverride={
           monitorBoardAliasId ? (
             <ScaledBoardPreview aliasId={monitorBoardAliasId} />

@@ -12,6 +12,19 @@ export interface EventData {
   note?: string;
   /** Notes from custom printout columns, scoped to their column heading. */
   teamNotes?: Array<{ teamName: string; note: string }>;
+  /**
+   * The song this row is for, taken from the source's own song marker rather
+   * than guessed from wording. Absent both when the row isn't a song and when
+   * the layout doesn't mark songs at all — see `getSongMarkerTitle`.
+   */
+  songTitle?: string;
+  /**
+   * The library song already linked to this row. Only set on rows built from a
+   * saved ServicePlan, where an operator has resolved which song this is; a
+   * scraped page has no such identity. Consumers must prefer it over matching
+   * the title, or a resolved song gets re-guessed and can come out different.
+   */
+  songId?: string;
 }
 
 export interface ServicePlanningSection {
@@ -80,6 +93,78 @@ const getElementText = (element?: Element | null) =>
       : element?.textContent || "",
   );
 
+/** Share links render an unassigned "Led By" as a styled placeholder where the
+ * printout simply leaves the cell empty — neither should import as a name. */
+const getLedByText = (element?: Element | null) => {
+  const text = getElementText(element);
+  return /^\[not specified\]$/i.test(text) ? "" : text;
+};
+
+const elementTextWithLineBreaks = (element?: Element | null): string => {
+  if (!element) return "";
+  if (!element.querySelector("br")) return element.textContent || "";
+  const clone = element.cloneNode(true) as Element;
+  clone.querySelectorAll("br").forEach((lineBreak) => lineBreak.replaceWith("\n"));
+  return clone.textContent || "";
+};
+
+/** Collapses runs of spaces and blank lines but keeps single line breaks. */
+const normalizeNoteText = (text: string) =>
+  text
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[\t ]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+
+/**
+ * Notes keep the line breaks their author typed, unlike every other cell.
+ * Two things get in the way: Service Planning writes a stored note into the
+ * cell with its raw newlines intact — which `innerText` would collapse away,
+ * because the printout itself renders them as one run-on line — while share
+ * links use `<br>`. So this reads textContent, never innerText, after turning
+ * any `<br>` into real newlines.
+ */
+const getNoteText = (element?: Element | null) =>
+  normalizeNoteText(elementTextWithLineBreaks(element));
+
+/** Service Planning prints a Font Awesome music icon beside a song. */
+const SONG_MARKER_SELECTOR = ".fa-music";
+
+const isSongMarkerNode = (node: Node): boolean =>
+  node instanceof Element &&
+  (node.classList.contains("fa-music") ||
+    Boolean(node.querySelector(SONG_MARKER_SELECTOR)));
+
+/**
+ * The song a row is for, read from the marker the source prints itself:
+ *
+ *   <span class="fa fa-music"></span>&nbsp;<b>There's a Welcome Here</b> (C)
+ *
+ * Both the share link and the custom-columns printout mark songs this way, and
+ * the song title is whatever follows the marker in that cell — so this also
+ * separates the song from the element type printed above it ("Welcome Song").
+ *
+ * Returns undefined when the cell has no marker. That covers two different
+ * cases on purpose, and callers have to tell them apart at the document level:
+ * a row that isn't a song, and a layout that marks no songs at all.
+ */
+const getSongMarkerTitle = (cell?: Element | null): string | undefined => {
+  const marker = cell?.querySelector(SONG_MARKER_SELECTOR);
+  if (!marker) return undefined;
+
+  let text = "";
+  for (let node = marker.nextSibling; node; node = node.nextSibling) {
+    // A medley cell can mark more than one song; stop at the next one so this
+    // title doesn't run into it.
+    if (isSongMarkerNode(node)) break;
+    text += node.textContent || "";
+  }
+  return normalizeCellText(text) || undefined;
+};
+
 const getDirectTableCells = (row: Element) =>
   Array.from(row.children).filter((child) => child.tagName.toLowerCase() === "td");
 
@@ -111,9 +196,71 @@ const getPlanningTimeFields = (value: string) => ({
   durationMinutes: parsePlanningDurationMinutes(value),
 });
 
+/**
+ * Share-link (serviceFlow.cfm) rows keep their notes out of the visible row: a
+ * collapsed detail panel holds free-text "General Notes:" plus a
+ * "Specific Notes:" table of team → note pairs. The toggle row points at that
+ * panel with `data-target` (older links only carry `data-id`, and some render
+ * the panel as the next row with no id at all).
+ */
+const getAccordionDetailPanel = (
+  root: ParentNode,
+  toggleRow: Element,
+): Element | null => {
+  const target = toggleRow.getAttribute("data-target");
+  const dataId = toggleRow.getAttribute("data-id");
+  const selector = target?.startsWith("#")
+    ? target
+    : dataId
+      ? `#collapse${dataId}`
+      : "";
+  if (selector) {
+    try {
+      const panel = root.querySelector(selector);
+      if (panel) return panel;
+    } catch {
+      // A data-target that isn't a valid selector shouldn't throw the import.
+    }
+  }
+  return toggleRow.nextElementSibling?.querySelector(".collapse") || null;
+};
+
+const parseAccordionDetailNotes = (panel: Element | null) => {
+  if (!panel) return { note: undefined, teamNotes: [] };
+
+  // The team-notes table is dropped first so its contents can't be mistaken for
+  // the tail of the General Notes block.
+  const withoutTeamNotes = panel.cloneNode(true) as Element;
+  withoutTeamNotes.querySelectorAll("table").forEach((table) => table.remove());
+  const note = normalizeNoteText(
+    elementTextWithLineBreaks(withoutTeamNotes).match(
+      /General Notes:([\s\S]*?)(?:Specific Notes:|$)/i,
+    )?.[1] || "",
+  );
+
+  // Every assigned team gets a row here whether or not it was given a note, so
+  // the empty ones are dropped rather than imported as blank team notes.
+  const teamNotes = Array.from(
+    panel.querySelector("table")?.querySelectorAll("tr") || [],
+  )
+    .map((row) => {
+      const cells = row.querySelectorAll("td");
+      return {
+        teamName: getElementText(cells[0]),
+        note: getNoteText(cells[1]),
+      };
+    })
+    .filter((teamNote) => Boolean(teamNote.teamName && teamNote.note));
+
+  return { note: note || undefined, teamNotes };
+};
+
 // Annotated rather than inferred: the spread timing fields infer as
 // required-but-undefined, which isn't assignable to EventData's optional ones.
-const buildAccordionRowEventData = (tds: NodeListOf<Element>): EventData => {
+const buildAccordionRowEventData = (
+  tds: NodeListOf<Element>,
+  detailPanel: Element | null,
+): EventData => {
   const middleCellLines = Array.from(tds[1].childNodes)
     .map((node) =>
       normalizeCellText(
@@ -130,30 +277,41 @@ const buildAccordionRowEventData = (tds: NodeListOf<Element>): EventData => {
     .trim();
 
   const timing = getPlanningTimeFields(getElementText(tds[0]));
+  const { note, teamNotes } = parseAccordionDetailNotes(detailPanel);
+  const songTitle = getSongMarkerTitle(tds[1]);
   return {
     elementType,
     title,
-    ledBy: getElementText(tds[2]),
+    ledBy: getLedByText(tds[2]),
     ...timing,
+    ...(note ? { note } : {}),
+    ...(teamNotes.length ? { teamNotes } : {}),
+    ...(songTitle ? { songTitle } : {}),
   };
 };
 
-const buildWorshipFlowRowEventData = (tds: NodeListOf<Element>) => ({
-  elementType: getElementText(tds[1]),
-  title: getElementText(tds[2]),
-  ledBy: getElementText(tds[3]),
-  note: getElementText(tds[4]) || undefined,
-  ...getPlanningTimeFields(getElementText(tds[0])),
-});
+const buildWorshipFlowRowEventData = (tds: NodeListOf<Element>): EventData => {
+  const songTitle = getSongMarkerTitle(tds[2]);
+  return {
+    elementType: getElementText(tds[1]),
+    title: getElementText(tds[2]),
+    ledBy: getLedByText(tds[3]),
+    note: getNoteText(tds[4]) || undefined,
+    ...getPlanningTimeFields(getElementText(tds[0])),
+    ...(songTitle ? { songTitle } : {}),
+  };
+};
 
 const getMainRowOptionalFields = (tds: NodeListOf<Element>) => {
   const startTime = parsePlanningStartTime(getElementText(tds[0]));
   const durationMinutes = parsePlanningDurationMinutes(getElementText(tds[1]));
-  const note = getElementText(tds[5]);
+  const note = getNoteText(tds[5]);
+  const songTitle = getSongMarkerTitle(tds[3]);
   return {
     ...(startTime ? { startTime } : {}),
     ...(durationMinutes ? { durationMinutes } : {}),
     ...(note ? { note } : {}),
+    ...(songTitle ? { songTitle } : {}),
   };
 };
 
@@ -214,7 +372,7 @@ const parseEventData = (textHtml: string): EventData[] => {
   ).map((tr) => {
     const tds = tr.querySelectorAll("td");
     if (tds.length !== 3) return null;
-    return buildAccordionRowEventData(tds);
+    return buildAccordionRowEventData(tds, getAccordionDetailPanel(el, tr));
   });
 
   if (accordionRows.length > 0) {
@@ -344,19 +502,21 @@ const buildCustomColumnsRowEventData = (
   const durationMinutes = parsePlanningDurationMinutes(
     getElementText(cells[layout.durationIndex]),
   );
-  const note = getElementText(cells[layout.noteIndex]);
+  const note = getNoteText(cells[layout.noteIndex]);
   const teamNotes = layout.teamColumns
-    .map(({ index, teamName }) => ({ teamName, note: getElementText(cells[index]) }))
+    .map(({ index, teamName }) => ({ teamName, note: getNoteText(cells[index]) }))
     .filter((teamNote) => Boolean(teamNote.note));
+  const songTitle = getSongMarkerTitle(cells[layout.titleIndex]);
 
   return {
     elementType: getElementText(cells[layout.elementTypeIndex]),
     title: getElementText(cells[layout.titleIndex]),
-    ledBy: getElementText(cells[layout.ledByIndex]),
+    ledBy: getLedByText(cells[layout.ledByIndex]),
     ...(startTime ? { startTime } : {}),
     ...(durationMinutes ? { durationMinutes } : {}),
     ...(note ? { note } : {}),
     ...(teamNotes.length ? { teamNotes } : {}),
+    ...(songTitle ? { songTitle } : {}),
   };
 };
 
@@ -455,7 +615,9 @@ export const parseServicePlanningImportFromHtml = (
       if (!isAccordionRow(tr)) continue;
       const tds = tr.querySelectorAll("td");
       if (tds.length !== 3) continue;
-      current.rows.push(buildAccordionRowEventData(tds));
+      current.rows.push(
+        buildAccordionRowEventData(tds, getAccordionDetailPanel(el, tr)),
+      );
     }
   } else if (worshipFlowRows.length > 0) {
     for (const tr of Array.from(worshipFlowRows)) {

@@ -106,6 +106,9 @@ describe("Home", () => {
       screen.getByRole("link", { name: /Overlay Controller/i }),
     ).toHaveAttribute("href", "/overlay-controller");
     expect(
+      screen.getByRole("link", { name: /Service Workspace/i }),
+    ).toHaveAttribute("href", "/current-service");
+    expect(
       screen.getByRole("link", { name: /^Credits Editor / }),
     ).toHaveAttribute("href", "/credits-editor");
     expect(

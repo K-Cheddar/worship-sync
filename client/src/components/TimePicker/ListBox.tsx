@@ -34,12 +34,14 @@ export function Listbox<T extends string | number>({
   return (
     <div className={cn("flex flex-col", className)}>
       {label && (
-        <span className="px-1 pb-1 text-xs text-muted-foreground">{label}</span>
+        <span className="px-1 pb-1 text-xs font-medium text-gray-300">
+          {label}
+        </span>
       )}
       <div
         role="listbox"
         aria-label={ariaLabel || label}
-        className="max-h-56 w-16 overflow-auto rounded-md border border-border bg-card p-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        className="max-h-56 w-16 overflow-auto rounded-md border border-gray-700 bg-gray-950 p-1 text-gray-100 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
       >
         {items.map((item) => (
           <Button
@@ -54,8 +56,8 @@ export function Listbox<T extends string | number>({
             className={cn(
               "w-full justify-start px-2 py-1 text-left text-sm",
               String(value) === String(item)
-                ? "bg-primary text-primary-foreground hover:bg-primary"
-                : "hover:bg-gray-400 hover:text-white",
+                ? "bg-cyan-500 text-white hover:bg-cyan-400"
+                : "text-gray-100 hover:bg-gray-800 hover:text-white",
               itemClassName
             )}
           >

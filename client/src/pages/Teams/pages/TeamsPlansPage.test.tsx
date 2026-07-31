@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ContextType } from "react";
@@ -114,8 +114,44 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("button", { name: /Next 4 weeks/i })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: /Add plan for /i }).length,
+      (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("shows mild plan-status placeholders until service plans load", async () => {
+    let resolvePlans!: (value: {
+      success: true;
+      servicePlans: [];
+    }) => void;
+    mockListServicePlans.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePlans = resolve;
+      }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByRole("status", { name: /Loading plan status/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("None planned")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /^Plan for /i }).length,
+    ).toBeGreaterThan(0);
+
+    await act(async () => {
+      resolvePlans({ success: true, servicePlans: [] });
+    });
+
+    expect(
+      (await screen.findAllByText("None planned")).length,
+    ).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("status", { name: /Loading plan status/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("marks an occurrence that already has a saved plan as Open plan", async () => {
@@ -143,7 +179,9 @@ describe("TeamsPlansPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Easter Sunday" });
-    const addPlanButtons = screen.getAllByRole("button", { name: /Add plan for /i });
+    const addPlanButtons = await screen.findAllByRole("button", {
+      name: /Add plan for /i,
+    });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
 
     expect(
@@ -170,9 +208,15 @@ describe("TeamsPlansPage", () => {
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
 
     renderPage();
+    // Flush listServicePlans microtasks so plan-status setState stays inside act
+    // under fake timers.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     await screen.findByRole("heading", { name: "Sabbath Service" });
-    const sabbathTiles = screen.getAllByRole("button", {
+    const sabbathTiles = await screen.findAllByRole("button", {
       name: /Add plan for /i,
     });
     // Second Sabbath tile so both previous and next exist in the window.
@@ -363,6 +407,9 @@ describe("TeamsPlansPage", () => {
   it("fetches the plan summary list for the current church on mount", async () => {
     renderPage();
     await waitFor(() => expect(mockListServicePlans).toHaveBeenCalledWith("church-1"));
+    expect(
+      await screen.findAllByRole("button", { name: /Add plan for /i }),
+    ).not.toHaveLength(0);
   });
 
   it("filters the list to a single service", async () => {
@@ -370,6 +417,7 @@ describe("TeamsPlansPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Easter Sunday" });
+    await screen.findAllByRole("button", { name: /Add plan for /i });
     await user.click(screen.getByLabelText(/Service/i));
     await user.click(await screen.findByRole("option", { name: "Sabbath Service" }));
 
@@ -384,11 +432,16 @@ describe("TeamsPlansPage", () => {
     jest.setSystemTime(new Date("2026-07-20T12:00:00"));
 
     renderPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(await screen.findByText(/Up next/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /up next/i }),
     ).toBeInTheDocument();
+    await screen.findAllByRole("button", { name: /Add plan for /i });
 
     jest.useRealTimers();
   });
@@ -421,6 +474,7 @@ describe("TeamsPlansPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Easter Sunday" });
+    await screen.findAllByRole("button", { name: /Add plan for /i });
     expect(
       screen.queryByRole("heading", { name: "Old Test Service" }),
     ).not.toBeInTheDocument();

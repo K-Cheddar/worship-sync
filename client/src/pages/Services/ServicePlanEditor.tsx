@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -6,10 +6,15 @@ import {
   Copy,
   ExternalLink,
   GripVertical,
+  LayoutTemplate,
   MoreHorizontal,
   Pencil,
   Plus,
+  Radio,
+  Redo2,
+  RefreshCw,
   Trash2,
+  Undo2,
 } from "lucide-react";
 import {
   closestCenter,
@@ -30,15 +35,22 @@ import {
   ButtonGroupItem,
 } from "../../components/Button";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import Input from "../../components/Input/Input";
 import TimePicker from "../../components/TimePicker/TimePicker";
+import ServicePlanRolePickerContent from "../../components/ServicePlanRolePickerContent";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
 import {
@@ -46,6 +58,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/Popover";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "@/utils/cnHelper";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -64,6 +83,8 @@ import {
   type ServicePlanPublicUrls,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
+import { keepElementInView } from "../../utils/generalUtils";
+import { serverNow } from "../../utils/serverTime";
 import { useSensors } from "../../utils/dndUtils";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
@@ -77,6 +98,16 @@ import {
   buildServicePlanSectionsFromImport,
   buildServicePlanSourceImport,
 } from "./servicePlanFromImport";
+import {
+  DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+  refreshServicePlanFromImport,
+  type ServicePlanningRefreshOptions,
+} from "./servicePlanImportSync";
+import ServicePlanImportReviewWindow from "./ServicePlanImportReviewWindow";
+import {
+  summarizeServicePlanImport,
+  type ServicePlanImportSummary,
+} from "./servicePlanImportSummary";
 import ServicePlanTemplateModal, {
   type ServicePlanTemplateModalMode,
 } from "./ServicePlanTemplateModal";
@@ -85,23 +116,40 @@ import ServicePlanElementRow, {
   formatPlanStartTimeDisplay,
   ServicePlanElementColumnHeader,
   SERVICE_PLAN_INLINE_INPUT_CLASS,
+  servicePlanElementDomId,
+  type ServicePlanRoleNoteOption,
 } from "./ServicePlanElementRow";
+import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
+import ViewPlainLyricsDrawer from "../../components/SongSections/ViewPlainLyricsDrawer";
 import {
   applyElementDurationSecondsChange,
   applyElementStartTimeChange,
   applyPlanAnchorStartTime,
 } from "./servicePlanTimingUtils";
 import {
-  getServicePlanLiveElementId,
+  getServicePlanLiveProgress,
+  getServicePlanLiveStartedAt,
+  isServicePlanLiveOverridden,
   isServicePlanManualLive,
+  isServicePlanTimelineAdjusted,
 } from "./servicePlanLive";
 import {
   isServicePlanUpdatedEvent,
   useTeamsLiveSync,
 } from "../Teams/hooks/useTeamsLiveSync";
 import { useServicePlanAutosave } from "./useServicePlanAutosave";
+import {
+  useServicePlanDraftHistory,
+  type ServicePlanDraftSnapshot,
+} from "./useServicePlanDraftHistory";
+import {
+  readServicePublicNotesTeam,
+  writeServicePublicNotesTeam,
+} from "../servicePublicNotesTeam";
 import type {
   TeamRosterMember,
+  TeamPosition,
+  TeamRecord,
   TeamScheduleOccurrence,
   TeamService,
 } from "../../api/authTypes";
@@ -109,6 +157,7 @@ import type {
   ServicePlan,
   ServicePlanPayload,
   ServicePlanSection,
+  ServicePlanSongReference,
   ServicePlanSourceImport,
 } from "../../types/servicePlan";
 import {
@@ -122,10 +171,135 @@ import {
   reorderSections,
   updateElement,
 } from "./servicePlanDraftUtils";
+import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
+import {
+  getServicePlanRoleNoteTeamName,
+  roleNoteMatchesServicePlanTeam,
+} from "./servicePlanRoleNoteTeam";
 
 const SECTION_ID_PREFIX = "section:";
 const ELEMENT_ID_PREFIX = "element:";
+const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
 const sectionDndId = (sectionId: string) => `${SECTION_ID_PREFIX}${sectionId}`;
+
+const ALL_TEAMS_FILTER_VALUE = "__everyone__";
+
+/** Live-row tracking needs second resolution; nothing else here does. */
+const LIVE_CLOCK_ACTIVE_MS = 1_000;
+/** Enough to catch midnight rollover and the service window opening. */
+const LIVE_CLOCK_IDLE_MS = 30_000;
+
+type ServicePlanImportPreview = {
+  sections: ServicePlanSection[];
+  sourceImport: ServicePlanSourceImport;
+  summary: ServicePlanImportSummary;
+};
+
+const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
+  new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timezone,
+  }).format(new Date(timeMs));
+
+/** Unique non-empty team-note labels across the plan, sorted for the filter. */
+export const collectServicePlanTeamNoteLabels = (
+  sections: ServicePlanSection[] | null | undefined,
+): string[] => {
+  if (!sections?.length) return [];
+  const labels = new Set<string>();
+  for (const section of sections) {
+    for (const element of section.elements) {
+      for (const note of element.teamNotes || []) {
+        if (note.scope === "role") continue;
+        const label = note.label.trim();
+        if (label) labels.add(label);
+      }
+    }
+  }
+  return Array.from(labels).sort((a, b) => a.localeCompare(b));
+};
+
+const collectServicePlanRoleNoteOptions = (
+  sections: ServicePlanSection[] | null | undefined,
+  positions: TeamPosition[],
+  teams: TeamRecord[],
+): ServicePlanRoleNoteOption[] => {
+  const teamNamesById = new Map(teams.map((team) => [team.teamId, team.name]));
+  const options = new Map<string, ServicePlanRoleNoteOption>();
+
+  positions
+    .filter((position) => !position.archivedAt)
+    .forEach((position) => {
+      const teamName = teamNamesById.get(position.teamId);
+      options.set(position.positionId, {
+        positionId: position.positionId,
+        label: teamName ? `${teamName} · ${position.name}` : position.name,
+        teamId: position.teamId,
+        teamName,
+      });
+    });
+
+  for (const section of sections || []) {
+    for (const element of section.elements) {
+      for (const note of element.teamNotes || []) {
+        if (note.scope !== "role" || !note.positionId || options.has(note.positionId)) {
+          continue;
+        }
+        options.set(note.positionId, {
+          positionId: note.positionId,
+          label: note.label.trim() || "Unknown role",
+          teamId: note.teamId,
+          teamName: note.teamName,
+        });
+      }
+    }
+  }
+
+  return Array.from(options.values()).sort((left, right) =>
+    left.label.localeCompare(right.label),
+  );
+};
+
+/** Only roles with an attached role note belong in the note-filter picker. */
+export const collectServicePlanRoleNoteFilterOptions = (
+  sections: ServicePlanSection[] | null | undefined,
+  allRoleOptions: ServicePlanRoleNoteOption[],
+  teamNotesFilter = "",
+): ServicePlanRoleNoteOption[] => {
+  const allByPositionId = new Map(
+    allRoleOptions.map((option) => [option.positionId, option]),
+  );
+  const options = new Map<string, ServicePlanRoleNoteOption>();
+
+  for (const section of sections || []) {
+    for (const element of section.elements) {
+      for (const note of element.teamNotes || []) {
+        if (
+          note.scope !== "role"
+          || !note.positionId
+          || !roleNoteMatchesServicePlanTeam(note, teamNotesFilter)
+          || options.has(note.positionId)
+        ) {
+          continue;
+        }
+        const fallbackOption = {
+          positionId: note.positionId,
+          label: note.label.trim() || "Unknown role",
+          teamId: note.teamId,
+          teamName: getServicePlanRoleNoteTeamName(note) || undefined,
+        };
+        const option = allByPositionId.get(note.positionId) || fallbackOption;
+        if (!roleNoteMatchesServicePlanTeam(option, teamNotesFilter)) continue;
+        options.set(note.positionId, option);
+      }
+    }
+  }
+
+  return Array.from(options.values()).sort((left, right) =>
+    left.label.localeCompare(right.label),
+  );
+};
 
 const urlsFromPublishResult = (result: {
   publicUrl: string;
@@ -178,6 +352,9 @@ type ServicePlanEditorProps = {
   /** Roster, for "Assigned to" suggestions (members + free-text history —
    * not roster-linked/position-ranked; see ServicePlanElementRow). */
   members: TeamRosterMember[];
+  /** Roles available for role-specific operational notes. */
+  positions?: TeamPosition[];
+  teams?: TeamRecord[];
   canEdit: boolean;
   /** When set, renders a shared editor chrome with back control + title. */
   onBack?: () => void;
@@ -203,19 +380,34 @@ type SortableSectionCardProps = {
   onRemove: () => void;
   onAddElement: () => void;
   onRemoveElement: (elementId: string) => void;
-  onUpdateElement: (elementId: string, changes: Parameters<typeof updateElement>[3]) => void;
+  onUpdateElement: (
+    elementId: string,
+    changes: Parameters<typeof updateElement>[3],
+    coalesceKey?: string,
+  ) => void;
   onElementDurationChange: (elementId: string, durationSeconds: number) => void;
   onElementStartTimeChange: (elementId: string, time: string) => void;
   assignedToHistoryValues: string[];
-  publicSharingEnabled: boolean;
+  roleNoteOptions: ServicePlanRoleNoteOption[];
   isServiceDay: boolean;
   liveElementId: string | null;
   isManualLive: boolean;
+  isTimelineAdjusted: boolean;
+  adjustedStartTimes: ReadonlyMap<string, string>;
+  liveStartedAtLabel: string | null;
   publicLiveBusy: boolean;
   onMakePublicLive: (elementId: string) => void;
-  onResumePublicSchedule: () => void;
   /** Local view preference: hide shared and team notes on every element. */
   hideNotes?: boolean;
+  /** Empty string = all teams; otherwise only team notes with this label. */
+  teamNotesFilter?: string;
+  /** Empty string = all roles; otherwise only notes for this position. */
+  roleNotesFilter?: string;
+  onViewSongLyrics?: (songRef: ServicePlanSongReference) => void;
+  canCreateLibrarySong?: boolean;
+  /** Elements whose stored song reference is out of date — see
+   * servicePlanSongResolution.ts. Absent means the stored one still stands. */
+  resolvedSongRefs: ReadonlyMap<string, ServicePlanSongReference>;
 };
 
 const SortableSectionCard = ({
@@ -231,14 +423,21 @@ const SortableSectionCard = ({
   onElementDurationChange,
   onElementStartTimeChange,
   assignedToHistoryValues,
-  publicSharingEnabled,
+  roleNoteOptions,
   isServiceDay,
   liveElementId,
   isManualLive,
+  isTimelineAdjusted,
+  adjustedStartTimes,
+  liveStartedAtLabel,
   publicLiveBusy,
   onMakePublicLive,
-  onResumePublicSchedule,
   hideNotes = false,
+  teamNotesFilter = "",
+  roleNotesFilter = "",
+  onViewSongLyrics,
+  canCreateLibrarySong = false,
+  resolvedSongRefs,
 }: SortableSectionCardProps) => {
   const allowEdit = canEdit && isEditing;
   const {
@@ -251,6 +450,13 @@ const SortableSectionCard = ({
     isDragging,
   } = useSortable({ id: sectionDndId(section.id), disabled: !allowEdit });
   const [isExpanded, setIsExpanded] = useState(true);
+
+  useEffect(() => {
+    if (isEditing || !liveElementId) return;
+    if (section.elements.some((element) => element.id === liveElementId)) {
+      setIsExpanded(true);
+    }
+  }, [isEditing, liveElementId, section.elements]);
 
   const elementIds = section.elements.map((element) => elementDndId(element.id));
 
@@ -302,9 +508,6 @@ const SortableSectionCard = ({
             {section.name.trim() || "Untitled section"}
           </h3>
         )}
-        <span className="shrink-0 tabular-nums text-[11px] text-gray-400">
-          {section.elements.length}
-        </span>
         {allowEdit ? (
           <Button
             type="button"
@@ -321,7 +524,10 @@ const SortableSectionCard = ({
       <AnimateCollapse open={isExpanded}>
         <div className="pb-1">
           {section.elements.length > 0 ? (
-            <ServicePlanElementColumnHeader isEditing={allowEdit} />
+            <ServicePlanElementColumnHeader
+              isEditing={allowEdit}
+              showActionsColumn={isServiceDay}
+            />
           ) : null}
           <SortableContext items={elementIds} strategy={verticalListSortingStrategy}>
             <div>
@@ -332,21 +538,32 @@ const SortableSectionCard = ({
                   canEdit={canEdit}
                   isEditing={isEditing}
                   onRemove={() => onRemoveElement(element.id)}
-                  onUpdate={(changes) => onUpdateElement(element.id, changes)}
+                  onUpdate={(changes, coalesceKey) =>
+                    onUpdateElement(element.id, changes, coalesceKey)
+                  }
                   onDurationChange={(durationSeconds) =>
                     onElementDurationChange(element.id, durationSeconds)
                   }
                   onStartTimeChange={(time) => onElementStartTimeChange(element.id, time)}
                   assignedToHistoryValues={assignedToHistoryValues}
                   toneIndex={elementIndex}
-                  publicSharingEnabled={publicSharingEnabled}
                   isServiceDay={isServiceDay}
                   isLive={liveElementId === element.id}
                   isManualLive={isManualLive && liveElementId === element.id}
+                  isAdjustedLive={isTimelineAdjusted && liveElementId === element.id}
+                  adjustedStartTime={adjustedStartTimes.get(element.id)}
+                  liveStartedAtDescription={
+                    liveElementId === element.id ? liveStartedAtLabel || undefined : undefined
+                  }
                   publicLiveBusy={publicLiveBusy}
                   onMakePublicLive={() => onMakePublicLive(element.id)}
-                  onResumePublicSchedule={onResumePublicSchedule}
                   hideNotes={hideNotes}
+                  teamNotesFilter={teamNotesFilter}
+                  roleNotesFilter={roleNotesFilter}
+                  roleNoteOptions={roleNoteOptions}
+                  onViewSongLyrics={onViewSongLyrics}
+                  canCreateLibrarySong={canCreateLibrarySong}
+                  resolvedSongRef={resolvedSongRefs.get(element.id)}
                 />
               ))}
             </div>
@@ -385,19 +602,24 @@ const ServicePlanEditor = ({
   service,
   occurrence,
   members,
+  positions = [],
+  teams = [],
   canEdit,
   onBack,
   backLabel = "Back to Plans",
   planNavigation,
   headerActions,
 }: ServicePlanEditorProps) => {
-  const { churchId } = useContext(GlobalInfoContext) || {};
+  const { churchId, access } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
   const dispatch = useDispatch();
   const sensors = useSensors();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
+  const [viewSongRef, setViewSongRef] = useState<ServicePlanSongReference | null>(
+    null,
+  );
 
   // The song library (allDocs.allSongDocs) is normally populated by the
   // Controller page's own lifecycle hook — a session that opens straight to
@@ -423,16 +645,28 @@ const ServicePlanEditor = ({
   const [showImport, setShowImport] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
+  const [refreshOptions, setRefreshOptions] = useState<ServicePlanningRefreshOptions>(
+    DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+  );
   const [templateModal, setTemplateModal] =
     useState<ServicePlanTemplateModalMode | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [updatingPublicLive, setUpdatingPublicLive] = useState(false);
   const [publicUrls, setPublicUrls] = useState<ServicePlanPublicUrls | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(() => serverNow());
   const [draftChangeVersion, setDraftChangeVersion] = useState(0);
   const [conflictPlan, setConflictPlan] = useState<ServicePlan | null>(null);
+  // An SSE message can arrive after our write commits but before its response.
+  // Hold a truly newer remote revision until the local acknowledgement lands.
+  const pendingRemotePlanRef = useRef<ServicePlan | null>(null);
   // View-only: collapses note chrome so operators can scan structure/timing.
   const [hideNotes, setHideNotes] = useState(false);
+  // Same preference as the public team view — filter team notes by label.
+  const [teamNotesFilter, setTeamNotesFilter] = useState(() =>
+    readServicePublicNotesTeam(),
+  );
+  const [roleNotesFilter, setRoleNotesFilter] = useState("");
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(false);
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
@@ -441,20 +675,69 @@ const ServicePlanEditor = ({
     setDraftChangeVersion((version) => version + 1);
   }, []);
 
-  const updateDraftSections = useCallback((next: ServicePlanSection[]) => {
-    setSections(next);
-    markDraftChanged();
-  }, [markDraftChanged]);
+  const restoreDraftSnapshot = useCallback(
+    (snapshot: ServicePlanDraftSnapshot) => {
+      setSections(snapshot.sections);
+      setPlanName(snapshot.planName);
+      setSourceImport(snapshot.sourceImport);
+      // An undone plan is still the plan of record — autosave persists it the
+      // same way it persists any other edit.
+      markDraftChanged();
+    },
+    [markDraftChanged],
+  );
+
+  const {
+    canUndo,
+    canRedo,
+    record: recordDraftHistory,
+    undo: undoDraft,
+    redo: redoDraft,
+    reset: resetDraftHistory,
+  } = useServicePlanDraftHistory({
+    draft: { sections, planName, sourceImport },
+    onRestore: restoreDraftSnapshot,
+  });
+
+  /**
+   * The single funnel for every draft edit: it records the pre-edit snapshot
+   * for undo, applies the change, and marks the draft for autosave. Grouping
+   * fields into one call keeps a compound edit (an import, a template) a
+   * single undo step. `coalesceKey` names the field being edited so a typing
+   * burst collapses instead of costing an undo press per character.
+   */
+  const updateDraft = useCallback(
+    (
+      changes: {
+        sections?: ServicePlanSection[];
+        planName?: string;
+        sourceImport?: ServicePlanSourceImport;
+      },
+      coalesceKey?: string,
+    ) => {
+      recordDraftHistory(coalesceKey);
+      if (changes.sections) setSections(changes.sections);
+      if (changes.planName !== undefined) setPlanName(changes.planName);
+      if ("sourceImport" in changes) setSourceImport(changes.sourceImport);
+      markDraftChanged();
+    },
+    [markDraftChanged, recordDraftHistory],
+  );
+
+  const updateDraftSections = useCallback(
+    (next: ServicePlanSection[], coalesceKey?: string) => {
+      updateDraft({ sections: next }, coalesceKey);
+    },
+    [updateDraft],
+  );
 
   const updateDraftName = useCallback((next: string) => {
-    setPlanName(next);
-    markDraftChanged();
-  }, [markDraftChanged]);
+    updateDraft({ planName: next }, "planName");
+  }, [updateDraft]);
 
-  useEffect(() => {
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, []);
+  // The live clock is started further down, once the plan's live state is
+  // known — it only needs to run at second resolution when the timeline is
+  // actually moving. See LIVE_CLOCK_* below.
 
   useEffect(() => {
     setPlan(null);
@@ -464,10 +747,14 @@ const ServicePlanEditor = ({
     setTemplateModal(null);
     setShowImport(false);
     setImportUrl("");
+    setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    setImportPreview(null);
     setPublicUrls(null);
     setConflictPlan(null);
+    pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
     setIsEditing(false);
+    resetDraftHistory();
     if (!planKey || !churchId) return;
     let cancelled = false;
     setLoading(true);
@@ -599,9 +886,20 @@ const ServicePlanEditor = ({
     },
     onConflict: (latestPlan) => {
       if (latestPlan.planKey && latestPlan.planKey !== planKey) return;
+      pendingRemotePlanRef.current = null;
       setConflictPlan(latestPlan);
     },
   });
+
+  // The hook returns a fresh object every render, so an effect depending on
+  // `autosave` runs after every render — once a second, thanks to the live
+  // clock. These three members are what the deferred-conflict effect actually
+  // watches, and the two callbacks are stable.
+  const {
+    state: autosaveState,
+    getRevision: getAutosaveRevision,
+    markConflict: markAutosaveConflict,
+  } = autosave;
 
   // Clean editors follow remote plan changes. Local edits are never silently
   // replaced; the server's revision check turns that situation into a conflict.
@@ -609,28 +907,88 @@ const ServicePlanEditor = ({
     if (!isServicePlanUpdatedEvent(event)) return;
     const { servicePlan } = event;
     if (servicePlan.planKey !== planKey) return;
-    if ((servicePlan.revision ?? 0) === (plan?.revision ?? 0)) {
+    const incomingRevision = servicePlan.revision ?? 0;
+    const knownRevision = autosave.getRevision();
+    if (incomingRevision <= knownRevision) {
       // Publishing and live-progress changes share the same document but do
       // not alter editable plan content. Keep those controls current without
       // turning a local text edit into a content conflict.
-      setPlan((current) => current ? {
-        ...current,
-        published: servicePlan.published,
-        publicLive: servicePlan.publicLive,
-        updatedAt: servicePlan.updatedAt,
-      } : current);
+      if (incomingRevision === knownRevision) {
+        setPlan((current) => current ? {
+          ...current,
+          published: servicePlan.published,
+          publicLive: servicePlan.publicLive,
+          updatedAt: servicePlan.updatedAt,
+        } : current);
+      }
+      return;
+    }
+    const expectedInFlightRevision = autosave.getInFlightExpectedRevision();
+    if (incomingRevision === expectedInFlightRevision) {
+      // This is the broadcast echo of our in-flight save. Its HTTP response
+      // carries the same plan and will update the local revision moments later.
+      return;
+    }
+    if (expectedInFlightRevision !== null) {
+      // A revision beyond the expected acknowledgement is a real concurrent
+      // edit. Defer the conflict until our save response advances its revision.
+      pendingRemotePlanRef.current = servicePlan;
       return;
     }
     if (autosave.state !== "saved") {
+      // Our base revision is already behind, so the queued autosave could only
+      // come back 409. Raise the conflict now rather than leaving the operator
+      // reading "Saving soon" until that doomed round trip returns.
       setConflictPlan(servicePlan);
+      autosave.markConflict();
       return;
     }
     setPlan(servicePlan);
     setSections(servicePlan.sections);
     setPlanName(servicePlan.name || occurrence.name || "");
     setSourceImport(servicePlan.sourceImport);
+    // This draft is now another editor's revision. Undoing past it would push
+    // our pre-sync snapshot back over their work as a fresh save.
+    resetDraftHistory();
     autosave.acceptRemoteRevision(servicePlan);
   });
+
+  useEffect(() => {
+    const pendingRemotePlan = pendingRemotePlanRef.current;
+    if (!pendingRemotePlan || autosaveState !== "saved") return;
+    if ((pendingRemotePlan.revision ?? 0) <= getAutosaveRevision()) {
+      pendingRemotePlanRef.current = null;
+      return;
+    }
+    pendingRemotePlanRef.current = null;
+    setConflictPlan(pendingRemotePlan);
+    markAutosaveConflict();
+  }, [autosaveState, getAutosaveRevision, markAutosaveConflict]);
+
+  // Undo/redo shortcuts, edit mode only. Fields that own their own undo keep
+  // it: TipTap handles the keystroke inside a rich-text field (and marks it
+  // handled), and plain inputs carry `data-ignore-undo` so the browser's
+  // character-level undo still applies — the same contract the Controller
+  // toolbar's undo uses.
+  useEffect(() => {
+    if (!canEdit || !isEditing) return;
+    const handleUndoRedoKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "z" && key !== "y") return;
+      if (event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.getAttribute?.("data-ignore-undo") === "true") return;
+      event.preventDefault();
+      if (key === "y" || event.shiftKey) {
+        redoDraft();
+        return;
+      }
+      undoDraft();
+    };
+    document.addEventListener("keydown", handleUndoRedoKey);
+    return () => document.removeEventListener("keydown", handleUndoRedoKey);
+  }, [canEdit, isEditing, redoDraft, undoDraft]);
 
   useEffect(() => {
     if (autosave.state === "saved") return;
@@ -649,13 +1007,46 @@ const ServicePlanEditor = ({
     setPlanName(conflictPlan.name || occurrence.name || "");
     setSourceImport(conflictPlan.sourceImport);
     setConflictPlan(null);
+    pendingRemotePlanRef.current = null;
+    resetDraftHistory();
     autosave.acceptRemoteRevision(conflictPlan);
   };
 
+  /** Undo history is scoped to a single editing session: Done commits the
+   * plan, so there is nothing left to step back through. */
+  const toggleEditing = () => {
+    resetDraftHistory();
+    setIsEditing((editing) => !editing);
+  };
+
   const startFromScratch = () => {
-    updateDraftSections(createEmptyServicePlanSections());
-    updateDraftName(occurrence.name || service.name || "");
+    updateDraft({
+      sections: createEmptyServicePlanSections(),
+      planName: occurrence.name || service.name || "",
+    });
     setIsEditing(true);
+  };
+
+  /**
+   * An import is meant to be reviewed in full, so it always lands on "All
+   * teams" with notes shown. The team filter is shared with the public plan
+   * view and persists across sessions, so an operator who once focused a
+   * single team there would otherwise open a freshly imported plan and see
+   * only that team's notes — looking exactly like every other team's notes
+   * failed to import. The stored value has to be cleared too, or the effect
+   * that restores the saved preference re-applies it immediately.
+   */
+  const showAllTeamNotesForReview = () => {
+    setTeamNotesFilter("");
+    writeServicePublicNotesTeam("");
+    setHideNotes(false);
+  };
+
+  const openImportUpdates = () => {
+    setImportUrl(
+      sourceImport?.source === "servicePlanning" ? sourceImport.sourceUrl : "",
+    );
+    setShowImport(true);
   };
 
   const handleImportFromServicePlanning = async () => {
@@ -669,29 +1060,89 @@ const ServicePlanEditor = ({
       const hasSourceTiming = importedSections.some((section) =>
         section.elements.some((element) => Boolean(element.startTime)),
       );
-      updateDraftSections(
-        // Preserve the source's actual schedule when the printout provides
-        // it. Older printouts without time columns still receive our normal
-        // occurrence-time anchor as a useful starting point.
+      // Preserve the source's actual schedule when the printout provides it.
+      // Older printouts without time columns still receive our normal
+      // occurrence-time anchor as a useful starting point.
+      const freshImportSections =
         hasElements && !hasSourceTiming
-          ? applyPlanAnchorStartTime(importedSections, occurrenceLocalTime(occurrence.startsAt, planTimezone))
-          : importedSections,
-      );
-      // The occurrence being planned names the plan — the imported source's
-      // own plan label (its own date/service, not necessarily this one) is
-      // provenance info only, kept on sourceImport.planLabel, never the name.
-      updateDraftName(occurrence.name || service.name || "");
-      setSourceImport(buildServicePlanSourceImport(data, trimmedUrl));
-      markDraftChanged();
+          ? applyPlanAnchorStartTime(
+            importedSections,
+            occurrenceLocalTime(occurrence.startsAt, planTimezone),
+          )
+          : importedSections;
+      // A plan with no items yet has nothing to reconcile — a draft started
+      // from scratch carries one empty section, which would otherwise survive
+      // the refresh and leave a stray blank section above the imported ones.
+      const nextSections =
+        hasPlanContent && sections
+          ? refreshServicePlanFromImport(sections, importedSections, {
+            ...refreshOptions,
+            // Only plans imported before item-level provenance existed can have
+            // their unmarked items regarded as source-owned, and then only when
+            // removal was chosen. On a tracked plan those are operator items.
+            treatUnmarkedItemsAsSource:
+              refreshOptions.removeMissing && isLegacyUntrackedImport,
+          })
+          : freshImportSections;
+      // One draft update, so undo reverts the whole import rather than peeling
+      // it back a field at a time. The occurrence being planned names the plan
+      // — the imported source's own plan label (its own date/service, not
+      // necessarily this one) is provenance info only, kept on
+      // sourceImport.planLabel, never the name.
+      const nextSourceImport = buildServicePlanSourceImport(data, trimmedUrl);
+      if (hasPlanContent && sections) {
+        setImportPreview({
+          sections: nextSections,
+          sourceImport: nextSourceImport,
+          summary: summarizeServicePlanImport(sections, nextSections),
+        });
+        setShowImport(false);
+        return;
+      }
+      applyImportedDraft({
+        sections: nextSections,
+        planName: occurrence.name || service.name || "",
+        sourceImport: nextSourceImport,
+      });
       setShowImport(false);
       setImportUrl("");
       setIsEditing(true);
+      showAllTeamNotesForReview();
       showToast("Imported from Service Planning — review before saving.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not import from Service Planning.");
     } finally {
       setImporting(false);
     }
+  };
+
+  const applyImportedDraft = (draft: {
+    sections: ServicePlanSection[];
+    planName: string;
+    sourceImport: ServicePlanSourceImport;
+  }) => {
+    updateDraft(draft);
+  };
+
+  const applyImportPreview = () => {
+    if (!importPreview) return;
+    applyImportedDraft({
+      sections: importPreview.sections,
+      planName: occurrence.name || service.name || "",
+      sourceImport: importPreview.sourceImport,
+    });
+    setImportPreview(null);
+    setImportUrl("");
+    setIsEditing(true);
+    showAllTeamNotesForReview();
+    showToast("Imported from Service Planning â€” review before saving.", "success");
+  };
+
+  const updateRefreshOption = (
+    key: keyof Omit<ServicePlanningRefreshOptions, "treatUnmarkedItemsAsSource">,
+    checked: boolean,
+  ) => {
+    setRefreshOptions((current) => ({ ...current, [key]: checked }));
   };
 
   const handleAddElement = (sectionId: string) => {
@@ -780,13 +1231,47 @@ const ServicePlanEditor = ({
     setUpdatingPublicLive(true);
     try {
       const result = await updateServicePlanPublicLive(churchId, planKey, {
-        mode: "manual",
+        mode: "anchored",
         currentElementId: elementId,
       });
       setPlan(result.servicePlan);
-      showToast("Detailed and simple views are on this item.", "success");
+      showToast("Live timeline updated. Following items will advance automatically.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update shared service progress.");
+    } finally {
+      setUpdatingPublicLive(false);
+    }
+  };
+
+  const handlePauseAutomaticAdvance = async () => {
+    if (!churchId || !planKey || !plan || !liveElementId) return;
+    setUpdatingPublicLive(true);
+    try {
+      const result = await updateServicePlanPublicLive(churchId, planKey, {
+        mode: "manual",
+        currentElementId: liveElementId,
+      });
+      setPlan(result.servicePlan);
+      showToast("Automatic advance paused.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not pause automatic advance.");
+    } finally {
+      setUpdatingPublicLive(false);
+    }
+  };
+
+  const handleContinueAutomaticAdvance = async () => {
+    if (!churchId || !planKey || !plan || !liveElementId) return;
+    setUpdatingPublicLive(true);
+    try {
+      const result = await updateServicePlanPublicLive(churchId, planKey, {
+        mode: "anchored",
+        currentElementId: liveElementId,
+      });
+      setPlan(result.servicePlan);
+      showToast("Automatic advance resumed.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not resume automatic advance.");
     } finally {
       setUpdatingPublicLive(false);
     }
@@ -800,7 +1285,7 @@ const ServicePlanEditor = ({
         mode: "schedule",
       });
       setPlan(result.servicePlan);
-      showToast("Detailed and simple views are following the schedule.", "success");
+      showToast("Returned to the planned schedule.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update shared service progress.");
     } finally {
@@ -866,15 +1351,183 @@ const ServicePlanEditor = ({
   // section has been removed. A fresh "Start from scratch" draft still has one
   // empty section, so it does not bounce back into this empty state.
   const hasSections = Boolean(sections && sections.length > 0);
+  /** Whether the draft holds anything an import would have to reconcile. */
+  const hasPlanContent = Boolean(
+    sections?.some((section) => section.elements.length > 0),
+  );
+  const teamNoteLabels = useMemo(
+    () => collectServicePlanTeamNoteLabels(sections),
+    [sections],
+  );
+  const roleNoteOptions = useMemo(
+    () => collectServicePlanRoleNoteOptions(sections, positions, teams),
+    [positions, sections, teams],
+  );
+  const roleNoteFilterOptions = useMemo(
+    () => collectServicePlanRoleNoteFilterOptions(sections, roleNoteOptions, teamNotesFilter),
+    [roleNoteOptions, sections, teamNotesFilter],
+  );
+  /**
+   * Songs an import couldn't find that the library has since gained. Resolved
+   * once for the whole plan rather than per row, since matching runs over the
+   * whole library.
+   */
+  const resolvedSongRefs = useMemo(
+    () => resolveServicePlanSongRefs(sections, allSongDocs),
+    [sections, allSongDocs],
+  );
+  const viewLibrarySong = useMemo(() => {
+    if (!viewSongRef || viewSongRef.kind !== "library") return null;
+    return (
+      allSongDocs.find(
+        (doc) => doc._id === viewSongRef.songId && doc.type === "song",
+      ) ?? null
+    );
+  }, [viewSongRef, allSongDocs]);
+  // Pending ("Not in library") songs open Create song for operators who can
+  // create library songs (full or music access) instead of a lyrics viewer.
+  const viewPlainLyrics = useMemo(() => {
+    if (!viewSongRef || viewSongRef.kind !== "library" || viewLibrarySong) {
+      return null;
+    }
+    return {
+      title: viewSongRef.songName,
+      lyricsText: "",
+      emptyMessage:
+        "This song is not in the library right now. Open Songs to restore it, then try again.",
+    };
+  }, [viewSongRef, viewLibrarySong]);
+
+  const canCreateLibrarySong = Boolean(
+    canEdit && (access === "full" || access === "music"),
+  );
+
+  useEffect(() => {
+    if (!teamNoteLabels.length) {
+      if (teamNotesFilter) setTeamNotesFilter("");
+      return;
+    }
+    if (teamNotesFilter && teamNoteLabels.includes(teamNotesFilter)) return;
+    const stored = readServicePublicNotesTeam();
+    if (stored && teamNoteLabels.includes(stored)) {
+      setTeamNotesFilter(stored);
+      return;
+    }
+    if (teamNotesFilter) setTeamNotesFilter("");
+  }, [teamNoteLabels, teamNotesFilter]);
+
+  const handleTeamNotesFilterChange = (value: string) => {
+    const next = value === ALL_TEAMS_FILTER_VALUE ? "" : value;
+    setTeamNotesFilter(next);
+    writeServicePublicNotesTeam(next);
+  };
+
+  useEffect(() => {
+    if (!roleNotesFilter) return;
+    if (roleNoteFilterOptions.some((option) => option.positionId === roleNotesFilter)) return;
+    setRoleNotesFilter("");
+  }, [roleNoteFilterOptions, roleNotesFilter]);
+
+  /**
+   * True only for plans imported before item-level provenance existed — every
+   * item unmarked, so a refresh has nothing but titles to go on. A plan with
+   * any marked item is tracked, and its unmarked items are the operator's own
+   * additions rather than untracked source items.
+   */
+  const isLegacyUntrackedImport = Boolean(
+    sourceImport?.source === "servicePlanning" &&
+    sections?.length &&
+    !sections.some(
+      (section) =>
+        section.sourcePlanningManaged ||
+        section.elements.some((element) => element.sourcePlanningManaged),
+    ),
+  );
   const isEmpty = !loading && !hasSections;
   const showChrome = Boolean(onBack);
   const publicSharingEnabled = Boolean(plan?.published);
   const isServiceDay = isOccurrenceOnCalendarDay(occurrence, planTimezone);
   const isManualLive = isServicePlanManualLive(plan);
-  const liveElementId =
+  const isTimelineAdjusted = isServicePlanTimelineAdjusted(plan);
+  const isLiveOverridden = isServicePlanLiveOverridden(plan);
+
+  /**
+   * The live clock re-renders the whole plan, so it runs at second resolution
+   * only while the timeline is genuinely moving: the service day, or an
+   * anchored override counting up from its own start. Every other session —
+   * planning next Sunday, which is most of them — still ticks, just slowly,
+   * so midnight rollover and the arrival of the service window are picked up
+   * and promote the clock to full rate on their own.
+   */
+  const liveClockIntervalMs =
+    isServiceDay || isTimelineAdjusted
+      ? LIVE_CLOCK_ACTIVE_MS
+      : LIVE_CLOCK_IDLE_MS;
+
+  useEffect(() => {
+    const interval = window.setInterval(
+      () => setNowMs(serverNow()),
+      liveClockIntervalMs,
+    );
+    return () => window.clearInterval(interval);
+  }, [liveClockIntervalMs]);
+
+  const liveProgress =
     plan && sections
-      ? getServicePlanLiveElementId({ ...plan, sections }, nowMs)
+      ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
       : null;
+  const liveElementId = liveProgress?.current?.item.id ?? null;
+  const followedLiveElementIdRef = useRef<string | null>(null);
+
+  // In view mode, keep the live row centered in the plan list as the schedule advances.
+  useEffect(() => {
+    if (isEditing) return;
+    if (!liveElementId) {
+      followedLiveElementIdRef.current = null;
+      return;
+    }
+    if (followedLiveElementIdRef.current === liveElementId) return;
+    followedLiveElementIdRef.current = liveElementId;
+    const scrollToLive = () => {
+      const child = document.getElementById(
+        servicePlanElementDomId(liveElementId),
+      );
+      const parent = document.getElementById(SERVICE_PLAN_LIST_SCROLL_ID);
+      if (!child || !parent) return;
+      keepElementInView({
+        child,
+        parent,
+        shouldScrollToCenter: true,
+      });
+    };
+    // Double rAF matches ItemSlides: wait for section expand / layout first.
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(scrollToLive);
+    });
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [isEditing, liveElementId]);
+
+  const liveStartedAt = getServicePlanLiveStartedAt(plan);
+  const liveStartedAtLabel = liveStartedAt
+    ? formatAdjustedTimelineTime(Date.parse(liveStartedAt), planTimezone)
+    : null;
+  const adjustedStartTimes = useMemo(() => {
+    if (!isTimelineAdjusted || !liveProgress || !liveElementId) return new Map<string, string>();
+    const liveIndex = liveProgress.items.findIndex(
+      (timed) => timed.item.id === liveElementId,
+    );
+    if (liveIndex < 0) return new Map<string, string>();
+    return new Map(
+      liveProgress.items.slice(liveIndex).map((timed) => [
+        timed.item.id,
+        formatAdjustedTimelineTime(timed.startsAtMs, planTimezone),
+      ]),
+    );
+  }, [isTimelineAdjusted, liveElementId, liveProgress, planTimezone]);
   const shareActionsDisabled = !canEdit || publishing || !hasSections;
 
   const shareViewActions = (
@@ -888,8 +1541,10 @@ const ServicePlanEditor = ({
       <ButtonGroup className="w-full border-gray-500" display="flex">
         <ButtonGroupItem
           type="button"
+          variant="primary"
           iconSize="sm"
           svg={Copy}
+          color="#22d3ee"
           disabled={shareActionsDisabled}
           className="max-md:min-h-0"
           aria-label={`Copy ${label.toLowerCase()} link`}
@@ -902,8 +1557,10 @@ const ServicePlanEditor = ({
         </ButtonGroupItem>
         <ButtonGroupItem
           type="button"
+          variant="primary"
           iconSize="sm"
           svg={ExternalLink}
+          color="#22d3ee"
           disabled={shareActionsDisabled}
           className="max-md:min-h-0"
           aria-label={`View ${label.toLowerCase()}`}
@@ -936,12 +1593,55 @@ const ServicePlanEditor = ({
         <DropdownMenuContent align="end" className="w-64">
           {hasSections ? (
             <>
+              <DropdownMenuLabel className="text-xs text-gray-400">
+                Notes
+              </DropdownMenuLabel>
               <DropdownMenuCheckboxItem
                 checked={hideNotes}
                 onCheckedChange={(checked) => setHideNotes(Boolean(checked))}
               >
                 Hide notes
               </DropdownMenuCheckboxItem>
+              {teamNoteLabels.length > 0 ? (
+                <DropdownMenuRadioGroup
+                  value={teamNotesFilter || ALL_TEAMS_FILTER_VALUE}
+                  onValueChange={handleTeamNotesFilterChange}
+                  aria-label="Team notes"
+                >
+                  <DropdownMenuRadioItem
+                    value={ALL_TEAMS_FILTER_VALUE}
+                    disabled={hideNotes}
+                  >
+                    All teams
+                  </DropdownMenuRadioItem>
+                  {teamNoteLabels.map((team) => (
+                    <DropdownMenuRadioItem
+                      key={team}
+                      value={team}
+                      disabled={hideNotes}
+                    >
+                      {team}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              ) : null}
+              {roleNoteFilterOptions.length > 0 ? (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger disabled={hideNotes}>
+                    Role notes
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="p-1">
+                    <ServicePlanRolePickerContent
+                      value={roleNotesFilter}
+                      onValueChange={setRoleNotesFilter}
+                      onSelectionComplete={() => setPlanActionsOpen(false)}
+                      options={roleNoteFilterOptions}
+                      teamFilterStorageKey="worshipsyncServicePlanRoleTeamFilter"
+                      lockedTeamName={teamNotesFilter || undefined}
+                    />
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ) : null}
               <DropdownMenuSeparator className="my-1 bg-gray-600" />
             </>
           ) : null}
@@ -949,8 +1649,49 @@ const ServicePlanEditor = ({
             disabled={!canEdit || !hasSections}
             onSelect={() => setTemplateModal("save")}
           >
+            <LayoutTemplate aria-hidden />
             Save as template
           </DropdownMenuItem>
+          {canEdit && hasSections ? (
+            <DropdownMenuItem
+              disabled={importing}
+              onSelect={openImportUpdates}
+            >
+              <RefreshCw aria-hidden />
+              Import updates
+            </DropdownMenuItem>
+          ) : null}
+          {isServiceDay && liveElementId ? (
+            <>
+              <DropdownMenuSeparator className="my-1 bg-gray-600" />
+              <DropdownMenuItem
+                disabled={!canEdit || updatingPublicLive}
+                onSelect={() => {
+                  if (isManualLive) {
+                    void handleContinueAutomaticAdvance();
+                    return;
+                  }
+                  void handlePauseAutomaticAdvance();
+                }}
+              >
+                <Radio aria-hidden />
+                {isManualLive
+                  ? "Continue automatic timing"
+                  : "Pause automatic advance"}
+              </DropdownMenuItem>
+              {isLiveOverridden ? (
+                <DropdownMenuItem
+                  disabled={!canEdit || updatingPublicLive}
+                  onSelect={() => {
+                    void handleResumePublicSchedule();
+                  }}
+                >
+                  <Radio aria-hidden />
+                  Return to planned schedule
+                </DropdownMenuItem>
+              ) : null}
+            </>
+          ) : null}
           <DropdownMenuSeparator className="my-1 bg-gray-600" />
           {shareViewActions("detailed", "Detailed view")}
           {shareViewActions("simple", "Simple view")}
@@ -1019,7 +1760,7 @@ const ServicePlanEditor = ({
             </div>
           ) : null}
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h2 className="truncate text-base font-semibold text-gray-50 sm:text-lg">
                 {occurrence.name || service.name}
               </h2>
@@ -1028,6 +1769,34 @@ const ServicePlanEditor = ({
             {plan || hasSections || headerActions ? (
               <div className="flex shrink-0 items-center gap-1.5">
                 {headerActions}
+                {canEdit && isEditing && hasSections ? (
+                  <div
+                    className="flex shrink-0 items-center"
+                    role="group"
+                    aria-label="Undo and redo"
+                  >
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Undo2}
+                      iconSize="sm"
+                      className="max-md:min-h-0"
+                      aria-label="Undo"
+                      disabled={!canUndo}
+                      onClick={undoDraft}
+                    />
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Redo2}
+                      iconSize="sm"
+                      className="max-md:min-h-0"
+                      aria-label="Redo"
+                      disabled={!canRedo}
+                      onClick={redoDraft}
+                    />
+                  </div>
+                ) : null}
                 {canEdit && hasSections ? (
                   <Button
                     type="button"
@@ -1035,7 +1804,7 @@ const ServicePlanEditor = ({
                     svg={isEditing ? undefined : Pencil}
                     iconSize="sm"
                     className="max-md:min-h-0"
-                    onClick={() => setIsEditing((prev) => !prev)}
+                    onClick={toggleEditing}
                   >
                     {isEditing ? "Done" : "Edit"}
                   </Button>
@@ -1142,7 +1911,12 @@ const ServicePlanEditor = ({
               onDragEnd={handleDragEnd}
             >
               <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-                <div className="scrollbar-variable min-h-0 flex-1 space-y-2 overflow-y-auto">
+                <div
+                  id={SERVICE_PLAN_LIST_SCROLL_ID}
+                  role="region"
+                  aria-label="Service plan"
+                  className="scrollbar-variable min-h-0 flex-1 space-y-2 overflow-y-auto"
+                >
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
                     {isEditing ? (
                       <>
@@ -1160,7 +1934,10 @@ const ServicePlanEditor = ({
                           value={anchorStartTime}
                           disabled={!canEdit || sections.every((s) => s.elements.length === 0)}
                           onChange={(value) =>
-                            value && updateDraftSections(applyPlanAnchorStartTime(sections, String(value)))
+                            value && updateDraftSections(
+                              applyPlanAnchorStartTime(sections, String(value)),
+                              "anchorStartTime",
+                            )
                           }
                         />
                       </>
@@ -1186,7 +1963,10 @@ const ServicePlanEditor = ({
                       canEdit={canEdit}
                       isEditing={isEditing}
                       onRename={(name) =>
-                        updateDraftSections(renameSection(sections, section.id, name))
+                        updateDraftSections(
+                          renameSection(sections, section.id, name),
+                          `section:${section.id}:name`,
+                        )
                       }
                       onRemove={() =>
                         updateDraftSections(removeSection(sections, section.id))
@@ -1195,12 +1975,18 @@ const ServicePlanEditor = ({
                       onRemoveElement={(elementId) =>
                         updateDraftSections(removeElement(sections, section.id, elementId))
                       }
-                      onUpdateElement={(elementId, changes) =>
+                      onUpdateElement={(elementId, changes, coalesceKey) =>
                         updateDraftSections(
                           updateElement(sections, section.id, elementId, changes),
+                          // Only the row knows whether this is continuous typing
+                          // or a discrete action — every note edit arrives as the
+                          // same `teamNotes` shape, so the change itself can't
+                          // tell a keystroke from a removal.
+                          coalesceKey && `element:${elementId}:${coalesceKey}`,
                         )
                       }
                       assignedToHistoryValues={assignedToSuggestions}
+                      roleNoteOptions={roleNoteOptions}
                       onElementDurationChange={(elementId, durationSeconds) =>
                         updateDraftSections(
                           applyElementDurationSecondsChange(
@@ -1208,21 +1994,29 @@ const ServicePlanEditor = ({
                             elementId,
                             durationSeconds,
                           ),
+                          `element:${elementId}:duration`,
                         )
                       }
                       onElementStartTimeChange={(elementId, time) =>
                         updateDraftSections(
                           applyElementStartTimeChange(sections, elementId, time),
+                          `element:${elementId}:startTime`,
                         )
                       }
-                      publicSharingEnabled={publicSharingEnabled}
                       isServiceDay={isServiceDay}
                       liveElementId={liveElementId}
                       isManualLive={isManualLive}
+                      isTimelineAdjusted={isTimelineAdjusted}
+                      adjustedStartTimes={adjustedStartTimes}
+                      liveStartedAtLabel={liveStartedAtLabel}
                       publicLiveBusy={updatingPublicLive}
                       onMakePublicLive={handleMakePublicLive}
-                      onResumePublicSchedule={handleResumePublicSchedule}
                       hideNotes={hideNotes}
+                      teamNotesFilter={teamNotesFilter}
+                      roleNotesFilter={roleNotesFilter}
+                      onViewSongLyrics={setViewSongRef}
+                      canCreateLibrarySong={canCreateLibrarySong}
+                      resolvedSongRefs={resolvedSongRefs}
                     />
                   ))}
                 </div>
@@ -1306,6 +2100,107 @@ const ServicePlanEditor = ({
         ) : null}
       </div>
 
+      {canEdit && hasSections ? (
+        <Sheet open={showImport} onOpenChange={setShowImport}>
+          <SheetContent side="right" className="w-full max-w-lg gap-0">
+            <SheetHeader>
+              <SheetTitle className="flex items-center gap-2">
+                <RefreshCw className="size-5 text-cyan-400" aria-hidden />
+                Import updates
+              </SheetTitle>
+              <SheetDescription>
+                Choose what to refresh from Service Planning. Local item order,
+                roster links, and outline history stay in place.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 py-5">
+              <Input
+                label="Planning URL"
+                placeholder="https://..."
+                value={importUrl}
+                disabled={importing}
+                onChange={(value) => setImportUrl(String(value))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleImportFromServicePlanning();
+                  }
+                }}
+              />
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium text-gray-100">
+                  Update from Service Planning
+                </legend>
+                <div className="grid gap-2 pt-1 sm:grid-cols-2">
+                  <Checkbox
+                    label="Titles and content"
+                    checked={refreshOptions.updateTitles}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("updateTitles", checked)}
+                  />
+                  <Checkbox
+                    label="Assigned to"
+                    checked={refreshOptions.updateAssignments}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("updateAssignments", checked)}
+                  />
+                  <Checkbox
+                    label="Start times and durations"
+                    checked={refreshOptions.updateTiming}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("updateTiming", checked)}
+                  />
+                  <Checkbox
+                    label="Notes"
+                    checked={refreshOptions.updateNotes}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("updateNotes", checked)}
+                  />
+                  <Checkbox
+                    label="Add new source items"
+                    checked={refreshOptions.addMissing}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("addMissing", checked)}
+                  />
+                  <Checkbox
+                    label="Remove source items no longer listed"
+                    checked={refreshOptions.removeMissing}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("removeMissing", checked)}
+                  />
+                </div>
+              </fieldset>
+              <p className="text-xs text-gray-400">
+                Removing items is off by default. Turn it on only when this
+                Service Planning plan is the source of truth.
+              </p>
+              {isLegacyUntrackedImport ? (
+                <p className="text-xs text-amber-200">
+                  This plan was imported before source tracking. If you remove
+                  missing items, current unmarked items will be treated as
+                  Service Planning items for this refresh.
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                onClick={() => void handleImportFromServicePlanning()}
+                disabled={importing || !importUrl.trim()}
+              >
+                {importing ? "Importing…" : "Apply updates"}
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      {importPreview ? (
+        <ServicePlanImportReviewWindow
+          summary={importPreview.summary}
+          onApply={applyImportPreview}
+          onClose={() => setImportPreview(null)}
+        />
+      ) : null}
+
       {templateModal && churchId ? (
         <ServicePlanTemplateModal
           mode={templateModal}
@@ -1315,12 +2210,29 @@ const ServicePlanEditor = ({
           sections={sections || []}
           onClose={() => setTemplateModal(null)}
           onApply={(templateSections) => {
-            updateDraftSections(templateSections);
-            if (!planName) updateDraftName(occurrence.name || service.name || "");
+            updateDraft({
+              sections: templateSections,
+              ...(planName
+                ? {}
+                : { planName: occurrence.name || service.name || "" }),
+            });
             setIsEditing(true);
           }}
         />
       ) : null}
+
+      <ViewSongSectionsDrawer
+        song={viewLibrarySong}
+        isOpen={Boolean(viewSongRef?.kind === "library" && viewLibrarySong)}
+        onClose={() => setViewSongRef(null)}
+      />
+      <ViewPlainLyricsDrawer
+        title={viewPlainLyrics?.title ?? null}
+        lyricsText={viewPlainLyrics?.lyricsText ?? ""}
+        emptyMessage={viewPlainLyrics?.emptyMessage}
+        isOpen={Boolean(viewPlainLyrics)}
+        onClose={() => setViewSongRef(null)}
+      />
     </div>
   );
 };

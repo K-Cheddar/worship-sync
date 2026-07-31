@@ -12,7 +12,11 @@ test("buildInviteAcceptedAccessLines labels admin access", () => {
       appAccess: "full",
       permissions: { teams: "none", teamScopes: { "team-1": "edit" } },
     }),
-    ["Access: Admin", "Teams: Edit all teams"],
+    [
+      "Access: Admin",
+      "Teams: Edit all teams",
+      "Services: Edit services and plans",
+    ],
   );
 });
 
@@ -23,7 +27,11 @@ test("buildInviteAcceptedAccessLines labels member app and teams access", () => 
       appAccess: "music",
       permissions: { teams: "view", teamScopes: {} },
     }),
-    ["Access: Music access", "Teams: View all teams"],
+    [
+      "Access: Music access",
+      "Teams: View all teams",
+      "Services: No service editing",
+    ],
   );
 });
 
@@ -38,7 +46,11 @@ test("buildInviteAcceptedAccessLines includes named per-team edit scopes", () =>
       },
       scopedTeamNames: ["Choir", "Worship Team"],
     }),
-    ["Access: Full access", "Teams: Can edit Choir, Worship Team only"],
+    [
+      "Access: Full access",
+      "Teams: Can edit Choir, Worship Team only",
+      "Services: No service editing",
+    ],
   );
 });
 
@@ -52,7 +64,11 @@ test("buildInviteAcceptedAccessLines falls back when scoped names are missing", 
         teamScopes: { "team-a": "edit" },
       },
     }),
-    ["Access: View access", "Teams: View all teams + per-team edit"],
+    [
+      "Access: View access",
+      "Teams: View all teams + per-team edit",
+      "Services: No service editing",
+    ],
   );
 });
 

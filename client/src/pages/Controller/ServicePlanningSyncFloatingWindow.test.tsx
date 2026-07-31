@@ -1,7 +1,8 @@
 import React from "react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import servicePlanningImportReducer, {
   setServicePlanningFloatingWindowDismissed,
@@ -24,6 +25,26 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
 }));
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
+}));
+// Covered by useCurrentServicePlanSource.test.tsx. Stubbed here so these tests
+// stay about the window itself and don't need Teams state in the store.
+const mockPlanSource = {
+  occurrences: [] as Array<{
+    occurrenceId: string;
+    serviceId: string;
+    name: string;
+    startsAt: string;
+  }>,
+  occurrence: null as { occurrenceId: string } | null,
+  isLoading: false,
+  isPlanSourced: false,
+  selectedOccurrenceId: null as string | null,
+  selectOccurrence: jest.fn(),
+  refresh: jest.fn(),
+};
+
+jest.mock("./useCurrentServicePlanSource", () => ({
+  useCurrentServicePlanSource: () => mockPlanSource,
 }));
 
 const mockedUseServicePlanningImport =
@@ -53,6 +74,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   beforeEach(() => {
     mockedUseServicePlanningImport.mockReturnValue({
       loadPreview: jest.fn(),
+      loadPlanPreview: jest.fn(),
       runImport: jest.fn(),
       planOutlineSyncSteps: jest.fn(),
       planSyncItemsInOrder: jest.fn(),
@@ -67,6 +89,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       hideToast: jest.fn(),
       toasts: [],
     } as any);
+    mockPlanSource.occurrences = [];
+    mockPlanSource.occurrence = null;
+    mockPlanSource.isPlanSourced = false;
+    mockPlanSource.selectedOccurrenceId = null;
   });
 
   it("stays hidden on initial hydration until the user explicitly opens it", () => {
@@ -118,6 +144,65 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     );
 
     expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
+  });
+
+  // Regression: the menu was portaled, which escapes the floating window's
+  // stacking context — the picker rendered but clicking it did nothing.
+  it("opens the service picker inside the floating window", async () => {
+    const user = userEvent.setup();
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.occurrence = { occurrenceId: "occurrence-1" };
+    mockPlanSource.occurrences = [
+      {
+        occurrenceId: "occurrence-1",
+        serviceId: "service-1",
+        name: "Test 1",
+        startsAt: "2026-07-30T19:00:00.000Z",
+      },
+      {
+        occurrenceId: "occurrence-2",
+        serviceId: "service-2",
+        name: "Test 2",
+        startsAt: "2026-08-06T19:00:00.000Z",
+      },
+    ];
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer },
+    });
+    store.dispatch(
+      setServicePlanningServiceOutline(
+        wrapImport({
+          overlayCandidates: [],
+          overlayPlan: [],
+          outlineCandidates: [],
+          lineItems: [],
+          teamAssignments: [],
+        }) as any,
+      ),
+    );
+    act(() => {
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    });
+
+    renderWindow(store);
+
+    await user.click(screen.getByRole("combobox"));
+    expect(
+      await screen.findByRole("option", { name: /Test 2/ }),
+    ).toBeInTheDocument();
+
+    // The assertion that matters: the menu must live *inside* the floating
+    // window. jsdom doesn't model stacking contexts, so a portaled menu still
+    // renders (into document.body) and a plain screen query passes either way —
+    // containment is what actually distinguishes the broken version.
+    const floatingWindow = within(screen.getByTestId("floating-window"));
+    expect(
+      floatingWindow.getByRole("option", { name: /Test 2/ }),
+    ).toBeInTheDocument();
+
+    await user.click(floatingWindow.getByRole("option", { name: /Test 2/ }));
+    expect(mockPlanSource.selectOccurrence).toHaveBeenCalledWith("occurrence-2");
   });
 
   it("shows every planning row in one list with selection badges", () => {

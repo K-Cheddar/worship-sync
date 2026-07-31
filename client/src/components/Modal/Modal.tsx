@@ -39,7 +39,7 @@ const sizeClasses = {
   lg: "max-w-4xl",
   xl: "max-w-6xl",
   "2xl": "max-w-7xl",
-  full: "max-w-[95vw] max-md:w-full max-md:h-full max-md:max-w-none",
+  full: "inset-0 left-0 top-0 h-full max-h-full w-full max-w-none translate-x-0 translate-y-0 p-0",
 };
 
 const getControllerElement = () => {
@@ -82,8 +82,6 @@ const Modal = ({
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-200",
             zIndexClass,
             sizeClasses[size],
-            size === "full" &&
-            "max-md:inset-0 max-md:left-0 max-md:top-0 max-md:h-full max-md:max-h-full max-md:w-full max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:p-0",
             size !== "full" && "max-h-[90vh]"
           )}
         >
@@ -101,7 +99,7 @@ const Modal = ({
                 : cn(
                   "bg-gray-800",
                   size === "full"
-                    ? "max-md:h-full max-md:rounded-none"
+                    ? "h-full rounded-none"
                     : "rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
                 )
             )}
@@ -138,7 +136,10 @@ const Modal = ({
 
             <div
               className={cn(
-                "min-h-0 flex-1 overflow-y-auto max-h-[calc(90vh-120px)] max-md:max-h-[calc(100vh)] scrollbar-variable",
+                "min-h-0 flex-1 overflow-y-auto scrollbar-variable",
+                size === "full"
+                  ? "max-h-none"
+                  : "max-h-[calc(90vh-120px)] max-md:max-h-[calc(100vh)]",
                 contentPadding
               )}
             >

@@ -47,6 +47,8 @@ import { bibleRefToSearchString } from "../../integrations/servicePlanning/parse
 import { cn } from "../../utils/cnHelper";
 import { iconColorMap } from "../../utils/itemTypeMaps";
 
+import Select from "../../components/Select/Select";
+import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
@@ -54,6 +56,19 @@ import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayou
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
+
+/** Weekday + time is enough to tell this week's services apart in a picker. */
+const formatOccurrenceLabel = (startsAt: string): string => {
+  const startsAtMs = Date.parse(startsAt);
+  if (!Number.isFinite(startsAtMs)) return "";
+  return new Date(startsAtMs).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
 
 const StatusBadge = ({
   className,
@@ -267,6 +282,15 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
+  // Keeps the Controller's copy of the plan in step with the Services editor.
+  const {
+    occurrences,
+    occurrence,
+    isPlanSourced,
+    selectedOccurrenceId,
+    selectOccurrence,
+    refresh: refreshPlan,
+  } = useCurrentServicePlanSource();
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const overlays = useSelector(
@@ -324,13 +348,29 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
   const handleRefresh = useCallback(async () => {
     if (
-      !url ||
       isRefreshing ||
       sync.status === "running" ||
       sync.status === "cancelling"
     ) {
       return;
     }
+    // A plan-sourced preview follows the Services plan, so re-read that rather
+    // than re-scraping `url` — which is only the plan's original import source
+    // and may belong to a different service entirely.
+    if (isPlanSourced) {
+      setIsRefreshing(true);
+      try {
+        await refreshPlan();
+        showToast("Plan refreshed", "success");
+      } catch {
+        showToast("Failed to refresh plan", "error");
+      } finally {
+        setIsRefreshing(false);
+      }
+      return;
+    }
+
+    if (!url) return;
     setIsRefreshing(true);
     try {
       const result = await loadPreview(url);
@@ -341,7 +381,16 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     } finally {
       setIsRefreshing(false);
     }
-  }, [dispatch, isRefreshing, loadPreview, showToast, sync.status, url]);
+  }, [
+    dispatch,
+    isPlanSourced,
+    isRefreshing,
+    loadPreview,
+    refreshPlan,
+    showToast,
+    sync.status,
+    url,
+  ]);
 
   const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
     if (!preview) return;
@@ -617,8 +666,27 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
               {serviceOutline?.loadedAt ? (
                 <div className="mt-2 text-xs text-zinc-400">
-                  Imported {new Date(serviceOutline.loadedAt).toLocaleString()}
+                  {isPlanSourced ? "Updated" : "Imported"}{" "}
+                  {new Date(serviceOutline.loadedAt).toLocaleString()}
                 </div>
+              ) : null}
+
+              {isPlanSourced && occurrences.length > 1 ? (
+                <Select
+                  label="Service"
+                  hideLabel
+                  className="mt-2"
+                  selectClassName="h-7 text-xs"
+                  // The menu must render inline: a portaled one escapes the
+                  // floating window's stacking context and never opens.
+                  disablePortal
+                  value={selectedOccurrenceId || occurrence?.occurrenceId || ""}
+                  onChange={selectOccurrence}
+                  options={occurrences.map((candidate) => ({
+                    value: candidate.occurrenceId,
+                    label: `${candidate.name} · ${formatOccurrenceLabel(candidate.startsAt)}`,
+                  }))}
+                />
               ) : null}
 
               <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>

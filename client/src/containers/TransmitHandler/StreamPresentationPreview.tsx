@@ -8,6 +8,8 @@ type StreamPresentationPreviewProps = {
   quickLinks: PresentationQuickLinks;
   isMobile?: boolean;
   previewScale?: number;
+  fillWidth?: boolean;
+  readOnly?: boolean;
   toggleIsTransmitting: () => void;
   variant: "default" | "overlayStreamFocus";
   showFocusedStreamControls: boolean;
@@ -18,6 +20,8 @@ const StreamPresentationPreview = memo(
     quickLinks,
     isMobile,
     previewScale,
+    fillWidth,
+    readOnly = false,
     toggleIsTransmitting,
     variant,
     showFocusedStreamControls,
@@ -49,12 +53,13 @@ const StreamPresentationPreview = memo(
         isTransmitting={isTransmitting}
         toggleIsTransmitting={toggleIsTransmitting}
         quickLinks={variant === "overlayStreamFocus" ? [] : quickLinks}
-        hideQuickLinks={variant === "overlayStreamFocus"}
+        hideQuickLinks={readOnly || variant === "overlayStreamFocus"}
         hideHeader={variant === "overlayStreamFocus"}
-        minimalHeader={variant === "overlayStreamFocus" && showFocusedStreamControls}
+        minimalHeader={readOnly || (variant === "overlayStreamFocus" && showFocusedStreamControls)}
         isMobile={isMobile}
         streamItemContentBlocked={streamItemContentBlocked}
         previewScale={previewScale}
+        fillWidth={fillWidth}
       />
     );
   }

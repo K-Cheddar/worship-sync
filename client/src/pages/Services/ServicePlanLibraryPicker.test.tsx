@@ -151,7 +151,14 @@ const attachSongNamed = async (
   await user.click(within(row as HTMLElement).getByRole("button", { name: /^Attach$/i }));
 };
 
-const renderPicker = (store = createPickerStore()) => {
+const renderPicker = (
+  store = createPickerStore(),
+  props: {
+    initialQuery?: string;
+    initialLyrics?: string;
+    startInCreate?: boolean;
+  } = {},
+) => {
   const onSelectSong = jest.fn();
   const onClose = jest.fn();
   render(
@@ -163,6 +170,7 @@ const renderPicker = (store = createPickerStore()) => {
               isOpen
               onClose={onClose}
               onSelectSong={onSelectSong}
+              {...props}
             />
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
@@ -290,6 +298,21 @@ describe("ServicePlanLibraryPicker", () => {
     expect(
       screen.getByRole("button", { name: /Back to song search/i }),
     ).toBeInTheDocument();
+  });
+
+  it("opens on the create form with a pending title and lyrics seeded", async () => {
+    renderPicker(createPickerStore(), {
+      startInCreate: true,
+      initialQuery: "Appeal Song",
+      initialLyrics: "Come as you are",
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: /Create song/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Song name/i)).toHaveValue("Appeal Song");
+    expect(screen.getByLabelText(/^Lyrics/i)).toHaveValue("Come as you are");
+    expect(screen.queryByText(songTitleMatcher("Living Hope"))).not.toBeInTheDocument();
   });
 
   it("creates a new library song through CreateItem and attaches it", async () => {

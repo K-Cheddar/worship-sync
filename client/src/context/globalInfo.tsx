@@ -395,6 +395,7 @@ type GlobalInfoContextType = {
   permissions: MemberPermissions;
   canViewTeams: boolean;
   canEditTeams: boolean;
+  canEditServices: boolean;
   canViewTeam?: (teamId: string) => boolean;
   canEditTeam?: (teamId: string) => boolean;
   churchId: string;
@@ -501,6 +502,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [access, setAccess] = useState<AccessType>("full");
   const [permissions, setPermissions] = useState<MemberPermissions>({
     teams: "none",
+    services: "none",
   });
   const [churchId, setChurchId] = useState("");
   const [churchName, setChurchName] = useState("");
@@ -534,6 +536,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const canEditTeams = role === "admin" || permissions.teams === "edit";
+  // Teams edit remains a superset so existing editors keep service access.
+  const canEditServices = canEditTeams || permissions.services === "edit";
   const canEditTeam = useCallback(
     (teamId: string) =>
       canEditTeams || permissions.teamScopes?.[teamId] === "edit",
@@ -547,7 +551,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const hasScopedTeamsAccess =
     Object.keys(permissions.teamScopes || {}).length > 0;
   const canViewTeams =
-    canEditTeams || permissions.teams === "view" || hasScopedTeamsAccess;
+    canEditTeams ||
+    canEditServices ||
+    permissions.teams === "view" ||
+    hasScopedTeamsAccess;
   // Anyone who can edit at least one team is a potential intake-notify
   // recipient — same predicate the server derives recipients from.
   const canManageIntakeNotifications =
@@ -2554,6 +2561,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       permissions,
       canViewTeams,
       canEditTeams,
+      canEditServices,
       canViewTeam,
       canEditTeam,
       churchId,
@@ -2615,6 +2623,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       permissions,
       canViewTeams,
       canEditTeams,
+      canEditServices,
       canViewTeam,
       canEditTeam,
       churchId,

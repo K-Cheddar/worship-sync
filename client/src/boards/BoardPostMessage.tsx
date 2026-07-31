@@ -54,7 +54,7 @@ export const BoardPostMessage = ({
   const isModeratorTone = tone === "moderator";
 
   const textClass = isModeratorTone
-    ? "whitespace-pre-wrap text-base leading-relaxed text-gray-100"
+    ? "whitespace-pre-wrap text-sm leading-relaxed text-gray-100"
     : cn(
       "whitespace-pre-wrap text-base leading-relaxed sm:text-lg",
       isMine ? "text-amber-50/95" : "text-stone-100",
@@ -70,7 +70,7 @@ export const BoardPostMessage = ({
   const showCollapsedFade = !expanded && showToggle;
 
   return (
-    <div className="mt-3">
+    <div className={isModeratorTone ? "mt-1.5" : "mt-3"}>
       <div
         ref={bodyRef}
         className={cn(
@@ -94,7 +94,7 @@ export const BoardPostMessage = ({
           variant="none"
           padding="py-0.5 px-0"
           className={cn(
-            "mt-2 max-md:min-h-0 rounded-sm text-sm underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-amber-500/50",
+            "mt-1.5 max-md:min-h-0 rounded-sm text-sm underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-amber-500/50",
             showMoreButtonClass,
           )}
           aria-expanded={expanded}

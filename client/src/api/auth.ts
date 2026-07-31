@@ -1023,7 +1023,10 @@ export const unpublishServicePlan = async (churchId: string, planKey: string) =>
 export const updateServicePlanPublicLive = async (
   churchId: string,
   planKey: string,
-  body: { mode: "schedule" } | { mode: "manual"; currentElementId: string },
+  body:
+    | { mode: "schedule" }
+    | { mode: "manual"; currentElementId: string }
+    | { mode: "anchored"; currentElementId: string },
 ) =>
   apiFetch<{ success: boolean; servicePlan: ServicePlan }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/live`,

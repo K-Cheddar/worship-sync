@@ -670,12 +670,10 @@ describe("BoardControllerContent", () => {
     expect(await screen.findByText(/1 highlighted/i)).toBeInTheDocument();
   });
 
-  it("renders the Restream tab with connection guidance", async () => {
-    const user = userEvent.setup();
+  it("renders Restream connection guidance in the live activity feed", async () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Sunday Board" });
-    await user.click(await screen.findByRole("tab", { name: /Restream/i }));
 
     expect(
       await screen.findByText(/Restream is not connected/i),
@@ -685,8 +683,7 @@ describe("BoardControllerContent", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the Restream stream name when it is available", async () => {
-    const user = userEvent.setup();
+  it("orders labeled Restream and board activity by timestamp", async () => {
     mockUseRestreamSession.mockReturnValue({
       session: {
         churchId: "church-1",
@@ -713,8 +710,8 @@ describe("BoardControllerContent", () => {
           author: "Evan",
           authorAvatarUrl: "",
           text: "Hello from chat",
-          postedAt: 100,
-          receivedAt: 100,
+          postedAt: 15,
+          receivedAt: 15,
           rawEventType: "5",
           isHighlighted: false,
           hidden: false,
@@ -732,14 +729,18 @@ describe("BoardControllerContent", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Sunday Board" });
-    await user.click(await screen.findByRole("tab", { name: /Restream/i }));
 
     expect(await screen.findByText(/Stream name:/i)).toBeInTheDocument();
     expect(screen.getByText("Sabbath School Weekly")).toBeInTheDocument();
+    expect(screen.getByText("RE")).toBeInTheDocument();
+    expect(screen.getAllByText("DB")).toHaveLength(3);
+
+    const [first, second] = screen.getAllByRole("article");
+    expect(within(first).getByText("Earlier question")).toBeInTheDocument();
+    expect(within(second).getByText("Hello from chat")).toBeInTheDocument();
   });
 
-  it("does not show a discussion-board post composer on the Restream tab", async () => {
-    const user = userEvent.setup();
+  it("keeps the discussion board composer available beside live chat", async () => {
     mockUseRestreamSession.mockReturnValue({
       session: {
         churchId: "church-1",
@@ -768,8 +769,12 @@ describe("BoardControllerContent", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Sunday Board" });
-    await user.click(await screen.findByRole("tab", { name: /Restream/i }));
 
+    expect(
+      screen.getByRole("button", {
+        name: /Add to discussion board/i,
+      }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("textbox", {
         name: /Add to discussion board/i,
@@ -777,7 +782,7 @@ describe("BoardControllerContent", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("posts to the discussion board from the Board Posts tab", async () => {
+  it("posts to the discussion board from the live activity feed", async () => {
     const user = userEvent.setup();
     const api = jest.requireMock("../boards/api") as {
       createBoardPost: jest.Mock;
@@ -804,6 +809,9 @@ describe("BoardControllerContent", () => {
 
     await screen.findByRole("heading", { name: "Sunday Board" });
 
+    await user.click(
+      screen.getByRole("button", { name: /Add to discussion board/i }),
+    );
     const field = await screen.findByRole("textbox", {
       name: /Add to discussion board/i,
     });
@@ -817,5 +825,20 @@ describe("BoardControllerContent", () => {
         text: "Announcement for everyone",
       });
     });
+  });
+
+  it("shows share links in Board tools and board context in the header", async () => {
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(screen.queryByRole("heading", { name: "Discussion boards" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/\d+ total · \d+ visible · \d+ highlighted/i),
+    ).toBeInTheDocument();
+
+    const tools = await findBoardToolsPanel();
+    expect(within(tools).getByText("Share links")).toBeInTheDocument();
+    expect(within(tools).getByText("Attendee link")).toBeInTheDocument();
+    expect(within(tools).getByText("Board link")).toBeInTheDocument();
   });
 });

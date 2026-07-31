@@ -28,6 +28,57 @@ export const normalizeHexColor = (
   return full ? `#${full[1].toLowerCase()}` : null;
 };
 
+const toHexPair = (value: number) =>
+  Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, "0");
+
+/** Accept hex or `rgb()`/`rgba()` forms browsers emit into `style.color`. */
+export const normalizeCssColorToHex = (
+  color: string | undefined | null,
+): string | null => {
+  const hex = normalizeHexColor(color);
+  if (hex) return hex;
+  if (!color) return null;
+  const rgb = color
+    .trim()
+    .toLowerCase()
+    .match(
+      /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*[\d.%]+\s*)?\)$/,
+    );
+  if (!rgb) return null;
+  const [, red, green, blue] = rgb;
+  return `#${toHexPair(Number(red))}${toHexPair(Number(green))}${toHexPair(Number(blue))}`;
+};
+
+/**
+ * Recover the authored hue from HTML that may have been rendered with a
+ * display-only contrast chip (`style.color` = black/white ink, fill = hue).
+ * Prefer `data-rich-text-color` when present; never persist chip ink.
+ */
+export const authoredColorFromElement = (
+  element: HTMLElement,
+): string | null => {
+  const fromAttr = normalizeHexColor(
+    element.getAttribute(RICH_TEXT_COLOR_ATTR),
+  );
+  if (fromAttr) return fromAttr;
+
+  const inkOrColor = normalizeCssColorToHex(element.style.color);
+  const fill = normalizeCssColorToHex(element.style.backgroundColor);
+
+  if (
+    fill &&
+    inkOrColor &&
+    (inkOrColor === "#000000" || inkOrColor === "#ffffff") &&
+    contrastingInkForFill(fill) === inkOrColor
+  ) {
+    return fill;
+  }
+
+  return inkOrColor;
+};
+
 const channelToLinear = (channel: number): number => {
   const s = channel / 255;
   return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;

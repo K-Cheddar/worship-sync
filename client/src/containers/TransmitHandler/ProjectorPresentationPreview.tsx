@@ -8,6 +8,8 @@ type ProjectorPresentationPreviewProps = {
   quickLinks: PresentationQuickLinks;
   isMobile?: boolean;
   previewScale?: number;
+  fillWidth?: boolean;
+  readOnly?: boolean;
   toggleIsTransmitting: () => void;
 };
 
@@ -16,6 +18,8 @@ const ProjectorPresentationPreview = memo(
     quickLinks,
     isMobile,
     previewScale,
+    fillWidth,
+    readOnly = false,
     toggleIsTransmitting,
   }: ProjectorPresentationPreviewProps) => {
     const info = useSelector((state) => state.presentation.projectorInfo);
@@ -42,8 +46,11 @@ const ProjectorPresentationPreview = memo(
         isTransmitting={isTransmitting}
         toggleIsTransmitting={toggleIsTransmitting}
         quickLinks={quickLinks}
+        hideQuickLinks={readOnly}
+        minimalHeader={readOnly}
         isMobile={isMobile}
         previewScale={previewScale}
+        fillWidth={fillWidth}
       />
     );
   }

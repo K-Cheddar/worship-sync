@@ -4,7 +4,9 @@ import { CircleAlert, Home as HomeIcon, Menu as MenuIcon } from "lucide-react";
 import Button from "../Button/Button";
 import Icon from "../Icon/Icon";
 import Menu from "../Menu/Menu";
+import { interfaceZoomMenuItem } from "../InterfaceZoomMenuControl/InterfaceZoomMenuControl";
 import { useAboutChangelogMenu } from "../../hooks/useAboutChangelogMenu";
+import { useInterfaceZoom } from "../../hooks/useInterfaceZoom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import type { MenuItemType } from "../../types";
 
@@ -23,6 +25,7 @@ const HomeToolbarMenu = ({ extraMenuItems }: HomeToolbarMenuProps = {}) => {
     aboutChangelogModals,
     updateReadyVersion,
   } = useAboutChangelogMenu();
+  useInterfaceZoom();
 
   const homeMenuItem = useMemo((): MenuItemType => {
     return {
@@ -43,7 +46,11 @@ const HomeToolbarMenu = ({ extraMenuItems }: HomeToolbarMenuProps = {}) => {
   }, [exitGuestMode, isGuest]);
 
   const menuItems = useMemo(() => {
-    const trailing = [...(extraMenuItems ?? []), ...aboutChangelogMenuItems];
+    const trailing = [
+      ...(extraMenuItems ?? []),
+      ...aboutChangelogMenuItems,
+      interfaceZoomMenuItem,
+    ];
     if (hideHomeMenuItem) {
       return trailing;
     }

@@ -39,6 +39,11 @@ export function useStickToBottomScroll({
     setPinnedToBottom(isNearBottom(el));
   }, []);
 
+  const scrollToBottom = useCallback(() => {
+    setPinnedToBottom(true);
+    endRef.current?.scrollIntoView?.({ behavior: "auto", block: "end" });
+  }, []);
+
   useLayoutEffect(() => {
     if (resetKey === undefined) return;
     setPinnedToBottom(true);
@@ -49,5 +54,11 @@ export function useStickToBottomScroll({
     endRef.current?.scrollIntoView?.({ behavior: "auto", block: "end" });
   }, [scrollTrigger, pinnedToBottom, resetKey]);
 
-  return { scrollRef, endRef, onScroll };
+  return {
+    scrollRef,
+    endRef,
+    onScroll,
+    isPinnedToBottom: pinnedToBottom,
+    scrollToBottom,
+  };
 }

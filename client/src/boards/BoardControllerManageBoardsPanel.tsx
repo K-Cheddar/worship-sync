@@ -39,12 +39,7 @@ export const ManageBoardsPanelBody = ({
       <div className={BOARD_PANEL_HEADER}>
         <h2 className="text-base font-semibold">Discussion Boards</h2>
       </div>
-      <div
-        className={cn(
-          "scrollbar-variable max-h-[55dvh] overflow-x-hidden overflow-y-auto overscroll-contain xl:max-h-[40dvh]",
-          BOARD_PANEL_BODY,
-        )}
-      >
+      <div className={cn("overflow-x-hidden", BOARD_PANEL_BODY)}>
         {aliases.length === 0 && (
           <p className="px-4 py-4 text-sm text-gray-300">
             No discussion boards yet.

@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import ServiceTimes from "./ServiceTimes";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -156,5 +157,19 @@ describe("ServiceTimes", () => {
 
     expect(screen.queryByTestId("spinner")).not.toBeInTheDocument();
     expect(dbGet).not.toHaveBeenCalled();
+  });
+
+  it("does not offer timer changes without Services edit access", () => {
+    render(
+      <GlobalInfoContext.Provider value={{ canEditServices: false } as never}>
+        <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
+          <ServiceTimes />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Add Service Timer" }),
+    ).not.toBeInTheDocument();
   });
 });

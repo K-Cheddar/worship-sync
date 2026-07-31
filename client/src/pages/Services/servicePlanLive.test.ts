@@ -2,6 +2,8 @@ import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlan } from "../../types/servicePlan";
 import {
   getServicePlanLiveElementId,
+  getServicePlanLiveProgress,
+  isServicePlanTimelineAdjusted,
   isServicePlanManualLive,
 } from "./servicePlanLive";
 
@@ -56,6 +58,31 @@ describe("getServicePlanLiveElementId", () => {
         Date.parse("2026-07-26T14:02:00.000Z"),
       ),
     ).toBe("song");
+  });
+
+  it("continues from a live timeline anchor instead of permanently pinning an item", () => {
+    const anchoredPlan = {
+      ...plan,
+      publicLive: {
+        mode: "anchored" as const,
+        currentElementId: "song",
+        startedAt: "2026-07-26T14:02:00.000Z",
+      },
+    };
+
+    expect(
+      getServicePlanLiveElementId(
+        anchoredPlan,
+        Date.parse("2026-07-26T14:04:00.000Z"),
+      ),
+    ).toBe("song");
+    expect(
+      getServicePlanLiveProgress(
+        anchoredPlan,
+        Date.parse("2026-07-26T14:04:00.000Z"),
+      )?.isAdjusted,
+    ).toBe(true);
+    expect(isServicePlanTimelineAdjusted(anchoredPlan)).toBe(true);
   });
 });
 

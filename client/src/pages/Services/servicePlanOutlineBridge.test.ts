@@ -73,6 +73,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
+      songs: [],
     });
 
     expect(mockCreateNewHeading).toHaveBeenCalledWith(
@@ -89,8 +90,34 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
+      songs: [],
     });
     expect(result.skippedTitles).toEqual(["Unwritten Song"]);
+  });
+
+  it("pushes a pending song the library has gained since the import", async () => {
+    // The plan still says pending, but the song plainly exists now — dropping
+    // it here would leave it off the screen for no reason anyone can see.
+    const result = await buildServicePlanOutlineItems({
+      plan: basePlan,
+      currentList: [],
+      db: undefined,
+      songs: [
+        {
+          _id: "song-7",
+          name: "Unwritten Song",
+          type: "song",
+          listId: "song-7",
+        },
+      ],
+    });
+
+    expect(result.skippedTitles).toEqual([]);
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ _id: "song-7", name: "Unwritten Song", type: "song" }),
+      ]),
+    );
   });
 
   it("creates a blank free-form placeholder for a type with no real content reference", async () => {
@@ -98,6 +125,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
+      songs: [],
     });
     expect(mockCreateNewFreeForm).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Baptism Testimony" }),
@@ -110,6 +138,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
+      songs: [],
     });
     const [section] = result.updatedSections;
     expect(section.elements[0].pushedOutlineListId).toBeTruthy();
@@ -123,6 +152,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: basePlan,
       currentList: [],
       db: undefined,
+      songs: [],
     });
     // 2 content items inserted (song + free-form placeholder); pending song skipped.
     expect(result.insertedCount).toBe(2);
@@ -148,6 +178,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: alreadyPushedPlan,
       currentList,
       db: undefined,
+      songs: [],
     });
 
     expect(mockCreateNewHeading).not.toHaveBeenCalled();
@@ -177,6 +208,7 @@ describe("buildServicePlanOutlineItems", () => {
       plan: noNewWorkPlan,
       currentList,
       db: undefined,
+      songs: [],
     });
 
     expect(mockCreateNewHeading).toHaveBeenCalledTimes(1);

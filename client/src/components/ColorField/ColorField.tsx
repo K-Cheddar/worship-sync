@@ -9,8 +9,11 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchBrandColorLabel } from "../../utils/churchBranding";
 import {
   addRecentColor,
+  COMMON_COLOR_SWATCHES,
   readRecentColors,
 } from "../../utils/recentColors";
+
+const RECENT_COLOR_PERSIST_MS = 300;
 
 interface ColorFieldProps {
   className?: string;
@@ -103,37 +106,47 @@ export const ChurchBrandColorSwatches: React.FC<
   );
 };
 
+type ColorSwatchRowProps = {
+  colors: readonly string[];
+  onSelect: (value: string) => void;
+};
+
+const ColorSwatchRow: React.FC<ColorSwatchRowProps> = ({
+  colors,
+  onSelect,
+}) => (
+  <div className="flex flex-wrap gap-1.5">
+    {colors.map((swatch) => (
+      <Button
+        key={swatch}
+        variant="tertiary"
+        aria-label={`Color ${swatch}`}
+        padding="p-0"
+        className="size-6 aspect-square shrink-0 min-h-0 max-md:min-h-0 border border-white/25"
+        style={{ backgroundColor: swatch }}
+        onClick={() => onSelect(swatch)}
+      />
+    ))}
+  </div>
+);
+
 type RecentColorSwatchesProps = {
   colors: string[];
-  onSelect: (value: string) => void;
+  onSelectRecent: (value: string) => void;
+  onSelectCommon: (value: string) => void;
 };
 
 export const RecentColorSwatches: React.FC<RecentColorSwatchesProps> = ({
   colors,
-  onSelect,
+  onSelectRecent,
+  onSelectCommon,
 }) => {
-  if (colors.length === 0) {
-    return null;
-  }
-
   return (
     <div className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wide text-gray-300">
-        Recent
-      </p>
-      <div className="flex flex-wrap gap-1.5">
-        {colors.map((swatch) => (
-          <Button
-            key={swatch}
-            variant="tertiary"
-            aria-label={`Recent color ${swatch}`}
-            padding="p-0"
-            className="size-6 aspect-square shrink-0 min-h-0 max-md:min-h-0 border border-white/25"
-            style={{ backgroundColor: swatch }}
-            onClick={() => onSelect(swatch)}
-          />
-        ))}
-      </div>
+      {colors.length > 0 && (
+        <ColorSwatchRow colors={colors} onSelect={onSelectRecent} />
+      )}
+      <ColorSwatchRow colors={COMMON_COLOR_SWATCHES} onSelect={onSelectCommon} />
     </div>
   );
 };
@@ -153,23 +166,56 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
 }) => {
   const PickerComponent = alpha ? HexAlphaColorPicker : HexColorPicker;
   const inputProps = alpha ? { alpha: true } : {};
-  const [recentColors] = useState(readRecentColors);
+  const [recentColors, setRecentColors] = useState(readRecentColors);
   const lastColorRef = useRef(color);
+  const shouldPersistRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     lastColorRef.current = color;
   }, [color]);
 
-  // PopOver unmounts content on close; persist only the final color then.
+  // Persist after the user pauses, and flush on unmount. Relying only on
+  // unmount misses updates when Radix Presence reopens before exit finishes.
   useEffect(() => {
     return () => {
-      addRecentColor(lastColorRef.current);
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      if (shouldPersistRef.current) {
+        addRecentColor(lastColorRef.current);
+      }
     };
   }, []);
 
-  const handleChange = (next: string) => {
+  const clearPersistTimer = () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+  };
+
+  const applyColor = (next: string, persist: boolean) => {
     lastColorRef.current = next;
+    shouldPersistRef.current = persist;
     onChange(next);
+    clearPersistTimer();
+    if (!persist) {
+      return;
+    }
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      setRecentColors(addRecentColor(next));
+    }, RECENT_COLOR_PERSIST_MS);
+  };
+
+  const handlePickerChange = (next: string) => {
+    applyColor(next, true);
+  };
+
+  const handlePresetSelect = (next: string) => {
+    applyColor(next, false);
   };
 
   return (
@@ -182,27 +228,32 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
           )}
         >
           <div className="[&_.react-colorful]:h-[180px] [&_.react-colorful]:w-full [&_.react-colorful]:rounded-md [&_.react-colorful]:border [&_.react-colorful]:border-white/15 [&_.react-colorful__hue]:mt-2 [&_.react-colorful__alpha]:mt-2">
-            <PickerComponent color={color} onChange={handleChange} />
+            <PickerComponent color={color} onChange={handlePickerChange} />
           </div>
           <HexColorInput
             color={color}
             prefixed
-            onChange={handleChange}
+            onChange={handlePickerChange}
             className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm font-medium text-neutral-100 placeholder:text-neutral-400"
             {...inputProps}
           />
         </div>
         {colors.length > 0 && (
           <div className="w-fit pl-1">
-            <ChurchBrandColorSwatches colors={colors} onSelect={handleChange} />
+            <ChurchBrandColorSwatches
+              colors={colors}
+              onSelect={handlePresetSelect}
+            />
           </div>
         )}
       </div>
-      {recentColors.length > 0 && (
-        <div className="mt-3 border-t border-white/15 pt-3">
-          <RecentColorSwatches colors={recentColors} onSelect={handleChange} />
-        </div>
-      )}
+      <div className="mt-3 border-t border-white/15 pt-3">
+        <RecentColorSwatches
+          colors={recentColors}
+          onSelectRecent={handlePickerChange}
+          onSelectCommon={handlePresetSelect}
+        />
+      </div>
     </div>
   );
 };

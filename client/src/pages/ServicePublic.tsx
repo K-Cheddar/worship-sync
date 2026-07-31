@@ -5,6 +5,7 @@ import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import Spinner from "../components/Spinner/Spinner";
 import Select from "../components/Select/Select";
+import ServicePlanRolePicker from "../components/ServicePlanRolePicker";
 import ServiceFlowRichText from "../components/ServiceFlowRichText/ServiceFlowRichText";
 import { getServiceFlowProgress } from "../services/serviceFlowProgress";
 import type { PublicServiceFlowItem } from "../services/serviceFlowTypes";
@@ -16,6 +17,11 @@ import {
   writeServicePublicNotesTeam,
 } from "./servicePublicNotesTeam";
 import { publicPageScrollClassName } from "./Teams/teamsStyles";
+import { normalizeHexColor } from "../utils/richTextColorContrast";
+import {
+  getServicePlanRoleNoteTeamName,
+  roleNoteMatchesServicePlanTeam,
+} from "./Services/servicePlanRoleNoteTeam";
 
 const formatServiceDate = (value: string, timezone: string) =>
   new Intl.DateTimeFormat(undefined, {
@@ -27,21 +33,38 @@ const formatServiceTime = (value: number, timezone: string) =>
     hour: "numeric", minute: "2-digit", timeZone: timezone,
   }).format(new Date(value));
 
-const itemHasNotes = (item: PublicServiceFlowItem, selectedTeam: string) => {
-  if (item.notes.blocks.length) return true;
-  if (selectedTeam) {
-    return Boolean(item.teamNotes?.some((note) => note.label === selectedTeam));
-  }
-  return Boolean(item.teamNotes?.length);
-};
-
-const visibleTeamNotesForItem = (
+const itemHasNotes = (
   item: PublicServiceFlowItem,
   selectedTeam: string,
+  selectedRole: string,
 ) => {
-  const teamNotes = item.teamNotes || [];
-  if (!selectedTeam) return teamNotes;
-  return teamNotes.filter((note) => note.label === selectedTeam);
+  if (item.notes.blocks.length) return true;
+  return Boolean(visibleAudienceNotesForItem(item, selectedTeam, selectedRole).length);
+};
+
+const visibleAudienceNotesForItem = (
+  item: PublicServiceFlowItem,
+  selectedTeam: string,
+  selectedRole: string,
+) => {
+  const notes = item.teamNotes || [];
+  return notes.filter((note) =>
+    note.scope === "role"
+      ? roleNoteMatchesServicePlanTeam(note, selectedTeam)
+      && (!selectedRole || note.positionId === selectedRole)
+      : !selectedTeam || note.label === selectedTeam,
+  );
+};
+
+const normalizePublicBrandHex = (raw: string) => {
+  const trimmed = String(raw || "").trim();
+  const normalized = normalizeHexColor(trimmed);
+  if (normalized) return normalized;
+  // Branding allows #RRGGBBAA; public chrome uses the RGB portion.
+  if (/^#[0-9a-f]{8}$/i.test(trimmed)) {
+    return normalizeHexColor(`#${trimmed.slice(1, 7)}`);
+  }
+  return null;
 };
 
 const pageShellClassName = cn(publicPageScrollClassName, "bg-neutral-950 text-neutral-100");
@@ -51,6 +74,7 @@ const ServicePublic = () => {
   const { snapshot, error, loading, connection, revoked, refresh } = usePublicServiceFlow(shareId);
   const [clientNow, setClientNow] = useState(() => Date.now());
   const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
+  const [selectedRole, setSelectedRole] = useState("");
   const [collapsedNoteIds, setCollapsedNoteIds] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
@@ -76,10 +100,50 @@ const ServicePublic = () => {
     if (!snapshot || snapshot.service.viewMode === "general") return [];
     return Array.from(new Set(
       snapshot.service.sections.flatMap((section) =>
-        section.items.flatMap((item) => (item.teamNotes || []).map((teamNote) => teamNote.label)),
+        section.items.flatMap((item) =>
+          (item.teamNotes || [])
+            .filter((note) => note.scope !== "role")
+            .map((teamNote) => teamNote.label),
+        ),
       ),
     )).sort((left, right) => left.localeCompare(right));
   }, [snapshot]);
+  const allRoleOptions = useMemo(() => {
+    if (!snapshot || snapshot.service.viewMode === "general") return [];
+    const options = new Map<string, {
+      positionId: string;
+      label: string;
+      teamId?: string;
+      teamName?: string;
+    }>();
+    snapshot.service.sections.forEach((section) => {
+      section.items.forEach((item) => {
+        (item.teamNotes || []).forEach((note) => {
+          if (note.scope === "role" && note.positionId) {
+            const separatorIndex = note.label.indexOf(" · ");
+            const legacyTeamName = separatorIndex > 0
+              ? note.label.slice(0, separatorIndex)
+              : "Other roles";
+            const teamName = getServicePlanRoleNoteTeamName(note) || legacyTeamName;
+            options.set(note.positionId, {
+              positionId: note.positionId,
+              label: note.label,
+              teamId: note.teamId || `legacy:${teamName}`,
+              teamName,
+            });
+          }
+        });
+      });
+    });
+    return Array.from(options.values())
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [snapshot]);
+  const roleOptions = useMemo(
+    () => allRoleOptions.filter((role) =>
+      roleNoteMatchesServicePlanTeam(role, selectedTeam),
+    ),
+    [allRoleOptions, selectedTeam],
+  );
 
   useEffect(() => {
     if (!teamLabels.length) {
@@ -94,6 +158,12 @@ const ServicePublic = () => {
     }
     if (selectedTeam) setSelectedTeam("");
   }, [selectedTeam, teamLabels]);
+
+  useEffect(() => {
+    if (!selectedRole) return;
+    if (roleOptions.some((role) => role.positionId === selectedRole)) return;
+    setSelectedRole("");
+  }, [roleOptions, selectedRole]);
 
   const handleTeamNotesFilterChange = (value: string) => {
     const next = value === "__everyone__" ? "" : value;
@@ -157,12 +227,60 @@ const ServicePublic = () => {
   const statusLabel = statusLabelByKind[statusKind];
   const statusBadgeClassName = statusBadgeClassNameByKind[statusKind];
   const showTeamNotesFilter = !isGeneralView && teamLabels.length > 0;
+  const showRoleNotesFilter = !isGeneralView && roleOptions.length > 0;
+  const churchPrimaryColor = normalizePublicBrandHex(
+    String(snapshot.churchPrimaryColor || ""),
+  );
+  const churchSecondaryColor = normalizePublicBrandHex(
+    String(snapshot.churchSecondaryColor || ""),
+  );
+  // Shared neutral surfaces on both views. Simple view uses brand color #2 for
+  // church name and section titles when set; otherwise quiet neutrals. Brand
+  // color #1 accents item borders.
+  const chrome = isGeneralView
+    ? {
+      page: "bg-neutral-950 text-neutral-100",
+      headerCard: "border-neutral-700/80 bg-neutral-900/95",
+      headerRule: "border-neutral-700/80",
+      churchName: "text-neutral-100",
+      meta: "text-neutral-400",
+      sectionTitle: "text-neutral-100",
+      list: "border-neutral-700 bg-neutral-900",
+      itemBorder: "border-neutral-700/80",
+      time: "text-neutral-300",
+      duration: "text-neutral-500",
+      title: "text-neutral-100",
+      credit: "text-neutral-400",
+      creditName: "text-neutral-300",
+      past: "bg-neutral-950/40 text-neutral-400",
+      reconnecting: "text-neutral-400",
+    }
+    : {
+      page: "bg-neutral-950 text-neutral-100",
+      headerCard: "border-neutral-700/80 bg-neutral-900/95",
+      headerRule: "border-neutral-700/80",
+      churchName: "text-neutral-400",
+      meta: "text-neutral-400",
+      sectionTitle: "text-neutral-400",
+      list: "border-neutral-700 bg-neutral-900",
+      itemBorder: "border-neutral-700/80",
+      time: "text-neutral-300",
+      duration: "text-neutral-500",
+      title: "text-neutral-100",
+      credit: "text-neutral-400",
+      creditName: "text-neutral-300",
+      past: "bg-neutral-950/40 text-neutral-400",
+      reconnecting: "text-neutral-400",
+    };
+  const brandAccentStyle = isGeneralView && churchSecondaryColor
+    ? { color: churchSecondaryColor }
+    : undefined;
 
   return (
-    <main className={pageShellClassName}>
+    <main className={cn(publicPageScrollClassName, chrome.page)}>
       <div className="mx-auto max-w-3xl px-3 pb-10 pt-4 sm:px-5 sm:pb-12 sm:pt-6">
         <header className="-mx-3 border-b border-neutral-800/90 px-3 pb-3 pt-1 sm:-mx-5 sm:px-5">
-          <div className="rounded-xl border border-neutral-700/80 bg-neutral-900/95 p-3 shadow-lg sm:p-4">
+          <div className={cn("rounded-xl p-3 shadow-lg sm:p-4", chrome.headerCard)}>
             <div className="flex items-start gap-3">
               <ChurchLogoImg
                 src={snapshot.churchLogoUrl || ""}
@@ -171,15 +289,22 @@ const ServicePublic = () => {
                 className="!mt-0 !size-11 !rounded-md sm:!size-12"
               />
               <div className="min-w-0 flex-1">
-                {snapshot.churchName ? <p className="text-xs font-medium text-neutral-400">{snapshot.churchName}</p> : null}
+                {snapshot.churchName ? (
+                  <p
+                    className={cn("text-xs font-medium", chrome.churchName)}
+                    style={brandAccentStyle}
+                  >
+                    {snapshot.churchName}
+                  </p>
+                ) : null}
                 <h1 className="text-lg font-bold leading-snug tracking-tight sm:text-xl">{service.title}</h1>
-                <p className="mt-0.5 text-xs text-neutral-400 sm:text-sm">
+                <p className={cn("mt-0.5 text-xs sm:text-sm", chrome.meta)}>
                   {formatServiceDate(service.startsAt, service.timezone)} · starts {formatServiceTime(Date.parse(service.startsAt), service.timezone)}
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-700/80 pt-3">
+            <div className={cn("mt-3 flex flex-wrap items-center gap-2 border-t pt-3", chrome.headerRule)}>
               <span
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
@@ -188,22 +313,45 @@ const ServicePublic = () => {
               >
                 <Radio className="size-3.5" aria-hidden="true" /> {statusLabel}
               </span>
-              {showTeamNotesFilter ? (
-                <Select
-                  label="Team notes"
-                  hideLabel
-                  className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
-                  selectClassName="min-h-0 py-1 text-xs"
-                  labelFontSize="text-xs"
-                  value={selectedTeam || "__everyone__"}
-                  onChange={handleTeamNotesFilterChange}
-                  options={[
-                    { value: "__everyone__", label: "All teams" },
-                    ...teamLabels.map((team) => ({ value: team, label: team })),
-                  ]}
-                />
+              {showTeamNotesFilter || showRoleNotesFilter ? (
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none">
+                  <span className="shrink-0 text-xs font-medium text-neutral-400">
+                    Show notes for
+                  </span>
+                  {showTeamNotesFilter ? (
+                    <Select
+                      label="Team notes"
+                      hideLabel
+                      className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
+                      selectClassName="min-h-0 py-1 text-xs"
+                      labelFontSize="text-xs"
+                      value={selectedTeam || "__everyone__"}
+                      onChange={handleTeamNotesFilterChange}
+                      options={[
+                        { value: "__everyone__", label: "All teams" },
+                        ...teamLabels.map((team) => ({ value: team, label: team })),
+                      ]}
+                    />
+                  ) : null}
+                  {showRoleNotesFilter ? (
+                    <ServicePlanRolePicker
+                      value={selectedRole}
+                      onValueChange={setSelectedRole}
+                      options={roleOptions}
+                      teamFilterStorageKey="worshipsyncServicePublicRoleTeamFilter"
+                      lockedTeamName={selectedTeam || undefined}
+                      ariaLabel="Filter role notes"
+                      label="Role notes"
+                      className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
+                    />
+                  ) : null}
+                </div>
               ) : null}
-              {connection === "reconnecting" ? <span className="text-xs text-neutral-400" aria-live="polite">Updating…</span> : null}
+              {connection === "reconnecting" ? (
+                <span className={cn("text-xs", chrome.reconnecting)} aria-live="polite">
+                  Updating…
+                </span>
+              ) : null}
               {progress?.current ? (
                 <Button variant="tertiary" svg={ChevronDown} className="ml-auto text-xs" onClick={jumpToCurrent}>
                   Jump to current
@@ -216,8 +364,8 @@ const ServicePublic = () => {
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">Now</p>
                 <p className="text-sm font-semibold text-neutral-50">{progress.current.item.title}</p>
                 {progress.next ? (
-                  <p className="mt-0.5 text-xs text-neutral-300">
-                    Up next: <span className="font-medium text-neutral-100">{progress.next.item.title}</span>
+                  <p className={cn("mt-0.5 text-xs", chrome.meta)}>
+                    Up next: <span className={cn("font-medium", chrome.title)}>{progress.next.item.title}</span>
                   </p>
                 ) : null}
               </div>
@@ -233,24 +381,31 @@ const ServicePublic = () => {
 
         <div className="mt-4 space-y-4">
           {service.sections.map((section) => (
-            <section key={section.id} aria-labelledby={`service-section-${section.id}`}>
+            <section
+              key={section.id}
+              aria-labelledby={section.title ? `service-section-${section.id}` : undefined}
+            >
               {section.title ? (
                 <h2
                   id={`service-section-${section.id}`}
-                  className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400"
+                  className={cn(
+                    "mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em]",
+                    chrome.sectionTitle,
+                  )}
+                  style={brandAccentStyle}
                 >
                   {section.title}
                 </h2>
               ) : null}
-              <ol className="overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-lg">
+              <ol className={cn("overflow-hidden rounded-xl border shadow-lg", chrome.list)}>
                 {section.items.map((item) => {
                   const timed = progress?.items.find((candidate) => candidate.item.id === item.id);
                   const isCurrent = progress?.current?.item.id === item.id;
                   const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
-                  const visibleTeamNotes = !isGeneralView
-                    ? visibleTeamNotesForItem(item, selectedTeam)
+                  const visibleAudienceNotes = !isGeneralView
+                    ? visibleAudienceNotesForItem(item, selectedTeam, selectedRole)
                     : [];
-                  const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam);
+                  const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole);
                   const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
                   const durationLabel = item.durationSeconds > 0
                     ? formatServicePlanDuration(item)
@@ -260,28 +415,42 @@ const ServicePublic = () => {
                       key={item.id}
                       id={`service-item-${item.id}`}
                       className={cn(
-                        "border-b border-l-2 border-l-transparent border-neutral-700/80 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
+                        "border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
+                        chrome.itemBorder,
+                        !isCurrent && !churchPrimaryColor && "border-l-transparent",
                         isCurrent && "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20",
-                        isPast && "bg-neutral-950/40 text-neutral-400",
+                        isPast && chrome.past,
                       )}
+                      style={
+                        !isCurrent && churchPrimaryColor
+                          ? { borderLeftColor: churchPrimaryColor }
+                          : undefined
+                      }
                     >
                       <div className="flex items-baseline gap-2.5 sm:gap-3">
                         <div className="w-[4.75rem] shrink-0 sm:w-[5.25rem]">
                           <time
                             className={cn(
                               "block text-xs font-medium tabular-nums sm:text-sm",
-                              isCurrent ? "text-emerald-300" : "text-neutral-300",
+                              isCurrent ? "text-emerald-300" : chrome.time,
                             )}
                           >
                             {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
                           </time>
                           {durationLabel ? (
-                            <p className="mt-0.5 text-[11px] tabular-nums text-neutral-500">{durationLabel}</p>
+                            <p className={cn("mt-0.5 text-[11px] tabular-nums", chrome.duration)}>
+                              {durationLabel}
+                            </p>
                           ) : null}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                            <h3 className="text-sm font-semibold leading-snug text-neutral-100 sm:text-[15px]">
+                            <h3
+                              className={cn(
+                                "text-sm font-semibold leading-snug sm:text-[15px]",
+                                chrome.title,
+                              )}
+                            >
                               {item.title}
                             </h3>
                             {isCurrent ? (
@@ -290,8 +459,11 @@ const ServicePublic = () => {
                               </span>
                             ) : null}
                             {item.creditName ? (
-                              <p className="ml-auto text-xs text-neutral-400">
-                                Led by <span className="font-medium text-neutral-300">{item.creditName}</span>
+                              <p className={cn("ml-auto text-xs", chrome.credit)}>
+                                Led by{" "}
+                                <span className={cn("font-medium", chrome.creditName)}>
+                                  {item.creditName}
+                                </span>
                               </p>
                             ) : null}
                           </div>
@@ -309,13 +481,13 @@ const ServicePublic = () => {
                                 aria-expanded={notesExpanded}
                                 onClick={() => toggleNotes(item.id)}
                               >
-                                {selectedTeam ? `${selectedTeam} notes` : "Notes"}
+                                {selectedTeam || selectedRole ? "Filtered notes" : "Notes"}
                               </Button>
                               {notesExpanded ? (
                                 <div className="mt-1.5 space-y-2 border-l border-neutral-600/70 pl-2.5 text-white">
                                   {item.notes.blocks.length ? (
                                     <div>
-                                      {visibleTeamNotes.length || selectedTeam ? (
+                                      {visibleAudienceNotes.length || selectedTeam || selectedRole ? (
                                         <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
                                           Shared notes
                                         </p>
@@ -323,17 +495,17 @@ const ServicePublic = () => {
                                       <ServiceFlowRichText document={item.notes} />
                                     </div>
                                   ) : null}
-                                  {visibleTeamNotes.map((teamNote) => (
-                                    <div key={teamNote.label}>
+                                  {visibleAudienceNotes.map((teamNote) => (
+                                    <div key={`${teamNote.scope || "team"}:${teamNote.positionId || teamNote.label}`}>
                                       <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-neutral-500">
-                                        {teamNote.label} notes
+                                        {teamNote.label}{teamNote.scope === "role" ? " role" : ""} notes
                                       </p>
                                       <ServiceFlowRichText document={teamNote.notes} />
                                     </div>
                                   ))}
-                                  {selectedTeam && visibleTeamNotes.length === 0 ? (
+                                  {(selectedTeam || selectedRole) && visibleAudienceNotes.length === 0 ? (
                                     <p className="text-xs text-neutral-500">
-                                      No {selectedTeam} notes for this item.
+                                      No matching notes for this item.
                                     </p>
                                   ) : null}
                                 </div>

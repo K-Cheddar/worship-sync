@@ -10,10 +10,12 @@ import {
   toTeamsAccessOption,
 } from "./accountTeamsAccess";
 import { toMemberAccessOption } from "./accountUtils";
+import { toServicesAccessOption } from "./accountServicesAccess";
 
 export const DEFAULT_INVITE_ACCESS_DRAFT: InviteAccessDraft = {
   access: "full",
   teamsAccess: "none",
+  servicesAccess: "none",
   teamScopeIds: [],
 };
 
@@ -48,13 +50,18 @@ export const inviteAccessDraftFromInvite = (
 ): InviteAccessDraft => ({
   access: toInviteAccessOption(invite.role, invite.appAccess),
   teamsAccess: toTeamsAccessOption(invite.permissions, invite.role),
+  servicesAccess: toServicesAccessOption(invite.permissions, invite.role),
   teamScopeIds: getEditableTeamScopeIds(invite.permissions),
 });
 
 export const buildPermissionsFromAccessDraft = (
-  draft: Pick<InviteAccessDraft, "access" | "teamsAccess" | "teamScopeIds">,
+  draft: Pick<
+    InviteAccessDraft,
+    "access" | "teamsAccess" | "servicesAccess" | "teamScopeIds"
+  >,
 ): MemberPermissions => ({
   teams: draft.access === "admin" ? "edit" : draft.teamsAccess,
+  services: draft.access === "admin" ? "edit" : draft.servicesAccess,
   teamScopes:
     draft.access === "admin" || draft.teamsAccess === "edit"
       ? {}
@@ -82,22 +89,24 @@ export const getInviteAccessSummaryLabel = (draft: InviteAccessDraft) => {
   const accessLabel =
     inviteAccessOptions.find((option) => option.value === draft.access)
       ?.label || "Full access";
+  const servicesSuffix =
+    draft.servicesAccess === "edit" ? " · Edit services and plans" : "";
   if (draft.access === "admin") {
-    return `${accessLabel} · Edit all teams`;
+    return `${accessLabel} · Edit all teams and services`;
   }
   if (draft.teamsAccess === "edit") {
-    return `${accessLabel} · Edit all teams`;
+    return `${accessLabel} · Edit all teams and services`;
   }
   if (draft.teamsAccess === "view") {
     if (draft.teamScopeIds.length > 0) {
-      return `${accessLabel} · View all teams + per-team edit`;
+      return `${accessLabel} · View all teams + per-team edit${servicesSuffix}`;
     }
-    return `${accessLabel} · View all teams`;
+    return `${accessLabel} · View all teams${servicesSuffix}`;
   }
   if (draft.teamScopeIds.length > 0) {
-    return `${accessLabel} · Per-team edit only`;
+    return `${accessLabel} · Per-team edit only${servicesSuffix}`;
   }
-  return `${accessLabel} · No Teams access`;
+  return `${accessLabel} · No Teams access${servicesSuffix}`;
 };
 
 export const scopedTeamsHelperText = (

@@ -1,4 +1,4 @@
-const commonWords = [
+export const commonWords = [
   "the",
   "a",
   "an",

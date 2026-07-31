@@ -12,13 +12,13 @@ export const teamsPageAccessOptions: {
 }[] = [
   { value: "none", label: "No global Teams access" },
   { value: "view", label: "View all teams" },
-  { value: "edit", label: "Edit all teams" },
+  { value: "edit", label: "Edit all teams (includes services)" },
 ];
 
 const teamsPageAccessLabels: Record<TeamsPageAccessOption, string> = {
   none: "No global Teams access",
   view: "View all teams",
-  edit: "Edit all teams",
+  edit: "Edit all teams (includes services)",
 };
 
 export const getTeamsPageAccessLabel = (access: TeamsPageAccessOption) =>

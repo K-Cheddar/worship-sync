@@ -1,4 +1,6 @@
 import {
+  RICH_TEXT_COLOR_ATTR,
+  authoredColorFromElement,
   contrastRatio,
   contrastingInkForFill,
   normalizeHexColor,
@@ -44,5 +46,26 @@ describe("richTextColorContrast", () => {
   it("computes relative luminance in a stable order", () => {
     expect(relativeLuminance("#ffffff")).toBeCloseTo(1, 2);
     expect(relativeLuminance("#000000")).toBeCloseTo(0, 2);
+  });
+
+  it("prefers the authored data attribute over display ink", () => {
+    const el = document.createElement("span");
+    el.setAttribute(RICH_TEXT_COLOR_ATTR, "#112233");
+    el.style.color = "#ffffff";
+    el.style.backgroundColor = "#112233";
+    expect(authoredColorFromElement(el)).toBe("#112233");
+  });
+
+  it("recovers chip fill when pasted HTML only carries contrast ink", () => {
+    const el = document.createElement("span");
+    el.style.color = "#ffffff";
+    el.style.backgroundColor = "#000000";
+    expect(authoredColorFromElement(el)).toBe("#000000");
+  });
+
+  it("keeps ordinary colored text as the authored hue", () => {
+    const el = document.createElement("span");
+    el.style.color = "#666666";
+    expect(authoredColorFromElement(el)).toBe("#666666");
   });
 });

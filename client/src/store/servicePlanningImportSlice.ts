@@ -69,6 +69,13 @@ export type ServicePlanningImportState = {
   url: string;
   serviceOutline: ServiceOutline | null;
   preview: ServicePlanningPreview | null;
+  /**
+   * planKey when the current preview was built from the Teams ServicePlan
+   * rather than a pasted URL; null for a URL-sourced preview. A plan-sourced
+   * preview follows the plan live, so Refresh must re-read the plan instead of
+   * re-scraping `url` (which may be stale or belong to a different service).
+   */
+  servicePlanKey: string | null;
   floatingWindowDismissed: boolean;
   floatingWindowRestoreId: number;
   /** Service Planning Import page: overlay sync summary list expanded. */
@@ -102,6 +109,7 @@ export const initialServicePlanningImportState: ServicePlanningImportState = {
   url: "",
   serviceOutline: null,
   preview: null,
+  servicePlanKey: null,
   floatingWindowDismissed: true,
   floatingWindowRestoreId: 0,
   overlaySummaryExpanded: false,
@@ -122,13 +130,44 @@ export const servicePlanningImportSlice = createSlice({
     ) => {
       state.serviceOutline = action.payload;
       state.preview = action.payload?.preview ?? null;
+      // Pasting a URL is an explicit operator choice, so it takes over from a
+      // plan-sourced preview until the next plan load.
+      state.servicePlanKey = null;
       if (action.payload?.sourceUrl) {
         state.url = action.payload.sourceUrl;
       }
     },
+    /**
+     * Same as above but for a preview built from the Teams ServicePlan. Leaves
+     * `url` alone: the plan's original import URL is provenance, not something
+     * the operator pasted, and overwriting the box would make Import look like
+     * it had already been used for this service.
+     */
+    setServicePlanningPlanOutline: (
+      state,
+      action: PayloadAction<{ outline: ServiceOutline; planKey: string }>,
+    ) => {
+      state.serviceOutline = action.payload.outline;
+      state.preview = action.payload.outline.preview;
+      state.servicePlanKey = action.payload.planKey;
+    },
+    /**
+     * Drops a plan-sourced preview when its service no longer has a saved plan
+     * (typically after switching services in the picker). Deliberately a no-op
+     * for a URL-sourced preview, which the operator pasted by hand and owns.
+     * Showing the previous service's plan under the new service's name would
+     * invite an operator to sync overlays or the outline for the wrong service.
+     */
+    clearServicePlanningPlanOutline: (state) => {
+      if (!state.servicePlanKey) return;
+      state.serviceOutline = null;
+      state.preview = null;
+      state.servicePlanKey = null;
+    },
     resetServicePlanningImportPreview: (state) => {
       state.serviceOutline = null;
       state.preview = null;
+      state.servicePlanKey = null;
       state.floatingWindowDismissed = true;
     },
     setServicePlanningFloatingWindowDismissed: (
@@ -316,6 +355,8 @@ export const servicePlanningImportSlice = createSlice({
 export const {
   setServicePlanningImportUrl,
   setServicePlanningServiceOutline,
+  setServicePlanningPlanOutline,
+  clearServicePlanningPlanOutline,
   resetServicePlanningImportPreview,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportOverlaySummaryExpanded,

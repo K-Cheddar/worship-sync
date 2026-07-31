@@ -8,10 +8,13 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 const Credits = ({
   credits,
   isPreview = false,
+  compact = false,
   runObsTransition,
 }: {
   credits: CreditsInfo[];
   isPreview?: boolean;
+  /** Smaller type and tighter spacing for sidebar / workspace previews. */
+  compact?: boolean;
   runObsTransition?: () => void;
 }) => {
   const containerRef = useRef<HTMLUListElement>(null);
@@ -80,12 +83,14 @@ const Credits = ({
           !isPreview &&
           "bg-black/75 h-dvh [scrollbar-width:none] flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto pb-[10%]",
           isPreview &&
-          "h-full max-h-full scrollbar-variable flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto overflow-x-hidden pb-[10%] pr-2"
+          "h-full max-h-full scrollbar-variable flex flex-col w-full text-white text-center overflow-y-auto overflow-x-hidden pr-2",
+          isPreview && (compact ? "gap-3 pb-4" : "gap-[7.5vh] pb-[10%]")
         )}
       >
         {adjustedCredits.map(({ heading, id, text }) => {
           const isEnding = id === "ending-credits";
           const isStarting = id === "starting-credits";
+          const useCompactType = isPreview && compact;
           return (
             <li key={id} id={`credits-${id}`}>
               {id === "starting-credits" && (
@@ -97,10 +102,24 @@ const Credits = ({
 
               {!isStarting && !isEnding && (
                 <>
-                  <h2 className="text-[2.25vw] max-md:text-[3.5vw] font-semibold">
+                  <h2
+                    className={cn(
+                      "font-semibold",
+                      useCompactType
+                        ? "text-[1.25rem]"
+                        : "text-[2.25vw] max-md:text-[3.5vw]",
+                    )}
+                  >
                     {heading}
                   </h2>
-                  <p className="text-[2vw] max-md:text-[3vw] whitespace-pre-line">
+                  <p
+                    className={cn(
+                      "whitespace-pre-line",
+                      useCompactType
+                        ? "text-[1rem] leading-snug"
+                        : "text-[2vw] max-md:text-[3vw]",
+                    )}
+                  >
                     {text}
                   </p>
                 </>

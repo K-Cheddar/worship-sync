@@ -5,6 +5,8 @@ import {
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
   pickPublicBoardHeaderLogoUrl,
+  pickPublicPrimaryBrandColor,
+  pickPublicSecondaryBrandColor,
 } from "./churchBranding.js";
 
 test("createEmptyChurchBranding returns empty branding defaults", () => {
@@ -210,5 +212,59 @@ test("pickPublicBoardHeaderLogoUrl rejects non-Cloudinary URLs", () => {
       },
     }),
     "",
+  );
+});
+
+test("pickPublicPrimaryBrandColor prefers a Primary label then the first swatch", () => {
+  assert.equal(pickPublicPrimaryBrandColor({ colors: [] }), "");
+  assert.equal(
+    pickPublicPrimaryBrandColor({
+      colors: [
+        { label: "Accent", value: "#AABBCC" },
+        { label: "Primary", value: "#112233" },
+      ],
+    }),
+    "#112233",
+  );
+  assert.equal(
+    pickPublicPrimaryBrandColor({
+      colors: [{ value: "#445566" }, { label: "Accent", value: "#AABBCC" }],
+    }),
+    "#445566",
+  );
+  assert.equal(
+    pickPublicPrimaryBrandColor({
+      colors: [{ label: "Broken", value: "red" }, { value: "#778899" }],
+    }),
+    "#778899",
+  );
+});
+
+test("pickPublicSecondaryBrandColor returns the second usable swatch", () => {
+  assert.equal(pickPublicSecondaryBrandColor({ colors: [] }), "");
+  assert.equal(
+    pickPublicSecondaryBrandColor({
+      colors: [{ value: "#112233" }],
+    }),
+    "",
+  );
+  assert.equal(
+    pickPublicSecondaryBrandColor({
+      colors: [
+        { label: "Primary", value: "#112233" },
+        { label: "Accent", value: "#AABBCC" },
+      ],
+    }),
+    "#AABBCC",
+  );
+  assert.equal(
+    pickPublicSecondaryBrandColor({
+      colors: [
+        { label: "Broken", value: "red" },
+        { value: "#445566" },
+        { value: "#778899" },
+      ],
+    }),
+    "#778899",
   );
 });
