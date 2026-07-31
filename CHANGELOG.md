@@ -1,3 +1,10 @@
+# [2.21.0](https://github.com/K-Cheddar/worship-sync/compare/v2.20.2...v2.21.0) (2026-07-31)
+
+
+### Features
+
+* Adding Service Planning ([273daf0](https://github.com/K-Cheddar/worship-sync/commit/273daf0e9b6645a7a93c15bb7e3e5a912b541428))
+
 ## [2.20.2](https://github.com/K-Cheddar/worship-sync/compare/v2.20.1...v2.20.2) (2026-07-30)
 
 
