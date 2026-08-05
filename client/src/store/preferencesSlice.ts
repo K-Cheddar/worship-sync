@@ -65,8 +65,13 @@ type PreferencesState = {
   bibleFontMode: BibleFontMode;
   scrollbarWidth: ScrollbarWidth;
   isInitialized: boolean;
-  /** Overlay controller main column: overlays, board posts, credits, or service times (not persisted). */
-  overlayControllerPanel: "overlays" | "boardPosts" | "credits" | "serviceTimes";
+  /** Overlay controller main column (not persisted). */
+  overlayControllerPanel:
+    | "overlays"
+    | "boardPosts"
+    | "overlaysAndPosts"
+    | "credits"
+    | "serviceTimes";
   /** Overlay credits tab: open Credits settings drawer from toolbar (not persisted). */
   overlayCreditsSettingsDrawerOpen: boolean;
   /** Last-selected media library folder per controller route; `null` = All media */
@@ -522,7 +527,13 @@ export const preferencesSlice = createSlice({
     },
     setOverlayControllerPanel: (
       state,
-      action: PayloadAction<"overlays" | "boardPosts" | "credits" | "serviceTimes">,
+      action: PayloadAction<
+        | "overlays"
+        | "boardPosts"
+        | "overlaysAndPosts"
+        | "credits"
+        | "serviceTimes"
+      >,
     ) => {
       state.overlayControllerPanel = action.payload;
       if (action.payload !== "credits") {

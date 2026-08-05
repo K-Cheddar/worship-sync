@@ -391,12 +391,13 @@ describe("ServicePlanEditor", () => {
       await user.click(
         await screen.findByRole("tab", { name: /Mic Assignments/i }),
       );
-      expect(await screen.findByText("Vocal 1")).toBeInTheDocument();
-      expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+      // The picker identifies both the scheduled person and role, so duplicate
+      // role slots are unambiguous during live setup.
+      const microphoneSelect = await screen.findByRole("combobox", {
+        name: /Microphone for Avery Stone \(Vocal 1\)/i,
+      });
 
-      await user.click(
-        screen.getByRole("combobox", { name: /Microphone for Vocal 1/i }),
-      );
+      await user.click(microphoneSelect);
       await user.click(await screen.findByRole("option", { name: /Lead/i }));
 
       expect(onChange).toHaveBeenCalledWith(scheduledRow, ["mic-lead"]);

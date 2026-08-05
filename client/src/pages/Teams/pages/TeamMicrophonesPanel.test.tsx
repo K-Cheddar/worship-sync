@@ -61,7 +61,7 @@ describe("TeamMicrophonesPanel", () => {
     );
 
     await user.click(
-      screen.getByRole("combobox", { name: /Microphone for Soprano/i }),
+      screen.getByRole("combobox", { name: /Microphone for Member Four \(Soprano\)/i }),
     );
 
     const lead = await screen.findByRole("option", { name: /Lead/i });
@@ -99,7 +99,7 @@ describe("TeamMicrophonesPanel", () => {
     );
 
     await user.click(
-      screen.getByRole("combobox", { name: /Microphone for Lead/i }),
+      screen.getByRole("combobox", { name: /Microphone for Johnny Mclain \(Lead\)/i }),
     );
 
     const lead = await screen.findByRole("option", { name: /^Lead$/i });

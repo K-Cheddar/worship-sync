@@ -7,6 +7,7 @@ import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 const renderSidebar = (
   initialEntry = "/teams-and-services/schedules",
   collapsed = false,
+  onNavigate?: () => void,
 ) =>
   render(
     <MemoryRouter initialEntries={[initialEntry]}>
@@ -14,7 +15,9 @@ const renderSidebar = (
         <Routes>
           <Route
             path="/teams-and-services/*"
-            element={<TeamsSidebarNav collapsed={collapsed} />}
+            element={
+              <TeamsSidebarNav collapsed={collapsed} onNavigate={onNavigate} />
+            }
           />
         </Routes>
       </TeamsNavigationGuardProvider>
@@ -67,5 +70,20 @@ describe("TeamsSidebarNav", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  it("calls onNavigate for section links but not for domain tabs", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderSidebar("/teams-and-services/schedules", false, onNavigate);
+
+    await user.click(screen.getByRole("tab", { name: "Services" }));
+    expect(
+      await screen.findByRole("link", { name: /^Plans$/i }),
+    ).toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("link", { name: /^Microphones$/i }));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 });

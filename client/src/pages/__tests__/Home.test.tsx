@@ -9,11 +9,7 @@ import {
   createMockGlobalContext,
 } from "../../test/mocks";
 import { usePwaInstallPrompt } from "../../hooks/usePwaInstallPrompt";
-import {
-  isLinuxBrowser,
-  isMacBrowser,
-  isWindowsBrowser,
-} from "../../utils/environment";
+import { getAppOs } from "../../utils/platform";
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -21,9 +17,13 @@ jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
 
 jest.mock("../../utils/environment", () => ({
   isElectron: jest.fn(() => false),
-  isWindowsBrowser: jest.fn(() => true),
-  isMacBrowser: jest.fn(() => false),
-  isLinuxBrowser: jest.fn(() => false),
+}));
+
+// Home reads the OS through the platform capability layer. `isMobileBrowser` /
+// `isIosBrowser` stay real so the user-agent set by each test still drives them.
+jest.mock("../../utils/platform", () => ({
+  ...jest.requireActual("../../utils/platform"),
+  getAppOs: jest.fn(() => "windows"),
 }));
 
 jest.mock("../../utils/githubRelease", () => ({
@@ -40,9 +40,7 @@ jest.mock("../../hooks/usePwaInstallPrompt", () => ({
 }));
 
 const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
-const mockIsWindowsBrowser = jest.mocked(isWindowsBrowser);
-const mockIsMacBrowser = jest.mocked(isMacBrowser);
-const mockIsLinuxBrowser = jest.mocked(isLinuxBrowser);
+const mockGetAppOs = jest.mocked(getAppOs);
 const originalUserAgent = window.navigator.userAgent;
 
 const openHomeHubMenu = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -65,14 +63,18 @@ const setUserAgent = (userAgent: string) => {
 describe("Home", () => {
   beforeEach(() => {
     setUserAgent(originalUserAgent);
+    // Reset alongside the user agent; the iPad case sets it and it would
+    // otherwise leak into later tests as a false iPadOS signal.
+    Object.defineProperty(window.navigator, "maxTouchPoints", {
+      configurable: true,
+      value: 0,
+    });
     mockUsePwaInstallPrompt.mockReturnValue({
       canShowInstall: false,
       installPwa: jest.fn(),
       isStandalone: false,
     });
-    mockIsWindowsBrowser.mockReturnValue(true);
-    mockIsMacBrowser.mockReturnValue(false);
-    mockIsLinuxBrowser.mockReturnValue(false);
+    mockGetAppOs.mockReturnValue("windows");
   });
 
   it("describes features and keeps controller and display guidance available", async () => {
@@ -331,9 +333,7 @@ describe("Home", () => {
   });
 
   it("offers Mac DMG download in the popover when on macOS", async () => {
-    mockIsWindowsBrowser.mockReturnValue(false);
-    mockIsMacBrowser.mockReturnValue(true);
-    mockIsLinuxBrowser.mockReturnValue(false);
+    mockGetAppOs.mockReturnValue("mac");
     const user = userEvent.setup();
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     render(
@@ -363,9 +363,7 @@ describe("Home", () => {
   });
 
   it("offers Linux desktop download in the popover when on Linux", async () => {
-    mockIsWindowsBrowser.mockReturnValue(false);
-    mockIsMacBrowser.mockReturnValue(false);
-    mockIsLinuxBrowser.mockReturnValue(true);
+    mockGetAppOs.mockReturnValue("linux");
     const user = userEvent.setup();
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     render(
@@ -394,9 +392,7 @@ describe("Home", () => {
 
   it("shows iOS install instructions when prompt event is unavailable on mobile", async () => {
     setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile Safari/604.1");
-    mockIsWindowsBrowser.mockReturnValue(false);
-    mockIsMacBrowser.mockReturnValue(false);
-    mockIsLinuxBrowser.mockReturnValue(false);
+    mockGetAppOs.mockReturnValue("unknown");
     const user = userEvent.setup();
 
     render(
@@ -422,10 +418,45 @@ describe("Home", () => {
     expect(screen.getByText(/Add to Home Screen/i)).toBeInTheDocument();
   });
 
+  it("offers iPad the mobile install path, not a Mac installer", async () => {
+    // iPadOS 13+ reports a desktop "Macintosh" user agent; before the platform
+    // layer resolved ios ahead of mac, iPads were offered a Mac DMG.
+    setUserAgent(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    );
+    Object.defineProperty(window.navigator, "maxTouchPoints", {
+      configurable: true,
+      value: 5,
+    });
+    mockGetAppOs.mockReturnValue("ios");
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await openHomeHubMenu(user);
+    expect(
+      screen.queryByRole("menuitem", { name: /Download Mac app/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /Install WorshipSync/i }),
+    ).toBeInTheDocument();
+  });
+
   it("uses beforeinstallprompt install flow on mobile when available", async () => {
     setUserAgent("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36");
-    mockIsWindowsBrowser.mockReturnValue(false);
-    mockIsMacBrowser.mockReturnValue(false);
+    mockGetAppOs.mockReturnValue("unknown");
     let canShowInstall = true;
     const installPwa = jest.fn().mockImplementation(async () => {
       canShowInstall = false;
@@ -498,8 +529,7 @@ describe("Home", () => {
     setUserAgent(
       "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
     );
-    mockIsWindowsBrowser.mockReturnValue(false);
-    mockIsMacBrowser.mockReturnValue(false);
+    mockGetAppOs.mockReturnValue("unknown");
     render(providerTree);
     await openHomeHubMenu(user);
     expect(

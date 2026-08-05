@@ -1,6 +1,8 @@
 {
-  "short_name": "Worship Sync",
-  "name": "Worship Sync",
+  "id": "/",
+  "short_name": "WorshipSync",
+  "name": "WorshipSync",
+  "description": "Software for managing the display of content for worship services",
   "icons": [
     {
       "src": "favicon.ico",
@@ -10,16 +12,28 @@
     {
       "src": "logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "maskable-icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
     }
   ],
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#374151"
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "theme_color": "#2b3544",
+  "background_color": "#2b3544",
+  "categories": ["productivity", "utilities"]
 }

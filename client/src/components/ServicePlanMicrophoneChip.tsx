@@ -46,7 +46,10 @@ export const ServicePlanMicrophoneChip = ({
     <span
       aria-label={accessibleName}
       className={cn(
-        "inline-flex min-w-0 items-center gap-1 rounded border px-1 py-0.5 text-[11px]",
+        // Extra right padding when a remove control is slotted in — otherwise
+        // the X sits flush against the pill edge on template/plan edit rows.
+        "inline-flex min-w-0 items-center gap-1 rounded border py-0.5 text-[11px]",
+        children ? "pl-1.5 pr-2" : "px-1",
         !chromeStyle && fallbackChromeClassName,
         className,
       )}

@@ -149,15 +149,18 @@ describe("preferencesSlice", () => {
       const store = createStore();
       store.dispatch(setDefaultSongBackgroundBrightness(50));
       expect(
-        store.getState().preferences.preferences.defaultSongBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultSongBackgroundBrightness,
       ).toBe(50);
       store.dispatch(setDefaultSongBackgroundBrightness(200));
       expect(
-        store.getState().preferences.preferences.defaultSongBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultSongBackgroundBrightness,
       ).toBe(100);
       store.dispatch(setDefaultSongBackgroundBrightness(0));
       expect(
-        store.getState().preferences.preferences.defaultSongBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultSongBackgroundBrightness,
       ).toBe(10);
     });
   });
@@ -167,15 +170,18 @@ describe("preferencesSlice", () => {
       const store = createStore();
       store.dispatch(setDefaultTimerBackgroundBrightness(5));
       expect(
-        store.getState().preferences.preferences.defaultTimerBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultTimerBackgroundBrightness,
       ).toBe(10);
       store.dispatch(setDefaultTimerBackgroundBrightness(110));
       expect(
-        store.getState().preferences.preferences.defaultTimerBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultTimerBackgroundBrightness,
       ).toBe(100);
       store.dispatch(setDefaultTimerBackgroundBrightness(75));
       expect(
-        store.getState().preferences.preferences.defaultTimerBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultTimerBackgroundBrightness,
       ).toBe(75);
     });
 
@@ -183,11 +189,13 @@ describe("preferencesSlice", () => {
       const store = createStore();
       store.dispatch(setDefaultBibleBackgroundBrightness(5));
       expect(
-        store.getState().preferences.preferences.defaultBibleBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultBibleBackgroundBrightness,
       ).toBe(10);
       store.dispatch(setDefaultBibleBackgroundBrightness(110));
       expect(
-        store.getState().preferences.preferences.defaultBibleBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultBibleBackgroundBrightness,
       ).toBe(100);
     });
 
@@ -195,11 +203,13 @@ describe("preferencesSlice", () => {
       const store = createStore();
       store.dispatch(setDefaultFreeFormBackgroundBrightness(3));
       expect(
-        store.getState().preferences.preferences.defaultFreeFormBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultFreeFormBackgroundBrightness,
       ).toBe(10);
       store.dispatch(setDefaultFreeFormBackgroundBrightness(150));
       expect(
-        store.getState().preferences.preferences.defaultFreeFormBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultFreeFormBackgroundBrightness,
       ).toBe(100);
     });
   });
@@ -208,17 +218,17 @@ describe("preferencesSlice", () => {
     it("setDefaultSlidesPerRow clamps to 1–7", () => {
       const store = createStore();
       store.dispatch(setDefaultSlidesPerRow(0));
-      expect(
-        store.getState().preferences.preferences.defaultSlidesPerRow,
-      ).toBe(1);
+      expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
+        1,
+      );
       store.dispatch(setDefaultSlidesPerRow(10));
-      expect(
-        store.getState().preferences.preferences.defaultSlidesPerRow,
-      ).toBe(7);
+      expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
+        7,
+      );
       store.dispatch(setDefaultSlidesPerRow(5));
-      expect(
-        store.getState().preferences.preferences.defaultSlidesPerRow,
-      ).toBe(5);
+      expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
+        5,
+      );
     });
 
     it("setDefaultSlidesPerRowMobile clamps to 1–7", () => {
@@ -274,11 +284,12 @@ describe("preferencesSlice", () => {
     it("merges partial preferences without overwriting others", () => {
       const store = createStore();
       store.dispatch(setDefaultPreferences({ defaultSlidesPerRow: 6 } as any));
+      expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
+        6,
+      );
       expect(
-        store.getState().preferences.preferences.defaultSlidesPerRow,
-      ).toBe(6);
-      expect(
-        store.getState().preferences.preferences.defaultBibleBackgroundBrightness,
+        store.getState().preferences.preferences
+          .defaultBibleBackgroundBrightness,
       ).toBe(60);
     });
   });
@@ -286,13 +297,18 @@ describe("preferencesSlice", () => {
   describe("quick links", () => {
     it("initiateQuickLinks sets list", () => {
       const store = createStore();
-      store.dispatch(initiateQuickLinks([makeQuickLink("q1", "Link 1")] as any));
+      store.dispatch(
+        initiateQuickLinks([makeQuickLink("q1", "Link 1")] as any),
+      );
       expect(store.getState().preferences.quickLinks).toHaveLength(1);
     });
 
     it("setSelectedQuickLink finds quick link by id", () => {
       const store = createStore();
-      const links = [makeQuickLink("q1", "Link 1"), makeQuickLink("q2", "Link 2")];
+      const links = [
+        makeQuickLink("q1", "Link 1"),
+        makeQuickLink("q2", "Link 2"),
+      ];
       store.dispatch(setQuickLinks(links as any));
       store.dispatch(setSelectedQuickLink("q1"));
       expect(store.getState().preferences.selectedQuickLink?.id).toBe("q1");
@@ -439,11 +455,23 @@ describe("preferencesSlice", () => {
   });
 
   describe("setOverlayControllerPanel", () => {
+    it("selects the combined overlays and posts workspace", () => {
+      const store = createStore();
+
+      store.dispatch(setOverlayControllerPanel("overlaysAndPosts"));
+
+      expect(store.getState().preferences.overlayControllerPanel).toBe(
+        "overlaysAndPosts",
+      );
+    });
+
     it("clears credits drawer when switching away from credits", () => {
       const store = createStore();
       store.dispatch(setOverlayCreditsSettingsDrawerOpen(true));
       store.dispatch(setOverlayControllerPanel("overlays"));
-      expect(store.getState().preferences.overlayControllerPanel).toBe("overlays");
+      expect(store.getState().preferences.overlayControllerPanel).toBe(
+        "overlays",
+      );
       expect(
         store.getState().preferences.overlayCreditsSettingsDrawerOpen,
       ).toBe(false);
@@ -490,7 +518,10 @@ describe("preferencesSlice", () => {
       defaultSongBackground: { background: "bg.jpg", mediaInfo: undefined },
       defaultTimerBackground: { background: "", mediaInfo: undefined },
       defaultBibleBackground: { background: "bible.jpg", mediaInfo: undefined },
-      defaultFreeFormBackground: { background: "free.jpg", mediaInfo: undefined },
+      defaultFreeFormBackground: {
+        background: "free.jpg",
+        mediaInfo: undefined,
+      },
       defaultSongBackgroundBrightness: 70,
       defaultTimerBackgroundBrightness: 75,
       defaultBibleBackgroundBrightness: 60,
@@ -509,14 +540,18 @@ describe("preferencesSlice", () => {
 
     it("derives slidesPerRow from non-music context", () => {
       const store = createStore();
-      store.dispatch(initiatePreferences({ preferences: basePrefs, isMusic: false }));
+      store.dispatch(
+        initiatePreferences({ preferences: basePrefs, isMusic: false }),
+      );
       expect(store.getState().preferences.slidesPerRow).toBe(5);
       expect(store.getState().preferences.slidesPerRowMobile).toBe(3);
     });
 
     it("uses music slides per row in music context", () => {
       const store = createStore();
-      store.dispatch(initiatePreferences({ preferences: basePrefs, isMusic: true }));
+      store.dispatch(
+        initiatePreferences({ preferences: basePrefs, isMusic: true }),
+      );
       expect(store.getState().preferences.slidesPerRow).toBe(6);
       expect(store.getState().preferences.slidesPerRowMobile).toBe(4);
     });
@@ -564,41 +599,45 @@ describe("preferencesSlice", () => {
     it("setMonitorShowClock toggles", () => {
       const store = createStore();
       store.dispatch(setMonitorShowClock(false));
-      expect(store.getState().preferences.monitorSettings.showClock).toBe(false);
+      expect(store.getState().preferences.monitorSettings.showClock).toBe(
+        false,
+      );
     });
 
     it("setMonitorShowTimer toggles", () => {
       const store = createStore();
       store.dispatch(setMonitorShowTimer(false));
-      expect(store.getState().preferences.monitorSettings.showTimer).toBe(false);
+      expect(store.getState().preferences.monitorSettings.showTimer).toBe(
+        false,
+      );
     });
 
     it("setMonitorClockFontSize clamps to 75–115", () => {
       const store = createStore();
       store.dispatch(setMonitorClockFontSize(60));
-      expect(
-        store.getState().preferences.monitorSettings.clockFontSize,
-      ).toBe(75);
+      expect(store.getState().preferences.monitorSettings.clockFontSize).toBe(
+        75,
+      );
       store.dispatch(setMonitorClockFontSize(120));
-      expect(
-        store.getState().preferences.monitorSettings.clockFontSize,
-      ).toBe(115);
+      expect(store.getState().preferences.monitorSettings.clockFontSize).toBe(
+        115,
+      );
       store.dispatch(setMonitorClockFontSize(90));
-      expect(
-        store.getState().preferences.monitorSettings.clockFontSize,
-      ).toBe(90);
+      expect(store.getState().preferences.monitorSettings.clockFontSize).toBe(
+        90,
+      );
     });
 
     it("setMonitorTimerFontSize clamps to 75–115", () => {
       const store = createStore();
       store.dispatch(setMonitorTimerFontSize(50));
-      expect(
-        store.getState().preferences.monitorSettings.timerFontSize,
-      ).toBe(75);
+      expect(store.getState().preferences.monitorSettings.timerFontSize).toBe(
+        75,
+      );
       store.dispatch(setMonitorTimerFontSize(200));
-      expect(
-        store.getState().preferences.monitorSettings.timerFontSize,
-      ).toBe(115);
+      expect(store.getState().preferences.monitorSettings.timerFontSize).toBe(
+        115,
+      );
     });
 
     it("setMonitorTimerId sets and clears", () => {
@@ -612,9 +651,9 @@ describe("preferencesSlice", () => {
     it("setMonitorShowNextSlide toggles", () => {
       const store = createStore();
       store.dispatch(setMonitorShowNextSlide(true));
-      expect(
-        store.getState().preferences.monitorSettings.showNextSlide,
-      ).toBe(true);
+      expect(store.getState().preferences.monitorSettings.showNextSlide).toBe(
+        true,
+      );
     });
   });
 
@@ -627,9 +666,9 @@ describe("preferencesSlice", () => {
           preferences: { defaultSlidesPerRow: 6 } as any,
         } as any),
       );
-      expect(
-        store.getState().preferences.preferences.defaultSlidesPerRow,
-      ).toBe(6);
+      expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
+        6,
+      );
     });
 
     it("replaces quickLinks when _id is QUICK_LINKS_POUCH_ID", () => {
@@ -658,7 +697,9 @@ describe("preferencesSlice", () => {
           },
         } as any),
       );
-      expect(store.getState().preferences.monitorSettings.showClock).toBe(false);
+      expect(store.getState().preferences.monitorSettings.showClock).toBe(
+        false,
+      );
       expect(store.getState().preferences.monitorSettings.timerId).toBe("t2");
     });
 
@@ -682,9 +723,9 @@ describe("preferencesSlice", () => {
       store.dispatch(
         updatePreferencesFromRemote({ _id: "unknown-doc" } as any),
       );
-      expect(
-        store.getState().preferences.preferences.defaultSlidesPerRow,
-      ).toBe(before);
+      expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
+        before,
+      );
     });
   });
 });

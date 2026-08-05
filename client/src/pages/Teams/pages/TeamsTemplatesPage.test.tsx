@@ -142,6 +142,31 @@ describe("nextTemplateCopyName", () => {
 });
 
 describe("TeamsTemplatesPage", () => {
+  it("shows a loading skeleton while templates are fetching", async () => {
+    let resolveList: ((value: {
+      success: true;
+      templates: ServicePlanTemplate[];
+    }) => void) | undefined;
+    mockListServicePlanTemplates.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+
+    renderPage();
+
+    expect(
+      screen.getByRole("status", { name: "Loading templates" }),
+    ).toBeInTheDocument();
+
+    resolveList?.({ success: true, templates: [template()] });
+    expect(await screen.findByText("Standard Sabbath")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", { name: "Loading templates" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("lists each template with its scope and size", async () => {
     renderPage();
 

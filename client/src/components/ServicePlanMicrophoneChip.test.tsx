@@ -41,4 +41,23 @@ describe("ServicePlanMicrophoneChip", () => {
     expect(chip).toHaveClass("bg-violet-950/40");
     expect(chip).toHaveClass("text-violet-100");
   });
+
+  it("adds right padding when a remove control is present", () => {
+    render(
+      <ServicePlanMicrophoneChip
+        microphone={{
+          id: "mic-gray",
+          name: "Gray",
+          type: "Headset",
+          color: "#9ca3af",
+        }}
+      >
+        <button type="button" aria-label="Remove Gray">
+          ×
+        </button>
+      </ServicePlanMicrophoneChip>,
+    );
+
+    expect(screen.getByLabelText("Gray")).toHaveClass("pr-2");
+  });
 });

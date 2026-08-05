@@ -5,6 +5,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import MonitorBoardView from "../components/DisplayWindow/MonitorBoardView";
 import { REFERENCE_HEIGHT } from "../constants";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
+import { useWakeLock } from "../hooks/useWakeLock";
 
 const Monitor = () => {
   const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
@@ -24,17 +25,7 @@ const Monitor = () => {
     state.timers.timers.find((timer) => timer.id === prevMonitorInfo.timerId)
   );
 
-  useEffect(() => {
-    const keepScreenOn = async () => {
-      try {
-        await navigator.wakeLock.request("screen");
-      } catch (err) {
-        console.error("Error acquiring wake lock:", err);
-      }
-    };
-
-    keepScreenOn();
-  }, []);
+  useWakeLock();
 
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {

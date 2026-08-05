@@ -12,15 +12,18 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
     name,
     hideQuickLinks,
     minimalHeader,
+    fillWidth,
   }: {
     name: string;
     hideQuickLinks?: boolean;
     minimalHeader?: boolean;
+    fillWidth?: boolean;
   }) => (
     <div
       data-testid={`presentation-${name.toLowerCase()}`}
       data-hide-quick-links={hideQuickLinks}
       data-minimal-header={minimalHeader}
+      data-fill-width={fillWidth}
     >
       {name}
     </div>
@@ -37,7 +40,7 @@ const createStore = () =>
           present: {
             preferences: preferencesSlice.getInitialState(),
           },
-        }
+        },
       ) => state,
     },
     preloadedState: {
@@ -60,11 +63,15 @@ describe("TransmitHandler", () => {
     render(
       <Provider store={store}>
         <TransmitHandler visibleScreens={["stream"]} />
-      </Provider>
+      </Provider>,
     );
     expect(screen.getByTestId("presentation-stream")).toBeInTheDocument();
-    expect(screen.queryByTestId("presentation-projector")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("presentation-monitor")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("presentation-projector"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("presentation-monitor"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders all three screens by default", () => {
@@ -72,7 +79,7 @@ describe("TransmitHandler", () => {
     render(
       <Provider store={store}>
         <TransmitHandler />
-      </Provider>
+      </Provider>,
     );
     expect(screen.getByTestId("presentation-stream")).toBeInTheDocument();
     expect(screen.getByTestId("presentation-projector")).toBeInTheDocument();
@@ -84,7 +91,7 @@ describe("TransmitHandler", () => {
     render(
       <Provider store={store}>
         <TransmitHandler readOnly />
-      </Provider>
+      </Provider>,
     );
 
     expect(screen.queryByText("Clear All")).not.toBeInTheDocument();
@@ -99,12 +106,26 @@ describe("TransmitHandler", () => {
     );
   });
 
+  it("uses a full-width stage when requested", () => {
+    const store = createStore();
+    render(
+      <Provider store={store}>
+        <TransmitHandler visibleScreens={["stream"]} fillWidth />
+      </Provider>,
+    );
+
+    expect(screen.getByTestId("presentation-stream")).toHaveAttribute(
+      "data-fill-width",
+      "true",
+    );
+  });
+
   it("hides overlay-only controls by default", () => {
     const store = createStore();
     render(
       <Provider store={store}>
         <TransmitHandler visibleScreens={["stream"]} />
-      </Provider>
+      </Provider>,
     );
 
     expect(screen.queryByText("Hide Content")).not.toBeInTheDocument();
@@ -121,12 +142,14 @@ describe("TransmitHandler", () => {
           showStreamOverlayOnlyToggle
           showClearStreamOverlaysButton
         />
-      </Provider>
+      </Provider>,
     );
 
     expect(screen.getByText("Clear All")).toBeInTheDocument();
     expect(screen.getByText("Live:")).toBeInTheDocument();
     expect(screen.getByText("Hide Content:")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Clear Overlays" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Clear Overlays" }),
+    ).toBeInTheDocument();
   });
 });

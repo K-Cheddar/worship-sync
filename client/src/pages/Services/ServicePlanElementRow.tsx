@@ -30,7 +30,7 @@ import Icon from "../../components/Icon/Icon";
 import { ServicePlanMicrophoneIcon } from "../../components/ServicePlanMicrophoneIcon";
 import ServicePlanAssigneeList, {
   addServicePlanAssignee,
-  addUnassignedMicrophone,
+  addMicrophoneSlot,
 } from "./ServicePlanAssigneeList";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -123,6 +123,8 @@ export type ServicePlanRoleNoteOption = {
   /** The concise role name shown under its team heading. */
   roleName?: string;
   label: string;
+  /** Lucide position icon key from the church positions catalog. */
+  icon?: string;
   teamId?: string;
   teamName?: string;
 };
@@ -1239,10 +1241,11 @@ const ServicePlanElementRow = ({
       onAddRoleNote={handleCreateRoleNote}
       onAddPerson={() => onUpdate({ assignees: addServicePlanAssignee(assignees) })}
       canAddPerson={canAddPerson}
-      // Item-level mics belong to nobody yet: a stand or spare. They land on
-      // the unassigned slot, where a name can be filled in later.
+      // Each microphone added here becomes its own slot at the end of the
+      // order, ready for a name. Grouping several onto one holder is done from
+      // that slot's own "+ Mic" control.
       onAddMicrophone={(microphoneId) => onUpdate({
-        assignees: addUnassignedMicrophone(assignees, microphoneId),
+        assignees: addMicrophoneSlot(assignees, microphoneId),
       })}
     />
   );

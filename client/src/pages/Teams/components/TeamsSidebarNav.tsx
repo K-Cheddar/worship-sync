@@ -112,8 +112,8 @@ const SectionLinkList = ({
  * Teams and Services share this one page/sidebar shell — scheduling always
  * happens for a specific service, so switching between "who's assigned" and
  * "what's happening" for it should be a click, not a different page. The
- * domain tabs at the top act as the "back" affordance: switching domains
- * swaps which subsection list is shown below.
+ * domain tabs at the top pick which subsection list is shown; only a section
+ * link navigates (and closes the mobile drawer via onNavigate).
  */
 const TeamsSidebarNav = ({
   onNavigate,
@@ -125,6 +125,14 @@ const TeamsSidebarNav = ({
   const activeDomain = getActiveDomain(location.pathname);
   const activeSections =
     activeDomain === "services" ? servicesNavSections : teamsNavSections;
+
+  const switchDomain = (domain: TeamsNavDomain) => {
+    const next = DOMAIN_TABS.find((tab) => tab.domain === domain);
+    if (!next || next.domain === activeDomain) return;
+    // Domain switch lands on that group's default section, but must not close
+    // the mobile Sections sheet — the operator still picks a destination link.
+    requestNavigation(next.defaultPath);
+  };
 
   if (collapsed) {
     return (
@@ -155,10 +163,7 @@ const TeamsSidebarNav = ({
                     ? "bg-cyan-500/15 text-white"
                     : "text-gray-300 hover:bg-gray-800 hover:text-white",
                 )}
-                onClick={() => {
-                  if (isActive) return;
-                  requestNavigation(tab.defaultPath, { onNavigated: onNavigate });
-                }}
+                onClick={() => switchDomain(tab.domain)}
               >
                 <Icon svg={tab.icon} size="sm" className="text-cyan-300" />
               </Button>
@@ -183,11 +188,7 @@ const TeamsSidebarNav = ({
     >
       <SectionTabs<TeamsNavDomain>
         value={activeDomain}
-        onValueChange={(domain) => {
-          const next = DOMAIN_TABS.find((tab) => tab.domain === domain);
-          if (!next) return;
-          requestNavigation(next.defaultPath, { onNavigated: onNavigate });
-        }}
+        onValueChange={switchDomain}
         className="flex min-h-0 flex-1 flex-col"
         tabBarClassName="shrink-0 overflow-visible rounded-xl bg-gray-950"
         tabsContentClassName="mt-3 min-h-0 flex-1 space-y-0 overflow-x-hidden overflow-y-auto p-px scrollbar-variable"

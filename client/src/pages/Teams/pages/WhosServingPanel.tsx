@@ -2,6 +2,11 @@ import { ChevronRight, Pencil, Users } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
 import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrophoneChip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/Popover";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
 import {
@@ -46,6 +51,56 @@ const rowMicrophones = (
       microphones.find((microphone) => microphone.id === microphoneId))
     .filter((microphone): microphone is ServicePlanMicrophone =>
       Boolean(microphone));
+
+/**
+ * Dense sidebar names truncate; click opens a compact popover with the full
+ * role, name, and any mic chips so operators can read them on touch too.
+ */
+const ServingMemberName = ({
+  memberName,
+  slotLabel,
+  heldMicrophones,
+}: {
+  memberName: string;
+  slotLabel: string;
+  heldMicrophones: ServicePlanMicrophone[];
+}) => (
+  <Popover>
+    <PopoverTrigger asChild>
+      <Button
+        type="button"
+        variant="tertiary"
+        title={memberName}
+        aria-label={`Details for ${memberName}`}
+        padding="p-0"
+        className="max-w-[45%] min-w-0 shrink-0 justify-start overflow-hidden text-xs font-medium text-gray-100 max-md:min-h-0 h-auto hover:bg-transparent"
+      >
+        {/* Truncate on an inner span: the Button is flex, so ellipsis on the
+            button itself would clip the start when content is end-aligned. */}
+        <span className="block min-w-0 truncate text-left">{memberName}</span>
+      </Button>
+    </PopoverTrigger>
+    <PopoverContent
+      align="end"
+      className="w-[min(18rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
+    >
+      <div className="space-y-2 text-left">
+        <p className="text-xs text-gray-400">{slotLabel}</p>
+        <p className="text-sm font-medium wrap-break-word">{memberName}</p>
+        {heldMicrophones.length ? (
+          <span className="flex flex-wrap items-center gap-1">
+            {heldMicrophones.map((microphone) => (
+              <ServicePlanMicrophoneChip
+                key={microphone.id}
+                microphone={microphone}
+              />
+            ))}
+          </span>
+        ) : null}
+      </div>
+    </PopoverContent>
+  </Popover>
+);
 
 /**
  * Read-only roster summary for the selected plan date: which team, which
@@ -161,6 +216,7 @@ const WhosServingPanel = ({
               <ul className="space-y-1.5">
                 {team.filled.map((row) => {
                   const heldMicrophones = rowMicrophones(row, microphones);
+                  const memberName = row.memberName?.trim() || "Unassigned";
                   return (
                     <li
                       key={`${scheduleId}-${row.columnKey}`}
@@ -183,9 +239,11 @@ const WhosServingPanel = ({
                           </span>
                         ) : null}
                       </span>
-                      <span className="max-w-[45%] shrink-0 truncate text-xs font-medium text-gray-100">
-                        {row.memberName}
-                      </span>
+                      <ServingMemberName
+                        memberName={memberName}
+                        slotLabel={row.slotLabel}
+                        heldMicrophones={heldMicrophones}
+                      />
                     </li>
                   );
                 })}

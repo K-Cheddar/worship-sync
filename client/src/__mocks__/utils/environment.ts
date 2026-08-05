@@ -13,6 +13,9 @@ const shareablePrefixFromHttpApiBase = (apiBase: string): string => {
 export const isElectron = jest.fn(() => false);
 export const isPackagedElectronRenderer = jest.fn(() => false);
 export const reloadElectronDisplayWindows = jest.fn();
+export const isWindowsBrowser = jest.fn(() => false);
+export const isMacBrowser = jest.fn(() => false);
+export const isLinuxBrowser = jest.fn(() => false);
 export const getApiBasePath = jest.fn(() => "/");
 export const getIsDev = jest.fn(() => Promise.resolve(false));
 export const getPlatform = jest.fn(() => Promise.resolve(null));

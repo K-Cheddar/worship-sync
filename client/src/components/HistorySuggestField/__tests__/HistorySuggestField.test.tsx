@@ -225,6 +225,21 @@ describe("HistorySuggestField", () => {
       expect(screen.getByText("Bob")).toBeInTheDocument();
     });
 
+    it("keeps clear-button padding when inputClassName sets horizontal padding", () => {
+      render(
+        <HistorySuggestField
+          label="Name"
+          value="Alice"
+          onChange={jest.fn()}
+          historyValues={historyValues}
+          multiline={false}
+          inputClassName="h-7 px-1 py-0.5"
+        />,
+      );
+      expect(screen.getByRole("textbox", { name: /Name/i })).toHaveClass("pr-10");
+      expect(screen.getByRole("button", { name: /clear/i })).toBeInTheDocument();
+    });
+
     it("does not render a clear button when the field is empty", () => {
       const Wrapper = () => {
         const [value, setValue] = useState("");

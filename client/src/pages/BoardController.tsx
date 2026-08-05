@@ -7,6 +7,7 @@ import {
   LayoutList,
   LoaderCircle,
   Menu as MenuIcon,
+  MessagesSquare,
   SlidersHorizontal,
   Sparkles,
   StarOff,
@@ -1190,110 +1191,123 @@ export const BoardControllerContent = () => {
         </Sheet>
       )}
 
-      <header className="flex shrink-0 flex-nowrap items-center gap-3 border-b-2 border-gray-500 bg-gray-800 px-4 py-3">
-        <BoardControllerMenu
-          canOpenBoard={Boolean(selectedAliasId)}
-          prepareBoardDisplay={() => {
-            if (selectedAliasId) {
-              setStoredBoardDisplayAliasId(selectedAliasId);
-            }
-          }}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-nowrap items-center justify-between gap-3">
-            {selectedAlias ? (
-              <div className="min-w-0 flex-1">
-                <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">
-                  {selectedAlias.title}
-                </h1>
-                <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <p className="truncate text-sm text-gray-300">
-                    Current session: {getBoardLabel(currentBoard)}
-                  </p>
-                  <div
-                    className="rounded-md border border-gray-500 px-2 py-0.5 text-xs text-gray-200"
-                    aria-live="polite"
-                  >
-                    {posts.length} total · {visibleCount} visible ·{" "}
-                    {highlightedPresentationCount} highlighted
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="min-w-0 flex-1" aria-hidden />
-            )}
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              {isMobileStack && selectedAlias ? (
-                <>
-                  <Button
-                    variant="tertiary"
-                    svg={LayoutList}
-                    gap="gap-1.5"
-                    className="hidden sm:flex"
-                    onClick={() => setManageBoardsOpen(true)}
-                  >
-                    Manage boards
-                  </Button>
-                  <Button
-                    variant="tertiary"
-                    svg={SlidersHorizontal}
-                    gap="gap-1.5"
-                    className="hidden sm:flex"
-                    onClick={() => setBoardToolsOpen(true)}
-                  >
-                    Board tools
-                  </Button>
-                  <Menu
-                    align="end"
-                    menuItems={[
-                      {
-                        element: (
-                          <div className="flex items-center gap-2 max-md:min-h-12">
-                            <Icon svg={LayoutList} color="#d1d5dc" />
-                            Manage boards
-                          </div>
-                        ),
-                        onClick: () => setManageBoardsOpen(true),
-                      },
-                      {
-                        element: (
-                          <div className="flex items-center gap-2 max-md:min-h-12">
-                            <Icon svg={SlidersHorizontal} color="#d1d5dc" />
-                            Board tools
-                          </div>
-                        ),
-                        onClick: () => setBoardToolsOpen(true),
-                      },
-                    ]}
-                    TriggeringButton={
-                      <Button
-                        variant="tertiary"
-                        svg={MenuIcon}
-                        gap="gap-1.5"
-                        className="sm:hidden"
-                        aria-label="Board tools and management"
-                      >
-                        Tools
-                      </Button>
-                    }
-                  />
-                </>
-              ) : null}
-              {isMobileStack && !selectedAlias ? (
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b-2 border-gray-500 bg-gray-800 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <BoardControllerMenu
+            canOpenBoard={Boolean(selectedAliasId)}
+            prepareBoardDisplay={() => {
+              if (selectedAliasId) {
+                setStoredBoardDisplayAliasId(selectedAliasId);
+              }
+            }}
+          />
+          <h1 className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-tight sm:text-lg">
+            <Icon
+              svg={MessagesSquare}
+              size="md"
+              className="shrink-0 text-sky-400"
+            />
+            <span className="truncate">Discussion Board</span>
+          </h1>
+        </div>
+        <UserSection />
+      </header>
+
+      {(isMobileStack || selectedAlias) && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-500 bg-gray-950/70 px-3 py-2">
+          {isMobileStack ? (
+            selectedAlias ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button
-                  variant="tertiary"
+                  variant="secondary"
                   svg={LayoutList}
                   gap="gap-1.5"
+                  iconSize="sm"
+                  className="hidden sm:flex max-md:min-h-0"
                   onClick={() => setManageBoardsOpen(true)}
                 >
                   Manage boards
                 </Button>
-              ) : null}
-              <UserSection />
+                <Button
+                  variant="secondary"
+                  svg={SlidersHorizontal}
+                  gap="gap-1.5"
+                  iconSize="sm"
+                  className="hidden sm:flex max-md:min-h-0"
+                  onClick={() => setBoardToolsOpen(true)}
+                >
+                  Board tools
+                </Button>
+                <Menu
+                  align="start"
+                  menuItems={[
+                    {
+                      element: (
+                        <div className="flex items-center gap-2 max-md:min-h-12">
+                          <Icon svg={LayoutList} color="#d1d5dc" />
+                          Manage boards
+                        </div>
+                      ),
+                      onClick: () => setManageBoardsOpen(true),
+                    },
+                    {
+                      element: (
+                        <div className="flex items-center gap-2 max-md:min-h-12">
+                          <Icon svg={SlidersHorizontal} color="#d1d5dc" />
+                          Board tools
+                        </div>
+                      ),
+                      onClick: () => setBoardToolsOpen(true),
+                    },
+                  ]}
+                  TriggeringButton={
+                    <Button
+                      variant="secondary"
+                      svg={MenuIcon}
+                      gap="gap-1.5"
+                      iconSize="sm"
+                      className="sm:hidden max-md:min-h-0"
+                      aria-label="Board tools and management"
+                    >
+                      Tools
+                    </Button>
+                  }
+                />
+              </div>
+            ) : (
+              <Button
+                variant="secondary"
+                svg={LayoutList}
+                gap="gap-1.5"
+                iconSize="sm"
+                className="max-md:min-h-0"
+                onClick={() => setManageBoardsOpen(true)}
+              >
+                Manage boards
+              </Button>
+            )
+          ) : null}
+          {selectedAlias ? (
+            <div className="min-w-0 flex-1">
+              <h2 className="min-w-0 truncate text-sm font-semibold text-gray-100 sm:text-base">
+                {selectedAlias.title}
+              </h2>
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <p className="truncate text-xs text-gray-300 sm:text-sm">
+                  Current session: {getBoardLabel(currentBoard)}
+                </p>
+                <div
+                  className="rounded-md border border-gray-500 px-2 py-0.5 text-xs text-gray-200"
+                  aria-live="polite"
+                >
+                  {posts.length} total · {visibleCount} visible ·{" "}
+                  {highlightedPresentationCount} highlighted
+                </div>
+              </div>
             </div>
-          </div>
+          ) : null}
         </div>
-      </header>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
         {/* Left aside — xl+ only */}

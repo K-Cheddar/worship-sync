@@ -36,12 +36,8 @@ import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
-import {
-  isElectron,
-  isLinuxBrowser,
-  isMacBrowser,
-  isWindowsBrowser,
-} from "../utils/environment";
+import { isElectron } from "../utils/environment";
+import { getAppOs, isIosBrowser, isMobileBrowser } from "../utils/platform";
 import {
   fetchLatestLinuxInstallerUrl,
   fetchLatestMacInstallerUrl,
@@ -240,16 +236,6 @@ const getDesktopDownloadHelpTitle = (os: DesktopOs) => {
   return "Download for Linux";
 };
 
-const isMobileBrowser = (): boolean => {
-  if (typeof navigator === "undefined") return false;
-  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
-};
-
-const isIosBrowser = (): boolean => {
-  if (typeof navigator === "undefined") return false;
-  return /iphone|ipad|ipod/i.test(navigator.userAgent);
-};
-
 const DesktopDownloadHelp = ({
   os,
   onTryAgain,
@@ -347,9 +333,11 @@ const Welcome = () => {
   const isWeb = !isElectron();
   const desktopOs = useMemo((): DesktopOs | null => {
     if (!isWeb) return null;
-    if (isWindowsBrowser()) return "windows";
-    if (isMacBrowser()) return "mac";
-    if (isLinuxBrowser()) return "linux";
+    // `getAppOs` resolves ios/android first, so an iPad — which reports a
+    // desktop "Macintosh" user agent — no longer falls through to "mac" and
+    // gets offered a Mac installer it cannot run.
+    const os = getAppOs();
+    if (os === "windows" || os === "mac" || os === "linux") return os;
     return null;
   }, [isWeb]);
 

@@ -59,6 +59,11 @@ const microphones = [
   { id: "mic-orange", name: "Orange", type: "Handheld", color: "#f97316" },
 ];
 
+const multiSlotMicrophones = [
+  ...microphones,
+  { id: "mic-blue", name: "Blue", type: "Lapel", color: "#3b82f6" },
+];
+
 const services: TeamService[] = [
   {
     id: "service-1",
@@ -304,12 +309,15 @@ describe("ServicePlanTemplateEditor", () => {
       await screen.findByRole("menuitem", { name: /Orange · Handheld/i }),
     );
 
-    // A template has no people, so an item-level microphone lands on the
-    // unassigned slot — a stand mic waiting for whoever picks it up.
+    // A template has no people: its rows are the ordered microphone plan that
+    // a dated plan hands out, so they read as slots rather than as gaps.
     expect(
       await screen.findByRole("button", {
-        name: /Remove Orange from Unassigned/i,
+        name: /Remove Orange from Slot 1/i,
       }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /Microphone plan for Opening prayer/i }),
     ).toBeInTheDocument();
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
       timeout: 2_500,
@@ -318,6 +326,49 @@ describe("ServicePlanTemplateEditor", () => {
     const [assignee] = payload?.sections[0].elements[0].assignees ?? [];
     expect(assignee.microphoneIds).toEqual(["mic-orange"]);
     expect(assignee.name).toBeUndefined();
+  });
+
+  it("adds each template microphone as its own ordered slot", async () => {
+    const user = userEvent.setup();
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: multiSlotMicrophones,
+      audiences: [],
+    });
+    renderEditor();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    await user.click(
+      screen.getByRole("button", { name: "Add to Opening prayer" }),
+    );
+    let menu = await screen.findByRole("menu");
+    await user.hover(within(menu).getByRole("menuitem", { name: /Microphone/i }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Orange \u00b7 Handheld/i }),
+    );
+
+    // Selecting a microphone keeps this submenu open, so the next available
+    // microphone can become the next slot without reopening the whole menu.
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Blue \u00b7 Lapel/i }),
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: /Remove Orange from Slot 1/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Remove Blue from Slot 2/i }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    const [, payload] = mockSaveServicePlanTemplate.mock.calls.at(-1) ?? [];
+    expect(payload?.sections[0].elements[0].assignees).toEqual([
+      expect.objectContaining({ microphoneIds: ["mic-orange"] }),
+      expect.objectContaining({ microphoneIds: ["mic-blue"] }),
+    ]);
   });
 
   it("autosaves the edited name, scope and sections against the same template", async () => {

@@ -167,17 +167,19 @@ const Toast: React.FC<ToastProps> = ({
       ? { top: `${16 + stackOffsetPx}px` }
       : { bottom: `${16 + stackOffsetPx}px` };
 
+  const showProgress = !persist && duration > 0;
+
   return (
     <div
       role="status"
       className={cn(
-        "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900",
+        "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
         config.textColor,
         positionStyles[position],
         isVisible && !isExiting && "opacity-100 translate-y-0",
         !isVisible && !isExiting && "opacity-0 -translate-y-2",
         isExiting && "opacity-0 -translate-y-2",
-        "transition duration-200 ease-in-out"
+        "transition-[opacity,transform] duration-200 ease-in-out"
       )}
       style={{
         borderColor: config.borderColor,
@@ -221,6 +223,22 @@ const Toast: React.FC<ToastProps> = ({
           />
         )}
       </div>
+      {showProgress && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5"
+        >
+          <div
+            data-testid="toast-progress"
+            className="h-full w-full origin-left opacity-70"
+            style={{
+              backgroundColor: config.borderColor,
+              animation: `toast-dismiss-progress ${duration}ms linear forwards`,
+              animationPlayState: isPaused || isExiting ? "paused" : "running",
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };

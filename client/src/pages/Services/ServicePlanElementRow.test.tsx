@@ -1032,3 +1032,130 @@ describe("assignees and their microphones", () => {
     expect(onUpdate).toHaveBeenCalledWith({ assignees: [] }, undefined);
   });
 });
+
+// A template's microphone plan arrives as ordered slots with nobody on them.
+// Claiming one is just typing a name into it, so the plan hands microphones
+// out in order without anything having to redistribute them.
+describe("microphone slots from a template", () => {
+  const orange: ServicePlanMicrophone = {
+    id: "mic-orange",
+    name: "Orange",
+    type: "Handheld",
+    color: "#f97316",
+  };
+  const choirMics: ServicePlanMicrophone[] = [
+    { id: "choir-l", name: "Choir L", type: "Choir", color: "#a78bfa" },
+    { id: "choir-r", name: "Choir R", type: "Choir", color: "#a78bfa" },
+    { id: "choir-c", name: "Choir C", type: "Choir", color: "#a78bfa" },
+  ];
+
+  it("does not offer another person while a microphone slot is unclaimed", () => {
+    renderRow({
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "slot-1", microphoneIds: ["mic-orange"] }],
+      },
+    });
+
+    // The empty slot is the invitation — a rival blank row would leave the
+    // microphone stranded behind it.
+    expect(
+      screen.queryByRole("button", { name: /Add (a|another) person/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers another person once every slot is claimed", () => {
+    renderRow({
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "slot-1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+        ],
+      },
+    });
+
+    expect(
+      screen.getByRole("button", { name: /Add another person/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hands a whole slot to one group, so a choir gets all three", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      microphones: choirMics,
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "slot-1", microphoneIds: ["choir-l", "choir-r", "choir-c"] },
+        ],
+      },
+    });
+
+    await user.type(screen.getByRole("textbox", { name: /Assigned to/i }), "Chorale");
+
+    const [changes] = onUpdate.mock.calls.at(-1) ?? [];
+    expect(changes.assignees[0].microphoneIds).toEqual([
+      "choir-l",
+      "choir-r",
+      "choir-c",
+    ]);
+  });
+
+  it("returns a removed person's microphones to the item instead of deleting them", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      microphones: [orange],
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "a1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+        ],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Remove Pastor John .*keeping their microphones/i }),
+    );
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      { assignees: [{ id: "a1", microphoneIds: ["mic-orange"] }] },
+      undefined,
+    );
+  });
+
+  it("flags a person with no microphone only when the item has a plan", () => {
+    const { unmount } = renderRow({
+      canEdit: false,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "a1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+          { id: "a2", name: "Sarah Lee" },
+        ],
+      },
+    });
+
+    expect(screen.getByText("No mic")).toBeInTheDocument();
+    unmount();
+
+    // An item with no microphones at all says nothing — most people never
+    // need one.
+    renderRow({
+      canEdit: false,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Sarah Lee" }],
+      },
+    });
+
+    expect(screen.queryByText("No mic")).not.toBeInTheDocument();
+  });
+});

@@ -80,6 +80,7 @@ export const collectServicePlanRoleNoteOptions = (
         positionId: position.positionId,
         roleName: position.name,
         label: position.name,
+        ...(position.icon ? { icon: position.icon } : {}),
         teamId: position.teamId,
         teamName,
       });

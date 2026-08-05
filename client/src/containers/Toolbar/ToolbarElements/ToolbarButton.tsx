@@ -9,6 +9,7 @@ export type ToolbarButtonProps = {
   onClick?: () => void;
   disabled?: boolean;
   hidden?: boolean;
+  className?: string;
   isActive?: boolean;
   children: React.ReactNode;
   "aria-label"?: string;
@@ -19,9 +20,9 @@ export const toolbarTabClassName = (isActive: boolean, hidden: boolean) =>
   cn(
     "text-xs rounded-none transition-colors duration-150",
     isActive &&
-    "border-2 border-transparent border-b-cyan-500 bg-gray-950 text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
+      "border-2 border-transparent border-b-cyan-500 bg-gray-950 text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
     !isActive && "bg-black/25 hover:border-gray-600/90 hover:bg-gray-600/50",
-    hidden && "hidden"
+    hidden && "hidden",
   );
 
 const ToolbarButton = React.forwardRef<
@@ -34,6 +35,7 @@ const ToolbarButton = React.forwardRef<
     onClick,
     disabled = false,
     hidden = false,
+    className,
     isActive = false,
     children,
     "aria-label": ariaLabel,
@@ -42,7 +44,7 @@ const ToolbarButton = React.forwardRef<
 ) {
   const variant = isActive ? "none" : "tertiary";
   const color = isActive ? "#ffffff" : undefined;
-  const className = toolbarTabClassName(isActive, hidden);
+  const buttonClassName = cn(toolbarTabClassName(isActive, hidden), className);
 
   if (to) {
     return (
@@ -54,7 +56,7 @@ const ToolbarButton = React.forwardRef<
         component="link"
         to={to}
         disabled={disabled}
-        className={className}
+        className={buttonClassName}
         aria-label={ariaLabel}
       >
         {children}
@@ -70,7 +72,7 @@ const ToolbarButton = React.forwardRef<
       color={color}
       onClick={onClick}
       disabled={disabled}
-      className={className}
+      className={buttonClassName}
       aria-label={ariaLabel}
     >
       {children}

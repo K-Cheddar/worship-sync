@@ -1,26 +1,13 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import BoardPresentationScreen from "../boards/BoardPresentationScreen";
 import { useStoredBoardDisplayAlias } from "../boards/useStoredBoardDisplayAlias";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
+import { useWakeLock } from "../hooks/useWakeLock";
 
 const BoardDisplay = () => {
   const aliasId = useStoredBoardDisplayAlias();
 
-  useEffect(() => {
-    const keepScreenOn = async () => {
-      if (!navigator.wakeLock?.request) {
-        return;
-      }
-
-      try {
-        await navigator.wakeLock.request("screen");
-      } catch (err) {
-        console.error("Error acquiring wake lock:", err);
-      }
-    };
-
-    void keepScreenOn();
-  }, []);
+  useWakeLock();
 
   const closeWindow = useCallback(async () => {
     if (window.electronAPI) {

@@ -314,9 +314,139 @@ export const TeamsServicesPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+const TeamsTemplateCardSkeleton = () => (
+  <div className="flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="min-w-0 flex-1 space-y-2">
+      <div className={cn(skeletonBar, "h-4 w-40")} />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <div className={cn(skeletonBar, "h-5 w-28")} />
+        <div className={cn(skeletonBar, "h-5 w-36")} />
+      </div>
+    </div>
+    <div className={cn(skeletonBar, "h-8 w-8 shrink-0 self-start")} />
+  </div>
+);
+
+/** Template list cards while the church's templates are fetching. */
+export const TeamsTemplatesListSkeleton = ({
+  count = 3,
+}: {
+  count?: number;
+}) => (
+  <div
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    aria-label="Loading templates"
+    className="space-y-2"
+  >
+    {Array.from({ length: count }, (_, index) => (
+      <TeamsTemplateCardSkeleton key={index} />
+    ))}
+  </div>
+);
+
 export const TeamsTemplatesPageSkeleton = () => (
   <SkeletonStatus label="Loading templates">
-    <SkeletonManagerPanel withSearch rowCount={3} />
+    <section
+      className={cn(
+        panelShellClassName,
+        "flex flex-col",
+        teamsPanelMaxHeightClassName,
+      )}
+    >
+      <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
+        <SkeletonPanelHeader />
+        <SkeletonDescription />
+      </div>
+      <div
+        className={cn(
+          "scrollbar-variable mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto",
+          panelScrollPaddingClassName,
+        )}
+      >
+        <div className={cn(skeletonBar, "h-10 w-full max-w-sm")} />
+        {Array.from({ length: 3 }, (_, index) => (
+          <TeamsTemplateCardSkeleton key={index} />
+        ))}
+      </div>
+    </section>
+  </SkeletonStatus>
+);
+
+const TeamsMicrophoneRowSkeleton = () => (
+  <div className="flex items-center gap-2.5 rounded-md border border-gray-800 bg-gray-900/60 px-2.5 py-2">
+    <div className={cn(skeletonBar, "size-7 shrink-0")} />
+    <div className="min-w-0 flex-1 space-y-1.5">
+      <div className={cn(skeletonBar, "h-4 w-32")} />
+      <div className={cn(skeletonBar, "h-3 w-20")} />
+    </div>
+  </div>
+);
+
+const TeamsMicrophonesManagerSkeletonBody = ({
+  count = 4,
+}: {
+  count?: number;
+}) => (
+  <>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className={cn(lineTabsListShellClassName, "shrink-0")}>
+        <div className={cn(skeletonBar, "h-9 flex-1 rounded-none")} />
+        <div className={cn(skeletonBar, "h-9 flex-1 rounded-none")} />
+      </div>
+      <div className="mt-3 min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+        {Array.from({ length: count }, (_, index) => (
+          <TeamsMicrophoneRowSkeleton key={index} />
+        ))}
+      </div>
+    </div>
+    <div className="flex shrink-0 items-center border-t border-gray-800 pt-3">
+      <div className={cn(skeletonBar, "ml-auto h-9 w-36")} />
+    </div>
+  </>
+);
+
+/** Microphone manager body while the church's mic list is fetching. */
+export const TeamsMicrophonesListSkeleton = ({
+  count = 4,
+}: {
+  count?: number;
+}) => (
+  <div
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    aria-label="Loading microphones"
+    className="flex min-h-0 flex-1 flex-col gap-3"
+  >
+    <TeamsMicrophonesManagerSkeletonBody count={count} />
+  </div>
+);
+
+export const TeamsMicrophonesPageSkeleton = () => (
+  <SkeletonStatus label="Loading microphones">
+    <section
+      className={cn(
+        panelShellClassName,
+        "flex flex-col",
+        teamsPanelMaxHeightClassName,
+      )}
+    >
+      <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
+        <div className={cn(skeletonBar, "h-6 w-36")} />
+      </div>
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          panelScrollPaddingClassName,
+        )}
+      >
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <TeamsMicrophonesManagerSkeletonBody />
+        </div>
+      </div>
+    </section>
   </SkeletonStatus>
 );
 
@@ -376,7 +506,7 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
     case "templates":
       return <TeamsTemplatesPageSkeleton />;
     case "microphones":
-      return <TeamsTemplatesPageSkeleton />;
+      return <TeamsMicrophonesPageSkeleton />;
     case "forms":
       return <TeamsFormsPageSkeleton />;
     default:

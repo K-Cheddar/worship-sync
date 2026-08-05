@@ -3,7 +3,6 @@ import { Copy, LayoutTemplate, Plus } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
 import Input from "../../../components/Input/Input";
-import Spinner from "../../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -23,6 +22,7 @@ import {
   useTeamsLiveSync,
 } from "../hooks/useTeamsLiveSync";
 import { useTeamsPage } from "../TeamsPageContext";
+import { TeamsTemplatesListSkeleton } from "../teamsPageSkeletons";
 import {
   panelHeaderPaddingClassName,
   panelScrollPaddingClassName,
@@ -252,11 +252,7 @@ const TeamsTemplatesPage = () => {
             />
           ) : null}
 
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-gray-300">
-              <Spinner /> Loading templates…
-            </div>
-          ) : null}
+          {loading ? <TeamsTemplatesListSkeleton /> : null}
 
           {!loading && templates.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-700 bg-black/20 px-4 py-8 text-center">

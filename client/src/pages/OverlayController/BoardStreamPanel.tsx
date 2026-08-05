@@ -1,4 +1,12 @@
-import { memo, useCallback, useContext, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Airplay, ChevronDown } from "lucide-react";
 import Button from "../../components/Button/Button";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
@@ -23,6 +31,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
+import { createPortal } from "react-dom";
+
+type BoardStreamPanelProps = {
+  /** Combined controller mode moves the selected post controls into a shared detail column. */
+  detailTarget?: HTMLDivElement | null;
+  isDetailActive?: boolean;
+  onDetailRequested?: () => void;
+};
 
 type HighlightedPostItem = {
   id: string;
@@ -53,7 +69,10 @@ function nearestBoardFontPreset(displayVal: number): number {
   let bestDist = Infinity;
   for (const p of BOARD_FONT_SIZE_PRESETS) {
     const d = Math.abs(p - displayVal);
-    if (d < bestDist) { bestDist = d; best = p; }
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
   }
   return best;
 }
@@ -96,7 +115,10 @@ const BoardStreamFontSizeField = memo(function BoardStreamFontSizeField({
         onChange(
           Math.min(
             MAX_FONT_SIZE_DISPLAY,
-            Math.max(MIN_FONT_SIZE_DISPLAY, Number(val) || DEFAULT_FONT_SIZE_DISPLAY),
+            Math.max(
+              MIN_FONT_SIZE_DISPLAY,
+              Number(val) || DEFAULT_FONT_SIZE_DISPLAY,
+            ),
           ),
         )
       }
@@ -153,7 +175,11 @@ const BoardStreamFontSizeField = memo(function BoardStreamFontSizeField({
   );
 });
 
-const BoardStreamPanel = () => {
+const BoardStreamPanel = ({
+  detailTarget,
+  isDetailActive = true,
+  onDetailRequested,
+}: BoardStreamPanelProps) => {
   const dispatch = useDispatch();
   const isStreamTransmitting = useSelector(
     (state) => state.presentation.isStreamTransmitting,
@@ -181,7 +207,9 @@ const BoardStreamPanel = () => {
   });
 
   const highlightedItems = useMemo((): HighlightedPostItem[] => {
-    const boardItems: HighlightedPostItem[] = filterHighlightedBoardPosts(posts).map((post) => ({
+    const boardItems: HighlightedPostItem[] = filterHighlightedBoardPosts(
+      posts,
+    ).map((post) => ({
       id: post._id,
       author: post.author,
       authorId: post.authorId,
@@ -190,7 +218,9 @@ const BoardStreamPanel = () => {
       timestamp: post.timestamp,
     }));
     const restreamItems: HighlightedPostItem[] = restreamMessages
-      .filter((m) => m.isHighlighted && !m.hidden && m.kind === "viewer_message")
+      .filter(
+        (m) => m.isHighlighted && !m.hidden && m.kind === "viewer_message",
+      )
       .map((m) => ({
         id: m.id,
         author: m.author,
@@ -204,7 +234,9 @@ const BoardStreamPanel = () => {
     });
   }, [posts, restreamMessages]);
 
-  const [selectedPost, setSelectedPost] = useState<HighlightedPostItem | null>(null);
+  const [selectedPost, setSelectedPost] = useState<HighlightedPostItem | null>(
+    null,
+  );
   const [backgroundColor, setBackgroundColor] = useState(DEFAULT_BG_COLOR);
   const [fontSize, setFontSize] = useState<number>(DEFAULT_FONT_SIZE);
   const [duration, setDuration] = useState<number>(DEFAULT_DURATION);
@@ -213,17 +245,18 @@ const BoardStreamPanel = () => {
   const previewInfo =
     selectedPost != null
       ? {
-        author: selectedPost.author,
-        authorHexColor: getBoardAuthorNameHexColor(selectedPost),
-        text: selectedPost.text,
-        backgroundColor,
-        fontSize,
-        duration,
-      }
+          author: selectedPost.author,
+          authorHexColor: getBoardAuthorNameHexColor(selectedPost),
+          text: selectedPost.text,
+          backgroundColor,
+          fontSize,
+          duration,
+        }
       : undefined;
 
   const handleSend = (item: HighlightedPostItem) => {
     setSelectedPost(item);
+    onDetailRequested?.();
     dispatch(
       updateBoardPostStreamInfo({
         author: item.author,
@@ -234,6 +267,11 @@ const BoardStreamPanel = () => {
         duration,
       }),
     );
+  };
+
+  const selectPost = (item: HighlightedPostItem) => {
+    setSelectedPost(item);
+    onDetailRequested?.();
   };
 
   const renderList = () => {
@@ -270,7 +308,7 @@ const BoardStreamPanel = () => {
     }
 
     return (
-      <div className="flex flex-col gap-1 overflow-y-auto p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
         {highlightedItems.map((item) => {
           const isSelected = selectedPost?.id === item.id;
           return (
@@ -289,7 +327,7 @@ const BoardStreamPanel = () => {
                 className="flex-col flex-1 h-full leading-4 items-start font-normal"
                 padding="px-2 py-1.5"
                 gap="gap-1"
-                onClick={() => setSelectedPost(item)}
+                onClick={() => selectPost(item)}
               >
                 <div className="flex items-center gap-1.5">
                   <p
@@ -333,73 +371,160 @@ const BoardStreamPanel = () => {
     );
   };
 
+  const postDetail = (
+    <div
+      className={cn(
+        "scrollbar-variable flex flex-col",
+        detailTarget
+          ? "h-full overflow-y-auto"
+          : "shrink-0 lg:w-[50%] lg:min-w-[260px] lg:order-last lg:overflow-y-auto max-lg:border-b max-lg:border-gray-600",
+      )}
+    >
+      <Button
+        className="lg:hidden justify-center text-sm m-2"
+        variant="tertiary"
+        onClick={() => setShowPreview(!showPreview)}
+      >
+        {showPreview ? "Hide" : "Show"} Preview
+      </Button>
+      <div className={cn("lg:block", !showPreview && "max-lg:hidden")}>
+        <div className="relative flex bg-black/40 px-3 py-1.5">
+          <h2 className="flex-1 text-center text-base font-semibold text-white">
+            Preview
+          </h2>
+        </div>
+        <div className="bg-gray-500/35">
+          <DisplayWindow
+            showBorder
+            displayType="stream"
+            className="w-full"
+            boardPostStreamInfo={previewInfo}
+          />
+        </div>
+      </div>
+      <section
+        className="scrollbar-variable m-3 flex w-full min-w-0 flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-transparent p-4"
+        style={{ width: "calc(100% - 1.5rem)" }}
+      >
+        <ColorField
+          label="Background"
+          value={backgroundColor}
+          onChange={setBackgroundColor}
+          debounceParentCommitMs={80}
+        />
+        <BoardStreamFontSizeField
+          value={Math.round(fontSize * 10)}
+          presetHighlight={nearestBoardFontPreset(Math.round(fontSize * 10))}
+          fieldClass={FIELD_CLASS}
+          labelClass={LABEL_CLASS}
+          onChange={(displayVal) => setFontSize(displayVal / 10)}
+        />
+        <Input
+          label="Duration (s)"
+          value={duration}
+          type="number"
+          min={5}
+          max={60}
+          step={1}
+          onChange={(val) =>
+            setDuration(
+              Math.min(60, Math.max(5, Number(val) || DEFAULT_DURATION)),
+            )
+          }
+          className={FIELD_CLASS}
+          labelClassName={LABEL_CLASS}
+          labelLayout="inline"
+          inputClassName="flex-1"
+        />
+      </section>
+    </div>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 overflow-hidden max-lg:flex-col">
         {/* Settings + preview — first in DOM so it's at top on mobile; lg:order-last keeps it on the right on desktop */}
-        <div className="scrollbar-variable flex shrink-0 flex-col lg:w-[50%] lg:min-w-[260px] lg:order-last lg:overflow-y-auto max-lg:border-b max-lg:border-gray-600">
-          {/* Show/Hide Preview — mobile only */}
-          <Button
-            className="lg:hidden justify-center text-sm m-2"
-            variant="tertiary"
-            onClick={() => setShowPreview(!showPreview)}
+        {!detailTarget && (
+          <div
+            className={cn(
+              "scrollbar-variable flex shrink-0 flex-col lg:w-[50%] lg:min-w-[260px] lg:order-last lg:overflow-y-auto max-lg:border-b max-lg:border-gray-600",
+              detailTarget && "hidden",
+            )}
           >
-            {showPreview ? "Hide" : "Show"} Preview
-          </Button>
+            {/* Show/Hide Preview — mobile only */}
+            <Button
+              className="lg:hidden justify-center text-sm m-2"
+              variant="tertiary"
+              onClick={() => setShowPreview(!showPreview)}
+            >
+              {showPreview ? "Hide" : "Show"} Preview
+            </Button>
 
-          {/* Preview — always visible on desktop, toggled on mobile */}
-          <div className={cn("lg:block", !showPreview && "max-lg:hidden")}>
-            <div className="relative flex bg-black/40 px-3 py-1.5">
-              <h2 className="flex-1 text-center text-base font-semibold text-white">
-                Preview
-              </h2>
+            {/* Preview — always visible on desktop, toggled on mobile */}
+            <div className={cn("lg:block", !showPreview && "max-lg:hidden")}>
+              <div className="relative flex bg-black/40 px-3 py-1.5">
+                <h2 className="flex-1 text-center text-base font-semibold text-white">
+                  Preview
+                </h2>
+              </div>
+              <div className="bg-gray-500/35">
+                <DisplayWindow
+                  showBorder
+                  displayType="stream"
+                  className="w-full"
+                  boardPostStreamInfo={previewInfo}
+                />
+              </div>
             </div>
-            <div className="bg-gray-500/35">
-              <DisplayWindow
-                showBorder
-                displayType="stream"
-                className="w-full"
-                boardPostStreamInfo={previewInfo}
+
+            {/* Post Settings */}
+            <section
+              className="scrollbar-variable flex min-w-0 w-full flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-transparent m-3 p-4"
+              style={{ width: "calc(100% - 1.5rem)" }}
+            >
+              <ColorField
+                label="Background"
+                value={backgroundColor}
+                onChange={setBackgroundColor}
+                debounceParentCommitMs={80}
               />
-            </div>
+              <BoardStreamFontSizeField
+                value={Math.round(fontSize * 10)}
+                presetHighlight={nearestBoardFontPreset(
+                  Math.round(fontSize * 10),
+                )}
+                fieldClass={FIELD_CLASS}
+                labelClass={LABEL_CLASS}
+                onChange={(displayVal) => setFontSize(displayVal / 10)}
+              />
+              <Input
+                label="Duration (s)"
+                value={duration}
+                type="number"
+                min={5}
+                max={60}
+                step={1}
+                onChange={(val) =>
+                  setDuration(
+                    Math.min(60, Math.max(5, Number(val) || DEFAULT_DURATION)),
+                  )
+                }
+                className={FIELD_CLASS}
+                labelClassName={LABEL_CLASS}
+                labelLayout="inline"
+                inputClassName="flex-1"
+              />
+            </section>
           </div>
-
-          {/* Post Settings */}
-          <section className="scrollbar-variable flex min-w-0 w-full flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-transparent m-3 p-4" style={{ width: "calc(100% - 1.5rem)" }}>
-            <ColorField
-              label="Background"
-              value={backgroundColor}
-              onChange={setBackgroundColor}
-              debounceParentCommitMs={80}
-            />
-            <BoardStreamFontSizeField
-              value={Math.round(fontSize * 10)}
-              presetHighlight={nearestBoardFontPreset(Math.round(fontSize * 10))}
-              fieldClass={FIELD_CLASS}
-              labelClass={LABEL_CLASS}
-              onChange={(displayVal) => setFontSize(displayVal / 10)}
-            />
-            <Input
-              label="Duration (s)"
-              value={duration}
-              type="number"
-              min={5}
-              max={60}
-              step={1}
-              onChange={(val) =>
-                setDuration(
-                  Math.min(60, Math.max(5, Number(val) || DEFAULT_DURATION)),
-                )
-              }
-              className={FIELD_CLASS}
-              labelClassName={LABEL_CLASS}
-              labelLayout="inline"
-              inputClassName="flex-1"
-            />
-          </section>
-        </div>
+        )}
 
         {/* Post list — second in DOM so it's below settings on mobile; lg:order-first keeps it on the left on desktop */}
+        {detailTarget &&
+          isDetailActive &&
+          createPortal(
+            <div className="absolute inset-0 z-10">{postDetail}</div>,
+            detailTarget,
+          )}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:border-r lg:border-gray-600 lg:order-first">
           <p className="shrink-0 px-3 py-2 text-lg font-semibold text-slate-200 text-center">
             Highlighted Posts
