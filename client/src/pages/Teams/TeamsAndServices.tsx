@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
-import { ListChecks, PanelLeft, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListChecks, PanelLeft, Users } from "lucide-react";
 import {
   Navigate,
   Outlet,
@@ -19,9 +19,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { cn } from "@/utils/cnHelper";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
+import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
 import {
@@ -38,6 +40,8 @@ const TeamsGroupsPage = lazy(() => import("./pages/TeamsGroupsPage"));
 const TeamsRolesPage = lazy(() => import("./pages/TeamsRolesPage"));
 const TeamsQualificationsPage = lazy(() => import("./pages/TeamsQualificationsPage"));
 const TeamsPlansPage = lazy(() => import("./pages/TeamsPlansPage"));
+const TeamsTemplatesPage = lazy(() => import("./pages/TeamsTemplatesPage"));
+const TeamsMicrophonesPage = lazy(() => import("./pages/TeamsMicrophonesPage"));
 const TeamsServiceSettingsPage = lazy(() => import("./pages/TeamsServiceSettingsPage"));
 
 const TeamsSectionLoadingFallback = () => {
@@ -77,6 +81,7 @@ const TeamsAndServicesLayout = () => {
   const location = useLocation();
   useTeamsAbandonedReturnCleanup();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const activeSection = useMemo(
     () => getActiveTeamsNavSection(location.pathname),
     [location.pathname],
@@ -107,7 +112,7 @@ const TeamsAndServicesLayout = () => {
           </div>
         </div>
 
-        <section className="mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
+        <section className="mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-2 lg:hidden">
             <Button
               variant="secondary"
@@ -124,8 +129,31 @@ const TeamsAndServicesLayout = () => {
             </p>
           </div>
 
-          <aside className="hidden min-h-0 flex-col overflow-hidden border-gray-700 bg-gray-950/70 lg:flex lg:border-r lg:p-4">
-            <TeamsSidebarNav />
+          <aside
+            className={cn(
+              "relative hidden min-h-0 flex-col border-gray-700 bg-gray-950/70 transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
+              sidebarCollapsed ? "w-14 lg:p-2" : "w-64 lg:p-4",
+            )}
+          >
+            <Button
+              type="button"
+              variant="tertiary"
+              padding="p-0"
+              position="absolute"
+              className="right-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-950 shadow-sm"
+              aria-expanded={!sidebarCollapsed}
+              aria-label={
+                sidebarCollapsed ? "Expand sections" : "Collapse sections"
+              }
+              onClick={() => setSidebarCollapsed((current) => !current)}
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight className="size-4 shrink-0" aria-hidden />
+              ) : (
+                <ChevronLeft className="size-4 shrink-0" aria-hidden />
+              )}
+            </Button>
+            <TeamsSidebarNav collapsed={sidebarCollapsed} />
           </aside>
 
           <div className={teamsSectionScrollClassName}>
@@ -230,6 +258,22 @@ const TeamsAndServicesRoutes = () => (
         path={servicesNavSections[1].routePath}
         element={
           <TeamsSectionRoute>
+            <TeamsTemplatesPage />
+          </TeamsSectionRoute>
+        }
+      />
+      <Route
+        path={servicesNavSections[2].routePath}
+        element={
+          <TeamsSectionRoute>
+            <TeamsMicrophonesPage />
+          </TeamsSectionRoute>
+        }
+      />
+      <Route
+        path={servicesNavSections[3].routePath}
+        element={
+          <TeamsSectionRoute>
             <TeamsServiceSettingsPage />
           </TeamsSectionRoute>
         }
@@ -237,7 +281,7 @@ const TeamsAndServicesRoutes = () => (
       {/* Old path from before Services/Teams shared this page. */}
       <Route
         path="services"
-        element={<Navigate to={servicesNavSections[1].path} replace />}
+        element={<Navigate to={servicesNavSections[3].path} replace />}
       />
       <Route path="*" element={<Navigate to="schedules" replace />} />
     </Route>
@@ -246,7 +290,9 @@ const TeamsAndServicesRoutes = () => (
 
 const TeamsAndServicesPage = () => (
   <TeamsPageProvider>
-    <TeamsAndServicesRoutes />
+    <TeamsNavigationGuardProvider>
+      <TeamsAndServicesRoutes />
+    </TeamsNavigationGuardProvider>
   </TeamsPageProvider>
 );
 

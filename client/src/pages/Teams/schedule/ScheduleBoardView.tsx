@@ -1,5 +1,7 @@
+import { useContext } from "react";
 import { ChevronDown, Users } from "lucide-react";
 import Button from "@/components/Button/Button";
+import Menu from "@/components/Menu/Menu";
 import { cn } from "@/utils/cnHelper";
 import type {
   TeamRosterMember,
@@ -15,12 +17,15 @@ import ScheduleBoardCell from "./ScheduleBoardCell";
 import ScheduleFillBadge from "./ScheduleFillBadge";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
 import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
+import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 import { scheduleUpNextBorderClassName } from "./scheduleUtils";
 
 /** The per-occurrence cell data ScheduleBoardView consumes from buildGridCellProps. */
 type BoardCellData = {
   slot: number;
   requiredCount: number;
+  isSlotEnabled: boolean;
+  isAdditionalPosition: boolean;
   assignmentCell?: TeamScheduleCellAssignment;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
@@ -41,7 +46,7 @@ type ScheduleBoardViewProps = {
   groups: BoardOccurrenceGroup[];
   columns: ScheduleSlotColumn[];
   teamName: string;
-  detailOccurrenceId: string | null;
+  canEdit: boolean;
   nextUpcomingOccurrenceId: string | null;
   fillByOccurrence: Map<string, OccurrenceFill>;
   /** Whether a card's positions are shown. Owned by ScheduleTab so the header's
@@ -49,7 +54,11 @@ type ScheduleBoardViewProps = {
   isExpanded: (occurrenceId: string) => boolean;
   onToggleExpanded: (occurrenceId: string) => void;
   serviceArchivedById: (serviceId: string) => boolean;
-  onOpenAttendance: (occurrenceId: string) => void;
+  onOpenServiceSummary: (occurrenceId: string) => void;
+  getAdditionalPositionOptions: (occurrenceId: string) => {
+    positionId: string;
+    label: string;
+  }[];
   buildCellProps: (
     occurrence: TeamScheduleOccurrence,
     column: ScheduleSlotColumn,
@@ -59,8 +68,8 @@ type ScheduleBoardViewProps = {
 
 /**
  * Per-service card layout: one card per occurrence, each listing only the
- * positions that occurrence actually requires (slot < requiredCount, the same
- * guard the grid uses). Cards reuse buildGridCellProps + the shared assignment
+ * positions that occurrence actually needs, including optional slots enabled for
+ * that date. Cards reuse buildGridCellProps + the shared assignment
  * context, so assignment, shadows, and the picker behave exactly like the tables.
  *
  * Each card's date, service, team, and fill summary stay visible; only the
@@ -72,15 +81,17 @@ const ScheduleBoardView = ({
   groups,
   columns,
   teamName,
-  detailOccurrenceId,
+  canEdit,
   nextUpcomingOccurrenceId,
   fillByOccurrence,
   isExpanded,
   onToggleExpanded,
   serviceArchivedById,
-  onOpenAttendance,
+  onOpenServiceSummary,
+  getAdditionalPositionOptions,
   buildCellProps,
 }: ScheduleBoardViewProps) => {
+  const handlersRef = useContext(ScheduleAssignmentContext);
   const occurrences = groups.flatMap((group) =>
     group.occurrences.map((occurrence) => ({ occurrence, group })),
   );
@@ -94,9 +105,10 @@ const ScheduleBoardView = ({
       {occurrences.map(({ occurrence, group }) => {
         const rows = columns.flatMap((column) => {
           const cellProps = buildCellProps(occurrence, column, "");
-          if (cellProps.slot >= cellProps.requiredCount) return [];
+          if (!cellProps.isSlotEnabled) return [];
           return [{ column, cellProps }];
         });
+        const additionalPositionOptions = getAdditionalPositionOptions(occurrence.occurrenceId);
         const serviceArchived = serviceArchivedById(group.serviceId);
         const occurrenceTiming = formatOccurrenceTiming(occurrence);
         const expanded = isExpanded(occurrence.occurrenceId);
@@ -127,10 +139,8 @@ const ScheduleBoardView = ({
                     // Override the shared button's w-full so it shares this row
                     // with the expand control instead of pushing it onto a new line.
                     "min-w-0 w-auto flex-1",
-                    detailOccurrenceId === occurrence.occurrenceId &&
-                    "border-cyan-300 bg-cyan-500/20 text-white",
                   )}
-                  onClick={() => onOpenAttendance(occurrence.occurrenceId)}
+                  onClick={() => onOpenServiceSummary(occurrence.occurrenceId)}
                 />
                 <Button
                   type="button"
@@ -184,6 +194,7 @@ const ScheduleBoardView = ({
                       assignmentCell={cellProps.assignmentCell}
                       isMemberHighlighted={cellProps.isMemberHighlighted}
                       isActiveSlot={cellProps.isActiveSlot}
+                      isAdditionalPosition={cellProps.isAdditionalPosition}
                       justFilled={cellProps.justFilled}
                       allMembers={cellProps.allMembers}
                       duplicateFirstNames={cellProps.duplicateFirstNames}
@@ -195,6 +206,26 @@ const ScheduleBoardView = ({
                     No positions required for this service.
                   </p>
                 )}
+                {canEdit && additionalPositionOptions.length > 0 ? (
+                  <div className="px-2.5 py-2">
+                    <Menu
+                      align="start"
+                      menuItems={additionalPositionOptions.map((option) => ({
+                        text: `Add ${option.label}`,
+                        onClick: () =>
+                          void handlersRef?.current?.addAdditionalPosition({
+                            serviceId: occurrence.occurrenceId,
+                            positionId: option.positionId,
+                          }),
+                      }))}
+                      TriggeringButton={
+                        <Button type="button" variant="tertiary" className="text-xs">
+                          Add position
+                        </Button>
+                      }
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>

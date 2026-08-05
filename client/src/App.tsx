@@ -65,6 +65,7 @@ const isTeamsAdminRoute = (pathname: string) => {
     "/teams-and-services/groups",
     "/teams-and-services/forms",
     "/teams-and-services/plans",
+    "/teams-and-services/templates",
     "/teams-and-services/service-settings",
   ].some(
     (adminPath) =>

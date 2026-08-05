@@ -28,8 +28,30 @@ export type PublicServiceFlowTeamNote = {
   notes: ServiceFlowRichText;
   scope?: "role";
   positionId?: string;
+  positionIds?: string[];
   teamId?: string;
   teamName?: string;
+  teamIds?: string[];
+  teamNames?: string[];
+};
+
+export type PublicServiceFlowMicrophoneAudience = {
+  positionId: string;
+  roleName: string;
+  teamId?: string;
+  teamName?: string;
+};
+
+export type PublicServiceFlowMicrophoneAssignment = {
+  microphone: {
+    id: string;
+    name: string;
+    type: string;
+    color: string;
+  };
+  audiences: PublicServiceFlowMicrophoneAudience[];
+  /** The person holding it, when the item names one. */
+  holderName?: string;
 };
 
 export type PublicServiceFlowItem = {
@@ -38,6 +60,7 @@ export type PublicServiceFlowItem = {
   durationSeconds: number;
   notes: ServiceFlowRichText;
   teamNotes?: PublicServiceFlowTeamNote[];
+  microphoneAssignments?: PublicServiceFlowMicrophoneAssignment[];
   creditName?: string;
 };
 
@@ -52,6 +75,14 @@ export type PublicServiceFlow = {
   viewMode?: "team" | "general";
   title: string;
   startsAt: string;
+  /**
+   * Where the planned item timeline begins, which is the first item's own
+   * start time — pre-service items can put that before the service's
+   * `startsAt` (a 9:45 call time on a 10:00 service). Absent when the plan
+   * starts exactly at `startsAt`, and on snapshots published before this
+   * existed, so readers fall back to `startsAt`.
+   */
+  timelineStartsAt?: string;
   timezone: string;
   revision: number;
   sections: PublicServiceFlowSection[];
@@ -59,6 +90,13 @@ export type PublicServiceFlow = {
     | { mode: "schedule" }
     | { mode: "manual"; currentItemId: string }
     | { mode: "anchored"; currentItemId: string; startedAt: string };
+};
+
+export type PublicServiceFlowRole = {
+  positionId: string;
+  label: string;
+  teamId?: string;
+  teamName?: string;
 };
 
 export type PublicServiceFlowSnapshot = {
@@ -69,6 +107,11 @@ export type PublicServiceFlowSnapshot = {
   churchPrimaryColor?: string;
   /** Second church brand swatch (Color 2) for simple-view accents. */
   churchSecondaryColor?: string;
+  /**
+   * Full non-archived role roster for the detailed-view notes/mic filter.
+   * Absent on simple/general view and on older snapshots.
+   */
+  roles?: PublicServiceFlowRole[];
   serverNowMs: number;
   service: PublicServiceFlow;
 };

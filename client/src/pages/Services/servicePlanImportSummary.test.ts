@@ -3,7 +3,11 @@ import type {
   ServicePlanElement,
   ServicePlanSection,
 } from "../../types/servicePlan";
-import { summarizeServicePlanImport } from "./servicePlanImportSummary";
+import {
+  applySelectedServicePlanImportChanges,
+  servicePlanImportChangeKey,
+  summarizeServicePlanImport,
+} from "./servicePlanImportSummary";
 
 const element = (
   id: string,
@@ -149,5 +153,56 @@ describe("summarizeServicePlanImport", () => {
       removed: 0,
       updated: 0,
     });
+  });
+
+  it("keeps unchecked import changes out of the applied draft", () => {
+    const current = [section([
+      element("updated", "Old welcome"),
+      element("removed", "Keep this local item"),
+    ])];
+    const next = [section([
+      element("updated", "New welcome"),
+      element("added", "New source item", { sourcePlanningManaged: true }),
+    ])];
+    const summary = summarizeServicePlanImport(current, next);
+    const selectedChangeKeys = new Set(
+      summary.changes
+        .filter((change) => change.id === "updated")
+        .map(servicePlanImportChangeKey),
+    );
+
+    const result = applySelectedServicePlanImportChanges(
+      current,
+      next,
+      summary,
+      selectedChangeKeys,
+    );
+
+    expect(result[0].elements.map((item) => item.id)).toEqual([
+      "updated",
+      "removed",
+    ]);
+    expect(result[0].elements[0].title).toEqual(plainTextToRichText("New welcome"));
+  });
+
+  it("preserves the complete refreshed result when every change is selected", () => {
+    const current = [{
+      ...section([element("welcome", "Old welcome")]),
+      sourcePlanningManaged: true,
+      name: "Old worship",
+    }];
+    const next = [{
+      ...section([element("welcome", "Welcome"), element("prayer", "Prayer")]),
+      sourcePlanningManaged: true,
+      name: "Worship",
+    }];
+    const summary = summarizeServicePlanImport(current, next);
+
+    expect(applySelectedServicePlanImportChanges(
+      current,
+      next,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    )).toEqual(next);
   });
 });

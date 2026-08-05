@@ -10,6 +10,11 @@ import type { TeamsScheduleDrafts } from "./types";
 const selectedScheduleKey = (churchId: string) =>
   `teams:selected-schedule:${churchId}`;
 const draftsKey = (churchId: string) => `teams:drafts:${churchId}`;
+const scheduleTeamFilterKey = (churchId: string) =>
+  `teams:schedule-team-filter:${churchId}`;
+
+/** Stored value meaning "don't filter", kept distinct from "nothing saved yet". */
+export const ALL_TEAMS_SCHEDULE_FILTER = "__all_teams__";
 
 const safeGet = (key: string): string | null => {
   try {
@@ -47,6 +52,27 @@ export const writeSelectedScheduleId = (
     safeSet(selectedScheduleKey(churchId), scheduleId);
   } else {
     safeRemove(selectedScheduleKey(churchId));
+  }
+};
+
+/**
+ * Which team's schedules the schedule picker is narrowed to. Most operators only
+ * ever work one team, so this sticks across reloads rather than making them
+ * re-narrow a church-wide list every visit.
+ *
+ * Returns "" when nothing has been chosen yet, which lets the caller apply its
+ * own default (the user's single editable team) without mistaking that for a
+ * deliberate "All teams" choice.
+ */
+export const readScheduleTeamFilter = (churchId: string): string =>
+  churchId ? safeGet(scheduleTeamFilterKey(churchId)) || "" : "";
+
+export const writeScheduleTeamFilter = (churchId: string, teamId: string) => {
+  if (!churchId) return;
+  if (teamId) {
+    safeSet(scheduleTeamFilterKey(churchId), teamId);
+  } else {
+    safeRemove(scheduleTeamFilterKey(churchId));
   }
 };
 

@@ -1,5 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useServicePlanAutosave } from "./useServicePlanAutosave";
+import {
+  useServicePlanAutosave,
+  type UseServicePlanAutosaveOptions,
+} from "./useServicePlanAutosave";
 import type { ServicePlan, ServicePlanPayload } from "../../types/servicePlan";
 
 const payloadFor = (name: string): ServicePlanPayload =>
@@ -8,7 +11,9 @@ const payloadFor = (name: string): ServicePlanPayload =>
 const planFor = (planKey: string, revision: number): ServicePlan =>
   ({ planKey, revision, sections: [] }) as unknown as ServicePlan;
 
-type Options = Parameters<typeof useServicePlanAutosave>[0];
+// The hook is generic over the document it saves (plans and templates both
+// use it), so name the plan instantiation these tests exercise.
+type Options = UseServicePlanAutosaveOptions<ServicePlan, ServicePlanPayload>;
 
 const setup = (overrides: Partial<Options> = {}) => {
   const onSaved = jest.fn();
@@ -84,6 +89,32 @@ describe("useServicePlanAutosave", () => {
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save.mock.calls[0][1]).toBe(3);
+  });
+
+  // The template editor never feeds its saves back into `baseRevision` — a new
+  // template identity resets its draft — so the prop stays on the revision the
+  // document had before the first autosave. Adopting it again would send that
+  // stale base with every later save, and the server would 409 forever.
+  it("keeps the saved revision when baseRevision stays behind it", async () => {
+    const save = jest.fn<Promise<ServicePlan>, [ServicePlanPayload, number]>(
+      async (_payload, baseRevision) => planFor("plan-a", baseRevision + 1),
+    );
+    const { view, options } = setup({ baseRevision: 4, save });
+
+    view.rerender({ ...options, changeVersion: 1 });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1]).toBe(4);
+
+    // Same stale prop, a second edit: the base has to be what the save returned.
+    view.rerender({ ...options, changeVersion: 2 });
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save.mock.calls[1][1]).toBe(5);
   });
 
   it("identifies the revision expected from an in-flight save", async () => {

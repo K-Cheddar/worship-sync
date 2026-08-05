@@ -39,6 +39,8 @@ import {
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 
 // Key used to track an in-flight save for the create form, which has no area id
@@ -92,6 +94,7 @@ const QualificationManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
   // Mirrors `editing` so an in-flight save can tell, on completion, whether the
   // operator has since switched areas — without rebinding the panel or clobbering
@@ -179,6 +182,11 @@ const QualificationManager = ({
       description: area.description || "",
     });
     resetLevelDrafts(area);
+  };
+
+  const selectArea = (area: TeamQualificationArea) => {
+    if (editing?.areaId === area.areaId) return;
+    requestDiscardAction(() => openAreaEditor(area));
   };
 
   const confirmDelete = async () => {
@@ -269,6 +277,47 @@ const QualificationManager = ({
   // currently open, so a background save elsewhere never spins or disables it.
   const currentEditorKey = editing ? editing.areaId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
+  const hasPendingAreaChanges = editing
+    ? JSON.stringify(draft) !==
+      JSON.stringify({
+        teamId: editing.teamId,
+        name: editing.name,
+        description: editing.description || "",
+      })
+    : JSON.stringify(draft) !==
+      JSON.stringify({ teamId, name: "", description: "" });
+  const savedLevelDrafts = editing
+    ? Object.fromEntries(
+      levels
+        .filter((level) => level.areaId === editing.areaId)
+        .sort((a, b) => a.rank - b.rank)
+        .map((level) => [
+          level.levelId,
+          {
+            areaId: level.areaId,
+            name: level.name,
+            description: level.description || "",
+            rank: level.rank,
+          },
+        ]),
+    )
+    : {};
+  const defaultNewLevelRank = editing
+    ? String(
+      Math.max(
+        0,
+        ...levels
+          .filter((level) => level.areaId === editing.areaId)
+          .map((level) => level.rank),
+      ) + 1,
+    )
+    : "1";
+  const hasPendingLevelChanges =
+    JSON.stringify(levelDrafts) !== JSON.stringify(savedLevelDrafts) ||
+    Boolean(newLevelName) ||
+    newLevelRank !== defaultNewLevelRank;
+  const hasPendingChanges = hasPendingAreaChanges || hasPendingLevelChanges;
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   const saveLevel = async (levelId?: string) => {
     if (!canEdit || !editing) return;
@@ -409,7 +458,7 @@ const QualificationManager = ({
                       archived={Boolean(area.archivedAt)}
                       compact
                       canEdit={canEdit}
-                      onTitleClick={() => openAreaEditor(area)}
+                      onTitleClick={() => selectArea(area)}
                     />
                   );
                 })}
@@ -461,6 +510,7 @@ const QualificationManager = ({
             saveLabel="Save area"
             onSave={() => void submitArea()}
             onCancel={cancelEditing}
+            hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
             isLoading={isSavingCurrent}
           />

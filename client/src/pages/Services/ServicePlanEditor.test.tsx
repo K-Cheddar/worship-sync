@@ -1,10 +1,12 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
-import ServicePlanEditor, {
-  collectServicePlanRoleNoteFilterOptions,
+import ServicePlanEditor from "./ServicePlanEditor";
+import {
+  collectServicePlanRoleNoteOptions,
   collectServicePlanTeamNoteLabels,
-} from "./ServicePlanEditor";
+} from "./servicePlanNoteOptions";
+import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { createMockGlobalContext } from "../../test/mocks";
@@ -13,19 +15,24 @@ import {
   saveServicePlanTemplate,
   getServicePlan,
   getServicePlanAssignmentHistory,
+  getServicePlanMicrophones,
   publishServicePlan,
   saveServicePlan,
   saveServicePlanAssignmentHistory,
+  saveServicePlanMicrophones,
   unpublishServicePlan,
   updateServicePlanPublicLive,
 } from "../../api/auth";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
 import type {
+  TeamPosition,
+  TeamRecord,
   TeamRosterMember,
   TeamScheduleOccurrence,
   TeamService,
 } from "../../api/authTypes";
 import type { ServicePlan } from "../../types/servicePlan";
+import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import {
   plainTextToRichText,
   richTextToPlainText,
@@ -45,9 +52,11 @@ jest.mock("../../api/auth", () => ({
   deleteServicePlanTemplate: jest.fn(),
   getServicePlan: jest.fn(),
   getServicePlanAssignmentHistory: jest.fn(),
+  getServicePlanMicrophones: jest.fn(),
   publishServicePlan: jest.fn(),
   saveServicePlan: jest.fn(),
   saveServicePlanAssignmentHistory: jest.fn(),
+  saveServicePlanMicrophones: jest.fn(),
   unpublishServicePlan: jest.fn(),
   updateServicePlanPublicLive: jest.fn(),
 }));
@@ -94,7 +103,9 @@ const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockSaveServicePlanTemplate = jest.mocked(saveServicePlanTemplate);
 const mockGetServicePlan = jest.mocked(getServicePlan);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
+const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockSaveServicePlanAssignmentHistory = jest.mocked(saveServicePlanAssignmentHistory);
+const mockSaveServicePlanMicrophones = jest.mocked(saveServicePlanMicrophones);
 const mockGetServicePlanningImportDataFromUrl = jest.mocked(
   getServicePlanningImportDataFromUrl,
 );
@@ -126,18 +137,36 @@ const renderEditor = ({
   service = oneTimeService,
   occurrence: occurrenceProp = occurrence,
   members = [],
+  positions = [],
+  teams = [],
   canEdit = true,
   onBack,
   planNavigation,
+  occurrenceSwitcher,
+  teamMicrophones,
 }: {
   service?: TeamService;
   occurrence?: TeamScheduleOccurrence;
   members?: TeamRosterMember[];
+  positions?: TeamPosition[];
+  teams?: TeamRecord[];
   canEdit?: boolean;
   onBack?: () => void;
   planNavigation?: {
     onPrevious?: () => void;
     onNext?: () => void;
+  };
+  occurrenceSwitcher?: {
+    options: { occurrenceId: string; label: string }[];
+    onSelect: (occurrenceId: string) => void;
+  };
+  teamMicrophones?: {
+    rows: TeamsAssignmentSummaryRow[];
+    savingSlot?: string | null;
+    onChange: (
+      row: TeamsAssignmentSummaryRow,
+      microphoneIds: string[],
+    ) => void;
   };
 } = {}) =>
   render(
@@ -153,9 +182,13 @@ const renderEditor = ({
           service={service}
           occurrence={occurrenceProp}
           members={members}
+          positions={positions}
+          teams={teams}
           canEdit={canEdit}
           onBack={onBack}
           planNavigation={planNavigation}
+          occurrenceSwitcher={occurrenceSwitcher}
+          teamMicrophones={teamMicrophones}
         />
       </ToastProvider>
     </GlobalInfoContext.Provider>,
@@ -187,91 +220,82 @@ describe("collectServicePlanTeamNoteLabels", () => {
   });
 });
 
-describe("collectServicePlanRoleNoteFilterOptions", () => {
-  it("keeps the filter focused on roles that have a role note", () => {
-    const allRoles = [
-      {
-        positionId: "camera",
-        label: "Media Team · Camera",
-        teamId: "media",
-        teamName: "Media Team",
-      },
-      {
-        positionId: "lyrics",
-        label: "Media Team · Lyrics",
-        teamId: "media",
-        teamName: "Media Team",
-      },
-    ];
-
-    expect(
-      collectServicePlanRoleNoteFilterOptions([
-        {
-          id: "section-1",
-          name: "Worship",
-          elements: [
-            {
-              id: "el-1",
-              type: "free",
-              title: plainTextToRichText("One"),
-              teamNotes: [{
-                id: "note-1",
-                scope: "role",
-                positionId: "camera",
-                label: "Media Team · Camera",
-                note: plainTextToRichText("Hold the wide shot."),
-              }],
-            },
-          ],
-        },
-      ], allRoles),
-    ).toEqual([allRoles[0]]);
-  });
-
-  it("scopes all-role choices to the selected team", () => {
-    const allRoles = [
-      {
-        positionId: "director",
-        label: "Media Team · Director",
-        teamId: "media",
-        teamName: "Media Team",
-      },
-      {
-        positionId: "lead-coordinator",
-        label: "Coordinators · Lead Coordinator",
-        teamId: "coordinators",
-        teamName: "Coordinators",
-      },
-    ];
-
-    expect(
-      collectServicePlanRoleNoteFilterOptions([{
+describe("role note filter options", () => {
+  // Behavior change: the filter lists the full roster (quiet roles included),
+  // not only roles that already have notes/mics. Selecting a quiet role still
+  // hides other roles' notes via the existing roleNotesFilter matchers.
+  it("keeps quiet roster roles available in the filter", () => {
+    const allRoles = collectServicePlanRoleNoteOptions(
+      [{
         id: "section-1",
         name: "Worship",
         elements: [{
           id: "el-1",
           type: "free",
           title: plainTextToRichText("One"),
-          teamNotes: [
-            {
-              id: "note-1",
-              scope: "role",
-              positionId: "director",
-              label: "Media Team · Director",
-              teamName: "Media Team",
-              note: plainTextToRichText("Check the camera."),
-            },
-            {
-              id: "note-2",
-              scope: "role",
-              positionId: "lead-coordinator",
-              label: "Coordinators · Lead Coordinator",
-              teamName: "Coordinators",
-              note: plainTextToRichText("Give the go-live cue."),
-            },
-          ],
+          teamNotes: [{
+            id: "note-1",
+            scope: "role",
+            positionId: "camera",
+            label: "Media Team · Camera",
+            note: plainTextToRichText("Hold the wide shot."),
+          }],
         }],
-      }], allRoles, "Coordinators"),
+      }],
+      [
+        {
+          positionId: "camera",
+          churchId: "church-1",
+          teamId: "media",
+          name: "Camera",
+          icon: "camera",
+        },
+        {
+          positionId: "lyrics",
+          churchId: "church-1",
+          teamId: "media",
+          name: "Lyrics",
+          icon: "lyrics",
+        },
+      ],
+      [{
+        teamId: "media",
+        churchId: "church-1",
+        name: "Media Team",
+        memberIds: [],
+      }],
+    );
+
+    const filterOptions = allRoles.filter((role) =>
+      roleNoteMatchesServicePlanTeam(role, ""),
+    );
+
+    expect(filterOptions.map((role) => role.positionId).sort()).toEqual([
+      "camera",
+      "lyrics",
+    ]);
+  });
+
+  it("scopes all-role choices to the selected team", () => {
+    const allRoles = [
+      {
+        positionId: "director",
+        label: "Director",
+        teamId: "media",
+        teamName: "Media Team",
+      },
+      {
+        positionId: "lead-coordinator",
+        label: "Lead Coordinator",
+        teamId: "coordinators",
+        teamName: "Coordinators",
+      },
+    ];
+
+    expect(
+      allRoles.filter((role) =>
+        roleNoteMatchesServicePlanTeam(role, "Coordinators"),
+      ),
     ).toEqual([allRoles[1]]);
   });
 });
@@ -287,7 +311,17 @@ describe("ServicePlanEditor", () => {
       template: {} as never,
     });
     mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [],
+      audiences: [],
+    });
     mockSaveServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
+    mockSaveServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [],
+      audiences: [],
+    });
     mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => ({
       success: true,
       servicePlan: {
@@ -312,10 +346,197 @@ describe("ServicePlanEditor", () => {
     });
   });
 
+  describe("Mic Assignments tab", () => {
+    const microphoneTeam: TeamRecord = {
+      teamId: "team-1",
+      churchId: "church-1",
+      name: "Worship",
+      memberIds: [],
+      usesMicrophoneAssignments: true,
+    };
+
+    const scheduledRow: TeamsAssignmentSummaryRow = {
+      teamId: "team-1",
+      teamName: "Worship",
+      scheduleId: "schedule-1",
+      occurrenceId: occurrence.occurrenceId,
+      positionId: "position-vocal",
+      positionName: "Vocal",
+      columnKey: "position-vocal::0",
+      slotLabel: "Vocal 1",
+      memberName: "Avery Stone",
+      microphoneIds: [],
+    };
+
+    const withCatalog = () => {
+      mockGetServicePlanMicrophones.mockResolvedValue({
+        success: true,
+        microphones: [
+          { id: "mic-lead", name: "Lead", type: "Handheld", color: "#22d3ee" },
+        ],
+        audiences: [],
+      });
+    };
+
+    it("allocates a microphone to a scheduled role away from the running order", async () => {
+      const user = userEvent.setup();
+      const onChange = jest.fn();
+      withCatalog();
+
+      renderEditor({
+        teams: [microphoneTeam],
+        teamMicrophones: { rows: [scheduledRow], onChange },
+      });
+
+      await user.click(
+        await screen.findByRole("tab", { name: /Mic Assignments/i }),
+      );
+      expect(await screen.findByText("Vocal 1")).toBeInTheDocument();
+      expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("combobox", { name: /Microphone for Vocal 1/i }),
+      );
+      await user.click(await screen.findByRole("option", { name: /Lead/i }));
+
+      expect(onChange).toHaveBeenCalledWith(scheduledRow, ["mic-lead"]);
+    });
+
+    it("keeps the plan untabbed when no scheduled role can hold a microphone", async () => {
+      withCatalog();
+
+      // Same rows, but the team never opted into microphone assignments.
+      renderEditor({
+        teams: [{ ...microphoneTeam, usesMicrophoneAssignments: false }],
+        teamMicrophones: { rows: [scheduledRow], onChange: jest.fn() },
+      });
+
+      expect(
+        await screen.findByRole("button", { name: /Start from scratch/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("tab", { name: /Mic Assignments/i }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("offers to start from scratch for an occurrence with no plan yet", async () => {
     renderEditor();
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
+    ).toBeInTheDocument();
+  });
+
+  // The Controller workspace picks the occurrence itself and has no Plans list
+  // to go back to, so the switch has to be reachable from the plan's own menu —
+  // including on a service with no plan saved yet, or the operator is stuck.
+  // Drill-in (not a side submenu) keeps the picker on-screen on narrow viewports.
+  it("switches to another occurrence from the plan actions menu", async () => {
+    const user = userEvent.setup();
+    const onSelect = jest.fn();
+
+    renderEditor({
+      occurrenceSwitcher: {
+        options: [
+          { occurrenceId: occurrence.occurrenceId, label: "Easter Sunday · Sun, Jul 26, 2:00 PM" },
+          { occurrenceId: "service-2@2026-07-29T23:00:00.000Z", label: "Midweek · Wed, Jul 29, 7:00 PM" },
+        ],
+        onSelect,
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Switch service/i }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /Midweek/i }));
+
+    expect(onSelect).toHaveBeenCalledWith("service-2@2026-07-29T23:00:00.000Z");
+  });
+
+  it("leaves the plan actions menu alone when there is nothing to switch to", async () => {
+    renderEditor({
+      occurrenceSwitcher: {
+        options: [
+          { occurrenceId: occurrence.occurrenceId, label: "Easter Sunday · Sun, Jul 26, 2:00 PM" },
+        ],
+        onSelect: jest.fn(),
+      },
+    });
+
+    expect(
+      await screen.findByRole("button", { name: /Start from scratch/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Plan actions/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Role notes uses a drill-in panel (not a side submenu) so the picker stays
+  // fully visible when the plan actions menu is flush against the viewport edge.
+  it("opens role notes as a drill-in panel in the plan actions menu", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+                teamNotes: [
+                  {
+                    id: "rn-1",
+                    scope: "role",
+                    positionId: "camera",
+                    label: "Media Team · Camera",
+                    note: plainTextToRichText("Hold the wide shot."),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor({
+      positions: [
+        {
+          positionId: "camera",
+          churchId: "church-1",
+          teamId: "media",
+          name: "Camera",
+        },
+      ],
+      teams: [
+        {
+          teamId: "media",
+          churchId: "church-1",
+          name: "Media Team",
+          memberIds: [],
+        },
+      ],
+    });
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Role notes/i }));
+
+    expect(screen.getByRole("textbox", { name: /Search roles/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^All roles$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: /^Hide notes$/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: /^Back$/i }));
+    expect(
+      await screen.findByRole("menuitemcheckbox", { name: /^Hide notes$/i }),
     ).toBeInTheDocument();
   });
 
@@ -477,7 +698,7 @@ describe("ServicePlanEditor", () => {
     expect(body.sections[0].name).toBe("Worship");
     // Structure only — the week's song and assignment must not travel.
     expect(body.sections[0].elements[0].songRef).toBeUndefined();
-    expect(body.sections[0].elements[0].assignedName).toBeUndefined();
+    expect(body.sections[0].elements[0].assignees).toEqual([]);
   });
 
   it("shows every team's imported notes even when a team filter was saved", async () => {
@@ -690,8 +911,8 @@ describe("ServicePlanEditor", () => {
     expect(body.sections[0].elements[0]).toMatchObject({
       id: "element-1",
       startTime: "09:00",
-      assignedName: "Blair",
     });
+    expect(body.sections[0].elements[0].assignees[0].name).toBe("Blair");
     expect(body.sections[0].elements[0].title.blocks[0].spans[0].text).toBe("Welcome home");
   });
 
@@ -716,6 +937,9 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
     await user.click(screen.getByRole("button", { name: /Add element/i }));
+    // Microphones hang off a person now, so an item starts with nobody on it
+    // and the first assignee is added explicitly.
+    await user.click(await screen.findByRole("button", { name: /Add a person/i }));
 
     const assignedToField = await screen.findByRole("textbox", { name: /Assigned to/i });
     await user.click(assignedToField);
@@ -1155,7 +1379,14 @@ describe("ServicePlanEditor", () => {
     });
 
     const user = userEvent.setup();
-    renderEditor();
+    renderEditor({
+      teams: [{
+        teamId: "team-band",
+        churchId: "church-1",
+        name: "Band",
+        memberIds: [],
+      }],
+    });
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
 

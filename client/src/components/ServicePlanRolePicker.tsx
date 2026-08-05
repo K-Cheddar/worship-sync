@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import Button from "./Button/Button";
 import ServicePlanRolePickerContent, {
+  servicePlanRoleOptionDisplayLabel,
   type ServicePlanRolePickerOption,
 } from "./ServicePlanRolePickerContent";
 import {
@@ -58,7 +59,9 @@ const ServicePlanRolePicker = ({
           disabled={disabled}
         >
           {label ? <span className="shrink-0 text-gray-300">{label}:</span> : null}
-          <span className="min-w-0 truncate">{selected?.label || placeholder}</span>
+          <span className="min-w-0 truncate">
+            {selected ? servicePlanRoleOptionDisplayLabel(selected, options) : placeholder}
+          </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 p-2 text-gray-100">

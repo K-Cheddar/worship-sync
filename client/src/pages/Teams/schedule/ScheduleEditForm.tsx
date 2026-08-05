@@ -6,6 +6,7 @@ import Button from "../../../components/Button/Button";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import Modal from "../../../components/Modal/Modal";
 import DatePicker from "@/components/ui/DatePicker";
+import { clampPlainDateToMin } from "@/utils/plainDate";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import {
@@ -40,10 +41,11 @@ import {
   scheduleDraftsMatch,
 } from "../teamsUtils";
 import { formatScheduleSaveToast } from "../teamsSaveToasts";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import {
   buildScheduleDraft,
   rekeyAssignmentsByServiceDate,
-  rekeyAttendanceByServiceDate,
+  rekeyScheduleOccurrenceRowsByServiceDate,
   remapAssignmentsToOccurrences,
   SCHEDULE_DRAFT_PERSIST_DELAY_MS,
   type ScheduleEditFormProps,
@@ -168,6 +170,8 @@ const ScheduleEditForm = ({
   // assignments. Surface what carries over so the date change isn't a surprise.
   const isCopy =
     !selectedSchedule && Object.keys(draft.assignments || {}).length > 0;
+  const hasPendingChanges = !scheduleDraftsMatch(draft, syncedBaselineRef.current);
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   const draftOccurrences = useMemo(
     () =>
@@ -223,7 +227,6 @@ const ScheduleEditForm = ({
       serviceIds: payload.serviceIds,
       occurrences: payload.occurrences || [],
       assignments: payload.assignments,
-      attendance: payload.attendance,
       archivedAt: selectedSchedule?.archivedAt || null,
     };
     const conflicts = Object.entries(payload.assignments).flatMap(
@@ -273,18 +276,28 @@ const ScheduleEditForm = ({
           targetOccurrences: occurrences,
           assignments: currentDraft.assignments || {},
         });
-      const attendance = selectedSchedule
-        ? rekeyAttendanceByServiceDate({
-          sourceOccurrences: currentDraft.occurrences || [],
-          targetOccurrences: occurrences,
-          attendance: currentDraft.attendance || {},
-        })
-        : {};
       const payload = {
         ...currentDraft,
         occurrences,
         assignments,
-        attendance,
+        ...(selectedSchedule?.microphoneAssignments
+          ? {
+            microphoneAssignments: rekeyScheduleOccurrenceRowsByServiceDate({
+              sourceOccurrences: selectedSchedule.occurrences || [],
+              targetOccurrences: occurrences,
+              rows: selectedSchedule.microphoneAssignments,
+            }),
+          }
+          : {}),
+        ...(selectedSchedule?.additionalPositionSlots
+          ? {
+            additionalPositionSlots: rekeyScheduleOccurrenceRowsByServiceDate({
+              sourceOccurrences: selectedSchedule.occurrences || [],
+              targetOccurrences: occurrences,
+              rows: selectedSchedule.additionalPositionSlots,
+            }),
+          }
+          : {}),
         ...(allowCrossTeamConflict ? { allowCrossTeamConflict: true } : {}),
       };
       const conflictWarning = getScheduleSaveConflictWarning(payload);
@@ -314,7 +327,8 @@ const ScheduleEditForm = ({
         serviceIds: payload.serviceIds,
         occurrences,
         assignments,
-        attendance,
+        microphoneAssignments: payload.microphoneAssignments,
+        additionalPositionSlots: payload.additionalPositionSlots,
         archivedAt: selectedSchedule?.archivedAt || null,
       };
       onScheduleSaved(optimisticSchedule);
@@ -442,11 +456,21 @@ const ScheduleEditForm = ({
               <DatePicker
                 label="Start date"
                 value={draft.startDate || ""}
-                onChange={(startDate) => setDraft((current) => ({ ...current, startDate }))}
+                onChange={(startDate) =>
+                  setDraft((current) => ({
+                    ...current,
+                    startDate,
+                    endDate: clampPlainDateToMin(
+                      current.endDate || "",
+                      startDate,
+                    ),
+                  }))
+                }
               />
               <DatePicker
                 label="End date"
                 value={draft.endDate || ""}
+                min={draft.startDate || undefined}
                 onChange={(endDate) => setDraft((current) => ({ ...current, endDate }))}
               />
             </div>
@@ -463,7 +487,7 @@ const ScheduleEditForm = ({
               {isCopy ? (
                 <p className="mt-1 text-xs text-gray-400">
                   Set the new date range. Assignments stay with matching services and
-                  move to replacement services when needed. Attendance starts fresh.
+                  move to replacement services when needed.
                 </p>
               ) : null}
             </div>
@@ -474,6 +498,7 @@ const ScheduleEditForm = ({
           saveLabel="Save schedule"
           onSave={() => void saveSchedule()}
           onCancel={onCancel}
+          hasPendingChanges={hasPendingChanges}
           disabled={
             !canEdit ||
             !draft.name.trim() ||

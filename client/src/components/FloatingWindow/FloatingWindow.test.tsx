@@ -42,14 +42,59 @@ describe("FloatingWindow", () => {
 
     const west = screen.getByTestId("resize-handle-w");
     const east = screen.getByTestId("resize-handle-e");
-    expect(west).toHaveClass("top-10", "z-10", "pointer-coarse:w-12");
-    expect(east).toHaveClass("top-10", "z-10", "pointer-coarse:w-12");
-    expect(screen.getByTestId("resize-handle-s")).toHaveClass("z-10", "pointer-coarse:h-12");
-    expect(screen.getByTestId("resize-handle-sw")).toHaveClass("z-10", "pointer-coarse:h-12");
-    expect(screen.getByTestId("resize-handle-se")).toHaveClass("z-10", "pointer-coarse:h-12");
+    expect(west).toHaveClass("top-10", "z-10", "pointer-coarse:w-3");
+    expect(east).toHaveClass("top-10", "z-10", "pointer-coarse:w-3");
+    expect(screen.getByTestId("resize-handle-s")).toHaveClass("z-10", "pointer-coarse:h-3");
+    expect(screen.getByTestId("resize-handle-sw")).toHaveClass("z-10", "pointer-coarse:h-4");
+    expect(screen.getByTestId("resize-handle-se")).toHaveClass("z-10", "pointer-coarse:h-4");
     expect(screen.queryByTestId("resize-handle-n")).not.toBeInTheDocument();
     expect(screen.queryByTestId("resize-handle-ne")).not.toBeInTheDocument();
     expect(screen.queryByTestId("resize-handle-nw")).not.toBeInTheDocument();
+  });
+
+  it("fires title bar actions from a touch tap without needing a second press", () => {
+    const onClose = jest.fn();
+    renderWindow(onClose);
+
+    const closeButton = screen.getByRole("button", { name: "Close window" });
+    fireEvent.touchStart(closeButton, {
+      touches: [{ clientX: 10, clientY: 10 }],
+    });
+    fireEvent.click(closeButton);
+
+    act(() => {
+      jest.advanceTimersByTime(180);
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires content button clicks after a touchstart that bubbles to the window", () => {
+    const onContentClick = jest.fn();
+    render(
+      <FloatingWindowZIndexProvider>
+        <FloatingWindow title="Service Planning" onClose={jest.fn()}>
+          <button type="button" onClick={onContentClick}>
+            Sync All
+          </button>
+        </FloatingWindow>
+      </FloatingWindowZIndexProvider>,
+    );
+
+    const contentButton = screen.getByRole("button", { name: "Sync All" });
+    const windowEl = screen.getByTestId("floating-window");
+
+    // Same path as a real touch: target receives touchstart, then it bubbles to
+    // the window raise handler, then the synthesized click fires.
+    fireEvent.touchStart(contentButton, {
+      touches: [{ clientX: 40, clientY: 80 }],
+    });
+    fireEvent.touchStart(windowEl, {
+      touches: [{ clientX: 40, clientY: 80 }],
+    });
+    fireEvent.click(contentButton);
+
+    expect(onContentClick).toHaveBeenCalledTimes(1);
   });
 
   it("updates fixed dimensions when the southeast handle is dragged", () => {
@@ -72,7 +117,7 @@ describe("FloatingWindow", () => {
     renderWindow(jest.fn(), { autoHeight: true, defaultHeight: 300 });
 
     const windowEl = screen.getByTestId("floating-window");
-    expect(windowEl).toHaveStyle({ maxHeight: "300px" });
+    expect(windowEl).toHaveStyle({ maxHeight: "min(300px, 100vh)" });
 
     fireEvent.mouseDown(screen.getByTestId("resize-handle-e"), {
       clientX: 400,
@@ -81,8 +126,53 @@ describe("FloatingWindow", () => {
     fireEvent.mouseMove(document, { clientX: 460, clientY: 200 });
     fireEvent.mouseUp(document);
 
-    expect(windowEl).not.toHaveStyle({ maxHeight: "300px" });
-    expect(windowEl.style.maxHeight).toBe("");
+    // Content-specific max is cleared; viewport cap remains.
+    expect(windowEl).toHaveStyle({ maxHeight: "100vh", maxWidth: "100vw" });
+  });
+
+  it("clamps default size to the viewport", () => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    renderWindow(jest.fn(), {
+      defaultWidth: vw + 400,
+      defaultHeight: vh + 400,
+    });
+
+    const windowEl = screen.getByTestId("floating-window");
+    expect(windowEl).toHaveStyle({
+      width: `${vw}px`,
+      height: `${vh}px`,
+      maxWidth: "100vw",
+      maxHeight: "100vh",
+    });
+  });
+
+  it("shrinks to fit when the viewport gets smaller", () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+
+    renderWindow(jest.fn(), { defaultWidth: 400, defaultHeight: 300 });
+
+    const windowEl = screen.getByTestId("floating-window");
+    expect(windowEl).toHaveStyle({ width: "400px", height: "300px" });
+
+    act(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 240 });
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    expect(windowEl).toHaveStyle({ width: "320px", height: "240px" });
+
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: originalWidth,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalHeight,
+    });
   });
 
   it("opens a new window above an existing one", () => {

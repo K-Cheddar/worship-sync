@@ -350,9 +350,16 @@ export const buildServicePlanningPreview = ({
           filter: (rule) => rule.outlineSync?.enabled ?? false,
         },
       );
-      const outlineItemType = elementRule?.outlineSync?.itemType ?? "none";
+      // Scripture the operator attached in the plan editor is an explicit
+      // answer, so it makes the row a Bible row on its own — the element rules
+      // match the source's free-text element type, which a hand-added element
+      // ("bible") was never going to satisfy. Only plan-sourced rows carry any.
+      const attachedScriptureRefs = row.scriptureRefs ?? [];
+      const outlineItemType = attachedScriptureRefs.length
+        ? "bible"
+        : elementRule?.outlineSync?.itemType ?? "none";
       let matchedLibraryItem: ServiceItem | null = null;
-      let parsedRef: ParsedBibleRef | null = null;
+      let parsedRefs: ParsedBibleRef[] = [];
       // A plan-sourced row names its song directly; a scraped one only has the
       // row title, which can also carry the element type or a second line.
       const cleanedTitle = cleanPlanningTitle(
@@ -367,7 +374,19 @@ export const buildServicePlanningPreview = ({
           (row.songId ? songs.find((song) => song._id === row.songId) : null) ??
           findBestServicePlanningSongMatch(cleanedTitle, songs);
       } else if (outlineItemType === "bible") {
-        parsedRef = parseBibleReference(row.title);
+        const parsedTitleRef = attachedScriptureRefs.length
+          ? null
+          : parseBibleReference(row.title);
+        parsedRefs = attachedScriptureRefs.length
+          ? attachedScriptureRefs.map(({ book, chapter, verseRange, version }) => ({
+              book,
+              chapter,
+              verseRange,
+              version,
+            }))
+          : parsedTitleRef
+            ? [parsedTitleRef]
+            : [];
       }
 
       const baseCandidate = {
@@ -380,27 +399,41 @@ export const buildServicePlanningPreview = ({
         ledBy: row.ledBy,
         outlineItemType,
         matchedLibraryItem,
-        parsedRef,
+        // One row, one line item: the preview mirrors the source order of
+        // service, so a multi-passage row still shows as the single row it is.
+        parsedRef: parsedRefs[0] ?? null,
         overlayReady: overlayReadyByRow.get(row) ?? false,
         outlineAlreadyPresent: false,
       };
 
+      const syncsToOutline =
+        attachedScriptureRefs.length > 0 ||
+        (Boolean(elementRule?.outlineSync) && outlineItemType !== "none");
+
       lineItems.push({
         ...baseCandidate,
-        selectedForOutline:
-          Boolean(elementRule?.outlineSync) && outlineItemType !== "none",
+        selectedForOutline: syncsToOutline,
       });
 
-      if (
-        !elementRule?.outlineSync ||
-        elementRule.outlineSync.itemType === "none"
-      ) {
+      if (!syncsToOutline) continue;
+
+      if (!attachedScriptureRefs.length) {
+        outlineCandidates.push({ ...baseCandidate, cleanedTitle });
         continue;
       }
 
-      outlineCandidates.push({
-        ...baseCandidate,
-        cleanedTitle,
+      // Every attached passage becomes its own outline item, named by the
+      // passage rather than the row. Sharing the row's title would make them
+      // indistinguishable, and the outline's already-present check — which
+      // compares item names — would drop all but the first.
+      attachedScriptureRefs.forEach((attached, attachedIndex) => {
+        const passageTitle = attached.label.trim();
+        outlineCandidates.push({
+          ...baseCandidate,
+          title: passageTitle || row.title,
+          cleanedTitle: passageTitle || cleanedTitle,
+          parsedRef: parsedRefs[attachedIndex],
+        });
       });
     }
   }
@@ -427,20 +460,24 @@ export const buildServicePlanningPreview = ({
         return item;
       }
 
-      const matchingOutlineCandidate = dedupedOutlineCandidates.find(
+      // A multi-passage row fans out into several candidates whose titles are
+      // the passages, not the row, so they're located by source position. The
+      // row only reads as already present once every one of them is.
+      const rowCandidates = dedupedOutlineCandidates.filter(
         (candidate) =>
           candidate.sectionName === item.sectionName &&
           candidate.headingName === item.headingName &&
+          candidate.sourceRowIndex === item.sourceRowIndex &&
           candidate.elementType === item.elementType &&
-          candidate.title === item.title &&
           candidate.outlineItemType === item.outlineItemType,
       );
 
-      return matchingOutlineCandidate
+      return rowCandidates.length
         ? {
             ...item,
-            outlineAlreadyPresent:
-              matchingOutlineCandidate.outlineAlreadyPresent,
+            outlineAlreadyPresent: rowCandidates.every(
+              (candidate) => candidate.outlineAlreadyPresent,
+            ),
           }
         : item;
     }),

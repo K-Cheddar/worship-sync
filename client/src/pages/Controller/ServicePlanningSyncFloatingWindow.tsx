@@ -48,6 +48,7 @@ import { cn } from "../../utils/cnHelper";
 import { iconColorMap } from "../../utils/itemTypeMaps";
 
 import Select from "../../components/Select/Select";
+import { formatOccurrenceLabel } from "./currentServiceWorkspaceUtils";
 import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
@@ -56,19 +57,6 @@ import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayou
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
-
-/** Weekday + time is enough to tell this week's services apart in a picker. */
-const formatOccurrenceLabel = (startsAt: string): string => {
-  const startsAtMs = Date.parse(startsAt);
-  if (!Number.isFinite(startsAtMs)) return "";
-  return new Date(startsAtMs).toLocaleString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-};
 
 const StatusBadge = ({
   className,

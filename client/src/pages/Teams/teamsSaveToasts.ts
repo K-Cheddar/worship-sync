@@ -28,6 +28,12 @@ export type MemberSaveChangeContext = {
   positionNameById: Map<string, string>;
   teamNameById: Map<string, string>;
   roleNameById: Map<string, string>;
+  /**
+   * Rosters the member belonged to before this save. Membership lives on the
+   * team, not the member, so it cannot be read back off the prior record.
+   * Leave it out to skip reporting membership changes.
+   */
+  priorTeamIds?: string[];
 };
 
 export type EntityNameContext = {
@@ -193,6 +199,21 @@ export const describeMemberSaveChanges = (
   );
   if (desiredPositionsChange) {
     changes.push(desiredPositionsChange);
+  }
+
+  // Only when the caller both knows the prior membership and is actually
+  // sending one — otherwise there is no change to report, just missing data.
+  if (context.priorTeamIds && saved.teamIds) {
+    const teamsChange = describeIdListChanges(
+      "Teams",
+      context.priorTeamIds,
+      saved.teamIds,
+      context.teamNameById,
+      "team",
+    );
+    if (teamsChange) {
+      changes.push(teamsChange);
+    }
   }
 
   const previousMemberships = prior.teamMemberships || {};

@@ -1,4 +1,9 @@
 import { richTextToPlainText } from "../../types/richText";
+import {
+  getServicePlanElementAssigneeNames,
+  getServicePlanElementScriptureRefs,
+  getServicePlanElementSongRefs,
+} from "../../types/servicePlan";
 import type {
   ServicePlanElement,
   ServicePlanSection,
@@ -14,11 +19,16 @@ export type ServicePlanImportFieldChange = {
 
 export type ServicePlanImportChange = {
   id: string;
+  sectionId: string;
   kind: ServicePlanImportChangeKind;
   itemName: string;
   sectionName: string;
   fields: ServicePlanImportFieldChange[];
 };
+
+/** Stable key for a review checkbox. */
+export const servicePlanImportChangeKey = (change: ServicePlanImportChange): string =>
+  `${change.kind}:${change.id}`;
 
 export type ServicePlanImportSummary = {
   changes: ServicePlanImportChange[];
@@ -75,14 +85,17 @@ const formatNotes = (element: ServicePlanElement) => {
 };
 
 const formatSong = (element: ServicePlanElement) => {
-  if (!element.songRef) return "No song";
-  return element.songRef.kind === "library"
-    ? element.songRef.songName
-    : element.songRef.title;
+  const refs = getServicePlanElementSongRefs(element);
+  if (!refs.length) return "No song";
+  return refs.map((songRef) =>
+    songRef.kind === "library" ? songRef.songName : songRef.title,
+  ).join(", ");
 };
 
 const formatScripture = (element: ServicePlanElement) =>
-  element.scriptureRef?.label || "No scripture";
+  getServicePlanElementScriptureRefs(element)
+    .map((scriptureRef) => scriptureRef.label)
+    .join(", ") || "No scripture";
 
 const changedFields = (
   current: ServicePlanElement,
@@ -96,14 +109,20 @@ const changedFields = (
       after: itemName(next),
     });
   }
-  if (!serializesEqual(current.songRef, next.songRef)) {
+  if (!serializesEqual(
+    getServicePlanElementSongRefs(current),
+    getServicePlanElementSongRefs(next),
+  )) {
     fields.push({
       label: "Song",
       before: formatSong(current),
       after: formatSong(next),
     });
   }
-  if (!serializesEqual(current.scriptureRef, next.scriptureRef)) {
+  if (!serializesEqual(
+    getServicePlanElementScriptureRefs(current),
+    getServicePlanElementScriptureRefs(next),
+  )) {
     fields.push({
       label: "Scripture",
       before: formatScripture(current),
@@ -117,14 +136,16 @@ const changedFields = (
       after: optionalValue(next.sourceElementTypeRaw, "None"),
     });
   }
+  const currentAssignees = getServicePlanElementAssigneeNames(current).join(", ");
+  const nextAssignees = getServicePlanElementAssigneeNames(next).join(", ");
   if (
-    current.assignedName !== next.assignedName ||
+    currentAssignees !== nextAssignees ||
     current.sourceLedByRaw !== next.sourceLedByRaw
   ) {
     fields.push({
       label: "Assigned to",
-      before: optionalValue(current.assignedName, "Unassigned"),
-      after: optionalValue(next.assignedName, "Unassigned"),
+      before: optionalValue(currentAssignees, "Unassigned"),
+      after: optionalValue(nextAssignees, "Unassigned"),
     });
   }
   if (
@@ -158,30 +179,39 @@ export const summarizeServicePlanImport = (
 ): ServicePlanImportSummary => {
   const currentItems = new Map<
     string,
-    { element: ServicePlanElement; sectionName: string }
+    { element: ServicePlanElement; sectionId: string; sectionName: string }
   >();
   const nextItems = new Map<
     string,
-    { element: ServicePlanElement; sectionName: string }
+    { element: ServicePlanElement; sectionId: string; sectionName: string }
   >();
 
   currentSections.forEach((section) => {
     section.elements.forEach((element) => {
-      currentItems.set(element.id, { element, sectionName: section.name });
+      currentItems.set(element.id, {
+        element,
+        sectionId: section.id,
+        sectionName: section.name,
+      });
     });
   });
   nextSections.forEach((section) => {
     section.elements.forEach((element) => {
-      nextItems.set(element.id, { element, sectionName: section.name });
+      nextItems.set(element.id, {
+        element,
+        sectionId: section.id,
+        sectionName: section.name,
+      });
     });
   });
 
   const changes: ServicePlanImportChange[] = [];
-  nextItems.forEach(({ element, sectionName }, id) => {
+  nextItems.forEach(({ element, sectionId, sectionName }, id) => {
     const current = currentItems.get(id);
     if (!current) {
       changes.push({
         id,
+        sectionId,
         kind: "added",
         itemName: itemName(element),
         sectionName,
@@ -193,6 +223,7 @@ export const summarizeServicePlanImport = (
     if (fields.length) {
       changes.push({
         id,
+        sectionId,
         kind: "updated",
         itemName: itemName(element),
         sectionName,
@@ -200,10 +231,11 @@ export const summarizeServicePlanImport = (
       });
     }
   });
-  currentItems.forEach(({ element, sectionName }, id) => {
+  currentItems.forEach(({ element, sectionId, sectionName }, id) => {
     if (nextItems.has(id)) return;
     changes.push({
       id,
+      sectionId,
       kind: "removed",
       itemName: itemName(element),
       sectionName,
@@ -222,4 +254,82 @@ export const summarizeServicePlanImport = (
     removed: changes.filter((change) => change.kind === "removed").length,
     updated: changes.filter((change) => change.kind === "updated").length,
   };
+};
+
+/**
+ * Applies only the checked changes from a reviewed refresh. This deliberately
+ * starts with the current draft so a skipped item keeps every local field.
+ */
+export const applySelectedServicePlanImportChanges = (
+  currentSections: ServicePlanSection[],
+  nextSections: ServicePlanSection[],
+  summary: ServicePlanImportSummary,
+  selectedChangeKeys: ReadonlySet<string>,
+): ServicePlanSection[] => {
+  const selectedChanges = new Map(
+    summary.changes
+      .filter((change) => selectedChangeKeys.has(servicePlanImportChangeKey(change)))
+      .map((change) => [servicePlanImportChangeKey(change), change]),
+  );
+  const currentSectionIds = new Set(currentSections.map((section) => section.id));
+  const nextSectionsById = new Map(nextSections.map((section) => [section.id, section]));
+  const nextItemsById = new Map(
+    nextSections.flatMap((section) =>
+      section.elements.map((element) => [element.id, element] as const),
+    ),
+  );
+
+  const selectedChangeFor = (kind: ServicePlanImportChangeKind, id: string) =>
+    selectedChanges.get(`${kind}:${id}`);
+
+  const result = currentSections.flatMap((currentSection) => {
+    const nextSection = nextSectionsById.get(currentSection.id);
+    const sectionChangeKeys = summary.changes
+      .filter((change) => change.sectionId === currentSection.id)
+      .map(servicePlanImportChangeKey);
+    const selectedChangesInSection = [...selectedChanges.values()]
+      .filter((change) => change.sectionId === currentSection.id);
+    const selectedAdditions = nextSection?.elements.filter((element) =>
+      Boolean(selectedChangeFor("added", element.id)),
+    ) || [];
+    const elements = currentSection.elements.flatMap((currentElement) => {
+      if (selectedChangeFor("removed", currentElement.id)) return [];
+      if (selectedChangeFor("updated", currentElement.id)) {
+        return [nextItemsById.get(currentElement.id) || currentElement];
+      }
+      return [currentElement];
+    });
+    elements.push(...selectedAdditions);
+
+    const allElementsRemoved =
+      !nextSection &&
+      currentSection.elements.length > 0 &&
+      currentSection.elements.every((element) =>
+        Boolean(selectedChangeFor("removed", element.id)),
+      );
+    if (allElementsRemoved && currentSection.sourcePlanningManaged) return [];
+
+    return [{
+      ...currentSection,
+      ...(nextSection && sectionChangeKeys.length && sectionChangeKeys.every((key) =>
+        selectedChangeKeys.has(key),
+      )
+        ? { name: nextSection.name }
+        : {}),
+      ...(selectedChangesInSection.length && nextSection?.sourcePlanningManaged
+        ? { sourcePlanningManaged: true }
+        : {}),
+      elements,
+    }];
+  });
+
+  nextSections.forEach((nextSection) => {
+    if (currentSectionIds.has(nextSection.id)) return;
+    const elements = nextSection.elements.filter((element) =>
+      Boolean(selectedChangeFor("added", element.id)),
+    );
+    if (elements.length) result.push({ ...nextSection, elements });
+  });
+
+  return result;
 };

@@ -11,6 +11,8 @@ import type {
   ServicePlanSummary,
   ServicePlanTemplate,
   ServicePlanTemplatePayload,
+  ServicePlanMicrophone,
+  ServicePlanMicrophoneAudience,
 } from "../types/servicePlan";
 import type {
   AuthBootstrap,
@@ -40,8 +42,6 @@ import type {
   TeamRosterMember,
   TeamSchedule,
   TeamScheduleAssignments,
-  TeamScheduleAttendance,
-  TeamScheduleAttendanceStatus,
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
   TeamsBootstrap,
@@ -390,6 +390,13 @@ export type TeamRosterMemberPayload = {
   dateOfBirth?: string;
   positionIds: string[];
   desiredPositionIds?: string[];
+  /**
+   * Rosters this member should belong to. Membership is stored on
+   * `team.memberIds`, so this is a desired-state instruction, not a member
+   * field — the server reconciles both directions and unions in the teams that
+   * own `positionIds`. Omit it entirely to leave membership alone.
+   */
+  teamIds?: string[];
   serviceAvailability?: TeamRosterMember["serviceAvailability"];
   teamMemberships?: TeamRosterMember["teamMemberships"];
   qualifications?: TeamRosterMember["qualifications"];
@@ -411,6 +418,7 @@ export type TeamPayload = {
   description?: string;
   icon?: string;
   memberIds: string[];
+  usesMicrophoneAssignments?: boolean;
 };
 
 export type TeamRolePayload = {
@@ -441,7 +449,8 @@ export type TeamSchedulePayload = {
   serviceIds: string[];
   occurrences?: TeamSchedule["occurrences"];
   assignments?: TeamScheduleAssignments;
-  attendance?: TeamScheduleAttendance;
+  microphoneAssignments?: TeamSchedule["microphoneAssignments"];
+  additionalPositionSlots?: TeamSchedule["additionalPositionSlots"];
   allowCrossTeamConflict?: boolean;
 };
 
@@ -468,8 +477,30 @@ export type TeamIntakeSubmissionPayload = {
   notes?: string;
 };
 
+/**
+ * Loads the Teams dataset. Requests schedule summaries (plus a hydrated window
+ * around today) so the payload does not grow with every month of history; the
+ * schedule the operator opens is hydrated on demand via
+ * `getTeamScheduleDetail`.
+ */
 export const getTeamsBootstrap = async (churchId: string) =>
-  apiFetch<TeamsBootstrap>(`api/churches/${churchId}/teams/bootstrap`);
+  apiFetch<TeamsBootstrap>(
+    `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
+  );
+
+/**
+ * Hydrates one schedule plus the other teams' schedules overlapping its dates —
+ * the latter back the "also scheduled on <team>" warning in the grid.
+ */
+export const getTeamScheduleDetail = async (
+  churchId: string,
+  scheduleId: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    schedule: TeamSchedule;
+    relatedSchedules: TeamSchedule[];
+  }>(`api/churches/${churchId}/team-schedules/${scheduleId}`);
 
 export const createTeamIntakeForm = async (
   churchId: string,
@@ -560,11 +591,23 @@ export const submitTeamIntake = async (
     },
   );
 
+/**
+ * Saving positions also joins the member to those positions' teams on the
+ * server, so both member endpoints hand back the rosters they changed for an
+ * immediate local refresh (same contract as `applyTeamIntakeSubmission`).
+ */
+type TeamRosterMemberSaveResponse = {
+  success: boolean;
+  member: TeamRosterMember;
+  /** Teams whose rosters changed (member added). Absent when none did. */
+  teams?: TeamRecord[];
+};
+
 export const createTeamRosterMember = async (
   churchId: string,
   body: TeamRosterMemberPayload,
 ) =>
-  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+  apiFetch<TeamRosterMemberSaveResponse>(
     `api/churches/${churchId}/team-roster-members`,
     {
       method: "POST",
@@ -577,7 +620,7 @@ export const updateTeamRosterMember = async (
   memberId: string,
   body: TeamRosterMemberPayload,
 ) =>
-  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+  apiFetch<TeamRosterMemberSaveResponse>(
     `api/churches/${churchId}/team-roster-members/${memberId}`,
     {
       method: "POST",
@@ -909,6 +952,8 @@ export const updateTeamScheduleAssignment = async (
     sourcePositionSlotKey?: string;
     shadowAction?: "add" | "remove";
     shadowKind?: TeamScheduleShadowKind;
+    /** Explicit acknowledgement that the member's blockout overlaps this service. */
+    allowBlockout?: boolean;
     allowCrossTeamConflict?: boolean;
   },
 ) =>
@@ -918,6 +963,40 @@ export const updateTeamScheduleAssignment = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const updateTeamScheduleAssignmentMicrophones = async (
+  churchId: string,
+  scheduleId: string,
+  body: {
+    serviceId: string;
+    positionSlotKey: string;
+    microphoneIds: string[];
+  },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignment-microphones`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const addTeamSchedulePositionSlot = async (
+  churchId: string,
+  scheduleId: string,
+  body: { serviceId: string; positionSlotKey: string },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/additional-position-slots`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const removeTeamSchedulePositionSlot = async (
+  churchId: string,
+  scheduleId: string,
+  body: { serviceId: string; positionSlotKey: string },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/additional-position-slots/remove`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const updateTeamScheduleAssignmentSwap = async (
@@ -941,25 +1020,6 @@ export const updateTeamScheduleAssignmentSwap = async (
     },
   );
 
-export const updateTeamScheduleAttendance = async (
-  churchId: string,
-  scheduleId: string,
-  body: {
-    occurrenceId: string;
-    memberId: string;
-    status: TeamScheduleAttendanceStatus | "";
-    columnKey?: string;
-    positionId?: string;
-    positionLabel?: string;
-  },
-) =>
-  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
-    `api/churches/${churchId}/team-schedules/${scheduleId}/attendance`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
 
 export const listServicePlans = async (churchId: string) =>
   apiFetch<{ success: boolean; servicePlans: ServicePlanSummary[] }>(
@@ -1048,10 +1108,17 @@ export const listServicePlanTemplates = async (churchId: string) =>
     { method: "GET" },
   );
 
-/** Upsert: omit `templateId` to create, pass it to overwrite an existing one. */
+/**
+ * Upsert: omit `templateId` to create, pass it to overwrite an existing one.
+ * `baseRevision` opts into conflict detection — the server answers 409 (with
+ * the latest template in the body) rather than overwriting another editor.
+ */
 export const saveServicePlanTemplate = async (
   churchId: string,
-  body: ServicePlanTemplatePayload & { templateId?: string },
+  body: ServicePlanTemplatePayload & {
+    templateId?: string;
+    baseRevision?: number;
+  },
 ) =>
   apiFetch<{ success: boolean; template: ServicePlanTemplate }>(
     `api/churches/${churchId}/service-plan-templates`,
@@ -1082,6 +1149,31 @@ export const saveServicePlanAssignmentHistory = async (
   apiFetch<{ success: boolean; values: string[] }>(
     `api/churches/${churchId}/service-plan-assignment-history`,
     { method: "POST", body: JSON.stringify({ values }) },
+  );
+
+/** Church-wide microphone catalog used by every service plan. */
+export const getServicePlanMicrophones = async (churchId: string) =>
+  apiFetch<{
+    success: boolean;
+    microphones: ServicePlanMicrophone[];
+    audiences?: ServicePlanMicrophoneAudience[];
+  }>(
+    `api/churches/${churchId}/service-plan-microphones`,
+    { method: "GET" },
+  );
+
+export const saveServicePlanMicrophones = async (
+  churchId: string,
+  microphones: ServicePlanMicrophone[],
+  audiences: ServicePlanMicrophoneAudience[],
+) =>
+  apiFetch<{
+    success: boolean;
+    microphones: ServicePlanMicrophone[];
+    audiences?: ServicePlanMicrophoneAudience[];
+  }>(
+    `api/churches/${churchId}/service-plan-microphones`,
+    { method: "POST", body: JSON.stringify({ microphones, audiences }) },
   );
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>

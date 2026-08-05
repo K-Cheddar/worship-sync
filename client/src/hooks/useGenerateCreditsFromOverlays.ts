@@ -161,15 +161,21 @@ export function useGenerateCreditsFromOverlays() {
 
       let schedule: TeamScheduleCreditEntry[] = [];
       let scheduleError: string | null = null;
+      // The bootstrap only hydrates schedules around today. A service outside
+      // that window comes back as a summary, and generating from it would write
+      // blank credits that read exactly like an unstaffed service.
+      let scheduleUnavailable = false;
       if (churchId) {
         try {
           const teamsBootstrap = await getTeamsBootstrap(churchId);
-          schedule = buildTeamScheduleCreditEntries({
+          const credits = buildTeamScheduleCreditEntries({
             schedules: teamsBootstrap.schedules || [],
             positions: teamsBootstrap.positions || [],
             members: teamsBootstrap.members || [],
             teams: teamsBootstrap.teams || [],
           });
+          schedule = credits.entries;
+          scheduleUnavailable = credits.scheduleUnavailable;
         } catch (error) {
           console.error("Error generating credits from Teams schedule:", error);
           scheduleError =
@@ -314,7 +320,9 @@ export function useGenerateCreditsFromOverlays() {
           ],
           warning: scheduleError
             ? "Media schedule was unavailable. Other sources will still be applied."
-            : null,
+            : scheduleUnavailable
+              ? "This service's media schedule hasn't loaded, so its names were left out. Open it in Teams first, then generate again."
+              : null,
         }),
       );
 

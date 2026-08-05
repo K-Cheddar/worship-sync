@@ -34,9 +34,10 @@ type ServicePlanTemplateModalProps = {
 
 /**
  * Applies a saved order-of-service skeleton to this plan, or saves this plan's
- * structure as a new/updated one. Templates carry structure only — the
- * per-week song, scripture and assignment picks are stripped on the way in and
- * on the way out (see cloneSectionsForTemplate).
+ * structure as a new/updated one. Templates carry the repeating parts —
+ * structure, timings, notes and microphones — while the per-week song,
+ * scripture and assignment picks are stripped on the way in and on the way out
+ * (see cloneSectionsForTemplate).
  */
 const ServicePlanTemplateModal = ({
   mode,
@@ -152,8 +153,8 @@ const ServicePlanTemplateModal = ({
             />
             <p className="text-xs text-gray-400">
               Checked templates sort first for this service. Uncheck to use with
-              any service. Saves structure, timings and notes — not songs,
-              scripture or assignments.
+              any service. Saves structure, timings, notes and microphones — not
+              songs, scripture or assignments.
             </p>
             {ordered.length > 0 ? (
               <div className="space-y-1">

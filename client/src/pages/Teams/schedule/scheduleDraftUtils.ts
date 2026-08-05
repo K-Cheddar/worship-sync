@@ -3,10 +3,10 @@ import type {
   TeamRecord,
   TeamSchedule,
   TeamScheduleAssignments,
-  TeamScheduleAttendance,
   TeamScheduleOccurrence,
   TeamService,
 } from "../../../api/authTypes";
+import { clampPlainDateToMin } from "@/utils/plainDate";
 import { getDefaultScheduleRange } from "@/utils/teamScheduleOccurrences";
 
 type BuildScheduleDraftArgs = {
@@ -15,6 +15,15 @@ type BuildScheduleDraftArgs = {
   defaultTeamId: string;
   defaultServiceIds: string[];
   defaultRange?: { startDate: string; endDate: string };
+};
+
+const withClampedScheduleDates = (
+  draft: TeamSchedulePayload,
+): TeamSchedulePayload => {
+  const startDate = draft.startDate || "";
+  const endDate = clampPlainDateToMin(draft.endDate || "", startDate);
+  if (endDate === (draft.endDate || "")) return draft;
+  return { ...draft, endDate };
 };
 
 export const buildScheduleDraft = ({
@@ -31,11 +40,11 @@ export const buildScheduleDraft = ({
   );
 
   if (persistedDraft && !cachedDraftLooksBlank) {
-    return persistedDraft;
+    return withClampedScheduleDates(persistedDraft);
   }
 
   if (selectedSchedule) {
-    return {
+    return withClampedScheduleDates({
       name: selectedSchedule.name,
       description: selectedSchedule.description || "",
       teamId: selectedSchedule.teamId,
@@ -44,11 +53,10 @@ export const buildScheduleDraft = ({
       serviceIds: selectedSchedule.serviceIds || [],
       occurrences: selectedSchedule.occurrences || [],
       assignments: selectedSchedule.assignments || {},
-      attendance: selectedSchedule.attendance || {},
-    };
+    });
   }
 
-  return {
+  return withClampedScheduleDates({
     name: "",
     description: "",
     teamId: defaultTeamId,
@@ -57,8 +65,7 @@ export const buildScheduleDraft = ({
     serviceIds: defaultServiceIds,
     occurrences: [],
     assignments: {},
-    attendance: {},
-  };
+  });
 };
 
 /**
@@ -143,7 +150,9 @@ const mapOccurrencesByServiceIndex = (
     sortOccurrences(sourceList).forEach((sourceOccurrence, index) => {
       const targetOccurrence = targetList[index];
       if (targetOccurrence) {
-        sourceToTargets.set(sourceOccurrence.occurrenceId, [targetOccurrence.occurrenceId]);
+        sourceToTargets.set(sourceOccurrence.occurrenceId, [
+          targetOccurrence.occurrenceId,
+        ]);
       }
     });
   });
@@ -208,7 +217,9 @@ const mapReplacementOccurrences = ({
   remainingSources.forEach((sourceOccurrence, index) => {
     const targetOccurrence = remainingTargets[index];
     if (targetOccurrence) {
-      sourceToTargets.set(sourceOccurrence.occurrenceId, [targetOccurrence.occurrenceId]);
+      sourceToTargets.set(sourceOccurrence.occurrenceId, [
+        targetOccurrence.occurrenceId,
+      ]);
     }
   });
 };
@@ -240,7 +251,7 @@ const buildRemappedAssignments = ({
 /**
  * Build a draft that copies an existing schedule into a new one. The copy keeps
  * the team, services, date range, and assignments so the operator has a populated
- * starting point; attendance is day-of data and is intentionally not carried.
+ * starting point.
  */
 export const buildScheduleCopyDraft = ({
   source,
@@ -257,14 +268,15 @@ export const buildScheduleCopyDraft = ({
   serviceIds: source.serviceIds || [],
   occurrences,
   assignments: source.assignments || {},
-  attendance: {},
 });
 
 const occurrenceDate = (occurrence: TeamScheduleOccurrence) =>
   occurrence.startsAt.slice(0, 10);
 
 const occurrenceServiceIds = (occurrence: TeamScheduleOccurrence) =>
-  occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId];
+  occurrence.serviceIds?.length
+    ? occurrence.serviceIds
+    : [occurrence.serviceId];
 
 /**
  * Map each source occurrence to the target occurrence(s) covering the same
@@ -348,31 +360,35 @@ export const rekeyAssignmentsByServiceDate = ({
   });
 };
 
-/** Attendance counterpart of {@link rekeyAssignmentsByServiceDate}, merged per member. */
-export const rekeyAttendanceByServiceDate = ({
+/**
+ * Re-key occurrence-scoped data that does not need cell-by-cell merging, such
+ * as daily microphone allocations and added positions. When several
+ * rows combine, the earliest source row wins; the shared schedule assignment
+ * can then be adjusted explicitly by the operator.
+ */
+export const rekeyScheduleOccurrenceRowsByServiceDate = <T,>({
   sourceOccurrences,
   targetOccurrences,
-  attendance,
+  rows,
 }: {
   sourceOccurrences: TeamScheduleOccurrence[];
   targetOccurrences: TeamScheduleOccurrence[];
-  attendance: TeamScheduleAttendance;
-}): TeamScheduleAttendance => {
-  if (!attendance || Object.keys(attendance).length === 0) return {};
-  const map = mapOccurrencesByServiceDate(sourceOccurrences, targetOccurrences);
-  const orderedSources = [...sourceOccurrences].sort(
-    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+  rows: Record<string, T> | undefined;
+}): Record<string, T> => {
+  if (!rows || Object.keys(rows).length === 0) return {};
+  const sourceToTargets = mapOccurrencesByServiceDate(
+    sourceOccurrences,
+    targetOccurrences,
   );
-  const result: TeamScheduleAttendance = {};
-  orderedSources.forEach((source) => {
-    const row = attendance[source.occurrenceId];
-    const targetIds = map.get(source.occurrenceId);
-    if (!row || !targetIds) return;
+  mapOccurrencesByServiceIndex(sourceOccurrences, targetOccurrences, sourceToTargets);
+  mapReplacementOccurrences({ sourceOccurrences, targetOccurrences, sourceToTargets });
+  const result: Record<string, T> = {};
+  sortOccurrences(sourceOccurrences).forEach((sourceOccurrence) => {
+    const row = rows[sourceOccurrence.occurrenceId];
+    const targetIds = sourceToTargets.get(sourceOccurrence.occurrenceId);
+    if (row === undefined || !targetIds) return;
     targetIds.forEach((targetId) => {
-      const dest = (result[targetId] ||= {});
-      Object.entries(row).forEach(([memberId, entry]) => {
-        if (dest[memberId] === undefined) dest[memberId] = entry;
-      });
+      if (result[targetId] === undefined) result[targetId] = row;
     });
   });
   return result;

@@ -1,3 +1,4 @@
+import { CalendarDays } from "lucide-react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SectionTabs } from "./SectionTabs";
@@ -76,5 +77,22 @@ describe("SectionTabs", () => {
 
     expect(screen.getByText("First panel")).toBeInTheDocument();
     expect(screen.getByText("Second panel")).toBeInTheDocument();
+  });
+
+  it("keeps the accessible tab name when an icon is provided", () => {
+    render(
+      <SectionTabs
+        items={[
+          {
+            value: "plans",
+            label: "Plans",
+            icon: CalendarDays,
+            content: <div>Plans content</div>,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^Plans$/i })).toBeInTheDocument();
   });
 });

@@ -41,9 +41,68 @@ export type ServicePlanTeamNote = {
   scope?: ServicePlanNoteScope;
   /** Stable Teams position id for a role-scoped note. */
   positionId?: string;
-  /** Team identity is stored with role notes to make role filtering practical. */
+  /** One or more stable Teams position ids for a role-scoped note. */
+  positionIds?: string[];
+  /** Stable Teams team id. Required for newly created team notes. */
   teamId?: string;
   teamName?: string;
+  /** Teams represented by the selected role audiences. */
+  teamIds?: string[];
+  teamNames?: string[];
+};
+
+/**
+ * Upper bound on the church microphone catalog. Keep in sync with
+ * `MAX_SERVICE_PLAN_MICROPHONES` in `server/teamsAuthHandlers.js`.
+ */
+export const MAX_SERVICE_PLAN_MICROPHONES = 80;
+
+/** A church-owned microphone available to every dated service plan. */
+export type ServicePlanMicrophone = {
+  id: string;
+  /** Short operator-facing identifier, e.g. "Orange" or "Choir left". */
+  name: string;
+  /** Physical style, e.g. handheld, headset, lapel, or choir mic. */
+  type: string;
+  /** A validated #RRGGBB swatch used to make live assignments easy to scan. */
+  color: string;
+};
+
+/** A position that should receive an assigned microphone in its notes area. */
+export type ServicePlanMicrophoneAudience = {
+  positionId: string;
+  roleName: string;
+  teamId?: string;
+  teamName?: string;
+};
+
+/**
+ * @deprecated Superseded by microphones held on a `ServicePlanAssignee`. Read
+ * only for plans saved before that change, and converted by
+ * scripts/migrate-service-plan-assignees.js.
+ */
+export type ServicePlanMicrophoneAssignment = {
+  microphoneId: string;
+  /** Legacy per-element visibility. New assignments use the church-wide audience setting. */
+  audiences?: ServicePlanMicrophoneAudience[];
+};
+
+/**
+ * One person doing an item, and the microphones they carry for it.
+ *
+ * An assignee with no `name` and no `memberId` is the item's *unassigned*
+ * slot: a stand or spare microphone that nobody is holding yet. That is a
+ * state of this one list rather than a second parallel feature, so a mic
+ * planned before its person is known simply gains a name later.
+ */
+export type ServicePlanAssignee = {
+  id: string;
+  /** Roster member id, when the assignment resolves to a real Teams member. */
+  memberId?: string;
+  /** Display name. Empty on the unassigned slot. */
+  name?: string;
+  /** Microphones this person carries for this item, in operator order. */
+  microphoneIds?: string[];
 };
 
 /**
@@ -89,6 +148,11 @@ export type ServicePlanElement = {
   notes?: RichTextDocument;
   /** Operational notes scoped to a team or specific role. */
   teamNotes?: ServicePlanTeamNote[];
+  /**
+   * @deprecated Microphones now hang off `assignees`. Read only for plans
+   * saved before that change; see getServicePlanElementAssignees.
+   */
+  microphoneAssignments?: ServicePlanMicrophoneAssignment[];
   /** Plain HH:mm (24h) start time within the service, derived by the timing
    * cascade when a duration is set instead (see servicePlanTimingUtils.ts). */
   startTime?: string;
@@ -96,13 +160,22 @@ export type ServicePlanElement = {
   durationSeconds?: number;
   /** Legacy compatibility value. New edits also write durationSeconds. */
   durationMinutes?: number;
-  /** Reference to the song being sung, if this is (or plays alongside) a song. */
+  /** Legacy single song reference. Read for plans saved before multi-song support. */
   songRef?: ServicePlanSongReference;
-  /** Scripture passage read during this element, if any. */
+  /** Songs that are sung during this element, in presentation order. */
+  songRefs?: ServicePlanSongReference[];
+  /** Legacy single scripture reference. Read for plans saved before multi-scripture support. */
   scriptureRef?: ServicePlanScriptureReference;
-  /** Roster member id, when the assignment resolves to a real Teams member. */
+  /** Scripture passages read during this element, in presentation order. */
+  scriptureRefs?: ServicePlanScriptureReference[];
+  /** Everyone doing this item, and the microphones each of them carries. */
+  assignees?: ServicePlanAssignee[];
+  /**
+   * @deprecated Superseded by `assignees`. Read only for plans saved before
+   * multi-assignee support; see getServicePlanElementAssignees.
+   */
   assignedMemberId?: string;
-  /** Free-text assignment (guest, or an unresolved Service Planning "led by" name). */
+  /** @deprecated Superseded by `assignees`. */
   assignedName?: string;
   /** Team position this element maps to; scopes roster assignment suggestions. */
   positionId?: string;
@@ -120,6 +193,8 @@ export type ServicePlanElement = {
   /** Set once this element has been pushed into the live outline, so a re-push
    * can detect it's already present instead of duplicating it. */
   pushedOutlineListId?: string;
+  /** All outline items pushed from this element when it has multiple attachments. */
+  pushedOutlineListIds?: string[];
 };
 
 /**
@@ -128,14 +203,92 @@ export type ServicePlanElement = {
  * which is what the outline bridge and public projection read.
  */
 export const getServicePlanElementType = (
-  element: Pick<ServicePlanElement, "songRef" | "scriptureRef" | "type">,
+  element: Pick<
+    ServicePlanElement,
+    "songRef" | "songRefs" | "scriptureRef" | "scriptureRefs" | "type"
+  >,
 ): ServicePlanElementType => {
-  if (element.songRef) return "song";
-  if (element.scriptureRef) return "bible";
+  if (getServicePlanElementSongRefs(element).length) return "song";
+  if (getServicePlanElementScriptureRefs(element).length) return "bible";
   // Headings carry no attachment but are still structurally distinct, so an
   // existing heading keeps its kind rather than collapsing into "free".
   return element.type === "heading" ? "heading" : "free";
 };
+
+/** New plans use arrays; these retain read compatibility with older plans. */
+export const getServicePlanElementSongRefs = (
+  element: Pick<ServicePlanElement, "songRef" | "songRefs">,
+): ServicePlanSongReference[] =>
+  element.songRefs ?? (element.songRef ? [element.songRef] : []);
+
+export const getServicePlanElementScriptureRefs = (
+  element: Pick<ServicePlanElement, "scriptureRef" | "scriptureRefs">,
+): ServicePlanScriptureReference[] =>
+  element.scriptureRefs ?? (element.scriptureRef ? [element.scriptureRef] : []);
+
+/**
+ * Every assignee on an element, in operator order.
+ *
+ * Stored plans are converted to `assignees` up front by
+ * scripts/migrate-service-plan-assignees.js. This still folds the legacy
+ * single-assignee and per-element microphone fields in as a read-time safety
+ * net: a document the migration missed (written by an older client mid-deploy,
+ * or skipped by a failed batch) would otherwise render with no assignee and
+ * silently drop its microphone plan during a live service.
+ *
+ * Legacy microphones have no person attached, so they land on the unassigned
+ * slot — exactly where a stand mic belongs.
+ */
+export const getServicePlanElementAssignees = (
+  element: Pick<
+    ServicePlanElement,
+    "assignees" | "assignedName" | "assignedMemberId" | "microphoneAssignments"
+  >,
+): ServicePlanAssignee[] => {
+  if (element.assignees) return element.assignees;
+
+  const legacy: ServicePlanAssignee[] = [];
+  const name = element.assignedName?.trim();
+  if (name || element.assignedMemberId) {
+    legacy.push({
+      id: "legacy-assignee",
+      ...(name ? { name } : {}),
+      ...(element.assignedMemberId
+        ? { memberId: element.assignedMemberId }
+        : {}),
+    });
+  }
+  const microphoneIds = (element.microphoneAssignments || [])
+    .map((assignment) => assignment.microphoneId)
+    .filter(Boolean);
+  if (microphoneIds.length) {
+    legacy.push({ id: "legacy-microphones", microphoneIds });
+  }
+  return legacy;
+};
+
+/** True for the unassigned slot: microphones with nobody holding them yet. */
+export const isUnassignedServicePlanAssignee = (
+  assignee: ServicePlanAssignee,
+): boolean => !assignee.name?.trim() && !assignee.memberId;
+
+/** Assignee display names only, skipping the unassigned slot. */
+export const getServicePlanElementAssigneeNames = (
+  element: Pick<
+    ServicePlanElement,
+    "assignees" | "assignedName" | "assignedMemberId" | "microphoneAssignments"
+  >,
+): string[] =>
+  getServicePlanElementAssignees(element)
+    .map((assignee) => assignee.name?.trim())
+    .filter((name): name is string => Boolean(name));
+
+/** New role notes use arrays; this retains old one-role notes. */
+export const getServicePlanRoleNotePositionIds = (
+  note: Pick<ServicePlanTeamNote, "positionId" | "positionIds">,
+): string[] =>
+  note.positionIds?.filter(Boolean) ??
+  (note.positionId ? [note.positionId] : []);
 
 export type ServicePlanSection = {
   id: string;
@@ -161,6 +314,8 @@ export type ServicePlanTemplate = {
   /** When set, the template is offered for this service first. */
   serviceId?: string;
   sections: ServicePlanSection[];
+  /** Incremented by the server on each save for conflict detection. */
+  revision?: number;
   createdAt?: string;
   updatedAt?: string;
 };

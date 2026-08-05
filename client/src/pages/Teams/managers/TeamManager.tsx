@@ -3,6 +3,7 @@ import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import { useToast } from "../../../context/toastContext";
 import {
   archiveTeam,
@@ -32,6 +33,8 @@ import {
 } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import type { TeamsData } from "../types";
 
 // Key used to track an in-flight save for the create form, which has no team id
@@ -75,6 +78,7 @@ const TeamManager = ({
     description: "",
     icon: "",
     memberIds: [],
+    usesMicrophoneAssignments: false,
   });
   // Teams with a save currently in flight, keyed by teamId (or CREATE_SAVING_KEY
   // for a new team). Tracking per-editor keeps the Save spinner on the team
@@ -82,6 +86,7 @@ const TeamManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
 
   const editingTeamPositions = useMemo(() => {
@@ -104,7 +109,13 @@ const TeamManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ name: "", description: "", icon: "", memberIds: [] });
+    setDraft({
+      name: "",
+      description: "",
+      icon: "",
+      memberIds: [],
+      usesMicrophoneAssignments: false,
+    });
   };
 
   const cancelEditing = () => {
@@ -119,8 +130,14 @@ const TeamManager = ({
       description: team.description || "",
       icon: team.icon || "",
       memberIds: team.memberIds || [],
+      usesMicrophoneAssignments: Boolean(team.usesMicrophoneAssignments),
     });
   }, []);
+
+  const selectTeam = useCallback((team: TeamRecord) => {
+    if (editing?.teamId === team.teamId) return;
+    requestDiscardAction(() => startEditingTeam(team));
+  }, [editing?.teamId, requestDiscardAction, startEditingTeam]);
 
   useTeamsRestoreOnMount({
     onGroupsRestore: (restore) => {
@@ -180,6 +197,7 @@ const TeamManager = ({
       description: draft.description || "",
       icon: draft.icon || "",
       memberIds: draft.memberIds,
+      usesMicrophoneAssignments: Boolean(draft.usesMicrophoneAssignments),
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -228,6 +246,24 @@ const TeamManager = ({
   // currently open, so a background save elsewhere never spins or disables it.
   const currentEditorKey = editing ? editing.teamId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
+  const hasPendingChanges = editing
+    ? JSON.stringify(draft) !==
+      JSON.stringify({
+        name: editing.name,
+        description: editing.description || "",
+        icon: editing.icon || "",
+        memberIds: editing.memberIds || [],
+        usesMicrophoneAssignments: Boolean(editing.usesMicrophoneAssignments),
+      })
+    : JSON.stringify(draft) !==
+      JSON.stringify({
+        name: "",
+        description: "",
+        icon: "",
+        memberIds: [],
+        usesMicrophoneAssignments: false,
+      });
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   const formatNameList = (names: string[]) =>
     names.length === 0 ? "None yet." : names.join(", ");
@@ -261,7 +297,7 @@ const TeamManager = ({
                 icon={team.icon}
                 archived={Boolean(team.archivedAt)}
                 canEdit={canEdit}
-                onTitleClick={() => startEditingTeam(team)}
+                onTitleClick={() => selectTeam(team)}
               />
             ))}
           </>
@@ -306,6 +342,7 @@ const TeamManager = ({
             saveLabel="Save team"
             onSave={() => void submit()}
             onCancel={cancelEditing}
+            hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
             isLoading={isSavingCurrent}
           />
@@ -319,6 +356,21 @@ const TeamManager = ({
           options={members.map((member) => ({ id: member.memberId, label: memberName(member), archived: Boolean(member.archivedAt) }))}
           value={draft.memberIds}
           onChange={(memberIds) => setDraft((d) => ({ ...d, memberIds }))}
+        />
+        <Checkbox
+          label={(
+            <span className="flex flex-col gap-0.5">
+              <span>Use microphone assignments</span>
+              <span className="text-xs text-gray-400">
+                Schedule microphones for this team&apos;s roles on each service day.
+              </span>
+            </span>
+          )}
+          checked={Boolean(draft.usesMicrophoneAssignments)}
+          onCheckedChange={(usesMicrophoneAssignments) => setDraft((current) => ({
+            ...current,
+            usesMicrophoneAssignments,
+          }))}
         />
         {editing ? (
           <div className="space-y-4">

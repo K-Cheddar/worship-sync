@@ -22,12 +22,26 @@ const MIN_HEIGHT = TITLE_BAR_HEIGHT + 60;
 const ANIM_MS = 180;
 const TITLE_BAR_CONTROL_CLASS =
   "max-md:!min-h-8 max-md:!min-w-8 max-md:p-1 touch-manipulation";
+/** Coarse hit areas stay near the border so they do not cover content buttons. */
 const BOTTOM_EDGE_RESIZE_CLASS =
-  "absolute bottom-0 left-12 right-12 z-10 h-1 cursor-ns-resize pointer-coarse:h-12";
+  "absolute bottom-0 left-12 right-12 z-10 h-1 cursor-ns-resize pointer-coarse:h-3";
 const BOTTOM_CORNER_RESIZE_CLASS =
-  "absolute bottom-0 z-10 h-3 w-3 pointer-coarse:h-12 pointer-coarse:w-12";
+  "absolute bottom-0 z-10 h-3 w-3 pointer-coarse:h-4 pointer-coarse:w-4";
 const SIDE_EDGE_RESIZE_CLASS =
-  "absolute top-10 bottom-12 z-10 w-1.5 cursor-ew-resize pointer-coarse:w-12";
+  "absolute top-10 bottom-12 z-10 w-1.5 cursor-ew-resize pointer-coarse:w-3";
+
+const isTitleBarControlTarget = (target: EventTarget | null) =>
+  target instanceof Element && Boolean(target.closest("button"));
+
+/** Keep floating windows inside the viewport — never larger than the screen. */
+const clampSizeToViewport = (width: number, height: number) => {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  return {
+    width: Math.min(Math.max(width, Math.min(MIN_WIDTH, vw)), vw),
+    height: Math.min(Math.max(height, Math.min(MIN_HEIGHT, vh)), vh),
+  };
+};
 
 export interface FloatingWindowHandle {
   restore: () => void;
@@ -92,7 +106,9 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       label?.trim() ||
       (typeof title === "string" && title.trim() ? title.trim() : "Window");
 
-    const [size, setSize] = useState({ width: defaultWidth, height: defaultHeight });
+    const [size, setSize] = useState(() =>
+      clampSizeToViewport(defaultWidth, defaultHeight),
+    );
     const [userResized, setUserResized] = useState(false);
     const sizeRef = useRef(size);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -101,15 +117,19 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     }, [size]);
 
     const [position, setPosition] = useState(() => {
+      const clampedSize = clampSizeToViewport(defaultWidth, defaultHeight);
       const p = defaultPosition ?? {
-        x: (window.innerWidth - defaultWidth) / 2,
-        y: (window.innerHeight - defaultHeight) / 2,
+        x: (window.innerWidth - clampedSize.width) / 2,
+        y: (window.innerHeight - clampedSize.height) / 2,
       };
       return {
-        x: Math.min(Math.max(p.x, 0), Math.max(window.innerWidth - defaultWidth, 0)),
+        x: Math.min(Math.max(p.x, 0), Math.max(window.innerWidth - clampedSize.width, 0)),
         y: autoHeight
           ? Math.max(p.y, 0)
-          : Math.min(Math.max(p.y, 0), Math.max(window.innerHeight - defaultHeight, 0)),
+          : Math.min(
+            Math.max(p.y, 0),
+            Math.max(window.innerHeight - clampedSize.height, 0),
+          ),
       };
     });
     const positionRef = useRef(position);
@@ -130,7 +150,9 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const [activeZ, setActiveZ] = useState(() => bringToFront());
 
     const raiseWindow = useCallback(() => {
-      setActiveZ(bringToFront());
+      // Skip setState when already frontmost — a re-render during touchstart
+      // cancels the browser's synthesized click on touch devices.
+      setActiveZ((current) => bringToFront(current));
       setFrontmost(windowId);
     }, [bringToFront, setFrontmost, windowId]);
 
@@ -246,6 +268,35 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       };
     }, []);
 
+    // Keep size/position inside the viewport when the browser window resizes.
+    useEffect(() => {
+      const onViewportResize = () => {
+        const nextSize = clampSizeToViewport(
+          sizeRef.current.width,
+          sizeRef.current.height,
+        );
+        sizeRef.current = nextSize;
+        setSize((prev) =>
+          prev.width === nextSize.width && prev.height === nextSize.height
+            ? prev
+            : nextSize,
+        );
+
+        const nextPos = clampPosition(positionRef.current.x, positionRef.current.y);
+        positionRef.current = nextPos;
+        setPosition((prev) =>
+          prev.x === nextPos.x && prev.y === nextPos.y ? prev : nextPos,
+        );
+
+        const dockY = window.innerHeight - TITLE_BAR_HEIGHT;
+        setMinimizedY((prev) => Math.min(prev, dockY));
+        minimizedYRef.current = Math.min(minimizedYRef.current, dockY);
+      };
+
+      window.addEventListener("resize", onViewportResize);
+      return () => window.removeEventListener("resize", onViewportResize);
+    }, [clampPosition]);
+
     const setGestureTransition = useCallback((active: boolean) => {
       if (containerRef.current) {
         containerRef.current.style.transition = active ? "none" : "";
@@ -287,7 +338,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     const handleTitleMouseDown = useCallback(
       (e: React.MouseEvent) => {
-        if ((e.target as HTMLElement).closest("button")) return;
+        if (isTitleBarControlTarget(e.target)) return;
         e.preventDefault();
         dragState.current = {
           isDragging: true,
@@ -328,7 +379,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     const handleTitleTouchStart = useCallback(
       (e: React.TouchEvent) => {
-        if ((e.target as HTMLElement).closest("button")) return;
+        if (isTitleBarControlTarget(e.target)) return;
         const touch = e.touches[0];
         dragState.current = {
           isDragging: true,
@@ -343,6 +394,11 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       },
       [handleDragTouchMove, handleDragTouchEnd, setGestureTransition],
     );
+
+    /** Keep title controls from starting a drag or raising (re-render) mid-tap. */
+    const stopTitleControlGesture = useCallback((e: React.SyntheticEvent) => {
+      e.stopPropagation();
+    }, []);
 
     // ── Resize ───────────────────────────────────────────────────────────────
     const resizeState = useRef<{
@@ -384,7 +440,9 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       const width = el.offsetWidth;
       const height = el.offsetHeight;
       sizeRef.current = { width, height };
-      el.style.maxHeight = "none";
+      // Drop the content max so height can be driven by the gesture, but keep
+      // the viewport cap so the window cannot grow past the screen.
+      el.style.maxHeight = "100vh";
       el.style.height = `${height}px`;
 
       return { width, height };
@@ -406,22 +464,30 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         newWidth = Math.min(
           Math.max(startWidth + dx, MIN_WIDTH),
           window.innerWidth - startPosX,
+          window.innerWidth,
         );
       }
       if (direction.includes("s")) {
         newHeight = Math.min(
           Math.max(startHeight + dy, MIN_HEIGHT),
           window.innerHeight - startPosY,
+          window.innerHeight,
         );
       }
       if (direction.includes("w")) {
         const proposed = startWidth - dx;
-        newWidth = Math.max(Math.min(proposed, startWidth + startPosX), MIN_WIDTH);
+        newWidth = Math.min(
+          Math.max(Math.min(proposed, startWidth + startPosX), MIN_WIDTH),
+          window.innerWidth,
+        );
         newX = startPosX + (startWidth - newWidth);
       }
       if (direction.includes("n")) {
         const proposed = startHeight - dy;
-        newHeight = Math.max(Math.min(proposed, startHeight + startPosY), MIN_HEIGHT);
+        newHeight = Math.min(
+          Math.max(Math.min(proposed, startHeight + startPosY), MIN_HEIGHT),
+          window.innerHeight,
+        );
         newY = startPosY + (startHeight - newHeight);
       }
 
@@ -493,7 +559,9 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     const handleResizeTouchStart = useCallback(
       (e: React.TouchEvent) => {
-        e.preventDefault();
+        // Do not preventDefault here — that cancels the synthesized click when
+        // a tap lands on a handle that overlaps a control. touchmove still
+        // preventDefaults once the resize gesture is active.
         e.stopPropagation();
         const direction = (e.currentTarget as HTMLElement).dataset.resizeDir as ResizeDirection;
         const touch = e.touches[0];
@@ -551,9 +619,15 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       position: "fixed",
       left: position.x,
       top: resolvedTop,
-      width: isMinimized ? 228 : size.width,
+      width: isMinimized ? Math.min(228, window.innerWidth) : size.width,
+      maxWidth: "100vw",
+      // Cap content growth and fixed heights to the viewport; autoHeight also
+      // keeps its content max when that is smaller than the viewport.
+      maxHeight:
+        resolvedMaxHeight !== undefined
+          ? `min(${resolvedMaxHeight}px, 100vh)`
+          : "100vh",
       ...(resolvedHeight !== undefined ? { height: resolvedHeight } : {}),
-      ...(resolvedMaxHeight !== undefined ? { maxHeight: resolvedMaxHeight } : {}),
       zIndex: activeZ,
       transformOrigin: "bottom center",
       transform: windowShrunk ? "scaleX(0.55) scaleY(0.08)" : "scaleX(1) scaleY(1)",
@@ -600,6 +674,8 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
               svg={isMinimized ? Maximize2 : Minus}
               iconSize="sm"
               className={TITLE_BAR_CONTROL_CLASS}
+              onMouseDown={stopTitleControlGesture}
+              onTouchStart={stopTitleControlGesture}
               onClick={handleMinimize}
               aria-label={isMinimized ? "Restore window" : "Minimize window"}
             />
@@ -608,6 +684,8 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
               svg={X}
               iconSize="sm"
               className={TITLE_BAR_CONTROL_CLASS}
+              onMouseDown={stopTitleControlGesture}
+              onTouchStart={stopTitleControlGesture}
               onClick={handleClose}
               aria-label="Close window"
             />

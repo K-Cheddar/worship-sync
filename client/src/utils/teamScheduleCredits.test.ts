@@ -81,7 +81,7 @@ describe("buildTeamScheduleCreditEntries", () => {
   ];
 
   it("uses an in-progress occurrence inside the service window before the next upcoming one", () => {
-    const entries = buildTeamScheduleCreditEntries({
+    const { entries } = buildTeamScheduleCreditEntries({
       teams,
       positions,
       members,
@@ -124,7 +124,7 @@ describe("buildTeamScheduleCreditEntries", () => {
   });
 
   it("rolls to the next upcoming occurrence after the three-hour window", () => {
-    const entries = buildTeamScheduleCreditEntries({
+    const { entries } = buildTeamScheduleCreditEntries({
       teams,
       positions,
       members,
@@ -167,7 +167,7 @@ describe("buildTeamScheduleCreditEntries", () => {
   });
 
   it("groups multiple slots and includes shadows with full member names", () => {
-    const entries = buildTeamScheduleCreditEntries({
+    const { entries } = buildTeamScheduleCreditEntries({
       teams,
       positions,
       members,
@@ -211,7 +211,7 @@ describe("buildTeamScheduleCreditEntries", () => {
         members,
         schedules: [],
       }),
-    ).toEqual([]);
+    ).toEqual({ entries: [], scheduleUnavailable: false });
 
     expect(
       buildTeamScheduleCreditEntries({
@@ -227,7 +227,30 @@ describe("buildTeamScheduleCreditEntries", () => {
           }),
         ],
       }),
-    ).toEqual([]);
+    ).toEqual({ entries: [], scheduleUnavailable: false });
+  });
+
+  // An empty roster and a roster we never fetched look identical once the
+  // summary is filtered out, and credits would go to air with names missing.
+  it("reports an unloaded media schedule instead of writing blank credits", () => {
+    const { assignments: _assignments, ...summary } = schedule(
+      "2026-07-04T10:00:00.000Z",
+      {
+        "occ-1": {
+          "camera::0": { primaryMemberId: "m1" },
+        },
+      },
+    );
+
+    expect(
+      buildTeamScheduleCreditEntries({
+        teams,
+        positions,
+        members,
+        now: new Date("2026-07-04T10:30:00.000Z"),
+        schedules: [{ ...summary, assignmentsOmitted: true }],
+      }),
+    ).toEqual({ entries: [], scheduleUnavailable: true });
   });
 });
 

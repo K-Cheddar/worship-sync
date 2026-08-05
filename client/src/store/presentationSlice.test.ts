@@ -115,6 +115,85 @@ describe("presentationSlice", () => {
       expect(state.prevProjectorInfo.name).toBe("");
     });
 
+    it("updateProjector and clearProjector persist then wipe slideIndex/slideCount", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          isProjectorTransmitting: true,
+        },
+      });
+      store.dispatch(
+        presentationSlice.actions.updateProjector(
+          createPresentation({
+            type: "song",
+            name: "Projected",
+            slide: { id: "p1", type: "Media", name: "V1", boxes: [] },
+            displayType: "projector",
+            slideIndex: 2,
+            slideCount: 8,
+          }),
+        ),
+      );
+      expect(store.getState().presentation.projectorInfo.slideIndex).toBe(2);
+      expect(store.getState().presentation.projectorInfo.slideCount).toBe(8);
+
+      store.dispatch(presentationSlice.actions.clearProjector());
+      expect(
+        store.getState().presentation.projectorInfo.slideIndex,
+      ).toBeUndefined();
+      expect(
+        store.getState().presentation.projectorInfo.slideCount,
+      ).toBeUndefined();
+    });
+
+    it("updateMonitor and updateStream persist slideIndex/slideCount", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          isMonitorTransmitting: true,
+          isStreamTransmitting: true,
+        },
+      });
+      store.dispatch(
+        presentationSlice.actions.updateMonitor(
+          createPresentation({
+            type: "song",
+            name: "Monitor Song",
+            slide: { id: "m1", type: "Media", name: "C", boxes: [] },
+            displayType: "monitor",
+            slideIndex: 0,
+            slideCount: 4,
+          }),
+        ),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateStream(
+          createPresentation({
+            type: "song",
+            name: "Stream Song",
+            slide: { id: "s1", type: "Media", name: "C", boxes: [] },
+            displayType: "stream",
+            slideIndex: 1,
+            slideCount: 4,
+          }),
+        ),
+      );
+      const state = store.getState().presentation;
+      expect(state.monitorInfo.slideIndex).toBe(0);
+      expect(state.monitorInfo.slideCount).toBe(4);
+      expect(state.streamInfo.slideIndex).toBe(1);
+      expect(state.streamInfo.slideCount).toBe(4);
+
+      store.dispatch(presentationSlice.actions.clearMonitor());
+      store.dispatch(presentationSlice.actions.clearStream());
+      expect(
+        store.getState().presentation.monitorInfo.slideIndex,
+      ).toBeUndefined();
+      expect(
+        store.getState().presentation.streamInfo.slideIndex,
+      ).toBeUndefined();
+    });
+
     it("updateMonitor sets nextSlide fallback and stores transition metadata", () => {
       const store = createStore({
         presentation: {
@@ -831,7 +910,9 @@ describe("presentationSlice", () => {
             type: "participant",
             name: "Jordan",
           } as never),
-        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
           expect(state.streamInfo.participantOverlayInfo?.name).toBe("Jordan");
         },
       },
@@ -843,7 +924,9 @@ describe("presentationSlice", () => {
             type: "stick-to-bottom",
             heading: "Service starts soon",
           } as never),
-        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
           expect(state.streamInfo.stbOverlayInfo?.heading).toBe(
             "Service starts soon",
           );
@@ -858,7 +941,9 @@ describe("presentationSlice", () => {
             url: "https://example.com/connect",
             description: "Connect",
           } as never),
-        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
           expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
             "https://example.com/connect",
           );
@@ -2531,7 +2616,9 @@ describe("presentationSlice", () => {
             name: "Jordan",
             time: 12,
           } as never),
-        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
           expect(state.streamInfo.participantOverlayInfo?.name).toBe("Jordan");
         },
       },
@@ -2544,7 +2631,9 @@ describe("presentationSlice", () => {
             heading: "Service starts soon",
             time: 12,
           } as never),
-        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
           expect(state.streamInfo.stbOverlayInfo?.heading).toBe(
             "Service starts soon",
           );
@@ -2560,7 +2649,9 @@ describe("presentationSlice", () => {
             description: "Connect",
             time: 12,
           } as never),
-        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
           expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
             "https://example.com/connect",
           );
@@ -2682,7 +2773,9 @@ describe("presentationSlice", () => {
       );
 
       const state = store.getState().presentation;
-      expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe("https://img.example/current.jpg");
+      expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe(
+        "https://img.example/current.jpg",
+      );
       expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
     });
@@ -2721,7 +2814,9 @@ describe("presentationSlice", () => {
       );
 
       const state = store.getState().presentation;
-      expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe("Scan here");
+      expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe(
+        "Scan here",
+      );
       expect(state.streamInfo.qrCodeOverlayInfo?.description).toBe("");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
     });

@@ -47,12 +47,12 @@ const MemberChip = ({
   return (
     <div
       className={cn(
-        "w-full max-w-full rounded border text-left text-sm font-semibold text-gray-100",
+        "w-full max-w-full rounded text-left text-sm font-semibold text-gray-100",
         disabled
-          ? "border-gray-800 bg-gray-900/40 text-gray-500"
+          ? "bg-gray-800/40 text-gray-500"
           : highlighted
-            ? "border-cyan-400/60 bg-cyan-400/15 ring-1 ring-cyan-400/40"
-            : "border-gray-700 bg-gray-900/60",
+            ? "bg-cyan-400/15 ring-1 ring-cyan-400/40"
+            : "bg-gray-800/80",
       )}
       role="group"
       aria-label={

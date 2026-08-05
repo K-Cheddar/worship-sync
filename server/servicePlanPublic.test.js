@@ -50,6 +50,67 @@ const plan = {
   ],
 };
 
+test("detailed snapshots expose the full role roster for notes filters", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan,
+    positions: [
+      {
+        positionId: "camera",
+        name: "Camera",
+        teamId: "media",
+      },
+      {
+        positionId: "sound",
+        name: "Sound",
+        teamId: "media",
+      },
+      {
+        positionId: "archived-role",
+        name: "Retired",
+        teamId: "media",
+        archivedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    teams: [{ teamId: "media", name: "Media Team" }],
+  });
+
+  assert.deepEqual(snapshot.roles, [
+    {
+      positionId: "camera",
+      label: "Camera",
+      teamId: "media",
+      teamName: "Media Team",
+    },
+    {
+      positionId: "sound",
+      label: "Sound",
+      teamId: "media",
+      teamName: "Media Team",
+    },
+  ]);
+});
+
+test("general snapshots omit the role roster", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      publicGeneralLinkToken: "general-share-token",
+    },
+    positions: [
+      {
+        positionId: "camera",
+        name: "Camera",
+        teamId: "media",
+      },
+    ],
+    teams: [{ teamId: "media", name: "Media Team" }],
+    viewMode: "general",
+    shareId: "general-share-token",
+  });
+
+  assert.equal(snapshot.roles, undefined);
+});
+
 test("public service plan snapshot exposes display-only team notes but omits editor fields", () => {
   const snapshot = buildPublicServicePlanSnapshot({
     plan,
@@ -112,9 +173,9 @@ test("public team snapshots preserve role note targets", () => {
               teamNotes: [
                 {
                   scope: "role",
-                  positionId: "camera",
-                  teamId: "media",
-                  teamName: "Media Team",
+                  positionIds: ["camera", "switcher"],
+                  teamIds: ["media"],
+                  teamNames: ["Media Team"],
                   label: "Media Team · Camera",
                   note: {
                     blocks: [
@@ -136,9 +197,9 @@ test("public team snapshots preserve role note targets", () => {
   assert.deepEqual(snapshot.service.sections[0].items[0].teamNotes, [
     {
       scope: "role",
-      positionId: "camera",
-      teamId: "media",
-      teamName: "Media Team",
+      positionIds: ["camera", "switcher"],
+      teamIds: ["media"],
+      teamNames: ["Media Team"],
       label: "Media Team · Camera",
       notes: {
         blocks: [
@@ -147,6 +208,88 @@ test("public team snapshots preserve role note targets", () => {
       },
     },
   ]);
+});
+
+test("detailed snapshots expose microphones only to their selected roles", () => {
+  const microphoneAssignments = [
+    {
+      microphoneId: "orange-handheld",
+    },
+  ];
+  const audiences = [
+    {
+      positionId: "foh",
+      roleName: "Front of house sound",
+      teamId: "media",
+      teamName: "Media Team",
+    },
+  ];
+  const microphones = [
+    {
+      id: "orange-handheld",
+      name: "Orange",
+      type: "Handheld",
+      color: "#f97316",
+    },
+  ];
+  const detailed = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      sections: [
+        {
+          ...plan.sections[0],
+          elements: [
+            {
+              ...plan.sections[0].elements[0],
+              microphoneAssignments,
+            },
+          ],
+        },
+      ],
+    },
+    microphones,
+    microphoneAudiences: audiences,
+  });
+
+  assert.deepEqual(
+    detailed.service.sections[0].items[0].microphoneAssignments,
+    [
+      {
+        microphone: {
+          id: "orange-handheld",
+          name: "Orange",
+          type: "Handheld",
+          color: "#f97316",
+        },
+        audiences,
+      },
+    ],
+  );
+
+  const general = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      publicGeneralLinkToken: "general-share-token",
+      sections: [
+        {
+          ...plan.sections[0],
+          elements: [
+            {
+              ...plan.sections[0].elements[0],
+              microphoneAssignments,
+            },
+          ],
+        },
+      ],
+    },
+    microphones,
+    viewMode: "general",
+    shareId: "general-share-token",
+  });
+  assert.deepEqual(
+    general.service.sections[0].items[0].microphoneAssignments,
+    [],
+  );
 });
 
 test("public snapshots preserve ordered and nested note lists", () => {
@@ -227,6 +370,7 @@ test("general snapshots contain credits but never operational notes", () => {
   assert.equal(snapshot.service.viewMode, "general");
   assert.deepEqual(item.notes, { blocks: [] });
   assert.deepEqual(item.teamNotes, []);
+  assert.deepEqual(item.microphoneAssignments, []);
   assert.equal(item.creditName, "Jamie Rivera");
   assert.equal(item.assignedMemberId, undefined);
 });
@@ -239,6 +383,57 @@ test("draft or malformed public plans are never serialized", () => {
   assert.equal(
     buildPublicServicePlanSnapshot({ plan: { ...plan, startsAt: "invalid" } }),
     null,
+  );
+});
+
+test("public snapshot anchors the timeline at a pre-service first item", () => {
+  // The plan starts at 10:00 in New York; a 9:45 call time has to keep the
+  // whole timeline 15 minutes earlier instead of sliding it to the service
+  // start, which is what the plan editor shows.
+  const withPreService = {
+    ...plan,
+    sections: [
+      {
+        ...plan.sections[0],
+        elements: [
+          { ...plan.sections[0].elements[0], startTime: "09:45" },
+          {
+            id: "song",
+            title: {
+              blocks: [{ type: "paragraph", spans: [{ text: "Song" }] }],
+            },
+            startTime: "09:50",
+            durationMinutes: 10,
+          },
+        ],
+      },
+    ],
+  };
+
+  const snapshot = buildPublicServicePlanSnapshot({ plan: withPreService });
+
+  assert.equal(snapshot.service.startsAt, "2026-07-27T14:00:00.000Z");
+  assert.equal(snapshot.service.timelineStartsAt, "2026-07-27T13:45:00.000Z");
+});
+
+test("public snapshot omits the timeline anchor when the plan starts on time", () => {
+  const onTime = {
+    ...plan,
+    sections: [
+      {
+        ...plan.sections[0],
+        elements: [{ ...plan.sections[0].elements[0], startTime: "10:00" }],
+      },
+    ],
+  };
+
+  assert.equal(
+    buildPublicServicePlanSnapshot({ plan: onTime }).service.timelineStartsAt,
+    undefined,
+  );
+  assert.equal(
+    buildPublicServicePlanSnapshot({ plan }).service.timelineStartsAt,
+    undefined,
   );
 });
 

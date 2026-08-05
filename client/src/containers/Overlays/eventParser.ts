@@ -25,6 +25,21 @@ export interface EventData {
    * the title, or a resolved song gets re-guessed and can come out different.
    */
   songId?: string;
+  /**
+   * The scripture passages an operator attached to this row in the plan editor,
+   * in reading order. Only set on rows built from a saved ServicePlan — a
+   * scraped page carries nothing but the row title. Consumers must prefer these
+   * over parsing the title, which may be a label ("Sermon text") rather than a
+   * reference, and may stand for several passages at once.
+   */
+  scriptureRefs?: Array<{
+    /** The label the plan editor shows, e.g. "Psalms 90:1-2 NLT". */
+    label: string;
+    book: string;
+    chapter: string;
+    verseRange: string;
+    version: string;
+  }>;
 }
 
 export interface ServicePlanningSection {

@@ -27,6 +27,8 @@ import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 
 // Key used to track an in-flight save for the create form, which has no role id
@@ -70,6 +72,7 @@ const TeamRoleManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
 
   const applyTeamId = useCallback((nextTeamId: string) => {
@@ -107,6 +110,11 @@ const TeamRoleManager = ({
       name: role.name,
       description: role.description || "",
     });
+  };
+
+  const selectRole = (role: TeamRole) => {
+    if (editing?.roleId === role.roleId) return;
+    requestDiscardAction(() => openRoleEditor(role));
   };
 
   const confirmDelete = async () => {
@@ -204,6 +212,16 @@ const TeamRoleManager = ({
   // currently open, so a background save elsewhere never spins or disables it.
   const currentEditorKey = editing ? editing.roleId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
+  const hasPendingChanges = editing
+    ? JSON.stringify(draft) !==
+      JSON.stringify({
+        teamId: editing.teamId,
+        name: editing.name,
+        description: editing.description || "",
+      })
+    : JSON.stringify(draft) !==
+      JSON.stringify({ teamId, name: "", description: "" });
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
     <>
@@ -279,7 +297,7 @@ const TeamRoleManager = ({
                     archived={Boolean(role.archivedAt)}
                     compact
                     canEdit={canEdit}
-                    onTitleClick={() => openRoleEditor(role)}
+                    onTitleClick={() => selectRole(role)}
                   />
                 ))}
               </>
@@ -326,6 +344,7 @@ const TeamRoleManager = ({
             saveLabel="Save role"
             onSave={() => void submit()}
             onCancel={cancelEditing}
+            hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
             isLoading={isSavingCurrent}
           />

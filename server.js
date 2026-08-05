@@ -777,6 +777,10 @@ app.post(
   "/api/churches/:churchId/teams/:teamId/delete",
   authHandlers.deleteTeam,
 );
+app.get(
+  "/api/churches/:churchId/team-schedules/:scheduleId",
+  authHandlers.getTeamScheduleDetail,
+);
 app.post(
   "/api/churches/:churchId/team-schedules",
   authHandlers.createTeamSchedule,
@@ -798,12 +802,20 @@ app.post(
   authHandlers.updateTeamScheduleAssignment,
 );
 app.post(
-  "/api/churches/:churchId/team-schedules/:scheduleId/assignment-swaps",
-  authHandlers.updateTeamScheduleAssignmentSwap,
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignment-microphones",
+  authHandlers.updateTeamScheduleAssignmentMicrophones,
 );
 app.post(
-  "/api/churches/:churchId/team-schedules/:scheduleId/attendance",
-  authHandlers.updateTeamScheduleAttendance,
+  "/api/churches/:churchId/team-schedules/:scheduleId/additional-position-slots",
+  authHandlers.addTeamSchedulePositionSlot,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/additional-position-slots/remove",
+  authHandlers.removeTeamSchedulePositionSlot,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/assignment-swaps",
+  authHandlers.updateTeamScheduleAssignmentSwap,
 );
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/link",
@@ -857,6 +869,14 @@ app.get(
 app.post(
   "/api/churches/:churchId/service-plan-assignment-history",
   authHandlers.saveServicePlanAssignmentHistory,
+);
+app.get(
+  "/api/churches/:churchId/service-plan-microphones",
+  authHandlers.getServicePlanMicrophones,
+);
+app.post(
+  "/api/churches/:churchId/service-plan-microphones",
+  authHandlers.saveServicePlanMicrophones,
 );
 app.get("/api/service-plan/public", authHandlers.getPublicServicePlan);
 app.get(

@@ -1,6 +1,7 @@
 import { memo, useCallback, useContext, useMemo } from "react";
 import { User } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
+import Button from "@/components/Button/Button";
 import type {
   TeamRosterMember,
   TeamScheduleCellAssignment,
@@ -25,6 +26,7 @@ type ScheduleBoardCellProps = {
   assignmentCell?: TeamScheduleCellAssignment;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
+  isAdditionalPosition: boolean;
   justFilled?: boolean;
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
@@ -48,6 +50,7 @@ const ScheduleBoardCell = memo(({
   assignmentCell,
   isMemberHighlighted,
   isActiveSlot,
+  isAdditionalPosition,
   justFilled = false,
   allMembers,
   duplicateFirstNames,
@@ -77,6 +80,13 @@ const ScheduleBoardCell = memo(({
     },
     [handlersRef, occurrenceId, columnKey],
   );
+
+  const handleRemove = useCallback(() => {
+    handlersRef?.current?.requestRemoveAdditionalPosition({
+      serviceId: occurrenceId,
+      cellKey: columnKey,
+    });
+  }, [columnKey, handlersRef, occurrenceId]);
 
   return (
     <div className="space-y-1">
@@ -139,6 +149,18 @@ const ScheduleBoardCell = memo(({
               />
             );
           })}
+        </div>
+      ) : null}
+      {canEdit && isAdditionalPosition ? (
+        <div className="pl-11">
+          <Button
+            type="button"
+            variant="tertiary"
+            className="text-xs text-gray-400 hover:text-red-200"
+            onClick={handleRemove}
+          >
+            Remove position
+          </Button>
         </div>
       ) : null}
     </div>

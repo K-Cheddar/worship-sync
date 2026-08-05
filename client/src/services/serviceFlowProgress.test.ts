@@ -35,6 +35,28 @@ describe("getServiceFlowProgress", () => {
     expect(complete.current).toBeNull();
   });
 
+  it("starts the timeline at the first item, not the advertised service start", () => {
+    // Regression: a plan whose first items run before the service start (a
+    // 9:45 pre-service item on a 10:00 service) had every item pushed later by
+    // that gap, so the public page disagreed with the plan editor.
+    const withPreService: PublicServiceFlow = {
+      ...service,
+      timelineStartsAt: "2026-07-26T13:45:00.000Z",
+    };
+    const timelineStartsAt = Date.parse("2026-07-26T13:45:00.000Z");
+    const [welcome, song] = getServiceFlowProgress(
+      withPreService,
+      timelineStartsAt,
+    ).items;
+
+    expect(welcome.startsAtMs).toBe(timelineStartsAt);
+    expect(song.startsAtMs).toBe(timelineStartsAt + 300_000);
+    expect(getServiceFlowProgress(withPreService, timelineStartsAt - 1).state)
+      .toBe("upcoming");
+    expect(getServiceFlowProgress(withPreService, timelineStartsAt).current?.item.id)
+      .toBe("welcome");
+  });
+
   it("stays live (not instantly complete) when no durations are set", () => {
     // Regression: plans often carry no durations at all — imports frequently
     // omit them — which made every item end the instant it started, so the

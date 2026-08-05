@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -82,12 +82,14 @@ jest.mock("./ToolbarElements/Outlines", () => ({
 
 jest.mock("./ToolbarElements/SlideEditTools", () => ({
   __esModule: true,
-  default: () => <div>Slide Tools Panel</div>,
+  default: ({ className }: { className?: string }) =>
+    className?.includes("hidden") ? null : <div>Slide Tools Panel</div>,
 }));
 
 jest.mock("./ToolbarElements/ItemEditTools", () => ({
   __esModule: true,
-  default: () => <div>Item Tools Panel</div>,
+  default: ({ className }: { className?: string }) =>
+    className?.includes("hidden") ? null : <div>Item Tools Panel</div>,
 }));
 
 jest.mock("./ToolbarElements/Undo", () => ({
@@ -269,6 +271,43 @@ describe("Toolbar", () => {
     expect(
       screen.getByRole("button", { name: "Configurations" }),
     ).toBeInTheDocument();
+  });
+
+  it("switches to Slide Tools when navigating to a timer item", () => {
+    const view = renderToolbar({ access: "full", itemType: "song" });
+
+    expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Item Tools" }).click();
+    });
+
+    expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
+    expect(screen.getByText("Item Tools Panel")).toBeInTheDocument();
+
+    mockPathname = "/controller/item/timer-id/list-id";
+    mockState = {
+      undoable: {
+        present: {
+          item: {
+            isEditMode: false,
+            type: "timer",
+          },
+          preferences: preferencesSlice.getInitialState(),
+        },
+      },
+    };
+
+    view.rerender(
+      <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
+          <Toolbar className="toolbar" />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
+    expect(screen.queryByText("Item Tools Panel")).not.toBeInTheDocument();
   });
 
   it("overlay variant shows Overlays, Credits Editor, and Service Times tabs", () => {

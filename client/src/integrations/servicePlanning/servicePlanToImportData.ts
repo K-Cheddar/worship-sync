@@ -27,6 +27,11 @@ import type {
   ServicePlanElement,
   ServicePlanSection,
 } from "../../types/servicePlan";
+import {
+  getServicePlanElementAssigneeNames,
+  getServicePlanElementScriptureRefs,
+  getServicePlanElementSongRefs,
+} from "../../types/servicePlan";
 
 const elementToRow = (element: ServicePlanElement): EventData => {
   const title = richTextToPlainText(element.title).trim();
@@ -50,22 +55,43 @@ const elementToRow = (element: ServicePlanElement): EventData => {
   // The song the plan settled on. A library ref is an answer the operator
   // already gave, so it travels as an id the preview can use directly rather
   // than a title it would have to guess from again.
-  const songRef = element.songRef;
+  // The source-preview row model has one song slot. Use the first attachment
+  // there; the Service Plan and live-outline push retain every attachment.
+  const songRef = getServicePlanElementSongRefs(element)[0];
   const song = songRef
     ? songRef.kind === "library"
       ? { songId: songRef.songId, songTitle: songRef.songName }
       : { songTitle: songRef.title.trim() }
     : {};
 
+  // Same principle as the song id: the operator already resolved which passages
+  // these are, so they travel as parsed references rather than a title the
+  // preview would have to recognize again — and a row titled "Sermon text" with
+  // scripture attached is one the preview could never have recognized at all.
+  // Read through the accessor so plans saved with a single legacy `scriptureRef`
+  // travel identically to ones using the array.
+  const scriptureRefs = getServicePlanElementScriptureRefs(element).map(
+    ({ label, book, chapter, verseRange, version }) => ({
+      label,
+      book,
+      chapter,
+      verseRange,
+      version,
+    }),
+  );
+
   return {
     elementType: element.sourceElementTypeRaw?.trim() || element.type,
     title,
-    ledBy: element.sourceLedByRaw?.trim() || element.assignedName?.trim() || "",
+    ledBy:
+      element.sourceLedByRaw?.trim()
+      || getServicePlanElementAssigneeNames(element).join(", "),
     ...(element.startTime ? { startTime: element.startTime } : {}),
     ...(typeof durationMinutes === "number" ? { durationMinutes } : {}),
     ...(notes ? { note: notes } : {}),
     ...(teamNotes.length ? { teamNotes } : {}),
     ...(song.songTitle ? song : {}),
+    ...(scriptureRefs.length ? { scriptureRefs } : {}),
   };
 };
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Radio, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, LocateFixed, Radio, RefreshCw } from "lucide-react";
 import { useParams } from "react-router-dom";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
@@ -12,6 +12,7 @@ import type { PublicServiceFlowItem } from "../services/serviceFlowTypes";
 import { usePublicServiceFlow } from "../services/usePublicServiceFlow";
 import { cn } from "../utils/cnHelper";
 import { formatServicePlanDuration } from "./Services/servicePlanDuration";
+import { ServicePlanMicrophoneChip } from "../components/ServicePlanMicrophoneChip";
 import {
   readServicePublicNotesTeam,
   writeServicePublicNotesTeam,
@@ -20,8 +21,21 @@ import { publicPageScrollClassName } from "./Teams/teamsStyles";
 import { normalizeHexColor } from "../utils/richTextColorContrast";
 import {
   getServicePlanRoleNoteTeamName,
+  getServicePlanRoleNoteRoleName,
   roleNoteMatchesServicePlanTeam,
 } from "./Services/servicePlanRoleNoteTeam";
+
+const servicePublicItemDomId = (itemId: string) => `service-item-${itemId}`;
+
+/** Ignore scroll events from our own smooth scroll so they do not pause follow. */
+const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 1000;
+
+const scrollServicePublicItemNearTop = (itemId: string) => {
+  document.getElementById(servicePublicItemDomId(itemId))?.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
+};
 
 const formatServiceDate = (value: string, timezone: string) =>
   new Intl.DateTimeFormat(undefined, {
@@ -39,7 +53,10 @@ const itemHasNotes = (
   selectedRole: string,
 ) => {
   if (item.notes.blocks.length) return true;
-  return Boolean(visibleAudienceNotesForItem(item, selectedTeam, selectedRole).length);
+  return Boolean(
+    visibleAudienceNotesForItem(item, selectedTeam, selectedRole).length
+    || visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole).length,
+  );
 };
 
 const visibleAudienceNotesForItem = (
@@ -51,10 +68,29 @@ const visibleAudienceNotesForItem = (
   return notes.filter((note) =>
     note.scope === "role"
       ? roleNoteMatchesServicePlanTeam(note, selectedTeam)
-      && (!selectedRole || note.positionId === selectedRole)
+      && (!selectedRole || rolePositionIds(note).includes(selectedRole))
       : !selectedTeam || note.label === selectedTeam,
   );
 };
+
+const visibleMicrophoneAssignmentsForItem = (
+  item: PublicServiceFlowItem,
+  selectedTeam: string,
+  selectedRole: string,
+) =>
+  (item.microphoneAssignments || []).filter((assignment) => {
+    // A microphone whose holder is named but whose roles are not configured
+    // still belongs on the unfiltered view — otherwise it would vanish for
+    // everyone rather than just for the role that filtered it out.
+    if (!assignment.audiences.length) return !selectedTeam && !selectedRole;
+    return assignment.audiences.some((audience) =>
+      (!selectedTeam || audience.teamName === selectedTeam)
+      && (!selectedRole || audience.positionId === selectedRole),
+    );
+  });
+
+const rolePositionIds = (note: { positionId?: string; positionIds?: string[] }) =>
+  note.positionIds?.filter(Boolean) ?? (note.positionId ? [note.positionId] : []);
 
 const normalizePublicBrandHex = (raw: string) => {
   const trimmed = String(raw || "").trim();
@@ -76,6 +112,9 @@ const ServicePublic = () => {
   const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
   const [selectedRole, setSelectedRole] = useState("");
   const [collapsedNoteIds, setCollapsedNoteIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [isFollowingLive, setIsFollowingLive] = useState(true);
+  const followedLiveItemIdRef = useRef<string | null>(null);
+  const suppressFollowPauseUntilRef = useRef(0);
 
   useEffect(() => {
     const interval = window.setInterval(() => setClientNow(Date.now()), 1000);
@@ -87,6 +126,45 @@ const ServicePublic = () => {
     () => snapshot ? getServiceFlowProgress(snapshot.service, clientNow + serverOffsetMs) : null,
     [clientNow, serverOffsetMs, snapshot],
   );
+  const currentItemId = progress?.current?.item.id ?? null;
+
+  const scrollCurrentNearTop = (itemId: string) => {
+    suppressFollowPauseUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
+    scrollServicePublicItemNearTop(itemId);
+  };
+
+  const pauseLiveFollow = () => {
+    setIsFollowingLive((following) => (following ? false : following));
+  };
+
+  const handlePageScroll = () => {
+    if (Date.now() < suppressFollowPauseUntilRef.current) return;
+    pauseLiveFollow();
+  };
+
+  // Follow the live item near the top of the public page when it advances,
+  // until the viewer scrolls away and pauses follow.
+  useEffect(() => {
+    if (!currentItemId) {
+      followedLiveItemIdRef.current = null;
+      return;
+    }
+    if (!isFollowingLive) return;
+    if (followedLiveItemIdRef.current === currentItemId) return;
+    followedLiveItemIdRef.current = currentItemId;
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        suppressFollowPauseUntilRef.current =
+          Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
+        scrollServicePublicItemNearTop(currentItemId);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [currentItemId, isFollowingLive]);
 
   const toggleNotes = (itemId: string) => {
     setCollapsedNoteIds((prev) => {
@@ -116,22 +194,49 @@ const ServicePublic = () => {
       teamId?: string;
       teamName?: string;
     }>();
+    // Prefer the full church roster so quiet roles (no notes/mics) stay selectable.
+    (snapshot.roles || []).forEach((role) => {
+      const positionId = String(role.positionId || "").trim();
+      const label = String(role.label || "").trim();
+      if (!positionId || !label) return;
+      options.set(positionId, {
+        positionId,
+        label,
+        teamId: role.teamId,
+        teamName: role.teamName,
+      });
+    });
     snapshot.service.sections.forEach((section) => {
       section.items.forEach((item) => {
         (item.teamNotes || []).forEach((note) => {
-          if (note.scope === "role" && note.positionId) {
+          if (note.scope === "role" && rolePositionIds(note).length) {
             const separatorIndex = note.label.indexOf(" · ");
             const legacyTeamName = separatorIndex > 0
               ? note.label.slice(0, separatorIndex)
               : "Other roles";
             const teamName = getServicePlanRoleNoteTeamName(note) || legacyTeamName;
-            options.set(note.positionId, {
-              positionId: note.positionId,
-              label: note.label,
-              teamId: note.teamId || `legacy:${teamName}`,
-              teamName,
+            rolePositionIds(note).forEach((positionId) => {
+              if (options.has(positionId)) return;
+              options.set(positionId, {
+                positionId,
+                label: getServicePlanRoleNoteRoleName(note.label),
+                teamId: note.teamIds?.[0] || note.teamId || `legacy:${teamName}`,
+                teamName: note.teamNames?.[0] || teamName,
+              });
             });
           }
+        });
+        (item.microphoneAssignments || []).forEach((assignment) => {
+          assignment.audiences.forEach((audience) => {
+            if (options.has(audience.positionId)) return;
+            const teamName = audience.teamName || "Other roles";
+            options.set(audience.positionId, {
+              positionId: audience.positionId,
+              label: audience.roleName,
+              teamId: audience.teamId || `legacy:${teamName}`,
+              teamName,
+            });
+          });
         });
       });
     });
@@ -172,10 +277,10 @@ const ServicePublic = () => {
   };
 
   const jumpToCurrent = () => {
-    if (!progress?.current) return;
-    document.getElementById(`service-item-${progress.current.item.id}`)?.scrollIntoView({
-      behavior: "smooth", block: "center",
-    });
+    if (!currentItemId) return;
+    followedLiveItemIdRef.current = currentItemId;
+    setIsFollowingLive(true);
+    scrollCurrentNearTop(currentItemId);
   };
 
   if (loading && !snapshot) {
@@ -234,9 +339,9 @@ const ServicePublic = () => {
   const churchSecondaryColor = normalizePublicBrandHex(
     String(snapshot.churchSecondaryColor || ""),
   );
-  // Shared neutral surfaces on both views. Simple view uses brand color #2 for
-  // church name and section titles when set; otherwise quiet neutrals. Brand
-  // color #1 accents item borders.
+  // Shared neutral surfaces on both views. Brand color #2 tints section titles
+  // on both views when set; simple view also uses it for the church name.
+  // Brand color #1 accents item borders.
   const chrome = isGeneralView
     ? {
       page: "bg-neutral-950 text-neutral-100",
@@ -272,13 +377,21 @@ const ServicePublic = () => {
       past: "bg-neutral-950/40 text-neutral-400",
       reconnecting: "text-neutral-400",
     };
-  const brandAccentStyle = isGeneralView && churchSecondaryColor
+  const churchNameBrandStyle = isGeneralView && churchSecondaryColor
+    ? { color: churchSecondaryColor }
+    : undefined;
+  const sectionTitleBrandStyle = churchSecondaryColor
     ? { color: churchSecondaryColor }
     : undefined;
 
   return (
-    <main className={cn(publicPageScrollClassName, chrome.page)}>
-      <div className="mx-auto max-w-3xl px-3 pb-10 pt-4 sm:px-5 sm:pb-12 sm:pt-6">
+    <main
+      className={cn(publicPageScrollClassName, chrome.page)}
+      onScroll={handlePageScroll}
+      onWheel={pauseLiveFollow}
+      onTouchMove={pauseLiveFollow}
+    >
+      <div className="mx-auto max-w-3xl px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6">
         <header className="-mx-3 border-b border-neutral-800/90 px-3 pb-3 pt-1 sm:-mx-5 sm:px-5">
           <div className={cn("rounded-xl p-3 shadow-lg sm:p-4", chrome.headerCard)}>
             <div className="flex items-start gap-3">
@@ -292,7 +405,7 @@ const ServicePublic = () => {
                 {snapshot.churchName ? (
                   <p
                     className={cn("text-xs font-medium", chrome.churchName)}
-                    style={brandAccentStyle}
+                    style={churchNameBrandStyle}
                   >
                     {snapshot.churchName}
                   </p>
@@ -352,11 +465,6 @@ const ServicePublic = () => {
                   Updating…
                 </span>
               ) : null}
-              {progress?.current ? (
-                <Button variant="tertiary" svg={ChevronDown} className="ml-auto text-xs" onClick={jumpToCurrent}>
-                  Jump to current
-                </Button>
-              ) : null}
             </div>
 
             {progress?.current ? (
@@ -392,7 +500,7 @@ const ServicePublic = () => {
                     "mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em]",
                     chrome.sectionTitle,
                   )}
-                  style={brandAccentStyle}
+                  style={sectionTitleBrandStyle}
                 >
                   {section.title}
                 </h2>
@@ -405,6 +513,9 @@ const ServicePublic = () => {
                   const visibleAudienceNotes = !isGeneralView
                     ? visibleAudienceNotesForItem(item, selectedTeam, selectedRole)
                     : [];
+                  const visibleMicrophoneAssignments = !isGeneralView
+                    ? visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole)
+                    : [];
                   const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole);
                   const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
                   const durationLabel = item.durationSeconds > 0
@@ -413,9 +524,9 @@ const ServicePublic = () => {
                   return (
                     <li
                       key={item.id}
-                      id={`service-item-${item.id}`}
+                      id={servicePublicItemDomId(item.id)}
                       className={cn(
-                        "border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
+                        "scroll-mt-3 border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
                         chrome.itemBorder,
                         !isCurrent && !churchPrimaryColor && "border-l-transparent",
                         isCurrent && "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20",
@@ -503,10 +614,26 @@ const ServicePublic = () => {
                                       <ServiceFlowRichText document={teamNote.notes} />
                                     </div>
                                   ))}
-                                  {(selectedTeam || selectedRole) && visibleAudienceNotes.length === 0 ? (
-                                    <p className="text-xs text-neutral-500">
-                                      No matching notes for this item.
-                                    </p>
+                                  {visibleMicrophoneAssignments.length ? (
+                                    <div>
+                                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-neutral-500">
+                                        Microphones
+                                      </p>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {visibleMicrophoneAssignments.map((assignment) => (
+                                          <ServicePlanMicrophoneChip
+                                            key={assignment.microphone.id}
+                                            microphone={assignment.microphone}
+                                            className="gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
+                                            iconClassName="size-4"
+                                            details={[
+                                              assignment.microphone.type,
+                                              assignment.holderName || "",
+                                            ]}
+                                          />
+                                        ))}
+                                      </div>
+                                    </div>
                                   ) : null}
                                 </div>
                               ) : null}
@@ -522,6 +649,19 @@ const ServicePublic = () => {
           ))}
         </div>
       </div>
+
+      {currentItemId ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-3 sm:bottom-6">
+          <Button
+            variant="cta"
+            svg={LocateFixed}
+            className="pointer-events-auto shadow-xl"
+            onClick={jumpToCurrent}
+          >
+            Go to current
+          </Button>
+        </div>
+      ) : null}
     </main>
   );
 };

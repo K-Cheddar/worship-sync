@@ -1,15 +1,18 @@
 import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
 import Button from "../../components/Button/Button";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import { cn } from "../../utils/cnHelper";
 import { Check } from "lucide-react";
+import { useMemo, useState } from "react";
 import type {
   ServicePlanImportChangeKind,
   ServicePlanImportSummary,
 } from "./servicePlanImportSummary";
+import { servicePlanImportChangeKey } from "./servicePlanImportSummary";
 
 type ServicePlanImportReviewWindowProps = {
   summary: ServicePlanImportSummary;
-  onApply: () => void;
+  onApply: (selectedChangeKeys: string[]) => void;
   onClose: () => void;
 };
 
@@ -35,12 +38,48 @@ const ServicePlanImportReviewWindow = ({
   onApply,
   onClose,
 }: ServicePlanImportReviewWindowProps) => {
-  const changeCount = summary.changes.length;
+  const changeKeys = useMemo(
+    () => summary.changes.map(servicePlanImportChangeKey),
+    [summary.changes],
+  );
+  const [selectedChangeKeys, setSelectedChangeKeys] = useState<Set<string>>(
+    () => new Set(changeKeys),
+  );
+  const selectedChanges = summary.changes.filter((change) =>
+    selectedChangeKeys.has(servicePlanImportChangeKey(change)),
+  );
+  const changeCount = selectedChanges.length;
   const summaryParts = [
-    summary.added ? `${summary.added} added` : "",
-    summary.updated ? `${summary.updated} updated` : "",
-    summary.removed ? `${summary.removed} removed` : "",
+    selectedChanges.filter((change) => change.kind === "added").length
+      ? `${selectedChanges.filter((change) => change.kind === "added").length} added`
+      : "",
+    selectedChanges.filter((change) => change.kind === "updated").length
+      ? `${selectedChanges.filter((change) => change.kind === "updated").length} updated`
+      : "",
+    selectedChanges.filter((change) => change.kind === "removed").length
+      ? `${selectedChanges.filter((change) => change.kind === "removed").length} removed`
+      : "",
   ].filter(Boolean);
+  const changesBySection = useMemo(() => {
+    const sections = new Map<string, typeof summary.changes>();
+    summary.changes.forEach((change) => {
+      const changes = sections.get(change.sectionId) || [];
+      changes.push(change);
+      sections.set(change.sectionId, changes);
+    });
+    return [...sections.values()];
+  }, [summary]);
+
+  const setSelected = (changeKeysToSet: string[], checked: boolean) => {
+    setSelectedChangeKeys((current) => {
+      const next = new Set(current);
+      changeKeysToSet.forEach((key) => {
+        if (checked) next.add(key);
+        else next.delete(key);
+      });
+      return next;
+    });
+  };
 
   return (
     <FloatingWindow
@@ -66,53 +105,73 @@ const ServicePlanImportReviewWindow = ({
         </div>
 
         <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-3">
-          {changeCount ? (
-            <ul className="space-y-2" aria-label="Service Planning changes">
-              {summary.changes.map((change) => {
-                const fields = visibleFields(change);
-                return (
-                  <li
-                    key={`${change.kind}:${change.id}`}
-                    className="rounded-lg border border-gray-700 bg-gray-900/70 px-3 py-2"
-                  >
-                    <div className="flex items-start gap-2">
-                      <span
-                        className={cn(
-                          "rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                          kindClassName[change.kind],
-                        )}
-                      >
-                        {kindLabel[change.kind]}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium text-gray-100">{change.itemName}</p>
-                        <p className="mt-0.5 text-xs text-gray-400">{change.sectionName || "Untitled section"}</p>
-                        {fields.length ? (
-                          <div className="mt-2 grid grid-cols-1 gap-2 border-t border-gray-700/80 pt-2 sm:grid-cols-2">
-                            {fields.map((field) => (
-                              <div
-                                key={field.label}
-                                className="rounded-md border border-gray-700/80 bg-gray-950/40 px-2.5 py-2 text-xs"
-                              >
-                                <p className="font-medium text-cyan-200">{field.label}</p>
-                                <p className="mt-1 wrap-break-word text-gray-500">
-                                  <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">Before</span>
-                                  {field.before}
-                                </p>
-                                <p className="wrap-break-word text-gray-200">
-                                  <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-cyan-300/70">After</span>
-                                  {field.after}
-                                </p>
+          {summary.changes.length ? (
+            <div className="space-y-3">
+              <Checkbox
+                label="Select all updates"
+                checked={selectedChangeKeys.size === changeKeys.length}
+                onCheckedChange={(checked) => setSelected(changeKeys, checked)}
+                className="border-b border-gray-700 pb-3"
+              />
+              <ul className="space-y-3" aria-label="Service Planning changes">
+                {changesBySection.map((sectionChanges) => {
+                  const sectionChangeKeys = sectionChanges.map(servicePlanImportChangeKey);
+                  const sectionName = sectionChanges[0]?.sectionName || "Untitled section";
+                  return (
+                    <li key={sectionChanges[0]?.sectionId} className="rounded-lg border border-gray-700 bg-gray-900/70">
+                      <Checkbox
+                        label={sectionName}
+                        checked={sectionChangeKeys.every((key) => selectedChangeKeys.has(key))}
+                        onCheckedChange={(checked) => setSelected(sectionChangeKeys, checked)}
+                        className="border-b border-gray-700 px-3 py-2"
+                        labelClassName="font-medium"
+                      />
+                      <ul className="space-y-2 p-2">
+                        {sectionChanges.map((change) => {
+                          const fields = visibleFields(change);
+                          const changeKey = servicePlanImportChangeKey(change);
+                          return (
+                            <li key={changeKey} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
+                              <div className="flex items-start gap-2">
+                                <Checkbox
+                                  label={`Update ${change.itemName}`}
+                                  checked={selectedChangeKeys.has(changeKey)}
+                                  onCheckedChange={(checked) => setSelected([changeKey], checked)}
+                                  className="pt-0.5"
+                                  hideLabel
+                                />
+                                <span
+                                  className={cn(
+                                    "mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                    kindClassName[change.kind],
+                                  )}
+                                >
+                                  {kindLabel[change.kind]}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium text-gray-100">{change.itemName}</p>
+                                  {fields.length ? (
+                                    <div className="mt-2 grid grid-cols-1 gap-2 border-t border-gray-700/80 pt-2 sm:grid-cols-2">
+                                      {fields.map((field) => (
+                                        <div key={field.label} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-2.5 py-2 text-xs">
+                                          <p className="font-medium text-cyan-200">{field.label}</p>
+                                          <p className="mt-1 wrap-break-word text-gray-500"><span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">Before</span>{field.before}</p>
+                                          <p className="wrap-break-word text-gray-200"><span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-cyan-300/70">After</span>{field.after}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
                               </div>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           ) : (
             <p className="rounded-lg border border-dashed border-gray-700 px-3 py-4 text-center text-sm text-gray-400">
               Nothing will change with the options currently selected.
@@ -122,7 +181,7 @@ const ServicePlanImportReviewWindow = ({
 
         <div className="flex justify-end gap-2 border-t border-gray-700 px-4 py-3">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="cta" svg={Check} onClick={onApply} disabled={!changeCount}>
+          <Button variant="cta" svg={Check} onClick={() => onApply([...selectedChangeKeys])} disabled={!changeCount}>
             Apply {changeCount || "no"} {changeCount === 1 ? "change" : "changes"}
           </Button>
         </div>

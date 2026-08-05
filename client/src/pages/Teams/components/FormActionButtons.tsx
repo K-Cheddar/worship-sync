@@ -7,9 +7,11 @@ type FormActionButtonsProps = {
   saveLabel: string;
   onSave: () => void;
   onCancel: () => void;
+  /** Whether closing would discard edits. */
+  hasPendingChanges?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
-  /** Pin Cancel/Save to the bottom of a scrollable form panel. */
+  /** Pin Close/Cancel and Save to the bottom of a scrollable form panel. */
   pinFooter?: boolean;
 };
 
@@ -17,6 +19,7 @@ const FormActionButtons = ({
   saveLabel,
   onSave,
   onCancel,
+  hasPendingChanges = true,
   disabled = false,
   isLoading = false,
   pinFooter = false,
@@ -30,7 +33,7 @@ const FormActionButtons = ({
         iconSize="sm"
         onClick={onCancel}
       >
-        Cancel
+        {hasPendingChanges ? "Cancel" : "Close"}
       </Button>
       <Button
         variant="cta"

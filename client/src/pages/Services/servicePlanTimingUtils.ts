@@ -21,6 +21,62 @@ const formatMinutesToTime = (totalMinutes: number): string => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
+/** Minutes past midnight for an instant, read in the plan's own timezone. */
+const localMinutesInTimezone = (
+  timeMs: number,
+  timeZone: string,
+): number | null => {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(timeMs));
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    return (hour % 24) * 60 + minute;
+  } catch {
+    // An unusable stored zone shouldn't break the timeline.
+    return null;
+  }
+};
+
+const getFirstElementStartTime = (sections: ServicePlanSection[]): string => {
+  for (const section of sections || []) {
+    for (const element of section?.elements || []) {
+      const startTime = String(element?.startTime || "").trim();
+      if (TIME_PATTERN.test(startTime)) return startTime;
+    }
+  }
+  return "";
+};
+
+/**
+ * The instant the plan's item timeline begins. Start times chain forward from
+ * the FIRST element, whose wall clock can sit before the occurrence's own
+ * start (a 9:45 pre-service item on a 10:00 service), so the occurrence time
+ * is the wrong anchor — following items would all read late by that gap.
+ * Falls back to the occurrence start when no element carries a usable time.
+ */
+export const resolvePlanTimelineStartMs = (
+  startsAtMs: number,
+  timezone: string,
+  sections: ServicePlanSection[],
+): number => {
+  const match = TIME_PATTERN.exec(getFirstElementStartTime(sections));
+  if (!match) return startsAtMs;
+  const planStartMinutes = localMinutesInTimezone(startsAtMs, timezone);
+  if (planStartMinutes == null) return startsAtMs;
+  let deltaMinutes = Number(match[1]) * 60 + Number(match[2]) - planStartMinutes;
+  // Element times are bare wall clocks with no date, so keep the anchor on the
+  // nearest side of the service start rather than jumping most of a day.
+  if (deltaMinutes > 720) deltaMinutes -= 1440;
+  else if (deltaMinutes < -720) deltaMinutes += 1440;
+  return startsAtMs + deltaMinutes * 60_000;
+};
+
 type TimedItem = {
   startTime?: string;
   durationSeconds?: number;

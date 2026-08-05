@@ -4,21 +4,23 @@ import {
   formatOneTime,
   formatWeekly,
 } from "../../containers/ServiceTimes/utils";
-import type {
-  TeamRecord,
-  TeamIntakeForm,
-  TeamIntakeSubmission,
-  TeamPosition,
-  TeamQualificationArea,
-  TeamQualificationLevel,
-  TeamRole,
-  TeamRosterMember,
-  TeamSchedule,
-  TeamScheduleCellAssignment,
-  TeamScheduleShadowAssignment,
-  TeamScheduleShadowKind,
-  TeamService,
-  TeamBlockoutDateRange,
+import {
+  isHydratedSchedule,
+  type TeamRecord,
+  type TeamIntakeForm,
+  type TeamIntakeSubmission,
+  type TeamPosition,
+  type TeamQualificationArea,
+  type TeamQualificationLevel,
+  type TeamRole,
+  type TeamRosterMember,
+  type TeamSchedule,
+  type TeamScheduleCellAssignment,
+  type TeamScheduleShadowAssignment,
+  type TeamScheduleShadowKind,
+  type TeamScheduleSummary,
+  type TeamService,
+  type TeamBlockoutDateRange,
 } from "../../api/authTypes";
 import type { TeamSchedulePayload } from "../../api/auth";
 import type { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
@@ -223,6 +225,48 @@ export const upsertListItem = <T extends Record<string, unknown>>(
     : [...filtered, item];
 };
 
+/**
+ * Optimistic equivalents of the assignment scrubs for schedules held as
+ * summaries: there are no cells to rewrite, but the cached counts must drop the
+ * deleted entity so a deletion-impact warning shown straight afterwards doesn't
+ * still include it.
+ */
+const scrubMemberFromScheduleCounts = (
+  schedule: TeamScheduleSummary,
+  memberId: string,
+): TeamScheduleSummary => {
+  if (!schedule.assignmentCounts?.byMemberId?.[memberId]) return schedule;
+  const { [memberId]: _removed, ...byMemberId } =
+    schedule.assignmentCounts.byMemberId;
+  return {
+    ...schedule,
+    assignmentCounts: { ...schedule.assignmentCounts, byMemberId },
+  };
+};
+
+const scrubPositionsFromScheduleCounts = (
+  schedule: TeamScheduleSummary,
+  positionIds: Set<string>,
+): TeamScheduleSummary => {
+  const byPositionId = schedule.assignmentCounts?.byPositionId;
+  if (!byPositionId) return schedule;
+  const remaining = Object.fromEntries(
+    Object.entries(byPositionId).filter(
+      ([positionId]) => !positionIds.has(positionId),
+    ),
+  );
+  if (Object.keys(remaining).length === Object.keys(byPositionId).length) {
+    return schedule;
+  }
+  return {
+    ...schedule,
+    assignmentCounts: {
+      byMemberId: schedule.assignmentCounts?.byMemberId || {},
+      byPositionId: remaining,
+    },
+  };
+};
+
 const scrubMemberFromAssignments = (
   assignments: TeamSchedule["assignments"],
   memberId: string,
@@ -277,19 +321,14 @@ export const applyTeamEntityDeletionLocally = (
         ...team,
         memberIds: (team.memberIds || []).filter((memberId) => memberId !== id),
       })),
-      schedules: data.schedules.map((schedule) => ({
-        ...schedule,
-        assignments: scrubMemberFromAssignments(schedule.assignments, id),
-        attendance: Object.fromEntries(
-          Object.entries(schedule.attendance || {}).map(
-            ([occurrenceId, row]) => {
-              const nextRow = { ...(row || {}) };
-              delete nextRow[id];
-              return [occurrenceId, nextRow];
-            },
-          ),
-        ),
-      })),
+      schedules: data.schedules.map((schedule) =>
+        isHydratedSchedule(schedule)
+          ? {
+              ...schedule,
+              assignments: scrubMemberFromAssignments(schedule.assignments, id),
+            }
+          : scrubMemberFromScheduleCounts(schedule, id),
+      ),
     };
   }
 
@@ -306,13 +345,17 @@ export const applyTeamEntityDeletionLocally = (
           (positionId) => !positionIds.has(positionId),
         ),
       })),
-      schedules: data.schedules.map((schedule) => ({
-        ...schedule,
-        assignments: scrubPositionsFromAssignments(
-          schedule.assignments,
-          positionIds,
-        ),
-      })),
+      schedules: data.schedules.map((schedule) =>
+        isHydratedSchedule(schedule)
+          ? {
+              ...schedule,
+              assignments: scrubPositionsFromAssignments(
+                schedule.assignments,
+                positionIds,
+              ),
+            }
+          : scrubPositionsFromScheduleCounts(schedule, positionIds),
+      ),
     };
   }
 
@@ -367,13 +410,17 @@ export const applyTeamEntityDeletionLocally = (
             !ownedAreaIds.has(qualification.areaId),
         ),
       })),
-      schedules: data.schedules.map((schedule) => ({
-        ...schedule,
-        assignments: scrubPositionsFromAssignments(
-          schedule.assignments,
-          ownedPositionIds,
-        ),
-      })),
+      schedules: data.schedules.map((schedule) =>
+        isHydratedSchedule(schedule)
+          ? {
+              ...schedule,
+              assignments: scrubPositionsFromAssignments(
+                schedule.assignments,
+                ownedPositionIds,
+              ),
+            }
+          : scrubPositionsFromScheduleCounts(schedule, ownedPositionIds),
+      ),
     };
   }
 
@@ -401,7 +448,7 @@ export const buildTeamsDataFromBootstrap = (response: {
   teamRoles?: TeamRole[];
   qualificationAreas?: TeamQualificationArea[];
   qualificationLevels?: TeamQualificationLevel[];
-  schedules?: TeamSchedule[];
+  schedules?: (TeamSchedule | TeamScheduleSummary)[];
   intakeForms?: TeamIntakeForm[];
   intakeSubmissions?: TeamIntakeSubmission[];
 }) =>
@@ -1197,6 +1244,33 @@ export const buildServiceTimeUpdate = (
 const pluralize = (count: number, noun: string, plural = `${noun}s`) =>
   `${count} ${count === 1 ? noun : plural}`;
 
+/**
+ * How many schedule cells assign this member on one team's schedules. Used to
+ * warn before dropping them from a roster: leaving a team does not clear their
+ * assignments, so an operator should know what stays behind.
+ *
+ * Schedules the bootstrap sent as summaries carry no cells, so their
+ * precomputed counts stand in — the same discipline `describeDeletionImpacts`
+ * uses, since a warning that only counts what happens to be loaded is worse
+ * than no warning.
+ */
+export const countMemberAssignmentsOnTeam = (
+  memberId: string,
+  teamId: string,
+  schedules: TeamsData["schedules"],
+) =>
+  schedules
+    .filter((schedule) => schedule.teamId === teamId)
+    .reduce((total, schedule) => {
+      if (!isHydratedSchedule(schedule)) {
+        return total + (schedule.assignmentCounts?.byMemberId[memberId] || 0);
+      }
+      return total + countScheduleAssignmentsForMember(
+        schedule.assignments,
+        memberId,
+      );
+    }, 0);
+
 const joinNames = (names: string[], max = 3) => {
   const named = names.filter(Boolean);
   const shown = named.slice(0, max);
@@ -1223,11 +1297,24 @@ export const describeDeletionImpacts = (
 ): string[] => {
   const impacts: string[] = [];
 
+  // Counts assignment cells across every schedule. Schedules the bootstrap sent
+  // as summaries have no cells to walk, so their precomputed counts are used
+  // instead — the warning shown before a destructive delete must be exact, not
+  // just "what happens to be loaded".
   const countCells = (
     predicate: (cellKey: string, cell: TeamScheduleCellAssignment) => boolean,
+    fromCounts: (
+      counts: NonNullable<TeamScheduleSummary["assignmentCounts"]>,
+    ) => number,
   ) => {
     let count = 0;
     data.schedules.forEach((schedule) => {
+      if (!isHydratedSchedule(schedule)) {
+        count += schedule.assignmentCounts
+          ? fromCounts(schedule.assignmentCounts)
+          : 0;
+        return;
+      }
       Object.values(schedule.assignments || {}).forEach((row) => {
         if (!row) return;
         Object.entries(row).forEach(([cellKey, cell]) => {
@@ -1253,14 +1340,21 @@ export const describeDeletionImpacts = (
         positionIdSet.has(req.positionId),
       ),
     );
-    const assignmentCount = countCells((cellKey, cell) => {
-      const slot = parseSlotKey(cellKey);
-      return Boolean(
-        slot &&
-        positionIdSet.has(slot.positionId) &&
-        getCellMemberIds(cell).length > 0,
-      );
-    });
+    const assignmentCount = countCells(
+      (cellKey, cell) => {
+        const slot = parseSlotKey(cellKey);
+        return Boolean(
+          slot &&
+          positionIdSet.has(slot.positionId) &&
+          getCellMemberIds(cell).length > 0,
+        );
+      },
+      (counts) =>
+        [...positionIdSet].reduce(
+          (total, positionId) => total + (counts.byPositionId[positionId] || 0),
+          0,
+        ),
+    );
     if (members.length) {
       lines.push(`Unassigned from ${pluralize(members.length, "member")}`);
     }
@@ -1288,8 +1382,9 @@ export const describeDeletionImpacts = (
     const teams = data.teams.filter((team) =>
       (team.memberIds || []).includes(id),
     );
-    const assignmentCount = countCells((_cellKey, cell) =>
-      getCellMemberIds(cell).includes(id),
+    const assignmentCount = countCells(
+      (_cellKey, cell) => getCellMemberIds(cell).includes(id),
+      (counts) => counts.byMemberId[id] || 0,
     );
     if (teams.length) {
       impacts.push(

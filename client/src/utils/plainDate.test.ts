@@ -1,4 +1,20 @@
-import { formatDateInputValue } from "./plainDate";
+import { clampPlainDateToMin, formatDateInputValue } from "./plainDate";
+
+describe("clampPlainDateToMin", () => {
+  it("bumps a date earlier than min up to min", () => {
+    expect(clampPlainDateToMin("2026-07-31", "2026-08-01")).toBe("2026-08-01");
+  });
+
+  it("leaves dates on or after min unchanged", () => {
+    expect(clampPlainDateToMin("2026-08-01", "2026-08-01")).toBe("2026-08-01");
+    expect(clampPlainDateToMin("2026-08-15", "2026-08-01")).toBe("2026-08-15");
+  });
+
+  it("returns the original value when either side is blank", () => {
+    expect(clampPlainDateToMin("", "2026-08-01")).toBe("");
+    expect(clampPlainDateToMin("2026-07-31", "")).toBe("2026-07-31");
+  });
+});
 
 describe("formatDateInputValue", () => {
   it("adds slashes after month and day segments", () => {

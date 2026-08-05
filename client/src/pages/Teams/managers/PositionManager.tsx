@@ -51,6 +51,8 @@ import {
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
 
@@ -114,6 +116,7 @@ const PositionManager = ({
   const [listQuery, setListQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditPositionIdRef = useRef<string | null>(null);
 
@@ -273,6 +276,21 @@ const PositionManager = ({
   // disables this button.
   const currentEditorKey = editing ? editing.positionId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
+  const hasPendingChanges = editing
+    ? JSON.stringify(draft) !==
+      JSON.stringify({
+        name: editing.name,
+        description: editing.description || "",
+        icon: editing.icon || "",
+        qualificationAreaId: editing.qualificationAreaId || "",
+      })
+    : JSON.stringify(draft) !==
+      JSON.stringify({ name: "", description: "", icon: "", qualificationAreaId: "" });
+  // A save already in flight for this editor is not an unsaved change: the
+  // operator committed it, and `editing` only catches up when the response
+  // lands. Without this, switching positions mid-save falsely prompts to
+  // discard work that is already on its way to the server.
+  useTeamsUnsavedChanges(hasPendingChanges && !isSavingCurrent);
 
   const openPositionEditor = useCallback((position: TeamPosition) => {
     setEditing(position);
@@ -285,6 +303,11 @@ const PositionManager = ({
       qualificationAreaId: position.qualificationAreaId || "",
     });
   }, []);
+
+  const selectPosition = useCallback((position: TeamPosition) => {
+    if (editing?.positionId === position.positionId) return;
+    requestDiscardAction(() => openPositionEditor(position));
+  }, [editing?.positionId, openPositionEditor, requestDiscardAction]);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -312,7 +335,7 @@ const PositionManager = ({
     archived: Boolean(position.archivedAt),
     compact: true,
     canEdit,
-    onTitleClick: () => openPositionEditor(position),
+    onTitleClick: () => selectPosition(position),
   });
 
   return (
@@ -452,6 +475,7 @@ const PositionManager = ({
             saveLabel="Save position"
             onSave={() => void submit()}
             onCancel={cancelEditing}
+            hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
             isLoading={isSavingCurrent}
           />

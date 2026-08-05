@@ -76,6 +76,7 @@ const mockedBoardApi = jest.requireMock("../boards/api") as {
   createBoardAlias: jest.Mock;
   deleteBoardAlias: jest.Mock;
   hardResetBoardAlias: jest.Mock;
+  resetRestreamSession: jest.Mock;
   softResetBoardAlias: jest.Mock;
   updateBoardAliasTitle: jest.Mock;
   updateBoardPresentationFontScale: jest.Mock;
@@ -85,6 +86,8 @@ const mockedBoardApi = jest.requireMock("../boards/api") as {
 
 const mockCreateBoardAlias = mockedBoardApi.createBoardAlias;
 const mockDeleteBoardAlias = mockedBoardApi.deleteBoardAlias;
+const mockHardResetBoardAlias = mockedBoardApi.hardResetBoardAlias;
+const mockResetRestreamSession = mockedBoardApi.resetRestreamSession;
 const mockSoftResetBoardAlias = mockedBoardApi.softResetBoardAlias;
 const mockUpdateBoardAliasTitle = mockedBoardApi.updateBoardAliasTitle;
 const mockUpdateBoardPresentationFontScale =
@@ -355,8 +358,11 @@ describe("BoardControllerContent", () => {
     mockUpdateBoardPresentationFontScale.mockResolvedValue({
       alias: { aliasId: "sunday", presentationFontScale: 1 },
     } as any);
-    mockedBoardApi.hardResetBoardAlias.mockResolvedValue({
+    mockHardResetBoardAlias.mockResolvedValue({
       alias: { currentBoardId: "board-new" },
+    } as any);
+    mockResetRestreamSession.mockResolvedValue({
+      session: { sessionId: "restream-session-new" },
     } as any);
     mockUpdateBoardPostHidden.mockResolvedValue({ post: {} as any });
     mockUpdateBoardPostHighlighted.mockResolvedValue({ post: {} as any });
@@ -628,6 +634,68 @@ describe("BoardControllerContent", () => {
     expect(
       screen.queryByRole("button", { name: /Return to current session/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("starts fresh across the board and Restream when only Restream is stale", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setPosts("board-current", [
+      {
+        _id: "post:board-current:today",
+        _rev: "1-today",
+        type: "post",
+        docType: "board-post",
+        id: "today",
+        aliasId: "sunday",
+        boardId: "board-current",
+        database: "test",
+        author: "Alex",
+        text: "Today's question",
+        timestamp: Date.now(),
+        hidden: false,
+        highlighted: false,
+      },
+    ]);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-old",
+        startedAt: 100,
+        lastMessageAt: 100,
+        messageCount: 2,
+        enabled: true,
+        connected: true,
+        connectionState: "connected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start fresh for today/i,
+    });
+    await user.click(within(dialog).getByRole("button", { name: /^Start fresh$/i }));
+
+    await waitFor(() =>
+      expect([
+        mockHardResetBoardAlias.mock.calls,
+        mockResetRestreamSession.mock.calls,
+      ]).toEqual([[['sunday']], [['church-1']]]),
+    );
   });
 
   it("hides Hide and Highlight on posts when viewing an earlier session", async () => {

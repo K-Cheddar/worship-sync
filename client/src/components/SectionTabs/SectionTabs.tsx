@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { FunctionComponent, SVGProps } from "react";
 
 import {
   Tabs,
@@ -10,10 +11,13 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/utils/cnHelper";
 import ErrorBoundary from "../ErrorBoundary/ErrorBoundary";
+import Icon from "../Icon/Icon";
 
 export type SectionTabItem<T extends string = string> = {
   value: T;
   label: string;
+  /** Optional leading icon shown beside the label. */
+  icon?: FunctionComponent<SVGProps<SVGSVGElement>>;
   description?: string;
   content: React.ReactNode;
   /** When true, the tab cannot be activated (e.g. prerequisite not met). */
@@ -85,7 +89,9 @@ export function SectionTabs<T extends string>({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl bg-gray-950 px-0 pb-0",
+          // Keep the strip unclipped so tab borders/radius stay intact; callers can
+          // still pass overflow-* via tabBarClassName when they need a clip.
+          "sticky top-0 z-10 rounded-xl bg-gray-950 px-0 pb-0",
           tabBarClassName
         )}
       >
@@ -98,8 +104,19 @@ export function SectionTabs<T extends string>({
               key={item.value}
               value={item.value}
               disabled={item.disabled}
-              className={cn(lineTabsTriggerClassName, triggerClassName)}
+              className={cn(
+                lineTabsTriggerClassName,
+                item.icon && "gap-2",
+                triggerClassName,
+              )}
             >
+              {item.icon ? (
+                <Icon
+                  svg={item.icon}
+                  size="sm"
+                  className="shrink-0 text-cyan-300"
+                />
+              ) : null}
               {item.label}
             </TabsTrigger>
           ))}

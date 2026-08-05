@@ -337,6 +337,7 @@ describe("RichTextEditor", () => {
         disabled
       />,
     );
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "More formatting" }),
     ).not.toBeInTheDocument();
@@ -349,7 +350,10 @@ describe("RichTextEditor", () => {
     );
   });
 
-  it("offers text size and color as primary toolbar controls", () => {
+  it("offers undo, emphasis, lists, and color as primary note toolbar controls", () => {
+    // Compact toolbar prioritizes the actions operators use most when writing
+    // service cues: undo mistakes, bold a cue, bullet a checklist, color a
+    // warning. Size, italic, underline, numbered lists, and alignment stay in More.
     render(
       <RichTextEditor
         label="Title"
@@ -357,13 +361,16 @@ describe("RichTextEditor", () => {
         onChange={jest.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bulleted list" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Text color" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "More formatting" }),
     ).toBeInTheDocument();
-    // Bold / align stay behind More until opened.
-    expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Italic" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Text size" })).not.toBeInTheDocument();
   });
 
   it("reflects the selected text's authored color in the picker control", async () => {
@@ -443,6 +450,8 @@ describe("RichTextEditor", () => {
         onChange={jest.fn()}
       />,
     );
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bulleted list" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Numbered list" })).toBeInTheDocument();
@@ -452,6 +461,43 @@ describe("RichTextEditor", () => {
     expect(
       screen.queryByRole("button", { name: "More formatting" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("undoes and redoes from the toolbar without waiting for blur", async () => {
+    const handleChange = jest.fn();
+    render(
+      <RichTextEditor
+        label="Notes"
+        value={{ blocks: [] }}
+        onChange={handleChange}
+      />,
+    );
+    const editable = screen.getByRole("textbox", { name: "Notes" });
+    fireEvent.focus(editable);
+
+    // Seed TipTap history the same way the keyboard-undo test does.
+    const user = userEvent.setup();
+    await user.click(editable);
+    await user.keyboard("A");
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "A" }] }],
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled();
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({ blocks: [] }),
+    );
+
+    expect(screen.getByRole("button", { name: "Redo" })).toBeEnabled();
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Redo" }));
+    await waitFor(() =>
+      expect(handleChange).toHaveBeenLastCalledWith({
+        blocks: [{ type: "paragraph", spans: [{ text: "A" }] }],
+      }),
+    );
   });
 
   it("toggles the selected block between a bullet and a paragraph", async () => {
@@ -522,6 +568,7 @@ describe("RichTextEditor", () => {
   });
 
   it("sets the selected block's size, storing normal as no size", async () => {
+    window.matchMedia = makeMatchMedia(true);
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -554,6 +601,7 @@ describe("RichTextEditor", () => {
   });
 
   it("applies a popover command after its trigger moves focus", async () => {
+    window.matchMedia = makeMatchMedia(true);
     const handleChange = jest.fn();
     render(
       <RichTextEditor
@@ -591,6 +639,7 @@ describe("RichTextEditor", () => {
         disabled
       />,
     );
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "More formatting" }),
     ).not.toBeInTheDocument();
@@ -619,7 +668,8 @@ describe("RichTextEditor", () => {
     );
     expect(screen.getByText("Notes heading")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove note" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "More formatting" }),
     ).toBeInTheDocument();

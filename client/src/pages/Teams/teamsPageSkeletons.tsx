@@ -211,7 +211,7 @@ const SkeletonScheduleGrid = () => (
 );
 
 const SkeletonMemberChip = () => (
-  <div className="rounded border border-gray-700 bg-gray-900/60 p-2">
+  <div className="rounded bg-gray-800/80 p-2">
     <div className={cn(skeletonBar, "h-4 w-28")} />
     <div className={cn(skeletonBar, "mt-1.5 h-3 w-36")} />
   </div>
@@ -314,6 +314,12 @@ export const TeamsServicesPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+export const TeamsTemplatesPageSkeleton = () => (
+  <SkeletonStatus label="Loading templates">
+    <SkeletonManagerPanel withSearch rowCount={3} />
+  </SkeletonStatus>
+);
+
 export const TeamsFormsPageSkeleton = () => (
   <SkeletonStatus label="Loading forms">
     <div className={teamsCreatePanelRowClassName}>
@@ -367,6 +373,10 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
       return <TeamsServicesPageSkeleton />;
     case "plans":
       return <TeamsServicesPageSkeleton />;
+    case "templates":
+      return <TeamsTemplatesPageSkeleton />;
+    case "microphones":
+      return <TeamsTemplatesPageSkeleton />;
     case "forms":
       return <TeamsFormsPageSkeleton />;
     default:

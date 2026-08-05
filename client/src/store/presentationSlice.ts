@@ -243,7 +243,10 @@ const emptyStbOverlay = (
   id: generateRandomId(),
 });
 
-const emptyQrOverlay = (t: number, transitionSequence?: number): OverlayInfo => ({
+const emptyQrOverlay = (
+  t: number,
+  transitionSequence?: number,
+): OverlayInfo => ({
   description: "",
   time: t,
   transitionSequence,
@@ -306,7 +309,11 @@ const clearStalePrevStreamOverlaySlotsExcept = (
   if (
     keep !== "stb" &&
     !hasStbOverlayData(streamInfo.stbOverlayInfo) &&
-    !isEmptySlotFromSameTransition(streamInfo.stbOverlayInfo, t, transitionSequence)
+    !isEmptySlotFromSameTransition(
+      streamInfo.stbOverlayInfo,
+      t,
+      transitionSequence,
+    )
   ) {
     prevStreamInfo.stbOverlayInfo = emptyStbOverlay(t, transitionSequence);
   }
@@ -332,7 +339,10 @@ const clearStalePrevStreamOverlaySlotsExcept = (
   ) {
     prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t, transitionSequence);
   }
-  if (keep !== "boardPost" && !hasBoardPostData(streamInfo.boardPostStreamInfo)) {
+  if (
+    keep !== "boardPost" &&
+    !hasBoardPostData(streamInfo.boardPostStreamInfo)
+  ) {
     prevStreamInfo.boardPostStreamInfo = emptyBoardPostStreamInfo(
       t,
       transitionSequence,
@@ -349,8 +359,10 @@ const clearStreamOverlaysExcept = (
 ) => {
   if (keep !== "participant")
     si.participantOverlayInfo = emptyParticipantOverlay(t, transitionSequence);
-  if (keep !== "stb") si.stbOverlayInfo = emptyStbOverlay(t, transitionSequence);
-  if (keep !== "qr") si.qrCodeOverlayInfo = emptyQrOverlay(t, transitionSequence);
+  if (keep !== "stb")
+    si.stbOverlayInfo = emptyStbOverlay(t, transitionSequence);
+  if (keep !== "qr")
+    si.qrCodeOverlayInfo = emptyQrOverlay(t, transitionSequence);
   if (keep !== "image")
     si.imageOverlayInfo = emptyImageOverlay(t, transitionSequence);
   if (keep !== "boardPost")
@@ -403,7 +415,10 @@ const preserveClearedStreamOverlaysForTransition = (
   if (keep !== "image" && hasImageOverlayData(streamInfo.imageOverlayInfo)) {
     prevStreamInfo.imageOverlayInfo = streamInfo.imageOverlayInfo;
   }
-  if (keep !== "boardPost" && hasBoardPostData(streamInfo.boardPostStreamInfo)) {
+  if (
+    keep !== "boardPost" &&
+    hasBoardPostData(streamInfo.boardPostStreamInfo)
+  ) {
     prevStreamInfo.boardPostStreamInfo = streamInfo.boardPostStreamInfo;
   }
 };
@@ -442,7 +457,10 @@ function clearAllStreamOverlaysForTransition(state: PresentationState) {
   prevStreamInfo.participantOverlayInfo = liveParticipant
     ? prevParticipant?.id && prevParticipant.id === snapParticipant?.id
       ? prevParticipant
-      : { ...emptyParticipantOverlay(t, transitionSequence), ...snapParticipant }
+      : {
+          ...emptyParticipantOverlay(t, transitionSequence),
+          ...snapParticipant,
+        }
     : emptyParticipantOverlay(t, transitionSequence);
 
   prevStreamInfo.stbOverlayInfo = liveStb
@@ -495,6 +513,8 @@ export const presentationSlice = createSlice({
         state.projectorInfo.name = action.payload.name;
         state.projectorInfo.type = action.payload.type;
         state.projectorInfo.timerId = action.payload.timerId;
+        state.projectorInfo.slideIndex = action.payload.slideIndex;
+        state.projectorInfo.slideCount = action.payload.slideCount;
         state.projectorInfo.time = Date.now();
       }
       if (state.isMonitorTransmitting) {
@@ -512,6 +532,8 @@ export const presentationSlice = createSlice({
         state.monitorInfo.type = action.payload.type;
         state.monitorInfo.timerId = action.payload.timerId;
         state.monitorInfo.itemId = action.payload.itemId;
+        state.monitorInfo.slideIndex = action.payload.slideIndex;
+        state.monitorInfo.slideCount = action.payload.slideCount;
         state.monitorInfo.time = Date.now();
         state.monitorInfo.nextSlide =
           action.payload.nextSlide !== undefined
@@ -532,6 +554,8 @@ export const presentationSlice = createSlice({
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
         state.streamInfo.timerId = action.payload.timerId;
+        state.streamInfo.slideIndex = action.payload.slideIndex;
+        state.streamInfo.slideCount = action.payload.slideCount;
         state.streamInfo.time = Date.now();
       }
     },
@@ -628,7 +652,12 @@ export const presentationSlice = createSlice({
       };
       if (action.payload.heading || action.payload.subHeading) {
         preserveClearedStreamOverlaysForTransition(state, "stb");
-        clearStreamOverlaysExcept(state.streamInfo, "stb", t, transitionSequence);
+        clearStreamOverlaysExcept(
+          state.streamInfo,
+          "stb",
+          t,
+          transitionSequence,
+        );
       }
     },
     updateQrCodeOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
@@ -652,7 +681,12 @@ export const presentationSlice = createSlice({
       };
       if (action.payload.url || action.payload.description) {
         preserveClearedStreamOverlaysForTransition(state, "qr");
-        clearStreamOverlaysExcept(state.streamInfo, "qr", t, transitionSequence);
+        clearStreamOverlaysExcept(
+          state.streamInfo,
+          "qr",
+          t,
+          transitionSequence,
+        );
       }
     },
     updateImageOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
@@ -675,7 +709,12 @@ export const presentationSlice = createSlice({
       };
       if (action.payload.imageUrl) {
         preserveClearedStreamOverlaysForTransition(state, "image");
-        clearStreamOverlaysExcept(state.streamInfo, "image", t, transitionSequence);
+        clearStreamOverlaysExcept(
+          state.streamInfo,
+          "image",
+          t,
+          transitionSequence,
+        );
       }
     },
     updateImageOverlayInfoFromRemote: (
@@ -716,7 +755,12 @@ export const presentationSlice = createSlice({
       };
       if (!next.imageUrl) return;
       preserveClearedStreamOverlaysForTransition(state, "image");
-      clearStreamOverlaysExcept(state.streamInfo, "image", t, transitionSequence);
+      clearStreamOverlaysExcept(
+        state.streamInfo,
+        "image",
+        t,
+        transitionSequence,
+      );
     },
     updateParticipantOverlayInfoFromRemote: (
       state,
@@ -744,8 +788,10 @@ export const presentationSlice = createSlice({
         state.prevStreamInfo.participantOverlayInfo = cur;
       } else if (!isEmptySlotFromSameTransition(cur, t, transitionSequence)) {
         // Later empty received after a cross-type switch: prev data is stale, clear it.
-        state.prevStreamInfo.participantOverlayInfo =
-          emptyParticipantOverlay(t, transitionSequence);
+        state.prevStreamInfo.participantOverlayInfo = emptyParticipantOverlay(
+          t,
+          transitionSequence,
+        );
       }
 
       state.streamInfo.participantOverlayInfo = {
@@ -1229,6 +1275,8 @@ export const presentationSlice = createSlice({
         state.projectorInfo.type = action.payload.type;
         state.projectorInfo.name = action.payload.name;
         state.projectorInfo.timerId = action.payload.timerId;
+        state.projectorInfo.slideIndex = action.payload.slideIndex;
+        state.projectorInfo.slideCount = action.payload.slideCount;
         state.projectorInfo.time = Date.now();
       }
     },
@@ -1245,6 +1293,8 @@ export const presentationSlice = createSlice({
       state.projectorInfo.type = action.payload.type;
       state.projectorInfo.time = action.payload.time;
       state.projectorInfo.timerId = action.payload.timerId;
+      state.projectorInfo.slideIndex = action.payload.slideIndex;
+      state.projectorInfo.slideCount = action.payload.slideCount;
     },
     updateMonitor: (
       state,
@@ -1266,6 +1316,8 @@ export const presentationSlice = createSlice({
         state.monitorInfo.type = action.payload.type;
         state.monitorInfo.timerId = action.payload.timerId;
         state.monitorInfo.itemId = action.payload.itemId;
+        state.monitorInfo.slideIndex = action.payload.slideIndex;
+        state.monitorInfo.slideCount = action.payload.slideCount;
         state.monitorInfo.time = Date.now();
         state.monitorInfo.nextSlide =
           action.payload.nextSlide !== undefined
@@ -1293,6 +1345,8 @@ export const presentationSlice = createSlice({
       state.monitorInfo.time = action.payload.time;
       state.monitorInfo.timerId = action.payload.timerId;
       state.monitorInfo.itemId = action.payload.itemId;
+      state.monitorInfo.slideIndex = action.payload.slideIndex;
+      state.monitorInfo.slideCount = action.payload.slideCount;
       state.monitorInfo.nextSlide =
         action.payload.nextSlide !== undefined
           ? action.payload.nextSlide
@@ -1332,6 +1386,8 @@ export const presentationSlice = createSlice({
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
         state.streamInfo.timerId = action.payload.timerId;
+        state.streamInfo.slideIndex = action.payload.slideIndex;
+        state.streamInfo.slideCount = action.payload.slideCount;
         state.streamInfo.time = t;
       }
     },
@@ -1366,6 +1422,8 @@ export const presentationSlice = createSlice({
         state.streamInfo.type = action.payload.type;
       state.streamInfo.time = action.payload.time;
       state.streamInfo.timerId = action.payload.timerId;
+      state.streamInfo.slideIndex = action.payload.slideIndex;
+      state.streamInfo.slideCount = action.payload.slideCount;
     },
   },
 });

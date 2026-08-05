@@ -53,7 +53,7 @@ export const scheduleWorkspacePanelClassName =
 export const scheduleWorkspaceBodyRowClassName =
   "mt-4 flex flex-col gap-4 max-lg:flex-none lg:min-h-0 lg:flex-1 lg:flex-row lg:items-stretch";
 
-/** Main column for schedule grid or attendance content. */
+/** Main column for the schedule grid. */
 export const scheduleWorkspaceMainColumnClassName =
   "flex min-w-0 flex-col max-lg:flex-none lg:min-h-0 lg:flex-1";
 

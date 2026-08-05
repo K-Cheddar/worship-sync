@@ -4,9 +4,44 @@ import Input from "./Input/Input";
 
 export type ServicePlanRolePickerOption = {
   positionId: string;
+  roleName?: string;
   label: string;
   teamId?: string;
   teamName?: string;
+};
+
+export const servicePlanRoleOptionName = (role: ServicePlanRolePickerOption): string =>
+  role.roleName?.trim()
+  || role.label.split(/\s+(?:\u00c2)?\u00b7\s+/).at(-1)?.trim()
+  || "Unknown role";
+
+export const servicePlanRoleOptionDisplayLabel = (
+  role: ServicePlanRolePickerOption,
+  options: ServicePlanRolePickerOption[],
+): string => {
+  const name = servicePlanRoleOptionName(role);
+  const duplicates = options.filter(
+    (option) => servicePlanRoleOptionName(option).toLocaleLowerCase() === name.toLocaleLowerCase(),
+  ).length;
+  return duplicates > 1 && role.teamName ? `${role.teamName} · ${name}` : name;
+};
+
+const groupServicePlanRoleOptionsByTeam = (options: ServicePlanRolePickerOption[]) => {
+  const groups = new Map<string, { teamName: string; roles: ServicePlanRolePickerOption[] }>();
+  options.forEach((role) => {
+    const key = role.teamId || role.teamName || "other";
+    const group = groups.get(key) || { teamName: role.teamName || "Other roles", roles: [] };
+    group.roles.push(role);
+    groups.set(key, group);
+  });
+  return Array.from(groups.values())
+    .sort((left, right) => left.teamName.localeCompare(right.teamName))
+    .map((group) => ({
+      ...group,
+      roles: [...group.roles].sort((left, right) =>
+        servicePlanRoleOptionName(left).localeCompare(servicePlanRoleOptionName(right)),
+      ),
+    }));
 };
 
 type ServicePlanRolePickerContentProps = {
@@ -63,7 +98,9 @@ const ServicePlanRolePickerContent = ({
   const filteredRoles = useMemo(() => options.filter((role) => {
     if (!lockedTeamName && teamId && role.teamId !== teamId) return false;
     if (!normalizedQuery) return true;
-    return `${role.label} ${role.teamName || ""}`.toLocaleLowerCase().includes(normalizedQuery);
+    return `${servicePlanRoleOptionName(role)} ${role.teamName || ""}`
+      .toLocaleLowerCase()
+      .includes(normalizedQuery);
   }), [lockedTeamName, normalizedQuery, options, teamId]);
 
   useEffect(() => {
@@ -146,21 +183,30 @@ const ServicePlanRolePickerContent = ({
             All roles
           </Button>
         ) : null}
-        {filteredRoles.map((role) => (
-          <Button
-            key={role.positionId}
-            variant="tertiary"
-            isSelected={role.positionId === value}
-            className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (!lockedTeamName && role.teamId) chooseTeam(role.teamId);
-              selectRole(role.positionId);
-            }}
-          >
-            <span className="block truncate">{role.label}</span>
-          </Button>
+        {groupServicePlanRoleOptionsByTeam(filteredRoles).map((group) => (
+          <div key={group.teamName} className="py-0.5">
+            <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
+              {group.teamName}
+            </p>
+            {group.roles.map((role) => (
+              <Button
+                key={role.positionId}
+                variant="tertiary"
+                isSelected={role.positionId === value}
+                className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!lockedTeamName && role.teamId) chooseTeam(role.teamId);
+                  selectRole(role.positionId);
+                }}
+              >
+                <span className="block truncate">
+                  {servicePlanRoleOptionDisplayLabel(role, options)}
+                </span>
+              </Button>
+            ))}
+          </div>
         ))}
         {filteredRoles.length === 0 ? (
           <p className="px-2 py-3 text-xs text-gray-400">No matching roles.</p>

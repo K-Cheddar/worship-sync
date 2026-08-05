@@ -1,9 +1,19 @@
-import { useEffect, useMemo, useState, type FunctionComponent, type ReactNode, type SVGProps } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FunctionComponent,
+  type ReactNode,
+  type SVGProps,
+} from "react";
 import {
   BookOpen,
+  Check,
   ChevronDown,
   GripVertical,
   Music,
+  Mic2,
   Plus,
   Radio,
   StickyNote,
@@ -17,9 +27,13 @@ import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
-import HistorySuggestField from "../../components/HistorySuggestField/HistorySuggestField";
+import { ServicePlanMicrophoneIcon } from "../../components/ServicePlanMicrophoneIcon";
+import ServicePlanAssigneeList, {
+  addServicePlanAssignee,
+  addUnassignedMicrophone,
+} from "./ServicePlanAssigneeList";
 import Input from "../../components/Input/Input";
-import ServicePlanRolePicker from "../../components/ServicePlanRolePicker";
+import Select from "../../components/Select/Select";
 import TimePicker from "../../components/TimePicker/TimePicker";
 import {
   formatServicePlanDuration,
@@ -35,6 +49,11 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../components/ui/Popover";
 import {
   EMPTY_RICH_TEXT,
   isRichTextEmpty,
@@ -62,7 +81,16 @@ import {
 } from "./servicePlanChipStyles";
 import type {
   ServicePlanElement,
+  ServicePlanMicrophone,
+  ServicePlanMicrophoneAudience,
   ServicePlanSongReference,
+  ServicePlanTeamNote,
+} from "../../types/servicePlan";
+import {
+  getServicePlanElementAssignees,
+  getServicePlanElementScriptureRefs,
+  getServicePlanElementSongRefs,
+  getServicePlanRoleNotePositionIds,
 } from "../../types/servicePlan";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
@@ -87,13 +115,21 @@ export const SERVICE_PLAN_INLINE_EDITOR_CLASS =
   "min-h-7 rounded-md border-0 bg-gray-950/70 px-1 py-0.5 shadow-none focus-visible:ring-0";
 
 export const SERVICE_PLAN_NOTE_ICON_CLASS = "text-yellow-300";
-export const SERVICE_PLAN_TEAM_NOTE_ICON_CLASS = "text-sky-400";
+/** Team/role notes — muted orange so they read as team context, not a cyan selection. */
+export const SERVICE_PLAN_TEAM_NOTE_ICON_CLASS = "text-orange-300/80";
 
 export type ServicePlanRoleNoteOption = {
   positionId: string;
+  /** The concise role name shown under its team heading. */
+  roleName?: string;
   label: string;
   teamId?: string;
   teamName?: string;
+};
+
+export type ServicePlanTeamNoteOption = {
+  teamId: string;
+  label: string;
 };
 /** Light red for day-of-service Make live. */
 export const SERVICE_PLAN_MAKE_LIVE_ICON_COLOR = "#fca5a5";
@@ -125,10 +161,13 @@ export const SERVICE_PLAN_COL = {
 export const ServicePlanElementColumnHeader = ({
   isEditing = false,
   showActionsColumn = false,
+  showAssignedColumn = true,
 }: {
   isEditing?: boolean;
   /** Match row trailing gutter when live controls or edit actions are present. */
   showActionsColumn?: boolean;
+  /** False on structure-only surfaces (templates), which carry no assignees. */
+  showAssignedColumn?: boolean;
 }) => (
   <div
     className={cn(
@@ -150,13 +189,15 @@ export const ServicePlanElementColumnHeader = ({
       {isEditing ? "Length" : "Len"}
     </span>
     <span className={SERVICE_PLAN_COL.title}>Title</span>
-    <span
-      className={
-        isEditing ? SERVICE_PLAN_COL.assignedEdit : SERVICE_PLAN_COL.assignedView
-      }
-    >
-      Assigned
-    </span>
+    {showAssignedColumn ? (
+      <span
+        className={
+          isEditing ? SERVICE_PLAN_COL.assignedEdit : SERVICE_PLAN_COL.assignedView
+        }
+      >
+        Assigned
+      </span>
+    ) : null}
     {isEditing || showActionsColumn ? (
       <span
         className={isEditing ? SERVICE_PLAN_COL.actionsEdit : SERVICE_PLAN_COL.actionsView}
@@ -309,15 +350,60 @@ type AddAttachmentMenuProps = {
   canAddNote: boolean;
   canAddTeamNote: boolean;
   canAddRoleNote: boolean;
+  canAddMicrophone: boolean;
+  canAddPerson: boolean;
+  teamNoteOptions: ServicePlanTeamNoteOption[];
   roleNoteOptions: ServicePlanRoleNoteOption[];
+  microphones: ServicePlanMicrophone[];
   onAddSong: () => void;
   onAddScripture: () => void;
   onAddNote: () => void;
-  onAddTeamNote: () => void;
+  onAddTeamNote: (teamId: string) => void;
   onAddRoleNote: (positionId: string) => void;
+  onAddMicrophone: (microphoneId: string) => void;
+  onAddPerson: () => void;
 };
 
 const ROLE_TEAM_FILTER_STORAGE_KEY = "worshipsyncServicePlanRoleTeamFilter";
+
+const roleOptionName = (role: ServicePlanRoleNoteOption): string =>
+  role.roleName?.trim()
+  || role.label.split(/\s+(?:\u00c2)?\u00b7\s+/).at(-1)?.trim()
+  || "Unknown role";
+
+const roleOptionDisplayLabel = (
+  role: ServicePlanRoleNoteOption,
+  options: ServicePlanRoleNoteOption[],
+): string => {
+  const roleName = roleOptionName(role);
+  const duplicateCount = options.filter(
+    (option) => roleOptionName(option).toLocaleLowerCase() === roleName.toLocaleLowerCase(),
+  ).length;
+  return duplicateCount > 1 && role.teamName
+    ? `${role.teamName} · ${roleName}`
+    : roleName;
+};
+
+const groupRoleOptionsByTeam = (options: ServicePlanRoleNoteOption[]) => {
+  const groups = new Map<string, { teamName: string; options: ServicePlanRoleNoteOption[] }>();
+  options.forEach((option) => {
+    const key = option.teamId || option.teamName || "other";
+    const group = groups.get(key) || {
+      teamName: option.teamName || "Other roles",
+      options: [],
+    };
+    group.options.push(option);
+    groups.set(key, group);
+  });
+  return Array.from(groups.values())
+    .sort((left, right) => left.teamName.localeCompare(right.teamName))
+    .map((group) => ({
+      ...group,
+      options: [...group.options].sort((left, right) =>
+        roleOptionName(left).localeCompare(roleOptionName(right)),
+      ),
+    }));
+};
 
 const RoleNoteAudienceSubmenu = ({
   options,
@@ -408,25 +494,218 @@ const RoleNoteAudienceSubmenu = ({
         </div>
       </div>
       <div className="max-h-56 overflow-y-auto rounded border border-gray-700 p-1">
-        {filteredRoles.map((role) => (
-          <Button
-            key={role.positionId}
-            variant="tertiary"
-            className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onSelectRole(role.positionId);
-            }}
-          >
-            <span className="block truncate">{role.label}</span>
-          </Button>
+        {groupRoleOptionsByTeam(filteredRoles).map((group) => (
+          <div key={group.teamName} className="py-0.5">
+            <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
+              {group.teamName}
+            </p>
+            {group.options.map((role) => (
+              <Button
+                key={role.positionId}
+                variant="tertiary"
+                className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectRole(role.positionId);
+                }}
+              >
+                <span className="block truncate">
+                  {roleOptionDisplayLabel(role, options)}
+                </span>
+              </Button>
+            ))}
+          </div>
         ))}
         {filteredRoles.length === 0 ? (
           <p className="px-2 py-3 text-xs text-gray-400">No matching roles.</p>
         ) : null}
       </div>
     </div>
+  );
+};
+
+const TeamNoteAudienceSubmenu = ({
+  options,
+  onSelectTeam,
+}: {
+  options: ServicePlanTeamNoteOption[];
+  onSelectTeam: (teamId: string) => void;
+}) => (
+  <div className="max-h-56 w-56 overflow-y-auto p-1">
+    {options.map((team) => (
+      <Button
+        key={team.teamId}
+        variant="tertiary"
+        className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelectTeam(team.teamId);
+        }}
+      >
+        <span className="block truncate">{team.label}</span>
+      </Button>
+    ))}
+  </div>
+);
+
+const roleAudienceLabel = (
+  note: ServicePlanTeamNote,
+  options: ServicePlanRoleNoteOption[],
+): string => {
+  const labels = getServicePlanRoleNotePositionIds(note)
+    .map((positionId) => {
+      const option = options.find((role) => role.positionId === positionId);
+      return option ? roleOptionDisplayLabel(option, options) : undefined;
+    })
+    .filter((label): label is string => Boolean(label));
+  return labels.join(", ") || note.label.trim() || "Role note";
+};
+
+/** Prefer role names on the trigger; fall back to a count when truncated. */
+const RoleNoteAudienceTriggerLabel = ({
+  names,
+  count,
+}: {
+  names: string;
+  count: number;
+}) => {
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = useState(false);
+
+  useEffect(() => {
+    const el = measureRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      setTruncated(el.scrollWidth > el.clientWidth + 1);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [names]);
+
+  const countLabel = `${count} role${count === 1 ? "" : "s"}`;
+
+  return (
+    <span className="relative min-w-0 flex-1 overflow-hidden">
+      {/* Invisible probe keeps measuring the full name list without flicker. */}
+      <span
+        ref={measureRef}
+        className="pointer-events-none absolute inset-0 truncate opacity-0"
+        aria-hidden
+      >
+        {names}
+      </span>
+      <span className="block truncate">{truncated ? countLabel : names}</span>
+    </span>
+  );
+};
+
+const RoleNoteAudiencePicker = ({
+  value,
+  options,
+  onValueChange,
+}: {
+  value: string[];
+  options: ServicePlanRoleNoteOption[];
+  onValueChange: (positionIds: string[]) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredOptions = options.filter((option) =>
+    !normalizedQuery
+    || `${roleOptionName(option)} ${option.teamName || ""}`
+      .toLocaleLowerCase()
+      .includes(normalizedQuery),
+  );
+  const selectedRoles = options.filter((option) => value.includes(option.positionId));
+  const selectedNames = selectedRoles
+    .map((role) => roleOptionDisplayLabel(role, options))
+    .join(", ");
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="secondary"
+          svg={ChevronDown}
+          iconPosition="right"
+          iconSize="xs"
+          className="max-md:min-h-0 min-w-0 max-w-full text-xs"
+          aria-label={
+            selectedRoles.length
+              ? `Role note audiences: ${selectedNames}`
+              : "Role note audiences"
+          }
+          title={selectedRoles.length ? selectedNames : undefined}
+        >
+          {selectedRoles.length ? (
+            <RoleNoteAudienceTriggerLabel
+              names={selectedNames}
+              count={selectedRoles.length}
+            />
+          ) : (
+            <span className="truncate">Select roles</span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 p-2 text-gray-100">
+        <Input
+          value={query}
+          onChange={(next) => setQuery(String(next))}
+          placeholder="Search roles"
+          aria-label="Search roles"
+          className="w-full"
+          inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
+        />
+        <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-700 p-1">
+          {groupRoleOptionsByTeam(filteredOptions).map((group) => (
+            <div key={group.teamName} className="py-0.5">
+              <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
+                {group.teamName}
+              </p>
+              {group.options.map((option) => {
+                const selected = value.includes(option.positionId);
+                return (
+                  <Button
+                    key={option.positionId}
+                    type="button"
+                    variant="tertiary"
+                    isSelected={selected}
+                    aria-pressed={selected}
+                    className={cn(
+                      "max-md:min-h-0 w-full px-2 py-1 text-left text-xs",
+                      selected && "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                    )}
+                    onClick={() => onValueChange(
+                      selected
+                        ? value.filter((positionId) => positionId !== option.positionId)
+                        : [...value, option.positionId],
+                    )}
+                  >
+                    <span className="flex w-full min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">
+                        {roleOptionDisplayLabel(option, options)}
+                      </span>
+                      {selected ? (
+                        <Check className="size-3.5 shrink-0 text-cyan-300" aria-hidden />
+                      ) : null}
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+          ))}
+          {filteredOptions.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-gray-400">No matching roles.</p>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 };
 
@@ -438,12 +717,18 @@ const AddAttachmentMenu = ({
   canAddNote,
   canAddTeamNote,
   canAddRoleNote,
+  canAddMicrophone,
+  canAddPerson,
+  teamNoteOptions,
   roleNoteOptions,
+  microphones,
   onAddSong,
   onAddScripture,
   onAddNote,
   onAddTeamNote,
   onAddRoleNote,
+  onAddMicrophone,
+  onAddPerson,
 }: AddAttachmentMenuProps) => {
   const [open, setOpen] = useState(false);
   return (
@@ -463,6 +748,12 @@ const AddAttachmentMenu = ({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-48">
+        {canAddPerson ? (
+          <DropdownMenuItem onSelect={onAddPerson}>
+            <UserRound className="size-4 text-gray-400" aria-hidden />
+            Person
+          </DropdownMenuItem>
+        ) : null}
         {canAddSong ? (
           <DropdownMenuItem onSelect={onAddSong}>
             <Music
@@ -491,13 +782,24 @@ const AddAttachmentMenu = ({
           </DropdownMenuItem>
         ) : null}
         {canAddTeamNote ? (
-          <DropdownMenuItem onSelect={onAddTeamNote}>
-            <Users
-              className={cn("size-4", SERVICE_PLAN_TEAM_NOTE_ICON_CLASS)}
-              aria-hidden
-            />
-            Team-specific note
-          </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Users
+                className={cn("size-4", SERVICE_PLAN_TEAM_NOTE_ICON_CLASS)}
+                aria-hidden
+              />
+              Team-specific note
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="p-1">
+              <TeamNoteAudienceSubmenu
+                options={teamNoteOptions}
+                onSelectTeam={(teamId) => {
+                  onAddTeamNote(teamId);
+                  setOpen(false);
+                }}
+              />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         ) : null}
         {canAddRoleNote ? (
           <DropdownMenuSub>
@@ -516,6 +818,32 @@ const AddAttachmentMenu = ({
                   setOpen(false);
                 }}
               />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ) : null}
+        {canAddMicrophone ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Mic2 className="size-4 text-violet-300" aria-hidden />
+              Microphones
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-64 min-w-52 overflow-y-auto p-1">
+              {microphones.map((microphone) => (
+                <DropdownMenuItem
+                  key={microphone.id}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    onAddMicrophone(microphone.id);
+                  }}
+                >
+                  <ServicePlanMicrophoneIcon
+                    microphone={microphone}
+                    color={microphone.color}
+                    className="size-5 shrink-0"
+                  />
+                  <span className="truncate">{microphone.name} · {microphone.type}</span>
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         ) : null}
@@ -575,7 +903,13 @@ type ServicePlanElementRowProps = {
   teamNotesFilter?: string;
   /** Empty = all roles in the selected team; otherwise only this Teams role. */
   roleNotesFilter?: string;
+  teamNoteOptions?: ServicePlanTeamNoteOption[];
   roleNoteOptions?: ServicePlanRoleNoteOption[];
+  /** Church-wide mic catalog. Assignments remain scoped to this plan item. */
+  microphones?: ServicePlanMicrophone[];
+  /** Church-wide roles that see every assigned microphone. */
+  microphoneAudiences?: ServicePlanMicrophoneAudience[];
+  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
   /**
    * When false, render a compact read-only row (view mode). When true and
    * canEdit, show editable fields — stacked on small screens, columns on md+.
@@ -595,6 +929,14 @@ type ServicePlanElementRowProps = {
    * stored reference still stands.
    */
   resolvedSongRef?: ServicePlanSongReference;
+  resolvedSongRefs?: ServicePlanSongReference[];
+  /**
+   * Structure-only surfaces (the template editor) drop the columns a template
+   * deliberately does not carry — song and scripture attachments, and
+   * "Assigned to" — since cloneSectionsForTemplate strips all three in both
+   * directions. Notes, timings, titles and microphones stay.
+   */
+  structureOnly?: boolean;
 };
 
 /**
@@ -627,11 +969,17 @@ const ServicePlanElementRow = ({
   hideNotes = false,
   teamNotesFilter = "",
   roleNotesFilter = "",
+  teamNoteOptions = [],
   roleNoteOptions = [],
+  microphones = [],
+  microphoneAudiences,
+  scheduledMicrophoneHolders,
   isEditing = false,
   onViewSongLyrics,
   canCreateLibrarySong = false,
   resolvedSongRef,
+  resolvedSongRefs,
+  structureOnly = false,
 }: ServicePlanElementRowProps) => {
   const hasNotes = !isRichTextEmpty(element.notes);
   const [notesEditorOpen, setNotesEditorOpen] = useState(hasNotes);
@@ -642,7 +990,14 @@ const ServicePlanElementRow = ({
   );
   const [songPickerOpen, setSongPickerOpen] = useState(false);
   const [songPickerStartInCreate, setSongPickerStartInCreate] = useState(false);
-  const [songSuggestionsOpen, setSongSuggestionsOpen] = useState(false);
+  /** When set, the library picker replaces that song index; otherwise it appends. */
+  const [songPickerTargetIndex, setSongPickerTargetIndex] = useState<number | null>(
+    null,
+  );
+  /** Which unmatched song chip has the suggestion popover open. */
+  const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
+    null,
+  );
   const [scriptureOpen, setScriptureOpen] = useState(false);
   const formattedDuration = formatServicePlanDuration(element);
   const [durationText, setDurationText] = useState(formattedDuration);
@@ -662,6 +1017,7 @@ const ServicePlanElementRow = ({
   } = useSortable({ id: elementDndId(element.id), disabled: !allowEdit });
 
   const scopedNotes = element.teamNotes || [];
+  const assignees = getServicePlanElementAssignees(element);
   const teamNotes = scopedNotes.filter((note) => note.scope !== "role");
   const roleNotes = scopedNotes.filter((note) => note.scope === "role");
   const visibleTeamNotes = teamNotesFilter
@@ -671,36 +1027,99 @@ const ServicePlanElementRow = ({
     roleNoteMatchesServicePlanTeam(note, teamNotesFilter),
   );
   const visibleRoleNotes = roleNotesFilter
-    ? teamScopedRoleNotes.filter((note) => note.positionId === roleNotesFilter)
+    ? teamScopedRoleNotes.filter((note) =>
+      getServicePlanRoleNotePositionIds(note).includes(roleNotesFilter),
+    )
     : teamScopedRoleNotes;
+  /**
+   * Who a microphone is addressed to. Configured once per microphone on the
+   * Microphones page, church-wide — this is the only source of that targeting.
+   */
+  const microphoneAudiencesFor = (microphoneId: string) =>
+    microphoneAudiences
+    ?? element.microphoneAssignments?.find(
+      (assignment) => assignment.microphoneId === microphoneId,
+    )?.audiences
+    ?? [];
+
+  /**
+   * Note filters narrow microphone chips, never the assignee rows themselves —
+   * who is doing an item is plain assignment info that every viewer saw in the
+   * Assigned column before microphones moved onto people.
+   *
+   * View mode only: hiding chips while editing would let an operator delete a
+   * row without seeing everything on it.
+   */
+  const visibleMicrophoneIds =
+    allowEdit || (!teamNotesFilter && !roleNotesFilter)
+      ? null
+      : new Set(
+        assignees.flatMap((assignee) =>
+          (assignee.microphoneIds || []).filter((microphoneId) => {
+            const audiences = microphoneAudiencesFor(microphoneId);
+            if (
+              teamNotesFilter
+              && !audiences.some((audience) => audience.teamName === teamNotesFilter)
+            ) {
+              return false;
+            }
+            return (
+              !roleNotesFilter
+              || audiences.some((audience) => audience.positionId === roleNotesFilter)
+            );
+          }),
+        ),
+      );
   const titleText = richTextToPlainText(element.title);
   const itemLabel = titleText.trim() || "item";
   // What the plan means today: the stored reference, unless a song it couldn't
   // find at import time has since been added to the library.
-  const songRef = resolvedSongRef ?? element.songRef;
-  const songLabel = songRefLabel(songRef);
+  const storedSongRefs = getServicePlanElementSongRefs(element);
+  const songRefs = resolvedSongRefs ?? (
+    resolvedSongRef && storedSongRefs.length === 1 ? [resolvedSongRef] : storedSongRefs
+  );
+  const scriptureRefs = getServicePlanElementScriptureRefs(element);
+  const pickerTargetSong =
+    songPickerTargetIndex !== null ? songRefs[songPickerTargetIndex] : undefined;
+  const pendingSongTitle =
+    pickerTargetSong?.kind === "pending" ? pickerTargetSong.title : "";
+  const pendingSongLyrics =
+    pickerTargetSong?.kind === "pending" ? pickerTargetSong.lyricsText : "";
+  const scriptureLabel = scriptureRefs[0]?.label || null;
   // A "pending" ref names a song with no library doc behind it, so there is
   // nothing to project yet — the operator still has to find and link the song.
-  const isSongUnlinked = songRef?.kind === "pending";
-  const canLinkSong = isSongUnlinked && allowEdit;
   // Outside edit mode, full/music operators create the missing library song
   // instead of opening a lyrics viewer that has nothing durable to show.
-  const canCreateMissingSong = isSongUnlinked && canCreateLibrarySong && !canLinkSong;
-  const pendingSongTitle = songRef?.kind === "pending" ? songRef.title : "";
-  const pendingSongLyrics = songRef?.kind === "pending" ? songRef.lyricsText : "";
-  const scriptureLabel = element.scriptureRef?.label || null;
   const showNotesEditor = !hideNotes && (notesEditorOpen || hasNotes);
   const surfaceClassName = getServicePlanElementSurfaceClassName({
     toneIndex,
     isLive,
   });
-  const canAddSong = !songLabel;
-  const canAddScripture = !scriptureLabel;
+  const canAddSong = !structureOnly;
+  const canAddScripture = !structureOnly;
   const canAddNote = !hideNotes && !showNotesEditor;
-  const canAddTeamNote = !hideNotes;
+  const canAddTeamNote = !hideNotes && teamNoteOptions.length > 0;
   const canAddRoleNote = !hideNotes && roleNoteOptions.length > 0;
+  /** Every named assignee, for the compact Assigned column. */
+  const assigneeSummary = assignees
+    .map((assignee) => assignee.name?.trim())
+    .filter(Boolean)
+    .join(", ");
+  const assignedMicrophoneIds = new Set(
+    assignees.flatMap((assignee) => assignee.microphoneIds || []),
+  );
+  const availableMicrophones = microphones.filter(
+    (microphone) => !assignedMicrophoneIds.has(microphone.id),
+  );
+  // Not gated by structureOnly: a template carries its microphone plan (see
+  // cloneSectionsForTemplate), so it has to be editable where templates are.
+  const canAddMicrophone = !hideNotes && availableMicrophones.length > 0;
+  // Templates carry a microphone plan but never a person (see
+  // cloneSectionsForTemplate), so the structure-only surface offers mics only.
+  const canAddPerson = !structureOnly;
   const canAddAttachment =
-    canAddSong || canAddScripture || canAddNote || canAddTeamNote || canAddRoleNote;
+    canAddSong || canAddScripture || canAddNote || canAddTeamNote
+    || canAddRoleNote || canAddMicrophone || canAddPerson;
   const showLiveControls = isServiceDay;
 
   const handleAddNote = () => {
@@ -717,7 +1136,9 @@ const ServicePlanElementRow = ({
     onUpdate({ notes: EMPTY_RICH_TEXT });
   };
 
-  const handleAddTeamNote = () => {
+  const handleAddTeamNote = (teamId: string) => {
+    const team = teamNoteOptions.find((option) => option.teamId === teamId);
+    if (!team) return;
     const id = generateRandomId();
     setExpandedTeamNoteIds((prev) => new Set(prev).add(id));
     onUpdate({
@@ -725,7 +1146,9 @@ const ServicePlanElementRow = ({
         ...scopedNotes,
         {
           id,
-          label: teamNotesFilter || "",
+          label: team.label,
+          teamId: team.teamId,
+          teamName: team.label,
           note: EMPTY_RICH_TEXT,
         },
       ],
@@ -743,10 +1166,10 @@ const ServicePlanElementRow = ({
         {
           id,
           scope: "role",
-          positionId: role.positionId,
-          label: role.label,
-          ...(role.teamId ? { teamId: role.teamId } : {}),
-          ...(role.teamName ? { teamName: role.teamName } : {}),
+          positionIds: [role.positionId],
+          label: roleOptionName(role),
+          ...(role.teamId ? { teamIds: [role.teamId] } : {}),
+          ...(role.teamName ? { teamNames: [role.teamName] } : {}),
           note: EMPTY_RICH_TEXT,
         },
       ],
@@ -762,14 +1185,38 @@ const ServicePlanElementRow = ({
     });
   };
 
-  const openSongPicker = (startInCreate = false) => {
+  const openSongPicker = (
+    startInCreate = false,
+    targetIndex: number | null = null,
+  ) => {
     setSongPickerStartInCreate(startInCreate);
+    setSongPickerTargetIndex(targetIndex);
     setSongPickerOpen(true);
   };
 
   const closeSongPicker = () => {
     setSongPickerOpen(false);
     setSongPickerStartInCreate(false);
+    setSongPickerTargetIndex(null);
+  };
+
+  const replaceSongAt = (
+    songIndex: number,
+    nextSongRef: ServicePlanSongReference,
+  ) => {
+    onUpdate({
+      songRef: undefined,
+      songRefs: songRefs.map((current, index) =>
+        index === songIndex ? nextSongRef : current,
+      ),
+    });
+  };
+
+  const removeSongAt = (songIndex: number) => {
+    onUpdate({
+      songRef: undefined,
+      songRefs: songRefs.filter((_, currentIndex) => currentIndex !== songIndex),
+    });
   };
 
   const addMenu = (
@@ -781,12 +1228,22 @@ const ServicePlanElementRow = ({
       canAddNote={canAddNote}
       canAddTeamNote={canAddTeamNote}
       canAddRoleNote={canAddRoleNote}
+      canAddMicrophone={canAddMicrophone}
+      teamNoteOptions={teamNoteOptions}
       roleNoteOptions={roleNoteOptions}
+      microphones={availableMicrophones}
       onAddSong={() => openSongPicker(false)}
       onAddScripture={() => setScriptureOpen(true)}
       onAddNote={handleAddNote}
       onAddTeamNote={handleAddTeamNote}
       onAddRoleNote={handleCreateRoleNote}
+      onAddPerson={() => onUpdate({ assignees: addServicePlanAssignee(assignees) })}
+      canAddPerson={canAddPerson}
+      // Item-level mics belong to nobody yet: a stand or spare. They land on
+      // the unassigned slot, where a name can be filled in later.
+      onAddMicrophone={(microphoneId) => onUpdate({
+        assignees: addUnassignedMicrophone(assignees, microphoneId),
+      })}
     />
   );
 
@@ -797,7 +1254,16 @@ const ServicePlanElementRow = ({
         open={scriptureOpen}
         onOpenChange={setScriptureOpen}
         disabled={!allowEdit}
-        onSelect={(scriptureRef) => onUpdate({ scriptureRef })}
+        onSelect={(scriptureRef) => onUpdate({
+          // Clearing a legacy singular field is what moves this element onto
+          // the arrays, so whatever it held has to be written across with it.
+          // Dropping `songRef` on its own loses the song of an element that
+          // only ever had the singular field.
+          songRef: undefined,
+          songRefs,
+          scriptureRef: undefined,
+          scriptureRefs: [...scriptureRefs, scriptureRef],
+        })}
         anchor={<span className="inline-flex">{addMenu}</span>}
       />
     ) : (
@@ -840,119 +1306,144 @@ const ServicePlanElementRow = ({
     </>
   );
 
-  const songChipInteractive =
-    canLinkSong || canCreateMissingSong || Boolean(!isSongUnlinked && onViewSongLyrics);
-
-  const handleSongChipClick = () => {
-    if (canLinkSong) {
-      setSongSuggestionsOpen(true);
-      return;
-    }
-    if (canCreateMissingSong) {
-      openSongPicker(true);
-      return;
-    }
-    if (!isSongUnlinked && songRef) {
-      onViewSongLyrics?.(songRef);
-    }
-  };
-
-  let songChipLabel = `View lyrics for ${songLabel}`;
-  if (canLinkSong) {
-    songChipLabel = `Link ${songLabel} to a song in the library`;
-  } else if (canCreateMissingSong) {
-    songChipLabel = `Create ${songLabel} in the library`;
-  }
-
-  const songChipContent = (
-    <>
-      <Icon
-        svg={Music}
-        size="xs"
-        className={
-          isSongUnlinked
-            ? SERVICE_PLAN_UNLINKED_SONG_ICON_CLASS
-            : SERVICE_PLAN_SONG_ICON_CLASS
-        }
-      />
-      <span className="max-w-44 truncate">{songLabel}</span>
-      {isSongUnlinked ? (
-        <span className="shrink-0 whitespace-nowrap text-amber-200/90">
-          · Not in library
-        </span>
-      ) : null}
-    </>
-  );
-
-  const songChipButton = songLabel && songRef ? (
-    songChipInteractive ? (
-      <button
-        type="button"
-        className={cn(
-          "flex min-w-0 items-center gap-0.5 rounded text-left focus-visible:outline-none focus-visible:ring-1",
-          isSongUnlinked
-            ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
-            : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
-        )}
-        aria-haspopup={canLinkSong || canCreateMissingSong ? "dialog" : undefined}
-        aria-expanded={canLinkSong ? songSuggestionsOpen : undefined}
-        aria-label={songChipLabel}
-        // Opens rather than toggles: the chip is the popover's anchor, not its
-        // trigger, so Radix already dismisses on a click outside the panel.
-        onClick={handleSongChipClick}
-      >
-        {songChipContent}
-      </button>
-    ) : (
-      <span className="flex min-w-0 items-center gap-0.5">{songChipContent}</span>
-    )
-  ) : null;
-
-  const attachmentChips = (songLabel || scriptureLabel || attachmentsTrailing) ? (
+  const attachmentChips = (
+    songRefs.length > 0 || scriptureLabel || attachmentsTrailing
+  ) ? (
     <div
       className={cn(
         "flex flex-wrap items-center gap-1 px-1.5 pb-1.5 md:pb-1",
         allowEdit ? "pl-9" : "pl-1.5",
       )}
     >
-      {songChipButton && songRef ? (
-        <span
-          className={cn(
-            SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-            isSongUnlinked
-              ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
-              : SERVICE_PLAN_SONG_CHIP_CLASS,
-          )}
-        >
-          {canLinkSong ? (
-            <ServicePlanSongSuggestionPopover
-              open={songSuggestionsOpen}
-              onOpenChange={setSongSuggestionsOpen}
-              title={pendingSongTitle}
-              onSelectSong={(songRef) => onUpdate({ songRef })}
-              onOpenLibrary={() => openSongPicker(false)}
-              onCreateSong={
-                canCreateLibrarySong ? () => openSongPicker(true) : undefined
+      {songRefs.map((currentSongRef, songIndex) => {
+        const label = songRefLabel(currentSongRef);
+        if (!label) return null;
+        const isSongUnlinked = currentSongRef.kind === "pending";
+        const canLinkSong = isSongUnlinked && allowEdit;
+        const canCreateMissingSong =
+          isSongUnlinked && canCreateLibrarySong && !canLinkSong;
+        const songChipInteractive =
+          canLinkSong ||
+          canCreateMissingSong ||
+          Boolean(!isSongUnlinked && onViewSongLyrics);
+        const pendingTitle =
+          currentSongRef.kind === "pending" ? currentSongRef.title : "";
+
+        const handleSongChipClick = () => {
+          if (canLinkSong) {
+            setSongSuggestionsIndex(songIndex);
+            return;
+          }
+          if (canCreateMissingSong) {
+            openSongPicker(true, songIndex);
+            return;
+          }
+          if (!isSongUnlinked) {
+            onViewSongLyrics?.(currentSongRef);
+          }
+        };
+
+        let songChipLabel = `View lyrics for ${label}`;
+        if (canLinkSong) {
+          songChipLabel = `Link ${label} to a song in the library`;
+        } else if (canCreateMissingSong) {
+          songChipLabel = `Create ${label} in the library`;
+        }
+
+        const songChipContent = (
+          <>
+            <Icon
+              svg={Music}
+              size="xs"
+              className={
+                isSongUnlinked
+                  ? SERVICE_PLAN_UNLINKED_SONG_ICON_CLASS
+                  : SERVICE_PLAN_SONG_ICON_CLASS
               }
-              anchor={songChipButton}
             />
-          ) : (
-            songChipButton
-          )}
-          {allowEdit ? (
-            <Button
-              type="button"
-              variant="tertiary"
-              iconSize="xs"
-              padding="p-0"
-              className="h-4 w-4 max-md:min-h-0"
-              svg={X}
-              aria-label="Remove song"
-              onClick={() => onUpdate({ songRef: undefined })}
-            />
-          ) : null}
-        </span>
-      ) : null}
+            <span className="max-w-44 truncate">{label}</span>
+            {isSongUnlinked ? (
+              <span className="shrink-0 whitespace-nowrap text-amber-200/90">
+                · Not in library
+              </span>
+            ) : null}
+          </>
+        );
+
+        const songChipButton = songChipInteractive ? (
+          <button
+            type="button"
+            className={cn(
+              "flex min-w-0 items-center gap-0.5 rounded text-left focus-visible:outline-none focus-visible:ring-1",
+              isSongUnlinked
+                ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
+                : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
+            )}
+            aria-haspopup={
+              canLinkSong || canCreateMissingSong ? "dialog" : undefined
+            }
+            aria-expanded={
+              canLinkSong ? songSuggestionsIndex === songIndex : undefined
+            }
+            aria-label={songChipLabel}
+            // Opens rather than toggles: the chip is the popover's anchor, not its
+            // trigger, so Radix already dismisses on a click outside the panel.
+            onClick={handleSongChipClick}
+          >
+            {songChipContent}
+          </button>
+        ) : (
+          <span className="flex min-w-0 items-center gap-0.5">{songChipContent}</span>
+        );
+
+        return (
+          <span
+            key={`${currentSongRef.kind}:${label}:${songIndex}`}
+            className={cn(
+              SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+              isSongUnlinked
+                ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
+                : SERVICE_PLAN_SONG_CHIP_CLASS,
+            )}
+          >
+            {canLinkSong ? (
+              <ServicePlanSongSuggestionPopover
+                open={songSuggestionsIndex === songIndex}
+                onOpenChange={(open) =>
+                  setSongSuggestionsIndex(open ? songIndex : null)
+                }
+                title={pendingTitle}
+                onSelectSong={(nextSongRef) =>
+                  replaceSongAt(songIndex, nextSongRef)
+                }
+                onOpenLibrary={() => openSongPicker(false, songIndex)}
+                onCreateSong={
+                  canCreateLibrarySong
+                    ? () => openSongPicker(true, songIndex)
+                    : undefined
+                }
+                anchor={songChipButton}
+              />
+            ) : (
+              songChipButton
+            )}
+            {allowEdit ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="xs"
+                padding="p-0"
+                className="h-4 w-4 max-md:min-h-0"
+                svg={X}
+                aria-label={
+                  songIndex === 0 ? "Remove song" : `Remove song ${label}`
+                }
+                onClick={() => removeSongAt(songIndex)}
+              />
+            ) : null}
+          </span>
+        );
+      })}
       {scriptureLabel ? (
         <span
           className={cn(
@@ -975,11 +1466,41 @@ const ServicePlanElementRow = ({
               className="h-4 w-4 max-md:min-h-0"
               svg={X}
               aria-label="Remove scripture"
-              onClick={() => onUpdate({ scriptureRef: undefined })}
+              onClick={() => onUpdate({
+                scriptureRef: undefined,
+                scriptureRefs: scriptureRefs.slice(1),
+              })}
             />
           ) : null}
         </span>
       ) : null}
+      {scriptureRefs.slice(1).map((additionalScripture, index) => {
+        const scriptureIndex = index + 1;
+        return (
+          <span
+            key={`${additionalScripture.label}:${scriptureIndex}`}
+            className={cn(SERVICE_PLAN_ATTACHMENT_CHIP_CLASS, SERVICE_PLAN_SCRIPTURE_CHIP_CLASS)}
+          >
+            <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
+            <span className="max-w-44 truncate">{additionalScripture.label}</span>
+            {allowEdit ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="xs"
+                padding="p-0"
+                className="h-4 w-4 max-md:min-h-0"
+                svg={X}
+                aria-label={`Remove scripture ${additionalScripture.label}`}
+                onClick={() => onUpdate({
+                  scriptureRef: undefined,
+                  scriptureRefs: scriptureRefs.filter((_, currentIndex) => currentIndex !== scriptureIndex),
+                })}
+              />
+            ) : null}
+          </span>
+        );
+      })}
       {attachmentsTrailing}
     </div>
   ) : null;
@@ -1061,22 +1582,33 @@ const ServicePlanElementRow = ({
                 }
                 titleControl={
                   allowEdit && teamExpanded ? (
-                    <Input
-                      label="Team note label"
+                    <Select
+                      label="Team note audience"
                       hideLabel
-                      placeholder="e.g. Band, Media, Coordinators"
                       className="min-w-0"
-                      inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-                      value={teamNote.label}
-                      onChange={(label) =>
+                      selectClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+                      value={teamNote.teamId || ""}
+                      options={teamNoteOptions.map((team) => ({
+                        value: team.teamId,
+                        label: team.label,
+                      }))}
+                      onChange={(teamId) => {
+                        const team = teamNoteOptions.find((option) => option.teamId === teamId);
+                        if (!team) return;
                         onUpdate({
                           teamNotes: scopedNotes.map((note) =>
                             note.id === teamNote.id
-                              ? { ...note, label: String(label) }
+                              ? {
+                                ...note,
+                                scope: "team",
+                                teamId: team.teamId,
+                                teamName: team.label,
+                                label: team.label,
+                              }
                               : note,
                           ),
-                        }, `teamNote:${teamNote.id}:label`)
-                      }
+                        });
+                      }}
                     />
                   ) : undefined
                 }
@@ -1114,7 +1646,7 @@ const ServicePlanElementRow = ({
       )}
     >
       {visibleRoleNotes.map((roleNote) => {
-        const roleTitle = roleNote.label.trim() || "Role note";
+        const roleTitle = roleAudienceLabel(roleNote, roleNoteOptions);
         const roleExpanded = expandedTeamNoteIds.has(roleNote.id);
         return (
           <ExpandableNotePanel
@@ -1140,29 +1672,35 @@ const ServicePlanElementRow = ({
                 }
                 titleControl={
                   allowEdit && roleExpanded ? (
-                    <ServicePlanRolePicker
-                      value={roleNote.positionId || ""}
+                    <RoleNoteAudiencePicker
+                      value={getServicePlanRoleNotePositionIds(roleNote)}
                       options={roleNoteOptions}
-                      teamFilterStorageKey="worshipsyncServicePlanRoleTeamFilter"
-                      ariaLabel="Role note audience"
-                      placeholder="Select role"
-                      allowEmpty={false}
-                      className="max-w-[18rem]"
-                      onValueChange={(positionId) => {
-                        const role = roleNoteOptions.find(
-                          (option) => option.positionId === positionId,
+                      onValueChange={(positionIds) => {
+                        const selectedRoles = roleNoteOptions.filter((option) =>
+                          positionIds.includes(option.positionId),
                         );
-                        if (!role) return;
+                        if (!selectedRoles.length) return;
+                        const teamIds = Array.from(new Set(
+                          selectedRoles
+                            .map((role) => role.teamId)
+                            .filter((teamId): teamId is string => Boolean(teamId)),
+                        ));
+                        const teamNames = Array.from(new Set(
+                          selectedRoles
+                            .map((role) => role.teamName)
+                            .filter((teamName): teamName is string => Boolean(teamName)),
+                        ));
                         onUpdate({
                           teamNotes: scopedNotes.map((note) =>
                             note.id === roleNote.id
                               ? {
                                 ...note,
                                 scope: "role",
-                                positionId: role.positionId,
-                                label: role.label,
-                                ...(role.teamId ? { teamId: role.teamId } : {}),
-                                ...(role.teamName ? { teamName: role.teamName } : {}),
+                                positionId: undefined,
+                                positionIds,
+                                label: selectedRoles.map(roleOptionName).join(", "),
+                                ...(teamIds.length ? { teamIds } : {}),
+                                ...(teamNames.length ? { teamNames } : {}),
                               }
                               : note,
                           ),
@@ -1195,6 +1733,35 @@ const ServicePlanElementRow = ({
         );
       })}
     </div>
+  ) : null;
+
+  /**
+   * Who is doing this item and what each of them carries. Microphones live on
+   * the person rather than the item, so one row answers "who has the orange
+   * handheld". A row with no name is a stand or spare mic.
+   */
+  const assigneesBlock = assignees.length > 0 || (allowEdit && !structureOnly) ? (
+    <ServicePlanAssigneeList
+      assignees={
+        visibleMicrophoneIds
+          ? assignees.map((assignee) => ({
+            ...assignee,
+            microphoneIds: (assignee.microphoneIds || []).filter((id) =>
+              visibleMicrophoneIds.has(id),
+            ),
+          }))
+          : assignees
+      }
+      allowEdit={allowEdit}
+      microphones={microphones}
+      assignedToHistoryValues={assignedToHistoryValues}
+      itemLabel={itemLabel}
+      structureOnly={structureOnly}
+      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+      onChange={(nextAssignees, coalesceKey) =>
+        onUpdate({ assignees: nextAssignees }, coalesceKey)
+      }
+    />
   ) : null;
 
   return (
@@ -1277,17 +1844,16 @@ const ServicePlanElementRow = ({
                 onUpdate({ title: plainTextToRichText(String(value)) }, "title")
               }
             />
-            <HistorySuggestField
-              label="Assigned to"
-              hideLabel
-              placeholder="Assigned to"
-              multiline={false}
-              className={cn("w-full", SERVICE_PLAN_COL.assignedEdit)}
-              inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
-              value={element.assignedName || ""}
-              onChange={(value) => onUpdate({ assignedName: value }, "assignedName")}
-              historyValues={assignedToHistoryValues}
-            />
+            {structureOnly ? null : (
+              <span
+                className={cn(
+                  "truncate text-xs leading-4 text-gray-400",
+                  SERVICE_PLAN_COL.assignedEdit,
+                )}
+              >
+                {assigneeSummary || "Add a person below"}
+              </span>
+            )}
           </div>
 
           <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:ml-auto")}>
@@ -1325,20 +1891,22 @@ const ServicePlanElementRow = ({
             <p className="truncate text-xs font-medium leading-5 text-gray-50">
               {titleText.trim() || "Untitled"}
             </p>
-            {element.assignedName?.trim() ? (
+            {!structureOnly && assigneeSummary ? (
               <p className="truncate text-[11px] leading-4 text-gray-400 md:hidden">
-                {element.assignedName.trim()}
+                {assigneeSummary}
               </p>
             ) : null}
           </div>
-          <span
-            className={cn(
-              SERVICE_PLAN_COL.assignedView,
-              "truncate text-xs leading-4 text-gray-400",
-            )}
-          >
-            {element.assignedName?.trim() || ""}
-          </span>
+          {structureOnly ? null : (
+            <span
+              className={cn(
+                SERVICE_PLAN_COL.assignedView,
+                "truncate text-xs leading-4 text-gray-400",
+              )}
+            >
+              {assigneeSummary}
+            </span>
+          )}
           {isLive || showLiveControls ? (
             <div className={cn(SERVICE_PLAN_COL.actionsView, "self-center")}>
               {liveControls}
@@ -1351,6 +1919,7 @@ const ServicePlanElementRow = ({
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
+      {assigneesBlock}
       {songPickerOpen ? (
         <ServicePlanLibraryPicker
           isOpen
@@ -1360,7 +1929,16 @@ const ServicePlanElementRow = ({
           initialLyrics={pendingSongLyrics}
           startInCreate={songPickerStartInCreate}
           onClose={closeSongPicker}
-          onSelectSong={(songRef) => onUpdate({ songRef })}
+          onSelectSong={(songRef) => {
+            if (songPickerTargetIndex !== null) {
+              replaceSongAt(songPickerTargetIndex, songRef);
+              return;
+            }
+            onUpdate({
+              songRef: undefined,
+              songRefs: [...songRefs, songRef],
+            });
+          }}
         />
       ) : null}
     </div>

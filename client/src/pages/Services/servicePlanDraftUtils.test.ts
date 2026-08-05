@@ -215,7 +215,7 @@ describe("cloneSectionsForTemplate", () => {
     const elementId = sections[0].elements[0].id;
     sections = updateElement(sections, "a", elementId, {
       songRef: { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
-      assignedName: "Jamie",
+      assignees: [{ id: "assignee-1", name: "Jamie", memberId: "member-1" }],
       sourceLedByRaw: "Jamie",
       pushedOutlineListId: "list-item-1",
     });
@@ -225,12 +225,62 @@ describe("cloneSectionsForTemplate", () => {
 
     expect(element.songRef).toBeUndefined();
     expect(element.scriptureRef).toBeUndefined();
-    // A template must not assert who is serving on some future date.
-    expect(element.assignedName).toBeUndefined();
-    expect(element.assignedMemberId).toBeUndefined();
+    // A template must not assert who is serving on some future date. The slot
+    // carried nothing else, so it is dropped rather than kept empty.
+    expect(element.assignees).toEqual([]);
     expect(element.sourceLedByRaw).toBeUndefined();
     expect(element.pushedOutlineListId).toBeUndefined();
     // Kind follows the now-cleared attachments.
     expect(element.type).toBe("free");
+  });
+
+  // Microphones are church-owned and addressed to roles by their own
+  // configuration, so a mic plan repeats week to week and rides along with the
+  // pattern — in both directions, since this clone runs on save and on apply.
+  // Microphones hang off an assignee, so what survives is the microphone slot
+  // with the person removed.
+  it("keeps the microphone plan as a slot, minus the person", () => {
+    let sections = addElement([section("a")], "a");
+    const elementId = sections[0].elements[0].id;
+    sections = updateElement(sections, "a", elementId, {
+      assignees: [
+        {
+          id: "assignee-1",
+          name: "Jamie",
+          memberId: "member-1",
+          microphoneIds: ["mic-orange"],
+        },
+      ],
+    });
+
+    const cloned = cloneSectionsForTemplate(sections);
+    const [element] = cloned[0].elements;
+
+    expect(element.assignees).toHaveLength(1);
+    expect(element.assignees?.[0]).toMatchObject({
+      microphoneIds: ["mic-orange"],
+    });
+    // Still no claim about who is holding it on any given week.
+    expect(element.assignees?.[0].name).toBeUndefined();
+    expect(element.assignees?.[0].memberId).toBeUndefined();
+    // Re-keyed like every other cloned id, so two plans never collide.
+    expect(element.assignees?.[0].id).not.toBe("assignee-1");
+  });
+
+  it("converts a legacy element's single assignee and element microphones", () => {
+    let sections = addElement([section("a")], "a");
+    const elementId = sections[0].elements[0].id;
+    sections = updateElement(sections, "a", elementId, {
+      assignedName: "Jamie",
+      microphoneAssignments: [{ microphoneId: "mic-orange" }],
+    });
+
+    const cloned = cloneSectionsForTemplate(sections);
+    const [element] = cloned[0].elements;
+
+    // The person goes; the stand-mic slot the legacy assignment became stays.
+    expect(element.assignees).toHaveLength(1);
+    expect(element.assignees?.[0].microphoneIds).toEqual(["mic-orange"]);
+    expect(element.microphoneAssignments).toBeUndefined();
   });
 });

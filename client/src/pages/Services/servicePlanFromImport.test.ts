@@ -66,7 +66,7 @@ describe("buildServicePlanSectionsFromImport", () => {
       songId: "song-1",
       songName: "Great Are You Lord",
     });
-    expect(matched.assignedName).toBe("Jane Doe");
+    expect(matched.assignees?.[0].name).toBe("Jane Doe");
     expect(matched.sourceLedByRaw).toBe("Jane Doe");
     expect(richTextToPlainText(matched.title)).toBe("Great Are You Lord");
   });
@@ -176,7 +176,7 @@ describe("buildServicePlanSectionsFromImport", () => {
   it("leaves non-song rows without a songRef", () => {
     const [, messageSection] = buildServicePlanSectionsFromImport(data, songs);
     expect(messageSection.elements[0].songRef).toBeUndefined();
-    expect(messageSection.elements[0].assignedName).toBe("Pastor Sam");
+    expect(messageSection.elements[0].assignees?.[0].name).toBe("Pastor Sam");
   });
 
   it("keeps imported timing plus shared and team-scoped notes", () => {

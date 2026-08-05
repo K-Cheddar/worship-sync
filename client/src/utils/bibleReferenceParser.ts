@@ -54,7 +54,13 @@ const normalizeBibleReferenceInput = (value: string) =>
     );
 
 const normalizeBookName = (value: string) =>
-  value.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+  value
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    // "1cor" and "1 Cor" are the same book — printouts write both.
+    .replace(/^([1-3])\s*(?=[a-z])/, "$1 ");
 
 const makeBookAliases = () => {
   const aliases: Record<string, string> = {
@@ -65,8 +71,11 @@ const makeBookAliases = () => {
     lev: "Leviticus",
     num: "Numbers",
     deut: "Deuteronomy",
+    dt: "Deuteronomy",
     josh: "Joshua",
+    jos: "Joshua",
     judg: "Judges",
+    jdg: "Judges",
     ruth: "Ruth",
     "1 sam": "1 Samuel",
     "2 sam": "2 Samuel",
@@ -76,13 +85,18 @@ const makeBookAliases = () => {
     "2 chron": "2 Chronicles",
     neh: "Nehemiah",
     esth: "Esther",
-    ps: "Psalm",
-    psa: "Psalm",
-    psalm: "Psalm",
-    psalms: "Psalm",
+    // Canonical spelling wins over the singular an operator may type: the
+    // chapter fetch and the seeded bibleDb are both keyed on "Psalms".
+    ps: "Psalms",
+    psa: "Psalms",
+    psalm: "Psalms",
+    psalms: "Psalms",
     prov: "Proverbs",
+    prv: "Proverbs",
     eccl: "Ecclesiastes",
+    ecc: "Ecclesiastes",
     song: "Song of Solomon",
+    sos: "Song of Solomon",
     "song of songs": "Song of Solomon",
     isa: "Isaiah",
     jer: "Jeremiah",
@@ -104,19 +118,28 @@ const makeBookAliases = () => {
     mk: "Mark",
     lk: "Luke",
     jn: "John",
+    act: "Acts",
     rom: "Romans",
     "1 cor": "1 Corinthians",
     "2 cor": "2 Corinthians",
+    "1 co": "1 Corinthians",
+    "2 co": "2 Corinthians",
     gal: "Galatians",
     eph: "Ephesians",
     phil: "Philippians",
+    php: "Philippians",
     col: "Colossians",
     "1 thess": "1 Thessalonians",
     "2 thess": "2 Thessalonians",
+    "1 th": "1 Thessalonians",
+    "2 th": "2 Thessalonians",
     "1 tim": "1 Timothy",
     "2 tim": "2 Timothy",
+    "1 ti": "1 Timothy",
+    "2 ti": "2 Timothy",
     tit: "Titus",
     philem: "Philemon",
+    phlm: "Philemon",
     heb: "Hebrews",
     jas: "James",
     "1 pet": "1 Peter",
@@ -126,6 +149,7 @@ const makeBookAliases = () => {
     "3 jn": "3 John",
     jude: "Jude",
     rev: "Revelation",
+    rv: "Revelation",
   };
 
   for (const book of bibleStructure.books) {
@@ -142,6 +166,29 @@ const bookAliasPattern = Object.keys(bookAliases)
     alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\ /g, "\\s+"),
   )
   .join("|");
+
+/**
+ * The canonical book name behind an abbreviation or full name, or null when the
+ * text names no Bible book at all. Callers deciding *whether* something is a
+ * scripture reference need that null — `parseBibleSearchReference` is
+ * deliberately lenient about the book so the search box can match while the
+ * operator is still typing.
+ */
+export const resolveBibleBookName = (value: string): string | null =>
+  bookAliases[normalizeBookName(value)] ?? null;
+
+/**
+ * "Psalms 90 (NLT)" — bulletins and planning printouts bracket the version as
+ * often as they append it bare. Only a recognized version is unwrapped, so a
+ * genuine parenthetical note is left for the caller to deal with.
+ */
+const unwrapParenthesizedVersion = (value: string): string => {
+  const match = value.match(/^(.*?)\s*\(\s*([A-Za-z][A-Za-z0-9]*)\s*\)$/);
+  if (!match) return value;
+  return bibleVersionValues.has(match[2].toLowerCase())
+    ? `${match[1]} ${match[2]}`.trim()
+    : value;
+};
 
 const findGlobalVersion = (input: string) => {
   const normalized = normalizeBibleReferenceInput(input);
@@ -170,7 +217,9 @@ const makeExtractionId = (
 export const parseBibleSearchReference = (
   value: string,
 ): ParsedBibleSearchReference | null => {
-  const normalized = normalizeBibleReferenceInput(value).trim();
+  const normalized = unwrapParenthesizedVersion(
+    normalizeBibleReferenceInput(value).trim(),
+  );
   if (!normalized) return null;
 
   const versionMatch = normalized.match(/\s+([A-Za-z][A-Za-z0-9]*)\s*$/);
@@ -183,7 +232,9 @@ export const parseBibleSearchReference = (
   const pattern = new RegExp(
     [
       "^\\s*",
-      "([1-3]?\\s*[A-Za-z]+(?:\\s+[A-Za-z]+)*)",
+      // Trailing dots keep abbreviations readable ("Ps.", "1 Cor.");
+      // normalizeBookName drops them again when resolving the book.
+      "([1-3]?\\s*[A-Za-z]+\\.?(?:\\s+[A-Za-z]+\\.?)*)",
       "(?:\\s*(\\d+)",
       "(?:(?:\\s*:\\s*|\\s+)(\\d+)",
       "(?:(?:-\\s*|\\s+)(\\d+))?",

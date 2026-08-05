@@ -66,6 +66,8 @@ export type ScheduleAssignmentHandlers = {
     firstName: string;
     lastName: string;
   }) => Promise<void>;
+  addAdditionalPosition: (args: { serviceId: string; positionId: string }) => Promise<void>;
+  requestRemoveAdditionalPosition: (args: { serviceId: string; cellKey: string }) => void;
   activateSlot: (cell: ScheduleFocusedCell, anchorEl: HTMLElement) => void;
   clearActiveSlot: () => void;
   setPendingCellAssignment: (pending: PendingCellAssignment | null) => void;

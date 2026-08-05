@@ -17,7 +17,9 @@ import {
   List,
   ListOrdered,
   MoreHorizontal,
+  Redo2,
   Underline as UnderlineIcon,
+  Undo2,
 } from "lucide-react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -55,6 +57,10 @@ const SIZE_OPTIONS: { value: RichTextSize | "normal"; label: string }[] = [
   { value: "normal", label: "Normal" },
   { value: "large", label: "Large" },
 ];
+
+const ToolbarDivider = () => (
+  <span className="mx-0.5 h-4 w-px shrink-0 bg-gray-700" aria-hidden />
+);
 
 const EXTENSIONS = [
   StarterKit.configure({
@@ -262,12 +268,13 @@ const RichTextEditor = ({
   const activeAlignment = currentAlignment(editor);
   const isBulletList = editor.isActive("bulletList");
   const isOrderedList = editor.isActive("orderedList");
+  // Mobile "More" holds less-common note controls; light the trigger when any
+  // of those are active so operators can spot leftover formatting.
   const moreFormattingActive =
-    editor.isActive("bold") ||
     editor.isActive("italic") ||
     editor.isActive("underline") ||
-    isBulletList ||
     isOrderedList ||
+    activeSize !== "normal" ||
     activeAlignment !== "left";
 
   const applyTextColorToSelection = (nextColor: string) => {
@@ -333,6 +340,29 @@ const RichTextEditor = ({
     />
   );
 
+  const historyButton = (kind: "undo" | "redo") => {
+    const canRun =
+      kind === "undo" ? editor.can().undo() : editor.can().redo();
+    return (
+      <Button
+        type="button"
+        variant="tertiary"
+        iconSize="sm"
+        svg={kind === "undo" ? Undo2 : Redo2}
+        aria-label={kind === "undo" ? "Undo" : "Redo"}
+        disabled={disabled || !canRun}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          runCommand(() => {
+            const chain = editor.chain().focus();
+            if (kind === "undo") chain.undo().run();
+            else chain.redo().run();
+          });
+        }}
+      />
+    );
+  };
+
   const markButton = (
     mark: "bold" | "italic" | "underline",
     Icon: typeof Bold,
@@ -377,6 +407,36 @@ const RichTextEditor = ({
         else chain.toggleOrderedList().run();
       },
     });
+
+  const renderHistoryControls = () => (
+    <>
+      {historyButton("undo")}
+      {historyButton("redo")}
+    </>
+  );
+
+  const renderMarkControls = () => (
+    <>
+      {markButton("bold", Bold, "Bold")}
+      {markButton("italic", Italic, "Italic")}
+      {markButton("underline", UnderlineIcon, "Underline")}
+    </>
+  );
+
+  const renderListControls = () => (
+    <>
+      {listButton("bullet", List, "Bulleted list")}
+      {listButton("ordered", ListOrdered, "Numbered list")}
+    </>
+  );
+
+  const renderAlignControls = () => (
+    <>
+      {alignButton("left", AlignLeft, "Align left")}
+      {alignButton("center", AlignCenter, "Align center")}
+      {alignButton("right", AlignRight, "Align right")}
+    </>
+  );
 
   const renderTextSizeControl = () => (
     <PopOver
@@ -479,35 +539,33 @@ const RichTextEditor = ({
         <div className="flex shrink-0 items-start gap-1.5 pb-1">
           {toolbarLeading}
           {!disabled ? (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            <div
+              className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
+              role="toolbar"
+              aria-label="Note formatting"
+            >
+              {/* Notes toolbar follows common editor order: history → marks →
+                  lists → appearance → alignment. Mobile keeps undo, bold,
+                  bullets, and color up front; less-used controls sit in More. */}
               {showFullToolbar ? (
                 <>
-                  {markButton("bold", Bold, "Bold")}
-                  {markButton("italic", Italic, "Italic")}
-                  {markButton("underline", UnderlineIcon, "Underline")}
-                  <span
-                    className="mx-0.5 h-4 w-px shrink-0 bg-gray-700"
-                    aria-hidden
-                  />
-                  {listButton("bullet", List, "Bulleted list")}
-                  {listButton("ordered", ListOrdered, "Numbered list")}
+                  {renderHistoryControls()}
+                  <ToolbarDivider />
+                  {renderMarkControls()}
+                  <ToolbarDivider />
+                  {renderListControls()}
+                  <ToolbarDivider />
                   {renderTextSizeControl()}
-                  <span
-                    className="mx-0.5 h-4 w-px shrink-0 bg-gray-700"
-                    aria-hidden
-                  />
-                  {alignButton("left", AlignLeft, "Align left")}
-                  {alignButton("center", AlignCenter, "Align center")}
-                  {alignButton("right", AlignRight, "Align right")}
-                  <span
-                    className="mx-0.5 h-4 w-px shrink-0 bg-gray-700"
-                    aria-hidden
-                  />
                   {renderTextColorControl()}
+                  <ToolbarDivider />
+                  {renderAlignControls()}
                 </>
               ) : (
                 <>
-                  {renderTextSizeControl()}
+                  {renderHistoryControls()}
+                  <ToolbarDivider />
+                  {markButton("bold", Bold, "Bold")}
+                  {listButton("bullet", List, "Bulleted list")}
                   {renderTextColorControl()}
                   <PopOver
                     align="start"
@@ -528,34 +586,21 @@ const RichTextEditor = ({
                     }
                   >
                     <div className="flex flex-wrap items-center gap-1 p-1.5">
-                      {markButton("bold", Bold, "Bold")}
                       {markButton("italic", Italic, "Italic")}
                       {markButton(
                         "underline",
                         UnderlineIcon,
                         "Underline",
                       )}
-                      <span
-                        className="mx-0.5 h-4 w-px shrink-0 bg-gray-700"
-                        aria-hidden
-                      />
-                      {listButton("bullet", List, "Bulleted list")}
+                      <ToolbarDivider />
                       {listButton(
                         "ordered",
                         ListOrdered,
                         "Numbered list",
                       )}
-                      <span
-                        className="mx-0.5 h-4 w-px shrink-0 bg-gray-700"
-                        aria-hidden
-                      />
-                      {alignButton("left", AlignLeft, "Align left")}
-                      {alignButton(
-                        "center",
-                        AlignCenter,
-                        "Align center",
-                      )}
-                      {alignButton("right", AlignRight, "Align right")}
+                      {renderTextSizeControl()}
+                      <ToolbarDivider />
+                      {renderAlignControls()}
                     </div>
                   </PopOver>
                 </>
