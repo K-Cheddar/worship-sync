@@ -176,7 +176,12 @@ const renderToolbarOverlay = ({
   overlayPanel = "overlays",
 }: {
   access: "full" | "music" | "view";
-  overlayPanel?: "overlays" | "credits" | "serviceTimes";
+  overlayPanel?:
+    | "overlays"
+    | "boardPosts"
+    | "overlaysAndPosts"
+    | "credits"
+    | "serviceTimes";
 }) => {
   mockState = {
     undoable: {
@@ -222,15 +227,23 @@ describe("Toolbar", () => {
   it("shows slide and box tools for music access on song items", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
-    expect(screen.getByRole("button", { name: "Slide Tools" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Box Tools" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Slide Tools" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Box Tools" }),
+    ).toBeInTheDocument();
   });
 
   it("shows slide and box tools for music access on free form items", () => {
     renderToolbar({ access: "music", itemType: "free" });
 
-    expect(screen.getByRole("button", { name: "Slide Tools" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Box Tools" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Slide Tools" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Box Tools" }),
+    ).toBeInTheDocument();
   });
 
   it("hides quick links and monitor settings for music access", () => {
@@ -310,11 +323,17 @@ describe("Toolbar", () => {
     expect(screen.queryByText("Item Tools Panel")).not.toBeInTheDocument();
   });
 
-  it("overlay variant shows Overlays, Credits Editor, and Service Times tabs", () => {
+  it("overlay variant shows Overlays, Board Posts, Overlays & Posts, Credits Editor, and Service Times tabs", () => {
     renderToolbarOverlay({ access: "full" });
 
     expect(
       screen.getByRole("button", { name: "Overlays" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Board Posts" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Overlays & Posts" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Credits Editor" }),
@@ -394,7 +413,9 @@ describe("Toolbar", () => {
   it("overlay variant shows Quick Links on overlays tab when full access", () => {
     renderToolbarOverlay({ access: "full", overlayPanel: "overlays" });
 
-    expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Quick Links" }),
+    ).toBeInTheDocument();
   });
 
   it("overlay variant hides Quick Links on service times tab when full access", () => {

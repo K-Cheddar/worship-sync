@@ -17,6 +17,8 @@ import CreditsEditor from "../CreditsEditor/CreditsEditor";
 import ServiceTimes from "../../containers/ServiceTimes/ServiceTimes";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
+import OverlaysAndPostsWorkspace from "./OverlaysAndPostsWorkspace";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -28,14 +30,30 @@ const OverlayController = () => {
     useContext(ControllerInfoContext) || {};
   const { user, churchName, access } = useContext(GlobalInfoContext) || {};
   const { scrollbarWidth } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state) => state.undoable.present.preferences,
   );
   const overlayControllerPanel = useSelector(
     (state) => state.undoable.present.preferences.overlayControllerPanel,
   );
+  const isXlUp = useMediaQuery("(min-width: 1280px)");
+  const isCombinedWorkspace =
+    overlayControllerPanel === "overlaysAndPosts" && isXlUp;
+  const showOverlaysPanel =
+    overlayControllerPanel === "overlays" ||
+    (overlayControllerPanel === "overlaysAndPosts" && !isXlUp);
+  const showPresentationPanel =
+    overlayControllerPanel === "overlays" ||
+    overlayControllerPanel === "boardPosts" ||
+    overlayControllerPanel === "overlaysAndPosts";
   useEffect(() => {
     dispatch(setIsEditMode(false));
   }, [dispatch]);
+
+  useEffect(() => {
+    if (overlayControllerPanel === "overlaysAndPosts" && !isXlUp) {
+      dispatch(setOverlayControllerPanel("overlays"));
+    }
+  }, [dispatch, isXlUp, overlayControllerPanel]);
 
   useEffect(() => {
     return () => {
@@ -70,18 +88,20 @@ const OverlayController = () => {
         Inactive panel: opacity-0 + pointer-events-none + z-0; active: z-10 + opacity-100.
       */}
       <div className="relative flex flex-3 min-h-0 h-full min-w-0 self-stretch overflow-hidden">
-        <div
-          className={cn(
-            "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
-            overlayControllerPanel === "overlays"
-              ? "z-10 opacity-100"
-              : "pointer-events-none z-0 opacity-0",
-          )}
-          aria-hidden={overlayControllerPanel !== "overlays"}
-        >
-          <Overlays />
-        </div>
-        {access === "full" && (
+        {!isCombinedWorkspace && (
+          <div
+            className={cn(
+              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+              showOverlaysPanel
+                ? "z-10 opacity-100"
+                : "pointer-events-none z-0 opacity-0",
+            )}
+            aria-hidden={!showOverlaysPanel}
+          >
+            <Overlays />
+          </div>
+        )}
+        {access === "full" && !isCombinedWorkspace && (
           <div
             className={cn(
               "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
@@ -92,6 +112,11 @@ const OverlayController = () => {
             aria-hidden={overlayControllerPanel !== "boardPosts"}
           >
             <BoardStreamPanel />
+          </div>
+        )}
+        {access === "full" && isCombinedWorkspace && (
+          <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 overflow-hidden">
+            <OverlaysAndPostsWorkspace />
           </div>
         )}
         {access !== "view" && (
@@ -126,7 +151,7 @@ const OverlayController = () => {
           <Button
             className={cn(
               "z-10 ml-2 h-1/4 justify-center text-sm lg:hidden",
-              overlayControllerPanel !== "overlays" && overlayControllerPanel !== "boardPosts" && "hidden",
+              !showPresentationPanel && "hidden",
             )}
             svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
@@ -134,10 +159,13 @@ const OverlayController = () => {
           <div
             className={cn(
               "flex flex-col flex-2 h-full bg-homepage-canvas border-gray-500 transition-all border-l-2",
-              "lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0",
+              isCombinedWorkspace
+                ? "xl:flex-[0_0_25%] xl:w-1/4 xl:min-w-0"
+                : "lg:w-[min(46rem,46%)] lg:min-w-120",
+              "shrink-0",
               "max-lg:right-0 max-lg:absolute",
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
-              overlayControllerPanel !== "overlays" && overlayControllerPanel !== "boardPosts" && "hidden",
+              !showPresentationPanel && "hidden",
             )}
             ref={rightPanelRef}
           >
@@ -152,6 +180,7 @@ const OverlayController = () => {
               <TransmitHandler
                 visibleScreens={["stream"]}
                 previewScale={1.875}
+                fillWidth={isCombinedWorkspace}
                 variant="overlayStreamFocus"
                 showStreamOverlayOnlyToggle
                 showClearStreamOverlaysButton
@@ -165,7 +194,7 @@ const OverlayController = () => {
         <div
           className={cn(
             "flex h-full shrink-0 flex-col border-l-2 border-gray-500 bg-homepage-canvas lg:w-[min(46rem,46%)] lg:min-w-120",
-            overlayControllerPanel !== "overlays" && overlayControllerPanel !== "boardPosts" && "hidden",
+            !showPresentationPanel && "hidden",
           )}
         >
           <TransmitHandler

@@ -1,7 +1,8 @@
 import { useSelector } from "../hooks";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
-import { useEffect, useCallback } from "react";
+import { useCallback } from "react";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
+import { useWakeLock } from "../hooks/useWakeLock";
 
 const ProjectorFull = () => {
   const projectorInfo = useSelector((state) => state.presentation.projectorInfo);
@@ -15,17 +16,7 @@ const ProjectorFull = () => {
     state.timers.timers.find((timer) => timer.id === prevProjectorInfo.timerId)
   );
 
-  useEffect(() => {
-    const keepScreenOn = async () => {
-      try {
-        await navigator.wakeLock.request("screen");
-      } catch (err) {
-        console.error("Error acquiring wake lock:", err);
-      }
-    };
-
-    keepScreenOn();
-  }, []);
+  useWakeLock();
 
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {

@@ -6,6 +6,7 @@ import {
   PanelsTopLeft,
   ScrollText,
   Clock,
+  Columns3,
   Check,
   RefreshCcw,
   Settings,
@@ -54,11 +55,13 @@ const ToolbarOverlay = ({
   const overlayPanelTabRefs = useRef<{
     overlays: HTMLButtonElement | HTMLAnchorElement | null;
     boardPosts: HTMLButtonElement | HTMLAnchorElement | null;
+    overlaysAndPosts: HTMLButtonElement | HTMLAnchorElement | null;
     credits: HTMLButtonElement | HTMLAnchorElement | null;
     serviceTimes: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     overlays: null,
     boardPosts: null,
+    overlaysAndPosts: null,
     credits: null,
     serviceTimes: null,
   });
@@ -84,15 +87,17 @@ const ToolbarOverlay = ({
           >
             Open Service Plan
           </ToolbarButton>
-          {access === "full" && overlayControllerPanel === "overlays" && (
-            <ToolbarButton
-              svg={RectangleEllipsis}
-              onClick={() => onQuickLinksOpenChange(true)}
-              isActive={quickLinksDrawerOpen}
-            >
-              Quick Links
-            </ToolbarButton>
-          )}
+          {access === "full" &&
+            (overlayControllerPanel === "overlays" ||
+              overlayControllerPanel === "overlaysAndPosts") && (
+              <ToolbarButton
+                svg={RectangleEllipsis}
+                onClick={() => onQuickLinksOpenChange(true)}
+                isActive={quickLinksDrawerOpen}
+              >
+                Quick Links
+              </ToolbarButton>
+            )}
           {access !== "view" &&
             access !== "music" &&
             overlayControllerPanel === "credits" && (
@@ -143,16 +148,31 @@ const ToolbarOverlay = ({
           Overlays
         </ToolbarButton>
         {access === "full" && (
-          <ToolbarButton
-            ref={(el) => {
-              overlayPanelTabRefs.current.boardPosts = el;
-            }}
-            svg={MessageSquare}
-            onClick={() => dispatch(setOverlayControllerPanel("boardPosts"))}
-            isActive={overlayControllerPanel === "boardPosts"}
-          >
-            Board Posts
-          </ToolbarButton>
+          <>
+            <ToolbarButton
+              ref={(el) => {
+                overlayPanelTabRefs.current.boardPosts = el;
+              }}
+              svg={MessageSquare}
+              onClick={() => dispatch(setOverlayControllerPanel("boardPosts"))}
+              isActive={overlayControllerPanel === "boardPosts"}
+            >
+              Board Posts
+            </ToolbarButton>
+            <ToolbarButton
+              ref={(el) => {
+                overlayPanelTabRefs.current.overlaysAndPosts = el;
+              }}
+              className="hidden xl:flex"
+              svg={Columns3}
+              onClick={() =>
+                dispatch(setOverlayControllerPanel("overlaysAndPosts"))
+              }
+              isActive={overlayControllerPanel === "overlaysAndPosts"}
+            >
+              Overlays &amp; Posts
+            </ToolbarButton>
+          </>
         )}
         {access !== "view" && access !== "music" && (
           <ToolbarButton

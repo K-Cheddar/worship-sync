@@ -7,6 +7,15 @@
     <title>WorshipSync</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/logo192.png" />
+    <meta name="theme-color" content="#2b3544" />
+    <!-- iOS Safari ignores the manifest's display/name; these are its equivalents. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- Opaque, not "black-translucent": translucent draws web content *under* the
+         status bar, and the app does not yet apply env(safe-area-inset-top)
+         padding. Switch to black-translucent only alongside that layout work. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="WorshipSync" />
     <!-- <link rel="stylesheet" href="/initial.css" /> -->
     <meta
       name="description"

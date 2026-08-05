@@ -8,6 +8,9 @@ import { updateBoardPostStreamInfo } from "../../store/presentationSlice";
 const mockDispatch = jest.fn();
 const mockUseBoardData = jest.fn();
 const mockUseRestreamSession = jest.fn();
+const mockDisplayWindow = jest.fn(() => (
+  <div data-testid="display-window-preview" />
+));
 
 let mockState = {
   presentation: {
@@ -37,7 +40,10 @@ jest.mock("../../boards/boardUtils", () => ({
   filterHighlightedBoardPosts: (posts: Array<{ highlighted?: boolean }>) =>
     posts.filter((post) => post.highlighted),
   getBoardAuthorNameColorClass: () => "text-cyan-100",
-  getBoardAuthorNameHexColor: (post: { source?: string; authorId?: string }) => {
+  getBoardAuthorNameHexColor: (post: {
+    source?: string;
+    authorId?: string;
+  }) => {
     if (post.source === "restream") return "#ff0000";
     if (post.authorId) return "#00ff00";
     return "#e7e5e4";
@@ -47,7 +53,7 @@ jest.mock("../../boards/boardUtils", () => ({
 
 jest.mock("../../components/DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-window-preview" />,
+  default: () => mockDisplayWindow(),
 }));
 
 jest.mock("../../components/ColorField/ColorField", () => ({
@@ -84,12 +90,14 @@ jest.mock("../../components/Button/Button", () => ({
     onClick,
     disabled,
     type = "button",
+    wrap: _wrap,
     ...props
   }: {
     children?: ReactNode;
     onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
     disabled?: boolean;
     type?: "button" | "submit" | "reset";
+    wrap?: boolean;
   }) => (
     <button type={type} onClick={onClick} disabled={disabled} {...props}>
       {children}
@@ -98,7 +106,9 @@ jest.mock("../../components/Button/Button", () => ({
 }));
 
 jest.mock("../../components/ui/DropdownMenu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -121,6 +131,7 @@ jest.mock("../../components/ui/DropdownMenu", () => ({
 describe("BoardStreamPanel", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
+    mockDisplayWindow.mockClear();
     mockState = {
       presentation: {
         isStreamTransmitting: true,
@@ -206,7 +217,8 @@ describe("BoardStreamPanel", () => {
     expect(screen.queryByText("Reply should not show")).not.toBeInTheDocument();
 
     const orderedTexts = rows.map((row) => {
-      if (within(row).queryByText("Board highlighted earlier")) return "board-1";
+      if (within(row).queryByText("Board highlighted earlier"))
+        return "board-1";
       if (within(row).queryByText("Restream highlighted")) return "restream-1";
       if (within(row).queryByText("Board highlighted later")) return "board-2";
       return "unknown";
@@ -218,7 +230,9 @@ describe("BoardStreamPanel", () => {
     );
     expect(restreamRow).toBeDefined();
 
-    fireEvent.click(within(restreamRow as HTMLElement).getByRole("button", { name: "Send" }));
+    fireEvent.click(
+      within(restreamRow as HTMLElement).getByRole("button", { name: "Send" }),
+    );
 
     expect(mockDispatch).toHaveBeenCalledWith(
       updateBoardPostStreamInfo({
@@ -230,5 +244,30 @@ describe("BoardStreamPanel", () => {
         duration: 15,
       }),
     );
+  });
+
+  it("moves the selected post controls into the shared detail column without sending", () => {
+    const detailTarget = document.createElement("div");
+    const onDetailRequested = jest.fn();
+
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+        <BoardStreamPanel
+          detailTarget={detailTarget}
+          isDetailActive
+          onDetailRequested={onDetailRequested}
+        />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(
+      within(detailTarget).getByTestId("display-window-preview"),
+    ).toBeTruthy();
+    expect(mockDisplayWindow).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText("Board highlighted earlier"));
+
+    expect(onDetailRequested).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 });

@@ -224,12 +224,13 @@ const Input = ({
       <UIInput
         className={cn(
           "peer py-1 pl-2 shadow-none",
-          hasTrailingAction ? "pr-10" : "pr-2",
           inputTextSize,
           inputWidth,
           hideSpinButtons &&
           "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]",
-          inputClassName
+          inputClassName,
+          // After inputClassName so px-* from callers cannot collapse clear-button room.
+          hasTrailingAction ? "pr-10" : "pr-2",
         )}
         {...restForInput}
         type={type}

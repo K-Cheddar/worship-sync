@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Mic2, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import Button from "../../components/Button/Button";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import ColorField from "../../components/ColorField/ColorField";
+import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import { SectionTabs } from "../../components/SectionTabs/SectionTabs";
@@ -12,10 +14,7 @@ import {
   servicePlanMicrophoneTypeOptions,
 } from "../../components/ServicePlanMicrophoneIcon";
 import generateRandomId from "../../utils/generateRandomId";
-import {
-  TeamGroupedCheckboxLists,
-  type MultiCheckboxOptionGroup,
-} from "../Teams/components/MultiCheckboxGroup";
+import { resolvePositionLucideIcon } from "../Teams/lucidePositionIcons";
 import {
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
@@ -31,8 +30,15 @@ export type MicrophonePositionOption = {
   positionId: string;
   roleName?: string;
   label: string;
+  /** Lucide position icon key from the church positions catalog. */
+  icon?: string;
   teamId?: string;
   teamName?: string;
+};
+
+type PositionTeamGroup = {
+  heading: string;
+  positions: MicrophonePositionOption[];
 };
 
 type MicrophoneManagerTab = "microphones" | "visibility";
@@ -53,24 +59,21 @@ const collectPositionTeams = (options: MicrophonePositionOption[]) => {
 
 const groupPositionsByTeam = (
   options: MicrophonePositionOption[],
-): MultiCheckboxOptionGroup[] => {
-  const groups = new Map<string, MultiCheckboxOptionGroup>();
+): PositionTeamGroup[] => {
+  const groups = new Map<string, PositionTeamGroup>();
   options.forEach((position) => {
     const key = position.teamId || position.teamName || "other";
     const heading = position.teamName || "Other positions";
-    const existing = groups.get(key) || { heading, options: [] };
-    existing.options = [
-      ...(existing.options || []),
-      { id: position.positionId, label: positionOptionLabel(position) },
-    ];
+    const existing = groups.get(key) || { heading, positions: [] };
+    existing.positions.push(position);
     groups.set(key, existing);
   });
   return Array.from(groups.values())
     .sort((left, right) => left.heading.localeCompare(right.heading))
     .map((group) => ({
       ...group,
-      options: [...(group.options || [])].sort((left, right) =>
-        left.label.localeCompare(right.label),
+      positions: [...group.positions].sort((left, right) =>
+        positionOptionLabel(left).localeCompare(positionOptionLabel(right)),
       ),
     }));
 };
@@ -191,7 +194,7 @@ const ServicePlanMicrophoneManager = ({
     if (!visibilityTeamFilter) return positionNoteOptions;
     return positionNoteOptions.filter((position) => position.teamId === visibilityTeamFilter);
   }, [positionNoteOptions, visibilityTeamFilter]);
-  const positionCheckboxGroups = useMemo(
+  const positionGroups = useMemo(
     () => groupPositionsByTeam(filteredPositionOptions),
     [filteredPositionOptions],
   );
@@ -207,6 +210,21 @@ const ServicePlanMicrophoneManager = ({
       : selectedPositionOptions;
     return groupPositionsByTeam(visible);
   }, [selectedPositionOptions, visibilityTeamFilter]);
+
+  const toggleAudiencePosition = (positionId: string, checked: boolean) => {
+    setAudienceDraft((current) => {
+      const selectedIds = current.map((audience) => audience.positionId);
+      let nextIds: string[];
+      if (checked) {
+        nextIds = selectedIds.includes(positionId)
+          ? selectedIds
+          : [...selectedIds, positionId];
+      } else {
+        nextIds = selectedIds.filter((id) => id !== positionId);
+      }
+      return rebuildMicrophoneAudiences(nextIds, positionNoteOptions, current);
+    });
+  };
 
   const chooseVisibilityTeam = (teamId: string) => {
     setVisibilityTeamFilter(teamId);
@@ -362,8 +380,9 @@ const ServicePlanMicrophoneManager = ({
                   aria-label={`Color for ${title}: ${microphone.color}`}
                 />
               ) : (
-                <div className="w-24 shrink-0">
+                <div className="w-fit shrink-0 [&_button]:w-auto [&_button]:min-w-0 [&_button]:px-2">
                   <ColorField
+                    className="w-fit"
                     label={`Color for ${title}`}
                     hideLabel
                     value={microphone.color}
@@ -436,13 +455,33 @@ const ServicePlanMicrophoneManager = ({
         selectedPositionsByTeam.length ? (
           <div className="space-y-3">
             {selectedPositionsByTeam.map((group) => (
-              <div key={group.heading} className="space-y-1">
+              <div key={group.heading} className="space-y-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                   {group.heading}
                 </p>
-                <p className="text-sm text-gray-300">
-                  {(group.options || []).map((option) => option.label).join(", ")}
-                </p>
+                <ul className="space-y-1">
+                  {group.positions.map((position) => {
+                    const PositionIcon = resolvePositionLucideIcon(position.icon);
+                    return (
+                      <li
+                        key={position.positionId}
+                        className="flex min-h-8 items-center gap-2 px-1 text-sm text-gray-300"
+                      >
+                        {PositionIcon ? (
+                          <Icon
+                            svg={PositionIcon}
+                            size="sm"
+                            className="shrink-0 text-orange-300"
+                            alt=""
+                          />
+                        ) : (
+                          <span className="size-4 shrink-0" aria-hidden />
+                        )}
+                        <span className="truncate">{positionOptionLabel(position)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             ))}
           </div>
@@ -454,21 +493,49 @@ const ServicePlanMicrophoneManager = ({
           </p>
         )
       ) : positionNoteOptions.length ? (
-        positionCheckboxGroups.length ? (
+        positionGroups.length ? (
           <div className="space-y-3 rounded-md border border-gray-700 bg-gray-950/60 p-2">
-            <TeamGroupedCheckboxLists
-              groups={positionCheckboxGroups}
-              value={audienceDraft.map((audience) => audience.positionId)}
-              onChange={(positionIds) =>
-                setAudienceDraft((current) =>
-                  rebuildMicrophoneAudiences(
-                    positionIds,
-                    positionNoteOptions,
-                    current,
-                  ),
-                )
-              }
-            />
+            {positionGroups.map((group) => (
+              <div key={group.heading} className="space-y-1.5">
+                <p className="px-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  {group.heading}
+                </p>
+                <div className="space-y-1">
+                  {group.positions.map((position) => {
+                    const PositionIcon = resolvePositionLucideIcon(position.icon);
+                    const checked = audienceDraft.some(
+                      (audience) => audience.positionId === position.positionId,
+                    );
+                    return (
+                      <Checkbox
+                        key={position.positionId}
+                        className="rounded px-2 py-1"
+                        checked={checked}
+                        onCheckedChange={(nextChecked) =>
+                          toggleAudiencePosition(position.positionId, nextChecked)
+                        }
+                        label={
+                          <>
+                            {PositionIcon ? (
+                              <Icon
+                                svg={PositionIcon}
+                                size="sm"
+                                className="shrink-0 text-orange-300"
+                                alt=""
+                              />
+                            ) : null}
+                            <span className="truncate">
+                              {positionOptionLabel(position)}
+                            </span>
+                          </>
+                        }
+                        labelClassName="gap-2 text-sm"
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <p className="text-sm text-gray-400">No positions on this team.</p>

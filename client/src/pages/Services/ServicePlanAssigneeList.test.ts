@@ -1,96 +1,86 @@
 import {
-  addServicePlanAssignee,
-  applyAssigneeChanges,
-  filterAssigneeSuggestions,
+  addMicrophoneSlot,
+  hasUnclaimedMicrophoneSlot,
+  releaseServicePlanAssignee,
 } from "./ServicePlanAssigneeList";
-import type { ServicePlanAssignee } from "../../types/servicePlan";
 
-describe("filterAssigneeSuggestions", () => {
-  const history = [
-    "Abigail",
-    "Alrae Spence",
-    "Bobby Zecher",
-    "Chadwick Anderson",
-  ];
-
-  const assignees: ServicePlanAssignee[] = [
-    { id: "a1", name: "Bobby Zecher" },
-    { id: "a2", name: "Alrae Spence" },
-    { id: "a3", name: "" },
-  ];
-
-  it("drops names already used on other assignee rows", () => {
-    expect(filterAssigneeSuggestions(history, assignees, "a3")).toEqual([
-      "Abigail",
-      "Chadwick Anderson",
-    ]);
-  });
-
-  it("keeps the current row's own name so renaming still suggests peers only", () => {
-    expect(filterAssigneeSuggestions(history, assignees, "a1")).toEqual([
-      "Abigail",
-      "Bobby Zecher",
-      "Chadwick Anderson",
-    ]);
-  });
-
-  it("matches taken names case-insensitively", () => {
+describe("hasUnclaimedMicrophoneSlot", () => {
+  it("is true for a microphone waiting on whoever will carry it", () => {
     expect(
-      filterAssigneeSuggestions(
-        ["bobby zecher", "Abigail"],
-        [{ id: "a1", name: "Bobby Zecher" }, { id: "a2" }],
-        "a2",
+      hasUnclaimedMicrophoneSlot([{ id: "s1", microphoneIds: ["mic-orange"] }]),
+    ).toBe(true);
+  });
+
+  it("is false once every slot has a name on it", () => {
+    expect(
+      hasUnclaimedMicrophoneSlot([
+        { id: "s1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+      ]),
+    ).toBe(false);
+  });
+
+  it("ignores a blank row the operator just added", () => {
+    // It holds nothing, so it strands no microphone and blocks no new person.
+    expect(hasUnclaimedMicrophoneSlot([{ id: "s1" }])).toBe(false);
+  });
+});
+
+describe("releaseServicePlanAssignee", () => {
+  it("keeps the microphones on the item when a person is removed", () => {
+    expect(
+      releaseServicePlanAssignee(
+        [{ id: "a1", name: "Pastor John", memberId: "m1", microphoneIds: ["mic-orange"] }],
+        "a1",
       ),
-    ).toEqual(["Abigail"]);
+    ).toEqual([{ id: "a1", microphoneIds: ["mic-orange"] }]);
   });
 
-  it("returns the full list when nobody else is named", () => {
+  it("deletes the slot on the second press, once nobody is on it", () => {
     expect(
-      filterAssigneeSuggestions(history, [{ id: "a1", name: "" }], "a1"),
-    ).toEqual(history);
+      releaseServicePlanAssignee([{ id: "a1", microphoneIds: ["mic-orange"] }], "a1"),
+    ).toEqual([]);
+  });
+
+  it("deletes a person who was carrying nothing", () => {
+    expect(
+      releaseServicePlanAssignee([{ id: "a1", name: "Sarah Lee" }], "a1"),
+    ).toEqual([]);
+  });
+
+  it("leaves everyone else untouched", () => {
+    const others = [
+      { id: "a1", name: "Pastor John" },
+      { id: "a2", name: "Sarah Lee", microphoneIds: ["mic-lapel"] },
+    ];
+    expect(releaseServicePlanAssignee(others, "a1")).toEqual([others[1]]);
   });
 });
 
-describe("addServicePlanAssignee", () => {
-  it("appends an empty assignee slot", () => {
-    const next = addServicePlanAssignee([{ id: "a1", name: "Sam" }]);
+describe("addMicrophoneSlot", () => {
+  it("gives each microphone its own slot, in the order added", () => {
+    const first = addMicrophoneSlot([], "mic-a");
+    const second = addMicrophoneSlot(first, "mic-b");
+    const third = addMicrophoneSlot(second, "mic-c");
+
+    // Three slots, not one slot holding three: a slot is one holder, so piling
+    // them together would hand all three to whoever claims it.
+    expect(third).toHaveLength(3);
+    expect(third.map((slot) => slot.microphoneIds)).toEqual([
+      ["mic-a"],
+      ["mic-b"],
+      ["mic-c"],
+    ]);
+  });
+
+  it("adds after the people already on the item", () => {
+    const next = addMicrophoneSlot(
+      [{ id: "a1", name: "Pastor John", microphoneIds: ["mic-orange"] }],
+      "mic-stand",
+    );
+
     expect(next).toHaveLength(2);
-    expect(next[0]).toEqual({ id: "a1", name: "Sam" });
-    expect(next[1].id).toBeTruthy();
+    expect(next[0]).toMatchObject({ name: "Pastor John" });
     expect(next[1].name).toBeUndefined();
-  });
-});
-
-describe("applyAssigneeChanges", () => {
-  it("keeps the row when clearing a name with no microphones", () => {
-    const next = applyAssigneeChanges([{ id: "a1", name: "Sam" }], "a1", {
-      name: "",
-    });
-    expect(next).toEqual([{ id: "a1", name: "" }]);
-  });
-
-  it("keeps a named row when its name is partially cleared mid-edit", () => {
-    const next = applyAssigneeChanges([{ id: "a1", name: "Sa" }], "a1", {
-      name: "S",
-    });
-    expect(next).toEqual([{ id: "a1", name: "S" }]);
-  });
-
-  it("prunes an unassigned slot when its last microphone is removed", () => {
-    const next = applyAssigneeChanges(
-      [{ id: "a1", microphoneIds: ["mic-1"] }],
-      "a1",
-      { microphoneIds: [] },
-    );
-    expect(next).toEqual([]);
-  });
-
-  it("keeps a named person when their last microphone is removed", () => {
-    const next = applyAssigneeChanges(
-      [{ id: "a1", name: "Sam", microphoneIds: ["mic-1"] }],
-      "a1",
-      { microphoneIds: [] },
-    );
-    expect(next).toEqual([{ id: "a1", name: "Sam", microphoneIds: [] }]);
+    expect(next[1].microphoneIds).toEqual(["mic-stand"]);
   });
 });

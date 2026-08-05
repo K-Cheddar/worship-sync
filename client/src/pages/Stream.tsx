@@ -1,6 +1,6 @@
 import { useSelector } from "../hooks";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
-import { useEffect } from "react";
+import { useWakeLock } from "../hooks/useWakeLock";
 
 const Stream = () => {
   const streamInfo = useSelector((state) => state.presentation.streamInfo);
@@ -15,17 +15,7 @@ const Stream = () => {
     state.timers.timers.find((timer) => timer.id === prevStreamInfo.timerId)
   );
 
-  useEffect(() => {
-    const keepScreenOn = async () => {
-      try {
-        await navigator.wakeLock.request("screen");
-      } catch (err) {
-        console.error("Error acquiring wake lock:", err);
-      }
-    };
-
-    keepScreenOn();
-  }, []);
+  useWakeLock();
 
   return (
     <DisplayWindow

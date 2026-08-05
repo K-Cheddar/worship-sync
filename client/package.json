@@ -104,7 +104,8 @@
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
     "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",
     "lint:check": "eslint src --ext .ts,.tsx,.js,.jsx --max-warnings 0",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "generate:maskable-icon": "node scripts/generate-maskable-icon.mjs"
   },
   "main": "dist-electron/main/main.js",
   "eslintConfig": {

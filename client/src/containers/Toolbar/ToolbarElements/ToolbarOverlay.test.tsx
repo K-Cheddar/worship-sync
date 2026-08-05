@@ -31,7 +31,12 @@ jest.mock("./ToolbarButton", () => ({
     disabled?: boolean;
     "aria-label"?: string;
   }) => (
-    <button type="button" onClick={onClick} disabled={disabled} aria-label={ariaLabel}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+    >
       {children}
     </button>
   ),
@@ -59,7 +64,12 @@ const renderOverlay = ({
   overlayPanel = "overlays" as const,
 }: {
   access?: "full" | "music" | "view";
-  overlayPanel?: "overlays" | "credits" | "serviceTimes";
+  overlayPanel?:
+    | "overlays"
+    | "boardPosts"
+    | "overlaysAndPosts"
+    | "credits"
+    | "serviceTimes";
 } = {}) => {
   mockState = {
     undoable: {
@@ -96,21 +106,37 @@ describe("ToolbarOverlay", () => {
 
   it("shows Quick Links on overlays tab for full access", () => {
     renderOverlay({ access: "full", overlayPanel: "overlays" });
-    expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Quick Links" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Generate Credits" }),
     ).not.toBeInTheDocument();
   });
 
+  it("shows Quick Links on the combined overlays and posts mode", () => {
+    renderOverlay({ access: "full", overlayPanel: "overlaysAndPosts" });
+
+    expect(
+      screen.getByRole("button", { name: "Quick Links" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows Generate Credits on credits tab and hides Quick Links", () => {
     renderOverlay({ access: "full", overlayPanel: "credits" });
-    expect(screen.getByRole("button", { name: "Generate Credits" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Quick Links" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Generate Credits" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Quick Links" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides Quick Links and Generate Credits on service times tab", () => {
     renderOverlay({ access: "full", overlayPanel: "serviceTimes" });
-    expect(screen.queryByRole("button", { name: "Quick Links" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Quick Links" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Generate Credits" }),
     ).not.toBeInTheDocument();
@@ -154,7 +180,9 @@ describe("ToolbarOverlay", () => {
       </GlobalInfoContext.Provider>,
     );
 
-    expect(screen.getByRole("button", { name: "Generate Credits" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Generate Credits" }),
+    ).toBeDisabled();
   });
 
   it("dispatches setOverlayControllerPanel when switching tabs", () => {
@@ -166,6 +194,19 @@ describe("ToolbarOverlay", () => {
       expect.objectContaining({
         type: "preferences/setOverlayControllerPanel",
         payload: "credits",
+      }),
+    );
+  });
+
+  it("dispatches the combined mode when Overlays & Posts is clicked", () => {
+    renderOverlay({ access: "full", overlayPanel: "overlays" });
+
+    screen.getByRole("button", { name: "Overlays & Posts" }).click();
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setOverlayControllerPanel",
+        payload: "overlaysAndPosts",
       }),
     );
   });

@@ -61,21 +61,34 @@ import {
 import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
+import { createPortal } from "react-dom";
+import cn from "classnames";
 
-const Overlays = () => {
+type OverlaysProps = {
+  /** Combined controller mode moves the selected-overlay editor into a shared detail column. */
+  detailTarget?: HTMLDivElement | null;
+  isDetailActive?: boolean;
+  onDetailRequested?: () => void;
+};
+
+const Overlays = ({
+  detailTarget,
+  isDetailActive = true,
+  onDetailRequested,
+}: OverlaysProps) => {
   const { list, initialList, overlayHistory } = useSelector(
-    (state: RootState) => state.undoable.present.overlays
+    (state: RootState) => state.undoable.present.overlays,
   );
 
   const { selectedOverlay: _selectedOverlay, isOverlayLoading } = useSelector(
-    (state: RootState) => state.undoable.present.overlay
+    (state: RootState) => state.undoable.present.overlay,
   );
 
   const { isStreamTransmitting } = useSelector(
-    (state: RootState) => state.presentation
+    (state: RootState) => state.presentation,
   );
   const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.itemList
+    (state: RootState) => state.undoable.present.itemList,
   );
 
   const defaultSelectedOverlay = useMemo(
@@ -93,7 +106,7 @@ const Overlays = () => {
       id: "",
       formatting: getDefaultFormatting("participant"),
     }),
-    []
+    [],
   );
   const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
 
@@ -144,7 +157,7 @@ const Overlays = () => {
             const update = _update as DBOverlay;
 
             const overlayIndex = list.findIndex(
-              (overlay) => overlay.id === update.id
+              (overlay) => overlay.id === update.id,
             );
 
             if (overlayIndex === -1) {
@@ -153,8 +166,10 @@ const Overlays = () => {
 
             const normalized = normalizeOverlayForSync(update);
             const getState = store.getState as () => OverlaySyncRootSlice;
-            const keepLocalRow =
-              shouldKeepLocalListRowForRemoteOverlay(getState, normalized);
+            const keepLocalRow = shouldKeepLocalListRowForRemoteOverlay(
+              getState,
+              normalized,
+            );
 
             const updatedOverlayList = list.map((overlay, index) => {
               if (index === overlayIndex) {
@@ -178,7 +193,7 @@ const Overlays = () => {
         console.error(e);
       }
     },
-    [dispatch, list, store]
+    [dispatch, list, store],
   );
 
   useEffect(() => {
@@ -207,7 +222,7 @@ const Overlays = () => {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   useGlobalBroadcast(updateTemplatesFromExternal);
@@ -227,10 +242,10 @@ const Overlays = () => {
     const { id: activeId } = active;
     const updatedOverlays = [...list];
     const newIndex = updatedOverlays.findIndex(
-      (overlay) => overlay.id === overId
+      (overlay) => overlay.id === overId,
     );
     const oldIndex = updatedOverlays.findIndex(
-      (overlay) => overlay.id === activeId
+      (overlay) => overlay.id === activeId,
     );
     const element = list[oldIndex];
     updatedOverlays.splice(oldIndex, 1);
@@ -244,7 +259,7 @@ const Overlays = () => {
 
     const scrollToElement = () => {
       const overlayElement = document.getElementById(
-        `overlay-${selectedOverlayId}`
+        `overlay-${selectedOverlayId}`,
       );
       const parentElement = document.getElementById("overlays-list");
 
@@ -302,13 +317,15 @@ const Overlays = () => {
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
     const type = selectedOverlay.type as OverlayType;
     const overlaysOfType = list.filter(
-      (o) => (o.type ?? "participant") === type
+      (o) => (o.type ?? "participant") === type,
     );
     setIsApplyingFormattingToAll(true);
-    dispatch(updateOverlay({
-      ...selectedOverlay,
-      formatting: formatting,
-    }));
+    dispatch(
+      updateOverlay({
+        ...selectedOverlay,
+        formatting: formatting,
+      }),
+    );
     for (const overlay of overlaysOfType) {
       dispatch(updateOverlayInList({ id: overlay.id, formatting }));
     }
@@ -343,8 +360,7 @@ const Overlays = () => {
     const keys = getOverlayHistoryKeysForType(selectedOverlay.type);
     const merged = mergeOverlaysIntoHistory(overlayHistory, [selectedOverlay]);
     const keysToSave = keys.filter(
-      (k) =>
-        JSON.stringify(merged[k]) !== JSON.stringify(overlayHistory[k])
+      (k) => JSON.stringify(merged[k]) !== JSON.stringify(overlayHistory[k]),
     );
     if (keysToSave.length === 0) return;
     dispatch(mergeOverlayIntoHistory(selectedOverlay));
@@ -370,21 +386,18 @@ const Overlays = () => {
           ...getDefaultFormatting(overlay.type || "participant"),
           ...overlay.formatting,
         },
-      })
+      }),
     );
   };
 
   const selectAndLoadOverlay = async (overlayId: string) => {
-    if (
-      selectedOverlay.id &&
-      selectedOverlay.id !== overlayId
-    ) {
+    if (selectedOverlay.id && selectedOverlay.id !== overlayId) {
       await saveCurrentOverlayToHistory();
     }
     try {
       dispatch(setIsOverlayLoading(true));
       const loadedOverlay: DBOverlay | undefined = await db?.get(
-        `overlay-${overlayId}`
+        `overlay-${overlayId}`,
       );
       if (loadedOverlay) {
         dispatch(
@@ -394,8 +407,9 @@ const Overlays = () => {
               ...getDefaultFormatting(loadedOverlay.type || "participant"),
               ...loadedOverlay.formatting,
             },
-          })
+          }),
         );
+        onDetailRequested?.();
       }
     } catch (error) {
       dispatch(selectOverlay(undefined));
@@ -421,7 +435,7 @@ const Overlays = () => {
         id: newId,
       });
       dispatch(
-        addOverlayToList({ newOverlay, selectedOverlayId: selectedOverlay.id })
+        addOverlayToList({ newOverlay, selectedOverlayId: selectedOverlay.id }),
       );
     } catch (error) {
       console.error("Error creating new overlay", error);
@@ -440,6 +454,21 @@ const Overlays = () => {
 
   const justAddedText =
     selectedOverlay.name || selectedOverlay.url ? "Copied." : "Added.";
+
+  const overlayEditor = (
+    <OverlayEditor
+      selectedOverlay={selectedOverlay}
+      isOverlayLoading={isOverlayLoading}
+      setShowPreview={setShowPreview}
+      showPreview={showPreview}
+      setIsStyleDrawerOpen={setIsStyleDrawerOpen}
+      setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
+      isMobile={isMobile}
+      handleOverlayUpdate={handleOverlayUpdate}
+      handleFormattingChange={handleFormattingChange}
+      readOnly={!canMutateOverlays}
+    />
+  );
 
   return (
     <ErrorBoundary>
@@ -483,7 +512,12 @@ const Overlays = () => {
                   : "This outline doesn't have any overlays yet."}
               </p>
             )}
-            <div className="flex min-h-0 flex-1 gap-2 pb-2 max-lg:flex-col-reverse">
+            <div
+              className={cn(
+                "flex min-h-0 flex-1 gap-2 pb-2",
+                detailTarget ? "" : "max-lg:flex-col-reverse",
+              )}
+            >
               <section className="flex min-h-0 flex-1 flex-col gap-2">
                 {isLoading ? (
                   <OverlaysListSkeleton
@@ -545,18 +579,15 @@ const Overlays = () => {
                     </div>
                   ))}
               </section>
-              <OverlayEditor
-                selectedOverlay={selectedOverlay}
-                isOverlayLoading={isOverlayLoading}
-                setShowPreview={setShowPreview}
-                showPreview={showPreview}
-                setIsStyleDrawerOpen={setIsStyleDrawerOpen}
-                setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
-                isMobile={isMobile}
-                handleOverlayUpdate={handleOverlayUpdate}
-                handleFormattingChange={handleFormattingChange}
-                readOnly={!canMutateOverlays}
-              />
+              {detailTarget
+                ? isDetailActive &&
+                  createPortal(
+                    <div className="absolute inset-0 z-10 overflow-y-auto p-2">
+                      {overlayEditor}
+                    </div>,
+                    detailTarget,
+                  )
+                : overlayEditor}
             </div>
           </div>
         </div>

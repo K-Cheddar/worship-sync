@@ -895,14 +895,16 @@ describe("BoardControllerContent", () => {
     });
   });
 
-  it("shows share links in Board tools and board context in the header", async () => {
+  it("shows share links in Board tools and board context in the toolbar", async () => {
     renderPage();
 
+    await screen.findByRole("heading", { name: "Discussion Board" });
     await screen.findByRole("heading", { name: "Sunday Board" });
     expect(screen.queryByRole("heading", { name: "Discussion boards" })).not.toBeInTheDocument();
     expect(
       screen.getByText(/\d+ total · \d+ visible · \d+ highlighted/i),
     ).toBeInTheDocument();
+    expect(screen.getAllByText(/Current session:/i).length).toBeGreaterThan(0);
 
     const tools = await findBoardToolsPanel();
     expect(within(tools).getByText("Share links")).toBeInTheDocument();

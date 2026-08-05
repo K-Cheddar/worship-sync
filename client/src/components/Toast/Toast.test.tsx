@@ -7,9 +7,59 @@ describe("Toast", () => {
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
     jest.useRealTimers();
     jest.clearAllMocks();
+  });
+
+  it("shows a dismiss progress bar when the toast has a duration", () => {
+    render(
+      <Toast
+        id="toast-progress"
+        message="Timed toast"
+        duration={1000}
+        onClose={jest.fn()}
+      />
+    );
+
+    expect(screen.getByTestId("toast-progress")).toBeInTheDocument();
+  });
+
+  it("does not show a progress bar for persistent toasts", () => {
+    render(
+      <Toast
+        id="toast-persist"
+        message="Stay open"
+        persist
+        onClose={jest.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId("toast-progress")).not.toBeInTheDocument();
+  });
+
+  it("pauses the progress bar while hovered", () => {
+    render(
+      <Toast
+        id="toast-pause-progress"
+        message="Hover me"
+        duration={1000}
+        onClose={jest.fn()}
+      />
+    );
+
+    const toast = screen.getByRole("status");
+    const progress = screen.getByTestId("toast-progress");
+
+    expect(progress).toHaveStyle({ animationPlayState: "running" });
+
+    fireEvent.mouseEnter(toast);
+    expect(progress).toHaveStyle({ animationPlayState: "paused" });
+
+    fireEvent.mouseLeave(toast);
+    expect(progress).toHaveStyle({ animationPlayState: "running" });
   });
 
   it("does not auto-close while hovered and closes after hover ends", () => {

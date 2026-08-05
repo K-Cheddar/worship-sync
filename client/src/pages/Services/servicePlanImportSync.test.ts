@@ -538,3 +538,73 @@ describe("mergeImportedAssignees", () => {
     expect(merged).toEqual([]);
   });
 });
+
+// A template's microphone plan lands as unclaimed slots. An import brings the
+// week's people, and the order pass hands the microphones out down the list —
+// this is what makes "3 mics, 3 people" need no manual work at all.
+describe("handing a template's microphone plan to imported people", () => {
+  const planned = (
+    microphoneIdsPerSlot: string[][],
+  ): ServicePlanElement => ({
+    id: "el-1",
+    type: "free",
+    title: plainTextToRichText("Worship set"),
+    assignees: microphoneIdsPerSlot.map((microphoneIds, index) => ({
+      id: `slot-${index + 1}`,
+      microphoneIds,
+    })),
+  });
+
+  const imported = (...names: string[]): ServicePlanElement => ({
+    id: "el-1",
+    type: "free",
+    title: plainTextToRichText("Worship set"),
+    assignees: names.map((name, index) => ({ id: `imported-${index}`, name })),
+  });
+
+  it("gives each person the next microphone in plan order", () => {
+    const merged = mergeImportedAssignees(
+      planned([["mic-a"], ["mic-b"], ["mic-c"]]),
+      imported("Avery", "Blair", "Sam"),
+    );
+
+    expect(merged.map((assignee) => [assignee.name, assignee.microphoneIds])).toEqual([
+      ["Avery", ["mic-a"]],
+      ["Blair", ["mic-b"]],
+      ["Sam", ["mic-c"]],
+    ]);
+  });
+
+  it("leaves a fourth person without one rather than inventing a microphone", () => {
+    const merged = mergeImportedAssignees(
+      planned([["mic-a"], ["mic-b"], ["mic-c"]]),
+      imported("Avery", "Blair", "Sam", "Jordan"),
+    );
+
+    expect(merged).toHaveLength(4);
+    expect(merged[3]).toMatchObject({ name: "Jordan" });
+    expect(merged[3].microphoneIds).toBeUndefined();
+  });
+
+  it("keeps a spare microphone unclaimed when fewer people turn up", () => {
+    const merged = mergeImportedAssignees(
+      planned([["mic-a"], ["mic-b"], ["mic-c"]]),
+      imported("Avery", "Blair"),
+    );
+
+    expect(merged).toHaveLength(3);
+    expect(merged[2]).toEqual({ id: "slot-3", microphoneIds: ["mic-c"] });
+  });
+
+  it("hands a whole slot to one group, so a choir keeps its three", () => {
+    const merged = mergeImportedAssignees(
+      planned([["mic-a"], ["choir-l", "choir-r", "choir-c"]]),
+      imported("Avery", "Chorale"),
+    );
+
+    expect(merged[1]).toMatchObject({
+      name: "Chorale",
+      microphoneIds: ["choir-l", "choir-r", "choir-c"],
+    });
+  });
+});

@@ -1,7 +1,6 @@
 import { useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import { Mic2 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
-import Spinner from "../../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -13,6 +12,7 @@ import ServicePlanMicrophoneManager from "../../Services/ServicePlanMicrophoneMa
 import { collectServicePlanRoleNoteOptions } from "../../Services/servicePlanNoteOptions";
 import { useTeamsPage } from "../TeamsPageContext";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { TeamsMicrophonesListSkeleton } from "../teamsPageSkeletons";
 import {
   panelHeaderPaddingClassName,
   panelScrollPaddingClassName,
@@ -153,9 +153,7 @@ const TeamsMicrophonesPage = () => {
           )}
         >
           {loading ? (
-            <div className="flex h-32 items-center justify-center gap-3 text-sm text-gray-400">
-              <Spinner width="20px" borderWidth="3px" /> Loading microphones…
-            </div>
+            <TeamsMicrophonesListSkeleton />
           ) : (
             <ServicePlanMicrophoneManager
               microphones={microphones}

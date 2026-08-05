@@ -152,11 +152,11 @@ const TeamMicrophonesPanel = ({
                   className="rounded-md border border-gray-800 bg-gray-900/60 p-2"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-16 max-w-[50%] truncate text-xs font-medium text-gray-100">
-                      {row.slotLabel}
-                    </span>
-                    <span className="min-w-0 truncate text-[11px] text-gray-400">
+                    <span className="min-w-0 max-w-[60%] truncate text-xs font-medium text-gray-100">
                       {row.memberName || "Unassigned"}
+                    </span>
+                    <span className="min-w-0 shrink-0 truncate text-[11px] text-gray-400">
+                      {row.slotLabel}
                     </span>
                   </div>
                   {canEdit && microphones.length > 0 ? (
@@ -172,7 +172,7 @@ const TeamMicrophonesPanel = ({
                     >
                       <SelectTrigger
                         size="sm"
-                        aria-label={`Microphone for ${row.slotLabel}`}
+                        aria-label={`Microphone for ${row.memberName || "Unassigned"} (${row.slotLabel})`}
                         className="mt-2 h-8 w-full justify-between border-gray-700 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100"
                       >
                         <SelectValue placeholder="No microphone">

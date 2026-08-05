@@ -103,27 +103,54 @@ export const addServicePlanAssignee = (
 ): ServicePlanAssignee[] => [...assignees, createServicePlanAssignee(overrides)];
 
 /**
- * Put a microphone on the item's unassigned slot, creating that slot if this
- * is the first stand mic. Used by the item's "Add → Microphone" action, which
- * is for mics nobody is holding yet.
+ * A microphone slot still waiting for whoever will carry it — the shape a
+ * template's microphone plan arrives in. An empty row the operator just added
+ * is not one of these: it holds nothing, so it blocks nothing.
  */
-export const addUnassignedMicrophone = (
+export const hasUnclaimedMicrophoneSlot = (
+  assignees: ServicePlanAssignee[],
+): boolean =>
+  assignees.some(
+    (assignee) =>
+      isUnassignedServicePlanAssignee(assignee)
+      && (assignee.microphoneIds || []).length > 0,
+  );
+
+/**
+ * Removing a person hands their microphones back to the item rather than
+ * deleting them: the mic is still in the service, it just has nobody on it
+ * yet. Removing a slot that already has nobody does delete it — that is the
+ * second press, and the only way to drop a microphone from the item wholesale.
+ */
+export const releaseServicePlanAssignee = (
+  assignees: ServicePlanAssignee[],
+  assigneeId: string,
+): ServicePlanAssignee[] =>
+  assignees.flatMap((assignee) => {
+    if (assignee.id !== assigneeId) return [assignee];
+    if (
+      isUnassignedServicePlanAssignee(assignee)
+      || !(assignee.microphoneIds || []).length
+    ) {
+      return [];
+    }
+    return [{ id: assignee.id, microphoneIds: assignee.microphoneIds }];
+  });
+
+/**
+ * Add a microphone to the item as a slot of its own, at the end of the order.
+ *
+ * A slot is one holder, so each microphone added from the item's "Add →
+ * Microphone" menu needs its own — piling them into a single slot would hand
+ * every one of them to whoever claims that slot. Microphones that genuinely
+ * travel together (a choir's three) are grouped afterwards with the slot's own
+ * "+ Mic" control.
+ */
+export const addMicrophoneSlot = (
   assignees: ServicePlanAssignee[],
   microphoneId: string,
-): ServicePlanAssignee[] => {
-  const slotIndex = assignees.findIndex(isUnassignedServicePlanAssignee);
-  if (slotIndex === -1) {
-    return addServicePlanAssignee(assignees, { microphoneIds: [microphoneId] });
-  }
-  return assignees.map((assignee, index) =>
-    index === slotIndex
-      ? {
-        ...assignee,
-        microphoneIds: [...(assignee.microphoneIds || []), microphoneId],
-      }
-      : assignee,
-  );
-};
+): ServicePlanAssignee[] =>
+  addServicePlanAssignee(assignees, { microphoneIds: [microphoneId] });
 
 type ServicePlanAssigneeListProps = {
   assignees: ServicePlanAssignee[];
@@ -171,6 +198,9 @@ const ServicePlanAssigneeList = ({
   const microphonesById = new Map(
     microphones.map((microphone) => [microphone.id, microphone]),
   );
+  const itemHasMicrophones = assignees.some(
+    (assignee) => (assignee.microphoneIds || []).length > 0,
+  );
 
   const updateAssignee = (
     assigneeId: string,
@@ -187,15 +217,21 @@ const ServicePlanAssigneeList = ({
         allowEdit && "pl-9",
       )}
       role="group"
-      aria-label={`Assignees for ${itemLabel}`}
+      aria-label={
+        structureOnly
+          ? `Microphone plan for ${itemLabel}`
+          : `Assignees for ${itemLabel}`
+      }
     >
       {/* Same chrome as Notes: icon + title so chips read as a named group. */}
       <div className="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5">
         <UserRound className="size-3.5 shrink-0 text-gray-300" aria-hidden />
-        <span className="shrink-0 text-xs font-medium text-white">Assignees</span>
+        <span className="shrink-0 text-xs font-medium text-white">
+          {structureOnly ? "Microphone plan" : "Assignees"}
+        </span>
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        {assignees.map((assignee) => {
+        {assignees.map((assignee, assigneeIndex) => {
           const isUnassigned = isUnassignedServicePlanAssignee(assignee);
           const assigneeMicrophones = (assignee.microphoneIds || [])
             .map((microphoneId) => microphonesById.get(microphoneId))
@@ -208,7 +244,18 @@ const ServicePlanAssigneeList = ({
               !taken.has(microphone.id)
               && !(assignee.microphoneIds || []).includes(microphone.id),
           );
-          const label = assignee.name?.trim() || "Unassigned";
+          // In a template these rows are the ordered plan the dated plan hands
+          // out, so they read as positions rather than as missing people.
+          const label = structureOnly
+            ? `Slot ${assigneeIndex + 1}`
+            : assignee.name?.trim() || "Unassigned";
+          // Quiet, not an alarm: plenty of people never need a microphone. It
+          // only says anything on an item that has a microphone plan at all.
+          const showMissingMicrophoneHint =
+            !structureOnly
+            && !isUnassigned
+            && itemHasMicrophones
+            && !(assignee.microphoneIds || []).length;
 
           return (
             <div
@@ -257,6 +304,12 @@ const ServicePlanAssigneeList = ({
                   {label}
                 </span>
               )}
+
+              {showMissingMicrophoneHint ? (
+                <span className="shrink-0 text-[10px] text-gray-400">
+                  No mic
+                </span>
+              ) : null}
 
               {assigneeMicrophones.map((microphone) => {
                 const scheduledHolders =
@@ -370,11 +423,13 @@ const ServicePlanAssigneeList = ({
                   padding="p-0.5"
                   className="h-6 w-6 shrink-0 max-md:min-h-0"
                   svg={Trash2}
-                  aria-label={`Remove ${label} from ${itemLabel}`}
+                  aria-label={
+                    isUnassigned
+                      ? `Remove ${label} from ${itemLabel}`
+                      : `Remove ${label} from ${itemLabel}, keeping their microphones`
+                  }
                   onClick={() =>
-                    onChange(
-                      assignees.filter((existing) => existing.id !== assignee.id),
-                    )
+                    onChange(releaseServicePlanAssignee(assignees, assignee.id))
                   }
                 />
               ) : null}
@@ -382,7 +437,7 @@ const ServicePlanAssigneeList = ({
           );
         })}
 
-        {canAddPerson ? (
+        {canAddPerson && !hasUnclaimedMicrophoneSlot(assignees) ? (
           <Button
             type="button"
             variant="tertiary"

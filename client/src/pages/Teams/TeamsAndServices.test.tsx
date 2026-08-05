@@ -364,17 +364,16 @@ describe("Teams", () => {
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Services" }));
+    // Domain tabs switch the group list without closing the mobile Sections
+    // sheet — the operator still picks a destination link. Page content behind
+    // the open sheet is aria-hidden, so assert on the sheet links instead.
     expect(
-      await screen.findByRole("heading", { name: /^Plans$/i }, { timeout: 8000 }),
+      await screen.findByRole("link", { name: /^Plans$/i }),
     ).toBeInTheDocument();
-    await openTeamsSectionsNavIfNeeded(user);
     expect(screen.getByRole("tab", { name: "Services" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(
-      screen.getByRole("link", { name: /^Plans$/i }),
-    ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /^Microphones$/i }),
     ).toBeInTheDocument();
@@ -391,7 +390,12 @@ describe("Teams", () => {
     ).toBeInTheDocument();
     expect(mockGetServicePlanMicrophones).toHaveBeenCalledWith("church-1");
 
+    await openTeamsSectionsNavIfNeeded(user);
     await user.click(screen.getByRole("tab", { name: "Teams" }));
+    expect(
+      await screen.findByRole("link", { name: /^Schedules$/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     await waitForTeamsBootstrap();
   });
 
