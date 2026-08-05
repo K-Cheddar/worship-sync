@@ -1,3 +1,10 @@
+# [2.22.0](https://github.com/K-Cheddar/worship-sync/compare/v2.21.0...v2.22.0) (2026-08-05)
+
+
+### Features
+
+* Adding mic assignments, support multiple assignees in service plans ([e506f35](https://github.com/K-Cheddar/worship-sync/commit/e506f357f292045759aff5755e02fd434b1553fa))
+
 # [2.21.0](https://github.com/K-Cheddar/worship-sync/compare/v2.20.2...v2.21.0) (2026-07-31)
 
 
