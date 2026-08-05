@@ -1,3 +1,10 @@
+## [2.22.1](https://github.com/K-Cheddar/worship-sync/compare/v2.22.0...v2.22.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* Multiple UX improvements for service plans ([2a8d041](https://github.com/K-Cheddar/worship-sync/commit/2a8d041d6bd8222541d0d2f2e967e6d0f053c0dc))
+
 # [2.22.0](https://github.com/K-Cheddar/worship-sync/compare/v2.21.0...v2.22.0) (2026-08-05)
 
 
