@@ -48,6 +48,34 @@ describe("getServicePlanLiveElementId", () => {
     ).toBe("song");
   });
 
+  it("follows element start times that begin before the occurrence start", () => {
+    const withPreService: ServicePlan = {
+      ...plan,
+      sections: [
+        {
+          ...plan.sections[0],
+          elements: [
+            { ...plan.sections[0].elements[0], startTime: "13:45" },
+            { ...plan.sections[0].elements[1], startTime: "13:50" },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      getServicePlanLiveElementId(
+        withPreService,
+        Date.parse("2026-07-26T13:47:00.000Z"),
+      ),
+    ).toBe("welcome");
+    expect(
+      getServicePlanLiveElementId(
+        withPreService,
+        Date.parse("2026-07-26T13:52:00.000Z"),
+      ),
+    ).toBe("song");
+  });
+
   it("lets a manual pin override the schedule for every shared view", () => {
     expect(
       getServicePlanLiveElementId(

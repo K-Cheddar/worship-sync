@@ -5,6 +5,9 @@ export type Option = {
   value: string;
   /** Optional Tailwind classes for styling this option's label (e.g. text color). */
   className?: string;
+  /** Optional heading this option sits under. Consecutive options sharing a
+   * group render as one labelled section; leave unset for a flat list. */
+  group?: string;
 };
 
 export type ServiceItem = {
@@ -305,6 +308,10 @@ export type Presentation = {
   timerId?: string;
   /** Item _id so we can look up slides (e.g. wrap-up slide when timer expires) */
   itemId?: string;
+  /** 0-based index of the live slide within the item deck (producer progress chrome). */
+  slideIndex?: number;
+  /** Total slides in the item deck when this presentation was sent. */
+  slideCount?: number;
   /** Bible only, next-slide layout: box at index 2 (reference) shown in clock/timer band */
   bibleInfoBox?: Box | null;
   qrCodeOverlayInfo?: OverlayInfo;
@@ -429,6 +436,7 @@ export type ServiceTimePosition =
  */
 export type PositionRequirement = {
   positionId: string;
+  /** Core slots that are expected to be filled for every occurrence. */
   count: number;
   minLevelId?: string;
 };

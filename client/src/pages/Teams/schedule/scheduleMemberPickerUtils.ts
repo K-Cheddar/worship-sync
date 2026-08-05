@@ -42,6 +42,13 @@ export const splitTypedMemberName = (raw: string) => {
   return { firstName, lastName: parts.join(" ") };
 };
 
+/**
+ * A manual scheduler can acknowledge a blockout in a confirmation dialog.
+ * Other assignment constraints remain hard stops in the picker.
+ */
+export const getManualScheduleAssignmentIssue = (issue: string) =>
+  issue === "Blocked out" ? "" : issue;
+
 export const memberQualifiesForPosition = (
   member: TeamRosterMember,
   positionId: string,

@@ -138,6 +138,78 @@ describe("servicePlanToImportData", () => {
     expect(sections[0].rows[0].songId).toBeUndefined();
   });
 
+  it("carries every attached scripture across as a parsed reference", () => {
+    const { sections } = servicePlanToImportData(
+      planWith([
+        element({
+          type: "bible",
+          title: plainTextToRichText("Sermon text"),
+          scriptureRefs: [
+            {
+              label: "Psalms 90:1-2 NLT",
+              book: "Psalms",
+              chapter: "90",
+              verseRange: "1-2",
+              version: "NLT",
+            },
+            {
+              label: "John 3:16 NLT",
+              book: "John",
+              chapter: "3",
+              verseRange: "16",
+              version: "NLT",
+            },
+          ],
+        }),
+      ]),
+    );
+
+    expect(sections[0].rows[0].scriptureRefs).toEqual([
+      {
+        label: "Psalms 90:1-2 NLT",
+        book: "Psalms",
+        chapter: "90",
+        verseRange: "1-2",
+        version: "NLT",
+      },
+      {
+        label: "John 3:16 NLT",
+        book: "John",
+        chapter: "3",
+        verseRange: "16",
+        version: "NLT",
+      },
+    ]);
+  });
+
+  it("carries a legacy single scriptureRef the same way", () => {
+    const { sections } = servicePlanToImportData(
+      planWith([
+        element({
+          type: "bible",
+          title: plainTextToRichText("Sermon text"),
+          scriptureRef: {
+            label: "Psalms 90:1-2 NLT",
+            book: "Psalms",
+            chapter: "90",
+            verseRange: "1-2",
+            version: "NLT",
+          },
+        }),
+      ]),
+    );
+
+    expect(sections[0].rows[0].scriptureRefs).toEqual([
+      {
+        label: "Psalms 90:1-2 NLT",
+        book: "Psalms",
+        chapter: "90",
+        verseRange: "1-2",
+        version: "NLT",
+      },
+    ]);
+  });
+
   it("leaves rows with no song alone", () => {
     const { sections } = servicePlanToImportData(
       planWith([element({ title: plainTextToRichText("Announcements") })]),

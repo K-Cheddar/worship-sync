@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
-  GripVertical,
   LayoutTemplate,
   MoreHorizontal,
   Pencil,
@@ -13,28 +12,13 @@ import {
   Radio,
   Redo2,
   RefreshCw,
-  Trash2,
   Undo2,
 } from "lucide-react";
-import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import {
   Button,
   ButtonGroup,
   ButtonGroupItem,
 } from "../../components/Button";
-import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import Input from "../../components/Input/Input";
 import TimePicker from "../../components/TimePicker/TimePicker";
@@ -48,9 +32,6 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
 import {
@@ -65,6 +46,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerSmClassName,
+} from "@/components/ui/tabs";
 import { cn } from "@/utils/cnHelper";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -74,6 +63,7 @@ import { updateAllDocs } from "../../utils/dbUtils";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
+  getServicePlanMicrophones,
   publishServicePlan,
   saveServicePlan,
   saveServicePlanAssignmentHistory,
@@ -85,7 +75,6 @@ import {
 import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
 import { serverNow } from "../../utils/serverTime";
-import { useSensors } from "../../utils/dndUtils";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
   formatOccurrenceRowLabel,
@@ -93,6 +82,11 @@ import {
   isOccurrenceOnCalendarDay,
 } from "../../utils/teamScheduleOccurrences";
 import { memberName } from "../Teams/teamsUtils";
+import TeamMicrophonesPanel from "../Teams/pages/TeamMicrophonesPanel";
+import {
+  getTeamMicrophoneRows,
+  type TeamsAssignmentSummaryRow,
+} from "../Teams/pages/teamsAssignmentsSummary";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
 import {
   buildServicePlanSectionsFromImport,
@@ -105,27 +99,22 @@ import {
 } from "./servicePlanImportSync";
 import ServicePlanImportReviewWindow from "./ServicePlanImportReviewWindow";
 import {
+  applySelectedServicePlanImportChanges,
   summarizeServicePlanImport,
   type ServicePlanImportSummary,
 } from "./servicePlanImportSummary";
 import ServicePlanTemplateModal, {
   type ServicePlanTemplateModalMode,
 } from "./ServicePlanTemplateModal";
-import ServicePlanElementRow, {
-  elementDndId,
+import {
   formatPlanStartTimeDisplay,
-  ServicePlanElementColumnHeader,
-  SERVICE_PLAN_INLINE_INPUT_CLASS,
   servicePlanElementDomId,
-  type ServicePlanRoleNoteOption,
+  type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
+import ServicePlanSectionList from "./ServicePlanSectionList";
 import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
 import ViewPlainLyricsDrawer from "../../components/SongSections/ViewPlainLyricsDrawer";
-import {
-  applyElementDurationSecondsChange,
-  applyElementStartTimeChange,
-  applyPlanAnchorStartTime,
-} from "./servicePlanTimingUtils";
+import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
 import {
   getServicePlanLiveProgress,
   getServicePlanLiveStartedAt,
@@ -159,28 +148,25 @@ import type {
   ServicePlanSection,
   ServicePlanSongReference,
   ServicePlanSourceImport,
+  ServicePlanMicrophone,
+  ServicePlanMicrophoneAudience,
 } from "../../types/servicePlan";
+import { getServicePlanElementAssigneeNames } from "../../types/servicePlan";
 import {
   addElement,
   addSection,
   createEmptyServicePlanSections,
-  removeElement,
-  removeSection,
-  renameSection,
-  reorderElementsInSection,
-  reorderSections,
   updateElement,
 } from "./servicePlanDraftUtils";
 import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
 import {
-  getServicePlanRoleNoteTeamName,
-  roleNoteMatchesServicePlanTeam,
-} from "./servicePlanRoleNoteTeam";
+  collectServicePlanRoleNoteOptions,
+  collectServicePlanTeamNoteLabels,
+  collectServicePlanTeamNoteOptions,
+} from "./servicePlanNoteOptions";
+import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 
-const SECTION_ID_PREFIX = "section:";
-const ELEMENT_ID_PREFIX = "element:";
 const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
-const sectionDndId = (sectionId: string) => `${SECTION_ID_PREFIX}${sectionId}`;
 
 const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 
@@ -190,6 +176,7 @@ const LIVE_CLOCK_ACTIVE_MS = 1_000;
 const LIVE_CLOCK_IDLE_MS = 30_000;
 
 type ServicePlanImportPreview = {
+  currentSections: ServicePlanSection[];
   sections: ServicePlanSection[];
   sourceImport: ServicePlanSourceImport;
   summary: ServicePlanImportSummary;
@@ -201,105 +188,6 @@ const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
     minute: "2-digit",
     timeZone: timezone,
   }).format(new Date(timeMs));
-
-/** Unique non-empty team-note labels across the plan, sorted for the filter. */
-export const collectServicePlanTeamNoteLabels = (
-  sections: ServicePlanSection[] | null | undefined,
-): string[] => {
-  if (!sections?.length) return [];
-  const labels = new Set<string>();
-  for (const section of sections) {
-    for (const element of section.elements) {
-      for (const note of element.teamNotes || []) {
-        if (note.scope === "role") continue;
-        const label = note.label.trim();
-        if (label) labels.add(label);
-      }
-    }
-  }
-  return Array.from(labels).sort((a, b) => a.localeCompare(b));
-};
-
-const collectServicePlanRoleNoteOptions = (
-  sections: ServicePlanSection[] | null | undefined,
-  positions: TeamPosition[],
-  teams: TeamRecord[],
-): ServicePlanRoleNoteOption[] => {
-  const teamNamesById = new Map(teams.map((team) => [team.teamId, team.name]));
-  const options = new Map<string, ServicePlanRoleNoteOption>();
-
-  positions
-    .filter((position) => !position.archivedAt)
-    .forEach((position) => {
-      const teamName = teamNamesById.get(position.teamId);
-      options.set(position.positionId, {
-        positionId: position.positionId,
-        label: teamName ? `${teamName} · ${position.name}` : position.name,
-        teamId: position.teamId,
-        teamName,
-      });
-    });
-
-  for (const section of sections || []) {
-    for (const element of section.elements) {
-      for (const note of element.teamNotes || []) {
-        if (note.scope !== "role" || !note.positionId || options.has(note.positionId)) {
-          continue;
-        }
-        options.set(note.positionId, {
-          positionId: note.positionId,
-          label: note.label.trim() || "Unknown role",
-          teamId: note.teamId,
-          teamName: note.teamName,
-        });
-      }
-    }
-  }
-
-  return Array.from(options.values()).sort((left, right) =>
-    left.label.localeCompare(right.label),
-  );
-};
-
-/** Only roles with an attached role note belong in the note-filter picker. */
-export const collectServicePlanRoleNoteFilterOptions = (
-  sections: ServicePlanSection[] | null | undefined,
-  allRoleOptions: ServicePlanRoleNoteOption[],
-  teamNotesFilter = "",
-): ServicePlanRoleNoteOption[] => {
-  const allByPositionId = new Map(
-    allRoleOptions.map((option) => [option.positionId, option]),
-  );
-  const options = new Map<string, ServicePlanRoleNoteOption>();
-
-  for (const section of sections || []) {
-    for (const element of section.elements) {
-      for (const note of element.teamNotes || []) {
-        if (
-          note.scope !== "role"
-          || !note.positionId
-          || !roleNoteMatchesServicePlanTeam(note, teamNotesFilter)
-          || options.has(note.positionId)
-        ) {
-          continue;
-        }
-        const fallbackOption = {
-          positionId: note.positionId,
-          label: note.label.trim() || "Unknown role",
-          teamId: note.teamId,
-          teamName: getServicePlanRoleNoteTeamName(note) || undefined,
-        };
-        const option = allByPositionId.get(note.positionId) || fallbackOption;
-        if (!roleNoteMatchesServicePlanTeam(option, teamNotesFilter)) continue;
-        options.set(note.positionId, option);
-      }
-    }
-  }
-
-  return Array.from(options.values()).sort((left, right) =>
-    left.label.localeCompare(right.label),
-  );
-};
 
 const urlsFromPublishResult = (result: {
   publicUrl: string;
@@ -355,6 +243,30 @@ type ServicePlanEditorProps = {
   /** Roles available for role-specific operational notes. */
   positions?: TeamPosition[];
   teams?: TeamRecord[];
+  /** Scheduled team holders for church microphones on this occurrence. */
+  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  /**
+   * Day-level microphone allocation for this occurrence's scheduled roles.
+   * When the occurrence has slots on a team that uses microphone assignments,
+   * the plan gains a Microphones tab beside the order of service — allocation
+   * belongs to the plan, but not in the middle of the running order.
+   */
+  teamMicrophones?: {
+    /** Every assignment row for this occurrence; filtered here to mic teams. */
+    rows: TeamsAssignmentSummaryRow[];
+    /**
+     * Whether `rows` is the whole picture. Schedules outside the bootstrap's
+     * hydration window arrive without their cells, and "no scheduled roles"
+     * would otherwise be shown for a date whose roster simply isn't loaded.
+     */
+    assignmentsStatus?: "ready" | "loading" | "unavailable";
+    /** Slot key (`scheduleId:occurrenceId:columnKey`) currently saving. */
+    savingSlot?: string | null;
+    onChange: (
+      row: TeamsAssignmentSummaryRow,
+      microphoneIds: string[],
+    ) => void;
+  };
   canEdit: boolean;
   /** When set, renders a shared editor chrome with back control + title. */
   onBack?: () => void;
@@ -369,222 +281,15 @@ type ServicePlanEditorProps = {
   };
   /** Extra header controls (e.g. mobile Who's serving) rendered next to Actions. */
   headerActions?: ReactNode;
-};
-
-type SortableSectionCardProps = {
-  section: ServicePlanSection;
-  sections: ServicePlanSection[];
-  canEdit: boolean;
-  isEditing: boolean;
-  onRename: (name: string) => void;
-  onRemove: () => void;
-  onAddElement: () => void;
-  onRemoveElement: (elementId: string) => void;
-  onUpdateElement: (
-    elementId: string,
-    changes: Parameters<typeof updateElement>[3],
-    coalesceKey?: string,
-  ) => void;
-  onElementDurationChange: (elementId: string, durationSeconds: number) => void;
-  onElementStartTimeChange: (elementId: string, time: string) => void;
-  assignedToHistoryValues: string[];
-  roleNoteOptions: ServicePlanRoleNoteOption[];
-  isServiceDay: boolean;
-  liveElementId: string | null;
-  isManualLive: boolean;
-  isTimelineAdjusted: boolean;
-  adjustedStartTimes: ReadonlyMap<string, string>;
-  liveStartedAtLabel: string | null;
-  publicLiveBusy: boolean;
-  onMakePublicLive: (elementId: string) => void;
-  /** Local view preference: hide shared and team notes on every element. */
-  hideNotes?: boolean;
-  /** Empty string = all teams; otherwise only team notes with this label. */
-  teamNotesFilter?: string;
-  /** Empty string = all roles; otherwise only notes for this position. */
-  roleNotesFilter?: string;
-  onViewSongLyrics?: (songRef: ServicePlanSongReference) => void;
-  canCreateLibrarySong?: boolean;
-  /** Elements whose stored song reference is out of date — see
-   * servicePlanSongResolution.ts. Absent means the stored one still stands. */
-  resolvedSongRefs: ReadonlyMap<string, ServicePlanSongReference>;
-};
-
-const SortableSectionCard = ({
-  section,
-  sections,
-  canEdit,
-  isEditing,
-  onRename,
-  onRemove,
-  onAddElement,
-  onRemoveElement,
-  onUpdateElement,
-  onElementDurationChange,
-  onElementStartTimeChange,
-  assignedToHistoryValues,
-  roleNoteOptions,
-  isServiceDay,
-  liveElementId,
-  isManualLive,
-  isTimelineAdjusted,
-  adjustedStartTimes,
-  liveStartedAtLabel,
-  publicLiveBusy,
-  onMakePublicLive,
-  hideNotes = false,
-  teamNotesFilter = "",
-  roleNotesFilter = "",
-  onViewSongLyrics,
-  canCreateLibrarySong = false,
-  resolvedSongRefs,
-}: SortableSectionCardProps) => {
-  const allowEdit = canEdit && isEditing;
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: sectionDndId(section.id), disabled: !allowEdit });
-  const [isExpanded, setIsExpanded] = useState(true);
-
-  useEffect(() => {
-    if (isEditing || !liveElementId) return;
-    if (section.elements.some((element) => element.id === liveElementId)) {
-      setIsExpanded(true);
-    }
-  }, [isEditing, liveElementId, section.elements]);
-
-  const elementIds = section.elements.map((element) => elementDndId(element.id));
-
-  return (
-    <section
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.6 : undefined,
-      }}
-      className="overflow-hidden rounded-md border border-gray-700/80 bg-gray-950/40"
-    >
-      <div className="flex items-center gap-1 bg-gray-800/95 px-1.5 py-1">
-        {allowEdit ? (
-          <Button
-            ref={setActivatorNodeRef}
-            type="button"
-            variant="tertiary"
-            iconSize="sm"
-            className="shrink-0 touch-none max-md:min-h-0"
-            svg={GripVertical}
-            aria-label={`Drag to reorder ${section.name || "section"}`}
-            {...attributes}
-            {...listeners}
-          />
-        ) : null}
-        <ExpandCollapseChevronButton
-          expanded={isExpanded}
-          onExpandedChange={setIsExpanded}
-          expandLabel="Expand section"
-          collapseLabel="Collapse section"
-          className="mt-0 shrink-0 max-md:min-h-0"
-        />
-        {allowEdit ? (
-          <Input
-            label="Section name"
-            hideLabel
-            value={section.name}
-            onChange={(value) => onRename(String(value))}
-            className="min-w-0 flex-1"
-            inputClassName={cn(
-              SERVICE_PLAN_INLINE_INPUT_CLASS,
-              "font-semibold text-gray-100",
-            )}
-          />
-        ) : (
-          <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-gray-100">
-            {section.name.trim() || "Untitled section"}
-          </h3>
-        )}
-        {allowEdit ? (
-          <Button
-            type="button"
-            variant="tertiary"
-            iconSize="sm"
-            className="max-md:min-h-0"
-            svg={Trash2}
-            aria-label={`Remove section ${section.name || ""}`}
-            onClick={onRemove}
-          />
-        ) : null}
-      </div>
-
-      <AnimateCollapse open={isExpanded}>
-        <div className="pb-1">
-          {section.elements.length > 0 ? (
-            <ServicePlanElementColumnHeader
-              isEditing={allowEdit}
-              showActionsColumn={isServiceDay}
-            />
-          ) : null}
-          <SortableContext items={elementIds} strategy={verticalListSortingStrategy}>
-            <div>
-              {section.elements.map((element, elementIndex) => (
-                <ServicePlanElementRow
-                  key={element.id}
-                  element={element}
-                  canEdit={canEdit}
-                  isEditing={isEditing}
-                  onRemove={() => onRemoveElement(element.id)}
-                  onUpdate={(changes, coalesceKey) =>
-                    onUpdateElement(element.id, changes, coalesceKey)
-                  }
-                  onDurationChange={(durationSeconds) =>
-                    onElementDurationChange(element.id, durationSeconds)
-                  }
-                  onStartTimeChange={(time) => onElementStartTimeChange(element.id, time)}
-                  assignedToHistoryValues={assignedToHistoryValues}
-                  toneIndex={elementIndex}
-                  isServiceDay={isServiceDay}
-                  isLive={liveElementId === element.id}
-                  isManualLive={isManualLive && liveElementId === element.id}
-                  isAdjustedLive={isTimelineAdjusted && liveElementId === element.id}
-                  adjustedStartTime={adjustedStartTimes.get(element.id)}
-                  liveStartedAtDescription={
-                    liveElementId === element.id ? liveStartedAtLabel || undefined : undefined
-                  }
-                  publicLiveBusy={publicLiveBusy}
-                  onMakePublicLive={() => onMakePublicLive(element.id)}
-                  hideNotes={hideNotes}
-                  teamNotesFilter={teamNotesFilter}
-                  roleNotesFilter={roleNotesFilter}
-                  roleNoteOptions={roleNoteOptions}
-                  onViewSongLyrics={onViewSongLyrics}
-                  canCreateLibrarySong={canCreateLibrarySong}
-                  resolvedSongRef={resolvedSongRefs.get(element.id)}
-                />
-              ))}
-            </div>
-          </SortableContext>
-
-          {allowEdit ? (
-            <Button
-              type="button"
-              variant="tertiary"
-              svg={Plus}
-              iconSize="sm"
-              className="mx-1 mt-1 max-md:min-h-0"
-              onClick={onAddElement}
-            >
-              Add element
-            </Button>
-          ) : null}
-        </div>
-      </AnimateCollapse>
-    </section>
-  );
+  /**
+   * Lets a surface that picked the occurrence itself — the Controller
+   * workspace, which has no Plans list to go back to — offer that switch from
+   * the plan actions menu. Options are pre-labelled by the caller.
+   */
+  occurrenceSwitcher?: {
+    options: { occurrenceId: string; label: string }[];
+    onSelect: (occurrenceId: string) => void;
+  };
 };
 
 /**
@@ -604,19 +309,25 @@ const ServicePlanEditor = ({
   members,
   positions = [],
   teams = [],
+  scheduledMicrophoneHolders,
+  teamMicrophones,
   canEdit,
   onBack,
   backLabel = "Back to Plans",
   planNavigation,
   headerActions,
+  occurrenceSwitcher,
 }: ServicePlanEditorProps) => {
   const { churchId, access } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
   const dispatch = useDispatch();
-  const sensors = useSensors();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
+  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [microphoneAudiences, setMicrophoneAudiences] = useState<
+    ServicePlanMicrophoneAudience[] | undefined
+  >();
   const [viewSongRef, setViewSongRef] = useState<ServicePlanSongReference | null>(
     null,
   );
@@ -669,7 +380,18 @@ const ServicePlanEditor = ({
   const [roleNotesFilter, setRoleNotesFilter] = useState("");
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(false);
+  // Microphones live beside the running order rather than inside it.
+  const [planTab, setPlanTab] = useState<"plan" | "microphones">("plan");
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
+  /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
+  const [planActionsView, setPlanActionsView] = useState<
+    "root" | "roleNotes" | "switchService"
+  >("root");
+
+  const handlePlanActionsOpenChange = useCallback((open: boolean) => {
+    setPlanActionsOpen(open);
+    if (!open) setPlanActionsView("root");
+  }, []);
 
   const markDraftChanged = useCallback(() => {
     setDraftChangeVersion((version) => version + 1);
@@ -754,6 +476,9 @@ const ServicePlanEditor = ({
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
     setIsEditing(false);
+    // A different date is a different running order — open on it, not on
+    // whichever side tab the previous plan was left on.
+    setPlanTab("plan");
     resetDraftHistory();
     if (!planKey || !churchId) return;
     let cancelled = false;
@@ -801,6 +526,24 @@ const ServicePlanEditor = ({
     };
   }, [churchId]);
 
+  useEffect(() => {
+    if (!churchId) return;
+    let cancelled = false;
+    getServicePlanMicrophones(churchId)
+      .then((res) => {
+        if (!cancelled) {
+          setMicrophones(res.microphones);
+          setMicrophoneAudiences(res.audiences);
+        }
+      })
+      .catch(() => {
+        // Microphones are optional operational metadata. The plan remains usable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId]);
+
   const assignedToSuggestions = useMemo(
     () => Array.from(new Set([...members.map((member) => memberName(member)), ...assignmentHistory])),
     [members, assignmentHistory],
@@ -818,9 +561,7 @@ const ServicePlanEditor = ({
   const rememberAssignmentHistory = (savedSections: ServicePlanSection[]) => {
     if (!churchId) return;
     const usedNames = savedSections.flatMap((section) =>
-      section.elements
-        .map((element) => element.assignedName?.trim())
-        .filter((name): name is string => Boolean(name)),
+      section.elements.flatMap(getServicePlanElementAssigneeNames),
     );
     const merged = Array.from(new Set([...assignmentHistory, ...usedNames]));
     if (merged.length === assignmentHistory.length) return;
@@ -1092,6 +833,7 @@ const ServicePlanEditor = ({
       const nextSourceImport = buildServicePlanSourceImport(data, trimmedUrl);
       if (hasPlanContent && sections) {
         setImportPreview({
+          currentSections: sections,
           sections: nextSections,
           sourceImport: nextSourceImport,
           summary: summarizeServicePlanImport(sections, nextSections),
@@ -1124,10 +866,15 @@ const ServicePlanEditor = ({
     updateDraft(draft);
   };
 
-  const applyImportPreview = () => {
+  const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
     applyImportedDraft({
-      sections: importPreview.sections,
+      sections: applySelectedServicePlanImportChanges(
+        importPreview.currentSections,
+        importPreview.sections,
+        importPreview.summary,
+        new Set(selectedChangeKeys),
+      ),
       planName: occurrence.name || service.name || "",
       sourceImport: importPreview.sourceImport,
     });
@@ -1293,55 +1040,6 @@ const ServicePlanEditor = ({
     }
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!canEdit || !isEditing || !over || active.id === over.id || !sections) return;
-    const activeId = String(active.id);
-    const overId = String(over.id);
-
-    if (
-      activeId.startsWith(SECTION_ID_PREFIX) &&
-      overId.startsWith(SECTION_ID_PREFIX)
-    ) {
-      const ids = sections.map((section) => sectionDndId(section.id));
-      const oldIndex = ids.indexOf(activeId);
-      const newIndex = ids.indexOf(overId);
-      if (oldIndex === -1 || newIndex === -1) return;
-      const reorderedIds = arrayMove(ids, oldIndex, newIndex).map((id) =>
-        id.slice(SECTION_ID_PREFIX.length),
-      );
-      updateDraftSections(reorderSections(sections, reorderedIds));
-      return;
-    }
-
-    if (
-      activeId.startsWith(ELEMENT_ID_PREFIX) &&
-      overId.startsWith(ELEMENT_ID_PREFIX)
-    ) {
-      const rawActiveId = activeId.slice(ELEMENT_ID_PREFIX.length);
-      const rawOverId = overId.slice(ELEMENT_ID_PREFIX.length);
-      const owningSection = sections.find((section) =>
-        section.elements.some((element) => element.id === rawActiveId),
-      );
-      // Cross-section drag reorder isn't supported — use "Move to section" instead.
-      if (!owningSection || !owningSection.elements.some((element) => element.id === rawOverId)) {
-        return;
-      }
-      const ids = owningSection.elements.map((element) => element.id);
-      const oldIndex = ids.indexOf(rawActiveId);
-      const newIndex = ids.indexOf(rawOverId);
-      if (oldIndex === -1 || newIndex === -1) return;
-      updateDraftSections(
-        reorderElementsInSection(
-          sections,
-          owningSection.id,
-          arrayMove(ids, oldIndex, newIndex),
-        ),
-      );
-    }
-  };
-
-  const sectionIds = (sections || []).map((section) => sectionDndId(section.id));
   const anchorStartTime = sections?.[0]?.elements?.[0]?.startTime || "";
   const occurrenceTiming = formatOccurrenceRowLabel(
     occurrence,
@@ -1356,16 +1054,39 @@ const ServicePlanEditor = ({
     sections?.some((section) => section.elements.length > 0),
   );
   const teamNoteLabels = useMemo(
-    () => collectServicePlanTeamNoteLabels(sections),
-    [sections],
+    () => collectServicePlanTeamNoteLabels(sections, microphoneAudiences),
+    [microphoneAudiences, sections],
   );
+  /** Scheduled slots on teams that use microphone assignments, if any. */
+  const microphoneRows = useMemo(
+    () =>
+      teamMicrophones ? getTeamMicrophoneRows(teamMicrophones.rows, teams) : [],
+    [teamMicrophones, teams],
+  );
+  const hasMicrophoneTeams = useMemo(
+    () => teams.some((team) => team.usesMicrophoneAssignments),
+    [teams],
+  );
+  // Show the tab when there is something to allocate, or when a mic-enabled
+  // team exists so empty-state guidance (no catalog / no scheduled roles) can
+  // still reach the operator.
+  const showMicrophoneTab = Boolean(teamMicrophones) && (
+    microphoneRows.length > 0 || hasMicrophoneTeams
+  );
+  const activeTab = showMicrophoneTab ? planTab : "plan";
   const roleNoteOptions = useMemo(
-    () => collectServicePlanRoleNoteOptions(sections, positions, teams),
-    [positions, sections, teams],
+    () => collectServicePlanRoleNoteOptions(sections, positions, teams, microphoneAudiences),
+    [microphoneAudiences, positions, sections, teams],
+  );
+  const teamNoteOptions = useMemo<ServicePlanTeamNoteOption[]>(
+    () => collectServicePlanTeamNoteOptions(teams),
+    [teams],
   );
   const roleNoteFilterOptions = useMemo(
-    () => collectServicePlanRoleNoteFilterOptions(sections, roleNoteOptions, teamNotesFilter),
-    [roleNoteOptions, sections, teamNotesFilter],
+    () => roleNoteOptions.filter((role) =>
+      roleNoteMatchesServicePlanTeam(role, teamNotesFilter),
+    ),
+    [roleNoteOptions, teamNotesFilter],
   );
   /**
    * Songs an import couldn't find that the library has since gained. Resolved
@@ -1575,9 +1296,27 @@ const ServicePlanEditor = ({
     </div>
   );
 
+  const canSwitchOccurrence = Boolean(
+    occurrenceSwitcher && occurrenceSwitcher.options.length > 1,
+  );
+
+  const planActionsBackItem = (
+    <DropdownMenuItem
+      onSelect={(event) => {
+        event.preventDefault();
+        setPlanActionsView("root");
+      }}
+    >
+      <span className="flex items-center gap-1.5">
+        <ChevronLeft aria-hidden className="size-4 text-gray-400" />
+        Back
+      </span>
+    </DropdownMenuItem>
+  );
+
   const shareMenu =
-    plan || hasSections ? (
-      <DropdownMenu open={planActionsOpen} onOpenChange={setPlanActionsOpen}>
+    plan || hasSections || canSwitchOccurrence ? (
+      <DropdownMenu open={planActionsOpen} onOpenChange={handlePlanActionsOpenChange}>
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
@@ -1590,132 +1329,447 @@ const ServicePlanEditor = ({
             aria-haspopup="menu"
           />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64">
-          {hasSections ? (
+        <DropdownMenuContent
+          align="end"
+          className={cn(
+            planActionsView === "roleNotes" || planActionsView === "switchService"
+              ? "w-72"
+              : "w-64",
+            (planActionsView === "roleNotes" ||
+              planActionsView === "switchService") &&
+            "max-h-80 overflow-y-auto",
+          )}
+        >
+          {planActionsView === "roleNotes" ? (
             <>
-              <DropdownMenuLabel className="text-xs text-gray-400">
-                Notes
+              {planActionsBackItem}
+              <DropdownMenuSeparator className="my-1 bg-gray-600" />
+              <DropdownMenuLabel className="text-xs font-normal text-gray-400">
+                Role notes
               </DropdownMenuLabel>
-              <DropdownMenuCheckboxItem
-                checked={hideNotes}
-                onCheckedChange={(checked) => setHideNotes(Boolean(checked))}
-              >
-                Hide notes
-              </DropdownMenuCheckboxItem>
-              {teamNoteLabels.length > 0 ? (
-                <DropdownMenuRadioGroup
-                  value={teamNotesFilter || ALL_TEAMS_FILTER_VALUE}
-                  onValueChange={handleTeamNotesFilterChange}
-                  aria-label="Team notes"
-                >
-                  <DropdownMenuRadioItem
-                    value={ALL_TEAMS_FILTER_VALUE}
-                    disabled={hideNotes}
-                  >
-                    All teams
-                  </DropdownMenuRadioItem>
-                  {teamNoteLabels.map((team) => (
-                    <DropdownMenuRadioItem
-                      key={team}
-                      value={team}
-                      disabled={hideNotes}
-                    >
-                      {team}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              ) : null}
-              {roleNoteFilterOptions.length > 0 ? (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger disabled={hideNotes}>
-                    Role notes
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="p-1">
-                    <ServicePlanRolePickerContent
-                      value={roleNotesFilter}
-                      onValueChange={setRoleNotesFilter}
-                      onSelectionComplete={() => setPlanActionsOpen(false)}
-                      options={roleNoteFilterOptions}
-                      teamFilterStorageKey="worshipsyncServicePlanRoleTeamFilter"
-                      lockedTeamName={teamNotesFilter || undefined}
-                    />
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              ) : null}
-              <DropdownMenuSeparator className="my-1 bg-gray-600" />
+              <ServicePlanRolePickerContent
+                value={roleNotesFilter}
+                onValueChange={setRoleNotesFilter}
+                onSelectionComplete={() => setPlanActionsOpen(false)}
+                options={roleNoteFilterOptions}
+                teamFilterStorageKey="worshipsyncServicePlanRoleTeamFilter"
+                lockedTeamName={teamNotesFilter || undefined}
+              />
             </>
-          ) : null}
-          <DropdownMenuItem
-            disabled={!canEdit || !hasSections}
-            onSelect={() => setTemplateModal("save")}
-          >
-            <LayoutTemplate aria-hidden />
-            Save as template
-          </DropdownMenuItem>
-          {canEdit && hasSections ? (
-            <DropdownMenuItem
-              disabled={importing}
-              onSelect={openImportUpdates}
-            >
-              <RefreshCw aria-hidden />
-              Import updates
-            </DropdownMenuItem>
-          ) : null}
-          {isServiceDay && liveElementId ? (
+          ) : planActionsView === "switchService" && occurrenceSwitcher ? (
             <>
+              {planActionsBackItem}
               <DropdownMenuSeparator className="my-1 bg-gray-600" />
-              <DropdownMenuItem
-                disabled={!canEdit || updatingPublicLive}
-                onSelect={() => {
-                  if (isManualLive) {
-                    void handleContinueAutomaticAdvance();
-                    return;
-                  }
-                  void handlePauseAutomaticAdvance();
+              <DropdownMenuLabel className="text-xs font-normal text-gray-400">
+                Switch service
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={occurrence.occurrenceId}
+                onValueChange={(value) => {
+                  occurrenceSwitcher.onSelect(value);
+                  setPlanActionsOpen(false);
                 }}
+                aria-label="Switch service"
               >
-                <Radio aria-hidden />
-                {isManualLive
-                  ? "Continue automatic timing"
-                  : "Pause automatic advance"}
+                {occurrenceSwitcher.options.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.occurrenceId}
+                    value={option.occurrenceId}
+                  >
+                    {option.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </>
+          ) : (
+            <>
+              {hasSections ? (
+                <>
+                  <DropdownMenuLabel className="text-xs text-gray-400">
+                    Notes
+                  </DropdownMenuLabel>
+                  <DropdownMenuCheckboxItem
+                    checked={hideNotes}
+                    onCheckedChange={(checked) => setHideNotes(Boolean(checked))}
+                  >
+                    Hide notes
+                  </DropdownMenuCheckboxItem>
+                  {teamNoteLabels.length > 0 ? (
+                    <DropdownMenuRadioGroup
+                      value={teamNotesFilter || ALL_TEAMS_FILTER_VALUE}
+                      onValueChange={handleTeamNotesFilterChange}
+                      aria-label="Team notes"
+                    >
+                      <DropdownMenuRadioItem
+                        value={ALL_TEAMS_FILTER_VALUE}
+                        disabled={hideNotes}
+                      >
+                        All teams
+                      </DropdownMenuRadioItem>
+                      {teamNoteLabels.map((team) => (
+                        <DropdownMenuRadioItem
+                          key={team}
+                          value={team}
+                          disabled={hideNotes}
+                        >
+                          {team}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  ) : null}
+                  {roleNoteFilterOptions.length > 0 ? (
+                    <DropdownMenuItem
+                      disabled={hideNotes}
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        setPlanActionsView("roleNotes");
+                      }}
+                    >
+                      Role notes
+                      <ChevronRight
+                        aria-hidden
+                        className="ml-auto size-4 text-gray-400"
+                      />
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                </>
+              ) : null}
+              <DropdownMenuItem
+                disabled={!canEdit || !hasSections}
+                onSelect={() => setTemplateModal("save")}
+              >
+                <LayoutTemplate aria-hidden />
+                Save as template
               </DropdownMenuItem>
-              {isLiveOverridden ? (
+              {canEdit && hasSections ? (
                 <DropdownMenuItem
-                  disabled={!canEdit || updatingPublicLive}
-                  onSelect={() => {
-                    void handleResumePublicSchedule();
-                  }}
+                  disabled={importing}
+                  onSelect={openImportUpdates}
                 >
-                  <Radio aria-hidden />
-                  Return to planned schedule
+                  <RefreshCw aria-hidden />
+                  Import updates
                 </DropdownMenuItem>
               ) : null}
-            </>
-          ) : null}
-          <DropdownMenuSeparator className="my-1 bg-gray-600" />
-          {shareViewActions("detailed", "Detailed view")}
-          {shareViewActions("simple", "Simple view")}
-          {publicSharingEnabled ? (
-            <>
+              {isServiceDay && liveElementId ? (
+                <>
+                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                  <DropdownMenuItem
+                    disabled={!canEdit || updatingPublicLive}
+                    onSelect={() => {
+                      if (isManualLive) {
+                        void handleContinueAutomaticAdvance();
+                        return;
+                      }
+                      void handlePauseAutomaticAdvance();
+                    }}
+                  >
+                    <Radio aria-hidden />
+                    {isManualLive
+                      ? "Continue automatic timing"
+                      : "Pause automatic advance"}
+                  </DropdownMenuItem>
+                  {isLiveOverridden ? (
+                    <DropdownMenuItem
+                      disabled={!canEdit || updatingPublicLive}
+                      onSelect={() => {
+                        void handleResumePublicSchedule();
+                      }}
+                    >
+                      <Radio aria-hidden />
+                      Return to planned schedule
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
+              ) : null}
               <DropdownMenuSeparator className="my-1 bg-gray-600" />
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={!canEdit || publishing}
-                onSelect={() => {
-                  void handleUnpublish();
-                }}
-              >
-                Disable shared links
-              </DropdownMenuItem>
+              {shareViewActions("detailed", "Detailed view")}
+              {shareViewActions("simple", "Simple view")}
+              {publicSharingEnabled ? (
+                <>
+                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    disabled={!canEdit || publishing}
+                    onSelect={() => {
+                      void handleUnpublish();
+                    }}
+                  >
+                    Disable shared links
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+              {occurrenceSwitcher && canSwitchOccurrence ? (
+                <>
+                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      setPlanActionsView("switchService");
+                    }}
+                  >
+                    Switch service
+                    <ChevronRight
+                      aria-hidden
+                      className="ml-auto size-4 text-gray-400"
+                    />
+                  </DropdownMenuItem>
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     ) : null;
 
+  const planBody = (
+    <>
+      {loading ? <p className="text-sm text-gray-400">Loading plan…</p> : null}
+
+      {!loading && isEmpty && canEdit ? (
+        <div
+          className={cn(
+            "flex flex-col gap-3",
+            showChrome &&
+            "flex-1 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-black/20 px-4 py-8 text-center",
+          )}
+        >
+          {showChrome ? (
+            <>
+              <p className="text-sm font-medium text-gray-200">
+                {plan ? "This plan is empty" : "No plan yet"}
+              </p>
+              <p className="max-w-md text-sm text-gray-400">
+                Start from a saved template, build from a blank plan, or
+                import one from Service Planning.
+              </p>
+            </>
+          ) : null}
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button type="button" onClick={() => setTemplateModal("apply")}>
+              Apply a template
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={startFromScratch}
+            >
+              Start from scratch
+            </Button>
+            <Popover open={showImport} onOpenChange={setShowImport}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  isSelected={showImport}
+                  aria-expanded={showImport}
+                  aria-haspopup="dialog"
+                >
+                  Import from Service Planning
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="center"
+                sideOffset={8}
+                className="w-[min(24rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-3 text-white shadow-xl"
+              >
+                <div className="flex flex-col gap-2 text-left">
+                  <Input
+                    label="Planning URL"
+                    placeholder="https://..."
+                    value={importUrl}
+                    disabled={importing}
+                    onChange={(value) => setImportUrl(String(value))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleImportFromServicePlanning();
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-gray-400">
+                    Sections and items are imported as a starting point — review
+                    and edit everything before saving.
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={() => void handleImportFromServicePlanning()}
+                    disabled={importing || !importUrl.trim()}
+                  >
+                    {importing ? "Importing…" : "Import plan"}
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+      ) : null}
+      {isEmpty && !canEdit ? (
+        <p className="text-xs text-gray-500">
+          You don&apos;t have permission to create a plan for this service.
+        </p>
+      ) : null}
+
+      {hasSections && sections ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <ServicePlanSectionList
+            sections={sections}
+            canEdit={canEdit}
+            isEditing={isEditing}
+            onSectionsChange={updateDraftSections}
+            onAddElement={handleAddElement}
+            scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
+            header={
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+                {isEditing ? (
+                  <>
+                    <Input
+                      label="Plan name"
+                      className="min-w-0 w-full sm:max-w-md sm:flex-1"
+                      value={planName}
+                      disabled={!canEdit}
+                      onChange={(value) => updateDraftName(String(value))}
+                    />
+                    <TimePicker
+                      label="Service start time"
+                      labelLayout="stacked"
+                      className="w-full shrink-0 sm:w-40"
+                      value={anchorStartTime}
+                      disabled={!canEdit || sections.every((s) => s.elements.length === 0)}
+                      onChange={(value) =>
+                        value && updateDraftSections(
+                          applyPlanAnchorStartTime(sections, String(value)),
+                          "anchorStartTime",
+                        )
+                      }
+                    />
+                  </>
+                ) : (
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-gray-100">
+                      {planName.trim() || occurrence.name || service.name}
+                    </p>
+                    {anchorStartTime ? (
+                      <p className="mt-0.5 text-xs text-gray-400">
+                        Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            }
+            assignedToHistoryValues={assignedToSuggestions}
+            roleNoteOptions={roleNoteOptions}
+            teamNoteOptions={teamNoteOptions}
+            microphones={microphones}
+            microphoneAudiences={microphoneAudiences}
+            scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+            isServiceDay={isServiceDay}
+            liveElementId={liveElementId}
+            isManualLive={isManualLive}
+            isTimelineAdjusted={isTimelineAdjusted}
+            adjustedStartTimes={adjustedStartTimes}
+            liveStartedAtLabel={liveStartedAtLabel}
+            publicLiveBusy={updatingPublicLive}
+            onMakePublicLive={handleMakePublicLive}
+            hideNotes={hideNotes}
+            teamNotesFilter={teamNotesFilter}
+            roleNotesFilter={roleNotesFilter}
+            onViewSongLyrics={setViewSongRef}
+            canCreateLibrarySong={canCreateLibrarySong}
+            resolvedSongRefs={resolvedSongRefs}
+          />
+
+          {/* Autosave state is rendered in the plan toolbar under the tabs.
+            <div
+              className={cn(
+                "hidden flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs",
+                autosave.state === "conflict"
+                  ? "border-amber-700/70 bg-amber-950/30 text-amber-100"
+                  : autosave.state === "error"
+                    ? "border-red-800/70 bg-red-950/30 text-red-100"
+                    : "border-slate-700 bg-slate-900/70 text-slate-300",
+              )}
+              role={autosave.state === "error" || autosave.state === "conflict" ? "alert" : "status"}
+            >
+              {autosave.state === "dirty" ? "Changes waiting to save." : null}
+              {autosave.state === "saving" ? "Saving changes…" : null}
+              {autosave.state === "retrying" ? "Could not save. Retrying…" : null}
+              {autosave.state === "error" ? "Could not save your changes." : null}
+              {autosave.state === "conflict" ? "Another editor changed this plan." : null}
+              {autosave.state === "error" ? (
+                <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={autosave.retry}>
+                  Retry
+                </Button>
+              ) : null}
+              {autosave.state === "conflict" ? (
+                <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
+                  Reload latest
+                </Button>
+              ) : null}
+            </div>
+          */}
+
+        </div>
+      ) : null}
+    </>
+  );
+
+  /**
+   * Add section plus the plan's save state. It sits below the tabs rather than
+   * inside the running order, so a failed or conflicted save is never hidden
+   * behind the Microphones tab.
+   */
+  const planToolbar =
+    hasSections && sections ? (
+      <div className="flex shrink-0 flex-wrap gap-2">
+        {canEdit && isEditing && activeTab === "plan" ? (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={Plus}
+            iconSize="sm"
+            className="max-md:min-h-0"
+            onClick={() => updateDraftSections(addSection(sections))}
+          >
+            Add section
+          </Button>
+        ) : null}
+        <div
+          className={cn(
+            "ml-auto flex min-h-9 items-center gap-2 rounded-md px-2.5 text-xs font-medium",
+            autosave.state === "conflict"
+              ? "bg-amber-950/50 text-amber-100"
+              : autosave.state === "error"
+                ? "bg-red-950/50 text-red-100"
+                : "text-gray-400",
+          )}
+          role={autosave.state === "error" || autosave.state === "conflict" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          {autosave.state === "saved" ? "Synced" : null}
+          {autosave.state === "dirty" ? "Saving soon" : null}
+          {autosave.state === "saving" ? "Saving…" : null}
+          {autosave.state === "retrying" ? "Retrying save…" : null}
+          {autosave.state === "error" ? "Could not save" : null}
+          {autosave.state === "conflict" ? "Plan changed elsewhere" : null}
+          {autosave.state === "error" ? (
+            <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={autosave.retry}>
+              Retry
+            </Button>
+          ) : null}
+          {autosave.state === "conflict" ? (
+            <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
+              Reload latest
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    ) : null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/70">
-      {showChrome || plan || hasSections ? (
+      {showChrome || plan || hasSections || canSwitchOccurrence ? (
         <header className="shrink-0 space-y-2 border-b border-gray-800 px-3 py-2">
           {showChrome ? (
             <div className="flex items-center justify-between gap-2">
@@ -1766,7 +1820,7 @@ const ServicePlanEditor = ({
               </h2>
               <p className="mt-0.5 text-xs text-gray-400">{occurrenceTiming}</p>
             </div>
-            {plan || hasSections || headerActions ? (
+            {plan || hasSections || headerActions || canSwitchOccurrence ? (
               <div className="flex shrink-0 items-center gap-1.5">
                 {headerActions}
                 {canEdit && isEditing && hasSections ? (
@@ -1817,287 +1871,56 @@ const ServicePlanEditor = ({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
-        {loading ? <p className="text-sm text-gray-400">Loading plan…</p> : null}
-
-        {!loading && isEmpty && canEdit ? (
-          <div
-            className={cn(
-              "flex flex-col gap-3",
-              showChrome &&
-              "flex-1 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-black/20 px-4 py-8 text-center",
-            )}
+        {showMicrophoneTab ? (
+          <Tabs
+            value={activeTab}
+            onValueChange={(next) => setPlanTab(next as "plan" | "microphones")}
+            className="min-h-0 flex-1 gap-2"
           >
-            {showChrome ? (
-              <>
-                <p className="text-sm font-medium text-gray-200">
-                  {plan ? "This plan is empty" : "No plan yet"}
-                </p>
-                <p className="max-w-md text-sm text-gray-400">
-                  Start from a saved template, build from a blank plan, or
-                  import one from Service Planning.
-                </p>
-              </>
-            ) : null}
-            <div className="flex flex-wrap justify-center gap-2">
-              <Button type="button" onClick={() => setTemplateModal("apply")}>
-                Apply a template
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={startFromScratch}
-              >
-                Start from scratch
-              </Button>
-              <Popover open={showImport} onOpenChange={setShowImport}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    isSelected={showImport}
-                    aria-expanded={showImport}
-                    aria-haspopup="dialog"
-                  >
-                    Import from Service Planning
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="center"
-                  sideOffset={8}
-                  className="w-[min(24rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-3 text-white shadow-xl"
-                >
-                  <div className="flex flex-col gap-2 text-left">
-                    <Input
-                      label="Planning URL"
-                      placeholder="https://..."
-                      value={importUrl}
-                      disabled={importing}
-                      onChange={(value) => setImportUrl(String(value))}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void handleImportFromServicePlanning();
-                        }
-                      }}
-                    />
-                    <p className="text-xs text-gray-400">
-                      Sections and items are imported as a starting point — review
-                      and edit everything before saving.
-                    </p>
-                    <Button
-                      type="button"
-                      onClick={() => void handleImportFromServicePlanning()}
-                      disabled={importing || !importUrl.trim()}
-                    >
-                      {importing ? "Importing…" : "Import plan"}
-                    </Button>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-          </div>
-        ) : null}
-        {isEmpty && !canEdit ? (
-          <p className="text-xs text-gray-500">
-            You don&apos;t have permission to create a plan for this service.
-          </p>
-        ) : null}
-
-        {hasSections && sections ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+            <TabsList
+              variant="line"
+              className={cn(lineTabsListShellClassName, "shrink-0")}
+              aria-label="Plan view"
             >
-              <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-                <div
-                  id={SERVICE_PLAN_LIST_SCROLL_ID}
-                  role="region"
-                  aria-label="Service plan"
-                  className="scrollbar-variable min-h-0 flex-1 space-y-2 overflow-y-auto"
-                >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-                    {isEditing ? (
-                      <>
-                        <Input
-                          label="Plan name"
-                          className="min-w-0 w-full sm:max-w-md sm:flex-1"
-                          value={planName}
-                          disabled={!canEdit}
-                          onChange={(value) => updateDraftName(String(value))}
-                        />
-                        <TimePicker
-                          label="Service start time"
-                          labelLayout="stacked"
-                          className="w-full shrink-0 sm:w-40"
-                          value={anchorStartTime}
-                          disabled={!canEdit || sections.every((s) => s.elements.length === 0)}
-                          onChange={(value) =>
-                            value && updateDraftSections(
-                              applyPlanAnchorStartTime(sections, String(value)),
-                              "anchorStartTime",
-                            )
-                          }
-                        />
-                      </>
-                    ) : (
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-100">
-                          {planName.trim() || occurrence.name || service.name}
-                        </p>
-                        {anchorStartTime ? (
-                          <p className="mt-0.5 text-xs text-gray-400">
-                            Starts {formatPlanStartTimeDisplay(anchorStartTime)}
-                          </p>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-
-                  {sections.map((section) => (
-                    <SortableSectionCard
-                      key={section.id}
-                      section={section}
-                      sections={sections}
-                      canEdit={canEdit}
-                      isEditing={isEditing}
-                      onRename={(name) =>
-                        updateDraftSections(
-                          renameSection(sections, section.id, name),
-                          `section:${section.id}:name`,
-                        )
-                      }
-                      onRemove={() =>
-                        updateDraftSections(removeSection(sections, section.id))
-                      }
-                      onAddElement={() => handleAddElement(section.id)}
-                      onRemoveElement={(elementId) =>
-                        updateDraftSections(removeElement(sections, section.id, elementId))
-                      }
-                      onUpdateElement={(elementId, changes, coalesceKey) =>
-                        updateDraftSections(
-                          updateElement(sections, section.id, elementId, changes),
-                          // Only the row knows whether this is continuous typing
-                          // or a discrete action — every note edit arrives as the
-                          // same `teamNotes` shape, so the change itself can't
-                          // tell a keystroke from a removal.
-                          coalesceKey && `element:${elementId}:${coalesceKey}`,
-                        )
-                      }
-                      assignedToHistoryValues={assignedToSuggestions}
-                      roleNoteOptions={roleNoteOptions}
-                      onElementDurationChange={(elementId, durationSeconds) =>
-                        updateDraftSections(
-                          applyElementDurationSecondsChange(
-                            sections,
-                            elementId,
-                            durationSeconds,
-                          ),
-                          `element:${elementId}:duration`,
-                        )
-                      }
-                      onElementStartTimeChange={(elementId, time) =>
-                        updateDraftSections(
-                          applyElementStartTimeChange(sections, elementId, time),
-                          `element:${elementId}:startTime`,
-                        )
-                      }
-                      isServiceDay={isServiceDay}
-                      liveElementId={liveElementId}
-                      isManualLive={isManualLive}
-                      isTimelineAdjusted={isTimelineAdjusted}
-                      adjustedStartTimes={adjustedStartTimes}
-                      liveStartedAtLabel={liveStartedAtLabel}
-                      publicLiveBusy={updatingPublicLive}
-                      onMakePublicLive={handleMakePublicLive}
-                      hideNotes={hideNotes}
-                      teamNotesFilter={teamNotesFilter}
-                      roleNotesFilter={roleNotesFilter}
-                      onViewSongLyrics={setViewSongRef}
-                      canCreateLibrarySong={canCreateLibrarySong}
-                      resolvedSongRefs={resolvedSongRefs}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
-
-            {/* Autosave state is rendered in the toolbar below.
-              <div
-                className={cn(
-                  "hidden flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs",
-                  autosave.state === "conflict"
-                    ? "border-amber-700/70 bg-amber-950/30 text-amber-100"
-                    : autosave.state === "error"
-                      ? "border-red-800/70 bg-red-950/30 text-red-100"
-                      : "border-slate-700 bg-slate-900/70 text-slate-300",
-                )}
-                role={autosave.state === "error" || autosave.state === "conflict" ? "alert" : "status"}
+              <TabsTrigger value="plan" className={lineTabsTriggerSmClassName}>
+                Order of service
+              </TabsTrigger>
+              <TabsTrigger
+                value="microphones"
+                className={lineTabsTriggerSmClassName}
               >
-                {autosave.state === "dirty" ? "Changes waiting to save." : null}
-                {autosave.state === "saving" ? "Saving changes…" : null}
-                {autosave.state === "retrying" ? "Could not save. Retrying…" : null}
-                {autosave.state === "error" ? "Could not save your changes." : null}
-                {autosave.state === "conflict" ? "Another editor changed this plan." : null}
-                {autosave.state === "error" ? (
-                  <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={autosave.retry}>
-                    Retry
-                  </Button>
-                ) : null}
-                {autosave.state === "conflict" ? (
-                  <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
-                    Reload latest
-                  </Button>
-                ) : null}
-              </div>
-            */}
-
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {canEdit && isEditing ? (
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  svg={Plus}
-                  iconSize="sm"
-                  className="max-md:min-h-0"
-                  onClick={() => updateDraftSections(addSection(sections))}
-                >
-                  Add section
-                </Button>
-              ) : null}
-              <div
-                className={cn(
-                  "ml-auto flex min-h-9 items-center gap-2 rounded-md px-2.5 text-xs font-medium",
-                  autosave.state === "conflict"
-                    ? "bg-amber-950/50 text-amber-100"
-                    : autosave.state === "error"
-                      ? "bg-red-950/50 text-red-100"
-                      : "text-gray-400",
-                )}
-                role={autosave.state === "error" || autosave.state === "conflict" ? "alert" : "status"}
-                aria-live="polite"
-              >
-                {autosave.state === "saved" ? "Synced" : null}
-                {autosave.state === "dirty" ? "Saving soon" : null}
-                {autosave.state === "saving" ? "Saving…" : null}
-                {autosave.state === "retrying" ? "Retrying save…" : null}
-                {autosave.state === "error" ? "Could not save" : null}
-                {autosave.state === "conflict" ? "Plan changed elsewhere" : null}
-                {autosave.state === "error" ? (
-                  <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={autosave.retry}>
-                    Retry
-                  </Button>
-                ) : null}
-                {autosave.state === "conflict" ? (
-                  <Button variant="tertiary" className="h-auto min-h-0 px-0 py-0 text-xs" onClick={reloadConflictPlan}>
-                    Reload latest
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        ) : null}
+                Mic Assignments
+              </TabsTrigger>
+            </TabsList>
+            {/* The running order stays mounted so switching tabs never
+                remounts the list or loses where the operator was. */}
+            <TabsContent
+              value="plan"
+              forceMount
+              className="flex min-h-0 flex-1 flex-col gap-2 data-[state=inactive]:hidden sm:gap-3"
+            >
+              {planBody}
+            </TabsContent>
+            <TabsContent
+              value="microphones"
+              className="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
+            >
+              <TeamMicrophonesPanel
+                rows={microphoneRows}
+                microphones={microphones}
+                canEdit={canEdit}
+                assignmentsStatus={teamMicrophones?.assignmentsStatus}
+                savingSlot={teamMicrophones?.savingSlot}
+                onChange={(row, microphoneIds) =>
+                  teamMicrophones?.onChange(row, microphoneIds)
+                }
+              />
+            </TabsContent>
+          </Tabs>
+        ) : (
+          planBody
+        )}
+        {planToolbar}
       </div>
 
       {canEdit && hasSections ? (

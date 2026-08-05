@@ -1,7 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import ServiceManager from "./ServiceManager";
 import { ToastProvider } from "../../../context/toastContext";
+import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import type { TeamService } from "../../../api/authTypes";
 
 const mockDispatch = jest.fn();
@@ -58,14 +60,18 @@ const midweek = service({
 
 const renderManager = (services: TeamService[]) =>
   render(
-    <ToastProvider>
-      <ServiceManager
-        services={services}
-        positions={[]}
-        teams={[]}
-        canEdit
-      />
-    </ToastProvider>,
+    <MemoryRouter>
+      <ToastProvider>
+        <TeamsNavigationGuardProvider>
+          <ServiceManager
+            services={services}
+            positions={[]}
+            teams={[]}
+            canEdit
+          />
+        </TeamsNavigationGuardProvider>
+      </ToastProvider>
+    </MemoryRouter>,
   );
 
 const findActions = (calls: unknown[][], type: string) =>

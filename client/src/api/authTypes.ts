@@ -225,6 +225,8 @@ export type TeamRecord = {
   description?: string;
   icon?: string;
   memberIds: string[];
+  /** Whether scheduled role slots for this team can receive church microphones. */
+  usesMicrophoneAssignments?: boolean;
   // a team's positions are derived from positions where position.teamId === teamId
   archivedAt?: string | null;
 };
@@ -276,24 +278,18 @@ export type TeamScheduleCellAssignment = {
   shadows?: TeamScheduleShadowAssignment[];
 };
 
+/** Church microphone ids allocated to one scheduled role slot for one day. */
+export type TeamScheduleMicrophoneAssignments = Record<
+  string,
+  Record<string, string[]>
+>;
+
+/** Additional role slots added to a specific schedule occurrence. */
+export type TeamScheduleAdditionalPositionSlots = Record<string, string[]>;
+
 export type TeamScheduleAssignments = Record<
   string,
   Record<string, TeamScheduleCellAssignment>
->;
-
-export type TeamScheduleAttendanceStatus = "present" | "absent";
-
-export type TeamScheduleAttendanceEntry = {
-  status: TeamScheduleAttendanceStatus;
-  columnKey?: string;
-  positionId?: string;
-  positionLabel?: string;
-  updatedAt?: string;
-};
-
-export type TeamScheduleAttendance = Record<
-  string,
-  Record<string, TeamScheduleAttendanceEntry>
 >;
 
 export type TeamScheduleOccurrence = {
@@ -339,7 +335,17 @@ export type TeamSchedulePublicSnapshot = {
   members: { memberId: string; name: string }[];
 };
 
-export type TeamSchedule = {
+/**
+ * A schedule without its per-cell maps. The bootstrap returns these for every
+ * schedule outside the hydrated date window, so payload size stays flat as a
+ * church accumulates a schedule per team per month.
+ *
+ * This is deliberately a *separate* type rather than `TeamSchedule` with
+ * optional assignments: code that needs assignments must narrow through
+ * `isHydratedSchedule` first, so a summary can never be silently read as a
+ * schedule that legitimately has no one assigned.
+ */
+export type TeamScheduleSummary = {
   scheduleId: string;
   churchId: string;
   name: string;
@@ -349,10 +355,45 @@ export type TeamSchedule = {
   endDate?: string;
   serviceIds: string[];
   occurrences?: TeamScheduleOccurrence[];
-  assignments: TeamScheduleAssignments;
-  attendance?: TeamScheduleAttendance;
   archivedAt?: string | null;
+  /** Set by the server when the heavy per-cell maps were stripped. */
+  assignmentsOmitted?: boolean;
+  /**
+   * Cell counts kept alongside a summary so deletion-impact warnings stay exact
+   * without the full assignment map. Present only on summaries.
+   */
+  assignmentCounts?: {
+    byMemberId: Record<string, number>;
+    byPositionId: Record<string, number>;
+  };
 };
+
+export type TeamSchedule = TeamScheduleSummary & {
+  assignments: TeamScheduleAssignments;
+  microphoneAssignments?: TeamScheduleMicrophoneAssignments;
+  additionalPositionSlots?: TeamScheduleAdditionalPositionSlots;
+};
+
+/**
+ * Narrows a schedule record to one that carries its assignment maps. Summaries
+ * (from outside the bootstrap's hydration window) return false until the detail
+ * endpoint has hydrated them.
+ */
+export const isHydratedSchedule = (
+  schedule: TeamScheduleSummary | TeamSchedule | null | undefined,
+): schedule is TeamSchedule =>
+  Boolean(schedule) && schedule?.assignmentsOmitted !== true;
+
+/**
+ * Keeps only the schedules that carry assignments. Safe for consumers scoped to
+ * services around today (credits, the live workspace, the assignments summary):
+ * the bootstrap always hydrates that window. Do not use it where an exact
+ * all-time total is required — see `describeDeletionImpacts`, which reads the
+ * summary's `assignmentCounts` instead.
+ */
+export const onlyHydratedSchedules = (
+  schedules: (TeamSchedule | TeamScheduleSummary)[],
+): TeamSchedule[] => schedules.filter(isHydratedSchedule);
 
 export type TeamsBootstrap = {
   success: boolean;
@@ -362,7 +403,13 @@ export type TeamsBootstrap = {
   teamRoles?: TeamRole[];
   qualificationAreas?: TeamQualificationArea[];
   qualificationLevels?: TeamQualificationLevel[];
-  schedules: TeamSchedule[];
+  /**
+   * Hydrated inside `scheduleHydrationWindow`, summaries outside it. Narrow with
+   * `isHydratedSchedule` before reading assignments.
+   */
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
+  /** Present only when the client requested summary mode. */
+  scheduleHydrationWindow?: { startDate: string; endDate: string };
   intakeForms?: TeamIntakeForm[];
   intakeSubmissions?: TeamIntakeSubmission[];
   /** True when any collection hit the server row cap, so this view is partial. */

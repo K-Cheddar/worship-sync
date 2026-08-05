@@ -5,7 +5,9 @@ import type {
   TeamSchedule,
   TeamScheduleCellAssignment,
   TeamScheduleOccurrence,
+  TeamScheduleSummary,
 } from "../api/authTypes";
+import { isHydratedSchedule } from "../api/authTypes";
 import { parseSlotKey } from "../pages/Teams/schedule/scheduleRequirements";
 import {
   getCellPrimaryMemberId,
@@ -24,7 +26,13 @@ export const MEDIA_TEAM_NAME = "media";
 export const DEFAULT_CREDITS_SERVICE_WINDOW_MINUTES = 180;
 
 type BuildTeamScheduleCreditEntriesInput = {
-  schedules: TeamSchedule[];
+  /**
+   * Every schedule, summaries included. Pre-filtering with
+   * `onlyHydratedSchedules` hides the difference between "nobody is on the
+   * media team for this service" and "we never fetched that schedule's cells",
+   * and credits go out with names missing either way.
+   */
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
   positions: TeamPosition[];
   members: TeamRosterMember[];
   teams: TeamRecord[];
@@ -33,8 +41,18 @@ type BuildTeamScheduleCreditEntriesInput = {
   serviceWindowMinutes?: number;
 };
 
+export type TeamScheduleCreditsResult = {
+  entries: TeamScheduleCreditEntry[];
+  /**
+   * The media schedule this service's credits come from arrived as a summary,
+   * so its assignments are not on the client. Empty `entries` here means "not
+   * loaded", not "nobody scheduled" — say so rather than writing blanks.
+   */
+  scheduleUnavailable: boolean;
+};
+
 type ScheduleOccurrenceWithOwner = {
-  schedule: TeamSchedule;
+  schedule: TeamSchedule | TeamScheduleSummary;
   occurrence: TeamScheduleOccurrence;
   startsAtMs: number;
 };
@@ -115,7 +133,7 @@ const findMediaTeam = (teams: TeamRecord[], mediaTeamName: string) => {
 };
 
 const findTargetOccurrence = (
-  schedules: TeamSchedule[],
+  schedules: (TeamSchedule | TeamScheduleSummary)[],
   now: Date,
   serviceWindowMinutes: number,
 ): ScheduleOccurrenceWithOwner | null => {
@@ -211,15 +229,22 @@ export const buildTeamScheduleCreditEntries = ({
   now = new Date(),
   mediaTeamName = MEDIA_TEAM_NAME,
   serviceWindowMinutes = DEFAULT_CREDITS_SERVICE_WINDOW_MINUTES,
-}: BuildTeamScheduleCreditEntriesInput): TeamScheduleCreditEntry[] => {
+}: BuildTeamScheduleCreditEntriesInput): TeamScheduleCreditsResult => {
   const mediaTeam = findMediaTeam(teams, mediaTeamName);
-  if (!mediaTeam) return [];
+  if (!mediaTeam) return { entries: [], scheduleUnavailable: false };
 
   const teamSchedules = schedules.filter(
     (schedule) => !schedule.archivedAt && schedule.teamId === mediaTeam.teamId,
   );
   const target = findTargetOccurrence(teamSchedules, now, serviceWindowMinutes);
-  if (!target) return [];
+  if (!target) return { entries: [], scheduleUnavailable: false };
+  // The schedule the credits would come from is outside the bootstrap's
+  // hydrated window. Reporting no names would be indistinguishable from an
+  // unstaffed service, so hand the caller the difference.
+  if (!isHydratedSchedule(target.schedule)) {
+    return { entries: [], scheduleUnavailable: true };
+  }
+  const targetSchedule = target.schedule;
 
   const teamPositions = sortPositionsByOrder(
     positions.filter(
@@ -235,8 +260,7 @@ export const buildTeamScheduleCreditEntries = ({
   );
   const namesByPositionId = new Map<string, string[]>();
   const seenMemberIdsByPositionId = new Map<string, Set<string>>();
-  const row =
-    target.schedule.assignments?.[target.occurrence.occurrenceId] || {};
+  const row = targetSchedule.assignments?.[target.occurrence.occurrenceId] || {};
 
   Object.entries(row)
     .map(([cellKey, cell]) => ({ cellKey, cell, slot: parseSlotKey(cellKey) }))
@@ -269,7 +293,7 @@ export const buildTeamScheduleCreditEntries = ({
       seenMemberIdsByPositionId.set(slot.positionId, seenMemberIds);
     });
 
-  return teamPositions.flatMap((position) => {
+  const entries = teamPositions.flatMap((position) => {
     const names = namesByPositionId.get(position.positionId) || [];
     if (!names.length) return [];
     return [
@@ -277,10 +301,11 @@ export const buildTeamScheduleCreditEntries = ({
         heading: position.name,
         names: names.join("\n"),
         sourceLabel: buildScheduleSourceLabel({
-          scheduleName: target.schedule.name,
+          scheduleName: targetSchedule.name,
           occurrenceName: target.occurrence.name,
         }),
       },
     ];
   });
+  return { entries, scheduleUnavailable: false };
 };

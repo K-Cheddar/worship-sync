@@ -56,6 +56,7 @@ describe("sanitizePositionRequirements", () => {
       sanitizePositionRequirements([{ positionId: "camera", count: 1, minLevelId: "lead" }]),
     ).toEqual([{ positionId: "camera", count: 1, minLevelId: "lead" }]);
   });
+
 });
 
 describe("resolveOccurrenceRequirements", () => {
@@ -125,6 +126,28 @@ describe("buildScheduleColumns", () => {
     });
     expect(columns.map((c) => c.columnKey)).toEqual(["vocal::0"]);
   });
+
+  it("keeps additional positions hidden until a date adds that position", () => {
+    const args = {
+      occurrences: [{ occurrenceId: "sun" }],
+      requirementsByOccurrence: new Map([
+        ["sun", [{ positionId: "vocal", count: 1 }]],
+      ]),
+      positions,
+      teamPositionIds: ["vocal", "camera"],
+    };
+    expect(buildScheduleColumns(args).map((column) => column.columnKey)).toEqual([
+      "vocal::0",
+    ]);
+    const columns = buildScheduleColumns({
+      ...args,
+      additionalPositionSlots: { sun: ["vocal::1"] },
+    });
+    expect(columns.map((column) => column.columnKey)).toEqual([
+      "vocal::0",
+      "vocal::1",
+    ]);
+  });
 });
 
 describe("computeOccurrenceFill", () => {
@@ -158,6 +181,24 @@ describe("computeOccurrenceFill", () => {
         "camera::0": { primaryMemberId: "m2" },
         "camera::1": { primaryMemberId: "should-not-count" },
         "vocal::0": { primaryMemberId: "should-not-count" },
+      }),
+    ).toEqual({ filled: 1, required: 1 });
+  });
+
+  it("does not add an additional position to the fill requirement", () => {
+    const additionalColumns = buildScheduleColumns({
+      occurrences: [{ occurrenceId: "sun" }],
+      requirementsByOccurrence: new Map([
+        ["sun", [{ positionId: "vocal", count: 1 }]],
+      ]),
+      additionalPositionSlots: { sun: ["vocal::1"] },
+      positions,
+      teamPositionIds: ["vocal", "camera"],
+    });
+    expect(
+      computeOccurrenceFill(additionalColumns, [{ positionId: "vocal", count: 1 }], {
+        "vocal::0": { primaryMemberId: "m1" },
+        "vocal::1": { primaryMemberId: "m2" },
       }),
     ).toEqual({ filled: 1, required: 1 });
   });

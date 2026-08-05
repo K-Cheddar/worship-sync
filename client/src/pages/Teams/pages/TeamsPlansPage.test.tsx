@@ -9,10 +9,12 @@ import { createMockGlobalContext } from "../../../test/mocks";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
+  getServicePlanMicrophones,
   listServicePlans,
   saveServicePlan,
 } from "../../../api/auth";
 import type { TeamService } from "../../../api/authTypes";
+import { formatPlainDate } from "../../../utils/plainDate";
 
 jest.mock("../../../api/auth", () => ({
   listServicePlans: jest.fn(),
@@ -20,6 +22,13 @@ jest.mock("../../../api/auth", () => ({
   getServicePlanAssignmentHistory: jest.fn(),
   saveServicePlan: jest.fn(),
   saveServicePlanAssignmentHistory: jest.fn(),
+  // The editor loads the church microphone catalog on mount and chains off the
+  // result, so this has to resolve rather than return undefined.
+  getServicePlanMicrophones: jest.fn(async () => ({
+    success: true,
+    microphones: [],
+    audiences: [],
+  })),
 }));
 
 jest.mock("../../../hooks", () => ({
@@ -39,6 +48,19 @@ const sabbath: TeamService = {
   time: "10:00",
 };
 
+/**
+ * The plans window runs from a week back to four weeks ahead of today, so the
+ * one-time service's date is derived from today rather than hard-coded: a fixed
+ * date quietly falls out of the window as real time passes and the service stops
+ * rendering a tile at all.
+ */
+const oneTimeDate = (() => {
+  const date = new Date();
+  date.setDate(date.getDate() + 3);
+  return date;
+})();
+const oneTimePlainDate = formatPlainDate(oneTimeDate);
+
 const easterOneTime: TeamService = {
   id: "easter",
   serviceId: "easter",
@@ -46,15 +68,21 @@ const easterOneTime: TeamService = {
   name: "Easter Sunday",
   timerType: "countdown",
   reccurence: "one_time",
-  dateTimeISO: "2026-08-01T14:00:00.000Z",
+  dateTimeISO: new Date(`${oneTimePlainDate}T14:00:00`).toISOString(),
 };
 
+/** Occurrences for a one-time service are keyed `<serviceId>@<startsAt>`. */
+const oneTimeStartsAt = easterOneTime.dateTimeISO as string;
+const oneTimeOccurrenceId = `easter@${oneTimeStartsAt}`;
+
 const mockUseTeamsPage = jest.fn();
+const mockHydrateSchedules = jest.fn();
 jest.mock("../TeamsPageContext", () => ({
   useTeamsPage: () => mockUseTeamsPage(),
 }));
 
 const mockGetServicePlan = jest.mocked(getServicePlan);
+const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
@@ -94,6 +122,8 @@ describe("TeamsPlansPage", () => {
         members: [],
       },
       canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
     });
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
@@ -159,9 +189,9 @@ describe("TeamsPlansPage", () => {
       success: true,
       servicePlans: [
         {
-          planKey: "easter@2026-08-01",
+          planKey: `easter@${oneTimePlainDate}`,
           serviceId: "easter",
-          date: "2026-08-01",
+          date: oneTimePlainDate,
           name: "Easter Sunday",
         },
       ],
@@ -176,13 +206,29 @@ describe("TeamsPlansPage", () => {
 
   it("opens the plan editor for a clicked date and can navigate back to the list", async () => {
     const user = userEvent.setup();
+    // Only the one-time service, so the single tile below is unambiguously its
+    // only occurrence — the weekly Sabbath can land on the same date and render
+    // a tile with an identical label.
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [easterOneTime],
+        positions: [],
+        teams: [],
+        schedules: [],
+        members: [],
+      },
+      canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
+    });
     renderPage();
 
     await screen.findByRole("heading", { name: "Easter Sunday" });
     const addPlanButtons = await screen.findAllByRole("button", {
       name: /Add plan for /i,
     });
-    await user.click(addPlanButtons[addPlanButtons.length - 1]);
+    expect(addPlanButtons).toHaveLength(1);
+    await user.click(addPlanButtons[0]);
 
     expect(
       await screen.findByRole("button", { name: /Back to Plans/i }),
@@ -249,7 +295,7 @@ describe("TeamsPlansPage", () => {
 
   it("summarizes who's serving with a fill count and links a row into the schedule", async () => {
     const user = userEvent.setup();
-    const occurrenceId = "easter@2026-08-01T14:00:00.000Z";
+    const occurrenceId = oneTimeOccurrenceId;
     mockUseTeamsPage.mockReturnValue({
       pageData: {
         services: [
@@ -296,7 +342,7 @@ describe("TeamsPlansPage", () => {
                 occurrenceId,
                 serviceId: "easter",
                 name: "Easter Sunday",
-                startsAt: "2026-08-01T14:00:00.000Z",
+                startsAt: oneTimeStartsAt,
               },
             ],
             assignments: {
@@ -308,6 +354,8 @@ describe("TeamsPlansPage", () => {
         ],
       },
       canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
     });
 
     renderPage();
@@ -333,6 +381,175 @@ describe("TeamsPlansPage", () => {
       }),
     );
     expect(await screen.findByText("Schedules page")).toBeInTheDocument();
+  });
+
+  // The bootstrap only hydrates schedules around today. A plan outside that
+  // window used to render the summary away and show an empty roster, which is
+  // indistinguishable from nobody being scheduled.
+  it("says who's serving hasn't loaded instead of showing an empty roster", async () => {
+    const user = userEvent.setup();
+    const summarySchedule = {
+      scheduleId: "schedule-1",
+      churchId: "church-1",
+      name: "August",
+      teamId: "team-1",
+      serviceIds: ["easter"],
+      occurrences: [
+        {
+          occurrenceId: oneTimeOccurrenceId,
+          serviceId: "easter",
+          name: "Easter Sunday",
+          startsAt: oneTimeStartsAt,
+        },
+      ],
+      // What the bootstrap ships for a schedule outside the hydration window.
+      assignmentsOmitted: true,
+    };
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [
+          {
+            ...easterOneTime,
+            positionRequirements: [{ positionId: "position-vocal", count: 1 }],
+          },
+        ],
+        positions: [
+          {
+            positionId: "position-vocal",
+            churchId: "church-1",
+            teamId: "team-1",
+            name: "Vocal",
+          },
+        ],
+        teams: [
+          { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] },
+        ],
+        members: [],
+        schedules: [summarySchedule],
+      },
+      canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
+    });
+
+    renderPage();
+    const addPlanButtons = await screen.findAllByRole("button", {
+      name: /Add plan for /i,
+    });
+    await user.click(addPlanButtons[addPlanButtons.length - 1]);
+    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+
+    const servingSheet = await screen.findByRole("dialog", {
+      name: /Who's serving/i,
+    });
+    expect(
+      within(servingSheet).getByText(/hasn't loaded, so names may be missing/i),
+    ).toBeInTheDocument();
+    // And the missing cells are fetched rather than left as a dead end.
+    expect(mockHydrateSchedules).toHaveBeenCalledWith(["schedule-1"]);
+  });
+
+  it("names the microphones a scheduled person is holding in Who's serving", async () => {
+    const user = userEvent.setup();
+    const occurrenceId = oneTimeOccurrenceId;
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [
+        { id: "mic-lead", name: "Lead", type: "Handheld", color: "#22d3ee" },
+      ],
+      audiences: [],
+    });
+    mockUseTeamsPage.mockReturnValue({
+      pageData: {
+        services: [
+          {
+            ...easterOneTime,
+            positionRequirements: [{ positionId: "position-vocal", count: 1 }],
+          },
+        ],
+        positions: [
+          {
+            positionId: "position-vocal",
+            churchId: "church-1",
+            teamId: "team-1",
+            name: "Vocal",
+          },
+        ],
+        teams: [
+          {
+            teamId: "team-1",
+            churchId: "church-1",
+            name: "Worship",
+            memberIds: [],
+            usesMicrophoneAssignments: true,
+          },
+        ],
+        members: [
+          {
+            memberId: "member-1",
+            churchId: "church-1",
+            firstName: "Avery",
+            lastName: "Stone",
+            positionIds: [],
+            blockoutDates: [],
+          },
+        ],
+        schedules: [
+          {
+            scheduleId: "schedule-1",
+            churchId: "church-1",
+            name: "August",
+            teamId: "team-1",
+            serviceIds: ["easter"],
+            occurrences: [
+              {
+                occurrenceId,
+                serviceId: "easter",
+                name: "Easter Sunday",
+                startsAt: oneTimeStartsAt,
+              },
+            ],
+            assignments: {
+              [occurrenceId]: {
+                "position-vocal::0": { primaryMemberId: "member-1" },
+              },
+            },
+            microphoneAssignments: {
+              [occurrenceId]: { "position-vocal::0": ["mic-lead"] },
+            },
+          },
+        ],
+      },
+      canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
+    });
+
+    renderPage();
+    const addPlanButtons = await screen.findAllByRole("button", {
+      name: /Add plan for /i,
+    });
+    await user.click(addPlanButtons[addPlanButtons.length - 1]);
+
+    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+
+    const servingSheet = await screen.findByRole("dialog", {
+      name: /Who's serving/i,
+    });
+    expect(within(servingSheet).getByText("Avery Stone")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("Vocal")).toBeInTheDocument();
+    expect(within(servingSheet).getByText("Lead")).toBeInTheDocument();
+    // Members are read-only; schedule edits go through the team Edit control.
+    expect(
+      within(servingSheet).getByRole("button", {
+        name: /Edit Worship schedule/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(servingSheet).queryByRole("button", {
+        name: /Avery Stone on Vocal/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("lists the positions the service needs when no schedule covers the date", async () => {
@@ -375,6 +592,8 @@ describe("TeamsPlansPage", () => {
         schedules: [],
       },
       canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
     });
 
     renderPage();
@@ -398,9 +617,9 @@ describe("TeamsPlansPage", () => {
     expect(
       within(servingSheet).getByLabelText("0 of 2 positions filled"),
     ).toBeInTheDocument();
-    // Nothing to open, so the team header is not a link.
+    // Nothing to open, so the team header has no Edit control.
     expect(
-      within(servingSheet).queryByRole("button", { name: /Open the schedule for/i }),
+      within(servingSheet).queryByRole("button", { name: /Edit .+ schedule/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -469,6 +688,8 @@ describe("TeamsPlansPage", () => {
         members: [],
       },
       canEditTeams: true,
+      hydrateSchedules: mockHydrateSchedules,
+      hydratingScheduleIds: [],
     });
 
     renderPage();

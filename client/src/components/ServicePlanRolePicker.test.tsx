@@ -46,8 +46,10 @@ describe("ServicePlanRolePicker", () => {
     );
     await user.click(screen.getByRole("button", { name: "Filter role notes" }));
 
-    expect(screen.getByRole("button", { name: "Media Team · Camera" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Worship Team · Vocal" })).toBeInTheDocument();
+    expect(screen.getAllByText("Media Team")).not.toHaveLength(0);
+    expect(screen.getAllByText("Worship Team")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Camera" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Vocal" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Media Team" }));
 
@@ -59,11 +61,11 @@ describe("ServicePlanRolePicker", () => {
       "aria-pressed",
       "false",
     );
-    expect(screen.getByRole("button", { name: "Media Team · Camera" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Worship Team · Vocal" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Camera" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Vocal" })).not.toBeInTheDocument();
     expect(localStorage.getItem("role-picker-team")).toBe("media");
 
-    await user.click(screen.getByRole("button", { name: "Media Team · Camera" }));
+    await user.click(screen.getByRole("button", { name: "Camera" }));
 
     expect(onValueChange).toHaveBeenCalledWith("camera");
   });
@@ -87,7 +89,30 @@ describe("ServicePlanRolePicker", () => {
     await user.click(screen.getByRole("button", { name: "Filter role notes" }));
 
     expect(screen.queryByText("Filter by team")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Worship Team · Vocal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Vocal" })).toBeInTheDocument();
     expect(localStorage.getItem("role-picker-team")).toBe("media");
+  });
+
+  it("adds team names only when a role name is duplicated", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServicePlanRolePicker
+        value=""
+        onValueChange={jest.fn()}
+        options={[
+          { positionId: "media-camera", label: "Camera", teamId: "media", teamName: "Media Team" },
+          { positionId: "stream-camera", label: "Camera", teamId: "stream", teamName: "Stream Team" },
+          { positionId: "lyrics", label: "Lyrics", teamId: "media", teamName: "Media Team" },
+        ]}
+        teamFilterStorageKey="role-picker-team"
+        ariaLabel="Filter role notes"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+
+    expect(screen.getByRole("button", { name: "Media Team · Camera" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stream Team · Camera" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Lyrics" })).toBeInTheDocument();
   });
 });

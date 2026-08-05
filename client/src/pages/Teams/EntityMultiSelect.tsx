@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
+import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import SelectAllButton from "../../components/SelectAllButton";
 import { resolvePositionLucideIcon } from "./lucidePositionIcons";
@@ -18,6 +19,14 @@ export type EntityMultiSelectOption = {
   /** Lucide icon name for team positions. */
   icon?: string;
   archived?: boolean;
+  /** Matches an entry in `groups` so the option can be filtered by it (e.g. its team). */
+  groupId?: string;
+};
+
+/** A filter chip scoping the list to one slice of the options (e.g. one team). */
+export type EntityMultiSelectGroup = {
+  id: string;
+  label: string;
 };
 
 type EntityMultiSelectProps = {
@@ -35,6 +44,12 @@ type EntityMultiSelectProps = {
   emphasizeSublabel?: boolean;
   /** Trailing control per option (e.g. cross-section Edit link). Rendered outside the toggle. */
   renderOptionAction?: (option: EntityMultiSelectOption) => ReactNode;
+  /** Filter chips shown above the list; each scopes it to options with that `groupId`. */
+  groups?: EntityMultiSelectGroup[];
+  /** Accessible name for the chip row, e.g. "Filter positions by team". */
+  groupFilterLabel?: string;
+  /** Chip label that clears the group filter. */
+  allGroupsLabel?: string;
 };
 
 /**
@@ -54,22 +69,42 @@ const EntityMultiSelect = ({
   variant = "admin",
   emphasizeSublabel = false,
   renderOptionAction,
+  groups,
+  groupFilterLabel,
+  allGroupsLabel = "All",
 }: EntityMultiSelectProps) => {
   const [query, setQuery] = useState("");
+  const [groupId, setGroupId] = useState<string | null>(null);
   const isBoard = variant === "board-attendee";
 
+  const groupChips = groups && groups.length > 1 ? groups : undefined;
+  // Ignore a stale selection if the group disappears (e.g. its team was removed)
+  // so the list can never filter down to nothing the operator can't undo.
+  const activeGroupId =
+    groupId && groupChips?.some((group) => group.id === groupId) ? groupId : null;
+
+  // Everything the group filter allows; search narrows this further for display,
+  // while Select all / Clear all stays scoped to the visible group.
+  const scopedOptions = useMemo(
+    () =>
+      activeGroupId
+        ? options.filter((option) => option.groupId === activeGroupId)
+        : options,
+    [activeGroupId, options],
+  );
+
   const selectableIds = useMemo(
-    () => options.filter((option) => !option.archived || value.includes(option.id)).map((o) => o.id),
-    [options, value],
+    () => scopedOptions.filter((option) => !option.archived || value.includes(option.id)).map((o) => o.id),
+    [scopedOptions, value],
   );
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return options;
-    return options.filter((option) =>
+    if (!trimmed) return scopedOptions;
+    return scopedOptions.filter((option) =>
       option.label.toLowerCase().includes(trimmed),
     );
-  }, [options, query]);
+  }, [scopedOptions, query]);
 
   const toggle = (id: string) => {
     onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
@@ -78,8 +113,25 @@ const EntityMultiSelect = ({
   const allSelected =
     selectableIds.length > 0 && selectableIds.every((id) => value.includes(id));
 
+  // Selections outside the active group are left untouched by Select all / Clear all.
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      const scoped = new Set(selectableIds);
+      onChange(value.filter((id) => !scoped.has(id)));
+      return;
+    }
+    onChange([...value, ...selectableIds.filter((id) => !value.includes(id))]);
+  };
+
   return (
-    <fieldset className={cn("min-w-0", isBoard && boardIntakeFieldsetClassName)}>
+    // The legend sits inside the header row (so Select all can sit beside it),
+    // which means it is not the fieldset's caption and contributes no
+    // accessible name. Name the group explicitly so screen readers and tests
+    // can tell one list from another.
+    <fieldset
+      className={cn("min-w-0", isBoard && boardIntakeFieldsetClassName)}
+      aria-label={label}
+    >
       <div className="flex items-center justify-between gap-2">
         <legend
           className={cn(
@@ -102,7 +154,7 @@ const EntityMultiSelect = ({
           <SelectAllButton
             allSelected={allSelected}
             tone={isBoard ? "board-attendee" : "admin"}
-            onClick={() => onChange(allSelected ? [] : selectableIds)}
+            onClick={toggleSelectAll}
           />
         ) : null}
       </div>
@@ -115,6 +167,38 @@ const EntityMultiSelect = ({
         >
           {description}
         </p>
+      ) : null}
+      {groupChips ? (
+        <div
+          className="mb-2 flex flex-wrap gap-1.5"
+          role="group"
+          aria-label={groupFilterLabel || `Filter ${label.toLowerCase()}`}
+        >
+          {[{ id: null, label: allGroupsLabel }, ...groupChips].map((group) => {
+            const selected = activeGroupId === group.id;
+            return (
+              <Button
+                key={group.id ?? "__all"}
+                type="button"
+                variant="tertiary"
+                isSelected={selected}
+                aria-pressed={selected}
+                truncate
+                padding="px-2 py-1"
+                className={cn(
+                  "text-xs max-md:min-h-11",
+                  selected &&
+                  (isBoard
+                    ? "border border-amber-400/50 bg-amber-400/10 text-amber-100"
+                    : "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100"),
+                )}
+                onClick={() => setGroupId(group.id)}
+              >
+                {group.label}
+              </Button>
+            );
+          })}
+        </div>
       ) : null}
       {showSearch && options.length >= searchThreshold ? (
         <Input

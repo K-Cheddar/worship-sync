@@ -1,13 +1,12 @@
 import type {
   TeamSchedule,
   TeamScheduleAssignments,
-  TeamScheduleAttendance,
   TeamScheduleOccurrence,
 } from "../../../api/authTypes";
 import {
   buildScheduleCopyDraft,
+  buildScheduleDraft,
   rekeyAssignmentsByServiceDate,
-  rekeyAttendanceByServiceDate,
   remapAssignmentsToOccurrences,
 } from "./scheduleDraftUtils";
 
@@ -154,7 +153,10 @@ describe("remapAssignmentsToOccurrences", () => {
   });
 
   it("carries assignments to replacement services when a copied schedule changes services", () => {
-    const janService = occurrence("january-service", "2026-01-04T10:00:00.000Z");
+    const janService = occurrence(
+      "january-service",
+      "2026-01-04T10:00:00.000Z",
+    );
     const febReplacement = occurrence(
       "february-service",
       "2026-02-01T10:00:00.000Z",
@@ -221,7 +223,10 @@ describe("rekeyAssignmentsByServiceDate", () => {
 
   it("preserves and merges assignments when services become combined", () => {
     const assignments: TeamScheduleAssignments = {
-      [first.occurrenceId]: { "vocals::0": cell("kev"), "drums::0": cell("sam") },
+      [first.occurrenceId]: {
+        "vocals::0": cell("kev"),
+        "drums::0": cell("sam"),
+      },
       [second.occurrenceId]: { "keys::0": cell("lee") },
     };
 
@@ -323,60 +328,25 @@ describe("rekeyAssignmentsByServiceDate", () => {
   });
 });
 
-describe("rekeyAttendanceByServiceDate", () => {
-  const first = occurrence("first", "2026-07-05T09:00:00.000Z");
-  const second = occurrence("second", "2026-07-05T11:00:00.000Z");
-  const combined = combinedOccurrence(
-    "sunday-am",
-    ["first", "second"],
-    "2026-07-05T09:00:00.000Z",
-  );
-
-  it("merges per-service attendance onto the combined occurrence", () => {
-    const attendance: TeamScheduleAttendance = {
-      [first.occurrenceId]: { m1: { status: "present" } },
-      [second.occurrenceId]: { m2: { status: "absent" } },
-    };
-
-    expect(
-      rekeyAttendanceByServiceDate({
-        sourceOccurrences: [first, second],
-        targetOccurrences: [combined],
-        attendance,
-      }),
-    ).toEqual({
-      [combined.occurrenceId]: {
-        m1: { status: "present" },
-        m2: { status: "absent" },
+describe("buildScheduleDraft", () => {
+  it("clamps an end date that is earlier than the start date", () => {
+    const draft = buildScheduleDraft({
+      defaultTeamId: "team1",
+      defaultServiceIds: ["s1"],
+      persistedDraft: {
+        name: "August 2026",
+        description: "",
+        teamId: "team1",
+        startDate: "2026-08-01",
+        endDate: "2026-07-31",
+        serviceIds: ["s1"],
+        occurrences: [],
+        assignments: {},
       },
     });
-  });
 
-  it("lets the earliest service win a member conflict", () => {
-    const attendance: TeamScheduleAttendance = {
-      [first.occurrenceId]: { m1: { status: "present" } },
-      [second.occurrenceId]: { m1: { status: "absent" } },
-    };
-
-    expect(
-      rekeyAttendanceByServiceDate({
-        sourceOccurrences: [second, first],
-        targetOccurrences: [combined],
-        attendance,
-      }),
-    ).toEqual({
-      [combined.occurrenceId]: { m1: { status: "present" } },
-    });
-  });
-
-  it("returns an empty map when there is no attendance", () => {
-    expect(
-      rekeyAttendanceByServiceDate({
-        sourceOccurrences: [combined],
-        targetOccurrences: [first, second],
-        attendance: {},
-      }),
-    ).toEqual({});
+    expect(draft.startDate).toBe("2026-08-01");
+    expect(draft.endDate).toBe("2026-08-01");
   });
 });
 
@@ -394,11 +364,6 @@ describe("buildScheduleCopyDraft", () => {
     assignments: {
       "s1@2026-01-04T10:00:00.000Z": { keys: cell("m1") },
     },
-    attendance: {
-      "s1@2026-01-04T10:00:00.000Z": {
-        m1: { status: "present" },
-      },
-    },
   };
 
   it("prefixes the name and carries team, services, dates, and assignments", () => {
@@ -413,14 +378,5 @@ describe("buildScheduleCopyDraft", () => {
     expect(draft.startDate).toBe("2026-01-01");
     expect(draft.endDate).toBe("2026-01-31");
     expect(draft.assignments).toEqual(source.assignments);
-  });
-
-  it("does not carry attendance into the copy", () => {
-    const draft = buildScheduleCopyDraft({
-      source,
-      occurrences: source.occurrences || [],
-    });
-
-    expect(draft.attendance).toEqual({});
   });
 });

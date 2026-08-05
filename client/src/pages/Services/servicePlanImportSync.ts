@@ -1,5 +1,11 @@
 import { richTextToPlainText } from "../../types/richText";
+import {
+  getServicePlanElementAssignees,
+  getServicePlanElementScriptureRefs,
+  getServicePlanElementSongRefs,
+} from "../../types/servicePlan";
 import type {
+  ServicePlanAssignee,
   ServicePlanElement,
   ServicePlanSection,
   ServicePlanTeamNote,
@@ -17,14 +23,15 @@ export type ServicePlanningRefreshOptions = {
   treatUnmarkedItemsAsSource?: boolean;
 };
 
-export const DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS: ServicePlanningRefreshOptions = {
-  updateTitles: true,
-  updateAssignments: true,
-  updateTiming: true,
-  updateNotes: true,
-  addMissing: true,
-  removeMissing: false,
-};
+export const DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS: ServicePlanningRefreshOptions =
+  {
+    updateTitles: true,
+    updateAssignments: true,
+    updateTiming: true,
+    updateNotes: true,
+    addMissing: true,
+    removeMissing: false,
+  };
 
 type Indexed<T> = { value: T; index: number };
 
@@ -68,12 +75,77 @@ const pairByLabelThenOrder = <T>(
   const remainingCurrent = availableCurrent.filter(
     (item) => !usedCurrent.has(item.index) && canPairByOrder(item.value),
   );
-  const remainingImported = availableImported.filter((item) => !usedImported.has(item.index));
+  const remainingImported = availableImported.filter(
+    (item) => !usedImported.has(item.index),
+  );
   const count = Math.min(remainingCurrent.length, remainingImported.length);
   for (let index = 0; index < count; index += 1) {
     pairs.push([remainingCurrent[index], remainingImported[index]]);
   }
   return pairs;
+};
+
+/**
+ * Take the source's people while keeping the operator's microphone plan.
+ *
+ * Microphones live on assignees, so replacing the list outright would delete
+ * the mic assignments on every refresh — the very thing "Assigned to" updates
+ * must not touch. Local microphones follow the person by name when the source
+ * reorders them; unmatched slots still fall back to position so a rename keeps
+ * the mic. Any local slot the source does not name survives as an unassigned
+ * one so its microphones are never dropped.
+ */
+export const mergeImportedAssignees = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+): ServicePlanAssignee[] => {
+  const currentAssignees = getServicePlanElementAssignees(current);
+  const importedAssignees = getServicePlanElementAssignees(imported);
+  /** Strip the person, keep whatever they were carrying. */
+  const asUnassigned = (
+    assignee: ServicePlanAssignee,
+  ): ServicePlanAssignee => ({
+    id: assignee.id,
+    ...(assignee.microphoneIds?.length
+      ? { microphoneIds: assignee.microphoneIds }
+      : {}),
+  });
+
+  if (!importedAssignees.length) {
+    return currentAssignees
+      .filter((assignee) => assignee.microphoneIds?.length)
+      .map(asUnassigned);
+  }
+
+  const pairs = pairByLabelThenOrder(
+    currentAssignees,
+    importedAssignees,
+    (assignee) => assignee.name || "",
+    (assignee) => Boolean(assignee.name?.trim()),
+  );
+  const currentByImportedIndex = new Map(
+    pairs.map(([existing, incoming]) => [incoming.index, existing]),
+  );
+  const pairedCurrentIndexes = new Set(
+    pairs.map(([existing]) => existing.index),
+  );
+
+  return [
+    ...importedAssignees.map((importedAssignee, index) => {
+      const existing = currentByImportedIndex.get(index)?.value;
+      return {
+        id: existing?.id ?? importedAssignee.id,
+        ...(importedAssignee.name ? { name: importedAssignee.name } : {}),
+        ...(existing?.microphoneIds?.length
+          ? { microphoneIds: existing.microphoneIds }
+          : {}),
+      };
+    }),
+    ...currentAssignees
+      .filter((_, index) => !pairedCurrentIndexes.has(index))
+      .filter((assignee) => assignee.microphoneIds?.length)
+      .map(asUnassigned),
+  ];
 };
 
 const copyOptionalField = <T extends object, K extends keyof T>(
@@ -98,13 +170,17 @@ const preserveImportedTeamNoteIds = (
 ): ServicePlanTeamNote[] => {
   const available = currentNotes.filter((note) => note.scope !== "role");
   return importedNotes.map((importedNote) => {
-    const exactIndex = available.findIndex((currentNote) =>
-      currentNote.label === importedNote.label
-      && JSON.stringify(currentNote.note) === JSON.stringify(importedNote.note),
+    const exactIndex = available.findIndex(
+      (currentNote) =>
+        currentNote.label === importedNote.label &&
+        JSON.stringify(currentNote.note) === JSON.stringify(importedNote.note),
     );
-    const labelIndex = exactIndex >= 0
-      ? exactIndex
-      : available.findIndex((currentNote) => currentNote.label === importedNote.label);
+    const labelIndex =
+      exactIndex >= 0
+        ? exactIndex
+        : available.findIndex(
+            (currentNote) => currentNote.label === importedNote.label,
+          );
     if (labelIndex < 0) return importedNote;
     const [currentNote] = available.splice(labelIndex, 1);
     return { ...importedNote, id: currentNote.id };
@@ -123,17 +199,33 @@ const mergeElement = (
       type: imported.type,
       title: imported.title,
     };
-    // A refresh must not undo song linking: once an item points at a real
+    // A refresh must not undo song linking: once a slot points at a real
     // library song, an unmatched ("pending") ref from the source is the weaker
-    // of the two, so the operator's link stays.
-    const keepLinkedSong =
-      current.songRef?.kind === "library" && imported.songRef?.kind === "pending";
-    if (!keepLinkedSong) next = copyOptionalField(next, imported, "songRef");
-    next = copyOptionalField(next, imported, "scriptureRef");
+    // of the two, so the operator's link stays. Check every song slot — a
+    // worship set can keep a later library link even when an earlier one is
+    // still pending.
+    const currentSongRefs = getServicePlanElementSongRefs(current);
+    const importedSongRefs = getServicePlanElementSongRefs(imported);
+    const mergedSongRefs = importedSongRefs.map((importedRef, index) => {
+      const currentRef = currentSongRefs[index];
+      if (currentRef?.kind === "library" && importedRef.kind === "pending") {
+        return currentRef;
+      }
+      return importedRef;
+    });
+    const songRefsUnchanged =
+      mergedSongRefs.length === currentSongRefs.length &&
+      mergedSongRefs.every((ref, index) => ref === currentSongRefs[index]);
+    if (!songRefsUnchanged) {
+      next.songRefs = mergedSongRefs;
+      delete next.songRef;
+    }
+    next.scriptureRefs = getServicePlanElementScriptureRefs(imported);
+    delete next.scriptureRef;
     next = copyOptionalField(next, imported, "sourceElementTypeRaw");
   }
   if (options.updateAssignments) {
-    next = copyOptionalField(next, imported, "assignedName");
+    next.assignees = mergeImportedAssignees(current, imported);
     next = copyOptionalField(next, imported, "sourceLedByRaw");
   }
   if (options.updateTiming) {
@@ -170,15 +262,21 @@ const planTracksSource = (sections: ServicePlanSection[]): boolean =>
   sections.some(
     (section) =>
       Boolean(section.sourcePlanningManaged) ||
-      section.elements.some((element) => Boolean(element.sourcePlanningManaged)),
+      section.elements.some((element) =>
+        Boolean(element.sourcePlanningManaged),
+      ),
   );
 
-const managedImportedElement = (element: ServicePlanElement): ServicePlanElement => ({
+const managedImportedElement = (
+  element: ServicePlanElement,
+): ServicePlanElement => ({
   ...element,
   sourcePlanningManaged: true,
 });
 
-const managedImportedSection = (section: ServicePlanSection): ServicePlanSection => ({
+const managedImportedSection = (
+  section: ServicePlanSection,
+): ServicePlanSection => ({
   ...section,
   sourcePlanningManaged: true,
   elements: section.elements.map(managedImportedElement),
@@ -220,59 +318,81 @@ export const refreshServicePlanFromImport = (
     canPairByLabel,
     isSourceOwned,
   );
-  const importedByCurrentIndex = new Map(sectionPairs.map(([current, imported]) => [current.index, imported]));
-  const pairedImportedSections = new Set(sectionPairs.map(([, imported]) => imported.index));
+  const importedByCurrentIndex = new Map(
+    sectionPairs.map(([current, imported]) => [current.index, imported]),
+  );
+  const pairedImportedSections = new Set(
+    sectionPairs.map(([, imported]) => imported.index),
+  );
 
-  const refreshed = currentSections.flatMap((currentSection, currentSectionIndex) => {
-    const importedSection = importedByCurrentIndex.get(currentSectionIndex);
-    if (!importedSection) {
-      return options.removeMissing && currentSection.sourcePlanningManaged
-        ? []
-        : [currentSection];
-    }
-
-    const sourceSection = importedSection.value;
-    const elementPairs = pairByLabelThenOrder(
-      currentSection.elements,
-      sourceSection.elements,
-      (element) => richTextToPlainText(element.title),
-      canPairByLabel,
-      isSourceOwned,
-    );
-    const importedByCurrentElementIndex = new Map(
-      elementPairs.map(([current, imported]) => [current.index, imported]),
-    );
-    const pairedImportedElements = new Set(elementPairs.map(([, imported]) => imported.index));
-    const elements = currentSection.elements.flatMap((currentElement, currentElementIndex) => {
-      const importedElement = importedByCurrentElementIndex.get(currentElementIndex);
-      if (importedElement) return [mergeElement(currentElement, importedElement.value, options)];
-      return options.removeMissing && isSourceOwned(currentElement)
-        ? []
-        : [currentElement];
-    });
-
-    if (options.addMissing) {
-      for (const importedElement of sourceSection.elements) {
-        const sourceIndex = sourceSection.elements.indexOf(importedElement);
-        if (!pairedImportedElements.has(sourceIndex)) elements.push(managedImportedElement(importedElement));
+  const refreshed = currentSections.flatMap(
+    (currentSection, currentSectionIndex) => {
+      const importedSection = importedByCurrentIndex.get(currentSectionIndex);
+      if (!importedSection) {
+        return options.removeMissing && currentSection.sourcePlanningManaged
+          ? []
+          : [currentSection];
       }
-    }
 
-    if (options.removeMissing && currentSection.sourcePlanningManaged && elements.length === 0) {
-      return [];
-    }
-    return [{
-      ...currentSection,
-      sourcePlanningManaged: true,
-      name: options.updateTitles ? sourceSection.name : currentSection.name,
-      elements,
-    }];
-  });
+      const sourceSection = importedSection.value;
+      const elementPairs = pairByLabelThenOrder(
+        currentSection.elements,
+        sourceSection.elements,
+        (element) => richTextToPlainText(element.title),
+        canPairByLabel,
+        isSourceOwned,
+      );
+      const importedByCurrentElementIndex = new Map(
+        elementPairs.map(([current, imported]) => [current.index, imported]),
+      );
+      const pairedImportedElements = new Set(
+        elementPairs.map(([, imported]) => imported.index),
+      );
+      const elements = currentSection.elements.flatMap(
+        (currentElement, currentElementIndex) => {
+          const importedElement =
+            importedByCurrentElementIndex.get(currentElementIndex);
+          if (importedElement)
+            return [
+              mergeElement(currentElement, importedElement.value, options),
+            ];
+          return options.removeMissing && isSourceOwned(currentElement)
+            ? []
+            : [currentElement];
+        },
+      );
+
+      if (options.addMissing) {
+        for (const importedElement of sourceSection.elements) {
+          const sourceIndex = sourceSection.elements.indexOf(importedElement);
+          if (!pairedImportedElements.has(sourceIndex))
+            elements.push(managedImportedElement(importedElement));
+        }
+      }
+
+      if (
+        options.removeMissing &&
+        currentSection.sourcePlanningManaged &&
+        elements.length === 0
+      ) {
+        return [];
+      }
+      return [
+        {
+          ...currentSection,
+          sourcePlanningManaged: true,
+          name: options.updateTitles ? sourceSection.name : currentSection.name,
+          elements,
+        },
+      ];
+    },
+  );
 
   if (options.addMissing) {
     for (const importedSection of importedSections) {
       const sourceIndex = importedSections.indexOf(importedSection);
-      if (!pairedImportedSections.has(sourceIndex)) refreshed.push(managedImportedSection(importedSection));
+      if (!pairedImportedSections.has(sourceIndex))
+        refreshed.push(managedImportedSection(importedSection));
     }
   }
   return refreshed;

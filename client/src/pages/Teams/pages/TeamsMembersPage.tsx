@@ -53,6 +53,7 @@ const TeamsMembersPage = () => {
       onSaved={(member, replaceId) =>
         upsertData("members", "memberId", member, replaceId)
       }
+      onTeamSaved={(team) => upsertData("teams", "teamId", team)}
       onArchived={() => void refresh()}
       onRemoved={(memberId) => removeData("members", "memberId", memberId)}
     />

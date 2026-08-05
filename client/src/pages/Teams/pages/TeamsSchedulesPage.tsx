@@ -71,6 +71,9 @@ const TeamsSchedulesPage = () => {
     <ScheduleTab
       data={pageData}
       canEdit={canEditTeams || canEditSelectedSchedule}
+      // Drives the default team filter: someone scoped to a single team gets
+      // their schedules narrowed for them on first visit.
+      editableTeamIds={editableTeamIds}
       canEditMember={canEditMember}
       onEditMember={handleEditMember}
       selectedScheduleId={selectedScheduleId}

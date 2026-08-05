@@ -10,12 +10,9 @@ import {
 } from "react";
 import {
   CalendarDays,
-  Check,
-  ChevronLeft,
   ChevronsDownUp,
   ChevronsUpDown,
   Clipboard,
-  ClipboardList,
   ClipboardPaste,
   Copy,
   LayoutGrid,
@@ -24,9 +21,8 @@ import {
   Plus,
   Printer,
   Redo2,
-  RefreshCw,
   Undo2,
-  UserX,
+  Users,
   Wand2,
   Pencil,
 } from "lucide-react";
@@ -36,19 +32,6 @@ import Modal from "../../../components/Modal/Modal";
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-  lineTabsListShellClassName,
-  lineTabsTriggerClassName,
-} from "@/components/ui/tabs";
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-} from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
 import {
   findNextUpcomingOccurrenceId,
@@ -63,19 +46,31 @@ import {
 } from "@/utils/teamScheduleOccurrences";
 import {
   createTeamRosterMember,
+  getTeamScheduleDetail,
   getTeamSchedulePublicLink,
   updateTeam,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentSwap,
-  updateTeamScheduleAttendance,
+  addTeamSchedulePositionSlot,
+  removeTeamSchedulePositionSlot,
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
   rekeyAssignmentsByServiceDate,
-  rekeyAttendanceByServiceDate,
+  rekeyScheduleOccurrenceRowsByServiceDate,
 } from "./scheduleDraftUtils";
 import { buildScheduleExportModel } from "./scheduleExport";
+import {
+  BROWSE_ALL_SCHEDULES_VALUE,
+  buildSchedulePickerOptions,
+} from "./schedulePickerOptions";
+import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
+import {
+  ALL_TEAMS_SCHEDULE_FILTER,
+  readScheduleTeamFilter,
+  writeScheduleTeamFilter,
+} from "../teamsLocalStore";
 import SchedulePdfExportButton from "./SchedulePdfExportButton";
 import { SCHEDULE_EXPORT_LAYOUTS } from "./scheduleExportPdf";
 import { parsePlainDate } from "@/utils/plainDate";
@@ -88,16 +83,17 @@ import {
   writeTeamScheduleAdminLayout,
   type TeamScheduleAdminLayout,
 } from "../teamScheduleAdminLayout";
-import type {
-  PositionRequirement,
-  TeamPosition,
-  TeamRecord,
-  TeamRosterMember,
-  TeamSchedule,
-  TeamScheduleAssignments,
-  TeamScheduleAttendanceStatus,
-  TeamScheduleOccurrence,
-  TeamScheduleShadowKind,
+import {
+  isHydratedSchedule,
+  onlyHydratedSchedules,
+  type PositionRequirement,
+  type TeamPosition,
+  type TeamRecord,
+  type TeamRosterMember,
+  type TeamSchedule,
+  type TeamScheduleAssignments,
+  type TeamScheduleOccurrence,
+  type TeamScheduleShadowKind,
 } from "../../../api/authTypes";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -112,8 +108,6 @@ import {
   scheduleWorkspaceBodyRowClassName,
   scheduleWorkspaceMainColumnClassName,
   scheduleWorkspacePanelClassName,
-  scheduleWorkspaceTabContentClassName,
-  scheduleWorkspaceTabsClassName,
   teamsCreatePanelFormClassName,
   teamsCreatePanelFormOpenMobileClassName,
   teamsManagerPageRootClassName,
@@ -142,12 +136,14 @@ import {
   useTeamsRestoreOnMount,
   useTeamsReturnNavigation,
 } from "../hooks/useTeamsReturnNavigation";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import TeamsReturnBackButton from "../components/TeamsReturnBackButton";
 import type { TeamsReturnTo } from "../teamsReturnNavigation";
 import {
   buildScheduleColumns,
   computeOccurrenceFill,
   getRequiredCount,
+  makeSlotKey,
   resolveOccurrenceRequirements,
   type OccurrenceFill,
   type ScheduleSlotColumn,
@@ -160,6 +156,7 @@ import ScheduleAssignmentPicker, {
 } from "./ScheduleAssignmentPicker";
 import {
   computeLevelBalanceBoost,
+  getManualScheduleAssignmentIssue,
   type ScheduleMemberRecommendationStats,
 } from "./scheduleMemberPickerUtils";
 import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
@@ -173,6 +170,7 @@ import SchedulePasteRowDialog from "./SchedulePasteRowDialog";
 import {
   findCrossTeamScheduleOccurrenceConflicts,
   formatCrossTeamScheduleConflictWarning,
+  scheduleDateRangesOverlap,
 } from "./scheduleConflicts";
 import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
@@ -191,11 +189,6 @@ import {
   formatSummaryMemberToken,
   OCCURRENCE_EMPTY_SLOT_LABEL,
 } from "./occurrenceSummary";
-import {
-  buildAttendanceRows,
-  countAttendanceStatuses,
-  type ScheduleAttendanceRow,
-} from "./scheduleAttendance";
 import {
   capScheduleColumnLabelForSizing,
   getAssignmentCellContentLabel,
@@ -251,9 +244,15 @@ type PendingCrossTeamConflict = {
   onCancel?: () => void;
 };
 
+type PendingBlockoutConfirmation = {
+  memberId: string;
+  onConfirm: () => void;
+};
+
 const ScheduleTab = ({
   data,
   canEdit,
+  editableTeamIds,
   canEditMember,
   onEditMember,
   selectedScheduleId,
@@ -269,6 +268,8 @@ const ScheduleTab = ({
 }: {
   data: TeamsData;
   canEdit: boolean;
+  /** Teams this user can edit, used to default the team filter. */
+  editableTeamIds?: Set<string>;
   canEditMember?: (member: TeamRosterMember) => boolean;
   onEditMember?: (memberId: string, returnTo: TeamsReturnTo) => void;
   selectedScheduleId: string;
@@ -301,11 +302,73 @@ const ScheduleTab = ({
     [data.services, defaultRange],
   );
   const schedules = data.schedules;
-  const selectedSchedule = selectedScheduleId
+  // The picker lists every schedule (summaries included); the grid needs the
+  // hydrated record. `selectedScheduleRecord` backs the header and the picker so
+  // the chosen name still shows while its assignments are being fetched, while
+  // `selectedSchedule` stays null until the cells have actually arrived.
+  const selectedScheduleRecord = selectedScheduleId
     ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
     : null;
-  const draftKey = selectedSchedule?.scheduleId || "new";
-  const selectedTeam = data.teams.find((team) => team.teamId === selectedSchedule?.teamId) || null;
+  const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
+    ? selectedScheduleRecord
+    : null;
+  const isSelectedScheduleLoading = Boolean(
+    selectedScheduleRecord && !selectedSchedule,
+  );
+  const draftKey = selectedScheduleRecord?.scheduleId || "new";
+  const selectedTeam =
+    data.teams.find((team) => team.teamId === selectedScheduleRecord?.teamId) || null;
+  // Archived schedules stay out of the quick-switcher; the browse dialog's
+  // status filter is the one place to go through everything.
+  const [isBrowsingSchedules, setIsBrowsingSchedules] = useState(false);
+
+  // Team narrowing for the picker, remembered per church. Most operators work a
+  // single team, so re-narrowing a church-wide list on every visit is friction.
+  // "" means every team; the stored sentinel distinguishes a deliberate "All
+  // teams" from "nothing chosen yet", which is what lets the default below
+  // apply only once.
+  const [scheduleTeamFilter, setScheduleTeamFilter] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!churchId) return;
+    const stored = readScheduleTeamFilter(churchId);
+    if (stored) {
+      setScheduleTeamFilter(stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored);
+      return;
+    }
+    // No saved choice: narrow for someone scoped to exactly one team, otherwise
+    // show everything.
+    const editable = [...(editableTeamIds || [])];
+    setScheduleTeamFilter(editable.length === 1 ? editable[0] : "");
+  }, [churchId, editableTeamIds]);
+
+  const updateScheduleTeamFilter = useCallback(
+    (teamId: string) => {
+      setScheduleTeamFilter(teamId);
+      writeScheduleTeamFilter(churchId, teamId || ALL_TEAMS_SCHEDULE_FILTER);
+    },
+    [churchId],
+  );
+
+  const scheduleTeamFilterOptions = useMemo(
+    () => [
+      { label: "All teams", value: "" },
+      ...activeTeams.map((team) => ({ label: team.name, value: team.teamId })),
+    ],
+    [activeTeams],
+  );
+
+  const scheduleOptions = useMemo(
+    () =>
+      buildSchedulePickerOptions({
+        schedules,
+        teams: data.teams,
+        selectedScheduleId,
+        teamId: scheduleTeamFilter || "",
+      }),
+    [data.teams, schedules, scheduleTeamFilter, selectedScheduleId],
+  );
   // Positions are owned by a team, so a schedule's positions are the team's own positions.
   const schedulePositions = useMemo(
     () =>
@@ -395,8 +458,8 @@ const ScheduleTab = ({
       redo: isMac ? "⌘⇧Z" : "Ctrl+Shift+Z",
     };
   }, []);
-  // Re-generate occurrences and re-key assignments/attendance onto them, then
-  // persist — the one-click path behind the "schedule out of date" nudge.
+  // Re-generate occurrences and re-key assignments onto them, then persist —
+  // the one-click path behind the "schedule out of date" nudge.
   const refreshScheduleOccurrences = useCallback(async () => {
     if (!canEdit || !selectedSchedule || !regeneratedOccurrences) return;
     const sourceOccurrences = selectedSchedule.occurrences || [];
@@ -405,10 +468,15 @@ const ScheduleTab = ({
       targetOccurrences: regeneratedOccurrences,
       assignments: selectedSchedule.assignments || {},
     });
-    const attendance = rekeyAttendanceByServiceDate({
+    const microphoneAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
       targetOccurrences: regeneratedOccurrences,
-      attendance: selectedSchedule.attendance || {},
+      rows: selectedSchedule.microphoneAssignments,
+    });
+    const additionalPositionSlots = rekeyScheduleOccurrenceRowsByServiceDate({
+      sourceOccurrences,
+      targetOccurrences: regeneratedOccurrences,
+      rows: selectedSchedule.additionalPositionSlots,
     });
     setApplyingGrouping(true);
     // Re-keying occurrences changes every cell key, so the current undo history no
@@ -418,7 +486,8 @@ const ScheduleTab = ({
       ...selectedSchedule,
       occurrences: regeneratedOccurrences,
       assignments,
-      attendance,
+      microphoneAssignments,
+      additionalPositionSlots,
     });
     try {
       const response = await updateTeamSchedule(
@@ -433,7 +502,8 @@ const ScheduleTab = ({
           serviceIds: selectedSchedule.serviceIds || [],
           occurrences: regeneratedOccurrences,
           assignments,
-          attendance,
+          microphoneAssignments,
+          additionalPositionSlots,
         },
       );
       onScheduleSaved(response.schedule);
@@ -471,10 +541,17 @@ const ScheduleTab = ({
       buildScheduleColumns({
         occurrences: scheduleOccurrences,
         requirementsByOccurrence,
+        additionalPositionSlots: selectedSchedule?.additionalPositionSlots,
         positions: data.positions,
         teamPositionIds,
       }),
-    [data.positions, requirementsByOccurrence, scheduleOccurrences, teamPositionIds],
+    [
+      data.positions,
+      requirementsByOccurrence,
+      scheduleOccurrences,
+      selectedSchedule?.additionalPositionSlots,
+      teamPositionIds,
+    ],
   );
   const teamMembers = useMemo(() => {
     if (!selectedTeam) return [] as TeamRosterMember[];
@@ -516,7 +593,11 @@ const ScheduleTab = ({
     () => new Set(),
   );
   const [autoFilling, setAutoFilling] = useState(false);
-  const [autoFillPopoverOpen, setAutoFillPopoverOpen] = useState(false);
+  const [autoFillConfirmOpen, setAutoFillConfirmOpen] = useState(false);
+  // Auto-fill applies an optimistic batch before its one network save settles.
+  // Keep navigation protected for that entire interval so leaving cannot strand
+  // a partially persisted schedule.
+  useTeamsUnsavedChanges(autoFilling);
   // Synchronous double-click guard for handleAutoFillSchedule — see there.
   const autoFillRunningRef = useRef(false);
   const pendingScheduleSlotRestoreRef = useRef<{
@@ -524,6 +605,10 @@ const ScheduleTab = ({
     slotPickerMode?: "assign" | "replace";
   } | null>(null);
   const [membersPanelQuery, setMembersPanelQuery] = useState("");
+  const [pendingAdditionalPositionRemoval, setPendingAdditionalPositionRemoval] = useState<{
+    serviceId: string;
+    cellKey: string;
+  } | null>(null);
   const [memberPositionFilterIds, setMemberPositionFilterIds] = useState<string[]>([]);
   const [highlightedMemberIds, setHighlightedMemberIds] = useState<string[]>([]);
   const highlightedMemberIdSet = useMemo(
@@ -547,11 +632,7 @@ const ScheduleTab = ({
   // Once the operator deliberately picks a layout it wins for the rest of the
   // session; until then the layout tracks the viewport (see the effect below).
   const hasExplicitLayoutPreference = useRef(hasStoredTeamScheduleAdminLayout());
-  const [scheduleWorkspaceTab, setScheduleWorkspaceTab] = useState<
-    "schedule" | "attendance"
-  >("schedule");
   const isNarrowViewport = useMediaQuery("(max-width: 1023px)");
-  const useAttendanceCardLayout = isNarrowViewport;
 
   // With no stored preference, follow the viewport so a mid-session resize across
   // the breakpoint swaps to the layout that reads best at that width.
@@ -582,9 +663,7 @@ const ScheduleTab = ({
     writeTeamScheduleAdminLayout(layout);
   }, []);
   const [activeSlot, setActiveSlot] = useState<ScheduleFocusedCell | null>(null);
-  // "assign" is the grid flow (replace / shadow / clear). "replace" is the
-  // attendance day-of flow, which only swaps in an eligible fill-in: no shadows,
-  // no clear, and a direct one-tap replacement.
+  // The standard grid flow supports replacing, shadowing, and clearing slots.
   const [slotPickerMode, setSlotPickerMode] = useState<"assign" | "replace">(
     "assign",
   );
@@ -596,6 +675,8 @@ const ScheduleTab = ({
   const pendingCellAssignmentRef = useRef<PendingCellAssignment | null>(null);
   const [pendingCrossTeamConflict, setPendingCrossTeamConflict] =
     useState<PendingCrossTeamConflict | null>(null);
+  const [pendingBlockoutConfirmation, setPendingBlockoutConfirmation] =
+    useState<PendingBlockoutConfirmation | null>(null);
   // Assignment saves are read-modify-write transactions on the same schedule
   // document. The UI updates optimistically, so a member can be removed from one
   // cell and immediately re-added (e.g. as a reverse shadow) before the first
@@ -640,13 +721,13 @@ const ScheduleTab = ({
   useEffect(() => {
     setPendingCellAssignment(null);
     setDetailOccurrenceId(null);
-    setScheduleWorkspaceTab("schedule");
     setHighlightedMemberIds([]);
     setMemberPositionFilterIds([]);
     setActiveSlot(null);
     setAssignmentQuery("");
     setPickerAnchorEl(null);
     setPendingCrossTeamConflict(null);
+    setPendingBlockoutConfirmation(null);
     resetUndoHistory();
   }, [resetUndoHistory, selectedScheduleId]);
 
@@ -666,11 +747,29 @@ const ScheduleTab = ({
           schedule: selectedSchedule,
           occurrenceId,
           memberId,
-          schedules: data.schedules,
+          // Conflict checks only need the schedules overlapping this one, and
+          // selecting a schedule hydrates exactly that set.
+          schedules: onlyHydratedSchedules(data.schedules),
           teams: data.teams,
         }),
       ),
     [data.schedules, data.teams, selectedSchedule],
+  );
+
+  const hasUnhydratedOverlappingTeamSchedule = useMemo(
+    () =>
+      Boolean(
+        selectedSchedule &&
+        data.schedules.some(
+          (schedule) =>
+            schedule.scheduleId !== selectedSchedule.scheduleId &&
+            schedule.teamId !== selectedSchedule.teamId &&
+            !schedule.archivedAt &&
+            !isHydratedSchedule(schedule) &&
+            scheduleDateRangesOverlap(selectedSchedule, schedule),
+        ),
+      ),
+    [data.schedules, selectedSchedule],
   );
 
   const requestCrossTeamConflictConfirmation = useCallback(
@@ -690,6 +789,10 @@ const ScheduleTab = ({
       pending?.onCancel?.();
       return null;
     });
+  }, []);
+
+  const dismissBlockoutConfirmation = useCallback(() => {
+    setPendingBlockoutConfirmation(null);
   }, []);
 
   const assignmentConflictPayload = (allowCrossTeamConflict?: boolean) =>
@@ -882,7 +985,7 @@ const ScheduleTab = ({
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
   useEffect(() => {
-    if (!canEdit || scheduleWorkspaceTab !== "schedule") return undefined;
+    if (!canEdit) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
@@ -908,7 +1011,7 @@ const ScheduleTab = ({
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [canEdit, handleRedo, handleUndo, scheduleWorkspaceTab]);
+  }, [canEdit, handleRedo, handleUndo]);
 
   const activateSlot = useCallback(
     (
@@ -1070,15 +1173,9 @@ const ScheduleTab = ({
     }
   }, [detailMessage, showToast]);
 
-  const openAttendanceForOccurrence = useCallback((occurrenceId: string) => {
+  const openServiceSummary = useCallback((occurrenceId: string) => {
     setDetailOccurrenceId(occurrenceId);
-    setScheduleWorkspaceTab("attendance");
   }, []);
-
-  const returnToScheduleGrid = useCallback(() => {
-    clearActiveSlot();
-    setScheduleWorkspaceTab("schedule");
-  }, [clearActiveSlot]);
 
   const canShowScheduleWorkspace = Boolean(
     selectedSchedule &&
@@ -1086,16 +1183,33 @@ const ScheduleTab = ({
     scheduleOccurrences.length > 0,
   );
 
-  const handleScheduleWorkspaceTabChange = useCallback(
-    (value: string) => {
-      const tab = value as "schedule" | "attendance";
-      setScheduleWorkspaceTab(tab);
-      if (tab === "attendance" && !detailOccurrenceId && scheduleOccurrences[0]) {
-        setDetailOccurrenceId(scheduleOccurrences[0].occurrenceId);
-      }
-    },
-    [detailOccurrenceId, scheduleOccurrences],
-  );
+  // Distinguishes "still loading this schedule's assignments" from the genuine
+  // empty states, so an operator never reads a mid-fetch grid as an unstaffed
+  // service.
+  const scheduleWorkspaceEmptyMessage = (() => {
+    const messageClassName =
+      "rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300";
+    if (isSelectedScheduleLoading) {
+      return (
+        <p className={messageClassName} role="status">
+          Loading this schedule&apos;s assignments…
+        </p>
+      );
+    }
+    if (!selectedSchedule || !selectedTeam) {
+      return (
+        <p className={messageClassName}>
+          Create a team, services, and a schedule to start assigning members.
+        </p>
+      );
+    }
+    return (
+      <p className={messageClassName}>
+        This schedule needs at least one service occurrence and one required
+        position. Set position requirements on a service, or add positions to the team.
+      </p>
+    );
+  })();
 
   const serviceDateBlockedOut = (member: TeamRosterMember, serviceDate: string) =>
     (member.blockoutDates || []).some((range) => {
@@ -1157,6 +1271,19 @@ const ScheduleTab = ({
     [data.members],
   );
 
+  const getBlockoutWarning = useCallback(
+    (memberId: string, occurrenceId: string) => {
+      const member = data.members.find((item) => item.memberId === memberId);
+      const occurrence = scheduleOccurrences.find(
+        (item) => item.occurrenceId === occurrenceId,
+      );
+      return member && occurrence && serviceDateBlockedOut(member, getOccurrenceDate(occurrence))
+        ? "Blocked out"
+        : "";
+    },
+    [data.members, scheduleOccurrences],
+  );
+
   const commitAssignment = async ({
     serviceId,
     cellKey,
@@ -1164,6 +1291,7 @@ const ScheduleTab = ({
     memberId,
     sourceServiceId,
     sourcePositionSlotKey,
+    allowBlockout = false,
     allowCrossTeamConflict = false,
   }: {
     serviceId: string;
@@ -1172,6 +1300,7 @@ const ScheduleTab = ({
     memberId: string | null;
     sourceServiceId?: string;
     sourcePositionSlotKey?: string;
+    allowBlockout?: boolean;
     allowCrossTeamConflict?: boolean;
   }) => {
     if (!canEdit) return;
@@ -1183,8 +1312,25 @@ const ScheduleTab = ({
         serviceId: sourceServiceId,
         positionId: sourcePositionSlotKey,
       });
-      if (issue) {
-        showToast(issue, "neutral");
+      if (issue === "Blocked out" && !allowBlockout) {
+        setPendingBlockoutConfirmation({
+          memberId,
+          onConfirm: () =>
+            void commitAssignment({
+              serviceId,
+              cellKey,
+              basePositionId,
+              memberId,
+              sourceServiceId,
+              sourcePositionSlotKey,
+              allowBlockout: true,
+            }),
+        });
+        return;
+      }
+      const blockingIssue = allowBlockout && issue === "Blocked out" ? "" : issue;
+      if (blockingIssue) {
+        showToast(blockingIssue, "neutral");
         return;
       }
       const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
@@ -1200,6 +1346,7 @@ const ScheduleTab = ({
               memberId,
               sourceServiceId,
               sourcePositionSlotKey,
+              allowBlockout,
               allowCrossTeamConflict: true,
             }),
         });
@@ -1293,6 +1440,7 @@ const ScheduleTab = ({
             serviceDate,
             sourceServiceId,
             sourcePositionSlotKey,
+            ...(allowBlockout ? { allowBlockout: true } : {}),
             ...assignmentConflictPayload(allowCrossTeamConflict),
           },
         );
@@ -1443,6 +1591,7 @@ const ScheduleTab = ({
     memberId,
     shadowKind,
     action,
+    allowBlockout = false,
     allowCrossTeamConflict = false,
   }: {
     serviceId: string;
@@ -1451,6 +1600,7 @@ const ScheduleTab = ({
     memberId: string;
     shadowKind: TeamScheduleShadowKind;
     action: "add" | "remove";
+    allowBlockout?: boolean;
     allowCrossTeamConflict?: boolean;
   }) => {
     if (!canEdit) return;
@@ -1465,8 +1615,25 @@ const ScheduleTab = ({
         undefined,
         shadowKind,
       );
-      if (issue) {
-        showToast(issue, "neutral");
+      if (issue === "Blocked out" && !allowBlockout) {
+        setPendingBlockoutConfirmation({
+          memberId,
+          onConfirm: () =>
+            void commitShadowAssignment({
+              serviceId,
+              cellKey,
+              basePositionId,
+              memberId,
+              shadowKind,
+              action,
+              allowBlockout: true,
+            }),
+        });
+        return;
+      }
+      const blockingIssue = allowBlockout && issue === "Blocked out" ? "" : issue;
+      if (blockingIssue) {
+        showToast(blockingIssue, "neutral");
         return;
       }
       const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
@@ -1482,6 +1649,7 @@ const ScheduleTab = ({
               memberId,
               shadowKind,
               action,
+              allowBlockout,
               allowCrossTeamConflict: true,
             }),
         });
@@ -1548,6 +1716,7 @@ const ScheduleTab = ({
             serviceDate,
             shadowAction: action,
             shadowKind,
+            ...(allowBlockout ? { allowBlockout: true } : {}),
             ...assignmentConflictPayload(allowCrossTeamConflict),
           },
         );
@@ -1699,6 +1868,39 @@ const ScheduleTab = ({
     );
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
+    const totalOpenSlots = entries.length + unfilledCount;
+    const gapLabel = unfilledCount
+      ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${unfilledCount === 1 ? "needs" : "need"
+      } a person you'll have to assign manually.`
+      : "";
+    // Persist the completed plan as one schedule update. Sending each entry one
+    // at a time made a large auto-fill slow and left it vulnerable to a page
+    // change midway through. Start saving before the local reveal so the two
+    // can run together, then keep autoFilling true until this request settles.
+    let saveFailed = false;
+    const save = enqueueAssignmentSave(() =>
+      updateTeamSchedule(churchId, selectedSchedule.scheduleId, {
+        name: selectedSchedule.name,
+        description: selectedSchedule.description || "",
+        teamId: selectedSchedule.teamId,
+        startDate: selectedSchedule.startDate || "",
+        endDate: selectedSchedule.endDate || "",
+        serviceIds: selectedSchedule.serviceIds || [],
+        occurrences: scheduleOccurrences,
+        assignments: finalAssignments,
+        microphoneAssignments: selectedSchedule.microphoneAssignments,
+        additionalPositionSlots: selectedSchedule.additionalPositionSlots,
+      }),
+    );
+    // The reveal may outlast a fast rejected request. Observe it immediately so
+    // the browser does not report a transient unhandled rejection; stop adding
+    // highlight keys and clear any already shown so rolled-back cells do not
+    // keep the just-filled animation. The await below still owns rollback and
+    // the user-facing error.
+    void save.catch(() => {
+      saveFailed = true;
+      setJustFilledCellKeys(() => new Set());
+    });
 
     // Reveal picks in the order the algorithm made them, one at a time. Total
     // pacing is capped so a big schedule doesn't take forever to watch, but a
@@ -1706,6 +1908,7 @@ const ScheduleTab = ({
     const stepDelayMs = Math.round(Math.max(35, Math.min(150, 1800 / entries.length)));
     let revealedAssignments = { ...(selectedSchedule.assignments || {}) };
     for (const entry of entries) {
+      if (saveFailed) break;
       const targetRow = { ...(revealedAssignments[entry.occurrenceId] || {}) };
       const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
       const nextCell = serializeAssignmentCell({
@@ -1733,38 +1936,22 @@ const ScheduleTab = ({
       await sleep(stepDelayMs);
     }
 
-    // Fire-and-forget, like every other commit function here (e.g.
-    // commitAssignment): the caller's busy state should track the visual
-    // reveal above, not however long N sequential API calls take to settle.
-    // The outcome toast lives here too (success only after every write
-    // actually lands, error on failure) rather than in the caller, so the
-    // two can never both fire for the same run.
-    const totalOpenSlots = entries.length + unfilledCount;
-    const gapLabel = unfilledCount
-      ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${unfilledCount === 1 ? "needs" : "need"
-      } a person you'll have to assign manually.`
-      : "";
-    void enqueueAssignmentSave(async () => {
-      try {
-        for (const entry of entries) {
-          await updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
-            serviceId: entry.occurrenceId,
-            positionSlotKey: entry.columnKey,
-            memberId: entry.memberId,
-            serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
-          });
-        }
-        showToast(
-          `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
-          "success",
-        );
-      } catch (error) {
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(previousSchedule);
-        }
-        showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+    try {
+      const response = await save;
+      if (scheduleMutationSeqRef.current === mutationSeq) {
+        onScheduleSaved(response.schedule);
       }
-    });
+      showToast(
+        `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
+        "success",
+      );
+    } catch (error) {
+      setJustFilledCellKeys(() => new Set());
+      if (scheduleMutationSeqRef.current === mutationSeq) {
+        onScheduleSaved(previousSchedule);
+      }
+      showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+    }
   };
 
   const handleAutoFillSchedule = async () => {
@@ -1773,8 +1960,53 @@ const ScheduleTab = ({
     // the same (still-false) state value and could each plan and commit a
     // bulk write against the same starting grid.
     if (!canEdit || !selectedSchedule || autoFillRunningRef.current) return;
+    if (hasUnhydratedOverlappingTeamSchedule) {
+      showToast(
+        "Other team schedules are still loading. Try Auto-fill again in a moment.",
+        "neutral",
+      );
+      return;
+    }
     autoFillRunningRef.current = true;
     try {
+      let getAutoFillCrossTeamConflictWarning = getCrossTeamConflictWarning;
+      const hasOverlappingTeamSchedule = data.schedules.some(
+        (schedule) =>
+          schedule.scheduleId !== selectedSchedule.scheduleId &&
+          schedule.teamId !== selectedSchedule.teamId &&
+          !schedule.archivedAt &&
+          scheduleDateRangesOverlap(selectedSchedule, schedule),
+      );
+      if (hasOverlappingTeamSchedule) {
+        try {
+          // The bulk save is protected by the server's current conflict check.
+          // Read those same related schedules immediately before planning so a
+          // stale bootstrap or live-sync gap cannot make Auto-fill nominate a
+          // person who is already serving elsewhere.
+          const detail = await getTeamScheduleDetail(
+            churchId,
+            selectedSchedule.scheduleId,
+          );
+          getAutoFillCrossTeamConflictWarning = (memberId, occurrenceId) =>
+            formatCrossTeamScheduleConflictWarning(
+              findCrossTeamScheduleOccurrenceConflicts({
+                schedule: selectedSchedule,
+                occurrenceId,
+                memberId,
+                schedules: detail.relatedSchedules,
+                teams: data.teams,
+              }),
+            );
+        } catch (error) {
+          showApiErrorToast(
+            showToast,
+            error,
+            "Could not check other team schedules before auto-fill.",
+          );
+          return;
+        }
+      }
+
       const plan = buildAutoFillPlan({
         occurrences: scheduleOccurrences,
         columns: scheduleColumns,
@@ -1787,7 +2019,7 @@ const ScheduleTab = ({
         getAssignmentIssue: (memberId, occurrenceId, positionId) =>
           getAssignmentIssue(memberId, occurrenceId, positionId),
         getServiceAvailabilityWarning,
-        getCrossTeamConflictWarning,
+        getCrossTeamConflictWarning: getAutoFillCrossTeamConflictWarning,
       });
 
       const totalOpenSlots = plan.entries.length + plan.unfilledSlots.length;
@@ -2063,7 +2295,7 @@ const ScheduleTab = ({
 
   // Seed the "new schedule" draft from the selected schedule and open the form
   // in create mode. The operator typically just changes the date; assignments are
-  // remapped onto the new dates on save (attendance is left behind by design).
+  // remapped onto the new dates on save.
   const handleCopySchedule = useCallback(() => {
     if (!canEdit || !selectedSchedule) return;
     onScheduleDraftFlush(
@@ -2113,219 +2345,6 @@ const ScheduleTab = ({
       getAssignmentIssue(memberId, occurrenceId, positionId),
     [getAssignmentIssue],
   );
-
-  const attendanceRows = useMemo(
-    () =>
-      buildAttendanceRows({
-        schedule: selectedSchedule,
-        occurrences: scheduleOccurrences,
-        columns: scheduleColumns,
-        members: data.members,
-        duplicateFirstNames: duplicateScheduleFirstNames,
-        occurrenceTimingById,
-        requiredCountFor: (occurrenceId, positionId) =>
-          getRequiredCount(requirementsByOccurrence.get(occurrenceId), positionId),
-      }),
-    [
-      data.members,
-      duplicateScheduleFirstNames,
-      occurrenceTimingById,
-      requirementsByOccurrence,
-      scheduleColumns,
-      scheduleOccurrences,
-      selectedSchedule,
-    ],
-  );
-
-  const absentMemberIdsByOccurrence = useMemo(() => {
-    const map = new Map<string, Set<string>>();
-    attendanceRows.forEach((row) => {
-      if (row.status !== "absent") return;
-      const existing = map.get(row.occurrenceId) || new Set<string>();
-      existing.add(row.memberId);
-      map.set(row.occurrenceId, existing);
-    });
-    return map;
-  }, [attendanceRows]);
-
-  const commitAttendanceStatus = useCallback(
-    async (
-      row: ScheduleAttendanceRow,
-      status: TeamScheduleAttendanceStatus | "",
-    ) => {
-      if (!canEdit) return;
-      if (!selectedSchedule) return;
-      const previousSchedule = selectedSchedule;
-      const nextAttendance = { ...(selectedSchedule.attendance || {}) };
-      const occurrenceAttendance = {
-        ...(nextAttendance[row.occurrenceId] || {}),
-      };
-      if (status) {
-        occurrenceAttendance[row.memberId] = {
-          status,
-          columnKey: row.columnKey,
-          positionId: row.positionId,
-          positionLabel: row.positionLabel,
-          updatedAt: new Date().toISOString(),
-        };
-      } else {
-        delete occurrenceAttendance[row.memberId];
-      }
-      if (Object.keys(occurrenceAttendance).length > 0) {
-        nextAttendance[row.occurrenceId] = occurrenceAttendance;
-      } else {
-        delete nextAttendance[row.occurrenceId];
-      }
-
-      const nextSchedule = {
-        ...selectedSchedule,
-        attendance: nextAttendance,
-      };
-      const mutationSeq = ++scheduleMutationSeqRef.current;
-      onScheduleSaved(nextSchedule);
-
-      try {
-        // Patch just this attendance cell instead of re-PUTting the whole
-        // schedule, so a concurrent assignment edit by another admin isn't
-        // clobbered.
-        await trackTeamsSave(
-          updateTeamScheduleAttendance(churchId, selectedSchedule.scheduleId, {
-            occurrenceId: row.occurrenceId,
-            memberId: row.memberId,
-            status,
-            columnKey: row.columnKey,
-            positionId: row.positionId,
-            positionLabel: row.positionLabel,
-          }),
-        );
-      } catch (error) {
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(previousSchedule);
-        }
-        showApiErrorToast(showToast, error, "Could not update attendance.");
-      }
-    },
-    [churchId, canEdit, onScheduleSaved, selectedSchedule, showToast, trackTeamsSave],
-  );
-
-  const detailAttendanceRows = useMemo(
-    () =>
-      detailOccurrence
-        ? attendanceRows.filter(
-          (row) => row.occurrenceId === detailOccurrence.occurrenceId,
-        )
-        : [],
-    [attendanceRows, detailOccurrence],
-  );
-
-  const detailAttendanceCounts = useMemo(
-    () => countAttendanceStatuses(detailAttendanceRows),
-    [detailAttendanceRows],
-  );
-
-  const activateAttendanceRowSlot = useCallback(
-    (
-      row: ScheduleAttendanceRow,
-      anchorEl: HTMLElement,
-    ) => {
-      if (!row.columnKey || !row.positionId) {
-        showToast("This attendance record is no longer assigned to a slot.", "neutral");
-        return;
-      }
-      activateSlot(
-        { occurrenceId: row.occurrenceId, columnKey: row.columnKey },
-        anchorEl,
-        "replace",
-      );
-    },
-    [activateSlot, showToast],
-  );
-
-  const renderAttendanceStatusControls = (row: ScheduleAttendanceRow) => (
-    <div className="flex flex-wrap items-center gap-2">
-      {row.status === "absent" ? (
-        <>
-          <span className="inline-flex items-center gap-1 rounded border border-rose-300/40 bg-rose-500/15 px-2 py-1 text-xs font-medium text-rose-50">
-            <UserX className="h-3.5 w-3.5" aria-hidden />
-            No-show
-          </span>
-          <Button
-            variant="tertiary"
-            svg={Check}
-            iconSize="xs"
-            disabled={!canEdit}
-            onClick={() => void commitAttendanceStatus(row, "present")}
-          >
-            Mark present
-          </Button>
-        </>
-      ) : (
-        <>
-          <span className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-50">
-            <Check className="h-3.5 w-3.5" aria-hidden />
-            Present
-          </span>
-          <Button
-            variant="tertiary"
-            svg={UserX}
-            iconSize="xs"
-            disabled={!canEdit}
-            onClick={() => void commitAttendanceStatus(row, "absent")}
-          >
-            Mark no-show
-          </Button>
-        </>
-      )}
-    </div>
-  );
-
-  const renderReplacementControls = (row: ScheduleAttendanceRow) => {
-    const canOpenReplacement =
-      canEdit &&
-      row.isPrimary &&
-      Boolean(row.columnKey) &&
-      Boolean(row.positionId);
-
-    if (canOpenReplacement) {
-      return (
-        <Button
-          variant="tertiary"
-          svg={RefreshCw}
-          iconSize="xs"
-          padding="px-2 py-1"
-          aria-label={
-            row.status === "absent"
-              ? `Choose fill-in for ${row.positionLabel}`
-              : `Choose replacement for ${row.positionLabel}`
-          }
-          onClick={(event) =>
-            activateAttendanceRowSlot(row, event.currentTarget)
-          }
-        >
-          Choose
-        </Button>
-      );
-    }
-
-    if (row.status === "absent") {
-      return <span className="text-sm text-gray-400">No-show recorded.</span>;
-    }
-    if (row.status === "present") {
-      return <span className="text-sm text-gray-400">Present recorded.</span>;
-    }
-    if (row.isPrimary) {
-      return (
-        <span className="text-sm text-gray-400">
-          Select the grid cell to assign this slot.
-        </span>
-      );
-    }
-    return (
-      <span className="text-sm text-gray-500">
-        Replacement applies to primary slots.
-      </span>
-    );
-  };
 
   const activeSlotMeta = useMemo(() => {
     if (!activeSlot) return null;
@@ -2473,9 +2492,7 @@ const ScheduleTab = ({
     const currentMember = data.members.find(
       (item) => item.memberId === currentMemberId,
     );
-    const absentMemberIds =
-      absentMemberIdsByOccurrence.get(activeSlot.occurrenceId) || new Set<string>();
-    if (!currentMember || absentMemberIds.has(currentMemberId)) return [];
+    if (!currentMember) return [];
 
     const plans: ScheduleAssignmentSwapPlan[] = [];
     for (const column of scheduleColumns) {
@@ -2484,8 +2501,6 @@ const ScheduleTab = ({
       const sourceCell = occurrenceAssignments[column.columnKey];
       const candidateMemberId = getCellPrimaryMemberId(sourceCell);
       if (!candidateMemberId || candidateMemberId === currentMemberId) continue;
-      if (absentMemberIds.has(candidateMemberId)) continue;
-
       const candidateMember = data.members.find(
         (item) => item.memberId === candidateMemberId,
       );
@@ -2549,7 +2564,6 @@ const ScheduleTab = ({
       })
       .slice(0, 3);
   }, [
-    absentMemberIdsByOccurrence,
     activeSlot,
     activeSlotMeta,
     activeSlotRecommendationStats,
@@ -2636,12 +2650,9 @@ const ScheduleTab = ({
   const activeSlotGetIssue = useCallback(
     (memberId: string) => {
       if (!activeSlot || !activeSlotMeta) return "Not available";
-      if (absentMemberIdsByOccurrence.get(activeSlot.occurrenceId)?.has(memberId)) {
-        return "Marked no-show for this service";
-      }
       const moveSource = getActiveSlotMoveSource(memberId);
       if (moveSource) {
-        return getAssignmentIssue(
+        return getManualScheduleAssignmentIssue(getAssignmentIssue(
           memberId,
           activeSlot.occurrenceId,
           activeSlotMeta.positionId,
@@ -2649,16 +2660,15 @@ const ScheduleTab = ({
             serviceId: moveSource.serviceId,
             positionId: moveSource.positionSlotKey,
           },
-        );
+        ));
       }
-      return getAssignmentIssue(
+      return getManualScheduleAssignmentIssue(getAssignmentIssue(
         memberId,
         activeSlot.occurrenceId,
         activeSlotMeta.positionId,
-      );
+      ));
     },
     [
-      absentMemberIdsByOccurrence,
       activeSlot,
       activeSlotMeta,
       getActiveSlotMoveSource,
@@ -2684,12 +2694,15 @@ const ScheduleTab = ({
         activeSlot.occurrenceId,
       );
       if (availabilityWarning) warnings.push(availabilityWarning);
+      const blockoutWarning = getBlockoutWarning(memberId, activeSlot.occurrenceId);
+      if (blockoutWarning) warnings.push(blockoutWarning);
       return warnings.join(". ");
     },
     [
       activeSlot,
       getActiveSlotMoveSource,
       getCrossTeamConflictWarning,
+      getBlockoutWarning,
       getServiceAvailabilityWarning,
     ],
   );
@@ -2703,16 +2716,8 @@ const ScheduleTab = ({
           reverseShadow: "Not available",
         };
       }
-      if (absentMemberIdsByOccurrence.get(activeSlot.occurrenceId)?.has(memberId)) {
-        const issue = "Marked no-show for this service";
-        return {
-          replace: issue,
-          shadow: issue,
-          reverseShadow: issue,
-        };
-      }
       const moveSource = getActiveSlotMoveSource(memberId);
-      return getAssignmentActionIssues(
+      const issues = getAssignmentActionIssues(
         memberId,
         activeSlot.occurrenceId,
         activeSlotMeta.positionId,
@@ -2723,9 +2728,13 @@ const ScheduleTab = ({
           }
           : undefined,
       );
+      return {
+        replace: getManualScheduleAssignmentIssue(issues.replace),
+        shadow: getManualScheduleAssignmentIssue(issues.shadow),
+        reverseShadow: getManualScheduleAssignmentIssue(issues.reverseShadow),
+      };
     },
     [
-      absentMemberIdsByOccurrence,
       activeSlot,
       activeSlotMeta,
       getActiveSlotMoveSource,
@@ -2942,24 +2951,49 @@ const ScheduleTab = ({
     return {
       memberId: pendingCellAssignment.memberId,
       title: `Assign ${scheduleMemberName(pendingMember, duplicateScheduleFirstNames)}`,
-      issues: getAssignmentActionIssues(
-        pendingCellAssignment.memberId,
-        activeSlot.occurrenceId,
-        activeSlotMeta.positionId,
-        pendingCellAssignment.sourceServiceId &&
-          pendingCellAssignment.sourcePositionSlotKey
-          ? {
-            serviceId: pendingCellAssignment.sourceServiceId,
-            positionId: pendingCellAssignment.sourcePositionSlotKey,
-          }
-          : undefined,
-      ),
+      issues: (() => {
+        const issues = getAssignmentActionIssues(
+          pendingCellAssignment.memberId,
+          activeSlot.occurrenceId,
+          activeSlotMeta.positionId,
+          pendingCellAssignment.sourceServiceId &&
+            pendingCellAssignment.sourcePositionSlotKey
+            ? {
+              serviceId: pendingCellAssignment.sourceServiceId,
+              positionId: pendingCellAssignment.sourcePositionSlotKey,
+            }
+            : undefined,
+        );
+        return {
+          replace: getManualScheduleAssignmentIssue(issues.replace),
+          shadow: getManualScheduleAssignmentIssue(issues.shadow),
+          reverseShadow: getManualScheduleAssignmentIssue(issues.reverseShadow),
+        };
+      })(),
       onBack: () => setPendingCellAssignment(null),
       onReplace: confirmPendingReplace,
       onAddShadow: () => confirmPendingShadow("shadow"),
       onAddReverseShadow: () => confirmPendingShadow("reverse_shadow"),
     };
   })();
+
+  const pendingAdditionalPositionRemovalDetails = pendingAdditionalPositionRemoval
+    ? {
+      label:
+        scheduleColumns.find(
+          (column) => column.columnKey === pendingAdditionalPositionRemoval.cellKey,
+        )?.label || "this position",
+      memberCount: getCellMemberIds(
+        selectedSchedule?.assignments?.[pendingAdditionalPositionRemoval.serviceId]?.[
+        pendingAdditionalPositionRemoval.cellKey
+        ],
+      ).length,
+      microphoneCount:
+        selectedSchedule?.microphoneAssignments?.[
+          pendingAdditionalPositionRemoval.serviceId
+        ]?.[pendingAdditionalPositionRemoval.cellKey]?.length || 0,
+    }
+    : null;
 
   const pendingCrossTeamConflictMember = pendingCrossTeamConflict
     ? data.members.find(
@@ -2971,6 +3005,12 @@ const ScheduleTab = ({
       pendingCrossTeamConflictMember,
       duplicateScheduleFirstNames,
     )
+    : "This person";
+  const pendingBlockoutMember = pendingBlockoutConfirmation
+    ? data.members.find((item) => item.memberId === pendingBlockoutConfirmation.memberId)
+    : null;
+  const pendingBlockoutMemberLabel = pendingBlockoutMember
+    ? scheduleMemberName(pendingBlockoutMember, duplicateScheduleFirstNames)
     : "This person";
 
   // Flattened occurrences (in service order) for the by-position orientation,
@@ -3147,6 +3187,151 @@ const ScheduleTab = ({
     scheduleLayout,
   ]);
 
+  const getAdditionalPositionOptions = useCallback(
+    (occurrenceId: string) => {
+      const requirements = requirementsByOccurrence.get(occurrenceId) || [];
+      const enabledSlots = new Set(selectedSchedule?.additionalPositionSlots?.[occurrenceId] || []);
+      return schedulePositions.filter(isActive).map((position) => {
+        const requiredCount = getRequiredCount(requirements, position.positionId);
+        let nextSlot = requiredCount;
+        while (enabledSlots.has(makeSlotKey(position.positionId, nextSlot))) {
+          nextSlot += 1;
+        }
+        return [{
+          positionId: position.positionId,
+          label: `${position.name}${nextSlot > 0 ? ` ${nextSlot + 1}` : ""}`,
+        }];
+      }).flat();
+    },
+    [requirementsByOccurrence, schedulePositions, selectedSchedule?.additionalPositionSlots],
+  );
+
+  const addPositionSlot = useCallback(
+    async ({ serviceId, cellKey }: { serviceId: string; cellKey: string }) => {
+      if (!canEdit || !churchId || !selectedSchedule) return;
+      const previousSchedule = selectedSchedule;
+      const additionalPositionSlots = {
+        ...(selectedSchedule.additionalPositionSlots || {}),
+        [serviceId]: [
+          ...new Set([
+            ...(selectedSchedule.additionalPositionSlots?.[serviceId] || []),
+            cellKey,
+          ]),
+        ],
+      };
+      onScheduleSaved({ ...selectedSchedule, additionalPositionSlots });
+      try {
+        const response = await addTeamSchedulePositionSlot(
+          churchId,
+          selectedSchedule.scheduleId,
+          { serviceId, positionSlotKey: cellKey },
+        );
+        onScheduleSaved(response.schedule);
+        showToast("Position added for this date.", "success");
+      } catch (error) {
+        onScheduleSaved(previousSchedule);
+        showApiErrorToast(showToast, error, "Could not add this position.");
+      }
+    },
+    [canEdit, churchId, onScheduleSaved, selectedSchedule, showToast],
+  );
+
+  const addAdditionalPosition = useCallback(
+    async ({ serviceId, positionId }: { serviceId: string; positionId: string }) => {
+      if (!selectedSchedule) return;
+      const requirements = requirementsByOccurrence.get(serviceId);
+      const requiredCount = getRequiredCount(requirements, positionId);
+      const enabledSlots = new Set(selectedSchedule.additionalPositionSlots?.[serviceId] || []);
+      let nextSlot = requiredCount;
+      while (enabledSlots.has(makeSlotKey(positionId, nextSlot))) {
+        nextSlot += 1;
+      }
+      await addPositionSlot({ serviceId, cellKey: makeSlotKey(positionId, nextSlot) });
+    },
+    [addPositionSlot, requirementsByOccurrence, selectedSchedule],
+  );
+
+  const renderAdditionalPositionMenu = (occurrenceId: string) => {
+    const options = getAdditionalPositionOptions(occurrenceId);
+    if (!canEdit || options.length === 0) return null;
+    return (
+      <Menu
+        align="end"
+        menuItems={options.map((option) => ({
+          text: `Add ${option.label}`,
+          onClick: () =>
+            void addAdditionalPosition({
+              serviceId: occurrenceId,
+              positionId: option.positionId,
+            }),
+        }))}
+        TriggeringButton={
+          <Button type="button" variant="tertiary" iconSize="sm" className="text-xs">
+            Add position
+          </Button>
+        }
+      />
+    );
+  };
+
+  const requestRemoveAdditionalPosition = useCallback(
+    ({ serviceId, cellKey }: { serviceId: string; cellKey: string }) => {
+      if (!canEdit) return;
+      setPendingAdditionalPositionRemoval({ serviceId, cellKey });
+    },
+    [canEdit],
+  );
+
+  const confirmRemoveAdditionalPosition = useCallback(async () => {
+    if (!churchId || !selectedSchedule || !pendingAdditionalPositionRemoval) return;
+    const { serviceId, cellKey } = pendingAdditionalPositionRemoval;
+    const previousSchedule = selectedSchedule;
+    const additionalPositionSlots = { ...(selectedSchedule.additionalPositionSlots || {}) };
+    const nextSlots = (additionalPositionSlots[serviceId] || []).filter(
+      (slotKey) => slotKey !== cellKey,
+    );
+    if (nextSlots.length) additionalPositionSlots[serviceId] = nextSlots;
+    else delete additionalPositionSlots[serviceId];
+
+    const assignments = { ...(selectedSchedule.assignments || {}) };
+    const assignmentRow = { ...(assignments[serviceId] || {}) };
+    delete assignmentRow[cellKey];
+    if (Object.keys(assignmentRow).length) assignments[serviceId] = assignmentRow;
+    else delete assignments[serviceId];
+
+    const microphoneAssignments = { ...(selectedSchedule.microphoneAssignments || {}) };
+    const microphoneRow = { ...(microphoneAssignments[serviceId] || {}) };
+    delete microphoneRow[cellKey];
+    if (Object.keys(microphoneRow).length) microphoneAssignments[serviceId] = microphoneRow;
+    else delete microphoneAssignments[serviceId];
+
+    setPendingAdditionalPositionRemoval(null);
+    onScheduleSaved({
+      ...selectedSchedule,
+      additionalPositionSlots,
+      assignments,
+      microphoneAssignments,
+    });
+    try {
+      const response = await removeTeamSchedulePositionSlot(
+        churchId,
+        selectedSchedule.scheduleId,
+        { serviceId, positionSlotKey: cellKey },
+      );
+      onScheduleSaved(response.schedule);
+      showToast("Position removed from this service.", "success");
+    } catch (error) {
+      onScheduleSaved(previousSchedule);
+      showApiErrorToast(showToast, error, "Could not remove this position.");
+    }
+  }, [
+    churchId,
+    onScheduleSaved,
+    pendingAdditionalPositionRemoval,
+    selectedSchedule,
+    showToast,
+  ]);
+
   const assignmentHandlers: ScheduleAssignmentHandlers = {
     getAssignmentIssue,
     getAssignmentActionIssues,
@@ -3155,6 +3340,8 @@ const ScheduleTab = ({
     commitAssignment,
     commitShadowAssignment,
     createMemberForCell,
+    addAdditionalPosition,
+    requestRemoveAdditionalPosition,
     activateSlot,
     clearActiveSlot,
     setPendingCellAssignment,
@@ -3174,6 +3361,14 @@ const ScheduleTab = ({
       const isActiveSlot =
         activeSlot?.occurrenceId === occurrence.occurrenceId &&
         activeSlot?.columnKey === column.columnKey;
+      const requirements = requirementsByOccurrence.get(occurrence.occurrenceId);
+      const requiredCount = getRequiredCount(requirements, column.positionId);
+      const isAdditionalPosition = Boolean(
+        selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId]?.includes(
+          column.columnKey,
+        ),
+      );
+      const isSlotEnabled = column.slot < requiredCount || isAdditionalPosition;
 
       return {
         occurrenceId: occurrence.occurrenceId,
@@ -3183,10 +3378,9 @@ const ScheduleTab = ({
         columnLabel: column.label,
         rowTone,
         slot: column.slot,
-        requiredCount: getRequiredCount(
-          requirementsByOccurrence.get(occurrence.occurrenceId),
-          column.positionId,
-        ),
+        requiredCount,
+        isSlotEnabled,
+        isAdditionalPosition,
         axisHighlightClassName: cellAxisHighlightMap.get(cellKey) ?? "",
         assignmentCell,
         isMemberHighlighted: getCellMemberIds(assignmentCell).some((memberId) =>
@@ -3212,252 +3406,6 @@ const ScheduleTab = ({
     ],
   );
 
-  const attendanceWorkspacePanel =
-    selectedSchedule &&
-      selectedTeam &&
-      scheduleColumns.length > 0 &&
-      scheduleOccurrences.length > 0 ? (
-      <div className="rounded-lg border border-gray-800 bg-gray-950/45 p-4">
-        {!detailOccurrence ? (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-start gap-3">
-              <Icon svg={ClipboardList} size="md" className="text-cyan-200" />
-              <div>
-                <h3 className="text-base font-semibold text-white">
-                  Select a service
-                </h3>
-                <p className="mt-1 text-sm text-gray-400">
-                  Choose one service to take attendance, copy assignments, or select replacements.
-                </p>
-              </div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {scheduleOccurrences.map((occurrence) => (
-                <ScheduleOccurrenceDateButton
-                  key={occurrence.occurrenceId}
-                  label={`${occurrence.name} - ${formatOccurrenceRowLabel(
-                    occurrence,
-                    occurrenceTimingById.get(occurrence.occurrenceId) || {
-                      sharedWeekday: null,
-                      sharedTime: null,
-                    },
-                  )}`}
-                  ariaLabel={`Open attendance for ${occurrence.name} on ${formatOccurrenceRowLabel(
-                    occurrence,
-                    occurrenceTimingById.get(occurrence.occurrenceId) || {
-                      sharedWeekday: null,
-                      sharedTime: null,
-                    },
-                  )}`}
-                  onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="flex items-center gap-2 text-base font-semibold text-white">
-                  <ClipboardList className="h-4 w-4 text-cyan-200" aria-hidden />
-                  {detailOccurrence.name}
-                </h3>
-                <p className="mt-1 text-sm text-gray-400">
-                  {formatOccurrenceTiming(detailOccurrence)}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="tertiary"
-                  svg={ChevronLeft}
-                  iconSize="sm"
-                  onClick={returnToScheduleGrid}
-                >
-                  Back
-                </Button>
-                <Button
-                  variant="tertiary"
-                  svg={Clipboard}
-                  iconSize="sm"
-                  onClick={() => void copyDetailOccurrenceAssignments()}
-                >
-                  Copy
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {scheduleOccurrences.map((occurrence) => {
-                const selected = occurrence.occurrenceId === detailOccurrence.occurrenceId;
-                return (
-                  <ScheduleOccurrenceDateButton
-                    key={occurrence.occurrenceId}
-                    label={formatOccurrenceRowLabel(
-                      occurrence,
-                      occurrenceTimingById.get(occurrence.occurrenceId) || {
-                        sharedWeekday: null,
-                        sharedTime: null,
-                      },
-                    )}
-                    ariaLabel={`Open attendance for ${occurrence.name} on ${formatOccurrenceRowLabel(
-                      occurrence,
-                      occurrenceTimingById.get(occurrence.occurrenceId) || {
-                        sharedWeekday: null,
-                        sharedTime: null,
-                      },
-                    )}`}
-                    className={cn(
-                      "w-auto shrink-0",
-                      selected && "border-cyan-300 bg-cyan-500/20 text-white",
-                    )}
-                    onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
-                  />
-                );
-              })}
-            </div>
-
-            {detailSummaryGroups.length === 0 ? (
-              <p className="rounded-md border border-gray-800 bg-gray-950 p-3 text-sm text-gray-300">
-                This service has no required positions for this date.
-              </p>
-            ) : (
-              <div className="rounded-md border border-gray-800 bg-gray-950/60 p-3">
-                <div className="grid grid-cols-[max-content_1fr] items-baseline gap-x-4 gap-y-1.5">
-                  {detailSummaryGroups.flatMap((group) => group.positions).map((position) => {
-                    const PositionIcon = resolvePositionLucideIcon(
-                      positionIconById.get(position.positionId),
-                    );
-                    const empty = position.members.length === 0;
-                    return (
-                      <Fragment key={position.positionId}>
-                        <span className="inline-flex items-center gap-1.5 font-medium text-white">
-                          {PositionIcon ? (
-                            <PositionIcon
-                              className="h-4 w-4 shrink-0 text-cyan-200"
-                              aria-hidden
-                            />
-                          ) : null}
-                          {position.name}:
-                        </span>
-                        <span
-                          className={cn(
-                            "min-w-0 text-sm",
-                            empty ? "italic text-amber-300/80" : "text-gray-200",
-                          )}
-                        >
-                          {empty
-                            ? OCCURRENCE_EMPTY_SLOT_LABEL
-                            : position.members.map(formatSummaryMemberToken).join(", ")}
-                        </span>
-                      </Fragment>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="rounded-md border border-gray-800 bg-gray-950/60 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h4 className="text-sm font-semibold text-white">
-                    Attendance and changes
-                  </h4>
-                  <p className="mt-1 text-sm text-gray-400">
-                    Everyone is counted present by default. Mark no-show on the day
-                    of service, then choose a fill-in from the members list.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs text-gray-300">
-                  <span className="rounded border border-emerald-300/30 bg-emerald-500/10 px-2 py-1">
-                    {detailAttendanceCounts.present + detailAttendanceCounts.unmarked} present
-                  </span>
-                  <span className="rounded border border-rose-300/30 bg-rose-500/10 px-2 py-1">
-                    {detailAttendanceCounts.absent} no-show
-                  </span>
-                </div>
-              </div>
-
-              {detailAttendanceRows.length === 0 ? (
-                <p className="mt-3 rounded-md border border-gray-800 bg-gray-950 p-3 text-sm text-gray-300">
-                  Assign members to this service before taking attendance.
-                </p>
-              ) : (
-                useAttendanceCardLayout ? (
-                  <div className="mt-3 space-y-3">
-                    {detailAttendanceRows.map((row) => (
-                      <section
-                        key={`${row.occurrenceId}-${row.memberId}-${row.columnKey || "record"}-card`}
-                        className="rounded-md border border-gray-800 bg-gray-950/70 p-3"
-                        aria-label={`${row.memberLabel}, ${row.positionLabel}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h5 className="truncate text-sm font-semibold text-white">
-                              {row.memberLabel}
-                            </h5>
-                            <p className="mt-0.5 truncate text-xs font-medium text-gray-400">
-                              {row.positionLabel}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                              Attendance
-                            </p>
-                            <div className="mt-1">
-                              {renderAttendanceStatusControls(row)}
-                            </div>
-                          </div>
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                              Replacement or fill-in
-                            </p>
-                            <div className="mt-1">
-                              {renderReplacementControls(row)}
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="mt-3 overflow-auto rounded-md border border-gray-800">
-                    <table className="min-w-full border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-800 bg-gray-950 text-xs uppercase text-gray-400">
-                          <th className="px-3 py-2 font-medium">Person</th>
-                          <th className="px-3 py-2 font-medium">Position</th>
-                          <th className="px-3 py-2 font-medium">Attendance</th>
-                          <th className="px-3 py-2 font-medium">Replacement or fill-in</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detailAttendanceRows.map((row) => (
-                          <tr
-                            key={`${row.occurrenceId}-${row.memberId}-${row.columnKey || "record"}`}
-                            className="border-b border-gray-900 last:border-0"
-                          >
-                            <td className="px-3 py-2 text-white">{row.memberLabel}</td>
-                            <td className="px-3 py-2 text-gray-300">{row.positionLabel}</td>
-                            <td className="px-3 py-2">
-                              {renderAttendanceStatusControls(row)}
-                            </td>
-                            <td className="px-3 py-2">
-                              {renderReplacementControls(row)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    ) : null;
 
   const scheduleEditForm = (
     <ScheduleEditForm
@@ -3469,7 +3417,7 @@ const ScheduleTab = ({
       defaultRange={defaultRange}
       services={data.services}
       activeTeams={activeTeams}
-      schedules={data.schedules}
+      schedules={onlyHydratedSchedules(data.schedules)}
       churchId={churchId}
       canEdit={canEdit}
       onDraftChange={onScheduleDraftChanged}
@@ -3520,19 +3468,35 @@ const ScheduleTab = ({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
+                  {/* Narrowing the picker to one team is remembered per church,
+                      so an operator who only runs Praise Team doesn't scroll
+                      past every other team's months on each visit. */}
+                  {activeTeams.length > 1 ? (
+                    <Select
+                      className="min-w-40"
+                      label="Filter schedules by team"
+                      hideLabel
+                      value={scheduleTeamFilter || ""}
+                      onChange={updateScheduleTeamFilter}
+                      options={scheduleTeamFilterOptions}
+                    />
+                  ) : null}
                   <Select
                     className="min-w-48"
                     label="Open schedule"
                     hideLabel
-                    value={selectedSchedule?.scheduleId || ""}
+                    // Bind to the record, not the hydrated schedule, so the name
+                    // stays in the trigger while its assignments load.
+                    value={selectedScheduleRecord?.scheduleId || ""}
                     onChange={(scheduleId) => {
+                      if (scheduleId === BROWSE_ALL_SCHEDULES_VALUE) {
+                        setIsBrowsingSchedules(true);
+                        return;
+                      }
                       setSelectedScheduleId(scheduleId);
                       setShowForm(false);
                     }}
-                    options={schedules.map((schedule) => ({
-                      label: `${schedule.name}${schedule.archivedAt ? " (archived)" : ""}`,
-                      value: schedule.scheduleId,
-                    }))}
+                    options={scheduleOptions}
                   />
                   {canEdit ? (
                     <Button
@@ -3586,499 +3550,530 @@ const ScheduleTab = ({
           </section>
 
           {canShowScheduleWorkspace ? (
-            <Tabs
-              value={scheduleWorkspaceTab}
-              onValueChange={handleScheduleWorkspaceTabChange}
-              className={scheduleWorkspaceTabsClassName}
-            >
-              <TabsList
-                variant="line"
-                className={cn(lineTabsListShellClassName, "shrink-0")}
-                aria-label="Schedule workspace"
-              >
-                <TabsTrigger value="schedule" className={lineTabsTriggerClassName}>
-                  Schedule
-                </TabsTrigger>
-                <TabsTrigger value="attendance" className={lineTabsTriggerClassName}>
-                  Attendance
-                </TabsTrigger>
-              </TabsList>
-
-              <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
-                <div className="shrink-0">
-                  <div className="flex items-start justify-between gap-3">
+            <section className={cn(panelClassName, scheduleWorkspacePanelClassName)}>
+              <div className="shrink-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                     <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
                       <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
                       Team schedule
                     </h2>
-                    {scheduleWorkspaceTab === "schedule" ? (
-                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                        {/* Board accordion: expand/collapse every service at once. */}
-                        {scheduleLayout === "board" && scheduleOccurrences.length > 1 ? (
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="tertiary"
-                              svg={ChevronsUpDown}
-                              iconSize="sm"
-                              disabled={allBoardCardsExpanded}
-                              onClick={() => setAllBoardCardsExpanded(true)}
-                              aria-label="Expand all services"
-                              title="Expand all services"
-                            />
-                            <Button
-                              variant="tertiary"
-                              svg={ChevronsDownUp}
-                              iconSize="sm"
-                              disabled={allBoardCardsCollapsed}
-                              onClick={() => setAllBoardCardsExpanded(false)}
-                              aria-label="Collapse all services"
-                              title="Collapse all services"
-                            />
-                          </div>
-                        ) : null}
-                        {/* Edit history: the frequent, in-flow controls stay visible. */}
-                        {canEdit ? (
-                          <>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                variant="tertiary"
-                                svg={Undo2}
-                                iconSize="sm"
-                                disabled={!canUndo || autoFilling}
-                                onClick={handleUndo}
-                                aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
-                                title={
-                                  undoLabel
-                                    ? `Undo ${undoLabel} (${undoShortcut.undo})`
-                                    : `Nothing to undo (${undoShortcut.undo})`
-                                }
-                              />
-                              <Button
-                                variant="tertiary"
-                                svg={Redo2}
-                                iconSize="sm"
-                                disabled={!canRedo || autoFilling}
-                                onClick={handleRedo}
-                                aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
-                                title={
-                                  redoLabel
-                                    ? `Redo ${redoLabel} (${undoShortcut.redo})`
-                                    : `Nothing to redo (${undoShortcut.redo})`
-                                }
-                              />
-                            </div>
-                            {SHOW_PASTE_FROM_EXCEL ? (
-                              <Button
-                                variant="tertiary"
-                                svg={ClipboardPaste}
-                                iconSize="sm"
-                                onClick={() => setPasteRowOpen(true)}
-                              >
-                                Paste from Excel
-                              </Button>
-                            ) : null}
-                            <span
-                              aria-hidden
-                              className="mx-0.5 h-5 w-px self-center bg-gray-700"
-                            />
-                          </>
-                        ) : null}
-
-                        {/* Infrequent schedule actions, including auto-fill. */}
-                        <Popover
-                          open={autoFillPopoverOpen}
-                          onOpenChange={setAutoFillPopoverOpen}
-                        >
-                          <PopoverAnchor asChild>
-                            <span className="inline-flex">
-                              <Menu
-                                align="end"
-                                menuItems={[
-                                  ...(canEdit
-                                    ? [
-                                      {
-                                        element: (
-                                          <span className="flex items-center gap-2">
-                                            <Wand2 className="h-4 w-4" aria-hidden />
-                                            {autoFilling
-                                              ? "Auto-filling…"
-                                              : "Auto-fill"}
-                                          </span>
-                                        ),
-                                        onClick: () => setAutoFillPopoverOpen(true),
-                                        disabled: autoFilling,
-                                      },
-                                    ]
-                                    : []),
-                                  {
-                                    element: (
-                                      <span className="flex items-center gap-2">
-                                        <LayoutGrid className="h-4 w-4" aria-hidden />
-                                        Layout
-                                      </span>
-                                    ),
-                                    subItems: scheduleLayoutOptions.map((option) => ({
-                                      text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                                      onClick: () => changeScheduleLayout(option.value),
-                                    })),
-                                  },
-                                  {
-                                    element: (
-                                      <span className="flex items-center gap-2">
-                                        <Printer className="h-4 w-4" aria-hidden />
-                                        Save as PDF
-                                      </span>
-                                    ),
-                                    onClick: () => setPdfPreviewOpen(true),
-                                    disabled: !scheduleExportModel,
-                                  },
-                                  ...(canEdit
-                                    ? [
-                                      {
-                                        element: (
-                                          <span className="flex items-center gap-2">
-                                            <Link2 className="h-4 w-4" aria-hidden />
-                                            {copyingLink
-                                              ? "Copying…"
-                                              : "Copy view-only link"}
-                                          </span>
-                                        ),
-                                        onClick: () => void copyPublicLink(),
-                                        disabled: copyingLink,
-                                        preventClose: copyingLink,
-                                      },
-                                    ]
-                                    : []),
-                                ] as MenuItemType[]}
-                                TriggeringButton={
-                                  <Button
-                                    variant="tertiary"
-                                    svg={MoreHorizontal}
-                                    iconSize="sm"
-                                    aria-label="More schedule actions"
-                                  />
-                                }
-                              />
-                            </span>
-                          </PopoverAnchor>
-                          <PopoverContent
-                            align="end"
-                            className="w-72 border-gray-700 bg-gray-900 p-4 text-gray-100"
-                          >
-                            <p className="text-sm font-semibold text-white">
-                              Auto-fill
-                            </p>
-                            <p className="mt-2 text-sm leading-snug text-gray-300">
-                              Fills empty slots with eligible team members.
-                              Existing assignments stay as they are, and you can
-                              undo afterward.
-                            </p>
-                            <Button
-                              className="mt-4 w-full"
-                              disabled={autoFilling}
-                              onClick={() => {
-                                setAutoFillPopoverOpen(false);
-                                void handleAutoFillSchedule();
-                              }}
-                            >
-                              Continue
-                            </Button>
-                          </PopoverContent>
-                        </Popover>
-                        <SchedulePdfExportButton
-                          model={scheduleExportModel}
-                          layout={toScheduleExportLayout(scheduleLayout)}
-                          hideTrigger
-                          open={pdfPreviewOpen}
-                          onOpenChange={setPdfPreviewOpen}
+                    {/* The picker shows only the schedule name, and teams reuse the
+                        same names — name the team the grid belongs to. */}
+                    {selectedTeam ? (
+                      <span className="flex min-w-0 items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
+                        <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span className="truncate">{selectedTeam.name}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    {/* Board accordion: expand/collapse every service at once. */}
+                    {scheduleLayout === "board" && scheduleOccurrences.length > 1 ? (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="tertiary"
+                          svg={ChevronsUpDown}
+                          iconSize="sm"
+                          disabled={allBoardCardsExpanded}
+                          onClick={() => setAllBoardCardsExpanded(true)}
+                          aria-label="Expand all services"
+                          title="Expand all services"
+                        />
+                        <Button
+                          variant="tertiary"
+                          svg={ChevronsDownUp}
+                          iconSize="sm"
+                          disabled={allBoardCardsCollapsed}
+                          onClick={() => setAllBoardCardsExpanded(false)}
+                          aria-label="Collapse all services"
+                          title="Collapse all services"
                         />
                       </div>
                     ) : null}
-                  </div>
-                  <p className="mt-1 text-sm text-gray-400">
-                    Schedule members first, then switch to attendance when you are tracking one service.
-                  </p>
-                </div>
+                    {/* Edit history: the frequent, in-flow controls stay visible. */}
+                    {canEdit ? (
+                      <>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="tertiary"
+                            svg={Undo2}
+                            iconSize="sm"
+                            disabled={!canUndo || autoFilling}
+                            onClick={handleUndo}
+                            aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
+                            title={
+                              undoLabel
+                                ? `Undo ${undoLabel} (${undoShortcut.undo})`
+                                : `Nothing to undo (${undoShortcut.undo})`
+                            }
+                          />
+                          <Button
+                            variant="tertiary"
+                            svg={Redo2}
+                            iconSize="sm"
+                            disabled={!canRedo || autoFilling}
+                            onClick={handleRedo}
+                            aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
+                            title={
+                              redoLabel
+                                ? `Redo ${redoLabel} (${undoShortcut.redo})`
+                                : `Nothing to redo (${undoShortcut.redo})`
+                            }
+                          />
+                        </div>
+                        {SHOW_PASTE_FROM_EXCEL ? (
+                          <Button
+                            variant="tertiary"
+                            svg={ClipboardPaste}
+                            iconSize="sm"
+                            onClick={() => setPasteRowOpen(true)}
+                          >
+                            Paste from Excel
+                          </Button>
+                        ) : null}
+                        <span
+                          aria-hidden
+                          className="mx-0.5 h-5 w-px self-center bg-gray-700"
+                        />
+                      </>
+                    ) : null}
 
-                {occurrencesStale && !showForm ? (
-                  <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-amber-100">
-                      This schedule no longer matches its services (grouping or timing
-                      changed). Refresh it to update the rows — assignments are kept where
-                      the service and date still line up.
-                    </p>
-                    <Button
-                      variant="secondary"
-                      iconSize="sm"
-                      disabled={applyingGrouping}
-                      onClick={() => void refreshScheduleOccurrences()}
+                    {/* Infrequent schedule actions, including auto-fill. */}
+                    <Menu
+                      align="end"
+                      menuItems={[
+                        ...(canEdit
+                          ? [
+                            {
+                              element: (
+                                <span className="flex items-center gap-2">
+                                  <Wand2 className="h-4 w-4" aria-hidden />
+                                  {autoFilling ? "Auto-filling…" : "Auto-fill"}
+                                </span>
+                              ),
+                              onClick: () => setAutoFillConfirmOpen(true),
+                              disabled: autoFilling,
+                            },
+                          ]
+                          : []),
+                        {
+                          element: (
+                            <span className="flex items-center gap-2">
+                              <LayoutGrid className="h-4 w-4" aria-hidden />
+                              Layout
+                            </span>
+                          ),
+                          subItems: scheduleLayoutOptions.map((option) => ({
+                            text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
+                            onClick: () => changeScheduleLayout(option.value),
+                          })),
+                        },
+                        {
+                          element: (
+                            <span className="flex items-center gap-2">
+                              <Printer className="h-4 w-4" aria-hidden />
+                              Save as PDF
+                            </span>
+                          ),
+                          onClick: () => setPdfPreviewOpen(true),
+                          disabled: !scheduleExportModel,
+                        },
+                        ...(canEdit
+                          ? [
+                            {
+                              element: (
+                                <span className="flex items-center gap-2">
+                                  <Link2 className="h-4 w-4" aria-hidden />
+                                  {copyingLink
+                                    ? "Copying…"
+                                    : "Copy view-only link"}
+                                </span>
+                              ),
+                              onClick: () => void copyPublicLink(),
+                              disabled: copyingLink,
+                              preventClose: copyingLink,
+                            },
+                          ]
+                          : []),
+                      ] as MenuItemType[]}
+                      TriggeringButton={
+                        <Button
+                          variant="tertiary"
+                          svg={MoreHorizontal}
+                          iconSize="sm"
+                          aria-label="More schedule actions"
+                        />
+                      }
+                    />
+                    {/* A modal, not a popover: this opens from a menu item, and
+                     * the menu's own focus handling as it closes dismisses a
+                     * non-modal popover before anyone can reach Continue. Same
+                     * pattern as the PDF preview below. */}
+                    <Modal
+                      isOpen={autoFillConfirmOpen}
+                      onClose={() => setAutoFillConfirmOpen(false)}
+                      title="Auto-fill"
+                      size="sm"
+                      description="Fill this schedule's empty slots with eligible team members."
                     >
-                      {applyingGrouping ? "Refreshing..." : "Refresh schedule"}
-                    </Button>
+                      <p className="text-sm leading-snug text-gray-300">
+                        Fills empty slots with eligible team members. Existing
+                        assignments stay as they are, and you can undo
+                        afterward.
+                      </p>
+                      <div className="mt-4 flex justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => setAutoFillConfirmOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          disabled={autoFilling}
+                          onClick={() => {
+                            setAutoFillConfirmOpen(false);
+                            void handleAutoFillSchedule();
+                          }}
+                        >
+                          Continue
+                        </Button>
+                      </div>
+                    </Modal>
+                    <Modal
+                      isOpen={Boolean(pendingAdditionalPositionRemoval)}
+                      onClose={() => setPendingAdditionalPositionRemoval(null)}
+                      title="Remove added position"
+                      size="sm"
+                    >
+                      <p className="text-sm leading-snug text-gray-300">
+                        Remove {pendingAdditionalPositionRemovalDetails?.label || "this position"} from
+                        this service? This does not change the service&apos;s required positions.
+                      </p>
+                      {pendingAdditionalPositionRemovalDetails?.memberCount ||
+                        pendingAdditionalPositionRemovalDetails?.microphoneCount ? (
+                        <p className="mt-3 text-sm leading-snug text-amber-100">
+                          This will also clear {pendingAdditionalPositionRemovalDetails.memberCount
+                            ? "the assigned person"
+                            : ""}
+                          {pendingAdditionalPositionRemovalDetails.memberCount &&
+                            pendingAdditionalPositionRemovalDetails.microphoneCount
+                            ? " and "
+                            : ""}
+                          {pendingAdditionalPositionRemovalDetails.microphoneCount
+                            ? "the microphone assignment"
+                            : ""}.
+                        </p>
+                      ) : null}
+                      <div className="mt-4 flex justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => setPendingAdditionalPositionRemoval(null)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button variant="destructive" onClick={() => void confirmRemoveAdditionalPosition()}>
+                          Remove position
+                        </Button>
+                      </div>
+                    </Modal>
+                    <SchedulePdfExportButton
+                      model={scheduleExportModel}
+                      layout={toScheduleExportLayout(scheduleLayout)}
+                      hideTrigger
+                      open={pdfPreviewOpen}
+                      onOpenChange={setPdfPreviewOpen}
+                    />
                   </div>
-                ) : null}
+                </div>
+                <p className="mt-1 text-sm text-gray-400">
+                  Select a date to view and copy that service&apos;s assignments.
+                </p>
+              </div>
 
-                <ScheduleAssignmentProvider handlers={assignmentHandlers}>
-                  <div className={scheduleWorkspaceBodyRowClassName}>
-                    <div className={scheduleWorkspaceMainColumnClassName}>
-                      <TabsContent value="schedule" className={scheduleWorkspaceTabContentClassName}>
-                        {scheduleLayout === "board" ? (
-                          <div className={scheduleGridScrollClassName}>
-                            <ScheduleBoardView
-                              groups={occurrencesByService}
-                              columns={scheduleColumns}
-                              teamName={selectedTeam?.name || ""}
-                              detailOccurrenceId={detailOccurrenceId}
-                              nextUpcomingOccurrenceId={nextUpcomingOccurrenceId}
-                              fillByOccurrence={fillByOccurrence}
-                              isExpanded={isBoardCardExpanded}
-                              onToggleExpanded={toggleBoardCard}
-                              serviceArchivedById={(serviceId) =>
-                                Boolean(
-                                  data.services.find(
-                                    (item) => item.serviceId === serviceId,
-                                  )?.archivedAt,
-                                )
-                              }
-                              onOpenAttendance={openAttendanceForOccurrence}
-                              buildCellProps={buildGridCellProps}
-                            />
-                          </div>
-                        ) : scheduleLayout === "transpose" ? (
-                          <div className={scheduleGridScrollClassName}>
-                            <div className={scheduleGridFrameClassName}>
-                              <table className="w-max border-collapse text-left text-sm table-auto">
-                                <colgroup>
-                                  <col />
-                                  {flatOccurrences.map(({ occurrence }) => {
-                                    const columnCh =
-                                      scheduleOccurrenceColumnCh.get(occurrence.occurrenceId) ??
-                                      toScheduleColumnMinCh("Empty");
-                                    return (
-                                      <col
-                                        key={occurrence.occurrenceId}
-                                        style={{
-                                          width: `${columnCh}ch`,
-                                          minWidth: `${columnCh}ch`,
-                                          maxWidth: `${columnCh}ch`,
-                                        }}
-                                      />
-                                    );
-                                  })}
-                                </colgroup>
-                                <thead>
-                                  <tr>
+              {occurrencesStale && !showForm ? (
+                <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-amber-100">
+                    This schedule no longer matches its services (grouping or timing
+                    changed). Refresh it to update the rows — assignments are kept where
+                    the service and date still line up.
+                  </p>
+                  <Button
+                    variant="secondary"
+                    iconSize="sm"
+                    disabled={applyingGrouping}
+                    onClick={() => void refreshScheduleOccurrences()}
+                  >
+                    {applyingGrouping ? "Refreshing..." : "Refresh schedule"}
+                  </Button>
+                </div>
+              ) : null}
+
+              <ScheduleAssignmentProvider handlers={assignmentHandlers}>
+                <div className={scheduleWorkspaceBodyRowClassName}>
+                  <div className={scheduleWorkspaceMainColumnClassName}>
+                    <div className="flex min-w-0 flex-col outline-none max-lg:flex-none lg:min-h-0 lg:flex-1">
+                      {scheduleLayout === "board" ? (
+                        <div className={scheduleGridScrollClassName}>
+                          <ScheduleBoardView
+                            groups={occurrencesByService}
+                            columns={scheduleColumns}
+                            teamName={selectedTeam?.name || ""}
+                            canEdit={canEdit}
+                            nextUpcomingOccurrenceId={nextUpcomingOccurrenceId}
+                            fillByOccurrence={fillByOccurrence}
+                            isExpanded={isBoardCardExpanded}
+                            onToggleExpanded={toggleBoardCard}
+                            serviceArchivedById={(serviceId) =>
+                              Boolean(
+                                data.services.find(
+                                  (item) => item.serviceId === serviceId,
+                                )?.archivedAt,
+                              )
+                            }
+                            onOpenServiceSummary={openServiceSummary}
+                            getAdditionalPositionOptions={getAdditionalPositionOptions}
+                            buildCellProps={buildGridCellProps}
+                          />
+                        </div>
+                      ) : scheduleLayout === "transpose" ? (
+                        <div className={scheduleGridScrollClassName}>
+                          <div className={scheduleGridFrameClassName}>
+                            <table className="w-max border-collapse text-left text-sm table-auto">
+                              <colgroup>
+                                <col />
+                                {flatOccurrences.map(({ occurrence }) => {
+                                  const columnCh =
+                                    scheduleOccurrenceColumnCh.get(occurrence.occurrenceId) ??
+                                    toScheduleColumnMinCh("Empty");
+                                  return (
+                                    <col
+                                      key={occurrence.occurrenceId}
+                                      style={{
+                                        width: `${columnCh}ch`,
+                                        minWidth: `${columnCh}ch`,
+                                        maxWidth: `${columnCh}ch`,
+                                      }}
+                                    />
+                                  );
+                                })}
+                              </colgroup>
+                              <thead>
+                                <tr>
+                                  <th
+                                    rowSpan={2}
+                                    className={cn(
+                                      "sticky left-0 top-0 z-20 border-b text-gray-200",
+                                      scheduleGridBottomBorderClassName,
+                                      schedulePositionColumnClassName,
+                                      scheduleStickyPositionColumnClassName,
+                                      scheduleCellPaddingClassName,
+                                      scheduleStickyRowTone(1),
+                                    )}
+                                  >
+                                    Position
+                                  </th>
+                                  {occurrencesByService.map((group) => (
                                     <th
-                                      rowSpan={2}
+                                      key={group.serviceId}
+                                      colSpan={group.occurrences.length}
                                       className={cn(
-                                        "sticky left-0 top-0 z-20 border-b text-gray-200",
-                                        scheduleGridBottomBorderClassName,
-                                        schedulePositionColumnClassName,
-                                        scheduleStickyPositionColumnClassName,
+                                        "border-b bg-gray-950 text-center font-semibold text-white",
+                                        scheduleServiceHeaderBottomBorderClassName,
+                                        scheduleServiceHeaderLeftBorderClassName,
                                         scheduleCellPaddingClassName,
-                                        scheduleStickyRowTone(1),
+                                        serviceHeaderRowTone,
                                       )}
                                     >
-                                      Position
-                                    </th>
-                                    {occurrencesByService.map((group) => (
-                                      <th
-                                        key={group.serviceId}
-                                        colSpan={group.occurrences.length}
-                                        className={cn(
-                                          "border-b bg-gray-950 text-center font-semibold text-white",
-                                          scheduleServiceHeaderBottomBorderClassName,
-                                          scheduleServiceHeaderLeftBorderClassName,
-                                          scheduleCellPaddingClassName,
-                                          serviceHeaderRowTone,
-                                        )}
-                                      >
-                                        <div className="flex flex-col items-center gap-0.5">
-                                          <span className="whitespace-nowrap">
-                                            {group.serviceName}
+                                      <div className="flex flex-col items-center gap-0.5">
+                                        <span className="whitespace-nowrap">
+                                          {group.serviceName}
+                                        </span>
+                                        {group.sharedTiming.sharedWeekday ||
+                                          group.sharedTiming.sharedTime ? (
+                                          <span className="font-normal text-gray-300">
+                                            {[
+                                              group.sharedTiming.sharedWeekday,
+                                              group.sharedTiming.sharedTime,
+                                            ]
+                                              .filter(Boolean)
+                                              .join(" ")}
                                           </span>
-                                          {group.sharedTiming.sharedWeekday ||
-                                            group.sharedTiming.sharedTime ? (
-                                            <span className="font-normal text-gray-300">
-                                              {[
-                                                group.sharedTiming.sharedWeekday,
-                                                group.sharedTiming.sharedTime,
-                                              ]
-                                                .filter(Boolean)
-                                                .join(" ")}
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                      </th>
-                                    ))}
-                                  </tr>
-                                  <tr>
-                                    {flatOccurrences.map(({ occurrence, group }) => (
-                                      <th
-                                        key={occurrence.occurrenceId}
-                                        className={cn(
-                                          "sticky top-0 z-10 border-b bg-gray-950 text-gray-200",
-                                          scheduleGridBottomBorderClassName,
-                                          scheduleGridLeftBorderClassName,
-                                          schedulePositionColumnClassName,
-                                          scheduleCellPaddingClassName,
-                                          nextUpcomingOccurrenceId === occurrence.occurrenceId &&
-                                          scheduleUpNextHeaderHighlightClassName,
-                                          getAxisHighlightClassName(occurrence.occurrenceId, undefined, {
-                                            surface: "header",
-                                          }),
-                                        )}
-                                      >
-                                        {renderUpNext(occurrence.occurrenceId)}
+                                        ) : null}
+                                      </div>
+                                    </th>
+                                  ))}
+                                </tr>
+                                <tr>
+                                  {flatOccurrences.map(({ occurrence, group }) => (
+                                    <th
+                                      key={occurrence.occurrenceId}
+                                      className={cn(
+                                        "sticky top-0 z-10 border-b bg-gray-950 text-gray-200",
+                                        scheduleGridBottomBorderClassName,
+                                        scheduleGridLeftBorderClassName,
+                                        schedulePositionColumnClassName,
+                                        scheduleCellPaddingClassName,
+                                        nextUpcomingOccurrenceId === occurrence.occurrenceId &&
+                                        scheduleUpNextHeaderHighlightClassName,
+                                        getAxisHighlightClassName(occurrence.occurrenceId, undefined, {
+                                          surface: "header",
+                                        }),
+                                      )}
+                                    >
+                                      {/* Keep "Add position" in the date header — not a fake assignment
+                                          row — so the position grid stays clean. */}
+                                      {renderUpNext(occurrence.occurrenceId)}
+                                      <div className="flex flex-col items-start gap-1">
                                         <ScheduleOccurrenceDateButton
                                           label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
                                           ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
-                                          className={cn(
-                                            detailOccurrenceId === occurrence.occurrenceId &&
-                                            "border-cyan-300 bg-cyan-500/20 text-white",
-                                          )}
-                                          onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
+                                          onClick={() => openServiceSummary(occurrence.occurrenceId)}
                                         />
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {scheduleColumns.map((column, columnIndex) => {
-                                    const PositionIcon = resolvePositionLucideIcon(column.position.icon);
-                                    const rowTone = scheduleRowTone(columnIndex);
-                                    const stickyTone = scheduleStickyRowTone(columnIndex);
-                                    return (
-                                      <tr
-                                        key={column.columnKey}
-                                        className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}
-                                      >
-                                        <th
-                                          className={cn(
-                                            "sticky left-0 z-10 align-middle",
-                                            scheduleGridRightBorderClassName,
-                                            schedulePositionColumnClassName,
-                                            scheduleStickyPositionColumnClassName,
-                                            scheduleCellPaddingClassName,
-                                            stickyTone,
-                                            getAxisHighlightClassName(undefined, column.columnKey, {
-                                              rowIndex: columnIndex,
-                                              surface: "sticky",
-                                            }),
-                                          )}
-                                        >
-                                          <span className="inline-flex min-w-0 max-w-full items-center gap-2">
-                                            {PositionIcon ? (
-                                              <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
-                                            ) : null}
-                                            <span className={cn(scheduleStickyPositionLabelClassName, "font-medium text-white")}>
-                                              {column.label}
-                                            </span>
-                                            {column.position.archivedAt ? (
-                                              <span className="shrink-0 text-xs text-gray-500">(archived)</span>
-                                            ) : null}
-                                          </span>
-                                        </th>
-                                        {flatOccurrences.map(({ occurrence }) => (
-                                          <ScheduleGridCell
-                                            key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
-                                            {...buildGridCellProps(occurrence, column, rowTone)}
-                                          />
-                                        ))}
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className={scheduleGridScrollClassName}>
-                            <div className={scheduleGridFrameClassName}>
-                              <table className="w-max border-collapse text-left text-sm table-auto">
-                                <colgroup>
-                                  <col style={{ minWidth: `${scheduleDateColumnMinCh}ch` }} />
-                                  {scheduleColumns.map((column) => {
-                                    const columnCh =
-                                      scheduleColumnMinCh.get(column.columnKey) ??
-                                      toScheduleColumnMinCh("Empty");
-                                    return (
-                                      <col
-                                        key={column.columnKey}
-                                        style={{
-                                          width: `${columnCh}ch`,
-                                          minWidth: `${columnCh}ch`,
-                                          maxWidth: `${columnCh}ch`,
-                                        }}
-                                      />
-                                    );
-                                  })}
-                                </colgroup>
-                                <thead>
-                                  <tr>
-                                    <th className={cn("sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName)}>
-                                      Date &amp; time
+                                        {renderAdditionalPositionMenu(occurrence.occurrenceId)}
+                                      </div>
                                     </th>
-                                    {scheduleColumns.map((column) => {
-                                      const PositionIcon = resolvePositionLucideIcon(column.position.icon);
-                                      return (
-                                        <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
-                                          <span className="inline-flex items-center gap-2">
-                                            {PositionIcon ? <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
-                                            <span>{column.label}</span>
-                                            {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {scheduleColumns.map((column, columnIndex) => {
+                                  const PositionIcon = resolvePositionLucideIcon(column.position.icon);
+                                  const rowTone = scheduleRowTone(columnIndex);
+                                  const stickyTone = scheduleStickyRowTone(columnIndex);
+                                  return (
+                                    <tr
+                                      key={column.columnKey}
+                                      className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}
+                                    >
+                                      <th
+                                        className={cn(
+                                          "sticky left-0 z-10 align-middle",
+                                          scheduleGridRightBorderClassName,
+                                          schedulePositionColumnClassName,
+                                          scheduleStickyPositionColumnClassName,
+                                          scheduleCellPaddingClassName,
+                                          stickyTone,
+                                          getAxisHighlightClassName(undefined, column.columnKey, {
+                                            rowIndex: columnIndex,
+                                            surface: "sticky",
+                                          }),
+                                        )}
+                                      >
+                                        <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+                                          {PositionIcon ? (
+                                            <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
+                                          ) : null}
+                                          <span className={cn(scheduleStickyPositionLabelClassName, "font-medium text-white")}>
+                                            {column.label}
                                           </span>
-                                        </th>
-                                      );
-                                    })}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {occurrencesByService.map((group, groupIndex) => {
-                                    const service = data.services.find((item) => item.serviceId === group.serviceId);
+                                          {column.position.archivedAt ? (
+                                            <span className="shrink-0 text-xs text-gray-500">(archived)</span>
+                                          ) : null}
+                                        </span>
+                                      </th>
+                                      {flatOccurrences.map(({ occurrence }) => (
+                                        <ScheduleGridCell
+                                          key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
+                                          {...buildGridCellProps(occurrence, column, rowTone)}
+                                        />
+                                      ))}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className={scheduleGridScrollClassName}>
+                          <div className={scheduleGridFrameClassName}>
+                            <table className="w-max border-collapse text-left text-sm table-auto">
+                              <colgroup>
+                                <col style={{ minWidth: `${scheduleDateColumnMinCh}ch` }} />
+                                {scheduleColumns.map((column) => {
+                                  const columnCh =
+                                    scheduleColumnMinCh.get(column.columnKey) ??
+                                    toScheduleColumnMinCh("Empty");
+                                  return (
+                                    <col
+                                      key={column.columnKey}
+                                      style={{
+                                        width: `${columnCh}ch`,
+                                        minWidth: `${columnCh}ch`,
+                                        maxWidth: `${columnCh}ch`,
+                                      }}
+                                    />
+                                  );
+                                })}
+                              </colgroup>
+                              <thead>
+                                <tr>
+                                  <th className={cn("sticky left-0 top-0 z-20 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName)}>
+                                    Date &amp; time
+                                  </th>
+                                  {scheduleColumns.map((column) => {
+                                    const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                     return (
-                                      <Fragment key={group.serviceId}>
-                                        <tr className={cn("border-t", scheduleServiceHeaderTopBorderClassName, serviceHeaderRowTone)}>
-                                          <th colSpan={scheduleColumns.length + 1} className={cn("p-0 text-left align-top", serviceHeaderRowTone)}>
-                                            <div
-                                              className={cn(
-                                                "sticky left-0 z-10 inline-flex w-max max-w-full flex-nowrap items-center gap-x-2 p-2 font-semibold text-white",
-                                              )}
-                                            >
-                                              <span className="shrink-0">{group.serviceName}</span>
-                                              {group.sharedTiming.sharedWeekday ? (
-                                                <span className="shrink-0 font-normal text-gray-300">
-                                                  {group.sharedTiming.sharedWeekday}
-                                                </span>
-                                              ) : null}
-                                              {group.sharedTiming.sharedTime ? (
-                                                <span className="shrink-0 font-normal text-gray-300">
-                                                  {group.sharedTiming.sharedTime}
-                                                </span>
-                                              ) : null}
-                                              {service?.archivedAt ? (
-                                                <span className="shrink-0 text-xs font-normal text-gray-500">Archived</span>
-                                              ) : null}
-                                            </div>
-                                          </th>
-                                        </tr>
-                                        {group.occurrences.map((occurrence, occurrenceIndex) => {
-                                          const rowIndex = occurrenceRowOffsets[groupIndex] + occurrenceIndex;
-                                          const rowTone = scheduleRowTone(rowIndex);
-                                          const stickyTone = scheduleStickyRowTone(rowIndex);
-                                          return (
-                                            <tr key={occurrence.occurrenceId} className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}>
+                                      <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
+                                        <span className="inline-flex items-center gap-2">
+                                          {PositionIcon ? <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
+                                          <span>{column.label}</span>
+                                          {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
+                                        </span>
+                                      </th>
+                                    );
+                                  })}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {occurrencesByService.map((group, groupIndex) => {
+                                  const service = data.services.find((item) => item.serviceId === group.serviceId);
+                                  return (
+                                    <Fragment key={group.serviceId}>
+                                      <tr className={cn("border-t", scheduleServiceHeaderTopBorderClassName, serviceHeaderRowTone)}>
+                                        <th colSpan={scheduleColumns.length + 1} className={cn("p-0 text-left align-top", serviceHeaderRowTone)}>
+                                          <div
+                                            className={cn(
+                                              "sticky left-0 z-10 inline-flex w-max max-w-full flex-nowrap items-center gap-x-2 p-2 font-semibold text-white",
+                                            )}
+                                          >
+                                            <span className="shrink-0">{group.serviceName}</span>
+                                            {group.sharedTiming.sharedWeekday ? (
+                                              <span className="shrink-0 font-normal text-gray-300">
+                                                {group.sharedTiming.sharedWeekday}
+                                              </span>
+                                            ) : null}
+                                            {group.sharedTiming.sharedTime ? (
+                                              <span className="shrink-0 font-normal text-gray-300">
+                                                {group.sharedTiming.sharedTime}
+                                              </span>
+                                            ) : null}
+                                            {service?.archivedAt ? (
+                                              <span className="shrink-0 text-xs font-normal text-gray-500">Archived</span>
+                                            ) : null}
+                                          </div>
+                                        </th>
+                                      </tr>
+                                      {group.occurrences.map((occurrence, occurrenceIndex) => {
+                                        const rowIndex = occurrenceRowOffsets[groupIndex] + occurrenceIndex;
+                                        const rowTone = scheduleRowTone(rowIndex);
+                                        const stickyTone = scheduleStickyRowTone(rowIndex);
+                                        return (
+                                          <Fragment key={occurrence.occurrenceId}>
+                                            <tr className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}>
                                               <th className={cn("sticky left-0 z-10 align-middle", scheduleGridRightBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName, stickyTone, nextUpcomingOccurrenceId === occurrence.occurrenceId && scheduleUpNextHeaderHighlightClassName, getAxisHighlightClassName(occurrence.occurrenceId, undefined, { rowIndex, surface: "sticky" }))}>
+                                                {/* Keep "Add position" with the date label — not a
+                                                    second bordered grid row. */}
                                                 {renderUpNext(occurrence.occurrenceId)}
-                                                <ScheduleOccurrenceDateButton
-                                                  label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
-                                                  ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
-                                                  className={cn(
-                                                    detailOccurrenceId === occurrence.occurrenceId &&
-                                                    "border-cyan-300 bg-cyan-500/20 text-white",
-                                                  )}
-                                                  onClick={() => openAttendanceForOccurrence(occurrence.occurrenceId)}
-                                                />
+                                                <div className="flex flex-col items-start gap-1">
+                                                  <ScheduleOccurrenceDateButton
+                                                    label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
+                                                    ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
+                                                    onClick={() => openServiceSummary(occurrence.occurrenceId)}
+                                                  />
+                                                  {renderAdditionalPositionMenu(occurrence.occurrenceId)}
+                                                </div>
                                               </th>
                                               {scheduleColumns.map((column) => (
                                                 <ScheduleGridCell
@@ -4087,127 +4082,122 @@ const ScheduleTab = ({
                                                 />
                                               ))}
                                             </tr>
-                                          );
-                                        })}
-                                      </Fragment>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
+                                          </Fragment>
+                                        );
+                                      })}
+                                    </Fragment>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
                           </div>
-                        )}
-                      </TabsContent>
-                      <TabsContent value="attendance" className={scheduleWorkspaceTabContentClassName}>
-                        <div className="scrollbar-variable overflow-y-auto max-lg:flex-none lg:min-h-0 lg:flex-1">
-                          {attendanceWorkspacePanel}
                         </div>
-                      </TabsContent>
+                      )}
                     </div>
-                    <ScheduleAssignmentPicker
-                      open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
-                      anchorEl={pickerAnchorEl}
-                      label={`${activeSlotMeta?.occurrenceName || ""} ${activeSlotMeta?.positionLabel || ""}`}
-                      positionId={activeSlotMeta?.positionId || ""}
-                      positionName={activeSlotMeta?.positionLabel || ""}
-                      members={activeTeamMembers}
-                      assignmentQuery={assignmentQuery}
-                      onAssignmentQueryChange={setAssignmentQuery}
-                      currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
-                      currentAssigneeLabel={activeSlotMeta?.currentAssigneeLabel || "Empty"}
-                      duplicateFirstNames={duplicateScheduleFirstNames}
-                      recommendationStats={activeSlotRecommendationStats}
-                      getIssue={activeSlotGetIssue}
-                      getAssignmentActionIssues={
-                        slotPickerMode === "replace"
-                          ? undefined
-                          : activeSlotGetAssignmentActionIssues
-                      }
-                      getWarning={activeSlotGetWarning}
-                      onSelectMember={handleActiveSlotMemberSelect}
-                      onAssignmentAction={handleActiveSlotAssignmentAction}
-                      swapRecommendations={activeSlotSwapRecommendations}
-                      onApplySwapRecommendation={(recommendation) =>
-                        void commitActiveSlotSwapRecommendation(recommendation)
-                      }
-                      onCreateMember={
-                        slotPickerMode === "replace"
-                          ? undefined
-                          : handleActiveSlotCreateMember
-                      }
-                      onClearAssignment={
-                        slotPickerMode === "replace"
-                          ? undefined
-                          : handleActiveSlotClearAssignment
-                      }
-                      currentShadows={activeSlotMeta?.currentShadows}
-                      onRemoveShadow={
-                        slotPickerMode === "replace"
-                          ? undefined
-                          : handleActiveSlotRemoveShadow
-                      }
-                      pendingSubmenu={pendingPickerSubmenu}
-                      inputRef={pickerInputRef}
-                    />
-                    <ScheduleMembersPanel
-                      open={membersPanelOpen}
-                      onOpenChange={setMembersPanelOpen}
-                      mode={canEdit && activeSlot ? "assign" : "browse"}
-                      activeTeamMembers={activeTeamMembers}
-                      schedulePositions={schedulePositions}
-                      scheduleStartDate={scheduleDateBounds.startDate}
-                      scheduleEndDate={scheduleDateBounds.endDate}
-                      scheduleAssignmentCounts={scheduleAssignmentCounts}
-                      recommendationStats={activeSlotRecommendationStats}
-                      duplicateFirstNames={duplicateScheduleFirstNames}
-                      highlightedMemberIdSet={highlightedMemberIdSet}
-                      onToggleHighlight={toggleHighlightedMember}
-                      memberPositionFilterIds={memberPositionFilterIds}
-                      onMemberPositionFilterChange={setMemberPositionFilterIds}
-                      membersPanelQuery={membersPanelQuery}
-                      onMembersPanelQueryChange={setMembersPanelQuery}
-                      assignmentQuery={assignmentQuery}
-                      onAssignmentQueryChange={setAssignmentQuery}
-                      slotContext={
-                        activeSlotMeta
-                          ? {
-                            positionLabel: activeSlotMeta.positionLabel,
-                            occurrenceLabel: activeSlotMeta.occurrenceLabel,
-                            currentAssigneeLabel: activeSlotMeta.currentAssigneeLabel,
-                            positionId: activeSlotMeta.positionId,
-                            currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
-                          }
-                          : undefined
-                      }
-                      onClearSlot={clearActiveSlot}
-                      onSelectMember={canEdit ? handleActiveSlotMemberSelect : () => undefined}
-                      getIssue={activeSlotGetIssue}
-                      getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
-                      getWarning={activeSlotGetWarning}
-                      canEditMember={canEditMember}
-                      onEditMember={handleEditMemberFromPanel}
-                    />
                   </div>
-                </ScheduleAssignmentProvider>
-                {canEdit ? (
-                  <SchedulePasteRowDialog
-                    open={pasteRowOpen}
-                    onOpenChange={setPasteRowOpen}
-                    occurrences={pasteRowOccurrenceOptions}
-                    columns={scheduleColumns}
+                  <ScheduleAssignmentPicker
+                    open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
+                    anchorEl={pickerAnchorEl}
+                    label={`${activeSlotMeta?.occurrenceName || ""} ${activeSlotMeta?.positionLabel || ""}`}
+                    positionId={activeSlotMeta?.positionId || ""}
+                    positionName={activeSlotMeta?.positionLabel || ""}
                     members={activeTeamMembers}
+                    assignmentQuery={assignmentQuery}
+                    onAssignmentQueryChange={setAssignmentQuery}
+                    currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
+                    currentAssigneeLabel={activeSlotMeta?.currentAssigneeLabel || "Empty"}
                     duplicateFirstNames={duplicateScheduleFirstNames}
-                    defaultOccurrenceId={
-                      activeSlot?.occurrenceId || detailOccurrenceId || undefined
+                    recommendationStats={activeSlotRecommendationStats}
+                    getIssue={activeSlotGetIssue}
+                    getAssignmentActionIssues={
+                      slotPickerMode === "replace"
+                        ? undefined
+                        : activeSlotGetAssignmentActionIssues
                     }
-                    getIssueForOccurrence={getIssueForOccurrence}
-                    onApply={(occurrenceId, entries) =>
-                      void commitRowAssignments(occurrenceId, entries)
+                    getWarning={activeSlotGetWarning}
+                    onSelectMember={handleActiveSlotMemberSelect}
+                    onAssignmentAction={handleActiveSlotAssignmentAction}
+                    swapRecommendations={activeSlotSwapRecommendations}
+                    onApplySwapRecommendation={(recommendation) =>
+                      void commitActiveSlotSwapRecommendation(recommendation)
                     }
+                    onCreateMember={
+                      slotPickerMode === "replace"
+                        ? undefined
+                        : handleActiveSlotCreateMember
+                    }
+                    onClearAssignment={
+                      slotPickerMode === "replace"
+                        ? undefined
+                        : handleActiveSlotClearAssignment
+                    }
+                    currentShadows={activeSlotMeta?.currentShadows}
+                    onRemoveShadow={
+                      slotPickerMode === "replace"
+                        ? undefined
+                        : handleActiveSlotRemoveShadow
+                    }
+                    pendingSubmenu={pendingPickerSubmenu}
+                    inputRef={pickerInputRef}
                   />
-                ) : null}
-              </section>
-            </Tabs>
+                  <ScheduleMembersPanel
+                    open={membersPanelOpen}
+                    onOpenChange={setMembersPanelOpen}
+                    mode={canEdit && activeSlot ? "assign" : "browse"}
+                    activeTeamMembers={activeTeamMembers}
+                    schedulePositions={schedulePositions}
+                    scheduleStartDate={scheduleDateBounds.startDate}
+                    scheduleEndDate={scheduleDateBounds.endDate}
+                    scheduleAssignmentCounts={scheduleAssignmentCounts}
+                    recommendationStats={activeSlotRecommendationStats}
+                    duplicateFirstNames={duplicateScheduleFirstNames}
+                    highlightedMemberIdSet={highlightedMemberIdSet}
+                    onToggleHighlight={toggleHighlightedMember}
+                    memberPositionFilterIds={memberPositionFilterIds}
+                    onMemberPositionFilterChange={setMemberPositionFilterIds}
+                    membersPanelQuery={membersPanelQuery}
+                    onMembersPanelQueryChange={setMembersPanelQuery}
+                    assignmentQuery={assignmentQuery}
+                    onAssignmentQueryChange={setAssignmentQuery}
+                    slotContext={
+                      activeSlotMeta
+                        ? {
+                          positionLabel: activeSlotMeta.positionLabel,
+                          occurrenceLabel: activeSlotMeta.occurrenceLabel,
+                          currentAssigneeLabel: activeSlotMeta.currentAssigneeLabel,
+                          positionId: activeSlotMeta.positionId,
+                          currentPrimaryMemberId: activeSlotMeta.currentPrimaryMemberId,
+                        }
+                        : undefined
+                    }
+                    onClearSlot={clearActiveSlot}
+                    onSelectMember={canEdit ? handleActiveSlotMemberSelect : () => undefined}
+                    getIssue={activeSlotGetIssue}
+                    getAssignmentActionIssues={activeSlotGetAssignmentActionIssues}
+                    getWarning={activeSlotGetWarning}
+                    canEditMember={canEditMember}
+                    onEditMember={handleEditMemberFromPanel}
+                  />
+                </div>
+              </ScheduleAssignmentProvider>
+              {canEdit ? (
+                <SchedulePasteRowDialog
+                  open={pasteRowOpen}
+                  onOpenChange={setPasteRowOpen}
+                  occurrences={pasteRowOccurrenceOptions}
+                  columns={scheduleColumns}
+                  members={activeTeamMembers}
+                  duplicateFirstNames={duplicateScheduleFirstNames}
+                  defaultOccurrenceId={
+                    activeSlot?.occurrenceId || detailOccurrenceId || undefined
+                  }
+                  getIssueForOccurrence={getIssueForOccurrence}
+                  onApply={(occurrenceId, entries) =>
+                    void commitRowAssignments(occurrenceId, entries)
+                  }
+                />
+              ) : null}
+            </section>
           ) : (
             <section className={panelClassName}>
               <div>
@@ -4216,25 +4206,137 @@ const ScheduleTab = ({
                   Team schedule
                 </h2>
                 <p className="mt-1 text-sm text-gray-400">
-                  Schedule members first, then switch to attendance when you are tracking one service.
+                  Select a date to view and copy that service&apos;s assignments.
                 </p>
               </div>
               <div className="mt-4">
-                {!selectedSchedule || !selectedTeam ? (
-                  <p className="rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300">
-                    Create a team, services, and a schedule to start assigning members.
-                  </p>
-                ) : (
-                  <p className="rounded-md border border-gray-700 bg-gray-950/50 p-4 text-sm text-gray-300">
-                    This schedule needs at least one service occurrence and one required
-                    position. Set position requirements on a service, or add positions to the team.
-                  </p>
-                )}
+                {/* Assignments for schedules outside the loaded window arrive on
+                    demand. Say so rather than dropping to an empty grid, which
+                    would read as "nobody is assigned". */}
+                {scheduleWorkspaceEmptyMessage}
               </div>
             </section>
           )}
         </>
       )}
+      <ScheduleBrowserDialog
+        isOpen={isBrowsingSchedules}
+        onClose={() => setIsBrowsingSchedules(false)}
+        schedules={schedules}
+        teams={data.teams}
+        selectedScheduleId={selectedScheduleId}
+        // Opens already narrowed to the team the picker is showing.
+        initialTeamId={scheduleTeamFilter || ""}
+        onSelectSchedule={(scheduleId) => {
+          setSelectedScheduleId(scheduleId);
+          setShowForm(false);
+        }}
+      />
+      <Modal
+        isOpen={Boolean(detailOccurrence)}
+        onClose={() => setDetailOccurrenceId(null)}
+        title={detailOccurrence?.name || "Service schedule"}
+        size="md"
+        description={
+          detailOccurrence
+            ? `Assignments for ${detailOccurrence.name} on ${formatOccurrenceTiming(detailOccurrence)}.`
+            : "Service assignments."
+        }
+        headerAction={
+          <Button
+            variant="tertiary"
+            svg={Clipboard}
+            iconSize="sm"
+            disabled={!detailMessage}
+            onClick={() => void copyDetailOccurrenceAssignments()}
+          >
+            Copy
+          </Button>
+        }
+      >
+        {detailOccurrence ? (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-400">
+              {formatOccurrenceTiming(detailOccurrence)}
+            </p>
+            {detailSummaryGroups.length === 0 ? (
+              <p className="rounded-md border border-gray-700 bg-gray-950/60 p-3 text-sm text-gray-300">
+                This service has no required positions for this date.
+              </p>
+            ) : (
+              <div className="rounded-md border border-gray-700 bg-gray-950/60 p-3">
+                <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2">
+                  {detailSummaryGroups.flatMap((group) => group.positions).map((position) => {
+                    const PositionIcon = resolvePositionLucideIcon(
+                      positionIconById.get(position.positionId),
+                    );
+                    const empty = position.members.length === 0;
+                    return (
+                      <Fragment key={position.positionId}>
+                        <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-white">
+                          {PositionIcon ? (
+                            <PositionIcon
+                              className="h-4 w-4 shrink-0 text-cyan-200"
+                              aria-hidden
+                            />
+                          ) : null}
+                          {position.name}:
+                        </span>
+                        <span
+                          className={cn(
+                            "min-w-0 text-sm",
+                            empty ? "italic text-amber-300/80" : "text-gray-200",
+                          )}
+                        >
+                          {empty
+                            ? OCCURRENCE_EMPTY_SLOT_LABEL
+                            : position.members.map(formatSummaryMemberToken).join(", ")}
+                        </span>
+                      </Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Modal>
+      <Modal
+        isOpen={Boolean(pendingBlockoutConfirmation)}
+        onClose={dismissBlockoutConfirmation}
+        title="Blocked-out date"
+        size="sm"
+        description="Confirm whether to schedule this member despite their blocked-out date."
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-200">
+            {pendingBlockoutMemberLabel} marked this date as blocked out.
+          </p>
+          <p className="text-sm text-gray-400">
+            Confirm that they are available before scheduling them.
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="tertiary"
+              onClick={dismissBlockoutConfirmation}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                const pending = pendingBlockoutConfirmation;
+                setPendingBlockoutConfirmation(null);
+                pending?.onConfirm();
+              }}
+            >
+              Schedule anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
       <Modal
         isOpen={Boolean(pendingCrossTeamConflict)}
         onClose={dismissCrossTeamConflict}

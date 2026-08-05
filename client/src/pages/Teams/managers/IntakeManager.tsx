@@ -43,6 +43,8 @@ import {
 } from "../teamsUtils";
 import { formatIntakeFormSaveToast } from "../teamsSaveToasts";
 import { cn } from "@/utils/cnHelper";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import {
   intakeSubmissionNeedsAction,
   selectIntakeExactMemberMatch,
@@ -161,6 +163,7 @@ const IntakeManager = ({
 }: IntakeManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
   const [draft, setDraft] = useState<TeamIntakeFormPayload>(emptyDraft);
   const [editing, setEditing] = useState<TeamIntakeForm | null>(null);
@@ -179,6 +182,23 @@ const IntakeManager = ({
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
+  const hasPendingChanges = editing
+    ? JSON.stringify(draft) !==
+      JSON.stringify({
+        name: editing.name,
+        startDate: editing.startDate,
+        endDate: editing.endDate,
+        availabilityServices: editing.availabilityServices || [],
+        availabilityOccurrences: editing.availabilityOccurrences || [],
+        teamIds: editing.teamIds || [],
+        active: editing.active,
+        welcomeMessage: editing.welcomeMessage || "",
+        positionsMessage: editing.positionsMessage || "",
+        availabilityMessage: editing.availabilityMessage || "",
+        notesMessage: editing.notesMessage || "",
+      })
+    : JSON.stringify(draft) !== JSON.stringify(emptyDraft());
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   const closePanel = () => {
     setSelectedForm(null);
@@ -1211,7 +1231,10 @@ const IntakeManager = ({
                   ) : null
                 }
                 canEdit={canEdit}
-                onTitleClick={() => openFormSubmissions(form)}
+                onTitleClick={() => {
+                  if (selectedForm?.formId === form.formId) return;
+                  requestDiscardAction(() => openFormSubmissions(form));
+                }}
               />
             ))}
           </>
@@ -1223,6 +1246,7 @@ const IntakeManager = ({
               saveLabel="Save form"
               onSave={() => void submit()}
               onCancel={cancelFormEdit}
+              hasPendingChanges={hasPendingChanges}
               disabled={!canEdit}
               isLoading={saving}
             />

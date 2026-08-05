@@ -5,11 +5,23 @@ import type {
   TeamSchedule,
   TeamService,
 } from "../../api/authTypes";
+import { isHydratedSchedule } from "../../api/authTypes";
 import {
   applyTeamEntityDeletionLocally,
   describeDeletionImpacts,
 } from "./teamsUtils";
 import type { TeamsData } from "./types";
+
+// `TeamsData.schedules` is a union of hydrated schedules and summaries. These
+// fixtures are hydrated; narrow so the assertions can read assignments.
+const assignmentsOf = (
+  schedule: TeamsData["schedules"][number],
+): TeamSchedule["assignments"] => {
+  if (!isHydratedSchedule(schedule)) {
+    throw new Error("expected a hydrated schedule fixture");
+  }
+  return schedule.assignments;
+};
 
 const position = (positionId: string, teamId: string, name = positionId): TeamPosition => ({
   positionId,
@@ -158,7 +170,7 @@ describe("describeDeletionImpacts", () => {
 });
 
 describe("applyTeamEntityDeletionLocally", () => {
-  it("removes a deleted member from teams, assignments, shadows, and attendance", () => {
+  it("removes a deleted member from teams, assignments, and shadows", () => {
     const data = buildData({
       members: [member("m1"), member("m2")],
       teams: [team("t1", "A", ["m1", "m2"])],
@@ -179,14 +191,7 @@ describe("applyTeamEntityDeletionLocally", () => {
               },
             },
           },
-          {
-            attendance: {
-              occ1: {
-                m1: { status: "absent" },
-                m2: { status: "present" },
-              },
-            },
-          },
+          {},
         ),
       ],
     });
@@ -195,12 +200,9 @@ describe("applyTeamEntityDeletionLocally", () => {
 
     expect(next.members.map((item) => item.memberId)).toEqual(["m2"]);
     expect(next.teams[0].memberIds).toEqual(["m2"]);
-    expect(next.schedules[0].assignments.occ1).toEqual({
+    expect(assignmentsOf(next.schedules[0]).occ1).toEqual({
       "camera::0": { shadows: [{ memberId: "m2", kind: "shadow" }] },
       "vocal::0": { primaryMemberId: "m2" },
-    });
-    expect(next.schedules[0].attendance?.occ1).toEqual({
-      m2: { status: "present" },
     });
   });
 
@@ -251,7 +253,7 @@ describe("applyTeamEntityDeletionLocally", () => {
     expect(next.members[0].positionIds).toEqual(["vocal"]);
     expect(next.members[0].teamMemberships).toEqual({});
     expect(next.members[0].qualifications).toEqual([]);
-    expect(next.schedules[0].assignments.occ1).toEqual({
+    expect(assignmentsOf(next.schedules[0]).occ1).toEqual({
       "vocal::0": { primaryMemberId: "m1" },
     });
   });

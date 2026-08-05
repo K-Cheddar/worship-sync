@@ -39,6 +39,7 @@ import EntityRow from "../components/EntityRow";
 import BlockoutDatesField from "../components/BlockoutDatesField";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
+  countMemberAssignmentsOnTeam,
   describeDeletionImpacts,
   memberMatchesListQuery,
   memberName,
@@ -55,6 +56,8 @@ import {
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import {
   countActiveMemberListFilters,
   emptyMemberListFilters,
@@ -64,9 +67,51 @@ import type { TeamsData } from "../types";
 
 const NO_SELECTION_VALUE = "__none";
 
+// Filter-chip id for positions whose team no longer exists.
+const NO_TEAM_GROUP_ID = "__no_team";
+
 // Key used to track an in-flight save for the create form, which has no member
 // id yet. Existing members are tracked by their own memberId.
 const CREATE_SAVING_KEY = "__create__";
+
+/**
+ * Membership lives on `team.memberIds`, so a member's teams have to be read off
+ * the team list rather than the member. A `teamMemberships` entry counts too:
+ * holding a role on a team is a form of belonging to it.
+ *
+ * Sorted so a draft built here compares cleanly against one the operator has
+ * been toggling, whose selection order is arbitrary.
+ */
+const readMemberTeamIds = (member: TeamRosterMember, teams: TeamRecord[]) =>
+  Array.from(
+    new Set([
+      ...teams
+        .filter((team) => (team.memberIds || []).includes(member.memberId))
+        .map((team) => team.teamId),
+      ...Object.keys(member.teamMemberships || {}),
+    ]),
+  ).sort();
+
+/**
+ * The editor's draft for a member, or a blank one for the create form. Kept in
+ * one place because the same shape is needed to seed the form, to reset it, and
+ * to decide whether anything is unsaved.
+ */
+const buildMemberDraft = (
+  member: TeamRosterMember | null,
+  teamIds: string[],
+): TeamRosterMemberPayload => ({
+  firstName: member?.firstName || "",
+  lastName: member?.lastName || "",
+  dateOfBirth: member?.dateOfBirth || "",
+  positionIds: member?.positionIds || [],
+  desiredPositionIds: member?.desiredPositionIds || [],
+  teamIds,
+  teamMemberships: member?.teamMemberships || {},
+  qualifications: member?.qualifications || [],
+  blockoutDates: member?.blockoutDates || [],
+  notes: member?.notes || "",
+});
 
 const qualificationStatusOptions: {
   value: TeamMemberQualificationStatus;
@@ -83,6 +128,8 @@ type MemberManagerProps = {
   data: TeamsData;
   canEdit: boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
+  /** Applies rosters the server changed by joining this member to a team. */
+  onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
   onRemoved: (memberId: string) => void;
 };
@@ -93,6 +140,7 @@ const MemberManager = ({
   data,
   canEdit,
   onSaved,
+  onTeamSaved,
   onArchived,
   onRemoved,
 }: MemberManagerProps) => {
@@ -103,17 +151,9 @@ const MemberManager = ({
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [draft, setDraft] = useState<TeamRosterMemberPayload>({
-    firstName: "",
-    lastName: "",
-    dateOfBirth: "",
-    positionIds: [],
-    desiredPositionIds: [],
-    teamMemberships: {},
-    qualifications: [],
-    blockoutDates: [],
-    notes: "",
-  });
+  const [draft, setDraft] = useState<TeamRosterMemberPayload>(() =>
+    buildMemberDraft(null, []),
+  );
   // Members with a save currently in flight, keyed by memberId (or
   // CREATE_SAVING_KEY for a new member). Tracking per-editor keeps the Save
   // spinner on the member actually saving and lets editing continue back-to-back
@@ -125,25 +165,24 @@ const MemberManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditMemberIdRef = useRef<string | null>(null);
 
-  const openMemberEditor = useCallback((member: TeamRosterMember) => {
-    setShowFilters(false);
-    setEditing(member);
-    setShowCreate(true);
-    setDraft({
-      firstName: member.firstName,
-      lastName: member.lastName,
-      dateOfBirth: member.dateOfBirth || "",
-      positionIds: member.positionIds || [],
-      desiredPositionIds: member.desiredPositionIds || [],
-      teamMemberships: member.teamMemberships || {},
-      qualifications: member.qualifications || [],
-      blockoutDates: member.blockoutDates || [],
-      notes: member.notes || "",
-    });
-  }, []);
+  const openMemberEditor = useCallback(
+    (member: TeamRosterMember) => {
+      setShowFilters(false);
+      setEditing(member);
+      setShowCreate(true);
+      setDraft(buildMemberDraft(member, readMemberTeamIds(member, data.teams)));
+    },
+    [data.teams],
+  );
+
+  const selectMember = useCallback((member: TeamRosterMember) => {
+    if (editing?.memberId === member.memberId) return;
+    requestDiscardAction(() => openMemberEditor(member));
+  }, [editing?.memberId, openMemberEditor, requestDiscardAction]);
 
   useEffect(() => {
     const editMemberId = searchParams.get(TEAMS_MEMBER_EDIT_SEARCH_PARAM)?.trim();
@@ -233,6 +272,11 @@ const MemberManager = ({
     () => new Map(data.qualificationAreas.map((area) => [area.areaId, area])),
     [data.qualificationAreas],
   );
+  // Teams the member belongs to right now, i.e. before anything in this draft.
+  const joinedTeamIds = useMemo(
+    () => (editing ? readMemberTeamIds(editing, data.teams) : []),
+    [data.teams, editing],
+  );
 
   const membersInListScope = useMemo(
     () =>
@@ -257,21 +301,13 @@ const MemberManager = ({
       ),
     [members, listQuery, listFilters, positionNameById, teamsById],
   );
+  const hasPendingFilterChanges =
+    JSON.stringify(draftListFilters) !== JSON.stringify(listFilters);
 
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({
-      firstName: "",
-      lastName: "",
-      dateOfBirth: "",
-      positionIds: [],
-      desiredPositionIds: [],
-      teamMemberships: {},
-      qualifications: [],
-      blockoutDates: [],
-      notes: "",
-    });
+    setDraft(buildMemberDraft(null, []));
   };
 
   const cancelEditing = () => {
@@ -322,6 +358,7 @@ const MemberManager = ({
       roleNameById: new Map(
         data.teamRoles.map((role) => [role.roleId, role.name]),
       ),
+      priorTeamIds: joinedTeamIds,
     });
     const localMemberId = wasEditing?.memberId || `local-member-${generateRandomId()}`;
     const optimisticMember: TeamRosterMember = {
@@ -349,6 +386,11 @@ const MemberManager = ({
       if (!wasEditing) {
         onSaved(response.member, localMemberId);
       }
+      // The server reconciles `team.memberIds` from the teams (and positions)
+      // this save asked for. Apply the rosters it changed now so the Teams tab
+      // and schedule reflect the join or removal right away, rather than
+      // waiting for the next poll.
+      response.teams?.forEach((team) => onTeamSaved(team));
       showToast(saveToastMessage, "success");
       // Cross-section return, or mobile where the form covers the list: close.
       // On desktop, keep the panel open for back-to-back editing.
@@ -385,6 +427,10 @@ const MemberManager = ({
   // disables it.
   const currentEditorKey = editing ? editing.memberId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
+  const hasPendingChanges =
+    JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
+    JSON.stringify(buildMemberDraft(editing, joinedTeamIds));
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
   const positionOptions = useMemo(
@@ -394,9 +440,24 @@ const MemberManager = ({
         label: position.name,
         sublabel: teamNameById.get(position.teamId) || "No team",
         archived: Boolean(position.archivedAt),
+        // Positions whose team is missing share one "No team" filter chip.
+        groupId: teamNameById.has(position.teamId)
+          ? position.teamId
+          : NO_TEAM_GROUP_ID,
       })),
     [positions, data.teams, teamNameById],
   );
+
+  // Team filter chips for the position pickers: same order as the list, and only
+  // teams that actually own a position.
+  const positionTeamFilters = useMemo(() => {
+    const labelById = new Map<string, string>();
+    positionOptions.forEach((option) => {
+      if (labelById.has(option.groupId)) return;
+      labelById.set(option.groupId, option.sublabel);
+    });
+    return Array.from(labelById, ([id, label]) => ({ id, label }));
+  }, [positionOptions]);
 
   // Positions the member asked for (intake) but is not yet eligible to be
   // scheduled for. Promoting one adds it to positionIds (the assignment gate).
@@ -408,33 +469,126 @@ const MemberManager = ({
     [draft.desiredPositionIds, draft.positionIds],
   );
 
-  const roleTeamIds = Array.from(
-    new Set([
-      ...(editing
-        ? data.teams
-          .filter((team) => (team.memberIds || []).includes(editing.memberId))
-          .map((team) => team.teamId)
-        : []),
-      ...Object.keys(draft.teamMemberships || {}),
-    ]),
+  const teamIdsForPositions = useCallback(
+    (positionIds: string[]) =>
+      Array.from(
+        new Set(
+          positionIds
+            .map((positionId) => positionTeamIdById.get(positionId))
+            .filter(Boolean) as string[],
+        ),
+      ),
+    [positionTeamIdById],
   );
-  const roleTeams = roleTeamIds
+
+  const draftTeamIds = useMemo(() => draft.teamIds || [], [draft.teamIds]);
+  // Membership is explicit now, so the teams that can hold a role are exactly
+  // the teams selected below — including ones a position just added.
+  const roleTeams = draftTeamIds
     .map((teamId) => data.teams.find((team) => team.teamId === teamId))
     .filter(Boolean) as TeamRecord[];
-  // Positions are team-scoped, so selecting one adds the member to that team's
-  // roster on save (see updateTeamRosterMember on the server). Surface the teams
-  // they'll newly join so the side effect isn't a surprise.
-  const teamsJoinedByPositions = (() => {
-    const alreadyOn = new Set(roleTeamIds);
-    const names = new Map<string, string>();
-    draft.positionIds.forEach((positionId) => {
-      const teamId = positionTeamIdById.get(positionId);
-      if (!teamId || alreadyOn.has(teamId) || names.has(teamId)) return;
-      const name = teamNameById.get(teamId);
-      if (name) names.set(teamId, name);
+
+  const teamNamesFor = useCallback(
+    (teamIds: string[]) =>
+      teamIds
+        .map((teamId) => teamNameById.get(teamId))
+        .filter(Boolean) as string[],
+    [teamNameById],
+  );
+  // Surface both directions so neither is a surprise on save.
+  const teamsBeingJoined = teamNamesFor(
+    draftTeamIds.filter((teamId) => !joinedTeamIds.includes(teamId)),
+  );
+  const teamIdsBeingLeft = joinedTeamIds.filter(
+    (teamId) => !draftTeamIds.includes(teamId),
+  );
+
+  /**
+   * Teams the member is still on but no longer has a position for, because this
+   * draft removed their last one. Membership is add-only on the server, so
+   * without a nudge here they would sit on the roster forever as an unassignable
+   * row. Deliberate roster-only membership is real (trainees, shadow assignees),
+   * so this offers the removal rather than doing it.
+   */
+  const teamsWithNoPositionsLeft = useMemo(() => {
+    if (!editing) return [];
+    const stillHasPosition = new Set(teamIdsForPositions(draft.positionIds));
+    return teamIdsForPositions(editing.positionIds || [])
+      .filter(
+        (teamId) =>
+          !stillHasPosition.has(teamId) &&
+          draftTeamIds.includes(teamId) &&
+          joinedTeamIds.includes(teamId),
+      )
+      .map((teamId) => ({
+        teamId,
+        name: teamNameById.get(teamId) || "this team",
+        assignmentCount: countMemberAssignmentsOnTeam(
+          editing.memberId,
+          teamId,
+          data.schedules,
+        ),
+      }));
+  }, [
+    data.schedules,
+    draft.positionIds,
+    draftTeamIds,
+    editing,
+    joinedTeamIds,
+    teamIdsForPositions,
+    teamNameById,
+  ]);
+
+  const teamOptions = useMemo(
+    () =>
+      data.teams.map((team) => ({
+        id: team.teamId,
+        label: team.name,
+        icon: team.icon,
+        archived: Boolean(team.archivedAt),
+      })),
+    [data.teams],
+  );
+
+  /**
+   * Applying a team selection keeps the draft self-consistent: leaving a team
+   * drops the positions and the role that only made sense while on it. Nothing
+   * is saved until Save, so this stays reversible with Cancel.
+   */
+  const applyTeamSelection = (teamIds: string[]) => {
+    setDraft((current) => {
+      const nextTeamIds = new Set(teamIds);
+      const teamMemberships = { ...(current.teamMemberships || {}) };
+      Object.keys(teamMemberships).forEach((teamId) => {
+        if (!nextTeamIds.has(teamId)) delete teamMemberships[teamId];
+      });
+      return {
+        ...current,
+        teamIds: [...teamIds].sort(),
+        positionIds: current.positionIds.filter((positionId) => {
+          const teamId = positionTeamIdById.get(positionId);
+          return !teamId || nextTeamIds.has(teamId);
+        }),
+        teamMemberships,
+      };
     });
-    return Array.from(names.values());
-  })();
+  };
+
+  /**
+   * Choosing a position joins its team: eligibility for a team's position is
+   * gated on belonging to that team, so the two cannot disagree. Unchecking a
+   * position deliberately does not leave the team — see
+   * `teamsWithNoPositionsLeft`.
+   */
+  const applyPositionSelection = (positionIds: string[]) => {
+    setDraft((current) => ({
+      ...current,
+      positionIds,
+      teamIds: Array.from(
+        new Set([...(current.teamIds || []), ...teamIdsForPositions(positionIds)]),
+      ).sort(),
+    }));
+  };
   const qualificationAreaOptions = data.qualificationAreas.map((area) => ({
     value: area.areaId,
     label: `${area.name}${teamNameById.get(area.teamId) ? ` (${teamNameById.get(area.teamId)})` : ""}`,
@@ -519,6 +673,7 @@ const MemberManager = ({
             saveLabel="Apply"
             onSave={applyFilters}
             onCancel={cancelFilters}
+            hasPendingChanges={hasPendingFilterChanges}
           />
         }
         list={
@@ -538,7 +693,7 @@ const MemberManager = ({
                 title={memberName(member)}
                 archived={Boolean(member.archivedAt)}
                 canEdit={canEdit}
-                onTitleClick={() => openMemberEditor(member)}
+                onTitleClick={() => selectMember(member)}
               />
             ))}
           </>
@@ -583,6 +738,7 @@ const MemberManager = ({
             saveLabel="Save member"
             onSave={() => void submit()}
             onCancel={cancelEditing}
+            hasPendingChanges={hasPendingChanges}
             disabled={
               !canEdit ||
               !draft.firstName.trim() ||
@@ -599,11 +755,22 @@ const MemberManager = ({
         </div>
         <DatePicker label="Date of birth" value={draft.dateOfBirth || ""} onChange={(dateOfBirth) => setDraft((d) => ({ ...d, dateOfBirth }))} />
         <EntityMultiSelect
+          label="Teams"
+          description="Rosters this member belongs to. Choosing a position below adds its team automatically."
+          options={teamOptions}
+          value={draftTeamIds}
+          onChange={applyTeamSelection}
+          emptyText="No teams yet."
+        />
+        <EntityMultiSelect
           label="Positions"
           description="Positions this member can be scheduled for."
           options={positionOptions}
+          groups={positionTeamFilters}
+          groupFilterLabel="Filter positions by team"
+          allGroupsLabel="All teams"
           value={draft.positionIds}
-          onChange={(positionIds) => setDraft((d) => ({ ...d, positionIds }))}
+          onChange={applyPositionSelection}
           renderOptionAction={
             canEdit
               ? (option) => {
@@ -629,15 +796,81 @@ const MemberManager = ({
               : undefined
           }
         />
-        {teamsJoinedByPositions.length > 0 ? (
+        {teamsBeingJoined.length > 0 ? (
           <p className="rounded-md border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
-            Saving will also add {draft.firstName.trim() || "this member"} to{" "}
+            Saving will add {draft.firstName.trim() || "this member"} to{" "}
             <span className="font-semibold">
-              {formatTeamJoinList(teamsJoinedByPositions)}
+              {formatTeamNameList(teamsBeingJoined)}
             </span>
             .
           </p>
         ) : null}
+        {teamIdsBeingLeft.length > 0 ? (
+          <div className="rounded-md border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+            <p>
+              Saving will remove {draft.firstName.trim() || "this member"} from{" "}
+              <span className="font-semibold">
+                {formatTeamNameList(teamNamesFor(teamIdsBeingLeft))}
+              </span>
+              .
+            </p>
+            {editing
+              ? teamIdsBeingLeft.map((teamId) => {
+                const assignmentCount = countMemberAssignmentsOnTeam(
+                  editing.memberId,
+                  teamId,
+                  data.schedules,
+                );
+                if (!assignmentCount) return null;
+                return (
+                  <p key={teamId} className="mt-1">
+                    They are still assigned{" "}
+                    {assignmentCount === 1
+                      ? "once"
+                      : `${assignmentCount} times`}{" "}
+                    on {teamNameById.get(teamId) || "that team"} schedules.
+                    Those assignments stay as they are.
+                  </p>
+                );
+              })
+              : null}
+          </div>
+        ) : null}
+        {teamsWithNoPositionsLeft.map((team) => (
+          <div
+            key={team.teamId}
+            className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3"
+          >
+            <p className="text-sm font-semibold text-amber-100">
+              No {team.name} positions left
+            </p>
+            <p className="mt-0.5 text-xs text-amber-100/80">
+              They stay on the {team.name} roster and can still be shadowed in.
+              {team.assignmentCount
+                ? ` They are assigned ${
+                  team.assignmentCount === 1
+                    ? "once"
+                    : `${team.assignmentCount} times`
+                } on ${team.name} schedules.`
+                : ""}
+            </p>
+            <div className="mt-2">
+              <Button
+                variant="secondary"
+                svg={X}
+                iconSize="sm"
+                padding="px-2 py-1"
+                onClick={() =>
+                  applyTeamSelection(
+                    draftTeamIds.filter((teamId) => teamId !== team.teamId),
+                  )
+                }
+              >
+                Remove from {team.name}
+              </Button>
+            </div>
+          </div>
+        ))}
         {desiredNotEligible.length > 0 ? (
           <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3">
             <p className="text-sm font-semibold text-amber-100">
@@ -656,10 +889,7 @@ const MemberManager = ({
                   iconSize="sm"
                   padding="px-2 py-1"
                   onClick={() =>
-                    setDraft((d) => ({
-                      ...d,
-                      positionIds: [...d.positionIds, positionId],
-                    }))
+                    applyPositionSelection([...draft.positionIds, positionId])
                   }
                 >
                   {positionNameById.get(positionId) || "Position"}
@@ -672,6 +902,9 @@ const MemberManager = ({
           label="Desired positions"
           description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
           options={positionOptions}
+          groups={positionTeamFilters}
+          groupFilterLabel="Filter desired positions by team"
+          allGroupsLabel="All teams"
           value={draft.desiredPositionIds || []}
           onChange={(desiredPositionIds) =>
             setDraft((d) => ({ ...d, desiredPositionIds }))
@@ -681,7 +914,7 @@ const MemberManager = ({
           <legend className="p-1 text-sm font-semibold">Team roles</legend>
           {roleTeams.length === 0 ? (
             <p className="text-sm text-gray-400">
-              Add this member to a team before assigning a team role.
+              Choose a team above to assign a team role.
             </p>
           ) : null}
           {roleTeams.map((team) => {
@@ -942,7 +1175,7 @@ const MemberManager = ({
   );
 };
 
-const formatTeamJoinList = (names: string[]) => {
+const formatTeamNameList = (names: string[]) => {
   if (names.length <= 1) return names.join("");
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;

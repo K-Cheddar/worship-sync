@@ -9,6 +9,7 @@ import type {
   TeamRosterMember,
   TeamSchedule,
   TeamScheduleShadowKind,
+  TeamScheduleSummary,
   TeamService,
 } from "../../api/authTypes";
 import type { TeamSchedulePayload } from "../../api/auth";
@@ -21,7 +22,12 @@ export type TeamsData = {
   qualificationAreas: TeamQualificationArea[];
   qualificationLevels: TeamQualificationLevel[];
   services: TeamService[];
-  schedules: TeamSchedule[];
+  /**
+   * Mixed hydration: schedules near today (and the one currently open) carry
+   * their assignment maps; the rest are summaries. Narrow with
+   * `isHydratedSchedule` before reading assignments — see `TeamScheduleSummary`.
+   */
+  schedules: (TeamSchedule | TeamScheduleSummary)[];
   intakeForms: TeamIntakeForm[];
   intakeSubmissions: TeamIntakeSubmission[];
 };

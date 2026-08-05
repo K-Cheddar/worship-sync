@@ -6,6 +6,7 @@ import type {
 import {
   buildScheduleMemberPickerMembers,
   computeLevelBalanceBoost,
+  getManualScheduleAssignmentIssue,
   getLowestLevelRank,
   getMemberQualificationLevelRank,
   isSelectableScheduleMember,
@@ -45,6 +46,13 @@ const members: TeamRosterMember[] = [
 const duplicateFirstNames = new Set<string>();
 
 describe("scheduleMemberPickerUtils", () => {
+  it("keeps blockouts selectable only in the manual scheduling flow", () => {
+    expect(getManualScheduleAssignmentIssue("Blocked out")).toBe("");
+    expect(getManualScheduleAssignmentIssue("Already assigned in this service")).toBe(
+      "Already assigned in this service",
+    );
+  });
+
   it("splits typed names into first and last", () => {
     expect(splitTypedMemberName("Jordan Van Buren")).toEqual({
       firstName: "Jordan",

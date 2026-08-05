@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import {
+  getTeamScheduleDetail,
   getTeamsBootstrap,
   reorderTeamPositions,
   type TeamSchedulePayload,
@@ -43,7 +44,12 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { SCHEDULE_DRAFT_PERSIST_DELAY_MS } from "../schedule/scheduleDraftUtils";
 import { normalizeTeamsForSelectors } from "../teamsSelectors";
 import { useTeamsLiveSync, type TeamsStreamEvent } from "./useTeamsLiveSync";
-import type { TeamSchedule } from "../../../api/authTypes";
+import {
+  isHydratedSchedule,
+  type TeamSchedule,
+  type TeamScheduleSummary,
+} from "../../../api/authTypes";
+import { scheduleDateRangesOverlap } from "../schedule/scheduleConflicts";
 
 // After a local optimistic edit, ignore inbound polls/pushes for this long so a
 // slightly-stale server snapshot (or an echo of our own change) can't revert it.
@@ -274,7 +280,7 @@ export const useTeamsPageState = () => {
     [],
   );
 
-  // Wrap an in-flight teams save (schedule assignments/attendance from the grid,
+  // Wrap an in-flight teams save (schedule assignments from the grid,
   // position reorders, …) so inbound sync stays gated until it settles: the
   // cooldown stays "hot" for the full drain of the serialized save queue, plus a
   // short tail after the last save lands. Also drives the toolbar autosave chip
@@ -367,6 +373,29 @@ export const useTeamsPageState = () => {
     [canEditAnyTeam, persistScheduleDrafts],
   );
 
+  // Schedules hydrated on demand this session, kept so a bootstrap refetch (which
+  // returns out-of-window schedules as summaries) doesn't blank the open grid.
+  const hydratedSchedulesRef = useRef(new Map<string, TeamSchedule>());
+
+  /**
+   * Re-applies retained hydration over a freshly fetched schedule list. Fresh
+   * summary fields win — only the assignment maps, which the summary omits, are
+   * carried over.
+   */
+  const withRetainedHydration = useCallback(
+    (schedules: (TeamSchedule | TeamScheduleSummary)[]) => {
+      if (hydratedSchedulesRef.current.size === 0) return schedules;
+      return schedules.map((schedule) => {
+        if (isHydratedSchedule(schedule)) return schedule;
+        const retained = hydratedSchedulesRef.current.get(schedule.scheduleId);
+        if (!retained) return schedule;
+        const { assignmentsOmitted: _omitted, ...freshSummary } = schedule;
+        return { ...retained, ...freshSummary };
+      });
+    },
+    [],
+  );
+
   const refreshInFlightRef = useRef(false);
   // Holds the in-flight bootstrap load so a concurrent/superseding refresh can
   // await it (and resolve `loading` off its result) instead of firing a
@@ -408,6 +437,7 @@ export const useTeamsPageState = () => {
       const response = await getTeamsBootstrap(churchId);
       if (churchIdRef.current !== churchId) return;
       const nextData = buildTeamsDataFromBootstrap(response);
+      nextData.schedules = withRetainedHydration(nextData.schedules);
       const nextSelectedScheduleId =
         selectedScheduleIdRef.current &&
         nextData.schedules.some(
@@ -445,7 +475,7 @@ export const useTeamsPageState = () => {
       bootstrapLoadRef.current = null;
       if (!isCancelled()) setLoading(false);
     }
-  }, [churchId, showToast]);
+  }, [churchId, showToast, withRetainedHydration]);
 
   useEffect(() => {
     let cancelled = false;
@@ -567,6 +597,7 @@ export const useTeamsPageState = () => {
       if (churchIdRef.current !== churchId) return;
       if (isLocalEditCoolingDown()) return;
       const nextData = buildTeamsDataFromBootstrap(response);
+      nextData.schedules = withRetainedHydration(nextData.schedules);
       const changedKeys = teamsDataKeys.filter(
         (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
       );
@@ -598,7 +629,171 @@ export const useTeamsPageState = () => {
     } finally {
       backgroundRefreshInFlightRef.current = false;
     }
-  }, [churchId, isLocalEditCoolingDown]);
+  }, [churchId, isLocalEditCoolingDown, withRetainedHydration]);
+
+  // Merge server-hydrated schedules over their summaries in place, keeping list
+  // order stable so the picker and grid don't reshuffle when hydration lands.
+  const mergeHydratedSchedules = useCallback(
+    (hydrated: TeamSchedule[]) => {
+      if (hydrated.length === 0) return;
+      const byId = new Map(
+        hydrated.map((schedule) => [schedule.scheduleId, schedule]),
+      );
+      hydrated.forEach((schedule) => {
+        hydratedSchedulesRef.current.set(schedule.scheduleId, schedule);
+      });
+      // A hydration response is remote data, not a local edit: applying it must
+      // not start the inbound-sync cooldown.
+      applyingRemoteRef.current = true;
+      try {
+        updateDataLocal((current) => {
+          let changed = false;
+          const schedules = current.schedules.map((schedule) => {
+            const next = byId.get(schedule.scheduleId);
+            if (!next) return schedule;
+            changed = true;
+            return next;
+          });
+          return changed ? { ...current, schedules } : current;
+        });
+      } finally {
+        applyingRemoteRef.current = false;
+      }
+    },
+    [updateDataLocal],
+  );
+
+  // Schedules whose hydration is already done or in flight, so re-selecting one
+  // (or a re-render) doesn't refetch. Cleared on church switch.
+  const hydratedScheduleIdsRef = useRef(new Set<string>());
+  const [hydratingScheduleId, setHydratingScheduleId] = useState("");
+  /** Ids `hydrateSchedules` is currently fetching, so a surface reading their
+   * cells can say "loading" instead of rendering an empty roster. */
+  const [hydratingScheduleIds, setHydratingScheduleIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    hydratedScheduleIdsRef.current = new Set<string>();
+  }, [churchId]);
+
+  /**
+   * Fetch assignment maps for schedules the bootstrap only summarized.
+   *
+   * The grid hydrates whatever schedule is open (below); this is for the
+   * surfaces that read one date's cells without opening a grid at all — the
+   * plan's "Who's serving" panel and its microphone rows. The hydration window
+   * is roughly a month back and two forward, so a plan outside it would
+   * otherwise render an empty roster that looks exactly like nobody being
+   * scheduled.
+   *
+   * Deduped through the same ref the grid uses, so opening a plan and then its
+   * schedule doesn't fetch twice. A failed id is released for a later retry.
+   */
+  const hydrateSchedules = useCallback(
+    async (scheduleIds: string[]) => {
+      const churchIdAtStart = churchIdRef.current;
+      const pending = scheduleIds.filter(
+        (scheduleId) =>
+          scheduleId && !hydratedScheduleIdsRef.current.has(scheduleId),
+      );
+      if (!pending.length || !churchIdAtStart) return;
+      pending.forEach((scheduleId) =>
+        hydratedScheduleIdsRef.current.add(scheduleId));
+      setHydratingScheduleIds((current) => [...current, ...pending]);
+      try {
+        const results = await Promise.allSettled(
+          pending.map((scheduleId) =>
+            getTeamScheduleDetail(churchIdAtStart, scheduleId)),
+        );
+        if (!isMountedRef.current || churchIdRef.current !== churchIdAtStart) {
+          return;
+        }
+        // One schedule failing must not discard the ones that arrived — a
+        // partly-loaded roster still beats a blank one.
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            hydratedScheduleIdsRef.current.delete(pending[index]);
+          }
+        });
+        mergeHydratedSchedules(
+          results.flatMap((result) =>
+            result.status === "fulfilled"
+              ? [result.value.schedule, ...(result.value.relatedSchedules || [])]
+              : []),
+        );
+        if (results.some((result) => result.status === "rejected")) {
+          showToast("Could not load this date's assignments.", "error");
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setHydratingScheduleIds((current) =>
+            current.filter((scheduleId) => !pending.includes(scheduleId)));
+        }
+      }
+    },
+    [mergeHydratedSchedules, showToast],
+  );
+
+  // Hydrate the open schedule on demand. The bootstrap only ships assignment
+  // maps for schedules near today, so opening an older or further-out one
+  // fetches its cells — plus the overlapping other-team schedules the grid needs
+  // for cross-team conflict warnings. Even when the open schedule was included
+  // in full, fetch its detail if an overlapping other-team schedule is only a
+  // summary: Auto-fill must not plan with incomplete conflict data.
+  useEffect(() => {
+    if (!churchId || !selectedScheduleId) return undefined;
+    if (hydratedScheduleIdsRef.current.has(selectedScheduleId)) return undefined;
+    const selected = data.schedules.find(
+      (schedule) => schedule.scheduleId === selectedScheduleId,
+    );
+    if (!selected) return undefined;
+    const hasUnhydratedOverlappingTeamSchedule = data.schedules.some(
+      (schedule) =>
+        schedule.scheduleId !== selected.scheduleId &&
+        schedule.teamId !== selected.teamId &&
+        !schedule.archivedAt &&
+        !isHydratedSchedule(schedule) &&
+        scheduleDateRangesOverlap(selected, schedule),
+    );
+    if (
+      isHydratedSchedule(selected) &&
+      !hasUnhydratedOverlappingTeamSchedule
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    hydratedScheduleIdsRef.current.add(selectedScheduleId);
+    setHydratingScheduleId(selectedScheduleId);
+    (async () => {
+      try {
+        const response = await getTeamScheduleDetail(churchId, selectedScheduleId);
+        if (cancelled || !isMountedRef.current) return;
+        if (churchIdRef.current !== churchId) return;
+        mergeHydratedSchedules([
+          response.schedule,
+          ...(response.relatedSchedules || []),
+        ]);
+      } catch (error) {
+        // Allow a retry on the next selection rather than stranding the grid on
+        // a summary forever.
+        hydratedScheduleIdsRef.current.delete(selectedScheduleId);
+        if (cancelled || !isMountedRef.current) return;
+        showApiErrorToast(showToast, error, "Could not load this schedule.");
+      } finally {
+        if (!cancelled && isMountedRef.current) setHydratingScheduleId("");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    churchId,
+    data.schedules,
+    mergeHydratedSchedules,
+    selectedScheduleId,
+    showToast,
+  ]);
 
   // Run a guarded background refresh once the local-edit cooldown clears. Used
   // when a live event arrives mid-edit and we defer applying it.
@@ -727,6 +922,11 @@ export const useTeamsPageState = () => {
     normalizedPageData,
     servicePlansRevision,
     selectedScheduleId,
+    /** Non-empty while the open schedule's assignments are being fetched. */
+    hydratingScheduleId,
+    hydrateSchedules,
+    /** Ids `hydrateSchedules` is fetching right now. */
+    hydratingScheduleIds,
     scheduleDrafts,
     upsertData,
     removeData,

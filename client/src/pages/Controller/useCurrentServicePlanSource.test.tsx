@@ -45,13 +45,17 @@ jest.mock("../Teams/hooks/useTeamsLiveSync", () => ({
   },
 }));
 
-// Occurrence selection has its own coverage in currentServiceWorkspaceUtils.test.ts.
+// Occurrence selection has its own coverage in currentServiceWorkspaceUtils.test.ts
+// and useCurrentServiceOccurrence.test.tsx.
 jest.mock("./currentServiceWorkspaceUtils", () => ({
   listCurrentServiceOccurrences: () => [mockOccurrence, mockOtherOccurrence],
-  findCurrentServiceOccurrence: () => mockOccurrence,
+  pickCurrentServiceOccurrence: () => mockOccurrence,
 }));
 
 jest.mock("../Teams/pages/teamsAssignmentsSummary", () => ({
+  // The bootstrap fixture below ships fully-hydrated schedules, so on-demand
+  // hydration has nothing to fetch — see hydrateOccurrenceSchedules.test.ts.
+  getUnhydratedOccurrenceScheduleIds: () => [],
   getOccurrenceAssignmentSummary: () => [
     {
       teamId: "team-1",

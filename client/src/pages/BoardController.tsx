@@ -243,8 +243,11 @@ export const BoardControllerContent = () => {
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
   );
   const restreamSession = useRestreamSession(churchId || "");
-  const { session: restreamSessionData, reload: reloadRestreamSession } =
-    restreamSession;
+  const {
+    session: restreamSessionData,
+    isLoading: isRestreamSessionLoading,
+    reload: reloadRestreamSession,
+  } = restreamSession;
   const [currentBoardHighlightedCount, setCurrentBoardHighlightedCount] =
     useState(0);
 
@@ -500,16 +503,6 @@ export const BoardControllerContent = () => {
     [pullFromRemote, showToast],
   );
 
-  const handleStartFreshSession = useCallback(() => {
-    if (!selectedAlias) return;
-    const aliasId = selectedAlias.aliasId;
-    void runAction(async () => {
-      await hardResetBoardAlias(aliasId);
-      setSelectedBoardId("");
-      showToast("Started a fresh session for today.", "success");
-    });
-  }, [selectedAlias, runAction, showToast]);
-
   const handleConfirmRestreamReset = useCallback(async () => {
     if (!churchId) return;
     try {
@@ -552,19 +545,15 @@ export const BoardControllerContent = () => {
     }
   }, [selectedAlias, churchId, reloadRestreamSession, showToast, pullFromRemote]);
 
-  // Prompt (never force) a fresh start when the current board and/or Restream
-  // chat only hold content from an earlier day — leftover activity with nothing
-  // new today. Keyed on post/message activity, not creation time, so a session
-  // that's actively collecting today's activity is never flagged. When both are
-  // stale at once they're combined into a single toast with a single action;
-  // confirming opens one combined confirm dialog that resets both together,
-  // rather than archiving the board immediately and then asking a second time
-  // about Restream. Restream chat clears are permanent, so a solo Restream
-  // reset still opens a confirm dialog rather than clearing straight from the
-  // toast.
+  // Prompt (never force) a fresh start when either the current board or
+  // Restream chat only holds content from an earlier day. Wait for both sources
+  // to load before prompting so a board-only prompt cannot appear before a
+  // stale Restream session is known. Confirming always resets both sources,
+  // giving the operator one explicit fresh-start action.
   useEffect(() => {
+    if (isLoading || isRestreamSessionLoading) return;
+
     const boardIsStale =
-      !isLoading &&
       isViewingCurrent &&
       !!currentBoard &&
       boardHasOnlyPreviousDayPosts(posts);
@@ -587,67 +576,38 @@ export const BoardControllerContent = () => {
       promptedRestreamResetSessionIdsRef.current.add(staleSessionId);
     }
 
-    let prompt: {
-      message: string;
-      keepLabel: string;
-      confirmLabel: string;
-      onConfirm: () => void;
-    } | null = null;
-
-    if (promptBoard && promptRestream) {
-      prompt = {
-        message:
-          "This board and Restream chat only have posts from an earlier day. Start fresh for today?",
-        keepLabel: "Keep both",
-        confirmLabel: "Start fresh for today",
-        onConfirm: () => setCombinedResetConfirmOpen(true),
-      };
-    } else if (promptBoard) {
-      prompt = {
-        message:
-          "This board only has posts from an earlier day. Start a fresh session for today?",
-        keepLabel: "Keep this session",
-        confirmLabel: "Start fresh session",
-        onConfirm: handleStartFreshSession,
-      };
-    } else if (promptRestream) {
-      prompt = {
-        message: "Restream chat is from an earlier day. Clear it for today?",
-        keepLabel: "Keep chat",
-        confirmLabel: "Clear Restream chat",
-        onConfirm: () => setRestreamResetConfirmOpen(true),
-      };
-    }
-
-    if (!prompt) return;
-    const resolvedPrompt = prompt;
+    const staleSources = [
+      promptBoard ? "board" : "",
+      promptRestream ? "Restream chat" : "",
+    ].filter(Boolean);
+    const sourceLabel = staleSources.join(" and ");
 
     showToast({
-      message: resolvedPrompt.message,
+      message: `Earlier-day comments are still in the ${sourceLabel}. Start fresh for today?`,
       variant: "info",
       duration: 15000,
       showCloseButton: false,
       children: (toastId) => (
         <SessionResetToastAction
-          keepLabel={resolvedPrompt.keepLabel}
-          confirmLabel={resolvedPrompt.confirmLabel}
+          keepLabel="Keep current session"
+          confirmLabel="Start fresh for today"
           onKeep={() => removeToast(toastId)}
           onConfirm={() => {
             removeToast(toastId);
-            resolvedPrompt.onConfirm();
+            setCombinedResetConfirmOpen(true);
           }}
         />
       ),
     });
   }, [
     isLoading,
+    isRestreamSessionLoading,
     isViewingCurrent,
     currentBoard,
     posts,
     restreamSessionData,
     showToast,
     removeToast,
-    handleStartFreshSession,
   ]);
 
   const runPostAction = useCallback(

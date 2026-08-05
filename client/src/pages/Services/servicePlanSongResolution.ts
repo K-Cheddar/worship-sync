@@ -15,7 +15,11 @@
  * deleted.
  */
 import { findBestSongMatchByName } from "../../integrations/servicePlanning/findServicePlanningSongMatch";
-import type { ServicePlanSection, ServicePlanSongReference } from "../../types/servicePlan";
+import {
+  getServicePlanElementSongRefs,
+  type ServicePlanSection,
+  type ServicePlanSongReference,
+} from "../../types/servicePlan";
 
 /**
  * The reference to use for a plan element right now — the stored one, unless a
@@ -47,14 +51,21 @@ export const resolveServicePlanSongRef = <T extends { _id: string; name: string 
 export const resolveServicePlanSongRefs = <T extends { _id: string; name: string }>(
   sections: ServicePlanSection[] | null | undefined,
   songs: T[],
-): ReadonlyMap<string, ServicePlanSongReference> => {
-  const resolved = new Map<string, ServicePlanSongReference>();
+): ReadonlyMap<string, ServicePlanSongReference[]> => {
+  const resolved = new Map<string, ServicePlanSongReference[]>();
   if (!sections?.length || !songs.length) return resolved;
 
   for (const section of sections) {
     for (const element of section.elements) {
-      const next = resolveServicePlanSongRef(element.songRef, songs);
-      if (next && next !== element.songRef) resolved.set(element.id, next);
+      const storedRefs = getServicePlanElementSongRefs(element);
+      // Only an absent reference resolves to `undefined`, and a stored list
+      // never holds one, so this keeps the resolved list non-optional.
+      const nextRefs = storedRefs.map(
+        (songRef) => resolveServicePlanSongRef(songRef, songs) ?? songRef,
+      );
+      if (nextRefs.some((songRef, index) => songRef !== storedRefs[index])) {
+        resolved.set(element.id, nextRefs);
+      }
     }
   }
   return resolved;

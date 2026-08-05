@@ -21,10 +21,25 @@ export type ServiceFlowProgress = {
   isAdjusted: boolean;
 };
 
+/**
+ * Item times chain forward from the first item, not from the service's
+ * advertised start: a plan can open with pre-service items that run before it
+ * (9:45 call time on a 10:00 service). Anchoring at `startsAt` in that case
+ * would shift every item later by the gap.
+ */
+export const getServiceFlowTimelineStartMs = (
+  service: PublicServiceFlow,
+): number => {
+  const timelineStartMs = Date.parse(service.timelineStartsAt || "");
+  return Number.isFinite(timelineStartMs)
+    ? timelineStartMs
+    : Date.parse(service.startsAt);
+};
+
 export const getTimedServiceFlowItems = (
   service: PublicServiceFlow,
 ): TimedServiceFlowItem[] => {
-  let startsAtMs = Date.parse(service.startsAt);
+  let startsAtMs = getServiceFlowTimelineStartMs(service);
   const anchorItemIndex = service.live.mode === "anchored"
     ? service.sections.flatMap((section) => section.items).findIndex(
       (item) => item.id === service.live.currentItemId,
@@ -94,7 +109,7 @@ export const getServiceFlowProgress = (
   ) {
     scheduled = items[anchoredItemIndex];
   }
-  const plannedStartMs = Date.parse(service.startsAt);
+  const plannedStartMs = getServiceFlowTimelineStartMs(service);
   // A Make live anchor restarts the timeline at its selected item. The service
   // status must use that same boundary; otherwise an early anchor would still
   // read as upcoming until the originally planned start time.

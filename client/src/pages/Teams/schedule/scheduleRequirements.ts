@@ -32,7 +32,7 @@ export const parseSlotKey = (
   return { positionId: base, slot };
 };
 
-/** Drop blank/zero entries, clamp counts to >= 1, and dedupe by position. */
+/** Drop blank/zero entries and dedupe by position. */
 export const sanitizePositionRequirements = (
   value?: PositionRequirement[] | null,
 ): PositionRequirement[] => {
@@ -126,27 +126,48 @@ export const computeOccurrenceFill = (
 
 /**
  * Build the union of slot columns across every occurrence. A position gets as many
- * columns as the largest count any occurrence requires; occurrences that need
- * fewer leave the extra slots inactive in the grid. Column order follows the
+ * columns as the largest core requirement, plus any additional slots actually
+ * added to a date. Unused positions intentionally stay out of view.
+ * Column order follows the
  * team's position order, with any extra required positions appended.
  */
 export const buildScheduleColumns = ({
   occurrences,
   requirementsByOccurrence,
+  additionalPositionSlots,
   positions,
   teamPositionIds,
 }: {
   occurrences: { occurrenceId: string }[];
   requirementsByOccurrence: Map<string, PositionRequirement[]>;
+  additionalPositionSlots?: Record<string, string[]>;
   positions: TeamPosition[];
   teamPositionIds: string[];
 }): ScheduleSlotColumn[] => {
   const maxCountByPosition = new Map<string, number>();
   occurrences.forEach((occurrence) => {
-    (requirementsByOccurrence.get(occurrence.occurrenceId) || []).forEach((req) => {
+    const requirements = requirementsByOccurrence.get(occurrence.occurrenceId) || [];
+    requirements.forEach((req) => {
       maxCountByPosition.set(
         req.positionId,
         Math.max(maxCountByPosition.get(req.positionId) || 0, req.count),
+      );
+    });
+    const requirementByPosition = new Map(
+      requirements.map((requirement) => [requirement.positionId, requirement]),
+    );
+    (additionalPositionSlots?.[occurrence.occurrenceId] || []).forEach((slotKey) => {
+      const slot = parseSlotKey(slotKey);
+      const requirement = slot && requirementByPosition.get(slot.positionId);
+      if (
+        !slot ||
+        slot.slot < (requirement?.count || 0)
+      ) {
+        return;
+      }
+      maxCountByPosition.set(
+        slot.positionId,
+        Math.max(maxCountByPosition.get(slot.positionId) || 0, slot.slot + 1),
       );
     });
   });

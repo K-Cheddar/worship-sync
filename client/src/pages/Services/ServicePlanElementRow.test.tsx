@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DndContext } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -7,10 +7,12 @@ import ServicePlanElementRow, {
   getServicePlanElementSurfaceClassName,
   richTextOneLinePreview,
   type ServicePlanRoleNoteOption,
+  type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
 import { plainTextToRichText } from "../../types/richText";
 import type {
   ServicePlanElement,
+  ServicePlanMicrophone,
   ServicePlanSongReference,
 } from "../../types/servicePlan";
 
@@ -125,11 +127,14 @@ const renderRow = (
     hideNotes?: boolean;
     teamNotesFilter?: string;
     roleNotesFilter?: string;
+    teamNoteOptions?: ServicePlanTeamNoteOption[];
     roleNoteOptions?: ServicePlanRoleNoteOption[];
     onUpdate?: jest.Mock;
     onViewSongLyrics?: jest.Mock;
     canCreateLibrarySong?: boolean;
     resolvedSongRef?: ServicePlanSongReference;
+    microphones?: ServicePlanMicrophone[];
+    scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
   } = {},
 ) => {
   const element = overrides.element ?? baseElement;
@@ -157,10 +162,13 @@ const renderRow = (
           hideNotes={overrides.hideNotes}
           teamNotesFilter={overrides.teamNotesFilter}
           roleNotesFilter={overrides.roleNotesFilter}
+          teamNoteOptions={overrides.teamNoteOptions}
           roleNoteOptions={overrides.roleNoteOptions}
           onViewSongLyrics={overrides.onViewSongLyrics}
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
+          microphones={overrides.microphones}
+          scheduledMicrophoneHolders={overrides.scheduledMicrophoneHolders}
         />
       </SortableContext>
     </DndContext>,
@@ -191,7 +199,7 @@ describe("ServicePlanElementRow", () => {
 
   it("collapses attachment actions into one Add menu with colored options", async () => {
     const user = userEvent.setup();
-    renderRow();
+    renderRow({ teamNoteOptions: [{ teamId: "band", label: "Band" }] });
 
     expect(screen.queryByRole("button", { name: /Add song/i })).not.toBeInTheDocument();
     await user.click(
@@ -206,6 +214,57 @@ describe("ServicePlanElementRow", () => {
     ).toBeInTheDocument();
   });
 
+  // Covers the menu-to-popover handoff: picking Scripture should leave the
+  // operator able to type a reference straight away. (jsdom can't reproduce the
+  // dismissal this flow is prone to — see the `modal` note on the popover.)
+  it("hands focus to the reference field when scripture opens from the Add menu", async () => {
+    const user = userEvent.setup();
+    renderRow();
+
+    await user.click(
+      screen.getByRole("button", { name: /Add to Pastoral Greetings/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /^Scripture$/i }));
+
+    const field = await screen.findByLabelText(/Scripture reference/i);
+    expect(field).toHaveFocus();
+  });
+
+  // Attaching scripture clears the legacy singular `songRef` as part of moving
+  // the element onto the arrays. It has to write `songRefs` in the same update
+  // or the merged element ends up with no song at all.
+  it("keeps a legacy single song when scripture is attached", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        type: "song",
+        songRef: { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Add to Pastoral Greetings/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /^Scripture$/i }));
+    await user.type(
+      await screen.findByLabelText(/Scripture reference/i),
+      "John 3:16",
+    );
+    await user.click(screen.getByRole("button", { name: /Attach scripture/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        songRef: undefined,
+        songRefs: [
+          { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+        ],
+      }),
+    );
+  });
+
   it("adds a role note using the selected Teams position", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
@@ -213,7 +272,7 @@ describe("ServicePlanElementRow", () => {
       onUpdate,
       roleNoteOptions: [{
         positionId: "camera",
-        label: "Media Team · Camera",
+        label: "Camera",
         teamId: "media",
         teamName: "Media Team",
       }],
@@ -224,18 +283,48 @@ describe("ServicePlanElementRow", () => {
 
     expect(onUpdate).not.toHaveBeenCalled();
 
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "Media Team · Camera" }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "Camera" }));
 
     expect(onUpdate).toHaveBeenCalledWith({
       teamNotes: [
         expect.objectContaining({
           scope: "role",
-          positionId: "camera",
-          label: "Media Team · Camera",
-          teamId: "media",
-          teamName: "Media Team",
+          positionIds: ["camera"],
+          label: "Camera",
+          teamIds: ["media"],
+          teamNames: ["Media Team"],
         }),
       ],
+    });
+  });
+
+  it("keeps every song and scripture attachment visible and removable", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        songRefs: [
+          { kind: "library", songId: "song-1", songName: "Opening Song" },
+          { kind: "library", songId: "song-2", songName: "Response Song" },
+        ],
+        scriptureRefs: [
+          { label: "Psalm 100", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+          { label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" },
+        ],
+      },
+    });
+
+    expect(screen.getByText("Opening Song")).toBeInTheDocument();
+    expect(screen.getByText("Response Song")).toBeInTheDocument();
+    expect(screen.getByText("Psalm 100")).toBeInTheDocument();
+    expect(screen.getByText("John 3:16")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove song Response Song" }));
+    expect(onUpdate).toHaveBeenCalledWith({
+      songRef: undefined,
+      songRefs: [{ kind: "library", songId: "song-1", songName: "Opening Song" }],
     });
   });
 
@@ -298,7 +387,8 @@ describe("ServicePlanElementRow", () => {
 
     await user.click(screen.getByRole("button", { name: /Expand notes/i }));
     expect(await screen.findByRole("textbox", { name: "Notes" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Text size" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "More formatting" }),
     ).toBeInTheDocument();
@@ -312,7 +402,7 @@ describe("ServicePlanElementRow", () => {
 
     await user.click(screen.getByRole("button", { name: /Expand Band/i }));
     expect(await screen.findByRole("textbox", { name: /Band note/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Team note label/i)).toHaveValue("Band");
+    expect(screen.getByLabelText(/Team note audience/i)).toBeInTheDocument();
   });
 
   it("hides shared and team notes when hideNotes is set", async () => {
@@ -410,6 +500,73 @@ describe("ServicePlanElementRow", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows selected role names on the audience trigger and marks them in the menu", async () => {
+    const user = userEvent.setup();
+    const roleNoteOptions: ServicePlanRoleNoteOption[] = [
+      {
+        positionId: "lead-coordinator",
+        label: "Coordinators · Lead Coordinator",
+        teamId: "coordinators",
+        teamName: "Coordinators",
+      },
+      {
+        positionId: "camera",
+        label: "Media Team · Camera",
+        teamId: "media",
+        teamName: "Media Team",
+      },
+      {
+        positionId: "director",
+        label: "Media Team · Director",
+        teamId: "media",
+        teamName: "Media Team",
+      },
+    ];
+
+    renderRow({
+      roleNoteOptions,
+      element: {
+        ...baseElement,
+        teamNotes: [
+          {
+            id: "role-note",
+            scope: "role",
+            positionIds: ["lead-coordinator", "camera"],
+            label: "Coordinators · Lead Coordinator, Media Team · Camera",
+            note: plainTextToRichText("Cue camera two."),
+          },
+        ],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Expand Lead Coordinator, Camera/i,
+      }),
+    );
+
+    const audienceTrigger = screen.getByRole("button", {
+      name: /Role note audiences: Lead Coordinator, Camera/i,
+    });
+    expect(audienceTrigger).toHaveTextContent("Lead Coordinator, Camera");
+    expect(audienceTrigger).not.toHaveTextContent(/2 roles/i);
+
+    await user.click(audienceTrigger);
+
+    expect(screen.getByRole("button", { name: "Lead Coordinator" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Camera" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Director" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
   it("renders a compact read-only row in view mode", () => {
     renderRow({
       isEditing: false,
@@ -461,6 +618,39 @@ describe("ServicePlanElementRow", () => {
     expect(onUpdate).not.toHaveBeenCalled();
   });
 
+  it("opens lyrics from each song badge when an element has multiple songs", async () => {
+    const user = userEvent.setup();
+    const onViewSongLyrics = jest.fn();
+    const openingSong = {
+      kind: "library" as const,
+      songId: "song-1",
+      songName: "Opening Song",
+    };
+    const responseSong = {
+      kind: "library" as const,
+      songId: "song-2",
+      songName: "Response Song",
+    };
+
+    renderRow({
+      onViewSongLyrics,
+      element: {
+        ...baseElement,
+        songRefs: [openingSong, responseSong],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /View lyrics for Opening Song/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /View lyrics for Response Song/i }),
+    );
+
+    expect(onViewSongLyrics).toHaveBeenNthCalledWith(1, openingSong);
+    expect(onViewSongLyrics).toHaveBeenNthCalledWith(2, responseSong);
+  });
+
   it("removes the song without opening lyrics", async () => {
     const user = userEvent.setup();
     const onViewSongLyrics = jest.fn();
@@ -483,7 +673,7 @@ describe("ServicePlanElementRow", () => {
 
     await user.click(screen.getByRole("button", { name: /Remove song/i }));
 
-    expect(onUpdate).toHaveBeenCalledWith({ songRef: undefined });
+    expect(onUpdate).toHaveBeenCalledWith({ songRef: undefined, songRefs: [] });
     expect(onViewSongLyrics).not.toHaveBeenCalled();
   });
 
@@ -695,5 +885,150 @@ describe("ServicePlanElementRow", () => {
       "Come as you are",
     );
     expect(onViewSongLyrics).not.toHaveBeenCalled();
+  });
+});
+
+describe("assignees and their microphones", () => {
+  const orange: ServicePlanMicrophone = {
+    id: "mic-orange",
+    name: "Orange",
+    type: "Handheld",
+    color: "#f97316",
+  };
+  const lapel: ServicePlanMicrophone = {
+    id: "mic-lapel",
+    name: "Lapel 1",
+    type: "Lapel",
+    color: "#22d3ee",
+  };
+
+  it("shows every assignee, not just the first", () => {
+    renderRow({
+      canEdit: false,
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "a1", name: "Pastor John" },
+          { id: "a2", name: "Sarah Lee" },
+        ],
+      },
+    });
+
+    // Group header matches Notes chrome so chips are not a loose row.
+    expect(screen.getByText("Assignees")).toBeInTheDocument();
+    // Rendered twice by design: the stacked mobile line and the desktop
+    // Assigned column.
+    expect(screen.getAllByText("Pastor John, Sarah Lee").length).toBeGreaterThan(0);
+  });
+
+  it("reads a legacy single assignee and element microphones", () => {
+    renderRow({
+      canEdit: false,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignedName: "Pastor John",
+        microphoneAssignments: [{ microphoneId: "mic-orange" }],
+      },
+    });
+
+    expect(screen.getAllByText("Pastor John").length).toBeGreaterThan(0);
+    // The legacy mic had no person on it, so it lands on the unassigned slot.
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+    expect(screen.getByText("Orange")).toBeInTheDocument();
+  });
+
+  it("puts a microphone on the person it was added for", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      microphones: [orange, lapel],
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Pastor John" }],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Add microphone for Pastor John/i }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /Orange/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      {
+        assignees: [
+          { id: "a1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+        ],
+      },
+      undefined,
+    );
+  });
+
+  it("offers a microphone to only one person at a time", async () => {
+    const user = userEvent.setup();
+    renderRow({
+      microphones: [orange, lapel],
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "a1", name: "Pastor John", microphoneIds: ["mic-orange"] },
+          { id: "a2", name: "Sarah Lee" },
+        ],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Add microphone for Sarah Lee/i }),
+    );
+
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveTextContent("Lapel 1");
+    // Already in Pastor John's hands, so it is not offered again.
+    expect(menu).not.toHaveTextContent("Orange");
+  });
+
+  it("marks schedule-held microphones in the add-mic menu", async () => {
+    const user = userEvent.setup();
+    renderRow({
+      microphones: [orange, lapel],
+      scheduledMicrophoneHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Abigail" }],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Add microphone for Abigail/i }),
+    );
+
+    const orangeOption = await screen.findByRole("menuitem", { name: /Orange/i });
+    expect(
+      within(orangeOption).getByText("Assigned: Johnny Mclain"),
+    ).toBeInTheDocument();
+
+    const lapelOption = screen.getByRole("menuitem", { name: /Lapel 1/i });
+    expect(within(lapelOption).queryByText(/Assigned:/i)).not.toBeInTheDocument();
+    expect(within(lapelOption).getByText("Lapel")).toBeInTheDocument();
+  });
+
+  it("clears the unassigned slot when its last microphone is removed", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      microphones: [orange],
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [{ id: "stand", microphoneIds: ["mic-orange"] }],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Remove Orange from Unassigned/i }),
+    );
+
+    expect(onUpdate).toHaveBeenCalledWith({ assignees: [] }, undefined);
   });
 });

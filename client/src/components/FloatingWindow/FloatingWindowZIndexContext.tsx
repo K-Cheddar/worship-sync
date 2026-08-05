@@ -20,7 +20,12 @@ export type FloatingWindowEntry = {
 };
 
 type FloatingWindowManagerValue = {
-  bringToFront: () => number;
+  /**
+   * Returns a z-index at the top of the stack. Pass the window's current
+   * z-index so an already-frontmost window can no-op (avoids a re-render on
+   * every touchstart, which cancels synthesized clicks on touch devices).
+   */
+  bringToFront: (currentZ?: number) => number;
   register: (entry: FloatingWindowEntry) => () => void;
   update: (
     id: string,
@@ -30,7 +35,7 @@ type FloatingWindowManagerValue = {
 };
 
 const defaultManager: FloatingWindowManagerValue = {
-  bringToFront: () => BASE_Z,
+  bringToFront: (currentZ) => currentZ ?? BASE_Z,
   register: () => () => { },
   update: () => { },
   setFrontmost: () => { },
@@ -95,13 +100,16 @@ export const FloatingWindowZIndexProvider = ({
   const [windows, setWindows] = useState<FloatingWindowEntry[]>([]);
   const [frontmostId, setFrontmostId] = useState<string | null>(null);
 
-  const bringToFront = useCallback(() => {
+  const bringToFront = useCallback((currentZ?: number) => {
+    if (currentZ !== undefined && currentZ === counterRef.current) {
+      return currentZ;
+    }
     counterRef.current += 1;
     return counterRef.current;
   }, []);
 
   const setFrontmost = useCallback((id: string) => {
-    setFrontmostId(id);
+    setFrontmostId((prev) => (prev === id ? prev : id));
   }, []);
 
   const register = useCallback((entry: FloatingWindowEntry) => {

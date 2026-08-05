@@ -378,6 +378,8 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
       timerId: streamInfo.timerId,
       name: streamInfo.name,
       type: streamInfo.type,
+      slideIndex: streamInfo.slideIndex,
+      slideCount: streamInfo.slideCount,
     },
     stream_itemContentBlocked: streamItemContentBlocked,
     stream_bibleInfo: streamInfo.bibleDisplayInfo,

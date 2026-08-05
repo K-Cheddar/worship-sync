@@ -209,6 +209,11 @@ export const createTeamsAuthHandlers = ({
     `${churchId}::${planKey}`;
 
   const MAX_SERVICE_PLAN_TEAM_NOTES = 12;
+  const MAX_SERVICE_PLAN_ATTACHMENTS = 20;
+  // Keep in sync with MAX_SERVICE_PLAN_MICROPHONES in client/src/types/servicePlan.ts
+  const MAX_SERVICE_PLAN_MICROPHONES = 80;
+  const MAX_SERVICE_PLAN_MICROPHONE_AUDIENCES = 24;
+  const MAX_SERVICE_PLAN_ASSIGNEES = 24;
 
   const isRichTextDocEmpty = (doc) =>
     !doc?.blocks?.length ||
@@ -219,10 +224,30 @@ export const createTeamsAuthHandlers = ({
     const label = normalizeShortText(raw.label, { max: 80 });
     if (!label) return null;
     const scope = raw.scope === "role" ? "role" : "team";
-    const positionId = normalizeShortText(raw.positionId, { max: 160 });
+    const positionIds = Array.from(
+      new Set(
+        (Array.isArray(raw.positionIds) ? raw.positionIds : [raw.positionId])
+          .map((positionId) => normalizeShortText(positionId, { max: 160 }))
+          .filter(Boolean),
+      ),
+    );
     const teamId = normalizeShortText(raw.teamId, { max: 160 });
     const teamName = normalizeShortText(raw.teamName, { max: 80 });
-    if (scope === "role" && !positionId) return null;
+    const teamIds = Array.from(
+      new Set(
+        (Array.isArray(raw.teamIds) ? raw.teamIds : [teamId])
+          .map((id) => normalizeShortText(id, { max: 160 }))
+          .filter(Boolean),
+      ),
+    );
+    const teamNames = Array.from(
+      new Set(
+        (Array.isArray(raw.teamNames) ? raw.teamNames : [teamName])
+          .map((name) => normalizeShortText(name, { max: 80 }))
+          .filter(Boolean),
+      ),
+    );
+    if (scope === "role" && !positionIds.length) return null;
     return {
       id:
         normalizeShortText(raw.id, { max: 160 }) ||
@@ -232,13 +257,129 @@ export const createTeamsAuthHandlers = ({
       ...(scope === "role"
         ? {
             scope,
-            positionId,
+            positionIds,
+            ...(teamIds.length ? { teamIds } : {}),
+            ...(teamNames.length ? { teamNames } : {}),
+          }
+        : {
             ...(teamId ? { teamId } : {}),
             ...(teamName ? { teamName } : {}),
-          }
-        : {}),
+          }),
     };
   };
+
+  const normalizeServicePlanMicrophone = (raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const name = normalizeShortText(raw.name, { max: 80 });
+    if (!name) return null;
+    const color = String(raw.color || "").trim();
+    return {
+      id:
+        normalizeShortText(raw.id, { max: 160 }) ||
+        createId("servicePlanMicrophone"),
+      name,
+      type: normalizeShortText(raw.type, { max: 80 }) || "Microphone",
+      color: /^#[0-9a-f]{6}$/i.test(color) ? color : "#9ca3af",
+    };
+  };
+
+  const normalizeServicePlanMicrophoneAudience = (raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const positionId = normalizeShortText(raw.positionId, { max: 160 });
+    const roleName = normalizeShortText(raw.roleName, { max: 120 });
+    if (!positionId || !roleName) return null;
+    const teamId = normalizeShortText(raw.teamId, { max: 160 });
+    const teamName = normalizeShortText(raw.teamName, { max: 120 });
+    return {
+      positionId,
+      roleName,
+      ...(teamId ? { teamId } : {}),
+      ...(teamName ? { teamName } : {}),
+    };
+  };
+
+  const normalizeServicePlanMicrophoneAudiences = (raw) =>
+    (Array.isArray(raw) ? raw : [])
+      .map(normalizeServicePlanMicrophoneAudience)
+      .filter(Boolean)
+      .filter(
+        (audience, index, values) =>
+          values.findIndex(
+            (candidate) => candidate.positionId === audience.positionId,
+          ) === index,
+      )
+      .slice(0, MAX_SERVICE_PLAN_MICROPHONE_AUDIENCES);
+
+  /**
+   * Everyone doing an item, and the microphones each of them carries. An entry
+   * with no name and no memberId is the unassigned slot: a stand or spare mic.
+   * Entries holding nothing at all are dropped rather than stored as blanks.
+   */
+  const normalizeServicePlanAssignees = (raw) => {
+    const usedMicrophoneIds = new Set();
+    return (Array.isArray(raw) ? raw : [])
+      .map((assignee) => {
+        if (!assignee || typeof assignee !== "object") return null;
+        const name = normalizeShortText(assignee.name, { max: 200 });
+        const memberId = normalizeShortText(assignee.memberId, { max: 160 });
+        // A microphone can only be in one pair of hands per item.
+        const microphoneIds = (
+          Array.isArray(assignee.microphoneIds) ? assignee.microphoneIds : []
+        )
+          .map((microphoneId) => normalizeShortText(microphoneId, { max: 160 }))
+          .filter((microphoneId) => {
+            if (!microphoneId || usedMicrophoneIds.has(microphoneId))
+              return false;
+            usedMicrophoneIds.add(microphoneId);
+            return true;
+          })
+          .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
+        if (!name && !memberId && !microphoneIds.length) return null;
+        return {
+          id:
+            normalizeShortText(assignee.id, { max: 160 }) ||
+            createId("servicePlanAssignee"),
+          ...(name ? { name } : {}),
+          ...(memberId ? { memberId } : {}),
+          ...(microphoneIds.length ? { microphoneIds } : {}),
+        };
+      })
+      .filter(Boolean)
+      .slice(0, MAX_SERVICE_PLAN_ASSIGNEES);
+  };
+
+  const normalizeServicePlanMicrophoneAssignments = (raw) =>
+    (Array.isArray(raw) ? raw : [])
+      .map((assignment) => {
+        const microphoneId = normalizeShortText(assignment?.microphoneId, {
+          max: 160,
+        });
+        if (!microphoneId) return null;
+        const audiences = (
+          Array.isArray(assignment?.audiences) ? assignment.audiences : []
+        )
+          .map(normalizeServicePlanMicrophoneAudience)
+          .filter(Boolean)
+          .filter(
+            (audience, index, values) =>
+              values.findIndex(
+                (candidate) => candidate.positionId === audience.positionId,
+              ) === index,
+          )
+          .slice(0, MAX_SERVICE_PLAN_MICROPHONE_AUDIENCES);
+        return {
+          microphoneId,
+          ...(audiences.length ? { audiences } : {}),
+        };
+      })
+      .filter(Boolean)
+      .filter(
+        (assignment, index, values) =>
+          values.findIndex(
+            (candidate) => candidate.microphoneId === assignment.microphoneId,
+          ) === index,
+      )
+      .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
 
   const normalizeServicePlanSongRef = (raw) => {
     if (!raw || typeof raw !== "object") return undefined;
@@ -280,6 +421,19 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const normalizeServicePlanAttachments = (
+    raw,
+    normalizeAttachment,
+    legacy,
+  ) => {
+    const values = Array.isArray(raw) ? raw : legacy ? [legacy] : [];
+    const normalized = values
+      .map(normalizeAttachment)
+      .filter(Boolean)
+      .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
+    return normalized.length ? normalized : undefined;
+  };
+
   const SERVICE_PLAN_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
   const normalizeServicePlanStartTime = (raw) => {
     const value = String(raw || "").trim();
@@ -314,6 +468,16 @@ export const createTeamsAuthHandlers = ({
   };
 
   const normalizeServicePlanElement = (raw) => {
+    const songRefs = normalizeServicePlanAttachments(
+      raw?.songRefs,
+      normalizeServicePlanSongRef,
+      raw?.songRef,
+    );
+    const scriptureRefs = normalizeServicePlanAttachments(
+      raw?.scriptureRefs,
+      normalizeServicePlanScriptureRef,
+      raw?.scriptureRef,
+    );
     const notes = normalizeRichTextDocument(raw?.notes);
     const teamNotes = Array.isArray(raw?.teamNotes)
       ? raw.teamNotes
@@ -321,6 +485,10 @@ export const createTeamsAuthHandlers = ({
           .filter(Boolean)
           .slice(0, MAX_SERVICE_PLAN_TEAM_NOTES)
       : undefined;
+    const assignees = normalizeServicePlanAssignees(raw?.assignees);
+    const microphoneAssignments = normalizeServicePlanMicrophoneAssignments(
+      raw?.microphoneAssignments,
+    );
     const durationSeconds = normalizeServicePlanDurationSeconds(
       raw?.durationSeconds,
       raw?.durationMinutes,
@@ -336,6 +504,21 @@ export const createTeamsAuthHandlers = ({
       title: normalizeRichTextDocument(raw?.title),
       ...(isRichTextDocEmpty(notes) ? {} : { notes }),
       ...(teamNotes?.length ? { teamNotes } : {}),
+      ...(assignees.length ? { assignees } : {}),
+      // Legacy shapes are still accepted from a client that has not reloaded
+      // yet, and converted for good by
+      // scripts/migrate-service-plan-assignees.js. Never written alongside
+      // `assignees`, so a migrated document keeps exactly one source of truth.
+      ...(assignees.length
+        ? {}
+        : {
+            ...(microphoneAssignments.length ? { microphoneAssignments } : {}),
+            assignedMemberId:
+              normalizeShortText(raw?.assignedMemberId, { max: 160 }) ||
+              undefined,
+            assignedName:
+              normalizeShortText(raw?.assignedName, { max: 200 }) || undefined,
+          }),
       startTime: normalizeServicePlanStartTime(raw?.startTime),
       ...(durationSeconds === undefined
         ? {}
@@ -344,12 +527,13 @@ export const createTeamsAuthHandlers = ({
             // Retained while older clients and integrations still read minutes.
             durationMinutes: durationSeconds / 60,
           }),
-      songRef: normalizeServicePlanSongRef(raw?.songRef),
-      scriptureRef: normalizeServicePlanScriptureRef(raw?.scriptureRef),
-      assignedMemberId:
-        normalizeShortText(raw?.assignedMemberId, { max: 160 }) || undefined,
-      assignedName:
-        normalizeShortText(raw?.assignedName, { max: 200 }) || undefined,
+      songRefs,
+      scriptureRefs,
+      // The singular fields are still written, the same way durationMinutes is
+      // above: mid-rollout an older tab reads only these, and a save it did not
+      // make would otherwise look to it like the attachments had vanished.
+      songRef: songRefs?.[0],
+      scriptureRef: scriptureRefs?.[0],
       positionId:
         normalizeShortText(raw?.positionId, { max: 160 }) || undefined,
       sourceLedByRaw:
@@ -359,6 +543,16 @@ export const createTeamsAuthHandlers = ({
         undefined,
       pushedOutlineListId:
         normalizeShortText(raw?.pushedOutlineListId, { max: 160 }) || undefined,
+      pushedOutlineListIds: Array.from(
+        new Set(
+          (Array.isArray(raw?.pushedOutlineListIds)
+            ? raw.pushedOutlineListIds
+            : []
+          )
+            .map((listId) => normalizeShortText(listId, { max: 160 }))
+            .filter(Boolean),
+        ),
+      ).slice(0, MAX_SERVICE_PLAN_ATTACHMENTS),
     };
   };
 
@@ -449,6 +643,23 @@ export const createTeamsAuthHandlers = ({
     );
     error.servicePlanConflict = servicePlan;
     return error;
+  };
+
+  const servicePlanTemplateConflict = (template) => {
+    const error = httpError(
+      409,
+      "This template was updated by another editor. Review the latest changes before saving.",
+    );
+    error.servicePlanTemplateConflict = template;
+    return error;
+  };
+
+  /** Same contract as assertServicePlanRevision, for templates. */
+  const assertServicePlanTemplateRevision = (existing, baseRevision) => {
+    if (baseRevision === undefined || !existing) return;
+    if (baseRevision !== getServicePlanRevision(existing)) {
+      throw servicePlanTemplateConflict(existing);
+    }
   };
 
   const assertServicePlanRevision = (existing, baseRevision) => {
@@ -798,12 +1009,39 @@ export const createTeamsAuthHandlers = ({
   };
 
   const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
-    const [church, brandingChrome] = await Promise.all([
+    const isGeneralView = viewMode === "general";
+    const [church, brandingChrome, positions, teams] = await Promise.all([
       getDoc(COLLECTIONS.churches, plan.churchId),
       readChurchPublicBrandingChrome(plan.churchId),
+      isGeneralView
+        ? Promise.resolve([])
+        : listTeamCollectionForChurch(
+            COLLECTIONS.teamPositions,
+            "positionId",
+            plan.churchId,
+          ),
+      isGeneralView
+        ? Promise.resolve([])
+        : listTeamCollectionForChurch(
+            COLLECTIONS.teams,
+            "teamId",
+            plan.churchId,
+          ),
     ]);
     return buildPublicServicePlanSnapshot({
       plan,
+      microphones: church?.servicePlanMicrophones || [],
+      microphoneAudiences: Array.isArray(church?.servicePlanMicrophoneAudiences)
+        ? church.servicePlanMicrophoneAudiences
+        : (church?.servicePlanMicrophones || []).some((microphone) =>
+              Array.isArray(microphone?.audiences),
+            )
+          ? church.servicePlanMicrophones.flatMap(
+              (microphone) => microphone?.audiences || [],
+            )
+          : undefined,
+      positions,
+      teams,
       churchName: church?.name || "WorshipSync",
       churchLogoUrl: brandingChrome.logoUrl,
       churchPrimaryColor: brandingChrome.primaryColor,
@@ -1041,15 +1279,10 @@ export const createTeamsAuthHandlers = ({
     return addedTeamIds;
   };
 
-  const addMemberToTeamsForPositions = async ({
-    churchId,
-    positionIds,
-    memberId,
-    adminUserId,
-  }) => {
+  // Positions are owned by a team, so a set of positions implies a set of teams.
+  const collectTeamIdsForPositions = async (churchId, positionIds) => {
     const normalizedPositionIds = normalizeIdArray(positionIds);
-    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
-    if (!normalizedMemberId || normalizedPositionIds.length === 0) return [];
+    if (normalizedPositionIds.length === 0) return [];
     const positions = await Promise.all(
       normalizedPositionIds.map((positionId) =>
         assertTeamEntityInChurch("position", positionId, churchId, {
@@ -1057,15 +1290,194 @@ export const createTeamsAuthHandlers = ({
         }),
       ),
     );
-    const teamIds = Array.from(
+    return Array.from(
       new Set(positions.map((position) => position.teamId).filter(Boolean)),
     );
+  };
+
+  const addMemberToTeamsForPositions = async ({
+    churchId,
+    positionIds,
+    memberId,
+    adminUserId,
+  }) => {
+    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
+    if (!normalizedMemberId) return [];
+    const teamIds = await collectTeamIdsForPositions(churchId, positionIds);
+    if (teamIds.length === 0) return [];
     return addMemberToTeams({
       churchId,
       teamIds,
       memberId: normalizedMemberId,
       adminUserId,
     });
+  };
+
+  // Load full team records for ids whose roster we just changed, so a response
+  // can hand them back for an immediate local refresh instead of leaving the
+  // client's `team.memberIds` stale until its next poll. Skips ids that no
+  // longer resolve or belong to another church.
+  const loadTeamsByIds = async (churchId, teamIds) => {
+    const ids = normalizeIdArray(teamIds);
+    if (ids.length === 0) return [];
+    const teams = await Promise.all(
+      ids.map((teamId) => getTeamEntity("team", teamId)),
+    );
+    return teams.filter((team) => team && team.churchId === churchId);
+  };
+
+  // Non-throwing form of the per-team edit check, for deciding which rosters a
+  // request is allowed to touch. Fails closed: anything we cannot confirm is
+  // treated as not editable and left alone.
+  const canEditTeamForRequest = async (req, churchId, teamId) => {
+    try {
+      await requireTeamsEditForTeam(req, churchId, teamId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Drop a member from the given teams' rosters. The mirror of
+  // `addMemberToTeams`; returns the team ids whose roster actually changed.
+  const removeMemberFromTeams = async ({
+    churchId,
+    teamIds,
+    memberId,
+    adminUserId,
+  }) => {
+    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
+    const ids = normalizeIdArray(teamIds);
+    if (!normalizedMemberId || ids.length === 0) return [];
+    const now = nowIso();
+    const removedTeamIds = [];
+    await Promise.all(
+      ids.map(async (teamId) => {
+        const team = await getDoc(COLLECTIONS.teams, teamId);
+        if (!team || team.churchId !== churchId) return;
+        const memberIds = team.memberIds || [];
+        if (!memberIds.includes(normalizedMemberId)) return;
+        await setDoc(
+          COLLECTIONS.teams,
+          teamId,
+          {
+            memberIds: memberIds.filter((id) => id !== normalizedMemberId),
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        removedTeamIds.push(teamId);
+      }),
+    );
+    return removedTeamIds;
+  };
+
+  /**
+   * Bring `team.memberIds` in line with the membership a member save asks for.
+   *
+   * `requestedTeamIds` is the client's desired roster set. Position teams are
+   * unioned in unconditionally: eligibility for a team's position is gated on
+   * belonging to that team, so dropping the membership would leave a member who
+   * is eligible for a position but cannot be assigned to it.
+   *
+   * Removals are scoped to teams this admin may edit, so a team-scoped admin
+   * whose view omits other teams can never strip a roster they cannot see.
+   * Passing `requestedTeamIds: null` keeps the older add-only behavior for
+   * callers that do not manage membership.
+   *
+   * Roles for teams the member leaves are dropped too — a stale
+   * `teamMemberships` entry still reads as membership to filters and to the
+   * permission checks that derive team scope from a member.
+   */
+  const syncMemberTeamMembership = async ({
+    req,
+    churchId,
+    member,
+    positionIds,
+    requestedTeamIds,
+    adminUserId,
+  }) => {
+    const memberId = member.memberId;
+    if (requestedTeamIds === null || requestedTeamIds === undefined) {
+      const addedTeamIds = await addMemberToTeamsForPositions({
+        churchId,
+        positionIds,
+        memberId,
+        adminUserId,
+      });
+      return {
+        member,
+        teams: await loadTeamsByIds(churchId, addedTeamIds),
+      };
+    }
+
+    const positionTeamIds = await collectTeamIdsForPositions(
+      churchId,
+      positionIds,
+    );
+    const desired = new Set([...requestedTeamIds, ...positionTeamIds]);
+    const allTeams = await listTeamCollectionForChurch(
+      COLLECTIONS.teams,
+      "teamId",
+      churchId,
+    );
+    const currentTeamIds = allTeams
+      .filter((team) => (team.memberIds || []).includes(memberId))
+      .map((team) => team.teamId);
+
+    const toAdd = Array.from(desired).filter(
+      (teamId) => !currentTeamIds.includes(teamId),
+    );
+    const removable = await Promise.all(
+      currentTeamIds
+        .filter((teamId) => !desired.has(teamId))
+        .map(async (teamId) => ({
+          teamId,
+          allowed: await canEditTeamForRequest(req, churchId, teamId),
+        })),
+    );
+    const toRemove = removable
+      .filter((entry) => entry.allowed)
+      .map((entry) => entry.teamId);
+
+    const [addedTeamIds, removedTeamIds] = await Promise.all([
+      addMemberToTeams({ churchId, teamIds: toAdd, memberId, adminUserId }),
+      removeMemberFromTeams({
+        churchId,
+        teamIds: toRemove,
+        memberId,
+        adminUserId,
+      }),
+    ]);
+
+    let nextMember = member;
+    const staleRoleTeamIds = Object.keys(member.teamMemberships || {}).filter(
+      (teamId) => removedTeamIds.includes(teamId),
+    );
+    if (staleRoleTeamIds.length > 0) {
+      const teamMemberships = { ...(member.teamMemberships || {}) };
+      staleRoleTeamIds.forEach((teamId) => delete teamMemberships[teamId]);
+      await setDoc(
+        COLLECTIONS.teamRosterMembers,
+        memberId,
+        {
+          teamMemberships,
+          updatedAt: nowIso(),
+          updatedByUid: adminUserId,
+        },
+        { merge: true },
+      );
+      nextMember = await getTeamEntity("member", memberId);
+    }
+
+    return {
+      member: nextMember,
+      teams: await loadTeamsByIds(churchId, [
+        ...addedTeamIds,
+        ...removedTeamIds,
+      ]),
+    };
   };
 
   const listTeamCollectionForChurch = async (
@@ -1147,7 +1559,109 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const buildTeamsBootstrap = async (churchId) => {
+  // How far around "today" the bootstrap ships fully-hydrated schedules when the
+  // client opts into summaries. Anything outside the window arrives as a summary
+  // and is hydrated on demand. One month back keeps the just-finished month's
+  // assignments available for credits; two months forward covers the schedules an
+  // operator is actively filling.
+  const SCHEDULE_HYDRATION_WINDOW_BACK_MONTHS = 1;
+  const SCHEDULE_HYDRATION_WINDOW_FORWARD_MONTHS = 2;
+
+  /**
+   * Plain YYYY-MM-DD for a date offset from `from` by whole months.
+   * Clamps the day so month-end dates (29–31) do not roll into the next
+   * month via `setUTCMonth` (e.g. Mar 31 − 1 month → Feb 28/29, not Mar 2/3).
+   */
+  const shiftIsoDateByMonths = (from, months) => {
+    const year = from.getUTCFullYear();
+    const month = from.getUTCMonth() + months;
+    const day = from.getUTCDate();
+    // Day 0 of the following month is the last day of the target month.
+    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(year, month, Math.min(day, lastDay)))
+      .toISOString()
+      .slice(0, 10);
+  };
+
+  /**
+   * A schedule with its heavy per-cell maps stripped. Everything the picker, the
+   * schedules list, and occurrence matching need stays; `assignments`,
+   * `microphoneAssignments`, and `additionalPositionSlots` — which dominate the
+   * document size and grow with every position × date — do not.
+   *
+   * `assignmentsOmitted` is an explicit marker so the client can never mistake a
+   * summary for a schedule that genuinely has no assignments.
+   */
+  /** Member ids in one assignment cell (primary + shadows), legacy shapes included. */
+  const assignmentCellMemberIds = (cell) => {
+    if (!cell) return [];
+    if (typeof cell === "string") return cell ? [cell] : [];
+    const shadows = Array.isArray(cell.shadows) ? cell.shadows : [];
+    return [cell.primaryMemberId, ...shadows.map((shadow) => shadow?.memberId)]
+      .map((id) => String(id || ""))
+      .filter(Boolean);
+  };
+
+  /**
+   * Per-member and per-position cell counts for a schedule. Deleting a member,
+   * position, or team shows the operator how many assignments it will clear
+   * ("Cleared from 12 schedule assignments"), and that warning must stay exact
+   * for summarized schedules too — so the counts travel with the summary rather
+   * than being recomputed from cells the client no longer has.
+   */
+  const buildScheduleAssignmentCounts = (assignments) => {
+    const byMemberId = {};
+    const byPositionId = {};
+    Object.values(assignments || {}).forEach((row) => {
+      if (!row || typeof row !== "object") return;
+      Object.entries(row).forEach(([cellKey, cell]) => {
+        const memberIds = assignmentCellMemberIds(cell);
+        memberIds.forEach((memberId) => {
+          byMemberId[memberId] = (byMemberId[memberId] || 0) + 1;
+        });
+        // Mirrors the client's slot-key format: "<positionId>::<slotIndex>".
+        const separatorIndex = String(cellKey).lastIndexOf("::");
+        const positionId =
+          separatorIndex > 0 ? String(cellKey).slice(0, separatorIndex) : "";
+        if (positionId && memberIds.length > 0) {
+          byPositionId[positionId] = (byPositionId[positionId] || 0) + 1;
+        }
+      });
+    });
+    return { byMemberId, byPositionId };
+  };
+
+  const summarizeTeamSchedule = (schedule) => {
+    const {
+      assignments,
+      microphoneAssignments,
+      additionalPositionSlots,
+      optionalPositionSlots,
+      ...summary
+    } = schedule || {};
+    return {
+      ...summary,
+      assignmentsOmitted: true,
+      assignmentCounts: buildScheduleAssignmentCounts(assignments),
+    };
+  };
+
+  /**
+   * Inclusive overlap between a schedule's date window and a plain YYYY-MM-DD
+   * range. Schedules with no dates at all (legacy, service-id only) are treated
+   * as overlapping so they are never silently stripped of assignments.
+   */
+  const scheduleOverlapsDateRange = (schedule, startDate, endDate) => {
+    const scheduleStart = schedule?.startDate || schedule?.endDate || "";
+    const scheduleEnd = schedule?.endDate || schedule?.startDate || "";
+    if (!scheduleStart || !scheduleEnd) return true;
+    return scheduleStart <= endDate && scheduleEnd >= startDate;
+  };
+
+  const buildTeamsBootstrap = async (
+    churchId,
+    { scheduleMode = "full" } = {},
+  ) => {
     // Collects any collection that hit the row cap so we can warn the admin their
     // view is incomplete instead of silently showing a partial roster/schedule.
     const truncatedCollections = [];
@@ -1224,6 +1738,38 @@ export const createTeamsAuthHandlers = ({
         submissionCountByForm.get(form.formId) || 0,
       ),
     );
+    // Clients that opt in receive schedule summaries plus full hydration for the
+    // schedules around today. Older clients omit the flag and still get every
+    // schedule fully hydrated, so this stays backward compatible.
+    const now = new Date();
+    const hydrationStart = shiftIsoDateByMonths(
+      now,
+      -SCHEDULE_HYDRATION_WINDOW_BACK_MONTHS,
+    );
+    const hydrationEnd = shiftIsoDateByMonths(
+      now,
+      SCHEDULE_HYDRATION_WINDOW_FORWARD_MONTHS,
+    );
+    const normalizedSchedules = schedules.map((schedule) =>
+      schedule.additionalPositionSlots || !schedule.optionalPositionSlots
+        ? schedule
+        : {
+            ...schedule,
+            additionalPositionSlots:
+              normalizeTeamScheduleAdditionalPositionSlots(
+                schedule.optionalPositionSlots,
+              ),
+          },
+    );
+    const bootstrapSchedules =
+      scheduleMode === "summary"
+        ? normalizedSchedules.map((schedule) =>
+            scheduleOverlapsDateRange(schedule, hydrationStart, hydrationEnd)
+              ? schedule
+              : summarizeTeamSchedule(schedule),
+          )
+        : normalizedSchedules;
+
     return {
       members,
       positions: sortPositionsByOrder(positions),
@@ -1231,7 +1777,15 @@ export const createTeamsAuthHandlers = ({
       teamRoles,
       qualificationAreas,
       qualificationLevels,
-      schedules,
+      schedules: bootstrapSchedules,
+      ...(scheduleMode === "summary"
+        ? {
+            scheduleHydrationWindow: {
+              startDate: hydrationStart,
+              endDate: hydrationEnd,
+            },
+          }
+        : {}),
       intakeForms,
       intakeSubmissions,
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
@@ -1433,6 +1987,25 @@ export const createTeamsAuthHandlers = ({
     return payload;
   };
 
+  /**
+   * The roster membership a member save asks for. Kept out of the member
+   * payload on purpose: membership lives on `team.memberIds`, and storing a
+   * second copy on the member is what lets the two sides drift.
+   *
+   * Returns null when the request says nothing about membership, which keeps
+   * the older add-only behavior for callers that do not manage it. Archived
+   * teams are allowed through so a member can stay on one.
+   */
+  const validateMemberTeamIds = async (body, churchId) => {
+    if (!Object.prototype.hasOwnProperty.call(body || {}, "teamIds")) {
+      return null;
+    }
+    return assertTeamEntityIdsInChurch("team", body?.teamIds, churchId, {
+      label: "Team",
+      active: false,
+    });
+  };
+
   const validateTeamPositionPayload = async (body, churchId) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
@@ -1492,6 +2065,7 @@ export const createTeamsAuthHandlers = ({
       description: normalizeLongText(body?.description),
       icon: normalizeShortText(body?.icon, { max: 40 }),
       memberIds,
+      usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
     };
   };
 
@@ -1607,138 +2181,44 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
-  const normalizeTeamScheduleAttendance = ({
-    value,
-    occurrenceIds,
-    teamMemberIds,
-  }) => {
-    const rawAttendance = value && typeof value === "object" ? value : {};
-    const occurrenceIdSet = new Set(occurrenceIds);
-    const teamMemberIdSet = new Set(teamMemberIds || []);
-    const attendance = {};
-    for (const [occurrenceId, row] of Object.entries(rawAttendance)) {
-      if (
-        !occurrenceIdSet.has(occurrenceId) ||
-        !row ||
-        typeof row !== "object"
-      ) {
-        continue;
-      }
-      for (const [memberId, rawEntry] of Object.entries(row)) {
-        const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
-        if (!teamMemberIdSet.has(normalizedMemberId)) continue;
-        const status =
-          rawEntry?.status === "present" || rawEntry?.status === "absent"
-            ? rawEntry.status
-            : "";
-        if (!status) continue;
-        const columnKey = normalizeShortText(rawEntry?.columnKey, { max: 180 });
-        const positionId = normalizeShortText(rawEntry?.positionId, {
-          max: 160,
-        });
-        const positionLabel = normalizeShortText(rawEntry?.positionLabel, {
-          max: 160,
-        });
-        const updatedAt = normalizeShortText(rawEntry?.updatedAt, { max: 80 });
-        if (!attendance[occurrenceId]) attendance[occurrenceId] = {};
-        attendance[occurrenceId][normalizedMemberId] = {
-          status,
-          ...(columnKey ? { columnKey } : {}),
-          ...(positionId ? { positionId } : {}),
-          ...(positionLabel ? { positionLabel } : {}),
-          ...(updatedAt ? { updatedAt } : {}),
-        };
-      }
-    }
-    return attendance;
-  };
-
-  // Apply a single attendance change to a schedule's attendance map. Used by the
-  // dedicated attendance endpoint so marking one person present/absent merges a
-  // single cell instead of re-PUTting the whole schedule (which races with other
-  // editors). Returns the next attendance object; throws on invalid input.
-  const buildNextScheduleAttendance = ({
-    schedule,
-    team,
-    occurrenceId,
-    memberId,
-    status,
-    columnKey,
-    positionId,
-    positionLabel,
-  }) => {
-    const normalizedOccurrenceId = normalizeShortText(occurrenceId, {
-      max: 180,
-    });
-    if (!normalizedOccurrenceId) {
-      throw httpError(400, "Occurrence is required.");
-    }
-    const occurrenceIds = new Set(
-      (schedule.occurrences || []).map((occurrence) => occurrence.occurrenceId),
-    );
-    if (!occurrenceIds.has(normalizedOccurrenceId)) {
-      throw httpError(404, "Occurrence not found on this schedule.");
-    }
-    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
-    if (!normalizedMemberId) {
-      throw httpError(400, "Member is required.");
-    }
-    if (!(team.memberIds || []).includes(normalizedMemberId)) {
-      throw httpError(400, "That member is not part of this team.");
-    }
-    const normalizedStatus =
-      status === "present" || status === "absent" ? status : "";
-
-    const attendance = { ...(schedule.attendance || {}) };
-    const row = { ...(attendance[normalizedOccurrenceId] || {}) };
-    if (normalizedStatus) {
-      const normalizedColumnKey = normalizeShortText(columnKey, { max: 180 });
-      const normalizedPositionId = normalizeShortText(positionId, { max: 160 });
-      const normalizedPositionLabel = normalizeShortText(positionLabel, {
-        max: 160,
+  const normalizeTeamScheduleMicrophoneAssignments = (value) => {
+    if (!value || typeof value !== "object") return {};
+    const assignments = {};
+    for (const [occurrenceId, rawRow] of Object.entries(value)) {
+      const normalizedOccurrenceId = normalizeShortText(occurrenceId, {
+        max: 260,
       });
-      row[normalizedMemberId] = {
-        status: normalizedStatus,
-        ...(normalizedColumnKey ? { columnKey: normalizedColumnKey } : {}),
-        ...(normalizedPositionId ? { positionId: normalizedPositionId } : {}),
-        ...(normalizedPositionLabel
-          ? { positionLabel: normalizedPositionLabel }
-          : {}),
-        updatedAt: nowIso(),
-      };
-    } else {
-      // An empty status clears the mark.
-      delete row[normalizedMemberId];
+      if (!normalizedOccurrenceId || !rawRow || typeof rawRow !== "object")
+        continue;
+      const row = {};
+      for (const [slotKey, microphoneIds] of Object.entries(rawRow)) {
+        if (!parseScheduleSlotKey(slotKey)) continue;
+        const ids = normalizeIdArray(microphoneIds).slice(0, 12);
+        if (ids.length) row[slotKey] = ids;
+      }
+      if (Object.keys(row).length) assignments[normalizedOccurrenceId] = row;
     }
-    if (Object.keys(row).length > 0) {
-      attendance[normalizedOccurrenceId] = row;
-    } else {
-      delete attendance[normalizedOccurrenceId];
-    }
-    return attendance;
+    return assignments;
   };
 
-  const validateTeamScheduleAttendanceUpdatePayload = (body) => {
-    const occurrenceId = normalizeShortText(body?.occurrenceId, { max: 180 });
-    if (!occurrenceId) {
-      throw httpError(400, "Occurrence is required.");
+  const normalizeTeamScheduleAdditionalPositionSlots = (value) => {
+    if (!value || typeof value !== "object") return {};
+    const slots = {};
+    for (const [occurrenceId, rawSlotKeys] of Object.entries(value)) {
+      const normalizedOccurrenceId = normalizeShortText(occurrenceId, {
+        max: 260,
+      });
+      if (!normalizedOccurrenceId) continue;
+      const row = [
+        ...new Set(
+          (Array.isArray(rawSlotKeys) ? rawSlotKeys : [])
+            .map((slotKey) => normalizeShortText(slotKey, { max: 260 }))
+            .filter((slotKey) => parseScheduleSlotKey(slotKey)),
+        ),
+      ];
+      if (row.length) slots[normalizedOccurrenceId] = row;
     }
-    const memberId = normalizeShortText(body?.memberId, { max: 160 });
-    if (!memberId) {
-      throw httpError(400, "Member is required.");
-    }
-    const status = normalizeShortText(body?.status, { max: 40 });
-    if (status && status !== "present" && status !== "absent") {
-      throw httpError(400, "Attendance status must be present or absent.");
-    }
-    return {
-      occurrenceId,
-      memberId,
-      status,
-      columnKey: normalizeShortText(body?.columnKey, { max: 180 }),
-      positionId: normalizeShortText(body?.positionId, { max: 160 }),
-      positionLabel: normalizeShortText(body?.positionLabel, { max: 160 }),
-    };
+    return slots;
   };
 
   const validateTeamSchedulePayload = async (body, churchId) => {
@@ -1771,6 +2251,13 @@ export const createTeamsAuthHandlers = ({
       (occurrence) => occurrence.occurrenceId,
     );
     const assignments = {};
+    const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
+      body?.microphoneAssignments,
+    );
+    const additionalPositionSlots =
+      normalizeTeamScheduleAdditionalPositionSlots(
+        body?.additionalPositionSlots ?? body?.optionalPositionSlots,
+      );
     const rawAssignments =
       body?.assignments && typeof body.assignments === "object"
         ? body.assignments
@@ -1790,11 +2277,6 @@ export const createTeamsAuthHandlers = ({
         }
       }
     }
-    const attendance = normalizeTeamScheduleAttendance({
-      value: body?.attendance,
-      occurrenceIds,
-      teamMemberIds: team.memberIds || [],
-    });
     return {
       name,
       description: normalizeLongText(body?.description),
@@ -1804,7 +2286,8 @@ export const createTeamsAuthHandlers = ({
       serviceIds,
       occurrences,
       assignments,
-      attendance,
+      microphoneAssignments,
+      additionalPositionSlots,
     };
   };
 
@@ -2076,7 +2559,6 @@ export const createTeamsAuthHandlers = ({
     await Promise.all(
       schedules.map(async (schedule) => {
         const assignments = schedule.assignments || {};
-        const attendance = schedule.attendance || {};
         let changed = false;
         const nextAssignments = {};
         for (const [occurrenceId, row] of Object.entries(assignments)) {
@@ -2114,25 +2596,12 @@ export const createTeamsAuthHandlers = ({
           }
           nextAssignments[occurrenceId] = nextRow;
         }
-        const nextAttendance = {};
-        for (const [occurrenceId, row] of Object.entries(attendance)) {
-          const nextRow = { ...(row || {}) };
-          if (
-            kind === "member" &&
-            Object.prototype.hasOwnProperty.call(nextRow, id)
-          ) {
-            delete nextRow[id];
-            changed = true;
-          }
-          nextAttendance[occurrenceId] = nextRow;
-        }
         if (!changed) return;
         await setDoc(
           COLLECTIONS.teamSchedules,
           schedule.scheduleId,
           {
             assignments: nextAssignments,
-            attendance: nextAttendance,
             ...touch,
           },
           { merge: true },
@@ -2645,6 +3114,7 @@ export const createTeamsAuthHandlers = ({
     "This person is already scheduled on another team for this service. Confirm to schedule them anyway.";
 
   const normalizeAllowCrossTeamConflict = (value) => value === true;
+  const normalizeAllowBlockout = (value) => value === true;
 
   const parseScheduleSlotKey = (value) => {
     const raw = String(value || "");
@@ -2799,6 +3269,44 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  // A full schedule save includes every already-filled cell. Only validate
+  // people newly added to an occurrence: otherwise an older, manually
+  // confirmed cross-team assignment prevents unrelated bulk edits (including
+  // Auto-fill) from being saved. The dedicated assignment endpoint continues
+  // to validate every new individual assignment.
+  const getNewScheduleAssignmentConflictChecks = ({
+    previousAssignments,
+    nextAssignments,
+  }) => {
+    const checks = {};
+    for (const [occurrenceId, nextRow] of Object.entries(
+      nextAssignments || {},
+    )) {
+      const existingMemberIds = new Set(
+        Object.values(previousAssignments?.[occurrenceId] || {}).flatMap(
+          getScheduleAssignmentCellMemberIds,
+        ),
+      );
+      const nextChecks = {};
+      for (const [cellKey, rawCell] of Object.entries(nextRow || {})) {
+        const cell = normalizeScheduleAssignmentCell(rawCell);
+        const nextCell = serializeScheduleAssignmentCell({
+          primaryMemberId: existingMemberIds.has(cell.primaryMemberId)
+            ? ""
+            : cell.primaryMemberId,
+          shadows: cell.shadows.filter(
+            (shadow) => !existingMemberIds.has(shadow.memberId),
+          ),
+        });
+        if (nextCell) nextChecks[cellKey] = nextCell;
+      }
+      if (Object.keys(nextChecks).length > 0) {
+        checks[occurrenceId] = nextChecks;
+      }
+    }
+    return checks;
+  };
+
   const buildValidatedScheduleAssignments = ({
     churchId,
     schedule,
@@ -2813,6 +3321,7 @@ export const createTeamsAuthHandlers = ({
     sourcePositionSlotKey,
     shadowAction,
     shadowKind,
+    allowBlockout,
   }) => {
     const rowIds = (schedule.occurrences || []).map(
       (occurrence) => occurrence.occurrenceId,
@@ -2828,6 +3337,35 @@ export const createTeamsAuthHandlers = ({
     }
     const basePositionId = targetSlot.positionId;
     const cellKey = makeScheduleSlotKey(basePositionId, targetSlot.slot);
+    const occurrence = (schedule.occurrences || []).find(
+      (item) => item.occurrenceId === serviceId,
+    );
+    const requirements = sanitizePositionRequirements(
+      occurrence?.positionRequirements,
+    );
+    // Older schedules did not store requirements. The scheduling UI treats
+    // that as one required slot for each team position, so assignment
+    // validation must do the same instead of rejecting every slot.
+    const requirement = requirements.find(
+      (item) => item?.positionId === basePositionId,
+    );
+    {
+      let requiredCount = Math.max(
+        0,
+        Math.floor(Number(requirement?.count) || 0),
+      );
+      if (!requirement && requirements.length === 0) {
+        requiredCount = 1;
+      }
+      const additionalSlots = new Set(
+        normalizeTeamScheduleAdditionalPositionSlots(
+          schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+        )[serviceId] || [],
+      );
+      if (targetSlot.slot >= requiredCount && !additionalSlots.has(cellKey)) {
+        throw httpError(400, "Add this position before assigning it.");
+      }
+    }
     if (!position || position.churchId !== churchId || position.archivedAt) {
       throw httpError(400, "Position is archived.");
     }
@@ -2898,6 +3436,7 @@ export const createTeamsAuthHandlers = ({
           throw httpError(400, "That member cannot serve in this position.");
         }
         if (
+          !allowBlockout &&
           isMemberUnavailableForService(member, { date: serviceDate || "" })
         ) {
           throw httpError(400, "That member is unavailable for this service.");
@@ -2983,7 +3522,10 @@ export const createTeamsAuthHandlers = ({
     if (!(member.positionIds || []).includes(basePositionId)) {
       throw httpError(400, "That member cannot serve in this position.");
     }
-    if (isMemberUnavailableForService(member, { date: serviceDate || "" })) {
+    if (
+      !allowBlockout &&
+      isMemberUnavailableForService(member, { date: serviceDate || "" })
+    ) {
       throw httpError(400, "That member is unavailable for this service.");
     }
     // Intake service availability is a soft warning only (surfaced in the
@@ -3197,6 +3739,7 @@ export const createTeamsAuthHandlers = ({
     sourcePositionSlotKey,
     shadowAction,
     shadowKind,
+    allowBlockout,
     allowCrossTeamConflict,
   }) => {
     const schedule = await assertTeamEntityInChurch(
@@ -3249,6 +3792,7 @@ export const createTeamsAuthHandlers = ({
       sourcePositionSlotKey,
       shadowAction,
       shadowKind,
+      allowBlockout,
     });
     if (normalizedMemberId && shadowAction !== "remove") {
       const schedules = await listTeamCollectionForChurch(
@@ -3316,6 +3860,7 @@ export const createTeamsAuthHandlers = ({
     sourcePositionSlotKey,
     shadowAction,
     shadowKind,
+    allowBlockout,
     allowCrossTeamConflict,
     adminUserId,
   }) => {
@@ -3332,6 +3877,7 @@ export const createTeamsAuthHandlers = ({
         sourcePositionSlotKey,
         shadowAction,
         shadowKind,
+        allowBlockout,
         allowCrossTeamConflict,
       });
       await setDoc(
@@ -3411,6 +3957,7 @@ export const createTeamsAuthHandlers = ({
         sourcePositionSlotKey,
         shadowAction,
         shadowKind,
+        allowBlockout,
       });
       if (normalizedMemberId && shadowAction !== "remove") {
         const schedules = await listTransactionSchedulesForChurch(
@@ -3669,102 +4216,65 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
-  const updateTeamScheduleAttendanceInStore = async ({
-    churchId,
-    scheduleId,
-    occurrenceId,
-    memberId,
-    status,
-    columnKey,
-    positionId,
-    positionLabel,
-    adminUserId,
-  }) => {
-    const db = requireFirestore();
-    if (!db) {
-      const schedule = await assertTeamEntityInChurch(
-        "schedule",
-        scheduleId,
-        churchId,
-        { label: "Schedule", active: false },
-      );
-      const team = await assertTeamEntityInChurch(
-        "team",
-        schedule.teamId,
-        churchId,
-        { label: "Team", active: false },
-      );
-      const attendance = buildNextScheduleAttendance({
-        schedule,
-        team,
-        occurrenceId,
-        memberId,
-        status,
-        columnKey,
-        positionId,
-        positionLabel,
-      });
-      await setDoc(
-        COLLECTIONS.teamSchedules,
-        scheduleId,
-        { attendance, updatedAt: nowIso(), updatedByUid: adminUserId },
-        { merge: true },
-      );
-      return getTeamEntity("schedule", scheduleId);
-    }
-
-    return db.runTransaction(async (transaction) => {
-      const scheduleRef = db
-        .collection(COLLECTIONS.teamSchedules)
-        .doc(scheduleId);
-      const scheduleSnap = await transaction.get(scheduleRef);
-      const schedule = readTransactionTeamEntity(
-        scheduleSnap,
-        "scheduleId",
-        "Schedule",
-      );
-      if (schedule.churchId !== churchId) {
-        throw httpError(404, "Schedule not found.");
-      }
-      const teamSnap = await transaction.get(
-        db.collection(COLLECTIONS.teams).doc(schedule.teamId),
-      );
-      const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
-      if (team.churchId !== churchId) {
-        throw httpError(404, "Team not found.");
-      }
-      const attendance = buildNextScheduleAttendance({
-        schedule,
-        team,
-        occurrenceId,
-        memberId,
-        status,
-        columnKey,
-        positionId,
-        positionLabel,
-      });
-      const update = {
-        attendance,
-        updatedAt: nowIso(),
-        updatedByUid: adminUserId,
-      };
-      // Use update (not set with merge) so the attendance map is replaced
-      // wholesale; a merged set would resurrect cleared attendance marks.
-      transaction.update(scheduleRef, update);
-      return { ...schedule, ...update };
-    });
-  };
-
   return {
     async getTeamsBootstrap(req, res) {
       try {
         await requireTeamsView(req, req.params.churchId);
+        // Opt-in: `?schedules=summary` trades full schedule docs for summaries
+        // plus a hydrated window around today. Absent (older clients) keeps the
+        // original full payload.
+        const scheduleMode =
+          req.query?.schedules === "summary" ? "summary" : "full";
         return res.json({
           success: true,
-          ...(await buildTeamsBootstrap(req.params.churchId)),
+          ...(await buildTeamsBootstrap(req.params.churchId, { scheduleMode })),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load teams.");
+      }
+    },
+
+    /**
+     * Hydrates one schedule on demand, together with the other teams' schedules
+     * that overlap its date window. The companions are what the grid needs to
+     * warn "also scheduled on <team>" when assigning a member, so they must
+     * arrive with the schedule rather than in a second round trip. The set is
+     * bounded by team count, not by how many months of history exist.
+     */
+    async getTeamScheduleDetail(req, res) {
+      try {
+        await requireTeamsView(req, req.params.churchId);
+        const schedule = await getDoc(
+          COLLECTIONS.teamSchedules,
+          req.params.scheduleId,
+        );
+        if (!schedule || schedule.churchId !== req.params.churchId) {
+          throw httpError(404, "Schedule not found.");
+        }
+        const hydrated = { scheduleId: req.params.scheduleId, ...schedule };
+        const all = await listTeamCollectionForChurch(
+          COLLECTIONS.teamSchedules,
+          "scheduleId",
+          req.params.churchId,
+        );
+        const startDate = hydrated.startDate || hydrated.endDate || "";
+        const endDate = hydrated.endDate || hydrated.startDate || "";
+        const relatedSchedules = all.filter(
+          (other) =>
+            other.scheduleId !== hydrated.scheduleId &&
+            !other.archivedAt &&
+            other.teamId !== hydrated.teamId &&
+            (!startDate ||
+              !endDate ||
+              scheduleOverlapsDateRange(other, startDate, endDate)),
+        );
+        return res.json({
+          success: true,
+          schedule: hydrated,
+          relatedSchedules,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load this schedule.");
       }
     },
 
@@ -3775,12 +4285,21 @@ export const createTeamsAuthHandlers = ({
           req.body,
           req.params.churchId,
         );
-        const admin = await requireTeamsEditForMember(
+        const requestedTeamIds = await validateMemberTeamIds(
+          req.body,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeamIds(
           req,
           req.params.churchId,
-          payload,
+          [
+            ...(await collectMemberTeamIds(payload, req.params.churchId)),
+            // Joining a team is an edit to that team's roster, so hold the
+            // request to the same bar as editing the team itself.
+            ...(requestedTeamIds || []),
+          ],
         );
-        const member = await upsertTeamEntity({
+        const created = await upsertTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
           payload,
@@ -3788,11 +4307,13 @@ export const createTeamsAuthHandlers = ({
         });
         // Positions are team-scoped, so being eligible for a team's position
         // implies belonging to that team's roster. Mirror the intake-apply flow
-        // and reconcile membership into `team.memberIds` (idempotent, add-only).
-        await addMemberToTeamsForPositions({
+        // and reconcile membership into `team.memberIds`.
+        const { member, teams: updatedTeams } = await syncMemberTeamMembership({
+          req,
           churchId: req.params.churchId,
+          member: created,
           positionIds: payload.positionIds,
-          memberId: member.memberId,
+          requestedTeamIds,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -3801,7 +4322,11 @@ export const createTeamsAuthHandlers = ({
           userId: admin.user.uid,
           memberId: member.memberId,
         });
-        return res.json({ success: true, member });
+        return res.json({
+          success: true,
+          member,
+          ...(updatedTeams.length ? { teams: updatedTeams } : {}),
+        });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this member.");
       }
@@ -3820,15 +4345,22 @@ export const createTeamsAuthHandlers = ({
           req.body,
           req.params.churchId,
         );
+        const requestedTeamIds = await validateMemberTeamIds(
+          req.body,
+          req.params.churchId,
+        );
         const admin = await requireTeamsEditForTeamIds(
           req,
           req.params.churchId,
           [
             ...(await collectMemberTeamIds(existing, req.params.churchId)),
             ...(await collectMemberTeamIds(payload, req.params.churchId)),
+            // Joining a team is an edit to that team's roster, so hold the
+            // request to the same bar as editing the team itself.
+            ...(requestedTeamIds || []),
           ],
         );
-        const member = await upsertTeamEntity({
+        const saved = await upsertTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
           id: req.params.memberId,
@@ -3837,11 +4369,13 @@ export const createTeamsAuthHandlers = ({
         });
         // Positions are team-scoped, so being eligible for a team's position
         // implies belonging to that team's roster. Mirror the intake-apply flow
-        // and reconcile membership into `team.memberIds` (idempotent, add-only).
-        await addMemberToTeamsForPositions({
+        // and reconcile membership into `team.memberIds`.
+        const { member, teams: updatedTeams } = await syncMemberTeamMembership({
+          req,
           churchId: req.params.churchId,
+          member: saved,
           positionIds: payload.positionIds,
-          memberId: member.memberId,
+          requestedTeamIds,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -3850,7 +4384,11 @@ export const createTeamsAuthHandlers = ({
           userId: admin.user.uid,
           memberId: member.memberId,
         });
-        return res.json({ success: true, member });
+        return res.json({
+          success: true,
+          member,
+          ...(updatedTeams.length ? { teams: updatedTeams } : {}),
+        });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this member.");
       }
@@ -4787,7 +5325,12 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           [existing.teamId, payload.teamId],
         );
-        if (Object.keys(payload.assignments || {}).length > 0) {
+        const newAssignmentConflictChecks =
+          getNewScheduleAssignmentConflictChecks({
+            previousAssignments: existing.assignments,
+            nextAssignments: payload.assignments,
+          });
+        if (Object.keys(newAssignmentConflictChecks).length > 0) {
           const schedules = await listTeamCollectionForChurch(
             COLLECTIONS.teamSchedules,
             "scheduleId",
@@ -4799,7 +5342,7 @@ export const createTeamsAuthHandlers = ({
               churchId: req.params.churchId,
               ...payload,
             },
-            assignments: payload.assignments,
+            assignments: newAssignmentConflictChecks,
             schedules,
             allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
               req.body?.allowCrossTeamConflict,
@@ -5184,6 +5727,7 @@ export const createTeamsAuthHandlers = ({
         const requestedId = normalizeShortText(req.body?.templateId, {
           max: 200,
         });
+        const baseRevision = getServicePlanBaseRevision(req.body?.baseRevision);
         const now = nowIso();
 
         let templateId = requestedId;
@@ -5198,28 +5742,64 @@ export const createTeamsAuthHandlers = ({
           templateId = createId("servicePlanTemplate");
         }
 
-        await setDoc(
-          COLLECTIONS.servicePlanTemplates,
+        /**
+         * Written whole rather than merged: `serviceId` is optional, so a merge
+         * would leave a stale scope behind when a template is changed back to
+         * "any service". Creation stamps are carried forward explicitly.
+         */
+        const buildNextTemplate = (current) => ({
+          ...payload,
           templateId,
-          {
-            ...payload,
+          churchId,
+          revision: getServicePlanRevision(current) + 1,
+          updatedAt: now,
+          updatedByUid: admin.user.uid,
+          createdAt: current?.createdAt || now,
+          createdByUid: current?.createdByUid || admin.user.uid,
+        });
+
+        const db = requireFirestore();
+        let template;
+        if (db) {
+          // Read-check-write in one transaction, so two autosaving editors
+          // cannot both pass the revision check and overwrite each other.
+          template = await db.runTransaction(async (transaction) => {
+            const ref = db
+              .collection(COLLECTIONS.servicePlanTemplates)
+              .doc(templateId);
+            const snapshot = await transaction.get(ref);
+            const current = snapshot.exists
+              ? { id: snapshot.id, ...snapshot.data() }
+              : null;
+            if (current && current.churchId !== churchId) {
+              throw httpError(404, "Template not found.");
+            }
+            assertServicePlanTemplateRevision(current, baseRevision);
+            const nextTemplate = buildNextTemplate(current);
+            transaction.set(ref, nextTemplate, { merge: false });
+            return nextTemplate;
+          });
+        } else {
+          assertServicePlanTemplateRevision(existing, baseRevision);
+          await setDoc(
+            COLLECTIONS.servicePlanTemplates,
             templateId,
-            churchId,
-            updatedAt: now,
-            updatedByUid: admin.user.uid,
-            ...(existing
-              ? {}
-              : { createdAt: now, createdByUid: admin.user.uid }),
-          },
-          { merge: Boolean(existing) },
-        );
-        const template = await getDoc(
-          COLLECTIONS.servicePlanTemplates,
-          templateId,
-        );
+            buildNextTemplate(existing),
+            { merge: false },
+          );
+          template = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
+        }
         emitTeamsEvent(churchId, "service-plan-template-updated", { template });
         return res.json({ success: true, template });
       } catch (error) {
+        if (error?.servicePlanTemplateConflict) {
+          return res.status(409).json({
+            success: false,
+            conflict: true,
+            errorMessage: error.message,
+            template: error.servicePlanTemplateConflict,
+          });
+        }
         return sendTeamsJsonError(
           res,
           error,
@@ -5304,6 +5884,92 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not save assignment suggestions.",
+        );
+      }
+    },
+
+    async getServicePlanMicrophones(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const microphones = (
+          Array.isArray(church?.servicePlanMicrophones)
+            ? church.servicePlanMicrophones
+            : []
+        )
+          .map(normalizeServicePlanMicrophone)
+          .filter(Boolean)
+          .slice(0, MAX_SERVICE_PLAN_MICROPHONES);
+        const hasSavedAudiences = Array.isArray(
+          church?.servicePlanMicrophoneAudiences,
+        );
+        const hasLegacyMicrophoneAudiences = (
+          church?.servicePlanMicrophones || []
+        ).some((microphone) => Array.isArray(microphone?.audiences));
+        let audiences;
+        if (hasSavedAudiences) {
+          audiences = normalizeServicePlanMicrophoneAudiences(
+            church.servicePlanMicrophoneAudiences,
+          );
+        } else if (hasLegacyMicrophoneAudiences) {
+          audiences = normalizeServicePlanMicrophoneAudiences(
+            church.servicePlanMicrophones.flatMap(
+              (microphone) => microphone?.audiences || [],
+            ),
+          );
+        }
+        return res.json({
+          success: true,
+          microphones,
+          ...(audiences ? { audiences } : {}),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load the microphone list.",
+        );
+      }
+    },
+
+    async saveServicePlanMicrophones(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireServicesEdit(req, churchId);
+        const microphones = (
+          Array.isArray(req.body?.microphones) ? req.body.microphones : []
+        )
+          .map(normalizeServicePlanMicrophone)
+          .filter(Boolean)
+          .filter(
+            (microphone, index, values) =>
+              values.findIndex(
+                (candidate) => candidate.id === microphone.id,
+              ) === index,
+          )
+          .slice(0, MAX_SERVICE_PLAN_MICROPHONES);
+        const audiences = normalizeServicePlanMicrophoneAudiences(
+          req.body?.audiences,
+        );
+        await setDoc(
+          COLLECTIONS.churches,
+          churchId,
+          {
+            servicePlanMicrophones: microphones,
+            servicePlanMicrophoneAudiences: audiences,
+            updatedAt: nowIso(),
+            updatedByUid: admin.user.uid,
+          },
+          { merge: true },
+        );
+        return res.json({ success: true, microphones, audiences });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save the microphone list.",
         );
       }
     },
@@ -5704,13 +6370,10 @@ export const createTeamsAuthHandlers = ({
           update.appliedByUid = admin.user.uid;
           update.appliedMemberId = member.memberId;
           update.appliedMemberCreated = Boolean(req.body?.createMember);
-          updatedTeams = (
-            await Promise.all(
-              Array.from(addedTeamIds).map((teamId) =>
-                getDoc(COLLECTIONS.teams, teamId),
-              ),
-            )
-          ).filter((team) => team && team.churchId === req.params.churchId);
+          updatedTeams = await loadTeamsByIds(
+            req.params.churchId,
+            Array.from(addedTeamIds),
+          );
         } else if (action === "dismissed") {
           update.status = "dismissed";
         } else if (action === "reviewed") {
@@ -5789,6 +6452,7 @@ export const createTeamsAuthHandlers = ({
           sourcePositionSlotKey: req.body?.sourcePositionSlotKey,
           shadowAction: req.body?.shadowAction,
           shadowKind: req.body?.shadowKind,
+          allowBlockout: normalizeAllowBlockout(req.body?.allowBlockout),
           allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
             req.body?.allowCrossTeamConflict,
           ),
@@ -5810,6 +6474,343 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not update this assignment.",
+        );
+      }
+    },
+
+    async updateTeamScheduleAssignmentMicrophones(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const schedule = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          churchId,
+          schedule.teamId,
+        );
+        const team = await assertTeamEntityInChurch(
+          "team",
+          schedule.teamId,
+          churchId,
+          {
+            label: "Team",
+          },
+        );
+        if (!team.usesMicrophoneAssignments) {
+          throw httpError(
+            400,
+            "This team does not use microphone assignments.",
+          );
+        }
+        const occurrenceId = normalizeShortText(req.body?.serviceId, {
+          max: 260,
+        });
+        const slotKey = normalizeShortText(req.body?.positionSlotKey, {
+          max: 260,
+        });
+        const slot = parseScheduleSlotKey(slotKey);
+        if (!slot) throw httpError(400, "Position slot key is invalid.");
+        assertScheduleRowContains(schedule, occurrenceId);
+        const occurrence = (schedule.occurrences || []).find(
+          (item) => item.occurrenceId === occurrenceId,
+        );
+        const requirements = Array.isArray(occurrence?.positionRequirements)
+          ? occurrence.positionRequirements
+          : [];
+        const requirement = requirements.find(
+          (item) => item?.positionId === slot.positionId,
+        );
+        {
+          const requiredCount = Math.max(
+            0,
+            Math.floor(Number(requirement?.count) || 0),
+          );
+          const additionalSlots = new Set(
+            normalizeTeamScheduleAdditionalPositionSlots(
+              schedule.additionalPositionSlots ??
+                schedule.optionalPositionSlots,
+            )[occurrenceId] || [],
+          );
+          const normalizedSlotKey = makeScheduleSlotKey(
+            slot.positionId,
+            slot.slot,
+          );
+          if (
+            slot.slot >= requiredCount &&
+            !additionalSlots.has(normalizedSlotKey)
+          ) {
+            throw httpError(
+              400,
+              "Add this position before assigning microphones.",
+            );
+          }
+        }
+        const position = await assertTeamEntityInChurch(
+          "position",
+          slot.positionId,
+          churchId,
+          { label: "Position" },
+        );
+        assertSchedulePositionForTeam({ churchId, team, position });
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const knownMicrophoneIds = new Set(
+          (Array.isArray(church?.servicePlanMicrophones)
+            ? church.servicePlanMicrophones
+            : []
+          ).map((microphone) => String(microphone?.id || "").trim()),
+        );
+        const microphoneIds = normalizeIdArray(req.body?.microphoneIds)
+          .filter((microphoneId) => knownMicrophoneIds.has(microphoneId))
+          .slice(0, 12);
+        const microphoneAssignments =
+          normalizeTeamScheduleMicrophoneAssignments(
+            schedule.microphoneAssignments,
+          );
+        const row = { ...(microphoneAssignments[occurrenceId] || {}) };
+        if (microphoneIds.length) row[slotKey] = microphoneIds;
+        else delete row[slotKey];
+        if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
+        else delete microphoneAssignments[occurrenceId];
+        const update = {
+          microphoneAssignments,
+          updatedAt: nowIso(),
+          updatedByUid: admin.user.uid,
+        };
+        await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
+          merge: true,
+        });
+        const updatedSchedule = { ...schedule, ...update };
+        emitTeamsEvent(churchId, "schedule-updated", {
+          schedule: updatedSchedule,
+        });
+        return res.json({ success: true, schedule: updatedSchedule });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update microphone assignments.",
+        );
+      }
+    },
+
+    async addTeamSchedulePositionSlot(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const schedule = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          churchId,
+          schedule.teamId,
+        );
+        const occurrenceId = normalizeShortText(req.body?.serviceId, {
+          max: 260,
+        });
+        const slotKey = normalizeShortText(req.body?.positionSlotKey, {
+          max: 260,
+        });
+        const slot = parseScheduleSlotKey(slotKey);
+        if (!slot) throw httpError(400, "Position slot key is invalid.");
+        assertScheduleRowContains(schedule, occurrenceId);
+        const occurrence = (schedule.occurrences || []).find(
+          (item) => item.occurrenceId === occurrenceId,
+        );
+        const requirement = (occurrence?.positionRequirements || []).find(
+          (item) => item?.positionId === slot.positionId,
+        );
+        const requiredCount = Math.max(
+          0,
+          Math.floor(Number(requirement?.count) || 0),
+        );
+        if (slot.slot < requiredCount || slot.slot > 99) {
+          throw httpError(
+            400,
+            "That additional position slot is not available for this service.",
+          );
+        }
+        const position = await assertTeamEntityInChurch(
+          "position",
+          slot.positionId,
+          churchId,
+          { label: "Position" },
+        );
+        const team = await assertTeamEntityInChurch(
+          "team",
+          schedule.teamId,
+          churchId,
+          {
+            label: "Team",
+          },
+        );
+        assertSchedulePositionForTeam({ churchId, team, position });
+        const additionalPositionSlots =
+          normalizeTeamScheduleAdditionalPositionSlots(
+            schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+          );
+        const row = new Set(additionalPositionSlots[occurrenceId] || []);
+        row.add(makeScheduleSlotKey(slot.positionId, slot.slot));
+        additionalPositionSlots[occurrenceId] = [...row];
+        const update = {
+          additionalPositionSlots,
+          updatedAt: nowIso(),
+          updatedByUid: admin.user.uid,
+        };
+        await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
+          merge: true,
+        });
+        const updatedSchedule = { ...schedule, ...update };
+        emitTeamsEvent(churchId, "schedule-updated", {
+          schedule: updatedSchedule,
+        });
+        return res.json({ success: true, schedule: updatedSchedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not add this position.");
+      }
+    },
+
+    async removeTeamSchedulePositionSlot(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const existing = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          churchId,
+          existing.teamId,
+        );
+        const occurrenceId = normalizeShortText(req.body?.serviceId, {
+          max: 260,
+        });
+        const slotKey = normalizeShortText(req.body?.positionSlotKey, {
+          max: 260,
+        });
+        const slot = parseScheduleSlotKey(slotKey);
+        if (!slot) throw httpError(400, "Position slot key is invalid.");
+        const position = await assertTeamEntityInChurch(
+          "position",
+          slot.positionId,
+          churchId,
+          { label: "Position" },
+        );
+        const team = await assertTeamEntityInChurch(
+          "team",
+          existing.teamId,
+          churchId,
+          {
+            label: "Team",
+          },
+        );
+        assertSchedulePositionForTeam({ churchId, team, position });
+
+        const buildUpdate = (schedule) => {
+          assertScheduleRowContains(schedule, occurrenceId);
+          const additionalPositionSlots =
+            normalizeTeamScheduleAdditionalPositionSlots(
+              schedule.additionalPositionSlots ??
+                schedule.optionalPositionSlots,
+            );
+          const addedSlots = new Set(
+            additionalPositionSlots[occurrenceId] || [],
+          );
+          const normalizedSlotKey = makeScheduleSlotKey(
+            slot.positionId,
+            slot.slot,
+          );
+          if (!addedSlots.delete(normalizedSlotKey)) {
+            throw httpError(
+              400,
+              "That position was not added to this service.",
+            );
+          }
+          if (addedSlots.size)
+            additionalPositionSlots[occurrenceId] = [...addedSlots];
+          else delete additionalPositionSlots[occurrenceId];
+
+          const assignments = JSON.parse(
+            JSON.stringify(schedule.assignments || {}),
+          );
+          if (assignments[occurrenceId]) {
+            delete assignments[occurrenceId][normalizedSlotKey];
+            if (Object.keys(assignments[occurrenceId]).length === 0) {
+              delete assignments[occurrenceId];
+            }
+          }
+          const microphoneAssignments =
+            normalizeTeamScheduleMicrophoneAssignments(
+              schedule.microphoneAssignments,
+            );
+          if (microphoneAssignments[occurrenceId]) {
+            delete microphoneAssignments[occurrenceId][normalizedSlotKey];
+            if (Object.keys(microphoneAssignments[occurrenceId]).length === 0) {
+              delete microphoneAssignments[occurrenceId];
+            }
+          }
+          return {
+            additionalPositionSlots,
+            assignments,
+            microphoneAssignments,
+            updatedAt: nowIso(),
+            updatedByUid: admin.user.uid,
+          };
+        };
+
+        const db = requireFirestore();
+        let schedule;
+        if (db) {
+          schedule = await db.runTransaction(async (transaction) => {
+            const scheduleRef = db
+              .collection(COLLECTIONS.teamSchedules)
+              .doc(existing.scheduleId);
+            const snapshot = await transaction.get(scheduleRef);
+            const current = readTransactionTeamEntity(
+              snapshot,
+              "scheduleId",
+              "Schedule",
+              { active: false },
+            );
+            if (current.churchId !== churchId) {
+              throw httpError(404, "Schedule not found.");
+            }
+            const update = buildUpdate(current);
+            // Replaces each root map so the deleted position and its assignments
+            // cannot be resurrected by Firestore's nested merge behavior.
+            transaction.update(scheduleRef, update);
+            return { ...current, ...update };
+          });
+        } else {
+          const update = buildUpdate(existing);
+          schedule = { ...existing, ...update };
+          await setDoc(
+            COLLECTIONS.teamSchedules,
+            existing.scheduleId,
+            schedule,
+            {
+              merge: false,
+            },
+          );
+        }
+        emitTeamsEvent(churchId, "schedule-updated", { schedule });
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not remove this position.",
         );
       }
     },
@@ -5868,42 +6869,6 @@ export const createTeamsAuthHandlers = ({
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not apply this swap.");
-      }
-    },
-
-    async updateTeamScheduleAttendance(req, res) {
-      try {
-        await assertCsrf(req);
-        const existing = await assertTeamEntityInChurch(
-          "schedule",
-          req.params.scheduleId,
-          req.params.churchId,
-          { label: "Schedule", active: false },
-        );
-        const admin = await requireTeamsEditForTeam(
-          req,
-          req.params.churchId,
-          existing.teamId,
-        );
-        const payload = validateTeamScheduleAttendanceUpdatePayload(req.body);
-        const schedule = await updateTeamScheduleAttendanceInStore({
-          churchId: req.params.churchId,
-          scheduleId: req.params.scheduleId,
-          ...payload,
-          adminUserId: admin.user.uid,
-        });
-        await addSecurityEvent({
-          type: "team_schedule_attendance_updated",
-          churchId: req.params.churchId,
-          userId: admin.user.uid,
-          scheduleId: req.params.scheduleId,
-          occurrenceId: payload.occurrenceId,
-          memberId: payload.memberId,
-        });
-        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
-        return res.json({ success: true, schedule });
-      } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not update attendance.");
       }
     },
   };

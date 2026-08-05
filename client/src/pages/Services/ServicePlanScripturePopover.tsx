@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -60,6 +60,15 @@ const ServicePlanScripturePopover = ({
     [reference],
   );
 
+  // Pasting the whole reference is the fast path — "Psalms 90 (NLT)" should
+  // set the version too rather than silently attaching it as the default. The
+  // picker stays authoritative afterwards, since this only fires when the
+  // typed version itself changes.
+  const typedVersion = parsedReference?.version.toLowerCase() || "";
+  useEffect(() => {
+    if (typedVersion) setVersion(typedVersion);
+  }, [typedVersion]);
+
   const reset = () => {
     setReference("");
     setVersion(DEFAULT_VERSION);
@@ -83,6 +92,13 @@ const ServicePlanScripturePopover = ({
 
   return (
     <Popover
+      // Modal on purpose. This usually opens from the row's Add menu, and a
+      // non-modal popover treats that menu's focus handling as it closes as an
+      // interaction outside itself — dismissing the form before the operator
+      // can type a reference. Modal traps focus (landing in the reference
+      // field, which is where they want it) while still closing on Escape or a
+      // click outside.
+      modal
       open={open}
       onOpenChange={(next) => {
         setOpen(next);

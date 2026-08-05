@@ -47,6 +47,9 @@ const buildCellProps = (
 ) => ({
   slot: col.slot,
   requiredCount: requiredCountByOccurrence[occ.occurrenceId]?.[col.positionId] ?? 0,
+  isSlotEnabled:
+    col.slot < (requiredCountByOccurrence[occ.occurrenceId]?.[col.positionId] ?? 0),
+  isAdditionalPosition: false,
   assignmentCell: undefined,
   isMemberHighlighted: false,
   isActiveSlot: false,
@@ -58,8 +61,7 @@ const buildCellProps = (
 const renderView = (
   occurrenceIds: string[],
   options: {
-    onOpenAttendance?: (occurrenceId: string) => void;
-    detailOccurrenceId?: string | null;
+    onOpenServiceSummary?: (occurrenceId: string) => void;
     nextUpcomingOccurrenceId?: string | null;
     isExpanded?: (occurrenceId: string) => boolean;
     onToggleExpanded?: (occurrenceId: string) => void;
@@ -77,7 +79,7 @@ const renderView = (
       ]}
       columns={columns}
       teamName="Media Team"
-      detailOccurrenceId={options.detailOccurrenceId ?? null}
+      canEdit
       nextUpcomingOccurrenceId={options.nextUpcomingOccurrenceId ?? null}
       isExpanded={options.isExpanded ?? (() => true)}
       onToggleExpanded={options.onToggleExpanded ?? jest.fn()}
@@ -93,7 +95,8 @@ const renderView = (
         )
       }
       serviceArchivedById={() => false}
-      onOpenAttendance={options.onOpenAttendance ?? jest.fn()}
+      onOpenServiceSummary={options.onOpenServiceSummary ?? jest.fn()}
+      getAdditionalPositionOptions={() => []}
       buildCellProps={buildCellProps}
     />,
   );
@@ -119,15 +122,15 @@ describe("ScheduleBoardView", () => {
     expect(screen.queryByText("Front Of House Audio")).not.toBeInTheDocument();
   });
 
-  it("opens attendance when the occurrence date button is clicked", () => {
-    const onOpenAttendance = jest.fn();
-    renderView(["o1"], { onOpenAttendance });
+  it("opens the service summary when the occurrence date button is clicked", () => {
+    const onOpenServiceSummary = jest.fn();
+    renderView(["o1"], { onOpenServiceSummary });
     fireEvent.click(
       screen.getByRole("button", {
         name: /View and copy assignments for Sunday Service/i,
       }),
     );
-    expect(onOpenAttendance).toHaveBeenCalledWith("o1");
+    expect(onOpenServiceSummary).toHaveBeenCalledWith("o1");
   });
 
   it("reflects expanded state and reports toggles to the parent", () => {

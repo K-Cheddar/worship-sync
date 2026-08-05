@@ -1,6 +1,9 @@
 import generateRandomId from "../../utils/generateRandomId";
 import { EMPTY_RICH_TEXT } from "../../types/richText";
-import { getServicePlanElementType } from "../../types/servicePlan";
+import {
+  getServicePlanElementAssignees,
+  getServicePlanElementType,
+} from "../../types/servicePlan";
 import type {
   ServicePlanElement,
   ServicePlanElementType,
@@ -133,7 +136,11 @@ export const reorderElementsInSection = (
  * when saving a plan as a template and when applying one back onto a plan, so
  * neither direction can leak one week's specifics into another.
  *
- * Kept: structure, section/item names, timings, notes, team notes.
+ * Kept: structure, section/item names, timings, notes, team notes, and the
+ * microphone plan. Microphones are church-owned and addressed to roles by
+ * their own configuration rather than by whoever holds them, so a mic plan
+ * repeats week to week and belongs to the pattern. Each assignee is kept as
+ * the microphone slot it describes, with the person removed.
  * Cleared: song/scripture picks, who's assigned, and the live-outline push
  * pointer — all of which belong to a single dated service, not to the pattern.
  * Ids are regenerated so two plans built from one template never collide.
@@ -149,11 +156,24 @@ export const cloneSectionsForTemplate = (
         ...element,
         id: generateRandomId(),
         songRef: undefined,
+        songRefs: undefined,
         scriptureRef: undefined,
+        scriptureRefs: undefined,
+        // The people go, the microphone plan stays: each assignee is kept as
+        // the microphone slot it describes, and gains a name back when the
+        // template is applied to a date. Slots holding nothing are dropped.
+        assignees: getServicePlanElementAssignees(element)
+          .filter((assignee) => assignee.microphoneIds?.length)
+          .map((assignee) => ({
+            id: generateRandomId(),
+            microphoneIds: [...(assignee.microphoneIds || [])],
+          })),
         assignedName: undefined,
         assignedMemberId: undefined,
+        microphoneAssignments: undefined,
         sourceLedByRaw: undefined,
         pushedOutlineListId: undefined,
+        pushedOutlineListIds: undefined,
       };
       // Kind follows the (now-cleared) attachments.
       return { ...cloned, type: getServicePlanElementType(cloned) };

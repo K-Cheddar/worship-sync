@@ -1,5 +1,6 @@
 import { buildServicePlanOutlineItems } from "./servicePlanOutlineBridge";
 import { createNewFreeForm, createNewHeading } from "../../utils/itemUtil";
+import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlan } from "../../types/servicePlan";
 import type { ServiceItem } from "../../types";
@@ -9,8 +10,13 @@ jest.mock("../../utils/itemUtil", () => ({
   createNewFreeForm: jest.fn(),
 }));
 
+jest.mock("../../utils/servicePlanningBibleImport", () => ({
+  createBibleItemFromParsedReference: jest.fn(),
+}));
+
 const mockCreateNewHeading = jest.mocked(createNewHeading);
 const mockCreateNewFreeForm = jest.mocked(createNewFreeForm);
+const mockCreateBibleItem = jest.mocked(createBibleItemFromParsedReference);
 
 const basePlan: ServicePlan = {
   planId: "plan-1",
@@ -66,6 +72,12 @@ describe("buildServicePlanOutlineItems", () => {
       arrangements: [],
       shouldSendTo: { projector: true, monitor: true, stream: true },
     }));
+    mockCreateBibleItem.mockImplementation(async ({ parsedRef }) => ({
+      _id: `bible-${parsedRef.book}-${parsedRef.chapter}`,
+      name: `${parsedRef.book} ${parsedRef.chapter}`,
+      type: "bible",
+      background: "",
+    }) as unknown as Awaited<ReturnType<typeof createBibleItemFromParsedReference>>);
   });
 
   it("creates a heading for the section and inserts the library-matched song directly", async () => {
@@ -83,6 +95,34 @@ describe("buildServicePlanOutlineItems", () => {
     expect(songItem).toEqual(
       expect.objectContaining({ _id: "song-1", name: "Great Are You Lord", type: "song" }),
     );
+  });
+
+  it("pushes every song attached to one plan element in order", async () => {
+    const plan: ServicePlan = {
+      ...basePlan,
+      sections: [{
+        ...basePlan.sections[0],
+        elements: [{
+          ...basePlan.sections[0].elements[0],
+          songRefs: [
+            { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+            { kind: "library", songId: "song-2", songName: "Build My Life" },
+          ],
+          songRef: undefined,
+        }],
+      }],
+    };
+
+    const result = await buildServicePlanOutlineItems({
+      plan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+    });
+
+    expect(result.items.filter((item) => item.type === "song").map((item) => item._id))
+      .toEqual(["song-1", "song-2"]);
+    expect(result.updatedSections[0].elements[0].pushedOutlineListIds).toHaveLength(2);
   });
 
   it("skips a pending (not-yet-created) song and reports its title", async () => {
@@ -184,6 +224,110 @@ describe("buildServicePlanOutlineItems", () => {
     expect(mockCreateNewHeading).not.toHaveBeenCalled();
     expect(result.items).toEqual([]);
     expect(result.insertedCount).toBe(0);
+  });
+
+  // One song nobody has added to the library yet used to take the whole element
+  // down with it: the operator got neither the song that did resolve nor the
+  // scripture, and the Bible doc built for that scripture was left orphaned.
+  it("pushes the attachments that resolved even when a sibling song did not", async () => {
+    const mixedPlan: ServicePlan = {
+      ...basePlan,
+      sections: [{
+        ...basePlan.sections[0],
+        elements: [{
+          id: "el-mixed",
+          type: "song",
+          title: plainTextToRichText("Worship Set"),
+          songRefs: [
+            { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+            { kind: "pending", title: "Unwritten Song", lyricsText: "" },
+          ],
+          scriptureRefs: [
+            { label: "John 3:16 (NIV)", book: "John", chapter: "3", verseRange: "16", version: "NIV" },
+          ],
+        }],
+      }],
+    };
+
+    const result = await buildServicePlanOutlineItems({
+      plan: mixedPlan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+    });
+
+    expect(result.items.map((item) => item._id)).toEqual([
+      "heading-Worship",
+      "song-1",
+      "bible-John-3",
+    ]);
+    expect(result.insertedCount).toBe(2);
+    // The operator is still told the unmatched song needs linking.
+    expect(result.skippedTitles).toEqual(["Worship Set"]);
+    expect(result.updatedSections[0].elements[0].pushedOutlineListIds).toHaveLength(2);
+  });
+
+  // Idempotency is per attachment: deleting one item from a multi-attachment
+  // element used to make the whole element look un-pushed, so a re-push put a
+  // second copy of everything else on the list mid-service.
+  it("re-adds only the deleted item when an element is pushed again", async () => {
+    const twoSongPlan: ServicePlan = {
+      ...basePlan,
+      sections: [{
+        ...basePlan.sections[0],
+        elements: [{
+          id: "el-two-songs",
+          type: "song",
+          title: plainTextToRichText("Worship Set"),
+          songRefs: [
+            { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+            { kind: "library", songId: "song-2", songName: "Build My Life" },
+          ],
+        }],
+      }],
+    };
+
+    const first = await buildServicePlanOutlineItems({
+      plan: twoSongPlan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+    });
+    // The operator drops the first song from the live list, then pushes again.
+    const listAfterDelete = first.items.filter((item) => item._id !== "song-1");
+
+    const second = await buildServicePlanOutlineItems({
+      plan: { ...twoSongPlan, sections: first.updatedSections },
+      currentList: listAfterDelete,
+      db: undefined,
+      songs: [],
+    });
+
+    expect(second.items.map((item) => item._id)).toEqual(["heading-Worship", "song-1"]);
+    expect(second.insertedCount).toBe(1);
+  });
+
+  it("does not re-push an element whose attachments are all still live", async () => {
+    const songPlan: ServicePlan = {
+      ...basePlan,
+      sections: [{ ...basePlan.sections[0], elements: [basePlan.sections[0].elements[0]] }],
+    };
+
+    const first = await buildServicePlanOutlineItems({
+      plan: songPlan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+    });
+    const second = await buildServicePlanOutlineItems({
+      plan: { ...songPlan, sections: first.updatedSections },
+      currentList: first.items,
+      db: undefined,
+      songs: [],
+    });
+
+    expect(second.items).toEqual([]);
+    expect(second.insertedCount).toBe(0);
   });
 
   it("skips creating a heading for a section where nothing is new", async () => {

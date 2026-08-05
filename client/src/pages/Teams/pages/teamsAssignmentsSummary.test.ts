@@ -8,6 +8,8 @@ import type {
 } from "../../../api/authTypes";
 import {
   getOccurrenceAssignmentSummary,
+  getScheduledMicrophoneHolders,
+  getTeamMicrophoneRows,
   groupAssignmentSummaryByTeam,
   summarizeNeededPositions,
 } from "./teamsAssignmentsSummary";
@@ -135,7 +137,10 @@ describe("getOccurrenceAssignmentSummary", () => {
     ]);
 
     expect(
-      rows.map((row) => ({ slotLabel: row.slotLabel, memberName: row.memberName })),
+      rows.map((row) => ({
+        slotLabel: row.slotLabel,
+        memberName: row.memberName,
+      })),
     ).toEqual([
       { slotLabel: "Vocal 1", memberName: "Morgan Lee" },
       // Required by the service, nobody assigned yet.
@@ -328,7 +333,12 @@ describe("getOccurrenceAssignmentSummary", () => {
       }),
     ]);
 
-    expect(rows.map((row) => row.memberName)).toEqual([null, null, null, "Casey Ng"]);
+    expect(rows.map((row) => row.memberName)).toEqual([
+      null,
+      null,
+      null,
+      "Casey Ng",
+    ]);
     expect(rows[3].columnKey).toBe("position-vocal::2");
   });
 
@@ -391,13 +401,13 @@ describe("groupAssignmentSummaryByTeam", () => {
           "position-vocal::0": { primaryMemberId: "member-2" },
         },
       }),
-      schedule(
-        {},
-        { scheduleId: "schedule-dup", name: "July (rebuild)" },
-      ),
+      schedule({}, { scheduleId: "schedule-dup", name: "July (rebuild)" }),
     ];
 
-    const groups = groupAssignmentSummaryByTeam(summaryFor(schedules), schedules);
+    const groups = groupAssignmentSummaryByTeam(
+      summaryFor(schedules),
+      schedules,
+    );
     const worship = groups.filter((group) => group.teamName === "Worship");
 
     expect(worship).toHaveLength(2);
@@ -416,9 +426,14 @@ describe("groupAssignmentSummaryByTeam", () => {
       }),
     ];
 
-    const groups = groupAssignmentSummaryByTeam(summaryFor(schedules), schedules);
+    const groups = groupAssignmentSummaryByTeam(
+      summaryFor(schedules),
+      schedules,
+    );
 
-    expect(groups.every((group) => group.scheduleName === undefined)).toBe(true);
+    expect(groups.every((group) => group.scheduleName === undefined)).toBe(
+      true,
+    );
   });
 
   it("splits filled from unfilled under each team, in team name order", () => {
@@ -486,5 +501,88 @@ describe("groupAssignmentSummaryByTeam", () => {
       "schedule-1",
       "schedule-2",
     ]);
+  });
+});
+
+describe("getTeamMicrophoneRows", () => {
+  const microphoneTeams: TeamRecord[] = [
+    { ...teams[0], usesMicrophoneAssignments: true },
+    teams[1],
+  ];
+
+  it("keeps scheduled slots on teams that use microphone assignments", () => {
+    const rows = getTeamMicrophoneRows(
+      summaryFor([
+        schedule({
+          [occurrence.occurrenceId]: {
+            "position-vocal::0": { primaryMemberId: "member-2" },
+          },
+        }),
+      ]),
+      microphoneTeams,
+    );
+
+    expect(rows.map((row) => row.slotLabel)).toEqual([
+      "Vocal 1",
+      "Vocal 2",
+      "Keys",
+    ]);
+  });
+
+  it("drops teams that have not opted in, and slots with no schedule", () => {
+    // team-2 has no schedule for this date, so its required Front of House
+    // slot has no cell to write a microphone to.
+    const rows = getTeamMicrophoneRows(summaryFor([]), microphoneTeams);
+
+    expect(rows).toEqual([]);
+  });
+});
+
+describe("getScheduledMicrophoneHolders", () => {
+  it("lists every holder of a microphone so the plan can warn about sharing", () => {
+    const holders = getScheduledMicrophoneHolders(
+      summaryFor([
+        schedule(
+          {
+            [occurrence.occurrenceId]: {
+              "position-vocal::0": { primaryMemberId: "member-2" },
+              "position-keys::0": { primaryMemberId: "member-1" },
+            },
+          },
+          {
+            microphoneAssignments: {
+              [occurrence.occurrenceId]: {
+                "position-vocal::0": ["mic-lead"],
+                "position-keys::0": ["mic-lead", "mic-orange"],
+              },
+            },
+          },
+        ),
+      ]),
+      [{ ...teams[0], usesMicrophoneAssignments: true }, teams[1]],
+    );
+
+    expect(Object.fromEntries(holders)).toEqual({
+      "mic-lead": ["Morgan Lee", "Avery Stone"],
+      "mic-orange": ["Avery Stone"],
+    });
+  });
+
+  it("falls back to the slot label when nobody is assigned yet", () => {
+    const holders = getScheduledMicrophoneHolders(
+      summaryFor([
+        schedule(
+          { [occurrence.occurrenceId]: {} },
+          {
+            microphoneAssignments: {
+              [occurrence.occurrenceId]: { "position-keys::0": ["mic-lead"] },
+            },
+          },
+        ),
+      ]),
+      [{ ...teams[0], usesMicrophoneAssignments: true }, teams[1]],
+    );
+
+    expect(holders.get("mic-lead")).toEqual(["Keys"]);
   });
 });

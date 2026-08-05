@@ -20,7 +20,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { GlobalInfoContext } from "../../../context/globalInfo";
-import { listServicePlans } from "../../../api/auth";
+import { useToast } from "../../../context/toastContext";
+import {
+  getServicePlanMicrophones,
+  listServicePlans,
+  updateTeamScheduleAssignmentMicrophones,
+} from "../../../api/auth";
+import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { formatPlainDate } from "../../../utils/plainDate";
 import {
   findNextUpcomingOccurrenceId,
@@ -34,10 +40,13 @@ import ServicePlanEditor from "../../Services/ServicePlanEditor";
 import { useTeamsPage } from "../TeamsPageContext";
 import {
   getOccurrenceAssignmentSummary,
+  getScheduledMicrophoneHolders,
+  getUnhydratedOccurrenceScheduleIds,
   groupAssignmentSummaryByTeam,
-  summarizeNeededPositions,
-  type TeamsAssignmentSummaryTeamGroup,
+  teamMicrophoneSlotKey,
+  type TeamsAssignmentSummaryRow,
 } from "./teamsAssignmentsSummary";
+import WhosServingPanel from "./WhosServingPanel";
 import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
 import {
   buildPlansReturnTo,
@@ -46,177 +55,19 @@ import {
   type TeamsPlansRestore,
 } from "../teamsReturnNavigation";
 import { isActive } from "../teamsUtils";
-import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
 import ScheduleUpNextBadge from "../schedule/ScheduleUpNextBadge";
 import { scheduleUpNextBorderClassName } from "../schedule/scheduleUtils";
 import { cn } from "@/utils/cnHelper";
-import type { TeamScheduleOccurrence, TeamService } from "../../../api/authTypes";
+import type {
+  TeamScheduleOccurrence,
+  TeamService,
+} from "../../../api/authTypes";
+import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import { onlyHydratedSchedules } from "../../../api/authTypes";
 
 type RangePreset = "4w" | "8w" | "custom";
 
 const ALL_SERVICES = "all";
-
-/** Every "Who's serving" line is a link into that slot's schedule. */
-const whosServingRowClassName =
-  "flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70";
-
-type WhosServingPanelProps = {
-  assignmentTeams: TeamsAssignmentSummaryTeamGroup[];
-  onOpenSchedule: (args: {
-    scheduleId: string;
-    slot?: { occurrenceId: string; columnKey: string };
-  }) => void;
-  /** When false, skip the panel title (e.g. a Sheet already provides one). */
-  showHeading?: boolean;
-};
-
-/**
- * Read-only roster summary for the selected plan date. Each filled/unfilled
- * row deep-links into the matching schedule slot.
- */
-const WhosServingPanel = ({
-  assignmentTeams,
-  onOpenSchedule,
-  showHeading = true,
-}: WhosServingPanelProps) => (
-  <>
-    {showHeading ? (
-      <div className="flex items-center gap-2">
-        <Icon svg={Users} size="sm" className="text-orange-300" />
-        <h3 className="text-sm font-semibold">Who&apos;s serving</h3>
-      </div>
-    ) : null}
-    {assignmentTeams.length === 0 ? (
-      <p className="text-xs text-gray-400">
-        No positions required for this service yet. Add them in Service
-        settings.
-      </p>
-    ) : (
-      <div className="space-y-3">
-        {assignmentTeams.map((team) => {
-          const scheduleId = team.scheduleId;
-          const teamHeader = (
-            <>
-              <div className="min-w-0">
-                <h4 className="truncate text-[11px] font-semibold uppercase tracking-wide text-orange-300/90">
-                  {team.teamName}
-                </h4>
-                {/* Only set when this team has more than one schedule
-                    over this date — otherwise the heading repeats with
-                    different numbers and reads like a bug. */}
-                {team.scheduleName ? (
-                  <p className="truncate text-[11px] font-normal normal-case text-gray-500">
-                    {team.scheduleName}
-                  </p>
-                ) : null}
-              </div>
-              <ScheduleFillBadge
-                filled={team.filled.length}
-                required={team.filled.length + team.unfilled.length}
-              />
-            </>
-          );
-          // No schedule covers this date for this team, so there is no
-          // grid to open — list what the service needs instead.
-          if (!scheduleId) {
-            return (
-              <section
-                key={`${team.teamId}-unscheduled`}
-                className="space-y-1.5"
-              >
-                <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
-                  {teamHeader}
-                </div>
-                <ul className="space-y-1.5">
-                  {summarizeNeededPositions(team.unfilled).map((need) => (
-                    <li
-                      key={need.positionId}
-                      className="flex items-center justify-between gap-2 px-1.5 text-xs"
-                    >
-                      <span className="truncate text-gray-400">
-                        {need.positionName}
-                      </span>
-                      <span className="shrink-0 tabular-nums text-gray-500">
-                        &times;{need.count}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="px-1.5 text-[11px] text-gray-500">
-                  Not scheduled yet
-                </p>
-              </section>
-            );
-          }
-          return (
-            <section
-              key={`${team.teamId}-${scheduleId}`}
-              className="space-y-1.5"
-            >
-              <button
-                type="button"
-                className={whosServingRowClassName}
-                onClick={() => onOpenSchedule({ scheduleId })}
-                aria-label={`Open the schedule for ${team.teamName}`}
-              >
-                {teamHeader}
-              </button>
-              <ul className="space-y-1.5">
-                {team.filled.map((row) => (
-                  <li key={`${scheduleId}-${row.columnKey}`}>
-                    <button
-                      type="button"
-                      className={whosServingRowClassName}
-                      onClick={() =>
-                        onOpenSchedule({
-                          scheduleId,
-                          slot: {
-                            occurrenceId: row.occurrenceId,
-                            columnKey: row.columnKey,
-                          },
-                        })
-                      }
-                      aria-label={`${row.memberName} on ${row.slotLabel} — open in the schedule`}
-                    >
-                      <span className="truncate text-xs text-gray-400">
-                        {row.slotLabel}
-                      </span>
-                      <span className="truncate text-xs font-medium text-gray-100">
-                        {row.memberName}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {team.unfilled.length > 0 ? (
-                <button
-                  type="button"
-                  className={cn(
-                    whosServingRowClassName,
-                    "justify-start gap-1 text-xs font-medium text-amber-300",
-                  )}
-                  onClick={() =>
-                    onOpenSchedule({
-                      scheduleId,
-                      slot: {
-                        occurrenceId: team.unfilled[0].occurrenceId,
-                        columnKey: team.unfilled[0].columnKey,
-                      },
-                    })
-                  }
-                  aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
-                >
-                  {team.unfilled.length} unfilled
-                  <Icon svg={ChevronRight} size="xs" />
-                </button>
-              ) : null}
-            </section>
-          );
-        })}
-      </div>
-    )}
-  </>
-);
 
 const rangeFromPreset = (preset: "4w" | "8w") => {
   const start = new Date();
@@ -337,7 +188,16 @@ const serviceTimingLabel = (shared: SharedOccurrenceTiming) => {
 const TeamsPlansPage = () => {
   const { churchId, canEditServices, canEditTeams: canEditTeamsFromContext } =
     useContext(GlobalInfoContext) || {};
-  const { pageData, canEditTeams, servicePlansRevision } = useTeamsPage();
+  const {
+    pageData,
+    canEditTeams,
+    servicePlansRevision,
+    upsertData,
+    hydrateSchedules,
+    hydratingScheduleIds,
+    trackTeamsSave,
+  } = useTeamsPage();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const initialRange = useMemo(() => defaultRange(), []);
   const [windowStart, setWindowStart] = useState(initialRange.start);
@@ -348,6 +208,8 @@ const TeamsPlansPage = () => {
   // Mild placeholders for planned chips / progress / checks until listServicePlans
   // resolves. Stays false on revision refreshes so badges do not flash.
   const [planStatusLoading, setPlanStatusLoading] = useState(Boolean(churchId));
+  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(null);
   const planStatusChurchIdRef = useRef<string | null>(null);
   const [selection, setSelection] = useState<{
     service: TeamService;
@@ -363,6 +225,51 @@ const TeamsPlansPage = () => {
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
+
+  useEffect(() => {
+    if (!churchId) {
+      setMicrophones([]);
+      return;
+    }
+    let cancelled = false;
+    getServicePlanMicrophones(churchId)
+      .then((result) => {
+        if (!cancelled) setMicrophones(result.microphones);
+      })
+      .catch(() => {
+        // Mic allocation remains optional; plans still work without the catalog.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId]);
+
+  const saveScheduledMicrophones = async (
+    row: TeamsAssignmentSummaryRow,
+    microphoneIds: string[],
+  ) => {
+    if (!churchId || !row.scheduleId) return;
+    setSavingMicrophoneSlot(teamMicrophoneSlotKey(row));
+    try {
+      // Success feedback is the toolbar Syncing → Synced chip via trackTeamsSave.
+      const result = await trackTeamsSave(
+        updateTeamScheduleAssignmentMicrophones(
+          churchId,
+          row.scheduleId,
+          {
+            serviceId: row.occurrenceId,
+            positionSlotKey: row.columnKey,
+            microphoneIds,
+          },
+        ),
+      );
+      upsertData("schedules", "scheduleId", result.schedule);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not update team microphones.");
+    } finally {
+      setSavingMicrophoneSlot(null);
+    }
+  };
 
   useEffect(() => {
     if (!pendingPlanRestore || !pageData.services.length) return;
@@ -593,10 +500,32 @@ const TeamsPlansPage = () => {
     };
   }, [selection, visibleGroups]);
 
+  /**
+   * Schedules covering the open plan's date whose assignments the bootstrap
+   * left out. The plan can sit outside the bootstrap's hydration window, and
+   * every "who's serving" read here filters summaries away — which renders as
+   * an empty roster, indistinguishable from nobody being scheduled.
+   */
+  const unloadedScheduleIds = useMemo(
+    () =>
+      selection
+        ? getUnhydratedOccurrenceScheduleIds(
+          selection.occurrence,
+          pageData.schedules,
+        )
+        : [],
+    [pageData.schedules, selection],
+  );
+
+  useEffect(() => {
+    if (!unloadedScheduleIds.length) return;
+    void hydrateSchedules(unloadedScheduleIds);
+  }, [hydrateSchedules, unloadedScheduleIds]);
+
   if (selection) {
     const assignments = getOccurrenceAssignmentSummary({
       occurrence: selection.occurrence,
-      schedules: pageData.schedules,
+      schedules: onlyHydratedSchedules(pageData.schedules),
       positions: pageData.positions,
       members: pageData.members,
       teams: pageData.teams,
@@ -604,7 +533,23 @@ const TeamsPlansPage = () => {
     });
     const assignmentTeams = groupAssignmentSummaryByTeam(
       assignments,
-      pageData.schedules,
+      onlyHydratedSchedules(pageData.schedules),
+    );
+    // Schedules covering this date that the bootstrap only summarized are being
+    // fetched (see the effect above). Until they land, the panel must say so
+    // rather than show a roster that reads as "nobody is scheduled".
+    const assignmentsStatus = unloadedScheduleIds.length === 0
+      ? "ready"
+      : unloadedScheduleIds.some((scheduleId) =>
+        hydratingScheduleIds.includes(scheduleId))
+        ? "loading"
+        : "unavailable";
+    const scheduledMicrophoneHolders = getScheduledMicrophoneHolders(
+      assignments,
+      pageData.teams,
+    );
+    const canEditPlan = Boolean(
+      canEditServices ?? canEditTeamsFromContext ?? canEditTeams,
     );
 
     return (
@@ -617,7 +562,16 @@ const TeamsPlansPage = () => {
               members={pageData.members}
               positions={pageData.positions}
               teams={pageData.teams}
-              canEdit={Boolean(canEditServices ?? canEditTeamsFromContext ?? canEditTeams)}
+              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              teamMicrophones={{
+                rows: assignments,
+                assignmentsStatus,
+                savingSlot: savingMicrophoneSlot,
+                onChange: (row, microphoneIds) => {
+                  void saveScheduledMicrophones(row, microphoneIds);
+                },
+              }}
+              canEdit={canEditPlan}
               onBack={() => {
                 setServingSheetOpen(false);
                 setSelection(null);
@@ -666,6 +620,8 @@ const TeamsPlansPage = () => {
                 <WhosServingPanel
                   assignmentTeams={assignmentTeams}
                   onOpenSchedule={openSchedule}
+                  microphones={microphones}
+                  assignmentsStatus={assignmentsStatus}
                 />
               </div>
             ) : (
@@ -694,6 +650,8 @@ const TeamsPlansPage = () => {
               <WhosServingPanel
                 assignmentTeams={assignmentTeams}
                 onOpenSchedule={openSchedule}
+                microphones={microphones}
+                assignmentsStatus={assignmentsStatus}
                 showHeading={false}
               />
             </div>

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ServicePlan, ServicePlanPayload } from "../../types/servicePlan";
 
 export type ServicePlanAutosaveState =
   | "saved"
@@ -9,16 +8,25 @@ export type ServicePlanAutosaveState =
   | "conflict"
   | "error";
 
-type UseServicePlanAutosaveOptions = {
+/**
+ * Any server document this hook can autosave: it only needs a revision to
+ * check writes against. Dated plans and reusable templates both qualify.
+ */
+type RevisionedDocument = { revision?: number };
+
+export type UseServicePlanAutosaveOptions<
+  TDoc extends RevisionedDocument,
+  TPayload,
+> = {
   enabled: boolean;
   resetKey: string;
   changeVersion: number;
   baseRevision: number;
-  buildPayload: () => ServicePlanPayload | null;
-  save: (payload: ServicePlanPayload, baseRevision: number) => Promise<ServicePlan>;
-  getConflictPlan: (error: unknown) => ServicePlan | null;
-  onSaved: (plan: ServicePlan) => void;
-  onConflict: (latestPlan: ServicePlan) => void;
+  buildPayload: () => TPayload | null;
+  save: (payload: TPayload, baseRevision: number) => Promise<TDoc>;
+  getConflictPlan: (error: unknown) => TDoc | null;
+  onSaved: (plan: TDoc) => void;
+  onConflict: (latestPlan: TDoc) => void;
 };
 
 const AUTOSAVE_DELAY_MS = 1_200;
@@ -28,8 +36,12 @@ const RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
  * Serializes complete-document plan saves. A change made during an in-flight
  * request is saved immediately afterwards, so an older response can never
  * replace the user's newest local snapshot.
+ *
+ * Generic over the document being saved so the dated-plan editor and the
+ * template editor share one implementation; both are complete-document writes
+ * guarded by a server-side revision check.
  */
-export const useServicePlanAutosave = ({
+export const useServicePlanAutosave = <TDoc extends RevisionedDocument, TPayload>({
   enabled,
   resetKey,
   changeVersion,
@@ -39,7 +51,7 @@ export const useServicePlanAutosave = ({
   getConflictPlan,
   onSaved,
   onConflict,
-}: UseServicePlanAutosaveOptions) => {
+}: UseServicePlanAutosaveOptions<TDoc, TPayload>) => {
   const [state, setState] = useState<ServicePlanAutosaveState>("saved");
   const changeVersionRef = useRef(changeVersion);
   const savedVersionRef = useRef(changeVersion);
@@ -64,9 +76,9 @@ export const useServicePlanAutosave = ({
    * plan it came from, so a pending edit can still be persisted to the *right*
    * plan after the editor has moved on. */
   const pendingRef = useRef<{
-    payload: ServicePlanPayload;
+    payload: TPayload;
     baseRevision: number;
-    save: (payload: ServicePlanPayload, baseRevision: number) => Promise<ServicePlan>;
+    save: (payload: TPayload, baseRevision: number) => Promise<TDoc>;
   } | null>(null);
 
   changeVersionRef.current = changeVersion;
@@ -178,7 +190,7 @@ export const useServicePlanAutosave = ({
     void flush();
   }, [flush]);
 
-  const acceptRemoteRevision = useCallback((plan: ServicePlan) => {
+  const acceptRemoteRevision = useCallback((plan: TDoc) => {
     revisionRef.current = plan.revision ?? revisionRef.current;
     savedVersionRef.current = changeVersionRef.current;
     retryCountRef.current = 0;
@@ -225,10 +237,18 @@ export const useServicePlanAutosave = ({
   // receives the fetched plan, adopt its real revision so the first edit is
   // checked against the document the operator is looking at. Never replace a
   // revision after local work has started: that must still use conflict safety.
+  //
+  // Only ever forwards. Not every consumer feeds its own saves back into this
+  // prop — the template editor deliberately does not, since a new `template`
+  // identity resets its draft — so it goes on reporting the revision the
+  // document had before the first autosave. Moving back to that would make
+  // every later save a guaranteed 409. Switching documents is the one case
+  // where the revision legitimately drops, and the resetKey effect above owns
+  // it.
   useEffect(() => {
     const hasUnsavedWork = changeVersionRef.current > savedVersionRef.current;
     if (
-      baseRevision === revisionRef.current
+      baseRevision <= revisionRef.current
       || hasUnsavedWork
       || inFlightRef.current
       || pendingRef.current

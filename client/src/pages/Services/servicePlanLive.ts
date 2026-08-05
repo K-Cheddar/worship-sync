@@ -5,6 +5,7 @@ import {
 import type { PublicServiceFlow } from "../../services/serviceFlowTypes";
 import type { ServicePlan, ServicePlanSection } from "../../types/servicePlan";
 import { getServicePlanDurationSeconds } from "./servicePlanDuration";
+import { resolvePlanTimelineStartMs } from "./servicePlanTimingUtils";
 
 type PlanLiveSource = {
   name?: string;
@@ -25,11 +26,21 @@ export const getServicePlanLiveProgress = (
 ): ServiceFlowProgress | null => {
   if (!plan.startsAt || Number.isNaN(Date.parse(plan.startsAt))) return null;
 
+  const timezone = plan.timezone || "UTC";
+  // Matches the public snapshot: the timeline starts at the first element's
+  // own time, which can precede the occurrence start.
+  const timelineStartMs = resolvePlanTimelineStartMs(
+    Date.parse(plan.startsAt),
+    timezone,
+    plan.sections,
+  );
+
   const flow: PublicServiceFlow = {
     shareId: "",
     title: plan.name || "Service",
     startsAt: plan.startsAt,
-    timezone: plan.timezone || "UTC",
+    timelineStartsAt: new Date(timelineStartMs).toISOString(),
+    timezone,
     revision: 0,
     sections: plan.sections.map((section) => ({
       id: section.id,

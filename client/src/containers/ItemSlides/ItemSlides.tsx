@@ -337,6 +337,8 @@ const ItemSlides = () => {
               type,
               name,
               timerId: timerInfo?.id,
+              slideIndex: index,
+              slideCount: slides.length,
             })
           );
         }
@@ -349,6 +351,8 @@ const ItemSlides = () => {
             type,
             name,
             timerId: timerInfo?.id,
+            slideIndex: index,
+            slideCount: slides.length,
           })
         );
       }
@@ -396,6 +400,8 @@ const ItemSlides = () => {
             name,
             timerId: timerInfo?.id,
             itemId: _id,
+            slideIndex: index,
+            slideCount: slides.length,
             nextSlide: nextSlideForMonitor,
             transitionDirection,
             bibleInfoBox:

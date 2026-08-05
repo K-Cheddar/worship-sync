@@ -1,7 +1,10 @@
 import { useEffect, useRef } from "react";
 import { getApiBasePath } from "../../../utils/environment";
 import type { TeamSchedule } from "../../../api/authTypes";
-import type { ServicePlan } from "../../../types/servicePlan";
+import type {
+  ServicePlan,
+  ServicePlanTemplate,
+} from "../../../types/servicePlan";
 
 export type TeamsStreamEvent =
   | { type: "connected"; churchId?: string }
@@ -9,11 +12,23 @@ export type TeamsStreamEvent =
   | { type: "schedule-removed"; scheduleId: string }
   | { type: "service-plan-updated"; servicePlan: ServicePlan }
   | { type: "service-plan-removed"; planKey: string }
+  | { type: "service-plan-template-updated"; template: ServicePlanTemplate }
+  | { type: "service-plan-template-removed"; templateId: string }
   | { type: string; [key: string]: unknown };
 
 export type ServicePlanUpdatedEvent = {
   type: "service-plan-updated";
   servicePlan: ServicePlan;
+};
+
+export type ServicePlanTemplateUpdatedEvent = {
+  type: "service-plan-template-updated";
+  template: ServicePlanTemplate;
+};
+
+export type ServicePlanTemplateRemovedEvent = {
+  type: "service-plan-template-removed";
+  templateId: string;
 };
 
 /**
@@ -29,6 +44,24 @@ export const isServicePlanUpdatedEvent = (
   const servicePlan = (event as { servicePlan?: unknown }).servicePlan;
   return Boolean(servicePlan) && typeof servicePlan === "object";
 };
+
+export const isServicePlanTemplateUpdatedEvent = (
+  event: TeamsStreamEvent,
+): event is ServicePlanTemplateUpdatedEvent => {
+  if (event.type !== "service-plan-template-updated") return false;
+  const template = (event as { template?: unknown }).template;
+  return (
+    Boolean(template)
+    && typeof template === "object"
+    && typeof (template as ServicePlanTemplate).templateId === "string"
+  );
+};
+
+export const isServicePlanTemplateRemovedEvent = (
+  event: TeamsStreamEvent,
+): event is ServicePlanTemplateRemovedEvent =>
+  event.type === "service-plan-template-removed"
+  && typeof (event as { templateId?: unknown }).templateId === "string";
 
 /**
  * Subscribes to the church's Teams live channel (SSE). The server pushes

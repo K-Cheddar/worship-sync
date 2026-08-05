@@ -158,6 +158,25 @@ const Toolbar = ({
     }
   }, [onItemPage, access, canShowSlideAndBoxTools]);
 
+  // Timer controls live under Slide Tools; always surface them when opening a timer.
+  useEffect(() => {
+    if (
+      !onItemPage ||
+      itemType !== "timer" ||
+      access === "view" ||
+      !canShowSlideAndBoxTools
+    ) {
+      return;
+    }
+    setSection("slide-tools");
+  }, [
+    onItemPage,
+    itemType,
+    access,
+    canShowSlideAndBoxTools,
+    location.pathname,
+  ]);
+
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
     dispatch(

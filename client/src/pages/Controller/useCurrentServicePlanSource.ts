@@ -31,16 +31,11 @@ import { getOccurrenceAssignmentSummary } from "../Teams/pages/teamsAssignmentsS
 import { toServicePlanningTeamAssignments } from "../../integrations/servicePlanning/servicePlanTeamAssignments";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { toTeamService } from "../Teams/teamsUtils";
-import {
-  findCurrentServiceOccurrence,
-  listCurrentServiceOccurrences,
-} from "./currentServiceWorkspaceUtils";
+import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
+import { hydrateOccurrenceSchedules } from "../../utils/hydrateOccurrenceSchedules";
 import type { TeamScheduleOccurrence, TeamsBootstrap } from "../../api/authTypes";
 import type { ServicePlan } from "../../types/servicePlan";
-
-/** Re-pick the current service on this cadence; services move in minutes, not
- * seconds, and this ticks on a live surface. */
-const OCCURRENCE_REFRESH_MS = 60_000;
+import { onlyHydratedSchedules } from "../../api/authTypes";
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
@@ -55,10 +50,6 @@ export const useCurrentServicePlanSource = () => {
     (state) => state.servicePlanningImport.servicePlanKey,
   );
 
-  const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(
-    null,
-  );
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const [isLoading, setIsLoading] = useState(false);
 
   const bootstrapRef = useRef<TeamsBootstrap | null>(null);
@@ -70,33 +61,12 @@ export const useCurrentServicePlanSource = () => {
     loadPlanPreviewRef.current = loadPlanPreview;
   }, [loadPlanPreview]);
 
-  useEffect(() => {
-    const interval = window.setInterval(
-      () => setNowMs(Date.now()),
-      OCCURRENCE_REFRESH_MS,
-    );
-    return () => window.clearInterval(interval);
-  }, []);
-
   const services = useMemo(
     () => serviceTimes.map(toTeamService),
     [serviceTimes],
   );
-  const occurrences = useMemo(
-    () => listCurrentServiceOccurrences(services, nowMs),
-    [services, nowMs],
-  );
-  const currentOccurrence = useMemo(
-    () => findCurrentServiceOccurrence(services, nowMs),
-    [services, nowMs],
-  );
-  const occurrence = useMemo(
-    () =>
-      occurrences.find(
-        (candidate) => candidate.occurrenceId === selectedOccurrenceId,
-      ) || currentOccurrence,
-    [currentOccurrence, occurrences, selectedOccurrenceId],
-  );
+  const { occurrences, occurrence, selectedOccurrenceId, selectOccurrence } =
+    useCurrentServiceOccurrence(services);
 
   const planKey = occurrence ? getServicePlanKey(occurrence) : null;
   const isEnabled = Boolean(
@@ -124,26 +94,38 @@ export const useCurrentServicePlanSource = () => {
     async (plan: ServicePlan) => {
       const bootstrap = bootstrapRef.current;
       const targetOccurrence = occurrenceRef.current;
-      const assignments =
-        bootstrap && targetOccurrence
-          ? toServicePlanningTeamAssignments(
-              getOccurrenceAssignmentSummary({
-                occurrence: targetOccurrence,
-                schedules: bootstrap.schedules || [],
-                positions: bootstrap.positions || [],
-                members: bootstrap.members || [],
-                teams: bootstrap.teams || [],
-                services: servicesRef.current,
-              }),
-            )
-          : [];
+      let assignments: ReturnType<typeof toServicePlanningTeamAssignments> = [];
+      if (bootstrap && targetOccurrence) {
+        // The operator can page a week either side of today, and the bootstrap
+        // only carries assignments for schedules around today — so the cells
+        // for this occurrence are fetched when they're missing. Without it the
+        // preview credits this service to nobody, which looks like an unstaffed
+        // service rather than data we never asked for.
+        const { schedules } = await hydrateOccurrenceSchedules({
+          churchId,
+          occurrence: targetOccurrence,
+          schedules: bootstrap.schedules || [],
+        });
+        // Keep what arrived, so paging back to this service doesn't refetch.
+        bootstrapRef.current = { ...bootstrap, schedules };
+        assignments = toServicePlanningTeamAssignments(
+          getOccurrenceAssignmentSummary({
+            occurrence: targetOccurrence,
+            schedules: onlyHydratedSchedules(schedules),
+            positions: bootstrap.positions || [],
+            members: bootstrap.members || [],
+            teams: bootstrap.teams || [],
+            services: servicesRef.current,
+          }),
+        );
+      }
 
       const outline = await loadPlanPreviewRef.current(plan, assignments);
       dispatch(
         setServicePlanningPlanOutline({ outline, planKey: plan.planKey }),
       );
     },
-    [dispatch],
+    [churchId, dispatch],
   );
 
   useEffect(() => {
@@ -256,7 +238,7 @@ export const useCurrentServicePlanSource = () => {
     /** Whether the on-screen preview came from the plan rather than a URL. */
     isPlanSourced: Boolean(servicePlanKey),
     selectedOccurrenceId,
-    selectOccurrence: setSelectedOccurrenceId,
+    selectOccurrence,
     /** Re-reads the plan from the server. Rejects so callers can toast. */
     refresh,
   };

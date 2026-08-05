@@ -1,13 +1,57 @@
 import { Option } from "../../types";
 import cn from "classnames";
-import { useId } from "react";
+import { Fragment, useId, useMemo } from "react";
 import {
   Select as RadixSelect,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+
+type OptionSection = { group?: string; options: Option[] };
+
+/**
+ * Radix throws on an item whose value is an empty string — it reserves "" for
+ * clearing the selection. "" is still the natural "no filter" value for our
+ * callers (for example an "All teams" choice), so swap it for a private
+ * sentinel on the way into Radix and swap it back on the way out. Callers keep
+ * seeing "" and never have to invent a sentinel of their own.
+ */
+const EMPTY_OPTION_VALUE = "__worshipsync_empty_option__";
+
+const toRadixValue = (value: string) =>
+  value === "" ? EMPTY_OPTION_VALUE : value;
+
+const fromRadixValue = (value: string) =>
+  value === EMPTY_OPTION_VALUE ? "" : value;
+
+// Split the flat option list into rendered sections: consecutive options sharing
+// a `group` become one labelled section, ungrouped options stay flat. Callers
+// that never set `group` get exactly the previous flat rendering.
+const toOptionSections = (options: Option[]): OptionSection[] =>
+  options.reduce<OptionSection[]>((sections, option) => {
+    const current = sections[sections.length - 1];
+    if (current && current.group === option.group) {
+      current.options.push(option);
+      return sections;
+    }
+    sections.push({ group: option.group, options: [option] });
+    return sections;
+  }, []);
+
+const renderOption = (option: Option) => (
+  <SelectItem key={option.value} value={toRadixValue(option.value)}>
+    {option.className ? (
+      <span className={option.className}>{option.label}</span>
+    ) : (
+      option.label
+    )}
+  </SelectItem>
+);
 
 export type SelectProps = {
   options: Option[];
@@ -67,7 +111,8 @@ const Select = ({
 
   // Check if value exists in options, if not use undefined to show placeholder
   const valueExists = options.some((option) => option.value === value);
-  const selectValue = valueExists ? value : undefined;
+  const selectValue = valueExists ? toRadixValue(value) : undefined;
+  const sections = useMemo(() => toOptionSections(options), [options]);
 
   return (
     <div className={className}>
@@ -86,7 +131,7 @@ const Select = ({
       )}
       <RadixSelect
         value={selectValue}
-        onValueChange={onChange}
+        onValueChange={(next) => onChange(fromRadixValue(next))}
         disabled={disabled}
         open={open}
         onOpenChange={onOpenChange}
@@ -108,14 +153,18 @@ const Select = ({
             suppressCloseAutoFocus ? (e) => e.preventDefault() : undefined
           }
         >
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.className ? (
-                <span className={option.className}>{option.label}</span>
+          {sections.map((section, index) => (
+            <Fragment key={`${section.group ?? "ungrouped"}-${index}`}>
+              {index > 0 && section.group ? <SelectSeparator /> : null}
+              {section.group ? (
+                <SelectGroup>
+                  <SelectLabel>{section.group}</SelectLabel>
+                  {section.options.map(renderOption)}
+                </SelectGroup>
               ) : (
-                option.label
+                section.options.map(renderOption)
               )}
-            </SelectItem>
+            </Fragment>
           ))}
         </SelectContent>
       </RadixSelect>

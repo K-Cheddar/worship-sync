@@ -4,8 +4,10 @@ import type {
   TeamRosterMember,
   TeamSchedule,
   TeamScheduleOccurrence,
+  TeamScheduleSummary,
   TeamService,
 } from "../../../api/authTypes";
+import { isHydratedSchedule } from "../../../api/authTypes";
 import { getOccurrenceDate } from "../../../utils/teamScheduleOccurrences";
 import {
   buildScheduleColumns,
@@ -40,6 +42,8 @@ export type TeamsAssignmentSummaryRow = {
   slotLabel: string;
   /** null when the slot is required but nobody is assigned yet. */
   memberName: string | null;
+  /** Church microphones allocated to this scheduled slot for the day. */
+  microphoneIds: string[];
 };
 
 export type TeamsAssignmentSummaryTeamGroup = {
@@ -70,7 +74,7 @@ export type TeamsAssignmentSummaryTeamGroup = {
  * which reads far worse than the old filled-only panel's silence.
  */
 const findScheduleOccurrenceId = (
-  schedule: TeamSchedule,
+  schedule: TeamSchedule | TeamScheduleSummary,
   occurrence: TeamScheduleOccurrence,
 ): string | null => {
   const stored = schedule.occurrences || [];
@@ -78,20 +82,50 @@ const findScheduleOccurrenceId = (
     return occurrence.occurrenceId;
   }
   // Legacy/lean schedules can carry assignments without stored occurrences.
-  if (schedule.assignments?.[occurrence.occurrenceId]) {
+  if (
+    isHydratedSchedule(schedule) &&
+    schedule.assignments?.[occurrence.occurrenceId]
+  ) {
     return occurrence.occurrenceId;
   }
   const wantedServiceIds = new Set(
-    occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+    occurrence.serviceIds?.length
+      ? occurrence.serviceIds
+      : [occurrence.serviceId],
   );
   const wantedDate = getOccurrenceDate(occurrence);
   const match = stored.find((item) => {
     if (getOccurrenceDate(item) !== wantedDate) return false;
-    const itemServiceIds = item.serviceIds?.length ? item.serviceIds : [item.serviceId];
+    const itemServiceIds = item.serviceIds?.length
+      ? item.serviceIds
+      : [item.serviceId];
     return itemServiceIds.some((serviceId) => wantedServiceIds.has(serviceId));
   });
   return match?.occurrenceId ?? null;
 };
+
+/**
+ * Schedules that cover this occurrence but arrived from the bootstrap as
+ * summaries, so their assignment maps are not on the client yet.
+ *
+ * The bootstrap only hydrates schedules around today. Filtering those summaries
+ * out (`onlyHydratedSchedules`) and rendering what's left is indistinguishable
+ * from "nobody is scheduled" — a plan a few months out reads as an empty roster
+ * rather than as data we simply haven't fetched. Callers use this to fetch the
+ * detail, and to say so plainly until it lands.
+ */
+export const getUnhydratedOccurrenceScheduleIds = (
+  occurrence: TeamScheduleOccurrence,
+  schedules: (TeamSchedule | TeamScheduleSummary)[],
+): string[] =>
+  schedules
+    .filter(
+      (schedule) =>
+        !isHydratedSchedule(schedule) &&
+        !schedule.archivedAt &&
+        findScheduleOccurrenceId(schedule, occurrence) !== null,
+    )
+    .map((schedule) => schedule.scheduleId);
 
 /**
  * What this occurrence's own service says it needs, independent of any schedule:
@@ -176,11 +210,13 @@ export const getOccurrenceAssignmentSummary = ({
       columnKey,
       slotLabel,
       memberName,
+      microphoneIds,
     }: {
       positionId: string;
       columnKey: string;
       slotLabel: string;
       memberName: string | null;
+      microphoneIds: string[];
     }): TeamsAssignmentSummaryRow => {
       const position = positionById.get(positionId);
       const teamId = position?.teamId || schedule.teamId || "unknown";
@@ -194,6 +230,7 @@ export const getOccurrenceAssignmentSummary = ({
         columnKey,
         slotLabel,
         memberName,
+        microphoneIds,
       };
     };
 
@@ -218,21 +255,35 @@ export const getOccurrenceAssignmentSummary = ({
       });
       const columns = buildScheduleColumns({
         occurrences: [{ occurrenceId: scheduleOccurrenceId }],
-        requirementsByOccurrence: new Map([[scheduleOccurrenceId, requirements]]),
+        requirementsByOccurrence: new Map([
+          [scheduleOccurrenceId, requirements],
+        ]),
+        additionalPositionSlots: schedule.additionalPositionSlots,
         positions,
         teamPositionIds,
       });
+      const additionalSlotKeys = new Set(
+        schedule.additionalPositionSlots?.[scheduleOccurrenceId] || [],
+      );
       for (const column of columns) {
-        // Same guard the grid and board render with, so the panel's fill count
-        // always matches the schedule's own.
-        if (column.slot >= getRequiredCount(requirements, column.positionId)) continue;
+        // Same guard the grid and board render with: core slots plus roles
+        // explicitly added for this date.
+        const isRequired =
+          column.slot < getRequiredCount(requirements, column.positionId);
+        if (!isRequired && !additionalSlotKeys.has(column.columnKey)) continue;
         covered.add(column.columnKey);
         rows.push(
           rowFor({
             positionId: column.positionId,
             columnKey: column.columnKey,
             slotLabel: column.label,
-            memberName: memberNameFor(cells?.[column.columnKey]?.primaryMemberId),
+            memberName: memberNameFor(
+              cells?.[column.columnKey]?.primaryMemberId,
+            ),
+            microphoneIds:
+              schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[
+                column.columnKey
+              ] || [],
           }),
         );
       }
@@ -254,6 +305,9 @@ export const getOccurrenceAssignmentSummary = ({
           columnKey: slotKey,
           slotLabel: position?.name || "Position",
           memberName,
+          microphoneIds:
+            schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[slotKey] ||
+            [],
         }),
       );
     }
@@ -282,13 +336,65 @@ export const getOccurrenceAssignmentSummary = ({
         positionId: position.positionId,
         positionName: position.name,
         columnKey: makeSlotKey(position.positionId, slot),
-        slotLabel: required > 1 ? `${position.name} ${slot + 1}` : position.name,
+        slotLabel:
+          required > 1 ? `${position.name} ${slot + 1}` : position.name,
         memberName: null,
+        microphoneIds: [],
       });
     }
   }
 
   return rows;
+};
+
+/**
+ * Identifies one scheduled slot's microphone allocation across the surfaces
+ * that save it — used to show a save in progress on that slot alone.
+ */
+export const teamMicrophoneSlotKey = (row: TeamsAssignmentSummaryRow) =>
+  `${row.scheduleId}:${row.occurrenceId}:${row.columnKey}`;
+
+/**
+ * The rows that can hold a church microphone for the day: scheduled slots on
+ * teams that opted into microphone assignments. A row with no schedule has no
+ * cell to write to, so it can never carry one.
+ */
+export const getTeamMicrophoneRows = (
+  rows: TeamsAssignmentSummaryRow[],
+  teams: TeamRecord[],
+): TeamsAssignmentSummaryRow[] => {
+  const microphoneTeamIds = new Set(
+    teams
+      .filter((team) => team.usesMicrophoneAssignments)
+      .map((team) => team.teamId),
+  );
+  return rows.filter(
+    (row) => row.scheduleId && microphoneTeamIds.has(row.teamId),
+  );
+};
+
+/**
+ * Who each microphone is already allocated to by the schedule, keyed by
+ * microphone id — what the plan's own per-item microphone picker warns with
+ * before an operator hands the same microphone to someone else.
+ */
+export const getScheduledMicrophoneHolders = (
+  rows: TeamsAssignmentSummaryRow[],
+  teams: TeamRecord[],
+): Map<string, string[]> => {
+  const holdersByMicrophone = new Map<string, string[]>();
+  getTeamMicrophoneRows(rows, teams).forEach((row) => {
+    const holder = row.memberName || row.slotLabel;
+    row.microphoneIds.forEach((microphoneId) => {
+      const holders = holdersByMicrophone.get(microphoneId);
+      if (holders) {
+        holders.push(holder);
+        return;
+      }
+      holdersByMicrophone.set(microphoneId, [holder]);
+    });
+  });
+  return holdersByMicrophone;
 };
 
 export type TeamsAssignmentSummaryNeed = {

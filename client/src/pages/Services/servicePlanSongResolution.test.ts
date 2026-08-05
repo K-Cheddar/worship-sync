@@ -89,7 +89,42 @@ describe("resolveServicePlanSongRefs", () => {
     ]);
 
     expect([...resolved.keys()]).toEqual(["now-in-library"]);
-    expect(resolved.get("now-in-library")).toMatchObject({ songId: "song-42" });
+    // An element carries a list of song references, so the resolved entry is
+    // the element's full list, not a single reference.
+    expect(resolved.get("now-in-library")).toEqual([
+      { kind: "library", songId: "song-42", songName: "How Great Is Our God" },
+    ]);
+  });
+
+  it("resolves each song of a multi-song element and keeps the unmatched ones", () => {
+    const medley: ServicePlanSection[] = [
+      {
+        id: "section-1",
+        name: "Praise",
+        elements: [
+          {
+            id: "medley",
+            type: "song",
+            title: plainTextToRichText("Medley"),
+            songRefs: [
+              { kind: "pending", title: "How Great is Our God", lyricsText: "" },
+              { kind: "pending", title: "Way Maker", lyricsText: "" },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const resolved = resolveServicePlanSongRefs(medley, [
+      song("song-42", "How Great Is Our God"),
+    ]);
+
+    // Position is preserved: the still-missing song stays pending in place, so
+    // callers can render the list without re-pairing it against the stored one.
+    expect(resolved.get("medley")).toEqual([
+      { kind: "library", songId: "song-42", songName: "How Great Is Our God" },
+      { kind: "pending", title: "Way Maker", lyricsText: "" },
+    ]);
   });
 
   it("is empty when the library has nothing new to offer", () => {

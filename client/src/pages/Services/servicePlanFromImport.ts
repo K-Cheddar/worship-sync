@@ -82,7 +82,12 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
     ...(row.elementType?.trim()
       ? { sourceElementTypeRaw: row.elementType.trim() }
       : {}),
-    ...(ledBy ? { assignedName: ledBy, sourceLedByRaw: ledBy } : {}),
+    ...(ledBy
+      ? {
+        assignees: [{ id: generateRandomId(), name: ledBy }],
+        sourceLedByRaw: ledBy,
+      }
+      : {}),
     ...(row.startTime ? { startTime: row.startTime } : {}),
     ...(typeof row.durationMinutes === "number"
       ? {

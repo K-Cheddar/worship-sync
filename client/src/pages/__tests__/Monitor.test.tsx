@@ -75,9 +75,18 @@ jest.mock("../../hooks", () => ({
   useDispatch: () => mockDispatch,
   useSelector: (selector: (state: typeof mockState) => unknown) =>
     selector(mockState),
+  useSyncMonitorSettings: jest.requireActual(
+    "../../hooks/useSyncMonitorSettings"
+  ).useSyncMonitorSettings,
   useFirebaseValueWithRetry: jest.requireActual(
     "../../hooks/useFirebaseValueWithRetry"
   ).useFirebaseValueWithRetry,
+}));
+
+jest.mock("../../hooks/reduxHooks", () => ({
+  useDispatch: () => mockDispatch,
+  useSelector: (selector: (state: typeof mockState) => unknown) =>
+    selector(mockState),
 }));
 
 jest.mock("firebase/database", () => ({

@@ -167,7 +167,7 @@ const byDateTable = (model: ScheduleExportModel): LayoutTable => {
       ]);
       model.columnLabels.forEach((label, columnIndex) => {
         const cell = row.cells[columnIndex];
-        if (cell.state === "inactive") return; // role not needed this service
+        if (cell.state === "inactive") return; // position not needed this service
         const assignee = cellToDef(cell);
         body.push([
           { content: label, styles: { textColor: SUBTLE_INK } },

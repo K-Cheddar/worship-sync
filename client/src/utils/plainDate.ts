@@ -22,6 +22,15 @@ export const formatPlainDate = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+/**
+ * Keep an end date from falling before a start date.
+ * Plain `yyyy-MM-dd` strings compare lexicographically in calendar order.
+ */
+export const clampPlainDateToMin = (value: string, min: string): string => {
+  if (!value || !min) return value;
+  return value < min ? min : value;
+};
+
 /** Auto-insert `/` separators while typing an MM/DD/YYYY date. */
 export const formatDateInputValue = (raw: string): string => {
   // Preserve alternate typed formats (ISO, month names).

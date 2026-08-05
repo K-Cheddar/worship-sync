@@ -41,8 +41,6 @@ type PickerMenuView =
   | "createMember"
   | "swapConfirmation";
 
-const MOVE_WARNING_PREFIX = "Will move from ";
-
 export type ScheduleAssignmentSwapRecommendation = {
   swapId: string;
   candidateMemberId: string;
@@ -269,9 +267,9 @@ const ScheduleAssignmentPicker = memo(({
     if (!currentPrimaryMemberId || !getAssignmentActionIssues) return true;
     return !getAssignmentActionIssues(row.member.memberId).replace;
   });
-  const recommendationRows = directAssignmentRows.filter(
-    (row) => !row.warning.startsWith(MOVE_WARNING_PREFIX),
-  );
+  // Recommendations are reserved for fully available people. Cautioned rows
+  // remain selectable below them, where an operator can make an intentional choice.
+  const recommendationRows = directAssignmentRows.filter((row) => !row.warning);
   const showRecommendations =
     menuView === "members" && !trimmedQuery && recommendationRows.length > 0;
   const recommendedRows = showRecommendations ? recommendationRows.slice(0, 3) : [];

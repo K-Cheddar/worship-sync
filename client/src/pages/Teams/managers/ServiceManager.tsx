@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { Minus, Plus } from "lucide-react";
-import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TimePicker from "../../../components/TimePicker/TimePicker";
@@ -48,6 +46,8 @@ import {
 } from "../teamsUtils";
 import { formatServiceSaveToast } from "../teamsSaveToasts";
 import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
+import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 
 type ServiceManagerProps = {
   services: TeamService[];
@@ -60,6 +60,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
   const dispatch = useDispatch();
   const { showToast } = useToast();
   const isNarrowViewport = useTeamsNarrowViewport();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState<Partial<ServiceTime>>(createEmptyServiceDraft);
@@ -182,7 +183,10 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
     setDraft((current) => {
       const rest = (current.positionRequirements || []).filter((req) => req.positionId !== positionId);
       const next: PositionRequirement[] = needed
-        ? [...rest, { positionId, count: Math.max(1, requirementCount(positionId)) }]
+        ? [
+          ...rest,
+          { positionId, count: Math.max(1, requirementCount(positionId)) },
+        ]
         : rest;
       return { ...current, positionRequirements: next };
     });
@@ -207,6 +211,19 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
         ? Boolean(draft.daysOfWeek?.length) &&
         (draft.daysOfWeek || []).every((day) => Boolean(day.time))
         : Boolean(draft.time));
+  const initialCombineWith = editing?.serviceGroupId
+    ? services
+      .filter(
+        (service) =>
+          service.serviceGroupId === editing.serviceGroupId &&
+          service.serviceId !== editing.serviceId,
+      )
+      .map((service) => service.serviceId)
+    : [];
+  const hasPendingChanges =
+    JSON.stringify(draft) !== JSON.stringify(editing || createEmptyServiceDraft()) ||
+    JSON.stringify(combineWith) !== JSON.stringify(initialCombineWith);
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
     <CreatePanel
@@ -231,7 +248,10 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
               archived={Boolean(service.archivedAt)}
               inactive={!service.archivedAt && isServicePastEnd(service)}
               canEdit={canEdit}
-              onTitleClick={() => startEdit(service)}
+              onTitleClick={() => {
+                if (editing?.serviceId === service.serviceId) return;
+                requestDiscardAction(() => startEdit(service));
+              }}
             />
           ))}
         </>
@@ -265,6 +285,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
           saveLabel="Save service"
           onSave={submit}
           onCancel={reset}
+          hasPendingChanges={hasPendingChanges}
           disabled={!canEdit || !canSave}
         />
       }
@@ -416,8 +437,9 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       <fieldset className="space-y-2">
         <legend className="p-1 text-sm font-semibold">Positions needed</legend>
         <p className="px-1 text-xs text-gray-400">
-          Choose which positions this service needs and how many of each. Schedules show
-          a column per slot. Leave all unchecked to use the team&apos;s positions.
+          Choose the positions this service needs for every occurrence. You can add extra
+          team positions to a specific date later without changing the fill requirement. Leave
+          all unchecked to use the team&apos;s positions.
         </p>
         {positionsByTeam.length === 0 ? (
           <p className="px-1 text-xs text-gray-500">
@@ -459,37 +481,20 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                       />
                       <div
                         className={cn(
-                          "flex items-center gap-1",
+                          "flex items-center gap-2",
                           !needed && "pointer-events-none invisible",
                         )}
                         aria-hidden={!needed}
                       >
-                        <Button
-                          svg={Minus}
-                          variant="tertiary"
-                          iconSize="sm"
-                          aria-label={`Decrease ${position.name} count`}
-                          disabled={!needed || count <= 1}
-                          onClick={() => setPositionCount(position.positionId, count - 1)}
-                        />
                         <Input
                           type="number"
                           min={1}
-                          label="How many"
-                          hideLabel
+                          label="Required"
                           disabled={!needed}
                           value={needed ? count : 1}
                           inputWidth="w-14"
                           inputTextSize="text-xs"
                           onChange={(value) => setPositionCount(position.positionId, Number(value))}
-                        />
-                        <Button
-                          svg={Plus}
-                          variant="tertiary"
-                          iconSize="sm"
-                          aria-label={`Increase ${position.name} count`}
-                          disabled={!needed}
-                          onClick={() => setPositionCount(position.positionId, count + 1)}
                         />
                       </div>
                     </div>
