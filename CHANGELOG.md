@@ -1,3 +1,10 @@
+## [2.22.2](https://github.com/K-Cheddar/worship-sync/compare/v2.22.1...v2.22.2) (2026-08-06)
+
+
+### Bug Fixes
+
+* Fix media load and minor service plan issues ([ee978d0](https://github.com/K-Cheddar/worship-sync/commit/ee978d08f7d825f198aebc93a0d893af179de946))
+
 ## [2.22.1](https://github.com/K-Cheddar/worship-sync/compare/v2.22.0...v2.22.1) (2026-08-05)
 
 
