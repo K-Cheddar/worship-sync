@@ -126,9 +126,12 @@ export function useMediaLibraryController({
   const { db, cloud, isMobile, updater, isGuestSession = false } =
     useContext(ControllerInfoContext) || {};
 
-  const { list, folders, isInitialized: mediaStoreInitialized } = useSelector(
-    (state: RootState) => state.media,
-  );
+  const {
+    list,
+    folders,
+    isInitialized: mediaStoreInitialized,
+    loadStatus: mediaLoadStatus,
+  } = useSelector((state: RootState) => state.media);
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const isLoading = item.isLoading;
 
@@ -215,7 +218,11 @@ export function useMediaLibraryController({
   const [moveToNewFolderOpen, setMoveToNewFolderOpen] = useState(false);
   const [moveSelectKey, setMoveSelectKey] = useState(0);
 
-  const isMediaLoading = Boolean(db && !mediaStoreInitialized);
+  const isMediaLoading = Boolean(
+    db && (mediaLoadStatus === "idle" || mediaLoadStatus === "loading"),
+  );
+  const hasMediaLoadError = mediaLoadStatus === "error";
+  const isMediaReadOnly = !mediaStoreInitialized;
 
   useEffect(() => {
     if (selectedLibraryFilter !== null) {
@@ -768,13 +775,13 @@ export function useMediaLibraryController({
       }
       const next = deleteFolderKeepContents(folderId, folders, list);
       dispatch(setMediaListAndFolders(next));
-      void flushMediaLibraryDocToPouch(next.list, next.folders).then((r) => {
+      void flushMediaLibraryDocToPouch(db, next.list, next.folders).then((r) => {
         if (!r.ok) {
           alertMediaLibraryFlushFailed(r.error, "folder");
         }
       });
     },
-    [dispatch, folders, list, mediaRouteFolders],
+    [db, dispatch, folders, list, mediaRouteFolders],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -835,6 +842,7 @@ export function useMediaLibraryController({
         }),
       );
       const flushResult = await flushMediaLibraryDocToPouch(
+        db,
         next.list,
         next.folders,
       );
@@ -852,6 +860,7 @@ export function useMediaLibraryController({
     [
       folders,
       list,
+      db,
       dispatch,
       mediaRouteFolders,
       removeMediaRowsAfterSweep,
@@ -931,6 +940,7 @@ export function useMediaLibraryController({
         const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
         dispatch(setMediaListAndFolders({ list: updatedList, folders }));
         const flushResult = await flushMediaLibraryDocToPouch(
+          db,
           updatedList,
           folders,
         );
@@ -975,6 +985,7 @@ export function useMediaLibraryController({
       );
       dispatch(setMediaListAndFolders({ list: updatedList, folders }));
       const flushResult = await flushMediaLibraryDocToPouch(
+        db,
         updatedList,
         folders,
       );
@@ -1196,6 +1207,8 @@ export function useMediaLibraryController({
     addMuxVideo,
     handleUploadActiveChange,
     isMediaLoading,
+    hasMediaLoadError,
+    isMediaReadOnly,
     searchTerm,
     showAll,
     handleShowAllChange,

@@ -7,6 +7,7 @@ export type MediaLibraryGridProps = {
   isPanelVariant: boolean;
   isMediaExpanded: boolean;
   isMediaLoading: boolean;
+  hasMediaLoadError: boolean;
   mediaItemsPerRow: number;
   mediaListRef: RefObject<HTMLElement | null>;
   mediaGridRef: RefObject<VirtualMediaGridHandle | null>;
@@ -34,6 +35,7 @@ export default function MediaLibraryGrid({
   isPanelVariant,
   isMediaExpanded,
   isMediaLoading,
+  hasMediaLoadError,
   mediaItemsPerRow,
   mediaListRef,
   mediaGridRef,
@@ -64,7 +66,21 @@ export default function MediaLibraryGrid({
           Loading media...
         </h3>
       )}
-      {!isMediaLoading && isMediaExpanded && (filteredList.length > 0 || !showAll) && (
+      {hasMediaLoadError && isMediaExpanded && (
+        <div
+          role="alert"
+          className={cn(
+            "mx-2 bg-black/30 px-4 py-8 text-center",
+            isPanelVariant ? "flex-1 min-h-0" : "h-full",
+          )}
+        >
+          <p className="font-medium text-gray-200">Media is unavailable.</p>
+          <p className="mt-1 text-sm text-gray-400">
+            Reload the page before making media changes.
+          </p>
+        </div>
+      )}
+      {!isMediaLoading && !hasMediaLoadError && isMediaExpanded && (filteredList.length > 0 || !showAll) && (
         <div
           ref={mediaListRef as RefObject<HTMLDivElement>}
           className={cn(
@@ -97,7 +113,7 @@ export default function MediaLibraryGrid({
           )}
         </div>
       )}
-      {!isMediaLoading && isMediaExpanded && showAll && !searchTerm && filteredList.length === 0 && (
+      {!isMediaLoading && !hasMediaLoadError && isMediaExpanded && showAll && !searchTerm && filteredList.length === 0 && (
         <div
           className={cn(
             "text-center py-8 bg-black/30 mx-2 px-2 rounded-b-md",
@@ -107,7 +123,7 @@ export default function MediaLibraryGrid({
           <p className="text-gray-400">No media in this view</p>
         </div>
       )}
-      {!isMediaLoading && isMediaExpanded && showAll && searchTerm && filteredList.length === 0 && (
+      {!isMediaLoading && !hasMediaLoadError && isMediaExpanded && showAll && searchTerm && filteredList.length === 0 && (
         <div
           className={cn(
             "text-center py-8 bg-black/30 mx-2 px-2",

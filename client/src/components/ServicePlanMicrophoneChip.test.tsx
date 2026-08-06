@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { ServicePlanMicrophoneChip } from "./ServicePlanMicrophoneChip";
 
 describe("ServicePlanMicrophoneChip", () => {
-  it("tints the chip chrome from the microphone catalog color", () => {
+  it("shows the microphone type next to the name and tints from catalog color", () => {
     render(
       <ServicePlanMicrophoneChip
         microphone={{
@@ -11,7 +11,7 @@ describe("ServicePlanMicrophoneChip", () => {
           type: "Handheld",
           color: "#f97316",
         }}
-        details={["Handheld", "Jamie"]}
+        details={["Jamie"]}
       />,
     );
 
@@ -21,7 +21,10 @@ describe("ServicePlanMicrophoneChip", () => {
     });
     expect(chip.style.borderColor).toBe("rgba(249, 115, 22, 0.45)");
     expect(chip.style.backgroundColor).toBe("rgba(249, 115, 22, 0.14)");
+    expect(screen.getByText("Orange")).toBeInTheDocument();
     expect(screen.getByText(/Handheld · Jamie/)).toBeInTheDocument();
+    expect(chip).not.toHaveClass("truncate");
+    expect(chip.className).not.toMatch(/max-w-/);
   });
 
   it("keeps the violet fallback when the microphone has no color", () => {
@@ -36,7 +39,7 @@ describe("ServicePlanMicrophoneChip", () => {
       />,
     );
 
-    const chip = screen.getByLabelText("Spare");
+    const chip = screen.getByLabelText("Spare · Handheld");
     expect(chip).toHaveClass("border-violet-500/30");
     expect(chip).toHaveClass("bg-violet-950/40");
     expect(chip).toHaveClass("text-violet-100");
@@ -58,6 +61,6 @@ describe("ServicePlanMicrophoneChip", () => {
       </ServicePlanMicrophoneChip>,
     );
 
-    expect(screen.getByLabelText("Gray")).toHaveClass("pr-2");
+    expect(screen.getByLabelText("Gray · Headset")).toHaveClass("pr-2");
   });
 });

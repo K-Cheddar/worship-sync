@@ -32,7 +32,7 @@ import { allItemsSlice } from "./allItemsSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
-import { mediaItemsSlice } from "./mediaSlice";
+import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
@@ -1487,6 +1487,7 @@ listenerMiddleware.startListening({
       mediaItemsSlice.actions.syncMediaFromRemote,
       mediaItemsSlice.actions.updateMediaListFromRemote,
       mediaItemsSlice.actions.setIsInitialized,
+      mediaItemsSlice.actions.setLoadStatus,
     );
     return (
       (currentState as RootState).media !==
@@ -1497,6 +1498,9 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const mediaAtStart = (listenerApi.getState() as RootState).media;
+    const dbAtStart = db;
+
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
         AUTOSAVE_DEBOUNCE_KEYS.media,
@@ -1506,16 +1510,30 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
 
-      // update ItemList
-      const { list, folders } = (listenerApi.getState() as RootState).media;
+      // A reset, remote update, reinitialization, or database switch makes this
+      // delayed save stale. Never let it replace a newer document snapshot.
+      const mediaSaveIsCurrent = () => {
+        const currentMedia = (listenerApi.getState() as RootState).media;
+        return Boolean(
+          dbAtStart &&
+            db === dbAtStart &&
+            currentMedia.isInitialized &&
+            currentMedia === mediaAtStart,
+        );
+      };
+      if (!dbAtStart || !mediaSaveIsCurrent()) return;
 
-      if (!db) return;
+      const { list, folders } = mediaAtStart;
       try {
-        const db_media: DBMedia = await db.get("media");
+        const db_media: DBMedia = await dbAtStart.get("media");
+        if (!mediaSaveIsCurrent()) return;
         db_media.list = [...list];
         db_media.folders = [...folders];
         db_media.updatedAt = new Date().toISOString();
-        await db.put(db_media);
+        await dbAtStart.put(db_media);
+        // The put is already committed. This check only prevents stale
+        // broadcast/cache side effects if state changed while it was in flight.
+        if (!mediaSaveIsCurrent()) return;
 
         // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
         safePostMessage({
@@ -2551,14 +2569,14 @@ const isCreditsPageReady = (state: RootState) => {
   return state.undoable.present.credits.isInitialized;
 };
 
-const areControllerSlicesReady = (state: RootState) => {
+export const areControllerSlicesReady = (state: RootState) => {
   return (
     state.allItems.isInitialized &&
     state.undoable.present.preferences.isInitialized &&
     state.undoable.present.itemList.isInitialized &&
     state.undoable.present.overlays.isInitialized &&
     state.undoable.present.itemLists.isInitialized &&
-    state.media.isInitialized &&
+    isMediaLoadSettled(state.media) &&
     (state.undoable.present.overlayTemplates as { isInitialized: boolean })
       .isInitialized
   );

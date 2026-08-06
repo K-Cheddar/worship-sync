@@ -2,6 +2,51 @@ import type { DBMedia, MediaFolder, MediaType } from "../types";
 
 const MEDIA_MAX_FOLDER_DEPTH = 8;
 
+type PouchDocumentError = {
+  status?: number;
+  name?: string;
+};
+
+const isPouchNotFound = (error: unknown) => {
+  const pouchError = error as PouchDocumentError;
+  return pouchError?.status === 404 || pouchError?.name === "not_found";
+};
+
+const isPouchConflict = (error: unknown) => {
+  const pouchError = error as PouchDocumentError;
+  return pouchError?.status === 409 || pouchError?.name === "conflict";
+};
+
+/** Load the media document, creating an authoritative empty document only on a confirmed 404. */
+export async function loadOrCreateMediaDoc(
+  db: PouchDB.Database,
+): Promise<DBMedia> {
+  try {
+    return (await db.get("media")) as DBMedia;
+  } catch (error) {
+    if (!isPouchNotFound(error)) throw error;
+  }
+
+  const now = new Date().toISOString();
+  const emptyMediaDoc = {
+    _id: "media",
+    list: [],
+    folders: [],
+    createdAt: now,
+    updatedAt: now,
+    docType: "media",
+  } satisfies Omit<DBMedia, "_rev">;
+
+  try {
+    await db.put(emptyMediaDoc);
+  } catch (error) {
+    // Replication or another tab may have created the document after our 404.
+    if (!isPouchConflict(error)) throw error;
+  }
+
+  return (await db.get("media")) as DBMedia;
+}
+
 /** Normalize legacy `media` docs for Redux and UI. */
 export function normalizeMediaDoc(doc: DBMedia | undefined): {
   list: MediaType[];

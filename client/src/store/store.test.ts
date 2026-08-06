@@ -76,6 +76,44 @@ const loadStoreWithPresentationSync = () => {
   };
 };
 
+const loadStoreWithMediaPersistence = () => {
+  let storeModule: any;
+  let mediaSliceModule: any;
+  const postMessage = jest.fn();
+  const db = {
+    get: jest.fn(),
+    put: jest.fn(),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: { postMessage },
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    mediaSliceModule = require("./mediaSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    mediaSlice: mediaSliceModule.mediaItemsSlice,
+    db,
+    postMessage,
+  };
+};
+
 const createOverlay = (id: string, name: string) => ({
   id,
   type: "participant" as const,
@@ -299,6 +337,236 @@ describe("store module", () => {
         call[1].length === 0,
     );
     expect(clearedPublishedList).toBe(false);
+  });
+
+  it("treats a failed media load as settled without marking media initialized", () => {
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const storeModule = require("./store");
+      const state = storeModule.default.getState();
+      const readyExceptForMedia = {
+        ...state,
+        allItems: { ...state.allItems, isInitialized: true },
+        media: {
+          ...state.media,
+          isInitialized: false,
+          loadStatus: "error",
+        },
+        undoable: {
+          ...state.undoable,
+          present: {
+            ...state.undoable.present,
+            preferences: {
+              ...state.undoable.present.preferences,
+              isInitialized: true,
+            },
+            itemList: {
+              ...state.undoable.present.itemList,
+              isInitialized: true,
+            },
+            overlays: {
+              ...state.undoable.present.overlays,
+              isInitialized: true,
+            },
+            itemLists: {
+              ...state.undoable.present.itemLists,
+              isInitialized: true,
+            },
+            overlayTemplates: {
+              ...state.undoable.present.overlayTemplates,
+              isInitialized: true,
+            },
+          },
+        },
+      };
+
+      expect(readyExceptForMedia.media.isInitialized).toBe(false);
+      expect(storeModule.areControllerSlicesReady(readyExceptForMedia)).toBe(
+        true,
+      );
+    });
+  });
+
+  it("discards a delayed media save when RESET replaces its state snapshot", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+
+    store.dispatch(
+      mediaSlice.actions.initiateMediaFromDoc({
+        list: [{ id: "media-1", name: "Original" }],
+        folders: [],
+      }),
+    );
+    store.dispatch(
+      mediaSlice.actions.updateMediaItemFields({
+        id: "media-1",
+        patch: { name: "Renamed" },
+      }),
+    );
+    store.dispatch({ type: "RESET" });
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("discards a delayed media save after a remote media update", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+
+    store.dispatch(
+      mediaSlice.actions.initiateMediaFromDoc({
+        list: [{ id: "media-1", name: "Original" }],
+        folders: [],
+      }),
+    );
+    store.dispatch(
+      mediaSlice.actions.updateMediaItemFields({
+        id: "media-1",
+        patch: { name: "Local rename" },
+      }),
+    );
+    store.dispatch(
+      mediaSlice.actions.syncMediaFromRemote({
+        list: [{ id: "media-1", name: "Remote rename" }],
+        folders: [],
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().media.list[0].name).toBe("Remote rename");
+  });
+
+  it("discards a delayed media save when RESET occurs during the document read", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    db.get.mockImplementation(async () => {
+      store.dispatch({ type: "RESET" });
+      return {
+        _id: "media",
+        _rev: "1-media",
+        list: [{ id: "media-1", name: "Original" }],
+        folders: [],
+      };
+    });
+
+    store.dispatch(
+      mediaSlice.actions.initiateMediaFromDoc({
+        list: [{ id: "media-1", name: "Original" }],
+        folders: [],
+      }),
+    );
+    store.dispatch(
+      mediaSlice.actions.updateMediaItemFields({
+        id: "media-1",
+        patch: { name: "Renamed" },
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledWith("media");
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("persists media when the initialized state snapshot remains current", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    db.get.mockResolvedValue({
+      _id: "media",
+      _rev: "1-media",
+      list: [{ id: "media-1", name: "Original" }],
+      folders: [],
+    });
+    db.put.mockResolvedValue({ ok: true, id: "media", rev: "2-media" });
+
+    store.dispatch(
+      mediaSlice.actions.initiateMediaFromDoc({
+        list: [{ id: "media-1", name: "Original" }],
+        folders: [],
+      }),
+    );
+    store.dispatch(
+      mediaSlice.actions.updateMediaItemFields({
+        id: "media-1",
+        patch: { name: "Renamed" },
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "media",
+        _rev: "1-media",
+        list: [expect.objectContaining({ id: "media-1", name: "Renamed" })],
+        folders: [],
+        updatedAt: expect.any(String),
+      }),
+    );
+  });
+
+  it("does not broadcast a save that became stale while put was in flight", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } =
+      loadStoreWithMediaPersistence();
+    db.get.mockResolvedValue({
+      _id: "media",
+      _rev: "1-media",
+      list: [{ id: "media-1", name: "Original" }],
+      folders: [],
+    });
+    db.put.mockImplementation(async () => {
+      store.dispatch(
+        mediaSlice.actions.syncMediaFromRemote({
+          list: [{ id: "media-1", name: "Remote rename" }],
+          folders: [],
+        }),
+      );
+      return { ok: true, id: "media", rev: "2-media" };
+    });
+
+    store.dispatch(
+      mediaSlice.actions.initiateMediaFromDoc({
+        list: [{ id: "media-1", name: "Original" }],
+        folders: [],
+      }),
+    );
+    store.dispatch(
+      mediaSlice.actions.updateMediaItemFields({
+        id: "media-1",
+        patch: { name: "Local rename" },
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(store.getState().media.list[0].name).toBe("Remote rename");
   });
 
   it("fallback initialization completes when credits slice becomes initialized", () => {

@@ -132,9 +132,8 @@ export const reorderElementsInSection = (
   });
 
 /**
- * Reduce a plan's sections to a reusable skeleton, and re-key it. Used both
- * when saving a plan as a template and when applying one back onto a plan, so
- * neither direction can leak one week's specifics into another.
+ * Plan → template. Reduce a dated plan's sections to a reusable skeleton and
+ * re-key it, so this week's specifics cannot leak into the pattern.
  *
  * Kept: structure, section/item names, timings, notes, team notes, and the
  * microphone plan. Microphones are church-owned and addressed to roles by
@@ -144,6 +143,11 @@ export const reorderElementsInSection = (
  * Cleared: song/scripture picks, who's assigned, and the live-outline push
  * pointer — all of which belong to a single dated service, not to the pattern.
  * Ids are regenerated so two plans built from one template never collide.
+ *
+ * Every name goes, including standing ones like "Audience": a plan's assignees
+ * are this week's people and nothing here can tell a group apart from a
+ * person. Standing labels are typed once in the template editor instead — see
+ * cloneSectionsFromTemplate for the direction that preserves them.
  */
 export const cloneSectionsForTemplate = (
   sections: ServicePlanSection[],
@@ -178,6 +182,31 @@ export const cloneSectionsForTemplate = (
       // Kind follows the (now-cleared) attachments.
       return { ...cloned, type: getServicePlanElementType(cloned) };
     }),
+  }));
+
+/**
+ * Template → plan (and template → duplicate). Re-key the sections without
+ * stripping anything the template deliberately holds.
+ *
+ * A template's assignees are standing labels, not people — "Audience",
+ * "Chorale", the group that always carries a given microphone. Running the
+ * save-direction clone here instead would erase them on the way out, so a
+ * template could never express an audience mic at all.
+ */
+export const cloneSectionsFromTemplate = (
+  sections: ServicePlanSection[],
+): ServicePlanSection[] =>
+  sections.map((section) => ({
+    ...section,
+    id: generateRandomId(),
+    elements: section.elements.map((element) => ({
+      ...element,
+      id: generateRandomId(),
+      assignees: getServicePlanElementAssignees(element).map((assignee) => ({
+        ...assignee,
+        id: generateRandomId(),
+      })),
+    })),
   }));
 
 /** Move an element to a different section, appending it at the end. No-op if

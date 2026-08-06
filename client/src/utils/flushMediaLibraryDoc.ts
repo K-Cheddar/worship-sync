@@ -1,4 +1,7 @@
-import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
+import {
+  globalBroadcastRef,
+  globalDb as activeDb,
+} from "../context/controllerInfo";
 import { globalHostId } from "../context/globalInfo";
 import { setMediaCacheMap } from "../store/mediaCacheMapSlice";
 import store from "../store/store";
@@ -14,21 +17,34 @@ const safePostMessage = (message: unknown) => {
 /** `error.message` when {@link flushMediaLibraryDocToPouch} could not run because `db` is unset. */
 export const FLUSH_MEDIA_NO_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: no database instance";
+export const FLUSH_MEDIA_STALE_DB_MESSAGE =
+  "flushMediaLibraryDocToPouch: database is no longer active";
 
 /** Persist media list + folders immediately (broadcast + Electron cache when applicable). */
 export async function flushMediaLibraryDocToPouch(
+  db: PouchDB.Database | undefined,
   list: MediaType[],
   folders: MediaFolder[],
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (!db) {
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
   }
+  const databaseIsActive = () => activeDb === db;
+  if (!databaseIsActive()) {
+    return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
+  }
   try {
     const db_media: DBMedia = await db.get("media");
+    if (!databaseIsActive()) {
+      return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
+    }
     db_media.list = [...list];
     db_media.folders = [...folders];
     db_media.updatedAt = new Date().toISOString();
     await db.put(db_media);
+    // The intended database was updated, but do not publish/cache its result
+    // into a different church if the active database changed during the put.
+    if (!databaseIsActive()) return { ok: true };
     safePostMessage({
       type: "update",
       data: {

@@ -8,7 +8,6 @@ import {
 import {
   DBAllItems,
   DBItemListDetails,
-  DBMedia,
   DBOverlayTemplates,
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
   MONITOR_SETTINGS_POUCH_ID,
@@ -64,9 +63,13 @@ import {
 import {
   initiateMediaList,
   initiateMediaFromDoc,
-  setIsInitialized as setMediaIsInitialized,
+  isMediaLoadSettled,
+  setLoadStatus as setMediaLoadStatus,
 } from "../../store/mediaSlice";
-import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
+import {
+  loadOrCreateMediaDoc,
+  normalizeMediaDoc,
+} from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
@@ -107,7 +110,7 @@ export const useControllerPageLifecycle = () => {
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.overlays.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
-      state.media.isInitialized &&
+      isMediaLoadSettled(state.media) &&
       (state.undoable.present.overlayTemplates as { isInitialized: boolean })
         .isInitialized,
     ),
@@ -232,7 +235,7 @@ export const useControllerPageLifecycle = () => {
       dispatch(setItemListIsInitialized(false));
       dispatch(setOverlaysIsInitialized(false));
       dispatch(setItemListsIsInitialized(false));
-      dispatch(setMediaIsInitialized(false));
+      dispatch(setMediaLoadStatus("idle"));
       dispatch(setOverlayTemplatesIsInitialized(false));
       dispatch({ type: "RESET_INITIALIZATION" });
       refreshPresentationListeners?.();
@@ -339,17 +342,32 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     if (!db || access !== "full") return;
-    (async () => {
+    let cancelled = false;
+    dispatch(setMediaLoadStatus("loading"));
+
+    const loadMediaLibrary = async () => {
       try {
         await migrateMediaLibraryFoldersFieldIfNeeded(db);
-        const raw = (await db.get("media")) as DBMedia;
+        const raw = await loadOrCreateMediaDoc(db);
+        if (cancelled) return;
         const { list, folders } = normalizeMediaDoc(raw);
         dispatch(initiateMediaFromDoc({ list, folders }));
-      } catch {
-        dispatch(initiateMediaFromDoc({ list: [], folders: [] }));
+      } catch (error) {
+        if (cancelled) return;
+        dispatch(setMediaLoadStatus("error"));
+        console.error("Failed to load media library from PouchDB:", error);
+        showToast(
+          "Could not load the media library. Reload the page before making media changes.",
+          "error",
+        );
       }
-    })();
-  }, [dispatch, db, access]);
+    };
+
+    void loadMediaLibrary();
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatch, db, access, showToast]);
 
   useEffect(() => {
     if (

@@ -244,11 +244,11 @@ const ServicePlanAssigneeList = ({
               !taken.has(microphone.id)
               && !(assignee.microphoneIds || []).includes(microphone.id),
           );
-          // In a template these rows are the ordered plan the dated plan hands
-          // out, so they read as positions rather than as missing people.
-          const label = structureOnly
-            ? `Slot ${assigneeIndex + 1}`
-            : assignee.name?.trim() || "Unassigned";
+          // In a template an unnamed row is a position in the order the dated
+          // plan hands microphones out in; a named one is a standing group.
+          const label =
+            assignee.name?.trim()
+            || (structureOnly ? `Slot ${assigneeIndex + 1}` : "Unassigned");
           // Quiet, not an alarm: plenty of people never need a microphone. It
           // only says anything on an item that has a microphone plan at all.
           const showMissingMicrophoneHint =
@@ -272,11 +272,17 @@ const ServicePlanAssigneeList = ({
                 aria-hidden
               />
 
-              {allowEdit && !structureOnly ? (
+              {allowEdit ? (
                 <HistorySuggestField
-                  label={`Assigned to for ${itemLabel}`}
+                  label={
+                    structureOnly
+                      ? `Group for ${itemLabel}`
+                      : `Assigned to for ${itemLabel}`
+                  }
                   hideLabel
-                  placeholder="Assigned to"
+                  // A template names standing groups, never this week's people
+                  // — "Audience", "Chorale", whoever always carries the mic.
+                  placeholder={structureOnly ? "Group (optional)" : "Assigned to"}
                   multiline={false}
                   className="w-32 sm:w-40"
                   inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
@@ -288,11 +294,15 @@ const ServicePlanAssigneeList = ({
                       `assignee:${assignee.id}:name`,
                     )
                   }
-                  historyValues={filterAssigneeSuggestions(
-                    assignedToHistoryValues,
-                    assignees,
-                    assignee.id,
-                  )}
+                  historyValues={
+                    structureOnly
+                      ? []
+                      : filterAssigneeSuggestions(
+                        assignedToHistoryValues,
+                        assignees,
+                        assignee.id,
+                      )
+                  }
                 />
               ) : (
                 <span
@@ -320,7 +330,7 @@ const ServicePlanAssigneeList = ({
                 return (
                   <span
                     key={microphone.id}
-                    className="inline-flex min-w-0 items-center gap-0.5"
+                    className="inline-flex shrink-0 items-center gap-0.5"
                     title={scheduledTitle}
                   >
                     <ServicePlanMicrophoneChip microphone={microphone}>

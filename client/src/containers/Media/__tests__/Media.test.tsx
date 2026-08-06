@@ -239,6 +239,7 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
       ],
       folders: [],
       isInitialized: true,
+      loadStatus: "ready",
     },
     undoable: {
       present: {
@@ -407,6 +408,44 @@ describe("Media", () => {
 
     fireEvent.click(screen.getByTitle("Add Media"));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables media entry points until the library is initialized", async () => {
+    mockState = makeBaseState({
+      media: {
+        list: [],
+        folders: [],
+        isInitialized: false,
+        loadStatus: "loading",
+      },
+    });
+    await renderMedia();
+
+    expect(screen.getByTitle("Add Media")).toBeDisabled();
+    expect(screen.getByTitle("Fullscreen")).toBeDisabled();
+    fireEvent.click(screen.getByTitle("Add Media"));
+    expect(mockOpenModal).not.toHaveBeenCalled();
+  });
+
+  it("keeps media read-only and shows recovery guidance after a load error", async () => {
+    mockState = makeBaseState({
+      media: {
+        list: [],
+        folders: [],
+        isInitialized: false,
+        loadStatus: "error",
+      },
+    });
+    await renderMedia();
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("Media is unavailable.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Reload the page before making media changes."),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle("Add Media")).toBeDisabled();
+    expect(screen.getByTitle("Fullscreen")).toBeDisabled();
+    expect(screen.queryByText("Loading media...")).not.toBeInTheDocument();
   });
 
   it("does not clear selection when opening the More actions overflow menu", async () => {

@@ -460,12 +460,13 @@ const RoleNoteAudienceSubmenu = ({
       />
       <div>
         <p className="mb-1 text-[11px] font-medium text-gray-400">Filter by team</p>
-        <div className="max-h-24 overflow-y-auto pr-0.5">
+        <div className="max-h-24 touch-pan-y overflow-y-auto overscroll-contain pr-0.5">
           <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by team">
             <Button
               variant={!teamId ? "cta" : "tertiary"}
               aria-pressed={!teamId}
               className="max-md:min-h-0 rounded-full px-2 py-0.5 text-xs"
+              onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -482,6 +483,7 @@ const RoleNoteAudienceSubmenu = ({
                   variant={selected ? "cta" : "tertiary"}
                   aria-pressed={selected}
                   className="max-md:min-h-0 rounded-full px-2 py-0.5 text-xs"
+                  onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -495,7 +497,7 @@ const RoleNoteAudienceSubmenu = ({
           </div>
         </div>
       </div>
-      <div className="max-h-56 overflow-y-auto rounded border border-gray-700 p-1">
+      <div className="max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1">
         {groupRoleOptionsByTeam(filteredRoles).map((group) => (
           <div key={group.teamName} className="py-0.5">
             <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
@@ -506,7 +508,8 @@ const RoleNoteAudienceSubmenu = ({
                 key={role.positionId}
                 variant="tertiary"
                 className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
-                onPointerDown={(event) => {
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
                   onSelectRole(role.positionId);
@@ -534,13 +537,14 @@ const TeamNoteAudienceSubmenu = ({
   options: ServicePlanTeamNoteOption[];
   onSelectTeam: (teamId: string) => void;
 }) => (
-  <div className="max-h-56 w-56 overflow-y-auto p-1">
+  <div className="max-h-56 w-56 touch-pan-y overflow-y-auto overscroll-contain p-1">
     {options.map((team) => (
       <Button
         key={team.teamId}
         variant="tertiary"
         className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
-        onPointerDown={(event) => {
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
           onSelectTeam(team.teamId);
@@ -664,7 +668,7 @@ const RoleNoteAudiencePicker = ({
           className="w-full"
           inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
         />
-        <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-700 p-1">
+        <div className="mt-2 max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1">
           {groupRoleOptionsByTeam(filteredOptions).map((group) => (
             <div key={group.teamName} className="py-0.5">
               <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
@@ -683,6 +687,7 @@ const RoleNoteAudiencePicker = ({
                       "max-md:min-h-0 w-full px-2 py-1 text-left text-xs",
                       selected && "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
                     )}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => onValueChange(
                       selected
                         ? value.filter((positionId) => positionId !== option.positionId)

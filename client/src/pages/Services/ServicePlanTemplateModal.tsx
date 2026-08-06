@@ -12,7 +12,10 @@ import {
   saveServicePlanTemplate,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
-import { cloneSectionsForTemplate } from "./servicePlanDraftUtils";
+import {
+  cloneSectionsForTemplate,
+  cloneSectionsFromTemplate,
+} from "./servicePlanDraftUtils";
 import type {
   ServicePlanSection,
   ServicePlanTemplate,
@@ -83,7 +86,7 @@ const ServicePlanTemplateModal = ({
   const ordered = [...forThisService, ...general];
 
   const handleApply = (template: ServicePlanTemplate) => {
-    onApply(cloneSectionsForTemplate(template.sections));
+    onApply(cloneSectionsFromTemplate(template.sections));
     showToast(`Applied "${template.name}".`, "success");
     onClose();
   };
