@@ -4,6 +4,7 @@ import {
   addElement,
   addSection,
   cloneSectionsForTemplate,
+  cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   moveElementToSection,
   removeElement,
@@ -282,5 +283,55 @@ describe("cloneSectionsForTemplate", () => {
     expect(element.assignees).toHaveLength(1);
     expect(element.assignees?.[0].microphoneIds).toEqual(["mic-orange"]);
     expect(element.microphoneAssignments).toBeUndefined();
+  });
+});
+
+describe("cloneSectionsFromTemplate", () => {
+  const templateSections = (): ServicePlanSection[] => [
+    {
+      id: "section-1",
+      name: "Panel",
+      elements: [
+        {
+          id: "element-1",
+          type: "free",
+          title: plainTextToRichText("Group discussion"),
+          assignees: [
+            { id: "slot-1", microphoneIds: ["mic-lead"] },
+            { id: "slot-2", name: "Audience", microphoneIds: ["mic-roving"] },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it("keeps a standing group label on the way out to a plan", () => {
+    const [section] = cloneSectionsFromTemplate(templateSections());
+    const [element] = section.elements;
+
+    // The save-direction clone strips every name; running it here too would
+    // erase "Audience" and leave the mic looking unassigned every week.
+    expect(element.assignees?.[0].name).toBeUndefined();
+    expect(element.assignees?.[1]).toMatchObject({
+      name: "Audience",
+      microphoneIds: ["mic-roving"],
+    });
+  });
+
+  it("re-keys everything so two plans from one template never collide", () => {
+    const [section] = cloneSectionsFromTemplate(templateSections());
+
+    expect(section.id).not.toBe("section-1");
+    expect(section.elements[0].id).not.toBe("element-1");
+    expect(section.elements[0].assignees?.[0].id).not.toBe("slot-1");
+    expect(section.elements[0].assignees?.[1].id).not.toBe("slot-2");
+  });
+
+  it("does not mutate the template it was given", () => {
+    const original = templateSections();
+    cloneSectionsFromTemplate(original);
+
+    expect(original[0].id).toBe("section-1");
+    expect(original[0].elements[0].assignees?.[1].id).toBe("slot-2");
   });
 });

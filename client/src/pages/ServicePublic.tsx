@@ -627,7 +627,6 @@ const ServicePublic = () => {
                                             className="gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
                                             iconClassName="size-4"
                                             details={[
-                                              assignment.microphone.type,
                                               assignment.holderName || "",
                                             ]}
                                           />

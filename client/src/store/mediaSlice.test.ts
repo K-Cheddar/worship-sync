@@ -3,8 +3,10 @@ import mediaReducer, {
   updateMediaList,
   setMediaListAndFolders,
   setIsInitialized,
+  setLoadStatus,
   initiateMediaList,
   initiateMediaFromDoc,
+  isMediaLoadSettled,
   syncMediaFromRemote,
   updateMediaListFromRemote,
   removeItemFromMediaList,
@@ -30,6 +32,7 @@ describe("mediaSlice", () => {
       expect(state.list).toEqual([]);
       expect(state.folders).toEqual([]);
       expect(state.isInitialized).toBe(false);
+      expect(state.loadStatus).toBe("idle");
     });
   });
 
@@ -61,6 +64,28 @@ describe("mediaSlice", () => {
       const store = createStore();
       store.dispatch(setIsInitialized(true));
       expect(store.getState().media.isInitialized).toBe(true);
+      expect(store.getState().media.loadStatus).toBe("ready");
+    });
+  });
+
+  describe("load status", () => {
+    it("keeps failed media read-only while allowing controller readiness", () => {
+      const store = createStore();
+
+      store.dispatch(setLoadStatus("error"));
+
+      const state = store.getState().media;
+      expect(state.isInitialized).toBe(false);
+      expect(state.loadStatus).toBe("error");
+      expect(isMediaLoadSettled(state)).toBe(true);
+    });
+
+    it("does not consider loading settled", () => {
+      const store = createStore();
+
+      store.dispatch(setLoadStatus("loading"));
+
+      expect(isMediaLoadSettled(store.getState().media)).toBe(false);
     });
   });
 
@@ -75,6 +100,7 @@ describe("mediaSlice", () => {
       expect(state.list).toHaveLength(1);
       expect(state.folders).toHaveLength(0);
       expect(state.isInitialized).toBe(true);
+      expect(state.loadStatus).toBe("ready");
     });
   });
 
@@ -91,6 +117,7 @@ describe("mediaSlice", () => {
       expect(state.list).toHaveLength(2);
       expect(state.folders).toHaveLength(1);
       expect(state.isInitialized).toBe(true);
+      expect(state.loadStatus).toBe("ready");
     });
   });
 
@@ -105,6 +132,7 @@ describe("mediaSlice", () => {
       );
       expect(store.getState().media.list[0].id).toBe("r1");
       expect(store.getState().media.folders[0].id).toBe("rf1");
+      expect(store.getState().media.loadStatus).toBe("ready");
     });
   });
 

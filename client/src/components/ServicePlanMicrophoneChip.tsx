@@ -9,8 +9,8 @@ type ServicePlanMicrophoneChipProps = {
   className?: string;
   iconClassName?: string;
   /**
-   * Extra muted segments after the name (type, holder). Joined with middots so
-   * public and operator surfaces can share one chip shape.
+   * Extra muted segments after the type (e.g. holder). Joined with middots.
+   * Type always comes from `microphone.type` so every surface shows it.
    */
   details?: string[];
   /** Trailing controls such as a remove button on editable assignee rows. */
@@ -34,7 +34,7 @@ export const ServicePlanMicrophoneChip = ({
   children,
 }: ServicePlanMicrophoneChipProps) => {
   const chromeStyle = servicePlanMicrophoneChromeStyle(microphone.color);
-  const detailLabel = details
+  const detailLabel = [microphone.type, ...details]
     .map((part) => part.trim())
     .filter(Boolean)
     .join(" · ");
@@ -48,7 +48,9 @@ export const ServicePlanMicrophoneChip = ({
       className={cn(
         // Extra right padding when a remove control is slotted in — otherwise
         // the X sits flush against the pill edge on template/plan edit rows.
-        "inline-flex min-w-0 items-center gap-1 rounded border py-0.5 text-[11px]",
+        // shrink-0 + no max-width so name and type stay fully readable; parents
+        // flex-wrap chips onto the next line instead of clipping them.
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border py-0.5 text-[11px]",
         children ? "pl-1.5 pr-2" : "px-1",
         !chromeStyle && fallbackChromeClassName,
         className,
@@ -60,11 +62,9 @@ export const ServicePlanMicrophoneChip = ({
         color={microphone.color}
         className={cn("size-3.5 shrink-0", iconClassName)}
       />
-      <span className="max-w-32 truncate">{microphone.name}</span>
+      <span>{microphone.name}</span>
       {detailLabel ? (
-        <span className="max-w-40 truncate font-normal opacity-80">
-          · {detailLabel}
-        </span>
+        <span className="font-normal opacity-80">· {detailLabel}</span>
       ) : null}
       {children}
     </span>

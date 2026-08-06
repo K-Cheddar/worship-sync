@@ -283,7 +283,15 @@ describe("ServicePlanElementRow", () => {
 
     expect(onUpdate).not.toHaveBeenCalled();
 
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "Camera" }));
+    // Selection is on click: the picker lets pointerDown through untouched so a
+    // touch drag scrolls the role list instead of picking whatever is under
+    // the finger (see ServicePlanRolePickerContent).
+    // Selection is on click now: the picker lets pointerDown through untouched
+    // so a touch drag scrolls the role list instead of picking whatever is
+    // under the finger (see RoleNoteAudienceSubmenu). A raw click event is
+    // needed rather than userEvent's — its pointer movement closes the Radix
+    // submenu before the click lands.
+    fireEvent.click(await screen.findByRole("button", { name: "Camera" }));
 
     expect(onUpdate).toHaveBeenCalledWith({
       teamNotes: [

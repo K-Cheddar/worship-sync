@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ServicePlanRolePicker from "./ServicePlanRolePicker";
 
@@ -114,5 +114,26 @@ describe("ServicePlanRolePicker", () => {
     expect(screen.getByRole("button", { name: "Media Team · Camera" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stream Team · Camera" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Lyrics" })).toBeInTheDocument();
+  });
+
+  // Role rows fill the scroll area; preventDefault on touch pointerdown cancels
+  // the scroll gesture when a finger lands on a role button.
+  it("does not cancel touch pointerdown on role rows so the list can scroll", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServicePlanRolePicker
+        value=""
+        onValueChange={jest.fn()}
+        options={roles}
+        teamFilterStorageKey="role-picker-team"
+        ariaLabel="Filter role notes"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+    const roleButton = screen.getByRole("button", { name: "Camera" });
+    const touchDown = createEvent.pointerDown(roleButton, { pointerType: "touch" });
+    fireEvent(roleButton, touchDown);
+    expect(touchDown.defaultPrevented).toBe(false);
   });
 });

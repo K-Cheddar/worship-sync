@@ -218,13 +218,49 @@ describe("ServicePlanTemplateEditor", () => {
     expect(screen.getByLabelText(/^Template name/i)).toBeInTheDocument();
   });
 
-  it("offers no assignee field, since templates never carry one", async () => {
+  it("offers a standing group label, never a week's assignee field", async () => {
     const user = userEvent.setup();
     renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(
+      screen.getByRole("button", { name: "Add to Opening prayer" }),
+    );
+    const menu = await screen.findByRole("menu");
+    await user.hover(within(menu).getByRole("menuitem", { name: /Microphone/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Orange/i }));
 
-    expect(screen.getByLabelText(/^Title/i)).toBeInTheDocument();
+    // "Assigned to" names this week's people and has no meaning in a pattern;
+    // a slot instead carries a standing label like "Audience" or "Chorale".
     expect(screen.queryByLabelText(/^Assigned to/i)).not.toBeInTheDocument();
+    expect(
+      await screen.findByPlaceholderText("Group (optional)"),
+    ).toBeInTheDocument();
+  });
+
+  it("saves a slot's standing group label with the template", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(
+      screen.getByRole("button", { name: "Add to Opening prayer" }),
+    );
+    const menu = await screen.findByRole("menu");
+    await user.hover(within(menu).getByRole("menuitem", { name: /Microphone/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Orange/i }));
+
+    await user.type(
+      await screen.findByPlaceholderText("Group (optional)"),
+      "Audience",
+    );
+
+    await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    const [, payload] = mockSaveServicePlanTemplate.mock.calls.at(-1) ?? [];
+    expect(payload?.sections[0].elements[0].assignees[0]).toMatchObject({
+      name: "Audience",
+      microphoneIds: ["mic-orange"],
+    });
   });
 
   it("offers notes but not songs or scripture on an item", async () => {

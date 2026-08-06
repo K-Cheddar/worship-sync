@@ -10,7 +10,7 @@ import {
   saveServicePlanTemplate,
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
-import { cloneSectionsForTemplate } from "../../Services/servicePlanDraftUtils";
+import { cloneSectionsFromTemplate } from "../../Services/servicePlanDraftUtils";
 import ServicePlanTemplateEditor, {
   countServicePlanTemplateItems,
   createServicePlanTemplateDraft,
@@ -161,7 +161,7 @@ const TeamsTemplatesPage = () => {
         ),
         ...(template.serviceId ? { serviceId: template.serviceId } : {}),
         // Fresh ids, so editing the copy can never touch the original's rows.
-        sections: cloneSectionsForTemplate(template.sections),
+        sections: cloneSectionsFromTemplate(template.sections),
       });
       upsertTemplate(res.template);
       showToast(`Duplicated as "${res.template.name}".`, "success");

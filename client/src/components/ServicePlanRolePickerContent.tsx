@@ -1,6 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type PointerEvent } from "react";
 import Button from "./Button/Button";
 import Input from "./Input/Input";
+
+/**
+ * Do not preventDefault on pointerdown here: role rows fill the scrollable list,
+ * and canceling touch pointerdown blocks scrolling on touch screens.
+ * stopPropagation still keeps the event from dismissing parent menus.
+ */
+const stopRolePickerPointerDown = (event: PointerEvent) => {
+  event.stopPropagation();
+};
+
+const handleRolePickerClick = (event: MouseEvent, onSelect: () => void) => {
+  event.preventDefault();
+  event.stopPropagation();
+  onSelect();
+};
 
 export type ServicePlanRolePickerOption = {
   positionId: string;
@@ -132,17 +147,14 @@ const ServicePlanRolePickerContent = ({
       {!lockedTeamName ? (
         <div>
           <p className="mb-1 text-[11px] font-medium text-gray-400">Filter by team</p>
-          <div className="max-h-24 overflow-y-auto pr-0.5">
+          <div className="max-h-24 touch-pan-y overflow-y-auto overscroll-contain pr-0.5">
             <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by team">
               <Button
                 variant={!teamId ? "cta" : "tertiary"}
                 aria-pressed={!teamId}
                 className="max-md:min-h-0 rounded-full px-2 py-0.5 text-xs"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  chooseTeam("");
-                }}
+                onPointerDown={stopRolePickerPointerDown}
+                onClick={(event) => handleRolePickerClick(event, () => chooseTeam(""))}
               >
                 All teams
               </Button>
@@ -154,11 +166,8 @@ const ServicePlanRolePickerContent = ({
                     variant={selected ? "cta" : "tertiary"}
                     aria-pressed={selected}
                     className="max-md:min-h-0 rounded-full px-2 py-0.5 text-xs"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      chooseTeam(team.id);
-                    }}
+                    onPointerDown={stopRolePickerPointerDown}
+                    onClick={(event) => handleRolePickerClick(event, () => chooseTeam(team.id))}
                   >
                     {team.name}
                   </Button>
@@ -168,17 +177,14 @@ const ServicePlanRolePickerContent = ({
           </div>
         </div>
       ) : null}
-      <div className="max-h-56 overflow-y-auto rounded border border-gray-700 p-1">
+      <div className="max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1">
         {allowEmpty ? (
           <Button
             variant="tertiary"
             isSelected={!value}
             className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              selectRole("");
-            }}
+            onPointerDown={stopRolePickerPointerDown}
+            onClick={(event) => handleRolePickerClick(event, () => selectRole(""))}
           >
             All roles
           </Button>
@@ -188,24 +194,26 @@ const ServicePlanRolePickerContent = ({
             <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
               {group.teamName}
             </p>
-            {group.roles.map((role) => (
-              <Button
-                key={role.positionId}
-                variant="tertiary"
-                isSelected={role.positionId === value}
-                className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (!lockedTeamName && role.teamId) chooseTeam(role.teamId);
-                  selectRole(role.positionId);
-                }}
-              >
-                <span className="block truncate">
-                  {servicePlanRoleOptionDisplayLabel(role, options)}
-                </span>
-              </Button>
-            ))}
+            {group.roles.map((role) => {
+              const choose = () => {
+                if (!lockedTeamName && role.teamId) chooseTeam(role.teamId);
+                selectRole(role.positionId);
+              };
+              return (
+                <Button
+                  key={role.positionId}
+                  variant="tertiary"
+                  isSelected={role.positionId === value}
+                  className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
+                  onPointerDown={stopRolePickerPointerDown}
+                  onClick={(event) => handleRolePickerClick(event, choose)}
+                >
+                  <span className="block truncate">
+                    {servicePlanRoleOptionDisplayLabel(role, options)}
+                  </span>
+                </Button>
+              );
+            })}
           </div>
         ))}
         {filteredRoles.length === 0 ? (

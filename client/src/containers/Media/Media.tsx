@@ -132,7 +132,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               svg={Plus}
               onClick={() => void c.requestMediaUpload()}
               title={toolbarAddMediaTitle}
-              disabled={c.uploadProgress.isUploading}
+              disabled={c.uploadProgress.isUploading || c.isMediaReadOnly}
             >
               {c.uploadProgress.isUploading
                 ? `${Math.round(c.uploadProgress.progress)}%`
@@ -143,6 +143,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               svg={Maximize}
               onClick={() => c.setIsFullscreen(true)}
               title="Fullscreen"
+              disabled={c.isMediaReadOnly}
             />
           </div>
         </div>
@@ -154,9 +155,9 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           uploadPreset="bpqu4ma5"
           cloudName="portable-media"
           onUploadActiveChange={c.handleUploadActiveChange}
-          uploadDisabled={c.isGuestSession}
+          uploadDisabled={c.isGuestSession || c.isMediaReadOnly}
         />
-        {!c.isMediaLoading && c.isMediaExpanded && (
+        {!c.isMediaReadOnly && c.isMediaExpanded && (
           <>
             <div className="w-full min-w-0">
               <div className="mx-2 flex items-center gap-2 border-b border-gray-500 bg-black/60 px-4 py-2">
@@ -281,6 +282,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isPanelVariant={c.isPanelVariant}
           isMediaExpanded={c.isMediaExpanded}
           isMediaLoading={c.isMediaLoading}
+          hasMediaLoadError={c.hasMediaLoadError}
           mediaItemsPerRow={c.mediaItemsPerRow}
           mediaListRef={c.mediaListRef}
           mediaGridRef={c.mediaGridRef}
@@ -359,7 +361,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaUploadInputRef={c.mediaUploadInputRef}
           uploadProgress={c.uploadProgress}
           onAddMediaClick={c.requestMediaUpload}
-          mediaUploadDisabled={c.isGuestSession}
+          mediaUploadDisabled={c.isGuestSession || c.isMediaReadOnly}
         />
         {selectedCount === 1 && c.mediaRenameOpen ? (
           <FloatingWindow
