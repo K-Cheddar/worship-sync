@@ -27,6 +27,23 @@ describe("Toast", () => {
     expect(screen.getByTestId("toast-progress")).toBeInTheDocument();
   });
 
+  it("allows content to wrap within a mobile-friendly max width", () => {
+    render(
+      <Toast
+        id="toast-wrap"
+        message="Earlier-day comments are still in the board and Restream chat. Start fresh for today?"
+        onClose={jest.fn()}
+      />
+    );
+
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveClass("max-w-[75vw]");
+    expect(toast).not.toHaveClass("max-w-[50vw]");
+    expect(screen.getByText(/Earlier-day comments/)).toHaveClass(
+      "wrap-break-word"
+    );
+  });
+
   it("does not show a progress bar for persistent toasts", () => {
     render(
       <Toast

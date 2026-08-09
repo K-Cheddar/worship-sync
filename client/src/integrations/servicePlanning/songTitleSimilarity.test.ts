@@ -9,10 +9,11 @@ describe("normalizeSongTitleForMatch", () => {
     // Plurals fold away, so a trailing "s" never decides a match on its own.
     // Applied to both sides, so a contraction folding too is harmless.
     ["There's a Welcome Here (C)", "there a welcome here"],
-    // A chapter number is the half of the name that says which passage, so it
-    // survives where a catalog number would not.
+    // A trailing number is kept whichever kind it is — the chapter that names a
+    // passage and the catalog number appended to a title both survive here, and
+    // the extension rule reads the catalog case as the same song.
     ["Proverbs 3", "proverb 3"],
-    ["He Hideth My Soul 520", "he hideth my soul"],
+    ["He Hideth My Soul 520", "he hideth my soul 520"],
     // Not every trailing "s" is a plural.
     ["Jesus Loves Me", "jesus love me"],
     ["Bless the Lord", "bless the lord"],

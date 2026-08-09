@@ -94,8 +94,15 @@ export const normalizeSongTitleForMatch = (title: string): string => {
    * one. Stripping those collapsed every chapter of a book onto whichever the
    * library happened to hold first.
    */
-  while (words.length > 2 && HYMNAL_NUMBER.test(words[0])) words.shift();
-  while (words.length > 2 && HYMNAL_NUMBER.test(words[words.length - 1])) words.pop();
+  /**
+   * A number that *leads* is where the song sits in a hymnal, never part of its
+   * name — nothing is called "3 Proverbs". A number that trails is ambiguous
+   * ("He Hideth My Soul 520" is a catalog number, "Proverbs 3" is the half of
+   * the name that says which passage), so it is left alone: the ordered
+   * extension rule already reads an appended number as the same song, without
+   * having to guess which kind it is.
+   */
+  while (words.length > 1 && HYMNAL_NUMBER.test(words[0])) words.shift();
 
   return words.join(" ");
 };

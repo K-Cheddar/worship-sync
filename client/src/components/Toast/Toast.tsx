@@ -173,7 +173,7 @@ const Toast: React.FC<ToastProps> = ({
     <div
       role="status"
       className={cn(
-        "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
+        "fixed z-9999 min-w-[300px] max-w-[75vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
         config.textColor,
         positionStyles[position],
         isVisible && !isExiting && "opacity-100 translate-y-0",
@@ -196,20 +196,22 @@ const Toast: React.FC<ToastProps> = ({
         setIsPaused(false);
       }}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         {variant !== "neutral" && (
           <Icon
             svg={config.icon}
             size="md"
             color={config.iconColor}
-            className="shrink-0"
+            className="mt-0.5 shrink-0"
           />
         )}
-        <div className="flex-1 w-max">
+        <div className="min-w-0 flex-1">
           {message && (
-            <p className="text-sm text-center font-medium">{message}</p>
+            <p className="text-sm text-center font-medium wrap-break-word">
+              {message}
+            </p>
           )}
-          {children && <div>{children}</div>}
+          {children && <div className="min-w-0">{children}</div>}
         </div>
         {showCloseButton && (
           <Button

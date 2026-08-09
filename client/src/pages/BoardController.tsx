@@ -225,11 +225,11 @@ const SessionResetToastAction = ({
   onKeep: () => void;
   onConfirm: () => void;
 }) => (
-  <div className="mt-3 flex justify-center gap-2">
-    <Button variant="primary" className="text-sm" onClick={onKeep}>
+  <div className="mt-3 flex flex-wrap justify-center gap-2">
+    <Button variant="primary" className="text-sm" wrap onClick={onKeep}>
       {keepLabel}
     </Button>
-    <Button variant="cta" className="text-sm" onClick={onConfirm}>
+    <Button variant="cta" className="text-sm" wrap onClick={onConfirm}>
       {confirmLabel}
     </Button>
   </div>
