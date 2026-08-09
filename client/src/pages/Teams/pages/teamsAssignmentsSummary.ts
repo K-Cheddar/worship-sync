@@ -18,6 +18,7 @@ import {
   sanitizePositionRequirements,
 } from "../schedule/scheduleRequirements";
 import { sortPositionsByOrder } from "../teamsUtils";
+import { canNotifyMember } from "../unnotifiableMembers";
 
 export type TeamsAssignmentSummaryRow = {
   teamId: string;
@@ -42,6 +43,12 @@ export type TeamsAssignmentSummaryRow = {
   slotLabel: string;
   /** null when the slot is required but nobody is assigned yet. */
   memberName: string | null;
+  /**
+   * False when the assigned person has neither an email nor a linked account,
+   * so a notification about this slot would reach nobody. null when the slot is
+   * unfilled — there is no one to reach yet.
+   */
+  canNotify: boolean | null;
   /** Church microphones allocated to this scheduled slot for the day. */
   microphoneIds: string[];
 };
@@ -205,17 +212,27 @@ export const getOccurrenceAssignmentSummary = ({
       if (!member) return null;
       return `${member.firstName} ${member.lastName}`.trim();
     };
+    // Resolved here, where the member record is already in hand — the panel
+    // receives rows, not the roster, so it cannot look this up itself.
+    const canNotifyFor = (memberId?: string) => {
+      if (!memberId) return null;
+      const member = memberById.get(memberId);
+      if (!member) return null;
+      return canNotifyMember(member);
+    };
     const rowFor = ({
       positionId,
       columnKey,
       slotLabel,
       memberName,
+      canNotify,
       microphoneIds,
     }: {
       positionId: string;
       columnKey: string;
       slotLabel: string;
       memberName: string | null;
+      canNotify: boolean | null;
       microphoneIds: string[];
     }): TeamsAssignmentSummaryRow => {
       const position = positionById.get(positionId);
@@ -230,6 +247,7 @@ export const getOccurrenceAssignmentSummary = ({
         columnKey,
         slotLabel,
         memberName,
+        canNotify,
         microphoneIds,
       };
     };
@@ -280,6 +298,9 @@ export const getOccurrenceAssignmentSummary = ({
             memberName: memberNameFor(
               cells?.[column.columnKey]?.primaryMemberId,
             ),
+            canNotify: canNotifyFor(
+              cells?.[column.columnKey]?.primaryMemberId,
+            ),
             microphoneIds:
               schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[
                 column.columnKey
@@ -305,6 +326,7 @@ export const getOccurrenceAssignmentSummary = ({
           columnKey: slotKey,
           slotLabel: position?.name || "Position",
           memberName,
+          canNotify: canNotifyFor(cell.primaryMemberId),
           microphoneIds:
             schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[slotKey] ||
             [],
@@ -339,6 +361,8 @@ export const getOccurrenceAssignmentSummary = ({
         slotLabel:
           required > 1 ? `${position.name} ${slot + 1}` : position.name,
         memberName: null,
+        // Nobody scheduled, so there is no one to reach.
+        canNotify: null,
         microphoneIds: [],
       });
     }

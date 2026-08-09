@@ -59,10 +59,12 @@ const rowMicrophones = (
 const ServingMemberName = ({
   memberName,
   slotLabel,
+  canNotify,
   heldMicrophones,
 }: {
   memberName: string;
   slotLabel: string;
+  canNotify: boolean | null;
   heldMicrophones: ServicePlanMicrophone[];
 }) => (
   <Popover>
@@ -73,7 +75,7 @@ const ServingMemberName = ({
         title={memberName}
         aria-label={`Details for ${memberName}`}
         padding="p-0"
-        className="max-w-[45%] min-w-0 shrink-0 justify-start overflow-hidden text-xs font-medium text-gray-100 max-md:min-h-0 h-auto hover:bg-transparent"
+        className="max-w-[55%] min-w-0 shrink-0 justify-start overflow-hidden text-xs font-medium text-gray-100 max-md:min-h-0 h-auto hover:bg-transparent"
       >
         {/* Truncate on an inner span: the Button is flex, so ellipsis on the
             button itself would clip the start when content is end-aligned. */}
@@ -87,6 +89,13 @@ const ServingMemberName = ({
       <div className="space-y-2 text-left">
         <p className="text-xs text-gray-400">{slotLabel}</p>
         <p className="text-sm font-medium wrap-break-word">{memberName}</p>
+        {/* Kept in the details popover rather than on the dense row: it is
+            context for one person, not a state the operator scans for. */}
+        {canNotify === false ? (
+          <p className="text-xs text-amber-300">
+            No email — they won&apos;t get notifications.
+          </p>
+        ) : null}
         {heldMicrophones.length ? (
           <span className="flex flex-wrap items-center gap-1">
             {heldMicrophones.map((microphone) => (
@@ -217,33 +226,45 @@ const WhosServingPanel = ({
                 {team.filled.map((row) => {
                   const heldMicrophones = rowMicrophones(row, microphones);
                   const memberName = row.memberName?.trim() || "Unassigned";
+                  const hasMicrophones = heldMicrophones.length > 0;
                   return (
                     <li
                       key={`${scheduleId}-${row.columnKey}`}
-                      className="flex w-full items-center gap-2 px-1.5 py-1"
+                      className={
+                        hasMicrophones
+                          // Light chrome groups this person's role, name, and
+                          // mics so adjacent Praise Team rows do not blur together.
+                          ? "flex w-full flex-col gap-1 rounded-md border border-gray-700/70 bg-gray-950/40 px-1.5 py-1.5"
+                          : "flex w-full flex-col gap-1 px-1.5 py-1"
+                      }
                     >
-                      {/* Position + mic share the left; name stays opposite.
-                          One row when it fits; truncate instead of stacking. */}
-                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                        <span className="min-w-0 truncate text-xs text-gray-400">
+                      {/* Position and name share the first line so both stay
+                          readable; mic chips drop to a second line. */}
+                      <div className="flex w-full items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
                           {row.slotLabel}
                         </span>
-                        {heldMicrophones.length ? (
-                          <span className="flex shrink-0 items-center gap-1">
-                            {heldMicrophones.map((microphone) => (
-                              <ServicePlanMicrophoneChip
-                                key={microphone.id}
-                                microphone={microphone}
-                              />
-                            ))}
-                          </span>
-                        ) : null}
-                      </span>
-                      <ServingMemberName
-                        memberName={memberName}
-                        slotLabel={row.slotLabel}
-                        heldMicrophones={heldMicrophones}
-                      />
+                        <ServingMemberName
+                          memberName={memberName}
+                          slotLabel={row.slotLabel}
+                          canNotify={row.canNotify}
+                          heldMicrophones={heldMicrophones}
+                        />
+                      </div>
+                      {hasMicrophones ? (
+                        <span
+                          className="flex flex-wrap items-center gap-1 border-t border-gray-800/80 pt-1"
+                          role="group"
+                          aria-label={`Microphones for ${memberName}`}
+                        >
+                          {heldMicrophones.map((microphone) => (
+                            <ServicePlanMicrophoneChip
+                              key={microphone.id}
+                              microphone={microphone}
+                            />
+                          ))}
+                        </span>
+                      ) : null}
                     </li>
                   );
                 })}

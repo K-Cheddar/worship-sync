@@ -16,11 +16,18 @@ import type { TeamsData } from "../types";
 const mockCreateTeamRosterMember = jest.fn();
 const mockUpdateTeamRosterMember = jest.fn();
 
+const mockInviteTeamRosterMember = jest.fn(async () => ({ success: true }));
+
 jest.mock("../../../api/auth", () => ({
   archiveTeamRosterMember: jest.fn(),
   createTeamRosterMember: (...args: unknown[]) =>
     mockCreateTeamRosterMember(...args),
   deleteTeamRosterMember: jest.fn(),
+  linkTeamRosterMember: jest.fn(),
+  unlinkTeamRosterMember: jest.fn(),
+  listChurchMembers: jest.fn(async () => ({ members: [] })),
+  inviteTeamRosterMember: (...args: unknown[]) =>
+    mockInviteTeamRosterMember(...args),
   updateTeamRosterMember: (...args: unknown[]) =>
     mockUpdateTeamRosterMember(...args),
 }));
@@ -81,16 +88,23 @@ const renderManager = ({
   data = buildData(),
   onSaved = jest.fn(),
   onTeamSaved = jest.fn(),
+  userId = "",
+  role = "admin",
 }: {
   data?: TeamsData;
   onSaved?: jest.Mock;
   onTeamSaved?: jest.Mock;
+  userId?: string;
+  /** Invite and the account picker call admin-only endpoints. */
+  role?: string;
 } = {}) => {
   render(
     <MemoryRouter>
       <GlobalInfoContext.Provider
         value={
-          { churchId: "church-1" } as ContextType<typeof GlobalInfoContext>
+          { churchId: "church-1", userId, role } as ContextType<
+            typeof GlobalInfoContext
+          >
         }
       >
         <ToastProvider>
@@ -378,5 +392,304 @@ describe("MemberManager team membership", () => {
     await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalled());
     expect(onSaved).toHaveBeenCalled();
     expect(onTeamSaved).not.toHaveBeenCalled();
+  });
+});
+
+describe("MemberManager account linking", () => {
+  const linkableMembers = (selfUserId?: string) =>
+    buildData({
+      members: [
+        {
+          memberId: "member-self",
+          churchId: "church-1",
+          firstName: "Me",
+          lastName: "Myself",
+          positionIds: [],
+          blockoutDates: [],
+          ...(selfUserId ? { userId: selfUserId } : {}),
+        },
+        {
+          memberId: "member-other",
+          churchId: "church-1",
+          firstName: "Someone",
+          lastName: "Else",
+          positionIds: [],
+          blockoutDates: [],
+        },
+      ],
+    } as Partial<TeamsData>);
+
+  const openMember = async (
+    user: ReturnType<typeof userEvent.setup>,
+    name: RegExp,
+  ) => {
+    await user.click(screen.getByRole("button", { name }));
+  };
+
+  it("offers 'This is me' on an unlinked member when the account has claimed nobody", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: linkableMembers(), userId: "user-1" });
+
+    await openMember(user, /Someone Else/);
+
+    expect(
+      screen.getByRole("button", { name: /This is me/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides 'This is me' once the account has claimed another member", async () => {
+    const user = userEvent.setup();
+    // An account may hold at most one member per church, so the server would
+    // reject this — offering it would be an action guaranteed to fail.
+    renderManager({ data: linkableMembers("user-1"), userId: "user-1" });
+
+    await openMember(user, /Someone Else/);
+
+    expect(
+      screen.queryByRole("button", { name: /This is me/i }),
+    ).not.toBeInTheDocument();
+    // Linking someone else stays available — that is the admin's tool.
+    expect(
+      screen.getByRole("button", { name: /Link an account/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the claimed member as linked to you, with an unlink action", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: linkableMembers("user-1"), userId: "user-1" });
+
+    await openMember(user, /Me Myself/);
+
+    expect(screen.getByText("Linked to your account.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Unlink$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the editable email once linked, so there is only one address", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: linkableMembers("someone-else-uid"), userId: "user-1" });
+
+    await openMember(user, /Me Myself/);
+
+    expect(screen.getByText("Linked to their account.")).toBeInTheDocument();
+    // Two editable addresses would mean two inboxes to check; the account
+    // email is the single source once linked.
+    expect(screen.queryByLabelText(/^Email/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Comes from their account/i),
+    ).toBeInTheDocument();
+  });
+
+  it("reflects the link in the open panel without reopening the member", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: linkableMembers(), userId: "user-1" });
+
+    await openMember(user, /Someone Else/);
+    expect(screen.getByText("Not linked to an account.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /This is me/i }));
+
+    // The panel renders from local `editing` state, so updating only the parent
+    // list would leave it stale while the toast claimed success. Asserted on the
+    // controls rather than the status text, which the toast also renders.
+    expect(
+      await screen.findByRole("button", { name: /^Unlink$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /This is me/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("MemberManager notification readiness", () => {
+  const rosterWithAndWithoutEmail = () =>
+    buildData({
+      members: [
+        {
+          memberId: "member-reachable",
+          churchId: "church-1",
+          firstName: "Has",
+          lastName: "Email",
+          email: "has@example.com",
+          positionIds: [],
+          blockoutDates: [],
+        },
+        {
+          memberId: "member-unreachable",
+          churchId: "church-1",
+          firstName: "No",
+          lastName: "Email",
+          positionIds: [],
+          blockoutDates: [],
+        },
+      ],
+    } as Partial<TeamsData>);
+
+  it("flags members a notification could never reach", () => {
+    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+
+    // Surfaced in the list so it is fixable where addresses are entered,
+    // rather than only visible after opening each member.
+    expect(screen.getByText("No email")).toBeInTheDocument();
+  });
+
+  it("shows the invite disabled, with the reason, when there is no address", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+
+    await user.click(screen.getByRole("button", { name: /No Email/ }));
+
+    // Hidden would mean a roster that never collected emails shows this action
+    // nowhere, so it looks like it does not exist. Disabled with the reason is
+    // discoverable.
+    expect(
+      screen.getByRole("button", { name: /Invite them to create an account/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Add an email above and save to invite them."),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks the invite while an email edit is unsaved", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+
+    await user.click(screen.getByRole("button", { name: /Has Email/ }));
+    await user.type(screen.getByLabelText(/^Email/i), "x");
+
+    // The server reads the saved address, so inviting now would mail the old
+    // one while the form showed the new.
+    expect(
+      screen.getByRole("button", { name: /Invite them to create an account/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Save your email change first."),
+    ).toBeInTheDocument();
+  });
+
+  it("records that an invite went out so it is not sent twice", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: rosterWithAndWithoutEmail(), userId: "user-1" });
+
+    await user.click(screen.getByRole("button", { name: /Has Email/ }));
+    await user.click(
+      screen.getByRole("button", { name: /Invite them to create an account/i }),
+    );
+
+    expect(mockInviteTeamRosterMember).toHaveBeenCalledWith("church-1", {
+      email: "has@example.com",
+      memberId: "member-reachable",
+    });
+    // Without persisting evidence an admin would keep re-sending.
+    expect(
+      await screen.findByText("Invite sent. Not linked until they accept."),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("MemberManager email validation", () => {
+  const oneMember = () =>
+    buildData({
+      members: [
+        {
+          memberId: "member-1",
+          churchId: "church-1",
+          firstName: "Val",
+          lastName: "Idate",
+          positionIds: [],
+          blockoutDates: [],
+        },
+      ],
+    } as Partial<TeamsData>);
+
+  it("rejects a malformed address inline instead of on save", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: oneMember(), userId: "user-1" });
+
+    await user.click(screen.getByRole("button", { name: /Val Idate/ }));
+    await user.type(screen.getByLabelText(/^Email/i), "not-an-email");
+
+    // The server rejects this too; catching it here avoids a failed round-trip.
+    expect(
+      screen.getByText("Enter a valid email address."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Save member/i }),
+    ).toBeDisabled();
+  });
+
+  it("accepts a valid address and re-enables saving", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: oneMember(), userId: "user-1" });
+
+    await user.click(screen.getByRole("button", { name: /Val Idate/ }));
+    await user.type(screen.getByLabelText(/^Email/i), "val@example.com");
+
+    expect(
+      screen.queryByText("Enter a valid email address."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Save member/i }),
+    ).not.toBeDisabled();
+  });
+
+  it("treats an empty address as valid, since most members have none", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: oneMember(), userId: "user-1" });
+
+    await user.click(screen.getByRole("button", { name: /Val Idate/ }));
+
+    expect(
+      screen.queryByText("Enter a valid email address."),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("MemberManager admin-only linking controls", () => {
+  const oneMember = () =>
+    buildData({
+      members: [
+        {
+          memberId: "member-1",
+          churchId: "church-1",
+          firstName: "Needs",
+          lastName: "Account",
+          email: "needs@example.com",
+          positionIds: [],
+          blockoutDates: [],
+        },
+      ],
+    } as Partial<TeamsData>);
+
+  it("hides invite and the account picker from a non-admin editor", async () => {
+    const user = userEvent.setup();
+    // A Teams editor passes `canEdit`, but `createInvite` and
+    // `listChurchMembers` both require an admin session — showing these would
+    // mean a 403 on invite and a permanently empty picker.
+    renderManager({ data: oneMember(), userId: "user-1", role: "member" });
+
+    await user.click(screen.getByRole("button", { name: /Needs Account/ }));
+
+    expect(
+      screen.queryByRole("button", {
+        name: /Invite them to create an account/i,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Link an account/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still lets a non-admin editor claim their own record", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: oneMember(), userId: "user-1", role: "member" });
+
+    await user.click(screen.getByRole("button", { name: /Needs Account/ }));
+
+    // Self-claim and unlink run on teams-edit endpoints, so they stay.
+    expect(
+      screen.getByRole("button", { name: /This is me/i }),
+    ).toBeInTheDocument();
   });
 });

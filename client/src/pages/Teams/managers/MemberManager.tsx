@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
+import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
@@ -15,10 +16,15 @@ import {
   archiveTeamRosterMember,
   createTeamRosterMember,
   deleteTeamRosterMember,
+  inviteTeamRosterMember,
+  linkTeamRosterMember,
+  listChurchMembers,
+  unlinkTeamRosterMember,
   updateTeamRosterMember,
   type TeamRosterMemberPayload,
 } from "../../../api/auth";
 import type {
+  ChurchMemberRow,
   TeamMemberQualification,
   TeamMemberQualificationStatus,
   TeamPosition,
@@ -47,6 +53,7 @@ import {
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
 import { formatMemberSaveToast } from "../teamsSaveToasts";
+import { canNotifyMember } from "../unnotifiableMembers";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -103,6 +110,7 @@ const buildMemberDraft = (
 ): TeamRosterMemberPayload => ({
   firstName: member?.firstName || "",
   lastName: member?.lastName || "",
+  email: member?.email || "",
   dateOfBirth: member?.dateOfBirth || "",
   positionIds: member?.positionIds || [],
   desiredPositionIds: member?.desiredPositionIds || [],
@@ -147,6 +155,19 @@ const MemberManager = ({
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
+  const currentUserId = context?.userId || "";
+  /**
+   * Inviting and listing church accounts both hit admin-only endpoints
+   * (`createInvite`, `listChurchMembers` — both `requireAdminSession`). `canEdit`
+   * includes Teams editors, so gating those controls on it alone would show a
+   * non-admin an invite that 403s and a picker that is always empty.
+   * Self-claim and unlink stay on `canEdit`: their endpoints take teams-edit.
+   */
+  const isChurchAdmin = context?.role === "admin";
+  const [isUpdatingLink, setIsUpdatingLink] = useState(false);
+  const [isInviting, setIsInviting] = useState(false);
+  const [churchAccounts, setChurchAccounts] = useState<ChurchMemberRow[]>([]);
+  const [showAccountPicker, setShowAccountPicker] = useState(false);
   const [editing, setEditing] = useState<TeamRosterMember | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
@@ -336,6 +357,199 @@ const MemberManager = ({
     }
   };
 
+  // Fetched only when the operator asks for the picker. Linking someone else is
+  // rare next to claiming your own record, so loading the church's accounts on
+  // every member open would be a request paid for on the common path and used
+  // on the uncommon one.
+  useEffect(() => {
+    // Also loaded for an already-linked member, so the panel can name the
+    // address notifications will actually go to. Linked members are the
+    // minority, so this stays off the common path.
+    if (!isChurchAdmin) return;
+    if (!churchId || (!showAccountPicker && !editing?.userId)) return;
+    let cancelled = false;
+    void listChurchMembers(churchId)
+      .then((result) => {
+        if (!cancelled) setChurchAccounts(result.members || []);
+      })
+      .catch(() => {
+        // Non-fatal: "This is me" still works without the picker.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId, showAccountPicker, editing?.userId, isChurchAdmin]);
+
+  // Close the picker when moving between members so it never carries one
+  // member's selection UI onto another.
+  useEffect(() => {
+    setShowAccountPicker(false);
+  }, [editing?.memberId]);
+
+  const linkedUserIds = useMemo(
+    () =>
+      new Set(
+        members
+          .map((member) => member.userId)
+          .filter((userId): userId is string => Boolean(userId)),
+      ),
+    [members],
+  );
+
+  /**
+   * The member record this account has already claimed, if any.
+   *
+   * An account may hold at most one member per church, so once this is set
+   * "This is me" would fail on every other member. Hiding it there keeps a
+   * self-claim offer from appearing on all sixty people in a roster the
+   * operator is only managing on someone else's behalf.
+   */
+  const selfLinkedMember = useMemo(
+    () =>
+      currentUserId
+        ? members.find((member) => member.userId === currentUserId)
+        : undefined,
+    [members, currentUserId],
+  );
+
+  /**
+   * The address a linked member is actually reachable at.
+   *
+   * Read from the account rather than copied onto the member: an account email
+   * can change, and a copy would silently go stale while still looking
+   * authoritative. The member's own email stays the fallback for people who
+   * have no account.
+   */
+  const linkedAccountEmail = useMemo(() => {
+    if (!editing?.userId) return "";
+    const row = churchAccounts.find((item) => item.userId === editing.userId);
+    return row?.user?.email || "";
+  }, [churchAccounts, editing?.userId]);
+
+  /**
+   * Mirrors the server's check so a typo is caught before a save round-trip
+   * rather than coming back as a toast. Deliberately permissive for the same
+   * reason the server is: over-strict patterns reject valid real addresses, and
+   * a wrong address costs a bounced notification, not a broken roster.
+   */
+  const emailError = useMemo(() => {
+    const value = (draft.email || "").trim();
+    if (!value) return "";
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+      ? ""
+      : "Enter a valid email address.";
+  }, [draft.email]);
+
+  /**
+   * An invite can only go to the address already stored on the member, since
+   * that is what the server reads. A typed-but-unsaved change would otherwise
+   * mail the previous address while the form showed the new one.
+   */
+  const canInviteMember = useMemo(() => {
+    const saved = (editing?.email || "").trim().toLowerCase();
+    if (!saved) return false;
+    return (draft.email || "").trim().toLowerCase() === saved;
+  }, [editing?.email, draft.email]);
+
+  const linkableAccounts = useMemo(
+    () =>
+      churchAccounts
+        .filter(
+          (row) =>
+            row.status === "active" &&
+            row.userId &&
+            row.userId !== currentUserId &&
+            !linkedUserIds.has(row.userId),
+        )
+        .map((row) => ({
+          label:
+            row.user?.displayName || row.user?.email || row.userId,
+          value: row.userId,
+        })),
+    [churchAccounts, currentUserId, linkedUserIds],
+  );
+
+  /**
+   * Emails a member an invite bound to their record, so accepting it both
+   * creates their account and links it here — no address matching involved.
+   */
+  const inviteMemberToAccount = async (member: TeamRosterMember) => {
+    if (!canEdit || isInviting || !member.email) return;
+    setIsInviting(true);
+    try {
+      await inviteTeamRosterMember(churchId, {
+        email: member.email,
+        memberId: member.memberId,
+      });
+      const next: TeamRosterMember = {
+        ...member,
+        invitedAt: new Date().toISOString(),
+      };
+      onSaved(next);
+      setEditing((current) =>
+        current?.memberId === member.memberId ? next : current,
+      );
+      showToast(`Invite sent to ${member.email}.`);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send the invite.");
+    } finally {
+      setIsInviting(false);
+    }
+  };
+
+  /**
+   * Claims or releases this member record for the signed-in account.
+   *
+   * Not optimistic: a wrong link routes another person's schedule, so the list
+   * is only updated once the server confirms. The cost is a brief spinner on an
+   * action taken a handful of times per member, which is the right trade.
+   */
+  const updateMemberLink = async (
+    member: TeamRosterMember,
+    action: "link" | "unlink",
+    targetUserId?: string,
+  ) => {
+    if (!canEdit || isUpdatingLink) return;
+    setIsUpdatingLink(true);
+    try {
+      if (action === "link") {
+        await linkTeamRosterMember(churchId, member.memberId, targetUserId);
+      } else {
+        await unlinkTeamRosterMember(churchId, member.memberId);
+      }
+      const next: TeamRosterMember = {
+        ...member,
+        userId:
+          action === "link" ? targetUserId || currentUserId : undefined,
+      };
+      onSaved(next);
+      // The open panel renders from `editing`, not from the list, so it has to
+      // be advanced too — otherwise the status text and buttons keep showing
+      // the pre-link state until the member is reopened.
+      setEditing((current) =>
+        current?.memberId === member.memberId ? next : current,
+      );
+      setShowAccountPicker(false);
+      showToast(
+        action === "link"
+          ? targetUserId && targetUserId !== currentUserId
+            ? "Linked to that account."
+            : "Linked to your account."
+          : "Unlinked from the account.",
+      );
+    } catch (error) {
+      showApiErrorToast(
+        showToast,
+        error,
+        action === "link"
+          ? "Could not link this member to your account."
+          : "Could not unlink this member.",
+      );
+    } finally {
+      setIsUpdatingLink(false);
+    }
+  };
+
   const submit = async () => {
     if (!canEdit) return;
     const wasEditing = editing;
@@ -366,6 +580,7 @@ const MemberManager = ({
       memberId: localMemberId,
       firstName: body.firstName.trim(),
       lastName: body.lastName.trim(),
+      email: (body.email || "").trim().toLowerCase(),
       dateOfBirth: body.dateOfBirth || "",
       positionIds: body.positionIds,
       desiredPositionIds: body.desiredPositionIds || [],
@@ -691,6 +906,12 @@ const MemberManager = ({
                 key={member.memberId}
                 compact
                 title={memberName(member)}
+                // Surfaced in the list, not only inside the form, so an admin
+                // can see at a glance who a notification would never reach —
+                // and fix it here, where addresses are entered.
+                subtitle={
+                  canNotifyMember(member) ? undefined : "No email"
+                }
                 archived={Boolean(member.archivedAt)}
                 canEdit={canEdit}
                 onTitleClick={() => selectMember(member)}
@@ -743,6 +964,9 @@ const MemberManager = ({
               !canEdit ||
               !draft.firstName.trim() ||
               !draft.lastName.trim() ||
+              // The server rejects a malformed address, so blocking here turns
+              // a failed round-trip into an inline message.
+              Boolean(emailError) ||
               isSavingCurrent
             }
             isLoading={isSavingCurrent}
@@ -753,6 +977,149 @@ const MemberManager = ({
           <Input label="First name" value={draft.firstName} onChange={(firstName) => setDraft((d) => ({ ...d, firstName: String(firstName) }))} />
           <Input label="Last name" value={draft.lastName} onChange={(lastName) => setDraft((d) => ({ ...d, lastName: String(lastName) }))} />
         </div>
+        {/* Optional: existing members have no address, and requiring one would
+            block saving them. Used for notifications only — never to identify
+            which account this member is. */}
+        {/*
+          One effective address per person, never two.
+
+          Linked: the account email is it. They control it and can change it,
+          whereas an admin-typed copy would go stale while still looking
+          authoritative — and sending to both would mean checking two inboxes.
+          So the editable field is hidden rather than left looking meaningful.
+
+          Unlinked: this field is the only way to reach them.
+
+          Reaching an additional person (a parent for a teen volunteer) is a
+          real need, but it belongs in a deliberate additional-recipients
+          feature, not in an ambiguous second field.
+        */}
+        {editing?.userId ? (
+          <div className="flex flex-col gap-1">
+            <span className="text-sm text-gray-300">Email</span>
+            <span className="text-sm">
+              {linkedAccountEmail || "From their account"}
+            </span>
+            <span className="text-xs text-gray-400">
+              Comes from their account. Unlink to set an address here instead.
+            </span>
+          </div>
+        ) : (
+          <Input
+            label="Email"
+            type="email"
+            value={draft.email || ""}
+            errorText={emailError}
+            onChange={(email) =>
+              setDraft((d) => ({ ...d, email: String(email) }))
+            }
+          />
+        )}
+        {/* Account link. Separate from the email above on purpose: an address is
+            a contact detail, the link is an identity, and one never implies the
+            other. Only shown for saved members — there is nothing to link yet
+            while creating one. */}
+        {editing ? (
+          <div className="flex flex-col gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Naming the other account would need it on the roster payload;
+                  the picker's list is only loaded on demand, so reading from it
+                  here would show a name sometimes and not others. */}
+              <span className="text-gray-300">
+                {/* The address itself is shown by the Email block above, so
+                    this only says whose account it is. */}
+                {editing.userId
+                  ? editing.userId === currentUserId
+                    ? "Linked to your account."
+                    : "Linked to their account."
+                  : editing.invitedAt
+                    ? "Invite sent. Not linked until they accept."
+                    : "Not linked to an account."}
+              </span>
+              {editing.userId ? (
+                <Button
+                  variant="tertiary"
+                  disabled={!canEdit || isUpdatingLink}
+                  isLoading={isUpdatingLink}
+                  onClick={() => void updateMemberLink(editing, "unlink")}
+                >
+                  Unlink
+                </Button>
+              ) : selfLinkedMember ? (
+                // Someone else's record and this account is already claimed:
+                // the remaining path is inviting them to make their own.
+                null
+              ) : (
+                // Offered only while this account has claimed no one. With a
+                // claim already made the server would reject this, so showing
+                // it would be an action guaranteed to fail.
+                <Button
+                  variant="tertiary"
+                  disabled={!canEdit || isUpdatingLink}
+                  isLoading={isUpdatingLink}
+                  onClick={() => void updateMemberLink(editing, "link")}
+                >
+                  This is me
+                </Button>
+              )}
+            </div>
+            {/* Only accounts already in this church are offered — the server
+                refuses anything else, so showing more would only produce
+                errors. Accounts already linked to another member are excluded
+                rather than shown and rejected. */}
+            {!editing.userId && canEdit && isChurchAdmin ? (
+              showAccountPicker ? (
+                <SearchableSelect
+                  variant="dark"
+                  label="Link an account"
+                  value=""
+                  placeholder="Choose an account…"
+                  options={linkableAccounts}
+                  onChange={(userId) => {
+                    if (!userId) return;
+                    void updateMemberLink(editing, "link", userId);
+                  }}
+                />
+              ) : (
+                <Button
+                  variant="textLink"
+                  padding="p-0"
+                  disabled={isUpdatingLink}
+                  onClick={() => setShowAccountPicker(true)}
+                >
+                  Link an account
+                </Button>
+              )
+            ) : null}
+            {/* For someone who has no account at all.
+                Always rendered rather than hidden behind having an address: a
+                roster that has never collected emails would show this nowhere,
+                so the action would look like it does not exist. Disabled with
+                the reason is discoverable; absent is not.
+                The invite sends to the *saved* address, so an unsaved edit
+                blocks it too — otherwise it would quietly mail the old one. */}
+            {!editing.userId && canEdit && isChurchAdmin ? (
+              <div className="flex flex-col gap-1">
+                <Button
+                  variant="textLink"
+                  padding="p-0"
+                  disabled={isInviting || !canInviteMember}
+                  isLoading={isInviting}
+                  onClick={() => void inviteMemberToAccount(editing)}
+                >
+                  Invite them to create an account
+                </Button>
+                {canInviteMember ? null : (
+                  <span className="text-xs text-gray-400">
+                    {editing.email
+                      ? "Save your email change first."
+                      : "Add an email above and save to invite them."}
+                  </span>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <DatePicker label="Date of birth" value={draft.dateOfBirth || ""} onChange={(dateOfBirth) => setDraft((d) => ({ ...d, dateOfBirth }))} />
         <EntityMultiSelect
           label="Teams"

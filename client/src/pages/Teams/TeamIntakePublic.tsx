@@ -33,6 +33,7 @@ type PreviewPosition = TeamIntakePreview["positions"][number];
 const emptyPayload = (): TeamIntakeSubmissionPayload => ({
   firstName: "",
   lastName: "",
+  email: "",
   positionIds: [],
   occurrenceAvailability: {},
   blockoutRanges: [],
@@ -76,6 +77,12 @@ const TeamIntakePublic = () => {
       showToast("First and last name are required.", "neutral");
       return;
     }
+    // Toast, not `setError`: that state renders the "Form unavailable" screen
+    // and would throw away everything they had typed.
+    if (emailRequired && !payload.email?.trim()) {
+      showToast("Email is required.", "neutral");
+      return;
+    }
     setSubmitting(true);
     try {
       await submitTeamIntake(token, payload);
@@ -88,6 +95,8 @@ const TeamIntakePublic = () => {
   };
 
   const churchLogoUrl = preview?.churchLogoUrl?.trim() || "";
+  /** Per-form setting; the server rejects a blank address when it is on. */
+  const emailRequired = Boolean(preview?.form?.requireEmail);
 
   // Group positions under their team so submitters can skip teams that aren't
   // theirs. The server already scopes which teams appear.
@@ -232,6 +241,22 @@ const TeamIntakePublic = () => {
               }
             />
           </div>
+
+          {/* Intake is the only place most volunteers will ever give us an
+              address. Whether it is required is a per-form setting, and the
+              label has to say so before they submit — the server rejects a
+              missing address, and discovering that after filling the whole
+              form is the worst time to learn it. */}
+          <Input
+            label={emailRequired ? "Email (required)" : "Email"}
+            type="email"
+            value={payload.email || ""}
+            labelClassName={boardFieldLabelClassName}
+            inputClassName={boardDarkFieldClassName}
+            onChange={(email) =>
+              setPayload((current) => ({ ...current, email: String(email) }))
+            }
+          />
 
           <EntityMultiSelect
             label="Positions"

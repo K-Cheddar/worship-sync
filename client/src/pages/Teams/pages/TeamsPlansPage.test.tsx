@@ -87,6 +87,19 @@ const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignment
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
 
+const originalMatchMedia = window.matchMedia;
+const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
+  jest.fn().mockImplementation((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })) as unknown as typeof window.matchMedia;
+
 const renderPage = () =>
   render(
     <GlobalInfoContext.Provider
@@ -111,8 +124,17 @@ const renderPage = () =>
   );
 
 describe("TeamsPlansPage", () => {
+  beforeAll(() => {
+    window.matchMedia = makeMatchMedia(false);
+  });
+
+  afterAll(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear();
     mockUseTeamsPage.mockReturnValue({
       pageData: {
         services: [sabbath, easterOneTime],
@@ -134,13 +156,51 @@ describe("TeamsPlansPage", () => {
     });
   });
 
-  it("lists each service's occurrences as date tiles without repeating Add plan labels", async () => {
+  it("defaults to by-date order with an organize control when multiple services exist", async () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Plans" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /Organize plans/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^By date$/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Next 4 weeks/i })).toBeInTheDocument();
+    expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
+    expect(
+      (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
+    ).toBeGreaterThan(0);
+    // Service names land on tiles in date order instead of separate section headers.
+    expect(
+      screen.getAllByText("Sabbath Service").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Easter Sunday")).toBeInTheDocument();
+  });
+
+  it("can switch to by-service cards", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("button", { name: /^By service$/i }));
+
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Service/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "All services" })).not.toBeInTheDocument();
+  });
+
+  it("lists each service's occurrences as date tiles without repeating Add plan labels", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("button", { name: /^By service$/i }));
+
+    expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Next 4 weeks/i })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
@@ -236,10 +296,11 @@ describe("TeamsPlansPage", () => {
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     ).toBeInTheDocument();
-    // Mobile opens Who's serving from a compact header control into a sheet.
+    // Mobile keeps the serving roster inside the same four-tab workspace.
     expect(
-      screen.getByRole("button", { name: /Who's serving/i }),
+      screen.getByRole("tab", { name: /Who's serving/i }),
     ).toBeInTheDocument();
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
     // One-time Easter has a single occurrence in range — both ends disabled.
     expect(screen.getByRole("button", { name: /Previous plan/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Next plan/i })).toBeDisabled();
@@ -260,6 +321,10 @@ describe("TeamsPlansPage", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: "Sabbath Service" }));
 
     await screen.findByRole("heading", { name: "Sabbath Service" });
     const sabbathTiles = await screen.findAllByRole("button", {
@@ -364,9 +429,9 @@ describe("TeamsPlansPage", () => {
     });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
 
-    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+    await user.click(screen.getByRole("tab", { name: /Who's serving/i }));
 
-    const servingSheet = await screen.findByRole("dialog", {
+    const servingSheet = await screen.findByRole("tabpanel", {
       name: /Who's serving/i,
     });
     expect(within(servingSheet).getByText("Avery Stone")).toBeInTheDocument();
@@ -437,9 +502,9 @@ describe("TeamsPlansPage", () => {
       name: /Add plan for /i,
     });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
-    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+    await user.click(screen.getByRole("tab", { name: /Who's serving/i }));
 
-    const servingSheet = await screen.findByRole("dialog", {
+    const servingSheet = await screen.findByRole("tabpanel", {
       name: /Who's serving/i,
     });
     expect(
@@ -531,9 +596,9 @@ describe("TeamsPlansPage", () => {
     });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
 
-    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+    await user.click(screen.getByRole("tab", { name: /Who's serving/i }));
 
-    const servingSheet = await screen.findByRole("dialog", {
+    const servingSheet = await screen.findByRole("tabpanel", {
       name: /Who's serving/i,
     });
     expect(within(servingSheet).getByText("Avery Stone")).toBeInTheDocument();
@@ -602,9 +667,9 @@ describe("TeamsPlansPage", () => {
     });
     await user.click(addPlanButtons[addPlanButtons.length - 1]);
 
-    await user.click(screen.getByRole("button", { name: /Who's serving/i }));
+    await user.click(screen.getByRole("tab", { name: /Who's serving/i }));
 
-    const servingSheet = await screen.findByRole("dialog", {
+    const servingSheet = await screen.findByRole("tabpanel", {
       name: /Who's serving/i,
     });
     // Requirements are grouped under the team that owns each position.
@@ -635,15 +700,14 @@ describe("TeamsPlansPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByRole("heading", { name: "Easter Sunday" });
+    await screen.findByRole("heading", { name: "All services" });
+    expect(screen.getByText("Easter Sunday")).toBeInTheDocument();
     await screen.findAllByRole("button", { name: /Add plan for /i });
-    await user.click(screen.getByLabelText(/Service/i));
+    await user.click(screen.getByRole("combobox"));
     await user.click(await screen.findByRole("option", { name: "Sabbath Service" }));
 
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Easter Sunday" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Easter Sunday")).not.toBeInTheDocument();
   });
 
   it("marks the soonest upcoming occurrence with an Up next badge", async () => {
@@ -694,10 +758,9 @@ describe("TeamsPlansPage", () => {
 
     renderPage();
 
-    await screen.findByRole("heading", { name: "Easter Sunday" });
+    await screen.findByRole("heading", { name: "All services" });
+    expect(screen.getByText("Easter Sunday")).toBeInTheDocument();
     await screen.findAllByRole("button", { name: /Add plan for /i });
-    expect(
-      screen.queryByRole("heading", { name: "Old Test Service" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Old Test Service")).not.toBeInTheDocument();
   });
 });

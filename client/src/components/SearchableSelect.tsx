@@ -30,9 +30,12 @@ const SearchableSelect = ({
   label?: string;
   ariaLabel?: string;
   className?: string;
-  variant?: "light" | "board-attendee";
+  variant?: "light" | "board-attendee" | "dark";
 }) => {
   const isBoardAttendee = variant === "board-attendee";
+  // Matches components/ui/Select so this sits beside the other form controls
+  // on dark surfaces (Teams, admin panels) without a bespoke palette.
+  const isDark = variant === "dark";
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selected = options.find((option) => option.value === value);
@@ -49,7 +52,7 @@ const SearchableSelect = ({
         <label
           className={cn(
             "block p-1 text-sm font-semibold",
-            isBoardAttendee ? "text-stone-200" : "text-gray-700",
+            isDark ? "text-neutral-100" : isBoardAttendee ? "text-stone-200" : "text-gray-700",
           )}
         >
           {label}
@@ -68,15 +71,22 @@ const SearchableSelect = ({
             aria-label={ariaLabel || label}
             className={cn(
               "flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm shadow-sm focus:outline-none focus:ring-2",
-              isBoardAttendee
-                ? "border-stone-600 bg-stone-900 text-stone-100 hover:border-stone-500 focus:ring-amber-500/40"
-                : "border-gray-300 bg-white text-gray-900 hover:border-gray-400 focus:ring-amber-400/50",
+              isDark
+                ? "border-neutral-700 bg-neutral-900 text-neutral-100 hover:border-neutral-500 focus:ring-cyan-500/35"
+                : isBoardAttendee
+                  ? "border-stone-600 bg-stone-900 text-stone-100 hover:border-stone-500 focus:ring-amber-500/40"
+                  : "border-gray-300 bg-white text-gray-900 hover:border-gray-400 focus:ring-amber-400/50",
             )}
           >
             <span
               className={cn(
                 "truncate",
-                !selected && (isBoardAttendee ? "text-stone-500" : "text-gray-400"),
+                !selected &&
+                  (isDark
+                    ? "text-neutral-400"
+                    : isBoardAttendee
+                      ? "text-stone-500"
+                      : "text-gray-400"),
               )}
             >
               {selected?.label || placeholder}
@@ -84,7 +94,7 @@ const SearchableSelect = ({
             <ChevronDown
               className={cn(
                 "h-4 w-4 shrink-0",
-                isBoardAttendee ? "text-stone-400" : "text-gray-400",
+                isDark ? "text-neutral-400" : isBoardAttendee ? "text-stone-400" : "text-gray-400",
               )}
               aria-hidden
             />
@@ -94,21 +104,23 @@ const SearchableSelect = ({
           align="start"
           className={cn(
             "w-[--radix-popover-trigger-width] min-w-52 rounded-md border p-0 shadow-xl",
-            isBoardAttendee
-              ? "border-stone-700 bg-stone-900 text-stone-100"
-              : "border-gray-200 bg-white text-gray-900",
+            isDark
+              ? "border-neutral-500 bg-neutral-900 text-neutral-100"
+              : isBoardAttendee
+                ? "border-stone-700 bg-stone-900 text-stone-100"
+                : "border-gray-200 bg-white text-gray-900",
           )}
         >
           <div
             className={cn(
               "flex items-center gap-2 border-b px-2 py-1.5",
-              isBoardAttendee ? "border-stone-700" : "border-gray-200",
+              isDark ? "border-neutral-700" : isBoardAttendee ? "border-stone-700" : "border-gray-200",
             )}
           >
             <Search
               className={cn(
                 "h-4 w-4 shrink-0",
-                isBoardAttendee ? "text-stone-400" : "text-gray-400",
+                isDark ? "text-neutral-400" : isBoardAttendee ? "text-stone-400" : "text-gray-400",
               )}
               aria-hidden
             />
@@ -119,9 +131,11 @@ const SearchableSelect = ({
               placeholder="Search…"
               className={cn(
                 "w-full bg-transparent text-sm focus:outline-none",
-                isBoardAttendee
-                  ? "text-stone-100 placeholder:text-stone-500"
-                  : "text-gray-900 placeholder:text-gray-400",
+                isDark
+                  ? "text-neutral-100 placeholder:text-neutral-400"
+                  : isBoardAttendee
+                    ? "text-stone-100 placeholder:text-stone-500"
+                    : "text-gray-900 placeholder:text-gray-400",
               )}
             />
           </div>
@@ -130,7 +144,7 @@ const SearchableSelect = ({
               <p
                 className={cn(
                   "px-2 py-1.5 text-sm",
-                  isBoardAttendee ? "text-stone-500" : "text-gray-400",
+                  isDark ? "text-neutral-400" : isBoardAttendee ? "text-stone-500" : "text-gray-400",
                 )}
               >
                 No matches.
@@ -142,9 +156,11 @@ const SearchableSelect = ({
                 type="button"
                 className={cn(
                   "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm",
-                  isBoardAttendee
-                    ? "text-stone-100 hover:bg-stone-800"
-                    : "text-gray-800 hover:bg-gray-100",
+                  isDark
+                    ? "text-neutral-100 hover:bg-neutral-800"
+                    : isBoardAttendee
+                      ? "text-stone-100 hover:bg-stone-800"
+                      : "text-gray-800 hover:bg-gray-100",
                 )}
                 onClick={() => {
                   onChange(option.value);
@@ -157,7 +173,7 @@ const SearchableSelect = ({
                   <Check
                     className={cn(
                       "h-4 w-4 shrink-0",
-                      isBoardAttendee ? "text-amber-300" : "text-amber-600",
+                      isDark ? "text-cyan-400" : isBoardAttendee ? "text-amber-300" : "text-amber-600",
                     )}
                     aria-hidden
                   />
