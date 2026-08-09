@@ -5,7 +5,10 @@ import {
   emitServiceFlowUpdated,
   removeServiceFlowSseClient,
 } from "./serviceFlowSse.js";
-import { buildPublicServicePlanSnapshot } from "./servicePlanPublic.js";
+import {
+  buildPublicServicePlanSnapshot,
+  richTextToPlainText,
+} from "./servicePlanPublic.js";
 // ServicePlan element titles/notes reuse the exact rich text shape (and its
 // normalizer) that the ServiceFlow public "order of service" display already
 // validates, so a future ServicePlan -> ServiceFlow publish step needs no
@@ -37,12 +40,16 @@ export const createTeamsAuthHandlers = ({
   getDoc,
   hashValue,
   httpError,
+  listMembershipsForChurch,
+  normalizeEmail,
   nowIso,
   queryDocs,
   randomSecret,
   readChurchPublicBoardHeaderLogoUrl,
   readChurchPublicBrandingChrome,
   requireAdminSession,
+  // Church membership without any teams grant — the guard a volunteer passes.
+  requireHumanSession,
   requireServicesEditSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
@@ -153,6 +160,31 @@ export const createTeamsAuthHandlers = ({
     String(value || "")
       .trim()
       .slice(0, max);
+
+  /**
+   * A member's email is a **contact address, not an identity**. It is never used
+   * to infer which account a member belongs to — linking happens only through an
+   * accepted invite or a logged-in intake submission. That is deliberate:
+   * addresses are legitimately shared (a parent covering two teen volunteers),
+   * so matching on them would attach people to the wrong schedule.
+   *
+   * Consequently duplicates are allowed and no uniqueness is enforced.
+   * Returns "" when absent, so members stay valid without one.
+   */
+  const normalizeMemberEmail = (value) => {
+    const trimmed = normalizeShortText(value, { max: 254 });
+    if (!trimmed) return "";
+    const normalized = normalizeEmail
+      ? normalizeEmail(trimmed)
+      : trimmed.toLowerCase();
+    // Deliberately permissive: reject only what cannot be an address at all.
+    // Over-strict validation rejects valid real-world addresses, and a bad
+    // address here costs a bounced notification, not a broken roster.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      throw httpError(400, "Enter a valid email address.");
+    }
+    return normalized;
+  };
 
   const normalizeIdArray = (value) =>
     Array.from(
@@ -1955,6 +1987,13 @@ export const createTeamsAuthHandlers = ({
       blockoutDates: normalizeBlockoutDates(body?.blockoutDates),
       notes: normalizeLongText(body?.notes),
     };
+    // Conditional like the other optional fields: a partial update that omits
+    // `email` must not wipe an address the member already has.
+    // `userId` / `invitedAt` are intentionally absent — they are server-owned
+    // and set only by the invite-accept path, never by a client payload.
+    if (Object.prototype.hasOwnProperty.call(body || {}, "email")) {
+      payload.email = normalizeMemberEmail(body?.email);
+    }
     if (Object.prototype.hasOwnProperty.call(body || {}, "teamMemberships")) {
       payload.teamMemberships = await normalizeTeamMemberships(
         body?.teamMemberships,
@@ -2759,6 +2798,10 @@ export const createTeamsAuthHandlers = ({
       availabilityOccurrences,
       teamIds,
       active: Boolean(body?.active ?? existing?.active),
+      // Off by default so existing public forms keep accepting submissions
+      // from people who have no address to give. Churches turn it on per form
+      // once they want intake to be their address-collection path.
+      requireEmail: Boolean(body?.requireEmail ?? existing?.requireEmail),
       welcomeMessage: normalizeMessage("welcomeMessage"),
       positionsMessage: normalizeMessage("positionsMessage"),
       availabilityMessage: normalizeMessage("availabilityMessage"),
@@ -2802,6 +2845,18 @@ export const createTeamsAuthHandlers = ({
     if (!firstName || !lastName) {
       throw httpError(400, "First and last name are required.");
     }
+    // Intake is the only scalable way to collect member addresses — nothing in
+    // the roster has one today.
+    //
+    // Opt-in per form, not required by default. `/api/team-intake/submit` is a
+    // live public endpoint, and defaulting to required would reject real
+    // volunteers on every existing form the moment this deploys — before the
+    // public form even renders an email field. Churches enable it per form, and
+    // the default can flip once the client field has shipped everywhere.
+    const email = normalizeMemberEmail(body?.email);
+    if (!email && form?.requireEmail === true) {
+      throw httpError(400, "Email is required.");
+    }
     // The public preview only offers positions from the form's scoped teams
     // (empty teamIds means every team). Enforce that same scope on submission so
     // a crafted POST cannot smuggle in positions from teams outside the form.
@@ -2841,6 +2896,7 @@ export const createTeamsAuthHandlers = ({
     return {
       firstName,
       lastName,
+      email,
       normalizedName: normalizePersonNameKey(firstName, lastName),
       positionIds,
       occurrenceAvailability,
@@ -4426,6 +4482,444 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    /**
+     * The signed-in person's own roster record and the slots they are on.
+     *
+     * Self-scoped by construction: the only member considered is the one whose
+     * `userId` matches the session, so this needs church membership and no
+     * teams permission at all. That matters — a volunteer holds
+     * `teams: "none"`, and granting them `view` to see their own schedule would
+     * expose the entire roster, every blockout date, and everyone else's
+     * assignments.
+     *
+     * Returns `member: null` rather than erroring when the account has claimed
+     * no record; that is the normal state for staff who are not on a team.
+     */
+    async getMyTeamAssignments(req, res) {
+      try {
+        const session = await requireHumanSession(req);
+        if (session.churchId !== req.params.churchId) {
+          throw httpError(403, "Access required");
+        }
+        const userId = session.user?.uid;
+        if (!userId) {
+          throw httpError(401, "Authentication required");
+        }
+
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          req.params.churchId,
+        );
+        const member = members.find((row) => row.userId === userId);
+        if (!member) {
+          return res.json({ success: true, member: null, occurrences: [] });
+        }
+
+        const [schedules, positions, teams] = await Promise.all([
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamSchedules,
+            "scheduleId",
+            req.params.churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamPositions,
+            "positionId",
+            req.params.churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teams,
+            "teamId",
+            req.params.churchId,
+          ),
+        ]);
+        const positionNameById = new Map(
+          positions.map((position) => [position.positionId, position.name]),
+        );
+        const teamNameById = new Map(
+          teams.map((team) => [team.teamId, team.name]),
+        );
+        // `members` is the church roster already fetched to find this person.
+        const memberById = new Map(members.map((row) => [row.memberId, row]));
+
+        // Same display convention as the public schedule link the church
+        // already emails out: first name, plus last initial only when two
+        // people share one. Reused so the two views never disagree.
+        const firstNameCounts = new Map();
+        members.forEach((row) => {
+          const firstName = String(row.firstName || "")
+            .trim()
+            .toLowerCase();
+          if (!firstName) return;
+          firstNameCounts.set(
+            firstName,
+            (firstNameCounts.get(firstName) || 0) + 1,
+          );
+        });
+        const duplicateFirstNames = new Set(
+          [...firstNameCounts.entries()]
+            .filter(([, count]) => count > 1)
+            .map(([name]) => name),
+        );
+
+        /** occurrenceId -> { startsAt, serving[], plan } */
+        const byOccurrence = new Map();
+        /**
+         * Identity comes from the schedule's own occurrence record, not from
+         * parsing the id. A combined occurrence is `group:<groupId>@<date>`, so
+         * the id carries neither a serviceId nor an ISO start — reading the
+         * record gives the real `startsAt` and every service it covers.
+         */
+        const ensureOccurrence = (occurrenceId, schedule) => {
+          let entry = byOccurrence.get(occurrenceId);
+          if (!entry) {
+            const record = (schedule.occurrences || []).find(
+              (item) => item?.occurrenceId === occurrenceId,
+            );
+            const startsAt = record?.startsAt || "";
+            entry = {
+              occurrenceId,
+              // Display name for the service (or "A & B" when combined), taken
+              // from the schedule's record so the client need not rebuild it.
+              name: record?.name || "",
+              serviceIds:
+                record?.serviceIds?.length > 0
+                  ? record.serviceIds
+                  : [
+                      record?.serviceId || String(occurrenceId).split("@")[0],
+                    ].filter(Boolean),
+              // From the schedule occurrence — already joined with " & " when
+              // several services share a combined date.
+              name: String(record?.name || "").trim(),
+              // Calendar date is what plans are keyed by; fall back to the id
+              // suffix, which is already a date for combined occurrences.
+              date: (
+                startsAt ||
+                String(occurrenceId).split("@")[1] ||
+                ""
+              ).slice(0, 10),
+              startsAt,
+              serving: [],
+              plan: null,
+            };
+            byOccurrence.set(occurrenceId, entry);
+          }
+          return entry;
+        };
+
+        // First pass: only occurrences this person is on. Everything else stays
+        // invisible — this endpoint must never become a roster read.
+        schedules.forEach((schedule) => {
+          if (schedule.archivedAt) return;
+          Object.entries(schedule.assignments || {}).forEach(
+            ([occurrenceId, cells]) => {
+              Object.entries(cells || {}).forEach(([columnKey, cell]) => {
+                if (!assignmentCellMemberIds(cell).includes(member.memberId)) {
+                  return;
+                }
+                ensureOccurrence(occurrenceId, schedule);
+              });
+            },
+          );
+        });
+
+        // Second pass: the full serving roster for those services, this person
+        // included and flagged. One list rather than "mine" and "theirs" so it
+        // reads like the public schedule, with their own row highlighted.
+        schedules.forEach((schedule) => {
+          if (schedule.archivedAt) return;
+          Object.entries(schedule.assignments || {}).forEach(
+            ([occurrenceId, cells]) => {
+              const entry = byOccurrence.get(occurrenceId);
+              if (!entry) return;
+              Object.entries(cells || {}).forEach(([columnKey, cell]) => {
+                const [positionId] = String(columnKey).split("::");
+                const primaryId =
+                  typeof cell === "string" ? cell : cell?.primaryMemberId;
+                assignmentCellMemberIds(cell).forEach((assignedId) => {
+                  const person = memberById.get(assignedId);
+                  if (!person) return;
+                  const isMe = assignedId === member.memberId;
+                  entry.serving.push({
+                    memberId: isMe ? assignedId : "",
+                    name: isMe
+                      ? `${member.firstName} ${member.lastName}`.trim()
+                      : scheduleMemberPublicName(person, duplicateFirstNames),
+                    isMe,
+                    scheduleId: schedule.scheduleId,
+                    teamId: schedule.teamId,
+                    teamName: teamNameById.get(schedule.teamId) || "",
+                    positionId,
+                    positionName: positionNameById.get(positionId) || "",
+                    columnKey,
+                    isPrimary: assignedId === primaryId,
+                  });
+                });
+              });
+            },
+          );
+        });
+
+        // Attach the order of service.
+        //
+        // Deliberately *not* gated on `published`: that flag is set as a side
+        // effect of minting share tokens (see `publishServicePlan`), so it means
+        // "someone clicked copy/view once", not "approved for sharing". Gating
+        // on it would hide every plan from churches that never use share links.
+        //
+        // The public link gate stays as it is — that URL is unauthenticated,
+        // whereas this reader is signed in and already assigned to the service.
+        const plans = await listTeamCollectionForChurch(
+          COLLECTIONS.servicePlans,
+          "planId",
+          req.params.churchId,
+        );
+        // Keyed on (serviceId, date) — the identity that survives services being
+        // combined or un-combined. Keying on `startsAt` alone was wrong twice
+        // over: two services can start at the same instant and overwrite each
+        // other, and a combined occurrence id is `group:<groupId>@<date>`, whose
+        // suffix is a calendar date that never equals an ISO `plan.startsAt`.
+        const planByServiceDate = new Map();
+        plans.forEach((plan) => {
+          if (!plan?.serviceId || !plan?.date) return;
+          planByServiceDate.set(`${plan.serviceId}@${plan.date}`, plan);
+        });
+
+        byOccurrence.forEach((entry) => {
+          const plan = entry.serviceIds
+            .map((serviceId) =>
+              planByServiceDate.get(`${serviceId}@${entry.date}`),
+            )
+            .find(Boolean);
+          if (!plan) return;
+          // Share URLs only when already published. Assigned volunteers already
+          // see the plan content here; the public link lets them open or copy
+          // the same share view the service plan editor exposes. Do not mint
+          // tokens from this read path.
+          const published = Boolean(plan.published);
+          const publicUrls =
+            published && plan.publicLinkToken
+              ? {
+                  team: buildPublicServicePlanUrl(plan.publicLinkToken),
+                  ...(plan.publicGeneralLinkToken
+                    ? {
+                        general: buildPublicServicePlanUrl(
+                          plan.publicGeneralLinkToken,
+                        ),
+                      }
+                    : {}),
+                }
+              : undefined;
+          entry.plan = {
+            planId: plan.planId,
+            name: plan.name || "",
+            published,
+            ...(publicUrls ? { publicUrls } : {}),
+            sections: (plan.sections || []).map((section) => ({
+              name: section?.name || "Section",
+              elements: (section?.elements || []).map((element) => ({
+                type: element?.type || "free",
+                title: richTextToPlainText(element?.title) || "Untitled item",
+                startTime: element?.startTime || "",
+                durationSeconds: element?.durationSeconds,
+              })),
+            })),
+          };
+        });
+
+        const occurrences = [...byOccurrence.values()].sort((a, b) =>
+          a.startsAt.localeCompare(b.startsAt),
+        );
+        occurrences.forEach((entry) => {
+          // Their own rows first, then a stable roster order.
+          entry.serving.sort(
+            (a, b) =>
+              Number(b.isMe) - Number(a.isMe) ||
+              a.teamName.localeCompare(b.teamName) ||
+              a.positionName.localeCompare(b.positionName) ||
+              a.name.localeCompare(b.name),
+          );
+        });
+
+        return res.json({ success: true, member, occurrences });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load your assignments.",
+        );
+      }
+    },
+
+    /**
+     * Claims a roster member record for the signed-in account ("this is me").
+     *
+     * The invite path cannot serve this case: someone who already belongs to
+     * the church is rejected with "You are already a member of this church"
+     * (`inviteMembershipGuards`), so staff and admins who are also on the roster
+     * had no way to link at all.
+     *
+     * This stays consistent with the rule that links are never inferred — the
+     * identity here is the session, which is as certain as it gets. It is also
+     * audited and reversible via the unlink endpoint.
+     *
+     * Accepts an optional `userId` to link someone other than the caller. That
+     * target must hold an **active membership in this church** — without that
+     * check a typo'd or guessed uid would hand an outsider a member's schedule
+     * and notifications. Omit it to claim the record for yourself.
+     */
+    async linkTeamRosterMember(req, res) {
+      try {
+        await assertCsrf(req);
+        const existing = await assertTeamEntityInChurch(
+          "member",
+          req.params.memberId,
+          req.params.churchId,
+          { label: "Member", active: false },
+        );
+        const admin = await requireTeamsEditForMember(
+          req,
+          req.params.churchId,
+          existing,
+        );
+        const requestedUserId = normalizeShortText(req.body?.userId, {
+          max: 160,
+        });
+        const userId = requestedUserId || admin.user.uid;
+        const isSelf = userId === admin.user.uid;
+
+        if (!isSelf) {
+          const memberships =
+            (await listMembershipsForChurch(req.params.churchId)) || [];
+          const target = memberships.find(
+            (membership) =>
+              membership.userId === userId && membership.status === "active",
+          );
+          if (!target) {
+            throw httpError(
+              404,
+              "That account is not an active member of this church.",
+            );
+          }
+        }
+
+        if (existing.userId === userId) {
+          return res.json({ success: true });
+        }
+        if (existing.userId) {
+          throw httpError(
+            400,
+            "That member is already linked to another account. Unlink them first.",
+          );
+        }
+
+        // One account may claim at most one member per church, or notifications
+        // would have two candidate records for the same person.
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          req.params.churchId,
+        );
+        const alreadyClaimed = members.find(
+          (member) =>
+            member.userId === userId && member.memberId !== req.params.memberId,
+        );
+        if (alreadyClaimed) {
+          throw httpError(
+            400,
+            isSelf
+              ? "Your account is already linked to another member in this church. Unlink that one first."
+              : "That account is already linked to another member in this church. Unlink that one first.",
+          );
+        }
+
+        const now = nowIso();
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          req.params.memberId,
+          {
+            userId,
+            linkedAt: now,
+            updatedAt: now,
+            updatedByUid: admin.user.uid,
+          },
+          { merge: true },
+        );
+        await addSecurityEvent({
+          type: "team_member_linked",
+          churchId: req.params.churchId,
+          // Who performed the link, so the audit trail names the actor rather
+          // than the subject.
+          userId: admin.user.uid,
+          linkedUserId: userId,
+          memberId: req.params.memberId,
+          source: isSelf ? "self" : "admin",
+        });
+        return res.json({ success: true });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not link this member to your account.",
+        );
+      }
+    },
+
+    /**
+     * Detaches a roster member from the account it was linked to.
+     *
+     * Needed because a wrong link is worse than no link — the member would
+     * receive another person's schedule. Clearing `userId` returns them to
+     * `unlinked`, after which a fresh member invite can attach the right
+     * account. The member record, and their contact email, are untouched.
+     */
+    async unlinkTeamRosterMember(req, res) {
+      try {
+        await assertCsrf(req);
+        const existing = await assertTeamEntityInChurch(
+          "member",
+          req.params.memberId,
+          req.params.churchId,
+          { label: "Member", active: false },
+        );
+        const admin = await requireTeamsEditForMember(
+          req,
+          req.params.churchId,
+          existing,
+        );
+        if (!existing.userId) {
+          return res.json({ success: true, member: existing });
+        }
+        const now = nowIso();
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          req.params.memberId,
+          {
+            userId: "",
+            linkedAt: "",
+            invitedAt: "",
+            updatedAt: now,
+            updatedByUid: admin.user.uid,
+          },
+          { merge: true },
+        );
+        await addSecurityEvent({
+          type: "team_member_unlinked",
+          churchId: req.params.churchId,
+          userId: admin.user.uid,
+          memberId: req.params.memberId,
+          previousUserId: existing.userId,
+        });
+        return res.json({ success: true });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not unlink this member from their account.",
+        );
+      }
+    },
+
     async createTeamPosition(req, res) {
       try {
         await assertCsrf(req);
@@ -4642,6 +5136,10 @@ export const createTeamsAuthHandlers = ({
             name: form.name,
             startDate: form.startDate,
             endDate: form.endDate,
+            // Sent so the public form can mark the field required up front.
+            // Enforcing on submit alone means a volunteer only discovers it
+            // after filling the whole form and failing.
+            requireEmail: Boolean(form.requireEmail),
             availabilityServices: form.availabilityServices || [],
             availabilityOccurrences: form.availabilityOccurrences || [],
             welcomeMessage: form.welcomeMessage || "",
@@ -5550,6 +6048,7 @@ export const createTeamsAuthHandlers = ({
           groupId: doc.groupId,
           date: doc.date,
           name: doc.name,
+          startsAt: doc.startsAt,
           published: Boolean(doc.published),
         }));
         return res.json({ success: true, servicePlans });
@@ -6276,6 +6775,7 @@ export const createTeamsAuthHandlers = ({
               payload: {
                 firstName: submission.firstName,
                 lastName: submission.lastName,
+                email: normalizeMemberEmail(submission.email),
                 dateOfBirth: "",
                 positionIds: [],
                 desiredPositionIds,
@@ -6331,6 +6831,11 @@ export const createTeamsAuthHandlers = ({
               ...(member.serviceAvailability || {}),
               ...submissionAvailability,
             };
+            // Backfill an address only when the member has none. A member who
+            // submits intake is describing themselves, but an admin-entered
+            // address is still the more deliberate record — never clobber it.
+            const submittedEmail = normalizeMemberEmail(submission.email);
+            const nextEmail = member.email ? member.email : submittedEmail;
             await setDoc(
               COLLECTIONS.teamRosterMembers,
               member.memberId,
@@ -6338,6 +6843,7 @@ export const createTeamsAuthHandlers = ({
                 desiredPositionIds: nextDesiredPositionIds,
                 serviceAvailability: nextServiceAvailability,
                 blockoutDates: nextBlockoutDates,
+                ...(nextEmail ? { email: nextEmail } : {}),
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
               },

@@ -307,6 +307,103 @@ test("removing admin access clears implicit Teams edit permission", async (t) =>
   assert.equal(bootstrapRes.payload.success, false);
 });
 
+test("making a member an admin grants Teams edit access", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const adminContext = await createAdminContext("make_admin_permissions");
+  const targetUserId = "teams_api_make_admin_permissions";
+  const targetContext = await createHumanContext(
+    "make_admin_permissions_target",
+    {
+      userId: targetUserId,
+      email: "teams-api-make-admin-permissions@example.com",
+      churchId: adminContext.churchId,
+      role: "member",
+      appAccess: "view",
+      permissions: { teams: "none", services: "none", teamScopes: {} },
+    },
+  );
+
+  const beforeBootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: targetContext,
+  });
+  assert.equal(beforeBootstrap.statusCode, 403);
+
+  const makeRes = await callHandler(authHandlers.makeAdmin, {
+    context: adminContext,
+    params: { userId: targetUserId },
+  });
+  assert.equal(makeRes.statusCode, 200);
+  assert.equal(makeRes.payload.success, true);
+
+  const membersRes = await callHandler(authHandlers.listChurchMembers, {
+    context: adminContext,
+  });
+  assert.equal(membersRes.statusCode, 200);
+  const promoted = (membersRes.payload.members || []).find(
+    (member) =>
+      member.userId === targetUserId || member.user?.uid === targetUserId,
+  );
+  assert.equal(promoted?.role, "admin");
+  assert.equal(promoted?.appAccess, "full");
+
+  const afterBootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: targetContext,
+  });
+  assert.equal(afterBootstrap.statusCode, 200);
+  assert.equal(afterBootstrap.payload.success, true);
+});
+
+test("making an existing admin an admin again is rejected", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const adminContext = await createAdminContext("make_admin_already");
+  const targetUserId = "teams_api_make_admin_already";
+  await createHumanContext("make_admin_already_target", {
+    userId: targetUserId,
+    email: "teams-api-make-admin-already@example.com",
+    churchId: adminContext.churchId,
+    role: "admin",
+    appAccess: "full",
+  });
+
+  const makeRes = await callHandler(authHandlers.makeAdmin, {
+    context: adminContext,
+    params: { userId: targetUserId },
+  });
+  assert.equal(makeRes.statusCode, 400);
+  assert.equal(makeRes.payload.success, false);
+  assert.match(makeRes.payload.errorMessage || "", /already a church admin/i);
+});
+
+test("non-admin cannot make a member an admin", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const adminContext = await createAdminContext("make_admin_forbidden");
+  const memberContext = await createHumanContext(
+    "make_admin_forbidden_member",
+    {
+      userId: "teams_api_make_admin_forbidden_member",
+      email: "teams-api-make-admin-forbidden-member@example.com",
+      churchId: adminContext.churchId,
+      role: "member",
+      appAccess: "full",
+    },
+  );
+  const targetUserId = "teams_api_make_admin_forbidden_target";
+  await createHumanContext("make_admin_forbidden_target", {
+    userId: targetUserId,
+    email: "teams-api-make-admin-forbidden-target@example.com",
+    churchId: adminContext.churchId,
+    role: "member",
+    appAccess: "view",
+  });
+
+  const makeRes = await callHandler(authHandlers.makeAdmin, {
+    context: memberContext,
+    params: { userId: targetUserId },
+  });
+  assert.equal(makeRes.statusCode, 403);
+  assert.equal(makeRes.payload.success, false);
+});
+
 test("team-scoped edit can manage that team schedules and members only", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("team_scope");
@@ -3752,8 +3849,16 @@ test("service plan elements round-trip scripture refs and raw source strings", a
               type: "song",
               title: { type: "doc", content: [] },
               songRefs: [
-                { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
-                { kind: "library", songId: "song-2", songName: "Build My Life" },
+                {
+                  kind: "library",
+                  songId: "song-1",
+                  songName: "Great Are You Lord",
+                },
+                {
+                  kind: "library",
+                  songId: "song-2",
+                  songName: "Build My Life",
+                },
               ],
               scriptureRefs: [
                 {
@@ -4292,4 +4397,640 @@ test("schedule detail rejects a schedule from another church", async (t) => {
   });
   assert.equal(cross.statusCode, 404);
   assert.equal(cross.payload.success, false);
+});
+
+// ---------------------------------------------------------------------------
+// Member contact email + account linking (Phase 0)
+//
+// A member's email is a contact address, never an identity. Linking happens
+// only through paths that carry a certain identity (an accepted invite bound to
+// a memberId, or a logged-in intake submission) — never by matching addresses,
+// because addresses are legitimately shared between people.
+// ---------------------------------------------------------------------------
+
+test("a member stores a normalized contact email", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_email_normalize");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Ada",
+      lastName: "Reed",
+      email: "  Ada.Reed@Example.COM ",
+    },
+  });
+
+  assert.equal(created.statusCode, 200);
+  // Must match how account emails normalize, or linked/unlinked comparisons
+  // would differ by case alone.
+  assert.equal(created.payload.member.email, "ada.reed@example.com");
+});
+
+test("a member without an email is still valid", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_email_optional");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "No", lastName: "Address" },
+  });
+
+  // Existing rosters have no addresses; requiring one would break them.
+  assert.equal(created.statusCode, 200);
+  assert.ok(!created.payload.member.email);
+});
+
+test("an unparseable member email is rejected", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_email_invalid");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Bad", lastName: "Address", email: "not-an-email" },
+  });
+
+  assert.equal(created.statusCode, 400);
+  assert.equal(created.payload.success, false);
+});
+
+test("two members may share one contact email", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_email_shared");
+
+  // A parent's address covering two teen volunteers is normal in this domain;
+  // a uniqueness constraint would force a fake address on the second child.
+  const first = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Kid", lastName: "One", email: "parent@example.com" },
+  });
+  const second = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Kid", lastName: "Two", email: "parent@example.com" },
+  });
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+  assert.equal(second.payload.member.email, "parent@example.com");
+});
+
+test("updating a member without an email field keeps the existing address", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_email_partial_update");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Keep", lastName: "Mine", email: "keep@example.com" },
+  });
+  const memberId = created.payload.member.memberId;
+
+  const updated = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: { firstName: "Keep", lastName: "Mine", notes: "changed" },
+  });
+
+  assert.equal(updated.statusCode, 200);
+  // A partial save must not silently drop the address.
+  assert.equal(updated.payload.member.email, "keep@example.com");
+});
+
+test("a member email can be cleared explicitly", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_email_clear");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Clear", lastName: "Me", email: "clear@example.com" },
+  });
+  const memberId = created.payload.member.memberId;
+
+  const updated = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: { firstName: "Clear", lastName: "Me", email: "" },
+  });
+
+  assert.equal(updated.statusCode, 200);
+  assert.ok(!updated.payload.member.email);
+});
+
+test("intake email is optional by default and required only when the form opts in", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_email_optin");
+  const worship = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal", icon: "mic" }],
+  });
+
+  const openForm = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Open form",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      teamIds: [worship.teamId],
+      active: true,
+    },
+  });
+  assert.equal(openForm.statusCode, 200);
+
+  // Default: a submission with no email still succeeds. `/api/team-intake/submit`
+  // is public and live — defaulting to required would reject real volunteers.
+  const withoutEmail = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: openForm.payload.publicToken },
+      body: { firstName: "No", lastName: "Email", positionIds: [] },
+    },
+    withoutEmail,
+  );
+  assert.equal(withoutEmail.statusCode, 200);
+
+  // And an address is captured when supplied.
+  const withEmail = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: openForm.payload.publicToken },
+      body: {
+        firstName: "Has",
+        lastName: "Email",
+        email: "Has.Email@Example.com",
+        positionIds: [],
+      },
+    },
+    withEmail,
+  );
+  assert.equal(withEmail.statusCode, 200);
+});
+
+test("unlinking a member clears the account link but keeps the member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_unlink");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Linked",
+      lastName: "Person",
+      email: "linked@example.com",
+    },
+  });
+  const memberId = created.payload.member.memberId;
+
+  // Unlinking an already-unlinked member is a no-op, not an error, so the
+  // action is safe to expose without extra state checks in the UI.
+  const unlinked = await callHandler(authHandlers.unlinkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  assert.equal(unlinked.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const member = (bootstrap.payload.members || []).find(
+    (item) => item.memberId === memberId,
+  );
+  // The person and their contact address survive; only the link is removed.
+  assert.ok(member);
+  assert.equal(member.email, "linked@example.com");
+  assert.ok(!member.userId);
+});
+
+test("a member can be claimed by the signed-in account", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_self_link");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Me", lastName: "Myself", email: "me@example.com" },
+  });
+  const memberId = created.payload.member.memberId;
+
+  const linked = await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  assert.equal(linked.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const member = (bootstrap.payload.members || []).find(
+    (item) => item.memberId === memberId,
+  );
+  assert.ok(member.userId);
+});
+
+test("claiming the same member twice is a no-op", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_link_idempotent");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Twice", lastName: "Claimed" },
+  });
+  const memberId = created.payload.member.memberId;
+
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  const second = await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+
+  // Safe to expose without the UI tracking link state.
+  assert.equal(second.statusCode, 200);
+});
+
+test("an account cannot claim a second member in the same church", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_link_one_per_church");
+
+  const first = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "First", lastName: "Record" },
+  });
+  const second = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Second", lastName: "Record" },
+  });
+
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: first.payload.member.memberId },
+  });
+  const conflict = await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: second.payload.member.memberId },
+  });
+
+  // Two candidate records for one person would make notification routing
+  // ambiguous.
+  assert.equal(conflict.statusCode, 400);
+  assert.equal(conflict.payload.success, false);
+});
+
+test("unlinking frees the account to claim a different member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_link_after_unlink");
+
+  const first = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Wrong", lastName: "Record" },
+  });
+  const second = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Right", lastName: "Record" },
+  });
+
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: first.payload.member.memberId },
+  });
+  await callHandler(authHandlers.unlinkTeamRosterMember, {
+    context,
+    params: { memberId: first.payload.member.memberId },
+  });
+  const relinked = await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: second.payload.member.memberId },
+  });
+
+  // A wrong link must be correctable, or the mistake is permanent.
+  assert.equal(relinked.statusCode, 200);
+});
+
+test("linking to an account outside the church is refused", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_link_outsider");
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Target", lastName: "Record" },
+  });
+
+  const res = await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: created.payload.member.memberId },
+    body: { userId: "uid-from-another-church" },
+  });
+
+  // Without this gate a typo'd or guessed uid would hand an outsider a
+  // member's schedule and notifications.
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.payload.success, false);
+});
+
+test("an explicit userId matching the caller behaves as a self-claim", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const selfUid = "member_link_explicit_self_uid";
+  const context = await createHumanContext("member_link_explicit_self", {
+    userId: selfUid,
+  });
+
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Explicit", lastName: "Self" },
+  });
+  const memberId = created.payload.member.memberId;
+
+  const res = await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: { userId: selfUid },
+  });
+
+  assert.equal(res.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const member = (bootstrap.payload.members || []).find(
+    (item) => item.memberId === memberId,
+  );
+  assert.equal(member.userId, selfUid);
+});
+
+test("my assignments returns only the caller's own member and slots", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_assignments_scope");
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "My", lastName: "Record" },
+  });
+  await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Someone", lastName: "Else" },
+  });
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: mine.payload.member.memberId },
+  });
+
+  const res = await callHandler(authHandlers.getMyTeamAssignments, { context });
+
+  assert.equal(res.statusCode, 200);
+  // Only the caller's own record — never the roster.
+  assert.equal(res.payload.member.memberId, mine.payload.member.memberId);
+  assert.ok(Array.isArray(res.payload.occurrences));
+});
+
+test("my assignments is empty rather than an error when nothing is claimed", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_assignments_unlinked");
+
+  await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Not", lastName: "Mine" },
+  });
+
+  const res = await callHandler(authHandlers.getMyTeamAssignments, { context });
+
+  // Normal for staff who are not on a team; erroring would make the client
+  // treat an ordinary state as a failure.
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.member, null);
+  assert.deepEqual(res.payload.occurrences, []);
+});
+
+test("my assignments refuses a church the session does not belong to", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_assignments_cross_church");
+
+  const res = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+    params: { churchId: "some_other_church" },
+  });
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.payload.success, false);
+});
+
+test("my assignments attaches the plan for a combined occurrence", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_assignments_group_plan");
+  const media = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Group",
+      lastName: "Member",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  const memberId = member.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+
+  // A combined occurrence id is `group:<groupId>@<date>` — its suffix is a
+  // calendar date, so matching a plan on the id's timestamp never worked.
+  const occurrenceId = "group:grp-1@2026-07-05";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Combined schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-a", "svc-b"],
+      startDate: "2026-07-05",
+      endDate: "2026-07-05",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc-a",
+          serviceIds: ["svc-a", "svc-b"],
+          startsAt: "2026-07-05T10:00:00.000Z",
+        },
+      ],
+    },
+  });
+  assert.equal(schedule.statusCode, 200);
+
+  const assigned = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: schedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${media.positionIds.Camera}::0`,
+        memberId,
+      },
+    },
+  );
+  assert.equal(assigned.statusCode, 200);
+
+  const res = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(res.statusCode, 200);
+  const entry = (res.payload.occurrences || [])[0];
+  assert.ok(entry, "the combined occurrence should be returned");
+  // Identity comes from the schedule's occurrence record, not the id.
+  assert.deepEqual(entry.serviceIds, ["svc-a", "svc-b"]);
+  assert.equal(entry.date, "2026-07-05");
+  assert.equal(entry.startsAt, "2026-07-05T10:00:00.000Z");
+});
+
+test("my assignments includes occurrence name and published plan share urls", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_assignments_plan_share");
+  const media = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Share",
+      lastName: "Viewer",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  const memberId = member.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+
+  const occurrenceId = "svc-morning@2026-08-10";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Morning schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-morning"],
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc-morning",
+          serviceIds: ["svc-morning"],
+          name: "Sunday Morning",
+          startsAt: "2026-08-10T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+  assert.equal(schedule.statusCode, 200);
+
+  const assigned = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: schedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${media.positionIds.Camera}::0`,
+        memberId,
+      },
+    },
+  );
+  assert.equal(assigned.statusCode, 200);
+
+  const planKey = "svc-morning@2026-08-10";
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc-morning",
+      date: "2026-08-10",
+      name: "Morning Plan",
+      startsAt: "2026-08-10T14:00:00.000Z",
+      timezone: "America/New_York",
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "el-1",
+              type: "song",
+              title: richText("Blessed Be Your Name"),
+              durationMinutes: 4,
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+
+  const beforePublish = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  assert.equal(beforePublish.statusCode, 200);
+  const unpublished = (beforePublish.payload.occurrences || [])[0];
+  assert.equal(unpublished.name, "Sunday Morning");
+  assert.equal(unpublished.plan?.name, "Morning Plan");
+  assert.equal(unpublished.plan?.published, false);
+  assert.equal(unpublished.plan?.publicUrls, undefined);
+
+  const published = await callHandler(authHandlers.publishServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(published.statusCode, 200);
+  assert.ok(published.payload.teamPublicUrl);
+
+  const afterPublish = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  assert.equal(afterPublish.statusCode, 200);
+  const entry = (afterPublish.payload.occurrences || [])[0];
+  assert.equal(entry.plan?.published, true);
+  assert.equal(entry.plan?.publicUrls?.team, published.payload.teamPublicUrl);
+  assert.equal(
+    entry.plan?.publicUrls?.general,
+    published.payload.generalPublicUrl,
+  );
+});
+
+test("schedule-only access cannot retain teams or services permissions", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createHumanContext("member_tier_perms", {
+    userId: "member_tier_target",
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "edit", services: "edit" },
+  });
+
+  const bootstrap = await callHandler(authHandlers.getAuthMe, { context });
+  assert.equal(bootstrap.statusCode, 200);
+  // Sanity: the seeded grants are real before narrowing the tier.
+  assert.equal(bootstrap.payload.permissions.teams, "edit");
+
+  const narrowed = await createHumanContext("member_tier_perms_narrow", {
+    userId: "member_tier_narrow",
+    role: "member",
+    appAccess: "member",
+    permissions: { teams: "edit", services: "edit" },
+  });
+  const narrowedBootstrap = await callHandler(authHandlers.getAuthMe, {
+    context: narrowed,
+  });
+
+  // A schedule-only volunteer cannot reach those surfaces, so a retained grant
+  // would read as active in Account while doing nothing — and would come back
+  // to life if their tier were widened later. Normalized on read, so already
+  // stored contradictions are corrected without a migration.
+  assert.equal(narrowedBootstrap.statusCode, 200);
+  assert.equal(narrowedBootstrap.payload.permissions.teams, "none");
+  assert.equal(narrowedBootstrap.payload.permissions.services, "none");
 });

@@ -28,6 +28,7 @@ import {
 import { useResolvedBoardDisplayAlias } from "../../../boards/useResolvedBoardDisplayAlias";
 import type { WindowType } from "../../../types/electron";
 import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
+import { isViewOnlyAccess } from "../../../utils/accessTiers";
 
 const ToolbarMenu = ({
   variant = "default",
@@ -87,7 +88,7 @@ const ToolbarMenu = ({
   // board data for viewers/guests who can't open a board anyway.
   const canManageDisplays =
     variant !== "overlay" &&
-    access !== "view" &&
+    !isViewOnlyAccess(access) &&
     access !== "music" &&
     !isGuest;
 
@@ -219,7 +220,7 @@ const ToolbarMenu = ({
         },
       ]
       : []),
-    ...(variant === "overlay" || access === "view" || access === "music" || isGuest
+    ...(variant === "overlay" || isViewOnlyAccess(access) || access === "music" || isGuest
       ? []
       : [
         {

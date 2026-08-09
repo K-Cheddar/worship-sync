@@ -60,6 +60,7 @@ import {
   PopoverTrigger,
 } from "../../components/ui/Popover";
 import cn from "classnames";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const BULK_BIBLE_IMPORT_STORAGE_PREFIX = "worshipSync_bibleBulkImport_";
 const BULK_BIBLE_IMPORT_ACTIVE_ID_KEY = "worshipSync_bibleBulkImport_activeId";
@@ -154,7 +155,7 @@ const Bible = () => {
     isMobile = false,
   } = useContext(ControllerInfoContext) || {};
   const { access, loginState } = useContext(GlobalInfoContext) || {};
-  const canAddBibleToOutline = access !== "view";
+  const canAddBibleToOutline = !isViewOnlyAccess(access);
   const isOfflineGuest = loginState === "guest";
 
   const loadBulkReviewFromStorage = useCallback((id: string) => {

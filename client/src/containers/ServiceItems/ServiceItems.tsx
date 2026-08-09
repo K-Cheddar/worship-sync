@@ -42,6 +42,7 @@ import {
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
 import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import type { ServiceTime } from "../../types";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -69,9 +70,6 @@ const ServiceItems = () => {
     (state) =>
       state.servicePlanningImport.sync.status === "running" &&
       state.servicePlanningImport.sync.phase === "outline"
-  );
-  const serviceOutline = useSelector(
-    (state) => state.servicePlanningImport.serviceOutline,
   );
   const prevItemsLengthRef = useRef(serviceItems.length);
 
@@ -230,7 +228,7 @@ const ServiceItems = () => {
 
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
-    if (access === "view") return;
+    if (isViewOnlyAccess(access)) return;
     const { over, active } = event;
     if (!over || !active) return;
 
@@ -455,7 +453,7 @@ const ServiceItems = () => {
     const row = serviceItemsByListId.get(listId);
     const canMultiSelectRow = row != null && canMultiSelectItem(row);
 
-    if (access === "view" || !canMultiSelectRow) {
+    if (isViewOnlyAccess(access) || !canMultiSelectRow) {
       setSelectedListIds(new Set([listId]));
       setAnchorListId(listId);
       dispatch(setActiveItemInList(listId));
@@ -627,12 +625,11 @@ const ServiceItems = () => {
 
     items.push({
       id: "open-service-plan",
-      label: "Open Service Plan",
-      disabled: !serviceOutline,
+      label: "Service plan",
     });
 
     return items;
-  }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode, serviceOutline]);
+  }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode]);
 
   const handleDeleteHeading = useCallback(() => {
     if (!selectedHeading) return;
@@ -791,7 +788,7 @@ const ServiceItems = () => {
         ) : null}
         {!isLoading && serviceItems.length === 0 && (
           <p className="text-sm p-2">
-            {access !== "view"
+            {!isViewOnlyAccess(access)
               ? "This outline is empty. Create a new item or add an existing one using the buttons above."
               : "This outline is empty."}
           </p>

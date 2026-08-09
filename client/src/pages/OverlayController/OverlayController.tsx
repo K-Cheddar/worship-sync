@@ -19,6 +19,7 @@ import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismi
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 import OverlaysAndPostsWorkspace from "./OverlaysAndPostsWorkspace";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -119,7 +120,7 @@ const OverlayController = () => {
             <OverlaysAndPostsWorkspace />
           </div>
         )}
-        {access !== "view" && (
+        {!isViewOnlyAccess(access) && (
           <div
             className={cn(
               "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
@@ -132,7 +133,7 @@ const OverlayController = () => {
             <CreditsEditor embeddedInOverlayController />
           </div>
         )}
-        {access !== "view" && (
+        {!isViewOnlyAccess(access) && (
           <div
             className={cn(
               "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",

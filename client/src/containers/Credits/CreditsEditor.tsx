@@ -37,6 +37,7 @@ import generateRandomId from "../../utils/generateRandomId";
 import { getCreditDocId, type DBCredit } from "../../types";
 import CreditsEditorSkeleton from "./CreditsEditorSkeleton";
 import ExistingCreditsDrawer from "./ExistingCreditsDrawer";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
   const { list, initialList, isLoading, selectedCreditId, creditsHistory } =
@@ -52,7 +53,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     isMobile: false,
   };
   const { access } = useContext(GlobalInfoContext) ?? {};
-  const readOnly = access === "view";
+  const readOnly = isViewOnlyAccess(access);
 
   const [justAdded, setJustAdded] = useState(false);
   const [isAddExistingOpen, setIsAddExistingOpen] = useState(false);

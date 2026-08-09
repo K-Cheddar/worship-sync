@@ -24,6 +24,7 @@ import Outlines from "./Outlines";
 import { useGenerateCreditsFromOverlays } from "../../../hooks/useGenerateCreditsFromOverlays";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../../utils/scrollToolbarTabIntoView";
 import GeneratedCreditsFloatingWindow from "../../../pages/CreditsEditor/GeneratedCreditsFloatingWindow";
+import { isViewOnlyAccess } from "../../../utils/accessTiers";
 export type ToolbarOverlayProps = {
   isEditMode: boolean;
   quickLinksDrawerOpen: boolean;
@@ -98,7 +99,7 @@ const ToolbarOverlay = ({
                 Quick Links
               </ToolbarButton>
             )}
-          {access !== "view" &&
+          {!isViewOnlyAccess(access) &&
             access !== "music" &&
             overlayControllerPanel === "credits" && (
               <div className="flex shrink-0 items-center gap-1">
@@ -174,7 +175,7 @@ const ToolbarOverlay = ({
             </ToolbarButton>
           </>
         )}
-        {access !== "view" && access !== "music" && (
+        {!isViewOnlyAccess(access) && access !== "music" && (
           <ToolbarButton
             ref={(el) => {
               overlayPanelTabRefs.current.credits = el;
@@ -186,7 +187,7 @@ const ToolbarOverlay = ({
             Credits Editor
           </ToolbarButton>
         )}
-        {access !== "view" && (
+        {!isViewOnlyAccess(access) && (
           <ToolbarButton
             ref={(el) => {
               overlayPanelTabRefs.current.serviceTimes = el;

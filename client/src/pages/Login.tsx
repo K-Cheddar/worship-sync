@@ -241,16 +241,32 @@ const Login = () => {
    * must describe returning to the desktop app, not finishing a web-only sign-in.
    */
   const showWebSessionNavigatingChrome = Boolean(
-    isFinishingSignIn && !isHostedDesktopBrowserFlow,
+    isFinishingSignIn &&
+      !isHostedDesktopBrowserFlow &&
+      // A device-code challenge outranks "navigating". Firebase sign-in can
+      // succeed (so `loginState` is "success") while the server still requires
+      // a code for an unrecognized device — as happens right after accepting an
+      // invite. Showing "Signed in — hang tight, this screen will switch in a
+      // moment" over the code form tells the operator to wait for something
+      // that will never arrive, while the action they must take sits below.
+      mode !== "code",
   );
+  /**
+   * `isFinishingSignIn` means "signed in, navigating away", which normally
+   * should lock the form. It must not while a device code is outstanding:
+   * Firebase sign-in succeeds before the server issues the challenge, so
+   * treating that as "finishing" disables the Verify button and the six-digit
+   * auto-submit — leaving the one action that can unblock the person unusable.
+   */
+  const isAwaitingDeviceCode = mode === "code";
   const isAuthActionDisabled =
     context?.loginState === "loading" ||
-    isFinishingSignIn ||
+    (isFinishingSignIn && !isAwaitingDeviceCode) ||
     !isAuthServerOnline;
   const isSignInFormFieldsLocked =
     !isAuthServerOnline ||
     context?.loginState === "loading" ||
-    isFinishingSignIn;
+    (isFinishingSignIn && !isAwaitingDeviceCode);
   const verifyEmailCode = context?.verifyEmailCode;
   const pendingLinkState = context?.pendingLinkState;
   const prevVerificationDigitsLenRef = useRef(0);
@@ -901,7 +917,8 @@ const Login = () => {
       }
       return context?.authError || infoBanner;
     }
-    if (context?.loginState === "success") {
+    // Not while a code is outstanding: nothing is opening until it is entered.
+    if (context?.loginState === "success" && mode !== "code") {
       return "Opening WorshipSync…";
     }
     if (mode === "forgotPassword") {
@@ -1321,10 +1338,10 @@ const Login = () => {
                   type="submit"
                   variant="cta"
                   className="w-full justify-center"
-                  isLoading={
-                    context?.loginState === "loading" ||
-                    context?.loginState === "success"
-                  }
+                  // Not "success": sign-in completing is what produced this
+                  // challenge, so spinning here reads as work in progress when
+                  // the form is actually waiting on input.
+                  isLoading={context?.loginState === "loading"}
                   disabled={isAuthActionDisabled}
                 >
                   Verify device

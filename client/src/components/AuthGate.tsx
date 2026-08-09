@@ -6,7 +6,10 @@ import Button from "./Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { getElectronDisplayWindowTypeFromPathname } from "../utils/electronDisplayWindowFromPath";
-import { isWorkstationDisplaySurfacePath } from "../utils/sessionRouteAccess";
+import {
+  isMemberAllowedPath,
+  isWorkstationDisplaySurfacePath,
+} from "../utils/sessionRouteAccess";
 
 type AllowedKind = "human" | "workstation" | "display";
 
@@ -90,6 +93,7 @@ const AuthGate = ({
   const bootstrapStatus = context?.bootstrapStatus;
   const loginState = context?.loginState;
   const sessionKind = context?.sessionKind;
+  const access = context?.access;
   const operatorName = context?.operatorName;
 
   const loadingDescription = useMemo(
@@ -124,6 +128,18 @@ const AuthGate = ({
         description={loadingDescription}
       />
     );
+  }
+
+  // Enforced here rather than per route: hiding the links on Home is
+  // presentation only, and every protected route already passes through this
+  // gate. Doing it centrally means an operator page added later is closed to
+  // schedule-only members by default instead of open until someone remembers.
+  if (
+    sessionKind === "human" &&
+    access === "member" &&
+    !isMemberAllowedPath(location.pathname)
+  ) {
+    return <Navigate to="/my-schedule" replace />;
   }
 
   if (sessionKind && allowedKinds.includes(sessionKind as AllowedKind)) {

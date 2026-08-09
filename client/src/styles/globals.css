@@ -205,6 +205,35 @@
   }
 }
 
+/**
+ * Route chunk loading fallback.
+ *
+ * Held at zero opacity, then faded in after a delay. A precached chunk resolves
+ * in tens of milliseconds, so the splash unmounts before it is ever visible —
+ * only a genuinely slow load reveals it. Without the delay, every lazy
+ * navigation would flash a full-screen panel.
+ *
+ * Never applied to projector/monitor/stream: those routes use a null fallback
+ * so nothing can appear on a display or break stream transparency.
+ */
+@keyframes route-chunk-splash-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.route-chunk-splash {
+  opacity: 0;
+  animation: route-chunk-splash-in 150ms ease-out 200ms forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the anti-flash delay, drop the fade. */
+  .route-chunk-splash {
+    animation-duration: 0ms;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

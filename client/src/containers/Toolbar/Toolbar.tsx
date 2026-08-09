@@ -46,6 +46,7 @@ import {
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 type sections =
   | "configurations"
   | "slide-tools"
@@ -149,7 +150,7 @@ const Toolbar = ({
   useEffect(() => {
     if (onItemPage) {
       setSection(
-        access === "view" || !canShowSlideAndBoxTools
+        isViewOnlyAccess(access) || !canShowSlideAndBoxTools
           ? "configurations"
           : "slide-tools"
       );
@@ -163,7 +164,7 @@ const Toolbar = ({
     if (
       !onItemPage ||
       itemType !== "timer" ||
-      access === "view" ||
+      isViewOnlyAccess(access) ||
       !canShowSlideAndBoxTools
     ) {
       return;
@@ -215,7 +216,7 @@ const Toolbar = ({
       <div className={className}>
         <div className="px-2 py-1 flex gap-2 border-r-2 border-gray-500 items-center flex-col justify-center">
           <Menu variant={variant} />
-          {!isEditMode && access !== "view" && <Undo />}
+          {!isEditMode && !isViewOnlyAccess(access) && <Undo />}
         </div>
         <div
           className={cn(
@@ -232,7 +233,7 @@ const Toolbar = ({
           ) : (
             <>
               <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
-                {access !== "view" ? (
+                {!isViewOnlyAccess(access) ? (
                   <ToolbarButton
                     ref={(el) => {
                       primaryToolbarTabRefs.current.configurations = el;
@@ -261,7 +262,7 @@ const Toolbar = ({
                   }}
                   svg={SquarePen}
                   onClick={() => setSection("slide-tools")}
-                  hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
+                  hidden={!onItemPage || isViewOnlyAccess(access) || !canShowSlideAndBoxTools}
                   isActive={section === "slide-tools"}
                 >
                   Slide Tools
@@ -272,7 +273,7 @@ const Toolbar = ({
                   }}
                   svg={Pencil}
                   onClick={() => setSection("box-tools")}
-                  hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
+                  hidden={!onItemPage || isViewOnlyAccess(access) || !canShowSlideAndBoxTools}
                   isActive={section === "box-tools"}
                 >
                   Box Tools
@@ -311,7 +312,7 @@ const Toolbar = ({
                   isEditMode && "hidden"
                 )}
               >
-                {access !== "view" && (
+                {!isViewOnlyAccess(access) && (
                   <ToolbarButton
                     ref={(el) => {
                       configurationsSubTabRefs.current.preferences = el;

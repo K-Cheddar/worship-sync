@@ -28,6 +28,12 @@ export const inviteAccessOptions: {
   { value: "full", label: "Full access", role: "member", appAccess: "full" },
   { value: "music", label: "Music access", role: "member", appAccess: "music" },
   { value: "view", label: "View access", role: "member", appAccess: "view" },
+  {
+    value: "member",
+    label: "Schedule only",
+    role: "member",
+    appAccess: "member",
+  },
   { value: "admin", label: "Admin", role: "admin", appAccess: "full" },
 ];
 
