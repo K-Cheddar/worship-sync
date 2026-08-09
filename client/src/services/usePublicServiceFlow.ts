@@ -6,16 +6,23 @@ import {
 } from "./serviceFlowApi";
 import type { PublicServiceFlowSnapshot } from "./serviceFlowTypes";
 
-export type PublicServiceConnection = "connecting" | "connected" | "reconnecting" | "failed";
+export type PublicServiceConnection =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "failed";
 
 const FALLBACK_REFRESH_MS = 60_000;
 const FOCUS_REFRESH_MIN_MS = 30_000;
 
 export const usePublicServiceFlow = (shareId: string) => {
-  const [snapshot, setSnapshot] = useState<PublicServiceFlowSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PublicServiceFlowSnapshot | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [connection, setConnection] = useState<PublicServiceConnection>("connecting");
+  const [connection, setConnection] =
+    useState<PublicServiceConnection>("connecting");
   /** The link itself stopped working — show "no longer available", not stale content. */
   const [revoked, setRevoked] = useState(false);
   const lastFocusRefreshRef = useRef(0);
@@ -26,39 +33,48 @@ export const usePublicServiceFlow = (shareId: string) => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
 
-  const refresh = useCallback(async (initial = false) => {
-    if (!shareId) {
-      setError("This service link is incomplete.");
-      setLoading(false);
-      setConnection("failed");
-      return;
-    }
-    const requestId = ++requestIdRef.current;
-    if (initial) setLoading(true);
-    try {
-      const next = await getPublicServiceFlow(shareId);
-      if (requestId !== requestIdRef.current) return;
-      setSnapshot(next);
-      setError("");
-      setRevoked(false);
-      setConnection("connected");
-    } catch (loadError) {
-      if (requestId !== requestIdRef.current) return;
-      setError(loadError instanceof Error ? loadError.message : "Could not load this service.");
-      if (loadError instanceof PublicServiceAccessRevokedError) {
-        // The link no longer grants access (unpublished, deleted, or revoked).
-        // Drop what we already rendered — keeping a stale snapshot would leave
-        // team notes and assignments visible in tabs that are already open.
+  const refresh = useCallback(
+    async (initial = false) => {
+      if (!shareId) {
         setSnapshot(null);
-        setRevoked(true);
+        setError("");
+        setLoading(false);
         setConnection("failed");
+        setRevoked(false);
         return;
       }
-      setConnection(snapshotRef.current ? "reconnecting" : "failed");
-    } finally {
-      if (requestId === requestIdRef.current) setLoading(false);
-    }
-  }, [shareId]);
+      const requestId = ++requestIdRef.current;
+      if (initial) setLoading(true);
+      try {
+        const next = await getPublicServiceFlow(shareId);
+        if (requestId !== requestIdRef.current) return;
+        setSnapshot(next);
+        setError("");
+        setRevoked(false);
+        setConnection("connected");
+      } catch (loadError) {
+        if (requestId !== requestIdRef.current) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load this service.",
+        );
+        if (loadError instanceof PublicServiceAccessRevokedError) {
+          // The link no longer grants access (unpublished, deleted, or revoked).
+          // Drop what we already rendered — keeping a stale snapshot would leave
+          // team notes and assignments visible in tabs that are already open.
+          setSnapshot(null);
+          setRevoked(true);
+          setConnection("failed");
+          return;
+        }
+        setConnection(snapshotRef.current ? "reconnecting" : "failed");
+      } finally {
+        if (requestId === requestIdRef.current) setLoading(false);
+      }
+    },
+    [shareId],
+  );
 
   useEffect(() => {
     setSnapshot(null);
@@ -85,7 +101,10 @@ export const usePublicServiceFlow = (shareId: string) => {
         // Native EventSource retries malformed or interrupted updates naturally.
       }
     };
-    source.onerror = () => setConnection((current) => current === "failed" ? current : "reconnecting");
+    source.onerror = () =>
+      setConnection((current) =>
+        current === "failed" ? current : "reconnecting",
+      );
     return () => source.close();
   }, [refresh, shareId, revoked]);
 
