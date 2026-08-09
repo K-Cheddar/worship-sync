@@ -59,6 +59,14 @@ jest.mock("../../../store/itemSlice", () => ({
     type: "item/setSongMetadata",
     payload,
   })),
+  setSongLinks: jest.fn((payload: unknown) => ({
+    type: "item/setSongLinks",
+    payload,
+  })),
+  applyPersistedSongAudio: jest.fn((payload: unknown) => ({
+    type: "item/applyPersistedSongAudio",
+    payload,
+  })),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   updateSlides: (payload: any) => mockUpdateSlides(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
@@ -71,8 +79,26 @@ jest.mock("../../../store/itemSlice", () => ({
   })),
 }));
 
+// SlideEditor imports runtime `broadcastItemUpdate` from store. Loading the real
+// store against the partial itemSlice mock above fails (`itemSlice.actions`).
+jest.mock("../../../store/store", () => ({
+  broadcastItemUpdate: jest.fn(),
+}));
+
+jest.mock("../../../store/allDocsSlice", () => ({
+  upsertItemInAllDocs: jest.fn((payload: unknown) => ({
+    type: "allDocs/upsertItemInAllDocs",
+    payload,
+  })),
+}));
+
 jest.mock("../../../store/preferencesSlice", () => ({
   setShouldShowItemEditor: (value: boolean) => mockSetShouldShowItemEditor(value),
+}));
+
+jest.mock("../../../components/SongAudioPlayer/SongAudioPlayer", () => ({
+  __esModule: true,
+  default: () => <div data-testid="song-audio-player" />,
 }));
 
 jest.mock("../../../utils/overflow", () => ({
@@ -169,6 +195,8 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
             },
           ],
           formattedSections: [{ sectionNum: 1, words: "Hello", slideSpan: 1 }],
+          songLinks: [],
+          songAudio: undefined,
           isLoading: false,
           isSectionLoading: false,
         },

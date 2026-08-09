@@ -30,7 +30,7 @@ type FilteredItemProps = {
   addButtonLabel?: string;
   /** When false, hide delete controls even if `canMutateLibrary` is true. Default follows canMutateLibrary. */
   showDelete?: boolean;
-  /** Songs library: open read-only sections preview for this item. */
+  /** Songs library: open read-only details, resources, and lyrics for this item. */
   onViewSongSections?: () => void;
 };
 
@@ -107,6 +107,7 @@ const FilteredItem = ({
               variant="tertiary"
               color="red"
               className="shrink-0 md:hidden"
+              aria-label={`Delete ${item.name}`}
               onClick={() => setItemToBeDeleted(item)}
             />
           ) : null}
@@ -127,9 +128,9 @@ const FilteredItem = ({
               svg={LayoutList}
               variant="tertiary"
               color="#22d3ee"
-              aria-label="View lyrics"
+              aria-label="View song details"
             >
-              View lyrics
+              View details
             </Button>
           )}
           {canAdd ? (
@@ -151,6 +152,7 @@ const FilteredItem = ({
               variant="tertiary"
               color="red"
               className="hidden md:inline-flex"
+              aria-label={`Delete ${item.name}`}
               onClick={() => setItemToBeDeleted(item)}
             />
           ) : null}

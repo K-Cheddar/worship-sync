@@ -48,6 +48,12 @@ import {
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
+import {
+  SongAudioInputError,
+  SongAudioStorageNotConfiguredError,
+  createSongAudioStorage,
+} from "./server/songAudioStorage.js";
+import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -163,6 +169,61 @@ const requireFullAppAccess = (req, res, next) => {
     return res.status(403).json({ error: "Full access is required." });
   }
   next();
+};
+
+const requireSongAudioEditAccess = (req, res, next) => {
+  if (req.appSession?.access !== "full" && req.appSession?.access !== "music") {
+    return res.status(403).json({ error: "Music access is required." });
+  }
+  next();
+};
+
+const songAudioMaxBytes = (() => {
+  const configured = Number(process.env.SONG_AUDIO_MAX_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : 50 * 1024 * 1024;
+})();
+const parseSongAudioBytes = express.raw({
+  type: ["audio/mpeg", "audio/mp3", "audio/x-mpeg"],
+  limit: songAudioMaxBytes,
+});
+const guardSongAudioUpload = createSongAudioUploadGuard();
+
+let songAudioStorage;
+const getSongAudioStorage = () => {
+  if (!songAudioStorage) {
+    songAudioStorage = createSongAudioStorage();
+  }
+  return songAudioStorage;
+};
+
+const assertSongAudioChurchAccess = (req, res) => {
+  if (req.appSession?.churchId !== req.params.churchId) {
+    res.status(403).json({ error: "That church is not available." });
+    return false;
+  }
+  return true;
+};
+
+const respondSongAudioError = (res, context, error) => {
+  if (error instanceof SongAudioInputError) {
+    return res.status(400).json({ error: error.message });
+  }
+  if (error instanceof SongAudioStorageNotConfiguredError) {
+    return res
+      .status(503)
+      .json({ error: "Song audio storage is not configured yet." });
+  }
+  if (error?.name === "NotFound" || error?.name === "NoSuchKey") {
+    return res.status(404).json({
+      error: "The uploaded MP3 was not found. Select the file and upload it again.",
+    });
+  }
+  console.error(context, error);
+  return res
+    .status(502)
+    .json({ error: "Song audio could not be completed. Try again." });
 };
 
 const requireBoardDatabaseAccess = (req, res, database) => {
@@ -622,6 +683,8 @@ app.use(
       "x-display-token",
       "x-support-token",
       "x-csrf-token",
+      "x-song-audio-id",
+      "x-song-audio-key",
       "Authorization",
     ],
     credentials: true,
@@ -663,6 +726,121 @@ app.post(
   "/api/churches/:churchId/integrations",
   authHandlers.updateChurchIntegrations,
 );
+app.use("/api/churches/:churchId/song-audio", requireAppSession);
+
+app.post(
+  "/api/churches/:churchId/song-audio/:songId/upload",
+  requireSongAudioEditAccess,
+  guardSongAudioUpload,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const result = await getSongAudioStorage().createUpload({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        upload: req.body,
+      });
+      res.json(result);
+    } catch (error) {
+      respondSongAudioError(res, "Error creating song audio upload:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/song-audio/:songId/complete",
+  requireSongAudioEditAccess,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const audio = await getSongAudioStorage().completeUpload({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        audio: req.body?.audio,
+        previousAudio: req.body?.previousAudio,
+      });
+      res.json({ audio });
+    } catch (error) {
+      respondSongAudioError(res, "Error completing song audio upload:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/song-audio/:songId/upload-from-app",
+  requireSongAudioEditAccess,
+  // Reject over-quota uploads from Content-Length before express.raw allocates
+  // and buffers as much as the full MP3 body.
+  guardSongAudioUpload,
+  parseSongAudioBytes,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const audio = await getSongAudioStorage().uploadFromServer({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        upload: {
+          fileName: req.query.fileName,
+          contentType: req.get("content-type"),
+        },
+        body: req.body,
+        previousAudio:
+          req.get("x-song-audio-id") || req.get("x-song-audio-key")
+            ? {
+                id: req.get("x-song-audio-id"),
+                key: req.get("x-song-audio-key"),
+              }
+            : undefined,
+      });
+      res.json({ audio });
+    } catch (error) {
+      respondSongAudioError(res, "Error uploading song audio from app:", error);
+    }
+  },
+);
+
+app.get(
+  "/api/churches/:churchId/song-audio/:songId/:audioId/url",
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const result = await getSongAudioStorage().createReadUrl({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        audio: {
+          id: req.params.audioId,
+          key: req.query.key,
+          fileName: req.query.fileName,
+        },
+        disposition: req.query.disposition,
+      });
+      res.json(result);
+    } catch (error) {
+      respondSongAudioError(res, "Error creating song audio URL:", error);
+    }
+  },
+);
+
+app.delete(
+  "/api/churches/:churchId/song-audio/:songId/:audioId",
+  requireSongAudioEditAccess,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      await getSongAudioStorage().remove({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        audio: {
+          id: req.params.audioId,
+          key: req.body?.key,
+        },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      respondSongAudioError(res, "Error deleting song audio:", error);
+    }
+  },
+);
 app.get(
   "/api/churches/:churchId/teams/bootstrap",
   authHandlers.getTeamsBootstrap,
@@ -700,6 +878,18 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/delete",
   authHandlers.deleteTeamRosterMember,
+);
+app.get(
+  "/api/churches/:churchId/my-team-assignments",
+  authHandlers.getMyTeamAssignments,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId/link",
+  authHandlers.linkTeamRosterMember,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId/unlink",
+  authHandlers.unlinkTeamRosterMember,
 );
 app.post(
   "/api/churches/:churchId/team-positions",
@@ -822,10 +1012,7 @@ app.post(
   authHandlers.getTeamSchedulePublicLink,
 );
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
-app.get(
-  "/api/churches/:churchId/service-plans",
-  authHandlers.listServicePlans,
-);
+app.get("/api/churches/:churchId/service-plans", authHandlers.listServicePlans);
 app.get(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.getServicePlan,
@@ -894,6 +1081,10 @@ app.post(
 );
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);
+app.post(
+  "/api/churches/:churchId/members/:userId/make-admin",
+  authHandlers.makeAdmin,
+);
 app.post(
   "/api/churches/:churchId/members/:userId/remove-admin",
   authHandlers.removeAdmin,

@@ -44,6 +44,7 @@ import { getChurchDataPath } from "../../utils/firebasePaths";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
 import { cn } from "../../utils/cnHelper";
 import { searchLrclibTracks } from "../../api/lrclib";
+import { deleteSongAudioWithRetry } from "../../api/auth";
 import ExternalLyricsResultItem from "./ExternalLyricsResultItem";
 import ViewExternalLyricsDrawer from "./ViewExternalLyricsDrawer";
 import {
@@ -60,6 +61,7 @@ import {
   FILTERED_ITEM_ROW_GAP,
   getLibraryItemVirtualKey,
 } from "./filteredItemsVirtualRowHeight";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -316,8 +318,8 @@ const FilteredItems = ({
   }, [viewSectionsSongId, allDocs, type]);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
-  const { access } = useContext(GlobalInfoContext) || {};
-  const canMutateLibrary = access !== "view";
+  const { access, churchId } = useContext(GlobalInfoContext) || {};
+  const canMutateLibrary = !isViewOnlyAccess(access);
   const allowDelete = showDelete ?? canMutateLibrary;
   const allowCreateAndExternal = showCreateAndExternal ?? canMutateLibrary;
   /** Attach mode always shows the primary action even for view-only library access. */
@@ -422,6 +424,17 @@ const FilteredItems = ({
 
   const deleteItem = async (item: ServiceItem) => {
     setItemToBeDeleted(null);
+    let deletedDoc: DBItem | undefined;
+    if (db) {
+      try {
+        deletedDoc = (await db.get(item._id)) as DBItem;
+        await db.remove(deletedDoc);
+      } catch (error) {
+        console.error("Error deleting library item:", error);
+        return;
+      }
+    }
+
     dispatch(removeItemFromAllItemsList(item._id));
     dispatch(removeItemFromListById(item._id));
     dispatch(ActionCreators.clearHistory());
@@ -469,12 +482,15 @@ const FilteredItems = ({
       }
     }
 
-    if (db) {
+    if (item.type === "song" && churchId && deletedDoc?.songAudio) {
       try {
-        const doc = await db.get(item._id);
-        db.remove(doc);
+        await deleteSongAudioWithRetry({
+          churchId,
+          songId: item._id,
+          audio: deletedDoc.songAudio,
+        });
       } catch (error) {
-        console.error(error);
+        console.error("Error cleaning deleted song audio:", error);
       }
     }
   };

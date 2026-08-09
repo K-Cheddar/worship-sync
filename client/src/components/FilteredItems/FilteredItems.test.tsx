@@ -15,13 +15,22 @@ import { createMockControllerContext, createMockGlobalContext } from "../../test
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { searchLrclibTracks } from "../../api/lrclib";
+import { deleteSongAudioWithRetry } from "../../api/auth";
 
 jest.mock("../../api/lrclib", () => ({
   searchLrclibTracks: jest.fn(),
 }));
+jest.mock("../../api/auth", () => ({
+  deleteSongAudioWithRetry: jest.fn(),
+  getSongAudioUrl: jest.fn(),
+  uploadSongAudio: jest.fn(),
+}));
 
 const mockedSearchLrclibTracks = searchLrclibTracks as jest.MockedFunction<
   typeof searchLrclibTracks
+>;
+const mockedDeleteSongAudio = deleteSongAudioWithRetry as jest.MockedFunction<
+  typeof deleteSongAudioWithRetry
 >;
 
 const CreateRouteProbe = () => {
@@ -49,6 +58,8 @@ describe("FilteredItems", () => {
 
   beforeEach(() => {
     mockedSearchLrclibTracks.mockReset();
+    mockedDeleteSongAudio.mockReset();
+    mockedDeleteSongAudio.mockResolvedValue({ success: true });
     getBoundingClientRectSpy = jest
       .spyOn(Element.prototype, "getBoundingClientRect")
       .mockImplementation(function (this: Element) {
@@ -76,6 +87,61 @@ describe("FilteredItems", () => {
 
   afterEach(() => {
     getBoundingClientRectSpy.mockRestore();
+  });
+
+  it("removes an attached MP3 from storage after deleting its song document", async () => {
+    const audio = {
+      id: "audio-1",
+      key: "churches/church-1/songs/song-1/audio-1.mp3",
+      fileName: "reference.mp3",
+      contentType: "audio/mpeg" as const,
+      sizeBytes: 100,
+      uploadedAt: "2026-08-06T00:00:00.000Z",
+    };
+    const song = {
+      _id: "song-1",
+      name: "Reference Song",
+      type: "song",
+      songAudio: audio,
+    } as any;
+    const remove = jest.fn().mockResolvedValue({ ok: true });
+    const db = {
+      get: jest.fn().mockResolvedValue(song),
+      remove,
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext({ db }) as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[song]}
+                type="song"
+                heading="Songs"
+                label="song"
+                isLoading={false}
+                allDocs={[song]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete Reference Song" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Forever" }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(song));
+    expect(mockedDeleteSongAudio).toHaveBeenCalledWith({
+      churchId: "church-1",
+      songId: "song-1",
+      audio,
+    });
   });
 
   it("searches external lyrics and opens a prefilled create song draft", async () => {
@@ -245,7 +311,7 @@ describe("FilteredItems", () => {
     expect(screen.queryByRole("button", { name: /Add to outline/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Search external lyrics/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Create a new song/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /View lyrics/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /View song details/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^Attach$/i }));
 

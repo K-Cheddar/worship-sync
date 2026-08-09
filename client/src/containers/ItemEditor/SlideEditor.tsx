@@ -5,6 +5,7 @@ import { ChevronsDownUp } from "lucide-react";
 import { FileQuestion } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { PencilLine } from "lucide-react";
+import { Headphones } from "lucide-react";
 
 import {
   CSSProperties,
@@ -32,6 +33,8 @@ import {
   setSelectedSlide,
   setIsEditMode,
   setSongMetadata,
+  applyPersistedSongAudio,
+  setSongLinks,
   updateArrangements,
   updateSlides,
   setRestoreFocusToBox,
@@ -46,8 +49,19 @@ import {
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
 import { ItemSlideType, SongMetadata } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
-import { RootState } from "../../store/store";
+import {
+  deleteSongAudioWithRetry,
+  getSongAudioUrl,
+  uploadSongAudio,
+} from "../../api/auth";
+import { broadcastItemUpdate, RootState } from "../../store/store";
+import { upsertItemInAllDocs } from "../../store/allDocsSlice";
+import {
+  deleteSongAudioBeforeClearingMetadata,
+  persistSongAudioAttachment,
+} from "../../utils/persistSongAudioAttachment";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
@@ -67,6 +81,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "../../components/ui/Popover";
+import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -116,6 +131,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     hasRemoteUpdate,
     hasPendingUpdate,
     songMetadata,
+    songLinks,
+    songAudio,
     baseItem,
   } = item;
   const itemRef = useRef(item);
@@ -152,6 +169,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, [numBoxes]);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const globalInfo = useContext(GlobalInfoContext);
+  const churchId = globalInfo?.churchId || "";
   const toastContext = useContext(ToastContext);
   const showToast = toastContext?.showToast;
   const removeToast = toastContext?.removeToast;
@@ -331,16 +350,109 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   const saveSongDetails = ({
     name: nextName,
     songMetadataPatch,
+    songLinksPatch,
   }: {
     name: string;
     songMetadataPatch?: SongMetadata | null;
+    songLinksPatch?: typeof songLinks;
   }) => {
     if (!db) return;
     dispatch(setName({ name: nextName }));
     if (songMetadataPatch !== undefined) {
       dispatch(setSongMetadata(songMetadataPatch));
     }
+    if (songLinksPatch !== undefined) {
+      dispatch(setSongLinks(songLinksPatch));
+    }
   };
+
+  const attachSongAudio = useCallback(
+    async (file: File) => {
+      if (!churchId || !db) {
+        throw new Error("Sign in to attach an MP3.");
+      }
+      const previousAudio = songAudio;
+      const audio = await uploadSongAudio({
+        churchId,
+        songId: _id,
+        file,
+        previousAudio,
+      });
+      let saved;
+      try {
+        saved = await persistSongAudioAttachment({
+          db,
+          songId: _id,
+          audio,
+        });
+      } catch (error) {
+        // A replacement overwrites the existing final key. Deleting it here
+        // would leave the still-old PouchDB metadata pointing at no object.
+        if (!previousAudio || previousAudio.key !== audio.key) {
+          try {
+            await deleteSongAudioWithRetry({ churchId, songId: _id, audio });
+          } catch (cleanupError) {
+            console.error("Error cleaning unpersisted song audio:", cleanupError);
+          }
+        }
+        throw error;
+      }
+
+      dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved }));
+      dispatch(upsertItemInAllDocs(saved));
+      broadcastItemUpdate(saved);
+
+      if (previousAudio && previousAudio.key !== audio.key) {
+        try {
+          await deleteSongAudioWithRetry({
+            churchId,
+            songId: _id,
+            audio: previousAudio,
+          });
+        } catch (error) {
+          console.error("Error cleaning replaced song audio:", error);
+        }
+      }
+      showToast?.({ message: "MP3 attached.", variant: "success" });
+    },
+    [_id, churchId, db, dispatch, showToast, songAudio],
+  );
+
+  const resolveSongAudioUrl = useCallback(
+    async (disposition: "inline" | "attachment") => {
+      if (!churchId || !songAudio) {
+        throw new Error("This song does not have an MP3 attached.");
+      }
+      const result = await getSongAudioUrl({
+        churchId,
+        songId: _id,
+        audio: songAudio,
+        disposition,
+      });
+      return result.url;
+    },
+    [_id, churchId, songAudio],
+  );
+
+  const removeSongAudio = useCallback(async () => {
+    if (!churchId || !db || !songAudio) return;
+    const saved = await deleteSongAudioBeforeClearingMetadata({
+      deleteAudio: () =>
+        deleteSongAudioWithRetry({ churchId, songId: _id, audio: songAudio }),
+      clearMetadata: () =>
+        persistSongAudioAttachment({
+          db,
+          songId: _id,
+          audio: null,
+        }),
+    });
+    dispatch(
+      applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved }),
+    );
+    dispatch(upsertItemInAllDocs(saved));
+    broadcastItemUpdate(saved);
+    showToast?.({ message: "MP3 removed.", variant: "success" });
+  }, [_id, churchId, db, dispatch, showToast, songAudio]);
 
   const onNameEditButtonClick = () => {
     if (!canEdit) return;
@@ -1217,6 +1329,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                     itemType={type}
                     itemName={name}
                     songMetadata={songMetadata}
+                    songLinks={songLinks}
+                    songAudio={songAudio}
+                    onUploadSongAudio={attachSongAudio}
+                    onGetSongAudioUrl={resolveSongAudioUrl}
+                    onRemoveSongAudio={removeSongAudio}
                     onSave={saveSongDetails}
                   />
                 </PopoverContent>
@@ -1238,6 +1355,29 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 </p>
               )}
             </span>
+            {type === "song" && songAudio ? (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={Headphones}
+                    aria-label={`Listen to ${name}`}
+                    disabled={isLoading}
+                  />
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  className="w-80 border border-gray-600 bg-gray-900 p-3 text-white"
+                >
+                  <p className="mb-2 text-sm font-semibold">Reference MP3</p>
+                  <SongAudioPlayer
+                    audio={songAudio}
+                    onGetUrl={resolveSongAudioUrl}
+                  />
+                </PopoverContent>
+              </Popover>
+            ) : null}
           </span>
           {type === "song" && (
             <Button

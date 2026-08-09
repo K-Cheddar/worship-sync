@@ -113,6 +113,10 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
   safePostMessage({ type: "update", data: { docs, hostId: globalHostId } });
 }
 
+export function broadcastItemUpdate(doc: DBItem) {
+  safePostMessage({ type: "update", data: { docs: doc, hostId: globalHostId } });
+}
+
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
@@ -455,6 +459,7 @@ const excludedActions: string[] = [
   itemSlice.actions.bufferRemoteItemUpdate.toString(),
   itemSlice.actions.discardPendingRemoteItem.toString(),
   itemSlice.actions.applyPendingRemoteItem.toString(),
+  itemSlice.actions.applyPersistedSongAudio.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
   itemSlice.actions.clearTransientState.toString(),
@@ -594,6 +599,16 @@ const listenerMiddleware = createListenerMiddleware();
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    // Audio is persisted independently after the R2 operation succeeds. Let the
+    // reconciliation action enter this listener so it can cancel an older editor
+    // autosave, but do not schedule another save for it.
+    if (itemSlice.actions.applyPersistedSongAudio.match(action)) {
+      return (
+        (currentState as RootState).undoable.present.item._id ===
+        action.payload.persistedDoc._id
+      );
+    }
+
     const excluded = isAnyOf(
       itemSlice.actions.setSelectedSlide,
       itemSlice.actions.setSelectedBox,
@@ -618,6 +633,11 @@ listenerMiddleware.startListening({
   },
 
   effect: async (_action, listenerApi) => {
+    if (itemSlice.actions.applyPersistedSongAudio.match(_action)) {
+      listenerApi.cancelActiveListeners();
+      return;
+    }
+
     let state = listenerApi.getState() as RootState;
     if (itemSlice.actions.setActiveItem.match(_action)) {
       state = listenerApi.getOriginalState() as RootState;
@@ -630,6 +650,7 @@ listenerMiddleware.startListening({
     const item = state.undoable.present.item;
     if (!db) return;
     let db_item: DBItem = await db.get(item._id);
+    listenerApi.throwIfCancelled();
 
     const updatedAt = new Date().toISOString();
     const nextItem: DBItem = {
@@ -642,6 +663,13 @@ listenerMiddleware.startListening({
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
       songMetadata: item.songMetadata,
+      songLinks: item.songLinks,
+      // R2 attachment flows persist this field out-of-band. Ordinary editor
+      // autosaves must retain the latest durable value instead of their older
+      // Redux snapshot. Keep setSongAudio working for any explicit caller.
+      songAudio: itemSlice.actions.setSongAudio.match(_action)
+        ? item.songAudio
+        : db_item.songAudio,
       shouldSendTo: item.shouldSendTo,
       formattedSections: item.formattedSections,
       updatedAt,
@@ -650,7 +678,9 @@ listenerMiddleware.startListening({
       // Doc came from db.get — always an update (legacy rows may lack createdAt).
       isNew: false,
     });
+    listenerApi.throwIfCancelled();
     const result = await db.put(db_item);
+    listenerApi.throwIfCancelled();
     db_item = {
       ...db_item,
       _rev: result.rev,

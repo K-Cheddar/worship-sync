@@ -31,6 +31,7 @@ import {
   logoutSession,
   removeChurchMember,
   revokeTrustedDevice,
+  uploadSongAudio,
   updateChurchMemberAccess,
 } from "../auth";
 // eslint-disable-next-line import/first -- see mocked module setup above
@@ -155,6 +156,97 @@ describe("api/auth", () => {
         body: JSON.stringify({
           appAccess: "music",
           permissions: { teams: "view" },
+        }),
+      }),
+    );
+  });
+
+  it("sends the current attachment when completing a browser MP3 replacement", async () => {
+    const previousAudio = {
+      id: "audio-current",
+      key: "churches/church-1/songs/song-1/audio-current.mp3",
+      fileName: "current.mp3",
+      contentType: "audio/mpeg",
+      sizeBytes: 3,
+      uploadedAt: "2026-08-09T12:00:00.000Z",
+    };
+    const pendingAudio = {
+      id: "audio-pending",
+      key: "pending/churches/church-1/songs/song-1/audio-pending.mp3",
+      fileName: "replacement.mp3",
+      contentType: "audio/mpeg",
+      sizeBytes: 3,
+    };
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            audio: pendingAudio,
+            uploadUrl: "https://r2.example.test/pending",
+            expiresAt: "2026-08-09T12:15:00.000Z",
+          }),
+      })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            audio: { ...previousAudio, fileName: "replacement.mp3" },
+          }),
+      });
+
+    await uploadSongAudio({
+      churchId: "church-1",
+      songId: "song-1",
+      file: new File([new Uint8Array([1, 2, 3])], "replacement.mp3", {
+        type: "audio/mpeg",
+      }),
+      previousAudio,
+    });
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:5000/api/churches/church-1/song-audio/song-1/complete",
+      expect.objectContaining({
+        body: JSON.stringify({ audio: pendingAudio, previousAudio }),
+      }),
+    );
+  });
+
+  it("sends the current attachment headers for a packaged Electron MP3 replacement", async () => {
+    packagedElectron.value = true;
+    const previousAudio = {
+      id: "audio-current",
+      key: "churches/church-1/songs/song-1/audio-current.mp3",
+      fileName: "current.mp3",
+      contentType: "audio/mpeg",
+      sizeBytes: 3,
+      uploadedAt: "2026-08-09T12:00:00.000Z",
+    };
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          audio: { ...previousAudio, fileName: "replacement.mp3" },
+        }),
+    });
+
+    await uploadSongAudio({
+      churchId: "church-1",
+      songId: "song-1",
+      file: new File([new Uint8Array([1, 2, 3])], "replacement.mp3", {
+        type: "audio/mpeg",
+      }),
+      previousAudio,
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/upload-from-app?fileName=replacement.mp3"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-song-audio-id": previousAudio.id,
+          "x-song-audio-key": previousAudio.key,
         }),
       }),
     );
