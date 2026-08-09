@@ -31,7 +31,7 @@ type ServicePlanLibraryPickerProps = {
 /**
  * Large modal for attaching a library song to a plan element.
  *
- * Reuses FilteredItems (lyrics preview + View lyrics) in attach mode: primary
+ * Reuses FilteredItems (lyrics preview + View song details) in attach mode: primary
  * action attaches a plan reference instead of adding to the live outline.
  * "Create a new song" swaps this search UI for the Controller CreateItem song
  * form (import lyrics, artist/album, etc.) in-place.

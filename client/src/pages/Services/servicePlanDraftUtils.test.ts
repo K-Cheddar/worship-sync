@@ -1,4 +1,7 @@
-import type { ServicePlanSection } from "../../types/servicePlan";
+import type {
+  ServicePlanSection,
+  ServicePlanSongReference,
+} from "../../types/servicePlan";
 import { plainTextToRichText } from "../../types/richText";
 import {
   addElement,
@@ -9,6 +12,7 @@ import {
   moveElementToSection,
   removeElement,
   removeSection,
+  replaceMatchingPendingSongReferences,
   renameSection,
   reorderElementsInSection,
   reorderSections,
@@ -53,6 +57,64 @@ describe("addSection / removeSection / renameSection", () => {
     );
     expect(sections[0].name).toBe("Renamed");
     expect(sections[1].name).toBe("b");
+  });
+});
+
+describe("replaceMatchingPendingSongReferences", () => {
+  it("links every exact repeated occurrence without changing a same-title variant", () => {
+    const pending: ServicePlanSongReference = {
+      kind: "pending",
+      title: "Appeal Song",
+      lyricsText: "Come as you are",
+    };
+    const replacement: ServicePlanSongReference = {
+      kind: "library",
+      songId: "song-created",
+      songName: "Appeal Song",
+    };
+    const sections = [
+      section("response", {
+        elements: [
+          {
+            id: "first",
+            type: "song",
+            title: plainTextToRichText("Appeal Song"),
+            songRef: pending,
+          },
+          {
+            id: "second",
+            type: "song",
+            title: plainTextToRichText("Appeal Song continued"),
+            songRefs: [pending],
+          },
+          {
+            id: "variant",
+            type: "song",
+            title: plainTextToRichText("Appeal Song alternate"),
+            songRef: {
+              kind: "pending",
+              title: "Appeal Song",
+              lyricsText: "Different lyrics",
+            },
+          },
+        ],
+      }),
+    ];
+
+    const result = replaceMatchingPendingSongReferences(
+      sections,
+      pending,
+      replacement,
+    );
+
+    expect(result[0].elements[0].songRefs).toEqual([replacement]);
+    expect(result[0].elements[0].songRef).toBeUndefined();
+    expect(result[0].elements[1].songRefs).toEqual([replacement]);
+    expect(result[0].elements[2].songRef).toEqual({
+      kind: "pending",
+      title: "Appeal Song",
+      lyricsText: "Different lyrics",
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import servicePlanningImportReducer, {
   recordServicePlanningSyncResult,
   resetServicePlanningImportPreview,
   setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
   setServicePlanningImportUrl,
@@ -34,6 +35,7 @@ const previewFixture: ServicePlanningPreview = {
   overlayPlan: [],
   outlineCandidates: [],
   lineItems: [],
+  teamAssignments: [],
 };
 
 const serviceOutlineFixture: ServiceOutline = {
@@ -56,6 +58,23 @@ describe("servicePlanningImportSlice", () => {
     expect(state.url).toBe("https://example.com/plan");
     expect(state.preview).toEqual(previewFixture);
     expect(state.serviceOutline).toEqual(serviceOutlineFixture);
+  });
+
+  it("does not replace an active preview when a target outline loads", () => {
+    const store = createStore();
+    const storedOutline = {
+      ...serviceOutlineFixture,
+      sourceUrl: "https://example.com/stored-plan",
+      planLabel: "Stored plan",
+    };
+
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+
+    const state = store.getState().servicePlanningImport;
+    expect(state.serviceOutline).toEqual(serviceOutlineFixture);
+    expect(state.preview).toEqual(serviceOutlineFixture.preview);
+    expect(state.url).toBe(serviceOutlineFixture.sourceUrl);
   });
 
   it("clears only the preview after sync so the last url stays available", () => {

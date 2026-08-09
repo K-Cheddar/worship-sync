@@ -5,10 +5,20 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import servicePlanningImportReducer, {
   cancelServicePlanningSync,
+  setServicePlanningPlanOutline,
   setServicePlanningServiceOutline,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+
+const mockPersistItemListServicePlanBinding = jest.fn();
+
+jest.mock("../../utils/itemListImports", () => ({
+  ...jest.requireActual("../../utils/itemListImports"),
+  persistItemListServicePlanBinding: (...args: unknown[]) =>
+    mockPersistItemListServicePlanBinding(...args),
+}));
 
 const mockShowToast = jest.fn();
 const mockRemoveToast = jest.fn();
@@ -65,6 +75,22 @@ const serviceOutlineFixture = {
   preview: previewFixture,
 };
 
+const undoableState = {
+  present: {
+    itemLists: {
+      selectedList: { _id: "outline-1", name: "Sunday AM" },
+    },
+  },
+};
+
+const undoableStateWithoutOutline = {
+  present: {
+    itemLists: {
+      selectedList: null,
+    },
+  },
+};
+
 describe("useServicePlanningSyncRunner", () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -81,6 +107,7 @@ describe("useServicePlanningSyncRunner", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
       },
     });
 
@@ -181,10 +208,100 @@ describe("useServicePlanningSyncRunner", () => {
     expect(state.preview).toEqual(previewFixture);
   });
 
+  it("links the target outline after a plan-sourced outline sync completes", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    mockPlanOutlineSyncSteps.mockReturnValue([]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([]);
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture as any,
+        planKey: "service-1@2026-08-09",
+      }),
+    );
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db: {} } as any}>
+          <MemoryRouter initialEntries={["/controller/service-planning"]}>
+            <RunnerHarness />
+          </MemoryRouter>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "outline" }));
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.sync.status).toBe(
+        "completed",
+      ),
+    );
+    expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+      {},
+      "outline-1",
+      expect.objectContaining({
+        planKey: "service-1@2026-08-09",
+        planName: "May 2, 2026 - 10 AM",
+      }),
+    );
+    expect(
+      store.getState().servicePlanningImport.outlinePlanBinding?.planKey,
+    ).toBe("service-1@2026-08-09");
+  });
+
+  it("allows an overlays-only sync without a selected outline", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableStateWithoutOutline,
+      },
+    });
+    mockPlanOutlineSyncSteps.mockReturnValue([]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([]);
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture as any));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller/overlays"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "overlays" }));
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.sync.status).toBe(
+        "completed",
+      ),
+    );
+    expect(mockPersistItemListServicePlanBinding).not.toHaveBeenCalled();
+  });
+
   it("finalizes a stop request after the active step records its result", async () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
       },
     });
     let resolveOutlineStep:

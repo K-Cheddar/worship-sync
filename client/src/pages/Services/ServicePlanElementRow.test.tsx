@@ -619,7 +619,7 @@ describe("ServicePlanElementRow", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /View lyrics for Living Hope/i }),
+      screen.getByRole("button", { name: /View song details for Living Hope/i }),
     );
 
     expect(onViewSongLyrics).toHaveBeenCalledWith(songRef);
@@ -649,10 +649,10 @@ describe("ServicePlanElementRow", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /View lyrics for Opening Song/i }),
+      screen.getByRole("button", { name: /View song details for Opening Song/i }),
     );
     await user.click(
-      screen.getByRole("button", { name: /View lyrics for Response Song/i }),
+      screen.getByRole("button", { name: /View song details for Response Song/i }),
     );
 
     expect(onViewSongLyrics).toHaveBeenNthCalledWith(1, openingSong);
@@ -697,7 +697,7 @@ describe("ServicePlanElementRow", () => {
 
     expect(screen.getByText(/Not in library/i)).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /View lyrics/i }),
+      screen.queryByRole("button", { name: /View song details/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -724,7 +724,7 @@ describe("ServicePlanElementRow", () => {
 
     expect(screen.queryByText(/Not in library/i)).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: /View lyrics for How Great Is Our God/i }),
+      screen.getByRole("button", { name: /View song details for How Great Is Our God/i }),
     );
     // The viewer gets the library song, not the stale pending reference.
     expect(onViewSongLyrics).toHaveBeenCalledWith(resolvedSongRef);
@@ -822,7 +822,7 @@ describe("ServicePlanElementRow", () => {
     );
   });
 
-  it("keeps unmatched songs non-interactive without create access", async () => {
+  it("opens stored reference lyrics for unmatched songs without create access", async () => {
     const user = userEvent.setup();
     const onViewSongLyrics = jest.fn();
     const songRef = {
@@ -844,15 +844,14 @@ describe("ServicePlanElementRow", () => {
     });
 
     expect(
-      screen.queryByRole("button", { name: /View lyrics for Appeal Song/i }),
-    ).not.toBeInTheDocument();
-    expect(
       screen.queryByRole("button", { name: /Create Appeal Song in the library/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/Not in library/i)).toBeInTheDocument();
-
-    await user.click(screen.getByText(/Not in library/i));
-    expect(onViewSongLyrics).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("button", {
+        name: /View reference lyrics for Appeal Song/i,
+      }),
+    );
+    expect(onViewSongLyrics).toHaveBeenCalledWith(songRef);
   });
 
   it("opens create song for an unmatched badge when the operator can create library songs", async () => {
@@ -1104,6 +1103,7 @@ describe("microphone slots from a template", () => {
     });
 
     await user.type(screen.getByRole("textbox", { name: /Assigned to/i }), "Chorale");
+    await user.tab();
 
     const [changes] = onUpdate.mock.calls.at(-1) ?? [];
     expect(changes.assignees[0].microphoneIds).toEqual([

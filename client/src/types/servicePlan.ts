@@ -396,5 +396,6 @@ export type ServicePlanSummary = {
   groupId?: string;
   date: string;
   name: string;
+  startsAt?: string;
   published?: boolean;
 };

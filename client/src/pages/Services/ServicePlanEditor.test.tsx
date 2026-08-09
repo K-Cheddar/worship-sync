@@ -1,6 +1,6 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ContextType } from "react";
+import type { ContextType, ReactNode } from "react";
 import ServicePlanEditor from "./ServicePlanEditor";
 import {
   collectServicePlanRoleNoteOptions,
@@ -59,6 +59,7 @@ jest.mock("../../api/auth", () => ({
   saveServicePlanMicrophones: jest.fn(),
   unpublishServicePlan: jest.fn(),
   updateServicePlanPublicLive: jest.fn(),
+  getSongAudioUrl: jest.fn(),
 }));
 
 // Song attach/create modal — row contract is covered in ElementRow tests; keep
@@ -69,17 +70,36 @@ jest.mock("./ServicePlanLibraryPicker", () => ({
     initialQuery,
     initialLyrics,
     startInCreate,
+    onSelectSong,
   }: {
     initialQuery?: string;
     initialLyrics?: string;
     startInCreate?: boolean;
+    onSelectSong?: (songRef: {
+      kind: "library";
+      songId: string;
+      songName: string;
+    }) => void;
   }) => (
     <div
       data-testid="song-picker"
       data-initial-query={initialQuery ?? ""}
       data-initial-lyrics={initialLyrics ?? ""}
       data-start-in-create={startInCreate ? "true" : "false"}
-    />
+    >
+      <button
+        type="button"
+        onClick={() =>
+          onSelectSong?.({
+            kind: "library",
+            songId: "created-song",
+            songName: initialQuery || "Created song",
+          })
+        }
+      >
+        Complete song creation
+      </button>
+    </div>
   ),
 }));
 
@@ -144,6 +164,7 @@ const renderEditor = ({
   planNavigation,
   occurrenceSwitcher,
   teamMicrophones,
+  mobileServingContent,
 }: {
   service?: TeamService;
   occurrence?: TeamScheduleOccurrence;
@@ -168,6 +189,7 @@ const renderEditor = ({
       microphoneIds: string[],
     ) => void;
   };
+  mobileServingContent?: ReactNode;
 } = {}) =>
   render(
     <GlobalInfoContext.Provider
@@ -189,6 +211,7 @@ const renderEditor = ({
           planNavigation={planNavigation}
           occurrenceSwitcher={occurrenceSwitcher}
           teamMicrophones={teamMicrophones}
+          mobileServingContent={mobileServingContent}
         />
       </ToastProvider>
     </GlobalInfoContext.Provider>,
@@ -391,6 +414,10 @@ describe("ServicePlanEditor", () => {
       await user.click(
         await screen.findByRole("tab", { name: /Mic Assignments/i }),
       );
+      expect(screen.getAllByRole("tab")).toHaveLength(3);
+      expect(
+        screen.queryByRole("tab", { name: /Who's serving/i }),
+      ).not.toBeInTheDocument();
       // The picker identifies both the scheduled person and role, so duplicate
       // role slots are unambiguous during live setup.
       const microphoneSelect = await screen.findByRole("combobox", {
@@ -403,7 +430,8 @@ describe("ServicePlanEditor", () => {
       expect(onChange).toHaveBeenCalledWith(scheduledRow, ["mic-lead"]);
     });
 
-    it("keeps the plan untabbed when no scheduled role can hold a microphone", async () => {
+    it("keeps Mics available with guidance when no scheduled role can hold one", async () => {
+      const user = userEvent.setup();
       withCatalog();
 
       // Same rows, but the team never opted into microphone assignments.
@@ -415,10 +443,84 @@ describe("ServicePlanEditor", () => {
       expect(
         await screen.findByRole("button", { name: /Start from scratch/i }),
       ).toBeInTheDocument();
+      await user.click(
+        await screen.findByRole("tab", { name: /Mic Assignments/i }),
+      );
       expect(
-        screen.queryByRole("tab", { name: /Mic Assignments/i }),
-      ).not.toBeInTheDocument();
+        screen.getByText(/No scheduled roles for teams that use microphones yet/i),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Order of service/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Setlist/i })).toBeInTheDocument();
     });
+  });
+
+  it("shows an ordered compact setlist and opens full song details", async () => {
+    const user = userEvent.setup();
+    mockAllSongDocs = [{
+      _id: "song-1",
+      name: "Living Hope",
+      type: "song",
+      selectedArrangement: 0,
+      arrangements: [],
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+      songLinks: [{
+        id: "link-1",
+        label: "Tutorial",
+        url: "https://example.com/tutorial",
+      }],
+      songAudio: {
+        id: "audio-1",
+        key: "churches/church-1/songs/song-1/audio-1.mp3",
+        fileName: "living-hope.mp3",
+        contentType: "audio/mpeg",
+        sizeBytes: 3_524_633,
+        uploadedAt: "2026-08-06T12:00:00.000Z",
+      },
+    }];
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "plan-1",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{
+            id: "element-1",
+            type: "song",
+            title: plainTextToRichText("Living Hope"),
+            songRefs: [{
+              kind: "library",
+              songId: "song-1",
+              songName: "Living Hope",
+            }],
+          }],
+        }],
+      } as ServicePlan,
+    });
+
+    renderEditor();
+    await user.click(await screen.findByRole("tab", { name: "Setlist" }));
+
+    const setlist = await screen.findByRole("region", { name: "Service setlist" });
+    expect(within(setlist).getByRole("link", { name: /Tutorial/i })).toHaveAttribute(
+      "href",
+      "https://example.com/tutorial",
+    );
+    expect(within(setlist).getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(within(setlist).queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
+
+    await user.click(
+      within(setlist).getByRole("button", {
+        name: /View song details for Living Hope/i,
+      }),
+    );
+    expect(await screen.findByText(/Song details.*Living Hope/i)).toBeInTheDocument();
   });
 
   it("offers to start from scratch for an occurrence with no plan yet", async () => {
@@ -1746,6 +1848,14 @@ describe("ServicePlanEditor", () => {
     expect(
       screen.getByRole("menuitem", { name: /Disable shared links/i }),
     ).toBeInTheDocument();
+    // The pair is symmetric now: a published plan says so instead of only
+    // offering the off switch.
+    expect(
+      screen.getByRole("menuitem", { name: /Shared links enabled/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /Enable shared links/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Serving links include notes/i),
     ).not.toBeInTheDocument();
@@ -1790,6 +1900,67 @@ describe("ServicePlanEditor", () => {
         planKey,
         { mode: "anchored", currentElementId: "welcome" },
       );
+    });
+  });
+
+  it("offers an explicit publish for an unpublished plan", async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const todayDate = calendarDateInTimeZone(new Date(), timeZone);
+    const todayStartsAt = `${todayDate}T14:00:00.000Z`;
+    const todayOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: `service-1@${todayStartsAt}`,
+      serviceId: "service-1",
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+    };
+    const planKey = `service-1@${todayStartsAt.slice(0, 10)}`;
+    const draftPlan: ServicePlan = {
+      planId: `church-1::${planKey}`,
+      churchId: "church-1",
+      planKey,
+      serviceId: "service-1",
+      date: todayDate,
+      name: "Easter Sunday",
+      startsAt: todayStartsAt,
+      published: false,
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: draftPlan,
+    });
+    mockPublishServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: { ...draftPlan, published: true },
+    });
+
+    const user = userEvent.setup();
+    renderEditor({ occurrence: todayOccurrence });
+
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+
+    // Previously the only way to publish was to copy a link you did not want.
+    // Worded as enable/disable because many plans can be published at once —
+    // the current-service link picks whichever is running or next.
+    const publishItem = await screen.findByRole("menuitem", {
+      name: /Enable shared links/i,
+    });
+    expect(
+      screen.queryByRole("menuitem", { name: /Disable shared links/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(publishItem);
+
+    await waitFor(() => {
+      expect(mockPublishServicePlan).toHaveBeenCalledWith("church-1", planKey);
     });
   });
 
@@ -2034,17 +2205,17 @@ describe("ServicePlanEditor", () => {
     renderEditor({ canEdit: false });
 
     await user.click(
-      await screen.findByRole("button", { name: /View lyrics for Living Hope/i }),
+      await screen.findByRole("button", { name: /View song details for Living Hope/i }),
     );
 
     expect(
-      await screen.findByText("Sections — Living Hope"),
+      await screen.findByText("Song details — Living Hope"),
     ).toBeInTheDocument();
     expect(screen.getByText("Verse 1")).toBeInTheDocument();
     expect(screen.getByText("Who am I that the highest King")).toBeInTheDocument();
   });
 
-  it("does not open plain lyrics for a pending plan song without edit access", async () => {
+  it("opens stored reference lyrics for a pending song without edit access", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -2075,13 +2246,19 @@ describe("ServicePlanEditor", () => {
       },
     });
 
+    const user = userEvent.setup();
     renderEditor({ canEdit: false });
 
-    expect(await screen.findByText(/Not in library/i)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /View lyrics for Appeal Song/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("tab", { name: "Setlist" }));
+    const setlist = await screen.findByRole("region", { name: "Service setlist" });
+    expect(within(setlist).getByText(/Not in library/i)).toBeInTheDocument();
+    await user.click(
+      within(setlist).getByRole("button", {
+        name: /View reference lyrics for Appeal Song/i,
+      }),
+    );
+    expect(await screen.findByText("Lyrics — Appeal Song")).toBeInTheDocument();
+    expect(screen.getByText("Come as you are")).toBeInTheDocument();
   });
 
   it("opens create song for a pending plan song when the operator can create library songs", async () => {
@@ -2131,6 +2308,89 @@ describe("ServicePlanEditor", () => {
     expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
   });
 
+  it("creates a pending song from Setlist and links every exact occurrence", async () => {
+    const pendingSong = {
+      kind: "pending" as const,
+      title: "Appeal Song",
+      lyricsText: "Come as you are",
+    };
+    mockAllSongDocs = [{
+      _id: "created-song",
+      name: "Appeal Song",
+      type: "song",
+      selectedArrangement: 0,
+      arrangements: [],
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    }];
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [{
+          id: "section-1",
+          name: "Response",
+          elements: [
+            {
+              id: "el-1",
+              type: "song",
+              title: plainTextToRichText("Appeal Song"),
+              songRef: pendingSong,
+            },
+            {
+              id: "el-2",
+              type: "free",
+              title: plainTextToRichText("Prayer"),
+            },
+            {
+              id: "el-3",
+              type: "song",
+              title: plainTextToRichText("Appeal Song continued"),
+              songRef: pendingSong,
+            },
+          ],
+        }],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("tab", { name: "Setlist" }));
+    const setlist = await screen.findByRole("region", { name: "Service setlist" });
+    expect(
+      within(setlist).getAllByRole("button", {
+        name: /Create Appeal Song in the library/i,
+      }),
+    ).toHaveLength(2);
+
+    await user.click(
+      within(setlist).getAllByRole("button", {
+        name: /Create Appeal Song in the library/i,
+      })[0],
+    );
+    expect(await screen.findByTestId("song-picker")).toHaveAttribute(
+      "data-start-in-create",
+      "true",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Complete song creation" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        within(setlist).getAllByRole("button", {
+          name: /View song details for Appeal Song/i,
+        }),
+      ).toHaveLength(2);
+    });
+    expect(within(setlist).queryByText(/Not in library/i)).not.toBeInTheDocument();
+  });
+
   it("explains when a library song badge cannot be resolved", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
@@ -2166,7 +2426,7 @@ describe("ServicePlanEditor", () => {
     renderEditor({ canEdit: false });
 
     await user.click(
-      await screen.findByRole("button", { name: /View lyrics for Missing Song/i }),
+      await screen.findByRole("button", { name: /View song details for Missing Song/i }),
     );
 
     expect(await screen.findByText("Lyrics — Missing Song")).toBeInTheDocument();

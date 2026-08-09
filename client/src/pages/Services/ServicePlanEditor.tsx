@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
+  Check,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -12,6 +13,7 @@ import {
   Radio,
   Redo2,
   RefreshCw,
+  Share2,
   Undo2,
 } from "lucide-react";
 import {
@@ -20,6 +22,7 @@ import {
   ButtonGroupItem,
 } from "../../components/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
+import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import TimePicker from "../../components/TimePicker/TimePicker";
 import ServicePlanRolePickerContent from "../../components/ServicePlanRolePickerContent";
@@ -112,6 +115,8 @@ import {
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
 import ServicePlanSectionList from "./ServicePlanSectionList";
+import ServicePlanSetlist from "./ServicePlanSetlist";
+import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
 import ViewPlainLyricsDrawer from "../../components/SongSections/ViewPlainLyricsDrawer";
 import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
@@ -156,6 +161,7 @@ import {
   addElement,
   addSection,
   createEmptyServicePlanSections,
+  replaceMatchingPendingSongReferences,
   updateElement,
 } from "./servicePlanDraftUtils";
 import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
@@ -165,6 +171,7 @@ import {
   collectServicePlanTeamNoteOptions,
 } from "./servicePlanNoteOptions";
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
 
@@ -181,6 +188,8 @@ type ServicePlanImportPreview = {
   sourceImport: ServicePlanSourceImport;
   summary: ServicePlanImportSummary;
 };
+
+type ServicePlanEditorTab = "plan" | "setlist" | "microphones" | "serving";
 
 const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
   new Intl.DateTimeFormat("en-US", {
@@ -279,8 +288,10 @@ type ServicePlanEditorProps = {
     onPrevious?: () => void;
     onNext?: () => void;
   };
-  /** Extra header controls (e.g. mobile Who's serving) rendered next to Actions. */
-  headerActions?: ReactNode;
+  /** Who's serving content shown as a fourth workspace tab below 1024px. */
+  mobileServingContent?: ReactNode;
+  /** Initial workspace tab, used when returning from the mobile serving roster. */
+  initialTab?: ServicePlanEditorTab;
   /**
    * Lets a surface that picked the occurrence itself — the Controller
    * workspace, which has no Plans list to go back to — offer that switch from
@@ -315,7 +326,8 @@ const ServicePlanEditor = ({
   onBack,
   backLabel = "Back to Plans",
   planNavigation,
-  headerActions,
+  mobileServingContent,
+  initialTab = "plan",
   occurrenceSwitcher,
 }: ServicePlanEditorProps) => {
   const { churchId, access } = useContext(GlobalInfoContext) || {};
@@ -331,6 +343,9 @@ const ServicePlanEditor = ({
   const [viewSongRef, setViewSongRef] = useState<ServicePlanSongReference | null>(
     null,
   );
+  const [pendingSongCreateRef, setPendingSongCreateRef] = useState<
+    Extract<ServicePlanSongReference, { kind: "pending" }> | null
+  >(null);
 
   // The song library (allDocs.allSongDocs) is normally populated by the
   // Controller page's own lifecycle hook — a session that opens straight to
@@ -381,7 +396,9 @@ const ServicePlanEditor = ({
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(false);
   // Microphones live beside the running order rather than inside it.
-  const [planTab, setPlanTab] = useState<"plan" | "microphones">("plan");
+  const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
+  const planTabPlanKeyRef = useRef(planKey);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
   const [planActionsView, setPlanActionsView] = useState<
@@ -467,6 +484,7 @@ const ServicePlanEditor = ({
     setPlanName("");
     setSourceImport(undefined);
     setTemplateModal(null);
+    setPendingSongCreateRef(null);
     setShowImport(false);
     setImportUrl("");
     setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
@@ -477,8 +495,12 @@ const ServicePlanEditor = ({
     setDraftChangeVersion(0);
     setIsEditing(false);
     // A different date is a different running order — open on it, not on
-    // whichever side tab the previous plan was left on.
-    setPlanTab("plan");
+    // whichever side tab the previous plan was left on. On first mount, keep
+    // the caller's requested tab (used when returning to the mobile roster).
+    if (planTabPlanKeyRef.current !== planKey) {
+      planTabPlanKeyRef.current = planKey;
+      setPlanTab("plan");
+    }
     resetDraftHistory();
     if (!planKey || !churchId) return;
     let cancelled = false;
@@ -958,6 +980,30 @@ const ServicePlanEditor = ({
     }
   };
 
+  /**
+   * Makes this plan reachable through the church's shared links.
+   *
+   * Distinct from copying a per-plan URL: the current-service link is shared
+   * once and resolves to whichever published plan is running or next, so this is
+   * a recurring action with no URL to copy. Publishing several plans ahead is
+   * expected — eligibility is per plan, and the link picks by time.
+   */
+  const handlePublish = async () => {
+    if (!churchId || !planKey || !plan) return;
+    setPublishing(true);
+    try {
+      if (!(await autosave.flush())) return;
+      const result = await publishServicePlan(churchId, planKey);
+      setPlan(result.servicePlan);
+      setPublicUrls(urlsFromPublishResult(result));
+      showToast("Shared links enabled.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not publish this service plan.");
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const handleUnpublish = async () => {
     if (!churchId || !planKey || !plan) return;
     setPublishing(true);
@@ -1063,17 +1109,16 @@ const ServicePlanEditor = ({
       teamMicrophones ? getTeamMicrophoneRows(teamMicrophones.rows, teams) : [],
     [teamMicrophones, teams],
   );
-  const hasMicrophoneTeams = useMemo(
-    () => teams.some((team) => team.usesMicrophoneAssignments),
-    [teams],
-  );
-  // Show the tab when there is something to allocate, or when a mic-enabled
-  // team exists so empty-state guidance (no catalog / no scheduled roles) can
-  // still reach the operator.
-  const showMicrophoneTab = Boolean(teamMicrophones) && (
-    microphoneRows.length > 0 || hasMicrophoneTeams
-  );
-  const activeTab = showMicrophoneTab ? planTab : "plan";
+  // Keep the workspace stable at three desktop tabs (four on mobile). The mic
+  // panel already explains an empty catalog or a service with no eligible
+  // scheduled roles, which is more useful than making the tab disappear.
+  const showMicrophoneTab = Boolean(teamMicrophones);
+  const showServingTab = Boolean(mobileServingContent) && !isDesktop;
+  const activeTab: ServicePlanEditorTab =
+    (planTab === "microphones" && !showMicrophoneTab) ||
+    (planTab === "serving" && !showServingTab)
+      ? "plan"
+      : planTab;
   const roleNoteOptions = useMemo(
     () => collectServicePlanRoleNoteOptions(sections, positions, teams, microphoneAudiences),
     [microphoneAudiences, positions, sections, teams],
@@ -1108,9 +1153,16 @@ const ServicePlanEditor = ({
   // Pending ("Not in library") songs open Create song for operators who can
   // create library songs (full or music access) instead of a lyrics viewer.
   const viewPlainLyrics = useMemo(() => {
-    if (!viewSongRef || viewSongRef.kind !== "library" || viewLibrarySong) {
-      return null;
+    if (!viewSongRef) return null;
+    if (viewSongRef.kind === "pending") {
+      return {
+        title: viewSongRef.title,
+        lyricsText: viewSongRef.lyricsText,
+        emptyMessage:
+          "This song is not in the library yet. Add it from Songs, then link it to this service.",
+      };
     }
+    if (viewLibrarySong) return null;
     return {
       title: viewSongRef.songName,
       lyricsText: "",
@@ -1121,6 +1173,34 @@ const ServicePlanEditor = ({
 
   const canCreateLibrarySong = Boolean(
     canEdit && (access === "full" || access === "music"),
+  );
+
+  const openPendingSongCreator = useCallback(
+    (songRef: Extract<ServicePlanSongReference, { kind: "pending" }>) => {
+      if (!canCreateLibrarySong) {
+        setViewSongRef(songRef);
+        return;
+      }
+      setPendingSongCreateRef(songRef);
+    },
+    [canCreateLibrarySong],
+  );
+
+  const handlePendingSongCreated = useCallback(
+    (songRef: ServicePlanSongReference) => {
+      if (!pendingSongCreateRef || songRef.kind !== "library" || !sections) {
+        return;
+      }
+      updateDraftSections(
+        replaceMatchingPendingSongReferences(
+          sections,
+          pendingSongCreateRef,
+          songRef,
+        ),
+      );
+      setPendingSongCreateRef(null);
+    },
+    [pendingSongCreateRef, sections, updateDraftSections],
   );
 
   useEffect(() => {
@@ -1485,9 +1565,24 @@ const ServicePlanEditor = ({
               <DropdownMenuSeparator className="my-1 bg-gray-600" />
               {shareViewActions("detailed", "Detailed view")}
               {shareViewActions("simple", "Simple view")}
+              <DropdownMenuSeparator className="my-1 bg-gray-600" />
+              {/* Publishing is its own action, not a by-product of copying a
+                  link: the church's current-service link is shared once and
+                  resolves to whichever published plan is running or next, so
+                  making a plan reachable meant copying a URL you did not want.
+                  Paired with Disable so the control is symmetric — sharing
+                  could previously be turned off but never explicitly on.
+
+                  Worded as enable/disable rather than "live": any number of
+                  plans can be published at once, and the current-service link
+                  picks by time. A plan published for next month is eligible,
+                  not live. */}
               {publicSharingEnabled ? (
                 <>
-                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                  <DropdownMenuItem disabled>
+                    <Check aria-hidden />
+                    Shared links enabled
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     variant="destructive"
                     disabled={!canEdit || publishing}
@@ -1498,7 +1593,17 @@ const ServicePlanEditor = ({
                     Disable shared links
                   </DropdownMenuItem>
                 </>
-              ) : null}
+              ) : (
+                <DropdownMenuItem
+                  disabled={shareActionsDisabled}
+                  onSelect={() => {
+                    void handlePublish();
+                  }}
+                >
+                  <Share2 aria-hidden />
+                  Enable shared links
+                </DropdownMenuItem>
+              )}
               {occurrenceSwitcher && canSwitchOccurrence ? (
                 <>
                   <DropdownMenuSeparator className="my-1 bg-gray-600" />
@@ -1623,12 +1728,13 @@ const ServicePlanEditor = ({
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
                 {isEditing ? (
                   <>
-                    <Input
+                    <DebouncedInput
+                      key={`plan-name:${planKey}`}
                       label="Plan name"
                       className="min-w-0 w-full sm:max-w-md sm:flex-1"
                       value={planName}
                       disabled={!canEdit}
-                      onChange={(value) => updateDraftName(String(value))}
+                      onChange={updateDraftName}
                     />
                     <TimePicker
                       label="Service start time"
@@ -1677,6 +1783,7 @@ const ServicePlanEditor = ({
             roleNotesFilter={roleNotesFilter}
             onViewSongLyrics={setViewSongRef}
             canCreateLibrarySong={canCreateLibrarySong}
+            onCreatePendingSong={openPendingSongCreator}
             resolvedSongRefs={resolvedSongRefs}
           />
 
@@ -1820,9 +1927,8 @@ const ServicePlanEditor = ({
               </h2>
               <p className="mt-0.5 text-xs text-gray-400">{occurrenceTiming}</p>
             </div>
-            {plan || hasSections || headerActions || canSwitchOccurrence ? (
+            {plan || hasSections || canSwitchOccurrence ? (
               <div className="flex shrink-0 items-center gap-1.5">
-                {headerActions}
                 {canEdit && isEditing && hasSections ? (
                   <div
                     className="flex shrink-0 items-center"
@@ -1871,36 +1977,73 @@ const ServicePlanEditor = ({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
-        {showMicrophoneTab ? (
-          <Tabs
-            value={activeTab}
-            onValueChange={(next) => setPlanTab(next as "plan" | "microphones")}
-            className="min-h-0 flex-1 gap-2"
+        <Tabs
+          value={activeTab}
+          onValueChange={(next) => setPlanTab(next as ServicePlanEditorTab)}
+          className="min-h-0 flex-1 gap-2"
+        >
+          <TabsList
+            variant="line"
+            className={cn(lineTabsListShellClassName, "shrink-0")}
+            aria-label="Plan view"
           >
-            <TabsList
-              variant="line"
-              className={cn(lineTabsListShellClassName, "shrink-0")}
-              aria-label="Plan view"
+            <TabsTrigger
+              value="plan"
+              className={lineTabsTriggerSmClassName}
+              aria-label="Order of service"
             >
-              <TabsTrigger value="plan" className={lineTabsTriggerSmClassName}>
-                Order of service
-              </TabsTrigger>
+              Order
+            </TabsTrigger>
+            <TabsTrigger
+              value="setlist"
+              className={lineTabsTriggerSmClassName}
+              aria-label="Setlist"
+            >
+              Setlist
+            </TabsTrigger>
+            {showMicrophoneTab ? (
               <TabsTrigger
                 value="microphones"
                 className={lineTabsTriggerSmClassName}
+                aria-label="Mic Assignments"
               >
-                Mic Assignments
+                Mics
               </TabsTrigger>
-            </TabsList>
-            {/* The running order stays mounted so switching tabs never
-                remounts the list or loses where the operator was. */}
-            <TabsContent
-              value="plan"
-              forceMount
-              className="flex min-h-0 flex-1 flex-col gap-2 data-[state=inactive]:hidden sm:gap-3"
-            >
-              {planBody}
-            </TabsContent>
+            ) : null}
+            {showServingTab ? (
+              <TabsTrigger
+                value="serving"
+                className={lineTabsTriggerSmClassName}
+                aria-label="Who's serving"
+              >
+                Team
+              </TabsTrigger>
+            ) : null}
+          </TabsList>
+          {/* The running order stays mounted so switching tabs never
+              remounts the list or loses where the operator was. */}
+          <TabsContent
+            value="plan"
+            forceMount
+            className="flex min-h-0 flex-1 flex-col gap-2 data-[state=inactive]:hidden sm:gap-3"
+          >
+            {planBody}
+          </TabsContent>
+          <TabsContent
+            value="setlist"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
+            <ServicePlanSetlist
+              sections={sections}
+              songs={allSongDocs}
+              resolvedSongRefs={resolvedSongRefs}
+              onViewSong={setViewSongRef}
+              onCreatePendingSong={
+                canCreateLibrarySong ? openPendingSongCreator : undefined
+              }
+            />
+          </TabsContent>
+          {showMicrophoneTab ? (
             <TabsContent
               value="microphones"
               className="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
@@ -1916,10 +2059,16 @@ const ServicePlanEditor = ({
                 }
               />
             </TabsContent>
-          </Tabs>
-        ) : (
-          planBody
-        )}
+          ) : null}
+          {showServingTab ? (
+            <TabsContent
+              value="serving"
+              className="scrollbar-variable min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-700 bg-black/20 p-3"
+            >
+              {mobileServingContent}
+            </TabsContent>
+          ) : null}
+        </Tabs>
         {planToolbar}
       </div>
 
@@ -2041,6 +2190,17 @@ const ServicePlanEditor = ({
             });
             setIsEditing(true);
           }}
+        />
+      ) : null}
+
+      {pendingSongCreateRef ? (
+        <ServicePlanLibraryPicker
+          isOpen
+          initialQuery={pendingSongCreateRef.title}
+          initialLyrics={pendingSongCreateRef.lyricsText}
+          startInCreate
+          onClose={() => setPendingSongCreateRef(null)}
+          onSelectSong={handlePendingSongCreated}
         />
       ) : null}
 

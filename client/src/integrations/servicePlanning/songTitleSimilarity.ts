@@ -37,6 +37,25 @@ const TITLE_WORD_VARIANTS: Record<string, string> = {
  * ("10,000 Reasons"), so only the short ones are treated as catalog numbers. */
 const HYMNAL_NUMBER = /^\d{1,3}$/;
 
+/**
+ * Folds a trailing plural away, so "Proverb" and "Proverbs" compare equal.
+ *
+ * Left to edit distance this comes out as a coin flip on word length:
+ * "Revelation"/"Revelations" clears the typo ratio at 0.909 while
+ * "Proverb"/"Proverbs" fails it at 0.875, though both differ by one systematic
+ * letter. It belongs here with the other known spelling variations instead.
+ *
+ * Short words are left alone ("his", "is", "was"), as are the endings where a
+ * trailing "s" isn't a plural at all — "Jesus", "bless", "cross".
+ */
+const foldPlural = (word: string): string =>
+  word.length >= 4 &&
+  word.endsWith("s") &&
+  !word.endsWith("ss") &&
+  !word.endsWith("us")
+    ? word.slice(0, -1)
+    : word;
+
 /** Below this, two titles are different songs. */
 export const SONG_TITLE_MATCH_THRESHOLD = 0.85;
 
@@ -65,12 +84,18 @@ export const normalizeSongTitleForMatch = (title: string): string => {
     .replace(punctuationRegex, " ")
     .split(/\s+/)
     .filter(Boolean)
-    .map((word) => TITLE_WORD_VARIANTS[word] ?? word);
+    .map((word) => TITLE_WORD_VARIANTS[word] ?? foldPlural(word));
 
-  // A hymnal number at either end is where the song sits in a book, not part of
-  // its name. Never strip the only word, or a title becomes empty.
-  while (words.length > 1 && HYMNAL_NUMBER.test(words[0])) words.shift();
-  while (words.length > 1 && HYMNAL_NUMBER.test(words[words.length - 1])) words.pop();
+  /**
+   * A hymnal number at either end is where the song sits in a book, not part of
+   * its name — but only when a name is left standing without it. "He Hideth My
+   * Soul 520" is a title plus a catalog number; "Proverbs 3" and "Psalm 23" are
+   * songs named for a passage, where the number is the half that says which
+   * one. Stripping those collapsed every chapter of a book onto whichever the
+   * library happened to hold first.
+   */
+  while (words.length > 2 && HYMNAL_NUMBER.test(words[0])) words.shift();
+  while (words.length > 2 && HYMNAL_NUMBER.test(words[words.length - 1])) words.pop();
 
   return words.join(" ");
 };

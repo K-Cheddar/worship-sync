@@ -1,5 +1,8 @@
 import type PouchDB from "pouchdb-browser";
-import type { DBItemListDetails } from "../types";
+import type {
+  DBItemListDetails,
+  ServicePlanOutlineBinding,
+} from "../types";
 import type { ServiceOutline } from "../types/importedPlan";
 
 export const persistItemListServiceOutline = async (
@@ -13,6 +16,21 @@ export const persistItemListServiceOutline = async (
   await db.put({
     ...existingList,
     serviceOutline,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+export const persistItemListServicePlanBinding = async (
+  db: PouchDB.Database | undefined,
+  itemListId: string | undefined,
+  binding: ServicePlanOutlineBinding,
+): Promise<void> => {
+  if (!db || !itemListId) return;
+
+  const existingList: DBItemListDetails = await db.get(itemListId);
+  await db.put({
+    ...existingList,
+    servicePlanBinding: binding,
     updatedAt: new Date().toISOString(),
   });
 };

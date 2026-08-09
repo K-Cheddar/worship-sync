@@ -3,6 +3,7 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { render, waitFor, act } from "@testing-library/react";
 import servicePlanningImportReducer, {
+  setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
 } from "../../store/servicePlanningImportSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -23,12 +24,14 @@ const mockOtherOccurrence = {
 
 const mockGetServicePlan = jest.fn();
 const mockGetTeamsBootstrap = jest.fn();
+const mockListServicePlans = jest.fn();
 const mockLoadPlanPreview = jest.fn();
 let mockLiveHandler: ((event: unknown) => void) | null = null;
 
 jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
   getTeamsBootstrap: (...args: unknown[]) => mockGetTeamsBootstrap(...args),
+  listServicePlans: (...args: unknown[]) => mockListServicePlans(...args),
 }));
 
 jest.mock("../../hooks/useServicePlanningImport", () => ({
@@ -97,7 +100,18 @@ const outlineFixture = {
 
 // Stable reference: a fresh object per dispatch would churn every derived memo
 // downstream, which is not how the real serviceTimes slice behaves.
-const undoableState = { present: { serviceTimes: { list: [] } } };
+const undoableState = {
+  present: {
+    serviceTimes: { list: [] },
+    itemLists: {
+      currentLists: [{ _id: "outline-1", name: "Sunday AM" }],
+      selectedList: { _id: "outline-1", name: "Sunday AM" },
+      activeList: { _id: "outline-1", name: "Sunday AM" },
+      isInitialized: true,
+    },
+    itemList: { isLoading: false, list: [] },
+  },
+};
 
 const dispatchedTypes: string[] = [];
 
@@ -156,6 +170,22 @@ describe("useCurrentServicePlanSource", () => {
     latestResult = null;
     mockLiveHandler = null;
     mockGetServicePlan.mockResolvedValue({ servicePlan: planFixture });
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
     mockGetTeamsBootstrap.mockResolvedValue({
       schedules: [],
       positions: [],
@@ -181,6 +211,35 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.preview).toEqual(
       outlineFixture.preview,
     );
+  });
+
+  it("prefers the plan linked to the selected outline", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      servicePlan: {
+        ...planFixture,
+        planKey: "service-2@2026-08-01",
+        serviceId: "service-2",
+        name: "Evening Service",
+      },
+    });
+    const store = makeStore();
+    store.dispatch(
+      setServicePlanningOutlinePlanBinding({
+        planKey: "service-2@2026-08-01",
+        planName: "Evening Service",
+        linkedAt: "2026-07-30T12:00:00.000Z",
+      }),
+    );
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() =>
+      expect(mockGetServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-2@2026-08-01",
+      ),
+    );
+    expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
   });
 
   it("sources assignments from the Teams schedule rather than the plan", async () => {
@@ -237,8 +296,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps an existing URL-sourced preview when no plan is saved yet", async () => {
-    mockGetServicePlan.mockResolvedValue({ servicePlan: null });
+  it("keeps a pasted URL preview when the target outline binding changes", async () => {
     const store = makeStore();
     const urlOutline = {
       ...outlineFixture,
@@ -249,12 +307,60 @@ describe("useCurrentServicePlanSource", () => {
 
     renderHookWith(store, enabledGlobalInfo);
 
-    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalled());
+    await waitFor(() => expect(mockListServicePlans).toHaveBeenCalled());
+    await act(async () => {
+      store.dispatch(
+        setServicePlanningOutlinePlanBinding({
+          planKey: "service-2@2026-08-01",
+          planName: "Evening Service",
+          linkedAt: "2026-07-30T12:00:00.000Z",
+        }),
+      );
+    });
+
+    expect(mockGetServicePlan).not.toHaveBeenCalled();
     expect(mockLoadPlanPreview).not.toHaveBeenCalled();
     expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
       urlOutline,
     );
     expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+  });
+
+  it("keeps a pinned plan selected when a new unbound outline loads", async () => {
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          servicePlan:
+            planKey === "service-2@2026-08-01"
+              ? {
+                  ...planFixture,
+                  planKey,
+                  serviceId: "service-2",
+                  name: "Evening Service",
+                }
+              : planFixture,
+        }),
+    );
+    const store = makeStore();
+    store.dispatch(
+      setServicePlanningOutlinePlanBinding({
+        planKey: "service-2@2026-08-01",
+        planName: "Evening Service",
+        linkedAt: "2026-07-30T12:00:00.000Z",
+      }),
+    );
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01"),
+    );
+
+    act(() => {
+      latestResult?.pinSelectedPlan();
+      store.dispatch(setServicePlanningOutlinePlanBinding(null));
+    });
+
+    expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
   });
 
   it("does nothing without Teams access", async () => {
@@ -318,7 +424,7 @@ describe("useCurrentServicePlanSource", () => {
     // The next service has no plan saved yet.
     mockGetServicePlan.mockResolvedValue({ servicePlan: null });
     await act(async () => {
-      latestResult?.selectOccurrence("occurrence-2");
+      latestResult?.selectPlan("service-2@2026-08-01");
     });
     await waitFor(() =>
       expect(mockGetServicePlan).toHaveBeenLastCalledWith(
@@ -335,13 +441,173 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.preview).toBeNull();
   });
 
+  it("clears a selected plan and preview when Refresh finds it was deleted", async () => {
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    mockGetServicePlan.mockResolvedValueOnce({ servicePlan: null });
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(latestResult?.savedPlans).toEqual([]);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockListServicePlans).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not silently switch services when a list refresh drops the automatic selection", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await latestResult?.refreshPlans();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a pinned selection when a plan-list refresh no longer contains it", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          servicePlan:
+            planKey === secondPlan.planKey ? secondPlan : planFixture,
+        }),
+    );
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    act(() => latestResult?.selectPlan(secondPlan.planKey));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        secondPlan.planKey,
+      ),
+    );
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await latestResult?.refreshPlans();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+  });
+
+  it("ignores a slow refresh after the operator selects another plan", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+
+    let resolveRefresh!: (value: { servicePlan: typeof planFixture }) => void;
+    const slowRefresh = new Promise<{ servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        planKey === secondPlan.planKey
+          ? Promise.resolve({ servicePlan: secondPlan })
+          : slowRefresh,
+    );
+    let refreshPromise: Promise<void> | undefined;
+    act(() => {
+      refreshPromise = latestResult?.refresh();
+    });
+    act(() => latestResult?.selectPlan(secondPlan.planKey));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        secondPlan.planKey,
+      ),
+    );
+
+    await act(async () => {
+      resolveRefresh({
+        servicePlan: { ...planFixture, name: "Stale refreshed plan" },
+      });
+      await refreshPromise;
+    });
+
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      secondPlan.planKey,
+    );
+    expect(latestResult?.selectedPlanKey).toBe(secondPlan.planKey);
+  });
+
   it("switches to another occurrence when the operator overrides it", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(1));
 
     await act(async () => {
-      latestResult?.selectOccurrence("occurrence-2");
+      latestResult?.selectPlan("service-2@2026-08-01");
     });
 
     await waitFor(() =>
