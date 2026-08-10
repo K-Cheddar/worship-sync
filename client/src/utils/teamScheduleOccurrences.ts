@@ -26,6 +26,18 @@ const toOccurrence = (
     serviceId: service.serviceId,
     name: service.name,
     startsAt: iso,
+    ...(service.positionRequirements?.length
+      ? {
+          // Keep a schedule-time snapshot so every server-side slot check uses
+          // the same requirements the grid was generated from. Copy each row
+          // so later service edits cannot mutate an in-memory occurrence.
+          positionRequirements: service.positionRequirements.map(
+            (requirement) => ({
+              ...requirement,
+            }),
+          ),
+        }
+      : {}),
   };
 };
 

@@ -1,6 +1,7 @@
 import { normalizeRichTextDocument } from "./serviceFlowService.js";
 
-const richTextToPlainText = (document) =>
+/** Shared with the member schedule so both views read plan titles the same way. */
+export const richTextToPlainText = (document) =>
   (document?.blocks || [])
     .map((block) =>
       (block?.spans || []).map((span) => span?.text || "").join(""),

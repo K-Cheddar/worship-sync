@@ -1,4 +1,7 @@
-import { persistItemListServiceOutline } from "./itemListImports";
+import {
+  persistItemListServiceOutline,
+  persistItemListServicePlanBinding,
+} from "./itemListImports";
 
 describe("persistItemListServiceOutline", () => {
   it("writes the current import onto the selected item list doc", async () => {
@@ -26,6 +29,7 @@ describe("persistItemListServiceOutline", () => {
         overlayPlan: [],
         outlineCandidates: [],
         lineItems: [],
+        teamAssignments: [],
       },
     };
 
@@ -37,6 +41,37 @@ describe("persistItemListServiceOutline", () => {
         _id: "outline-1",
         _rev: "1-abc",
         serviceOutline,
+      }),
+    );
+  });
+});
+
+describe("persistItemListServicePlanBinding", () => {
+  it("links the selected outline to the plan without replacing its contents", async () => {
+    const existing = {
+      _id: "outline-1",
+      _rev: "1-abc",
+      name: "Sunday AM",
+      items: [{ _id: "song-1", listId: "row-1", name: "Song", type: "song" }],
+      overlays: ["overlay-1"],
+    };
+    const put = jest.fn();
+    const db = {
+      get: jest.fn().mockResolvedValue(existing),
+      put,
+    } as any;
+    const binding = {
+      planKey: "service-1@2026-08-09",
+      planName: "Sunday Worship",
+      linkedAt: "2026-08-08T15:30:00.000Z",
+    };
+
+    await persistItemListServicePlanBinding(db, "outline-1", binding);
+
+    expect(put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...existing,
+        servicePlanBinding: binding,
       }),
     );
   });

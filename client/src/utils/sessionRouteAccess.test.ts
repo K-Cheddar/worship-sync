@@ -244,3 +244,34 @@ describe("sessionRouteAccess", () => {
     expect(result).toBe("/home");
   });
 });
+
+describe("schedule-only member routing", () => {
+  const member = { loginState: "success", sessionKind: "human", access: "member" } as const;
+
+  it("allows only the member surfaces", () => {
+    expect(isRouteAllowedForSession("/my-schedule", member)).toBe(true);
+    expect(isRouteAllowedForSession("/home", member)).toBe(true);
+  });
+
+  it("refuses operator surfaces a hidden link would otherwise leave reachable", () => {
+    // Hiding the cards on Home is presentation only; typing the URL must not
+    // open a read-only controller.
+    expect(isRouteAllowedForSession("/controller", member)).toBe(false);
+    expect(isRouteAllowedForSession("/overlay-controller", member)).toBe(false);
+    expect(isRouteAllowedForSession("/boards/controller", member)).toBe(false);
+    expect(isRouteAllowedForSession("/credits-editor", member)).toBe(false);
+    expect(isRouteAllowedForSession("/account", member)).toBe(false);
+    expect(isRouteAllowedForSession("/teams-and-services", member)).toBe(false);
+  });
+
+  it("is deny-by-default, so a route added later stays closed", () => {
+    expect(isRouteAllowedForSession("/some-future-operator-page", member)).toBe(
+      false,
+    );
+  });
+
+  it("leaves view access unchanged", () => {
+    const viewer = { loginState: "success", sessionKind: "human", access: "view" } as const;
+    expect(isRouteAllowedForSession("/controller", viewer)).toBe(true);
+  });
+});

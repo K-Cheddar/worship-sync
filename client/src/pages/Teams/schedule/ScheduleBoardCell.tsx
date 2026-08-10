@@ -1,5 +1,5 @@
 import { memo, useCallback, useContext, useMemo } from "react";
-import { User } from "lucide-react";
+import { TriangleAlert, User } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
 import Button from "@/components/Button/Button";
 import type {
@@ -7,6 +7,8 @@ import type {
   TeamScheduleCellAssignment,
 } from "../../../api/authTypes";
 import {
+  formatBlockoutDateRangeLabel,
+  findBlockoutRangeForDate,
   getCellPrimaryMemberId,
   getCellShadowAssignments,
   scheduleMemberName,
@@ -18,6 +20,8 @@ import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 type ScheduleBoardCellProps = {
   occurrenceId: string;
   occurrenceName: string;
+  /** YYYY-MM-DD, for checking the assignee's blockout dates. */
+  occurrenceDate: string;
   columnKey: string;
   positionId: string;
   positionLabel: string;
@@ -42,6 +46,7 @@ type ScheduleBoardCellProps = {
 const ScheduleBoardCell = memo(({
   occurrenceId,
   occurrenceName,
+  occurrenceDate,
   columnKey,
   positionId,
   positionLabel,
@@ -71,6 +76,19 @@ const ScheduleBoardCell = memo(({
     ? scheduleMemberName(assignedMember, duplicateFirstNames)
     : "";
 
+  // The person in this slot has since blocked the date out. Flagged rather than
+  // cleared: only the owner can decide whether to reassign.
+  const blockoutConflict = useMemo(
+    () =>
+      assignedMember
+        ? findBlockoutRangeForDate(assignedMember.blockoutDates, occurrenceDate)
+        : null,
+    [assignedMember, occurrenceDate],
+  );
+  const blockoutConflictLabel = blockoutConflict
+    ? `Blocked out ${formatBlockoutDateRangeLabel(blockoutConflict)}`
+    : "";
+
   const handleActivate = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       handlersRef?.current?.activateSlot(
@@ -96,7 +114,10 @@ const ScheduleBoardCell = memo(({
         data-cell-key={`${occurrenceId}|${columnKey}`}
         aria-haspopup="listbox"
         aria-expanded={isActiveSlot}
-        aria-label={`${occurrenceName} ${positionLabel}, ${assigneeLabel || "empty"}`}
+        aria-label={cn(
+          `${occurrenceName} ${positionLabel}, ${assigneeLabel || "empty"}`,
+          blockoutConflictLabel && `, ${blockoutConflictLabel}`,
+        )}
         disabled={!canEdit}
         className={cn(
           "flex w-full min-w-0 items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors duration-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
@@ -129,6 +150,12 @@ const ScheduleBoardCell = memo(({
           >
             {assigneeLabel || "Unassigned"}
           </span>
+          {blockoutConflictLabel ? (
+            <span className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-300">
+              <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="truncate">{blockoutConflictLabel}</span>
+            </span>
+          ) : null}
         </span>
       </button>
       {shadowAssignments.length > 0 ? (

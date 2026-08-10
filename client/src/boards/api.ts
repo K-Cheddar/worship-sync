@@ -353,3 +353,88 @@ export const disconnectRestream = (churchId: string) =>
       body: {},
     },
   );
+
+export type YouTubeStatusResponse = {
+  oauthConfigured: boolean;
+  enabled: boolean;
+  connected: boolean;
+  accountLabel: string;
+  lastError: string;
+};
+
+export type YouTubeConnectUrlResponse = {
+  authorizeUrl: string;
+  connectRequestId: string;
+  connectRequestSecret: string;
+  expiresAt: number;
+  pollIntervalMs: number;
+};
+
+export type YouTubeConnectStatusResponse = {
+  status: "pending" | "completed" | "failed" | "expired";
+  errorMessage: string;
+  completedAt?: number;
+  expiresAt?: number;
+  accountLabel?: string;
+};
+
+export type YouTubeLiveChatSendResponse = {
+  success: boolean;
+  messageId: string;
+  liveChatId: string;
+  videoId: string;
+  broadcastTitle: string;
+  accountLabel: string;
+};
+
+export const getYouTubeStatus = (churchId: string) =>
+  fetchJson<YouTubeStatusResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/youtube/status`,
+  );
+
+export const getYouTubeConnectAuthorizeUrl = (
+  churchId: string,
+  returnTo = "/account/integrations",
+  options?: { desktop?: boolean },
+) => {
+  const params = new URLSearchParams({ returnTo });
+  if (options?.desktop) {
+    params.set("desktop", "1");
+  }
+  return fetchJson<YouTubeConnectUrlResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/youtube/connect-url?${params.toString()}`,
+  );
+};
+
+export const getYouTubeConnectStatus = (
+  churchId: string,
+  payload: { connectRequestId: string; connectRequestSecret: string },
+) =>
+  fetchJson<YouTubeConnectStatusResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/youtube/connect-status`,
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+
+export const disconnectYouTube = (churchId: string) =>
+  fetchJson<{ success: boolean }>(
+    `api/churches/${encodeURIComponent(churchId)}/youtube/disconnect`,
+    {
+      method: "POST",
+      body: {},
+    },
+  );
+
+export const sendYouTubeLiveChatMessage = (
+  churchId: string,
+  payload: { messageText: string; videoId?: string; videoUrl?: string },
+) =>
+  fetchJson<YouTubeLiveChatSendResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/youtube/live-chat/messages`,
+    {
+      method: "POST",
+      body: payload,
+    },
+  );

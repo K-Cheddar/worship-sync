@@ -302,7 +302,7 @@ type ChurchBrandingStatus = "loading" | "ready";
 type ChurchIntegrationsStatus = "loading" | "ready";
 export type HumanAuthMethod = "password" | "google" | "microsoft";
 
-export type AccessType = "full" | "music" | "view";
+export type AccessType = "full" | "music" | "view" | "member";
 type GlobalInfoContextType = {
   authenticateHumanWithFirebase: ({
     method,

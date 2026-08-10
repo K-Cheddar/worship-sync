@@ -88,11 +88,20 @@ export type RestreamIntegrationConfig = {
   platformSummary: string[];
 };
 
+export type YouTubeIntegrationConfig = {
+  enabled: boolean;
+  connected: boolean;
+  accountLabel: string;
+  lastError: string;
+  lastPostedAt?: number;
+};
+
 export type ChurchIntegrations = {
   version: number;
   catalog: ChurchIntegrationsCatalog;
   servicePlanning: ServicePlanningConfig;
   restream: RestreamIntegrationConfig;
+  youtube: YouTubeIntegrationConfig;
 };
 
 export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
@@ -114,5 +123,11 @@ export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
     accountLabel: "",
     lastError: "",
     platformSummary: [],
+  },
+  youtube: {
+    enabled: false,
+    connected: false,
+    accountLabel: "",
+    lastError: "",
   },
 });

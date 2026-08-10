@@ -47,7 +47,7 @@ export type DisplayDevice = {
   revokedAt?: string | null;
 };
 
-export type MemberAccessOption = "full" | "music" | "view";
+export type MemberAccessOption = "full" | "music" | "view" | "member";
 
 export type InviteAccessOption = "admin" | MemberAccessOption;
 
@@ -75,6 +75,12 @@ export type InviteRecord = {
 };
 
 export type AccountDestructiveConfirm =
+  | {
+      kind: "makeAdmin";
+      membershipId: string;
+      memberLabel: string;
+      targetUserId: string;
+    }
   | {
       kind: "removeAdmin";
       membershipId: string;

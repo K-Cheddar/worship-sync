@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { AuthHandoffMarks } from "../components/AuthHandoffMarks";
 import AuthScreenMain from "../components/AuthScreenMain";
 import {
   readDesktopSsoCompleteFlashOnce,
@@ -15,8 +16,11 @@ const DesktopSsoComplete = () => {
   return (
     <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6 text-center">
+        {provider ? <AuthHandoffMarks provider={provider} /> : null}
         <h1 className="text-2xl font-semibold">
-          {provider ? `Signed in with ${providerLabel(provider)}` : "You are all set"}
+          {provider
+            ? `Signed in with ${providerLabel(provider)}`
+            : "You are all set"}
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-gray-200">
           {provider

@@ -1,22 +1,26 @@
 /**
- * Keeps the Controller's service plan in step with the plan the Services page
- * owns, so importing or editing there shows up here without anyone re-pasting a
- * planning URL.
+ * Keeps the Controller connected to saved Service Plans while leaving every
+ * live outline mutation behind the operator's explicit Sync action.
  *
- * Read-only by design. The plan panel refreshes itself, but nothing is written
- * into the live item list or overlays — those stay behind the operator's
- * explicit Sync press, because the outline bridge is insert-only and silently
- * mutating the live list mid-service is exactly the surprise this app can't
- * afford.
- *
- * Degrades to the pasted-URL flow whenever a plan isn't available: guest mode,
- * churches without Teams access, or an occurrence with no plan saved yet. In
- * those cases an existing URL-sourced preview is left untouched.
+ * Selection order is deliberate: the plan linked to the selected outline,
+ * then the current scheduled occurrence when it has a saved plan, then the
+ * nearest saved plan. A manual pick remains pinned for this Controller session.
  */
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useDispatch, useSelector } from "../../hooks";
-import { getServicePlan, getTeamsBootstrap } from "../../api/auth";
+import {
+  getServicePlan,
+  getTeamsBootstrap,
+  listServicePlans,
+} from "../../api/auth";
 import {
   clearServicePlanningPlanOutline,
   setServicePlanningPlanOutline,
@@ -34,8 +38,13 @@ import { toTeamService } from "../Teams/teamsUtils";
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
 import { hydrateOccurrenceSchedules } from "../../utils/hydrateOccurrenceSchedules";
 import type { TeamScheduleOccurrence, TeamsBootstrap } from "../../api/authTypes";
-import type { ServicePlan } from "../../types/servicePlan";
+import type { ServicePlan, ServicePlanSummary } from "../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../api/authTypes";
+import {
+  chooseControllerServicePlanKey,
+  servicePlanToSummary,
+  sortControllerServicePlans,
+} from "./controllerServicePlanSelection";
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
@@ -46,16 +55,38 @@ export const useCurrentServicePlanSource = () => {
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
   );
+  const selectedOutlineId = useSelector(
+    (state) => state.undoable.present.itemLists.selectedList?._id,
+  );
+  const itemListLoading = useSelector(
+    (state) => state.undoable.present.itemList.isLoading,
+  );
+  const outlinePlanBinding = useSelector(
+    (state) => state.servicePlanningImport.outlinePlanBinding,
+  );
   const servicePlanKey = useSelector(
     (state) => state.servicePlanningImport.servicePlanKey,
   );
+  const hasUrlSourcedPreview = useSelector(
+    (state) =>
+      Boolean(
+        state.servicePlanningImport.preview &&
+          !state.servicePlanningImport.servicePlanKey,
+      ),
+  );
 
+  const [savedPlans, setSavedPlans] = useState<ServicePlanSummary[]>([]);
+  const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [plansError, setPlansError] = useState<string | null>(null);
+  const [plansLoaded, setPlansLoaded] = useState(false);
 
   const bootstrapRef = useRef<TeamsBootstrap | null>(null);
   const planRef = useRef<ServicePlan | null>(null);
-  /** Bumped on every (re)load so a slow response can't overwrite a newer one. */
+  const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
+  const manualSelectionRef = useRef(false);
   const loadPlanPreviewRef = useRef(loadPlanPreview);
   useEffect(() => {
     loadPlanPreviewRef.current = loadPlanPreview;
@@ -65,21 +96,147 @@ export const useCurrentServicePlanSource = () => {
     () => serviceTimes.map(toTeamService),
     [serviceTimes],
   );
-  const { occurrences, occurrence, selectedOccurrenceId, selectOccurrence } =
+  const { occurrences, occurrence: currentOccurrence } =
     useCurrentServiceOccurrence(services);
+  const currentOccurrencePlanKey = currentOccurrence
+    ? getServicePlanKey(currentOccurrence)
+    : null;
 
-  const planKey = occurrence ? getServicePlanKey(occurrence) : null;
   const isEnabled = Boolean(
-    churchId && canViewTeams && loginState !== "guest" && isServicePlanningEnabled,
+    churchId &&
+      canViewTeams &&
+      loginState !== "guest" &&
+      isServicePlanningEnabled,
   );
 
-  /**
-   * Everything below keys off `planKey` — a string — rather than the occurrence
-   * or services objects. Those are derived arrays whose identity changes on
-   * unrelated store updates, and keying effects on them re-fetched the plan on
-   * every such update: needless server load on a live surface. The current
-   * values are read through refs instead.
-   */
+  const clearUnavailablePlan = useCallback(
+    (planKey: string, allowAutomaticFallback = false) => {
+      if (selectedPlanKeyRef.current !== planKey) return;
+      generationRef.current += 1;
+      // Missing detail/refresh results should leave an explicit empty choice;
+      // silently choosing another service's plan is unsafe. A live removal may
+      // opt into the existing contextual fallback behavior.
+      manualSelectionRef.current = !allowAutomaticFallback;
+      planRef.current = null;
+      selectedPlanKeyRef.current = null;
+      setSelectedPlanKey(null);
+      setSavedPlans((current) =>
+        current.filter((candidate) => candidate.planKey !== planKey),
+      );
+      setIsLoading(false);
+      dispatch(clearServicePlanningPlanOutline());
+    },
+    [dispatch],
+  );
+
+  const refreshPlans = useCallback(async () => {
+    if (!isEnabled || !churchId) return;
+    setIsLoadingPlans(true);
+    setPlansError(null);
+    try {
+      const result = await listServicePlans(churchId);
+      setSavedPlans(sortControllerServicePlans(result.servicePlans));
+      setPlansLoaded(true);
+    } catch {
+      setPlansError("Could not load saved plans. Try again.");
+      setPlansLoaded(true);
+    } finally {
+      setIsLoadingPlans(false);
+    }
+  }, [churchId, isEnabled]);
+
+  useEffect(() => {
+    if (!isEnabled) {
+      generationRef.current += 1;
+      manualSelectionRef.current = false;
+      planRef.current = null;
+      bootstrapRef.current = null;
+      selectedPlanKeyRef.current = null;
+      setSavedPlans([]);
+      setPlansLoaded(false);
+      setSelectedPlanKey(null);
+      setIsLoading(false);
+      dispatch(clearServicePlanningPlanOutline());
+      return;
+    }
+    void refreshPlans();
+  }, [dispatch, isEnabled, refreshPlans]);
+
+  // A pasted URL is an explicit source choice. Drop any prior automatic plan
+  // selection so outline binding changes cannot silently replace that review.
+  useEffect(() => {
+    if (!hasUrlSourcedPreview) return;
+    generationRef.current += 1;
+    manualSelectionRef.current = false;
+    planRef.current = null;
+    selectedPlanKeyRef.current = null;
+    setSelectedPlanKey(null);
+    setIsLoading(false);
+  }, [hasUrlSourcedPreview]);
+
+  // A refresh can remove a plan without an SSE removal event (for example,
+  // after reconnecting or resuming a sleeping device). Reconcile a pinned key
+  // before automatic selection runs so the old preview cannot remain visible
+  // while a different service is chosen.
+  useEffect(() => {
+    if (
+      !plansLoaded ||
+      isLoadingPlans ||
+      !selectedPlanKey ||
+      savedPlans.some((plan) => plan.planKey === selectedPlanKey)
+    ) {
+      return;
+    }
+    clearUnavailablePlan(selectedPlanKey);
+  }, [
+    clearUnavailablePlan,
+    isLoadingPlans,
+    plansLoaded,
+    savedPlans,
+    selectedPlanKey,
+  ]);
+
+  /** Resolve the initial context only after the selected outline has loaded its
+   * binding. A fast default before that point would briefly fetch the wrong
+   * plan and replace it again when PouchDB answered. */
+  useEffect(() => {
+    if (
+      !plansLoaded ||
+      itemListLoading ||
+      hasUrlSourcedPreview ||
+      manualSelectionRef.current
+    ) {
+      return;
+    }
+    const nextKey = chooseControllerServicePlanKey({
+      plans: savedPlans,
+      boundPlanKey: outlinePlanBinding?.planKey,
+      currentOccurrencePlanKey,
+    });
+    selectedPlanKeyRef.current = nextKey;
+    setSelectedPlanKey(nextKey);
+  }, [
+    currentOccurrencePlanKey,
+    hasUrlSourcedPreview,
+    itemListLoading,
+    outlinePlanBinding?.planKey,
+    plansLoaded,
+    savedPlans,
+    selectedOutlineId,
+  ]);
+
+  const selectedPlan = useMemo(
+    () => savedPlans.find((plan) => plan.planKey === selectedPlanKey) ?? null,
+    [savedPlans, selectedPlanKey],
+  );
+  const occurrence = useMemo(
+    () =>
+      occurrences.find(
+        (candidate) => getServicePlanKey(candidate) === selectedPlanKey,
+      ) ?? null,
+    [occurrences, selectedPlanKey],
+  );
+
   const occurrenceRef = useRef<TeamScheduleOccurrence | null>(occurrence);
   const servicesRef = useRef(services);
   useEffect(() => {
@@ -87,26 +244,18 @@ export const useCurrentServicePlanSource = () => {
     servicesRef.current = services;
   }, [occurrence, services]);
 
-  /** Rebuilds the preview from an already-fetched plan. Assignments come from
-   * the Teams schedule, so they reflect the roster now rather than whatever the
-   * planning printout said when the plan was first imported. */
   const applyPlan = useCallback(
-    async (plan: ServicePlan) => {
+    async (plan: ServicePlan, shouldApply: () => boolean = () => true) => {
       const bootstrap = bootstrapRef.current;
       const targetOccurrence = occurrenceRef.current;
       let assignments: ReturnType<typeof toServicePlanningTeamAssignments> = [];
       if (bootstrap && targetOccurrence) {
-        // The operator can page a week either side of today, and the bootstrap
-        // only carries assignments for schedules around today — so the cells
-        // for this occurrence are fetched when they're missing. Without it the
-        // preview credits this service to nobody, which looks like an unstaffed
-        // service rather than data we never asked for.
         const { schedules } = await hydrateOccurrenceSchedules({
           churchId,
           occurrence: targetOccurrence,
           schedules: bootstrap.schedules || [],
         });
-        // Keep what arrived, so paging back to this service doesn't refetch.
+        if (!shouldApply()) return;
         bootstrapRef.current = { ...bootstrap, schedules };
         assignments = toServicePlanningTeamAssignments(
           getOccurrenceAssignmentSummary({
@@ -121,6 +270,7 @@ export const useCurrentServicePlanSource = () => {
       }
 
       const outline = await loadPlanPreviewRef.current(plan, assignments);
+      if (!shouldApply()) return;
       dispatch(
         setServicePlanningPlanOutline({ outline, planKey: plan.planKey }),
       );
@@ -129,7 +279,19 @@ export const useCurrentServicePlanSource = () => {
   );
 
   useEffect(() => {
-    if (!isEnabled || !planKey || !churchId) return;
+    if (
+      !isEnabled ||
+      !selectedPlanKey ||
+      !churchId ||
+      itemListLoading ||
+      (hasUrlSourcedPreview && !manualSelectionRef.current)
+    ) {
+      if (plansLoaded && !selectedPlanKey) {
+        planRef.current = null;
+        dispatch(clearServicePlanningPlanOutline());
+      }
+      return;
+    }
     generationRef.current += 1;
     const generation = generationRef.current;
     let cancelled = false;
@@ -138,9 +300,7 @@ export const useCurrentServicePlanSource = () => {
     const load = async () => {
       try {
         const [planResult, bootstrap] = await Promise.all([
-          getServicePlan(churchId, planKey),
-          // Assignments are a nice-to-have; a failed bootstrap must not stop
-          // the plan itself from reaching the Controller.
+          getServicePlan(churchId, selectedPlanKey),
           getTeamsBootstrap(churchId).catch(() => null),
         ]);
         if (cancelled || generation !== generationRef.current) return;
@@ -149,17 +309,18 @@ export const useCurrentServicePlanSource = () => {
         const plan = planResult.servicePlan;
         planRef.current = plan;
         if (!plan) {
-          // No plan saved for this service. Drop a stale plan-sourced preview
-          // so the previous service's plan can't sit under this service's name
-          // — a URL-sourced preview is left alone, since the operator owns it.
-          dispatch(clearServicePlanningPlanOutline());
+          clearUnavailablePlan(selectedPlanKey);
           return;
         }
-        await applyPlan(plan);
+        await applyPlan(
+          plan,
+          () =>
+            !cancelled &&
+            generation === generationRef.current &&
+            selectedPlanKeyRef.current === selectedPlanKey,
+        );
       } catch (error) {
-        // The Controller must stay usable without Teams; the pasted-URL flow is
-        // still there, so this is logged rather than surfaced as an error toast.
-        console.error("Could not load the current service plan:", error);
+        console.error("Could not load the selected service plan:", error);
       } finally {
         if (!cancelled && generation === generationRef.current) {
           setIsLoading(false);
@@ -171,13 +332,54 @@ export const useCurrentServicePlanSource = () => {
     return () => {
       cancelled = true;
     };
-  }, [applyPlan, churchId, dispatch, isEnabled, planKey]);
+  }, [
+    applyPlan,
+    churchId,
+    clearUnavailablePlan,
+    dispatch,
+    hasUrlSourcedPreview,
+    isEnabled,
+    itemListLoading,
+    plansLoaded,
+    selectedOutlineId,
+    selectedPlanKey,
+  ]);
+
+  const selectPlan = useCallback(
+    (planKey: string) => {
+      manualSelectionRef.current = true;
+      generationRef.current += 1;
+      planRef.current = null;
+      selectedPlanKeyRef.current = planKey || null;
+      setIsLoading(Boolean(planKey));
+      dispatch(clearServicePlanningPlanOutline());
+      setSelectedPlanKey(planKey || null);
+    },
+    [dispatch],
+  );
+
+  const pinSelectedPlan = useCallback(() => {
+    if (selectedPlanKey) {
+      manualSelectionRef.current = true;
+    }
+  }, [selectedPlanKey]);
 
   const handleLiveEvent = useCallback(
     (event: TeamsStreamEvent) => {
-      if (!isEnabled || !planKey) return;
-      // The schedule drives the assignments tab, so a roster change should
-      // refresh it too. The plan itself is unchanged; rebuild from what we have.
+      if (!isEnabled) return;
+      if (event.type === "service-plan-removed") {
+        const removedKey = (event as { planKey?: unknown }).planKey;
+        if (typeof removedKey !== "string") return;
+        if (removedKey === selectedPlanKeyRef.current) {
+          clearUnavailablePlan(removedKey, true);
+        } else {
+          setSavedPlans((current) =>
+            current.filter((plan) => plan.planKey !== removedKey),
+          );
+        }
+        return;
+      }
+
       if (event.type === "schedule-updated" || event.type === "schedule-removed") {
         if (!churchId || !planRef.current) return;
         void getTeamsBootstrap(churchId)
@@ -186,60 +388,102 @@ export const useCurrentServicePlanSource = () => {
             const plan = planRef.current;
             if (plan) return applyPlan(plan);
           })
-          .catch(() => {
-            // Keep showing the assignments we already have.
-          });
+          .catch(() => undefined);
         return;
       }
 
       if (!isServicePlanUpdatedEvent(event)) return;
-      if (event.servicePlan.planKey !== planKey) return;
+      setSavedPlans((current) => {
+        const summary = servicePlanToSummary(event.servicePlan);
+        const withoutUpdated = current.filter(
+          (plan) => plan.planKey !== summary.planKey,
+        );
+        return sortControllerServicePlans([...withoutUpdated, summary]);
+      });
+      if (event.servicePlan.planKey !== selectedPlanKeyRef.current) return;
+      const generation = ++generationRef.current;
       planRef.current = event.servicePlan;
-      // The event carries the whole plan, so this needs no refetch.
-      void applyPlan(event.servicePlan);
+      void applyPlan(
+        event.servicePlan,
+        () =>
+          generation === generationRef.current &&
+          selectedPlanKeyRef.current === event.servicePlan.planKey,
+      ).finally(() => {
+        if (
+          generation === generationRef.current &&
+          selectedPlanKeyRef.current === event.servicePlan.planKey
+        ) {
+          setIsLoading(false);
+        }
+      });
     },
-    [applyPlan, churchId, isEnabled, planKey],
+    [applyPlan, churchId, clearUnavailablePlan, isEnabled],
   );
 
   useTeamsLiveSync(isEnabled ? churchId : null, handleLiveEvent);
 
   const refresh = useCallback(async () => {
+    const planKey = selectedPlanKeyRef.current;
     if (!isEnabled || !planKey || !churchId) return;
-    const result = await getServicePlan(churchId, planKey);
-    const plan = result.servicePlan;
-    if (!plan) return;
-    planRef.current = plan;
-    await applyPlan(plan);
-  }, [applyPlan, churchId, isEnabled, planKey]);
+    const generation = ++generationRef.current;
+    setIsLoading(true);
+    try {
+      const result = await getServicePlan(churchId, planKey);
+      if (
+        generation !== generationRef.current ||
+        selectedPlanKeyRef.current !== planKey
+      ) {
+        return;
+      }
+      const plan = result.servicePlan;
+      if (!plan) {
+        clearUnavailablePlan(planKey);
+        return;
+      }
+      planRef.current = plan;
+      await applyPlan(
+        plan,
+        () =>
+          generation === generationRef.current &&
+          selectedPlanKeyRef.current === planKey,
+      );
+    } finally {
+      if (
+        generation === generationRef.current &&
+        selectedPlanKeyRef.current === planKey
+      ) {
+        setIsLoading(false);
+      }
+    }
+  }, [
+    applyPlan,
+    churchId,
+    clearUnavailablePlan,
+    isEnabled,
+  ]);
 
-  /**
-   * SSE is single-instance and absent in some runtimes, so a missed event would
-   * otherwise leave a stale plan on screen until reload. Re-reading on focus is
-   * the cheap self-heal: an operator returning to the window gets the truth.
-   */
   useEffect(() => {
-    if (!isEnabled || !planKey) return;
+    if (!isEnabled || !selectedPlanKey) return;
     const refetch = () => {
-      void refresh().catch(() => {
-        // Focus is a best-effort refresh; the live channel is the main path.
-      });
+      void refresh().catch(() => undefined);
     };
     window.addEventListener("focus", refetch);
     return () => window.removeEventListener("focus", refetch);
-  }, [isEnabled, planKey, refresh]);
+  }, [isEnabled, refresh, selectedPlanKey]);
 
   return {
-    /** Occurrences the operator can switch between, earliest first. */
-    occurrences,
-    /** The occurrence currently driving the plan, auto-selected or overridden. */
+    savedPlans,
+    selectedPlan,
+    selectedPlanKey,
+    selectPlan,
+    pinSelectedPlan,
     occurrence,
-    /** True while the plan (not the preview) is being fetched. */
+    isEnabled,
     isLoading,
-    /** Whether the on-screen preview came from the plan rather than a URL. */
+    isLoadingPlans,
+    plansError,
     isPlanSourced: Boolean(servicePlanKey),
-    selectedOccurrenceId,
-    selectOccurrence,
-    /** Re-reads the plan from the server. Rejects so callers can toast. */
     refresh,
+    refreshPlans,
   };
 };

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/DropdownMenu";
 import { cn } from "@/utils/cnHelper";
 import generateRandomId from "../../utils/generateRandomId";
+import useDebouncedStringCommit from "../../hooks/useDebouncedStringCommit";
 import { SERVICE_PLAN_INLINE_INPUT_CLASS } from "./ServicePlanElementRow";
 import {
   isUnassignedServicePlanAssignee,
@@ -169,6 +170,40 @@ type ServicePlanAssigneeListProps = {
   onChange: (next: ServicePlanAssignee[], coalesceKey?: string) => void;
 };
 
+type DebouncedAssigneeNameFieldProps = {
+  value: string;
+  onCommit: (value: string) => void;
+  historyValues: string[];
+  label: string;
+  placeholder: string;
+};
+
+/** Keeps assignee typing inside its chip until the plan-wide update settles. */
+const DebouncedAssigneeNameField = ({
+  value,
+  onCommit,
+  historyValues,
+  label,
+  placeholder,
+}: DebouncedAssigneeNameFieldProps) => {
+  const draft = useDebouncedStringCommit(value, onCommit);
+
+  return (
+    <HistorySuggestField
+      label={label}
+      hideLabel
+      placeholder={placeholder}
+      multiline={false}
+      className="w-32 sm:w-40"
+      inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+      value={draft.draftValue}
+      onChange={draft.setDraftValue}
+      onFieldBlur={draft.flush}
+      historyValues={historyValues}
+    />
+  );
+};
+
 /**
  * Who is doing this item, and what each of them is holding.
  *
@@ -273,21 +308,17 @@ const ServicePlanAssigneeList = ({
               />
 
               {allowEdit ? (
-                <HistorySuggestField
+                <DebouncedAssigneeNameField
                   label={
                     structureOnly
                       ? `Group for ${itemLabel}`
                       : `Assigned to for ${itemLabel}`
                   }
-                  hideLabel
                   // A template names standing groups, never this week's people
                   // — "Audience", "Chorale", whoever always carries the mic.
                   placeholder={structureOnly ? "Group (optional)" : "Assigned to"}
-                  multiline={false}
-                  className="w-32 sm:w-40"
-                  inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
                   value={assignee.name || ""}
-                  onChange={(value) =>
+                  onCommit={(value) =>
                     updateAssignee(
                       assignee.id,
                       { name: value },

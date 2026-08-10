@@ -48,6 +48,32 @@ import type {
   TrustedHumanDeviceListItem,
   WorkstationDeviceClient,
 } from "./authTypes";
+import type { SongAudio } from "../types";
+
+export type RichLinkPreview = {
+  provider: "youtube" | "spotify";
+  kind:
+    | "video"
+    | "track"
+    | "album"
+    | "artist"
+    | "playlist"
+    | "show"
+    | "episode"
+    | "audiobook"
+    | "unknown";
+  resourceId: string;
+  title: string;
+  creator?: string;
+  thumbnailUrl?: string;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+  canonicalUrl: string;
+  embedUrl: string;
+  embedWidth?: number;
+  embedHeight?: number;
+  supportsSegments: boolean;
+};
 
 export type { AuthBootstrap, ChurchStatus, SessionKind } from "./authTypes";
 
@@ -58,7 +84,11 @@ export class AuthApiError extends Error {
 
   constructor(
     message: string,
-    options: { status?: number; isReachabilityError?: boolean; details?: unknown } = {},
+    options: {
+      status?: number;
+      isReachabilityError?: boolean;
+      details?: unknown;
+    } = {},
   ) {
     super(message);
     this.name = "AuthApiError";
@@ -155,6 +185,209 @@ const apiFetchWithoutAuthRecovery = async <T>(
     authRecovery: false,
     ...config,
   });
+
+type SongAudioUploadIntent = {
+  audio: Pick<
+    SongAudio,
+    "id" | "key" | "fileName" | "contentType" | "sizeBytes"
+  >;
+  uploadUrl: string;
+  expiresAt: string;
+};
+
+const songAudioPath = (churchId: string, songId: string) =>
+  `api/churches/${encodeURIComponent(churchId)}/song-audio/${encodeURIComponent(songId)}`;
+
+export const getRichLinkPreview = async (url: string) => {
+  const result = await apiFetch<{ preview: RichLinkPreview }>(
+    `api/link-previews?${new URLSearchParams({ url }).toString()}`,
+  );
+  return result.preview;
+};
+
+const uploadSongAudioFromPackagedElectron = async ({
+  churchId,
+  songId,
+  file,
+  contentType,
+  previousAudio,
+}: {
+  churchId: string;
+  songId: string;
+  file: File;
+  contentType: string;
+  previousAudio?: SongAudio;
+}): Promise<SongAudio> => {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiBasePath()}${songAudioPath(churchId, songId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": contentType,
+          ...(getHumanApiToken()
+            ? { Authorization: `Bearer ${getHumanApiToken()}` }
+            : {}),
+          ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
+          ...(previousAudio
+            ? {
+                "x-song-audio-id": previousAudio.id,
+                "x-song-audio-key": previousAudio.key,
+              }
+            : {}),
+        },
+        body: file,
+      },
+    );
+  } catch {
+    throw new AuthApiError(
+      "Could not upload the MP3. Check the connection and try again.",
+      {
+        isReachabilityError: true,
+      },
+    );
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    audio?: SongAudio;
+    error?: string;
+  };
+  if (!response.ok || !data.audio) {
+    throw new AuthApiError(
+      data.error || "The MP3 upload was not accepted. Try again.",
+      {
+        status: response.status,
+      },
+    );
+  }
+  return data.audio;
+};
+
+/** Uploads directly to private R2 storage, then verifies it through the API. */
+export const uploadSongAudio = async ({
+  churchId,
+  songId,
+  file,
+  previousAudio,
+}: {
+  churchId: string;
+  songId: string;
+  file: File;
+  previousAudio?: SongAudio;
+}): Promise<SongAudio> => {
+  const contentType = file.type || "audio/mpeg";
+  if (isPackagedElectronRenderer()) {
+    return uploadSongAudioFromPackagedElectron({
+      churchId,
+      songId,
+      file,
+      contentType,
+      previousAudio,
+    });
+  }
+  const intent = await apiFetch<SongAudioUploadIntent>(
+    `${songAudioPath(churchId, songId)}/upload`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType,
+        sizeBytes: file.size,
+      }),
+    },
+  );
+
+  let uploadResponse: Response;
+  try {
+    uploadResponse = await fetch(intent.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": intent.audio.contentType },
+      body: file,
+    });
+  } catch {
+    throw new AuthApiError(
+      "Could not upload the MP3. Check the connection and try again.",
+      {
+        isReachabilityError: true,
+      },
+    );
+  }
+
+  if (!uploadResponse.ok) {
+    throw new AuthApiError("The MP3 upload was not accepted. Try again.", {
+      status: uploadResponse.status,
+    });
+  }
+
+  const completed = await apiFetch<{ audio: SongAudio }>(
+    `${songAudioPath(churchId, songId)}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({ audio: intent.audio, previousAudio }),
+    },
+  );
+  return completed.audio;
+};
+
+export const getSongAudioUrl = async ({
+  churchId,
+  songId,
+  audio,
+  disposition,
+}: {
+  churchId: string;
+  songId: string;
+  audio: SongAudio;
+  disposition: "inline" | "attachment";
+}) => {
+  const query = new URLSearchParams({
+    key: audio.key,
+    fileName: audio.fileName,
+    disposition,
+  });
+  return apiFetch<{ url: string; expiresAt: string }>(
+    `${songAudioPath(churchId, songId)}/${encodeURIComponent(audio.id)}/url?${query.toString()}`,
+  );
+};
+
+export const deleteSongAudio = async ({
+  churchId,
+  songId,
+  audio,
+}: {
+  churchId: string;
+  songId: string;
+  audio: SongAudio;
+}) =>
+  apiFetch<{ success: true }>(
+    `${songAudioPath(churchId, songId)}/${encodeURIComponent(audio.id)}`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ key: audio.key }),
+    },
+  );
+
+export const deleteSongAudioWithRetry = async (
+  args: Parameters<typeof deleteSongAudio>[0],
+) => {
+  try {
+    return await deleteSongAudio(args);
+  } catch (error) {
+    if (error instanceof AuthApiError && error.status === 404) {
+      return { success: true as const };
+    }
+    const canRetry =
+      !(error instanceof AuthApiError) ||
+      error.isReachabilityError ||
+      !error.status ||
+      error.status === 429 ||
+      error.status >= 500;
+    if (!canRetry) throw error;
+    return deleteSongAudio(args);
+  }
+};
 
 export const getAuthBootstrap = async ({
   workstationToken,
@@ -387,6 +620,8 @@ export const updateChurchIntegrations = async (
 export type TeamRosterMemberPayload = {
   firstName: string;
   lastName: string;
+  /** Omit to leave an existing address untouched; send "" to clear it. */
+  email?: string;
   dateOfBirth?: string;
   positionIds: string[];
   desiredPositionIds?: string[];
@@ -462,6 +697,7 @@ export type TeamIntakeFormPayload = {
   availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
   teamIds: string[];
   active: boolean;
+  requireEmail?: boolean;
   welcomeMessage?: string;
   positionsMessage?: string;
   availabilityMessage?: string;
@@ -471,6 +707,8 @@ export type TeamIntakeFormPayload = {
 export type TeamIntakeSubmissionPayload = {
   firstName: string;
   lastName: string;
+  /** Optional server-side; forms may opt into requiring it. */
+  email?: string;
   positionIds: string[];
   occurrenceAvailability: TeamIntakeSubmission["occurrenceAvailability"];
   blockoutRanges: TeamIntakeSubmission["blockoutRanges"];
@@ -646,6 +884,144 @@ export const deleteTeamRosterMember = async (
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/team-roster-members/${memberId}/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
+export type MyScheduleServing = {
+  /** Set only for this person's own rows; others are name-only by design. */
+  memberId: string;
+  /** Their own full name; everyone else uses the public first-name convention. */
+  name: string;
+  isMe: boolean;
+  scheduleId: string;
+  teamId: string;
+  teamName: string;
+  positionId: string;
+  positionName: string;
+  columnKey: string;
+  /** False when shadowing the slot rather than holding it. */
+  isPrimary: boolean;
+};
+
+export type MySchedulePlanElement = {
+  type: string;
+  title: string;
+  startTime: string;
+  durationSeconds?: number;
+};
+
+export type MySchedulePlan = {
+  planId: string;
+  name: string;
+  /** True when share links have been enabled for this plan. */
+  published?: boolean;
+  /** Present only when published — team (detailed) and optional general (simple). */
+  publicUrls?: {
+    team: string;
+    general?: string;
+  };
+  sections: { name: string; elements: MySchedulePlanElement[] }[];
+};
+
+export type MyScheduleOccurrence = {
+  occurrenceId: string;
+  /**
+   * Service name, or "A & B" when services are combined. Empty when older
+   * schedules never stored one.
+   */
+  name: string;
+  /** Every service this occurrence covers; more than one when combined. */
+  serviceIds: string[];
+  /** Calendar date (YYYY-MM-DD) — how plans are keyed. */
+  date: string;
+  /** ISO start of the service; "" when the id carries no timestamp. */
+  startsAt: string;
+  /** Everyone on this service, this person included and flagged `isMe`. */
+  serving: MyScheduleServing[];
+  /**
+   * Order of service for this date, or null when no plan exists yet.
+   * Not gated on the plan being "published" — that flag is a side effect of
+   * minting share links, and this reader is signed in and assigned to the
+   * service rather than an anonymous link holder. Public URLs are included
+   * only when the plan is already published.
+   */
+  plan: MySchedulePlan | null;
+};
+
+/**
+ * The signed-in person's services: when they serve, in what capacity, who else
+ * is on with them, and what is planned.
+ *
+ * Self-scoped server-side — only occurrences this person is assigned to are
+ * returned — so it needs church membership and no teams permission. Co-serving
+ * names use the same convention as the public schedule link.
+ *
+ * `member` is null when this account has claimed no roster record.
+ */
+export const getMyTeamAssignments = async (churchId: string) =>
+  apiFetch<{
+    success: boolean;
+    member: TeamRosterMember | null;
+    occurrences: MyScheduleOccurrence[];
+  }>(`api/churches/${churchId}/my-team-assignments`);
+
+/**
+ * Replaces the signed-in person's own blockout dates.
+ *
+ * Self-scoped server-side — the record written is the one linked to this
+ * account — so a schedule-only volunteer can keep their availability current
+ * without any teams permission. Only `blockoutDates` is written; nothing else
+ * on the member record is touched.
+ *
+ * Dates they are already scheduled for are accepted. The conflict is surfaced
+ * to the volunteer here and to owners in the schedule grid, rather than being
+ * refused.
+ */
+export const updateMyBlockoutDates = async (
+  churchId: string,
+  blockoutDates: TeamRosterMember["blockoutDates"],
+) =>
+  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+    `api/churches/${churchId}/my-blockout-dates`,
+    {
+      method: "POST",
+      body: JSON.stringify({ blockoutDates }),
+    },
+  );
+
+/**
+ * Links a member record to an account.
+ *
+ * Omit `userId` to claim the record for the signed-in account. Pass one to link
+ * someone else — the server requires that account to hold an active membership
+ * in this church.
+ *
+ * Links are never inferred from a matching email; addresses are shared between
+ * people. This is also the path for anyone who already belongs to the church,
+ * since the invite flow rejects an existing member.
+ */
+export const linkTeamRosterMember = async (
+  churchId: string,
+  memberId: string,
+  userId?: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-roster-members/${memberId}/link`,
+    {
+      method: "POST",
+      body: JSON.stringify(userId ? { userId } : {}),
+    },
+  );
+
+export const unlinkTeamRosterMember = async (
+  churchId: string,
+  memberId: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/team-roster-members/${memberId}/unlink`,
     {
       method: "POST",
       body: JSON.stringify({}),
@@ -1020,7 +1396,6 @@ export const updateTeamScheduleAssignmentSwap = async (
     },
   );
 
-
 export const listServicePlans = async (churchId: string) =>
   apiFetch<{ success: boolean; servicePlans: ServicePlanSummary[] }>(
     `api/churches/${churchId}/service-plans`,
@@ -1041,10 +1416,9 @@ export const getServicePlan = async (churchId: string, planKey: string) =>
     success: boolean;
     servicePlan: ServicePlan | null;
     publicUrls?: ServicePlanPublicUrls;
-  }>(
-    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`,
-    { method: "GET" },
-  );
+  }>(`api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`, {
+    method: "GET",
+  });
 
 export const saveServicePlan = async (
   churchId: string,
@@ -1157,10 +1531,7 @@ export const getServicePlanMicrophones = async (churchId: string) =>
     success: boolean;
     microphones: ServicePlanMicrophone[];
     audiences?: ServicePlanMicrophoneAudience[];
-  }>(
-    `api/churches/${churchId}/service-plan-microphones`,
-    { method: "GET" },
-  );
+  }>(`api/churches/${churchId}/service-plan-microphones`, { method: "GET" });
 
 export const saveServicePlanMicrophones = async (
   churchId: string,
@@ -1171,10 +1542,10 @@ export const saveServicePlanMicrophones = async (
     success: boolean;
     microphones: ServicePlanMicrophone[];
     audiences?: ServicePlanMicrophoneAudience[];
-  }>(
-    `api/churches/${churchId}/service-plan-microphones`,
-    { method: "POST", body: JSON.stringify({ microphones, audiences }) },
-  );
+  }>(`api/churches/${churchId}/service-plan-microphones`, {
+    method: "POST",
+    body: JSON.stringify({ microphones, audiences }),
+  });
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>
   apiFetch<{ success: boolean; invite: ChurchInviteRow }>(
@@ -1184,6 +1555,31 @@ export const createAdminInvite = async (churchId: string, body: JsonBody) =>
       body: JSON.stringify(body),
     },
   );
+
+/**
+ * Invites a roster member to create an account, binding the invite to their
+ * member record so accepting it establishes the link.
+ *
+ * Access is deliberately minimal and set here rather than by the caller: the
+ * generic invite endpoint defaults to `admin` / `full`, which would hand a band
+ * member the whole console. A volunteer needs an identity, not permissions —
+ * their own schedule becomes visible with the member self-service scope.
+ *
+ * Requires an admin session server-side, so a teams-editor who is not an admin
+ * will be refused.
+ */
+export const inviteTeamRosterMember = async (
+  churchId: string,
+  { email, memberId }: { email: string; memberId: string },
+) =>
+  createAdminInvite(churchId, {
+    email,
+    memberId,
+    role: "member",
+    // The narrowest tier: their own schedule, no operator surfaces.
+    appAccess: "member",
+    permissions: { teams: "none", services: "none" },
+  });
 
 export const updateChurchInviteAccess = async (
   churchId: string,
@@ -1222,6 +1618,15 @@ export const acceptInvite = async (body: JsonBody) =>
     },
   );
 
+export const makeAdmin = async (churchId: string, userId: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/members/${userId}/make-admin`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+
 export const removeAdmin = async (churchId: string, userId: string) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/remove-admin`,
@@ -1243,7 +1648,7 @@ export const removeChurchMember = async (churchId: string, userId: string) =>
 export const updateChurchMemberAccess = async (
   churchId: string,
   userId: string,
-  appAccess: "full" | "music" | "view",
+  appAccess: "full" | "music" | "view" | "member",
   permissions: MemberPermissions,
 ) =>
   apiFetch<{ success: boolean }>(

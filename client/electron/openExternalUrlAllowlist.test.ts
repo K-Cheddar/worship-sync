@@ -29,9 +29,21 @@ describe("assertAllowedOpenExternalUrl", () => {
 
   it("allows Restream OAuth authorize URLs", () => {
     expect(() =>
-      assertAllowedOpenExternalUrl("https://api.restream.io/login?response_type=code", {
-        isDev: false,
-      }),
+      assertAllowedOpenExternalUrl(
+        "https://api.restream.io/login?response_type=code",
+        {
+          isDev: false,
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it("allows Google OAuth authorize URLs for YouTube connect", () => {
+    expect(() =>
+      assertAllowedOpenExternalUrl(
+        "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example",
+        { isDev: false },
+      ),
     ).not.toThrow();
   });
 

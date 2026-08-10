@@ -77,7 +77,7 @@ describe("BoardSyncProvider auth gating", () => {
   beforeEach(() => {
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
-    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => { });
   });
 
   afterEach(() => {
@@ -111,10 +111,10 @@ describe("BoardSyncProvider auth gating", () => {
 
     renderProvider({ database: "church-db", loginState: "success" });
 
-    // Signed in → it tries, hits 401, and settles into a terminal failed state
-    // with a clear log instead of an endless retry.
+    // Signed in → it tries, hits 401, and settles into paused so the UI can
+    // offer "Sign in again" instead of an endless retry.
     await waitFor(() =>
-      expect(screen.getByTestId("status")).toHaveTextContent("failed"),
+      expect(screen.getByTestId("status")).toHaveTextContent("paused"),
     );
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("bootstrap"),

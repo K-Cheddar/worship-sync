@@ -10,8 +10,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import { Button } from "../../components/Button";
+import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
-import Input from "../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
 import { useSensors } from "../../utils/dndUtils";
 import ServicePlanElementRow, {
@@ -94,6 +94,9 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   roleNotesFilter?: string;
   onViewSongLyrics?: (songRef: ServicePlanSongReference) => void;
   canCreateLibrarySong?: boolean;
+  onCreatePendingSong?: (
+    songRef: Extract<ServicePlanSongReference, { kind: "pending" }>,
+  ) => void;
   /** Elements whose stored song reference is out of date — see
    * servicePlanSongResolution.ts. Absent means the stored one still stands. */
   resolvedSongRefs: ReadonlyMap<string, ServicePlanSongReference[]>;
@@ -131,6 +134,7 @@ const SortableSectionCard = ({
   roleNotesFilter = "",
   onViewSongLyrics,
   canCreateLibrarySong = false,
+  onCreatePendingSong,
   resolvedSongRefs,
   structureOnly = false,
 }: SortableSectionCardProps) => {
@@ -187,11 +191,11 @@ const SortableSectionCard = ({
           className="mt-0 shrink-0 max-md:min-h-0"
         />
         {allowEdit ? (
-          <Input
+          <DebouncedInput
             label="Section name"
             hideLabel
             value={section.name}
-            onChange={(value) => onRename(String(value))}
+            onChange={onRename}
             className="min-w-0 flex-1"
             inputClassName={cn(
               SERVICE_PLAN_INLINE_INPUT_CLASS,
@@ -267,6 +271,7 @@ const SortableSectionCard = ({
                   scheduledMicrophoneHolders={scheduledMicrophoneHolders}
                   onViewSongLyrics={onViewSongLyrics}
                   canCreateLibrarySong={canCreateLibrarySong}
+                  onCreatePendingSong={onCreatePendingSong}
                   resolvedSongRefs={resolvedSongRefs.get(element.id)}
                   structureOnly={structureOnly}
                 />
@@ -318,6 +323,9 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   roleNotesFilter?: string;
   onViewSongLyrics?: (songRef: ServicePlanSongReference) => void;
   canCreateLibrarySong?: boolean;
+  onCreatePendingSong?: (
+    songRef: Extract<ServicePlanSongReference, { kind: "pending" }>,
+  ) => void;
   resolvedSongRefs?: ReadonlyMap<string, ServicePlanSongReference[]>;
   /**
    * Structure-only surfaces (templates) drop the per-week columns — song and
@@ -357,6 +365,7 @@ const ServicePlanSectionList = ({
   roleNotesFilter = "",
   onViewSongLyrics,
   canCreateLibrarySong = false,
+  onCreatePendingSong,
   resolvedSongRefs = EMPTY_RESOLVED_SONG_REFS,
   structureOnly = false,
   scrollId,
@@ -484,6 +493,7 @@ const ServicePlanSectionList = ({
               roleNotesFilter={roleNotesFilter}
               onViewSongLyrics={onViewSongLyrics}
               canCreateLibrarySong={canCreateLibrarySong}
+              onCreatePendingSong={onCreatePendingSong}
               resolvedSongRefs={resolvedSongRefs}
               structureOnly={structureOnly}
               {...liveRowState}

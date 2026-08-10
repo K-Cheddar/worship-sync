@@ -63,6 +63,7 @@ import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
 import { createPortal } from "react-dom";
 import cn from "classnames";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 type OverlaysProps = {
   /** Combined controller mode moves the selected-overlay editor into a shared detail column. */
@@ -116,7 +117,7 @@ const Overlays = ({
     isMobile: false,
   };
   const { access } = useContext(GlobalInfoContext) || {};
-  const canMutateOverlays = access !== "view";
+  const canMutateOverlays = !isViewOnlyAccess(access);
 
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
@@ -476,7 +477,7 @@ const Overlays = ({
         <div className="flex flex-col w-full h-full p-2 gap-2">
           <div
             className={
-              access === "view"
+              isViewOnlyAccess(access)
                 ? "mx-auto flex w-full max-w-[70%] flex-1 min-h-0 min-w-0 flex-col gap-2"
                 : "flex w-full flex-1 min-h-0 min-w-0 flex-col gap-2"
             }

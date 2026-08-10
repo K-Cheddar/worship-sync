@@ -14,6 +14,9 @@ import {
   disconnectRestream,
   getRestreamConnectStatus,
   getRestreamConnectAuthorizeUrl,
+  disconnectYouTube,
+  getYouTubeConnectStatus,
+  getYouTubeConnectAuthorizeUrl,
 } from "../../boards/api";
 import {
   DEFAULT_SERVICE_PLANNING_NAME_SOURCES,
@@ -43,6 +46,8 @@ type PendingRestreamConnect = {
   expiresAt: number;
   pollIntervalMs: number;
 };
+
+type PendingYouTubeConnect = PendingRestreamConnect;
 
 const NAME_COLUMNS: { value: NameColumnKey; label: string }[] = [
   { value: "elementType", label: "Element type" },
@@ -573,6 +578,9 @@ export const IntegrationsSettingsPanel = ({
   const [isRestreamActing, setIsRestreamActing] = useState(false);
   const [pendingRestreamConnect, setPendingRestreamConnect] =
     useState<PendingRestreamConnect | null>(null);
+  const [isYouTubeActing, setIsYouTubeActing] = useState(false);
+  const [pendingYouTubeConnect, setPendingYouTubeConnect] =
+    useState<PendingYouTubeConnect | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Avoid JSON.stringify(draft) per keystroke — that dominated input latency. */
   const [isDraftDirty, setIsDraftDirty] = useState(false);
@@ -791,6 +799,142 @@ export const IntegrationsSettingsPanel = ({
       window.clearInterval(timerId);
     };
   }, [churchId, pendingRestreamConnect, showToast]);
+
+  const youtube = integrations.youtube;
+
+  let youtubeConnectionLabel = "Not connected";
+  if (youtube.connected) {
+    youtubeConnectionLabel = "Connected";
+  } else if (youtube.enabled) {
+    youtubeConnectionLabel = "Disconnected";
+  }
+
+  const handleConnectYouTube = useCallback(async () => {
+    setIsYouTubeActing(true);
+    try {
+      const response = await getYouTubeConnectAuthorizeUrl(
+        churchId,
+        "/account/integrations",
+        { desktop: isElectron() },
+      );
+      const nextPending = {
+        connectRequestId: response.connectRequestId,
+        connectRequestSecret: response.connectRequestSecret,
+        authorizeUrl: response.authorizeUrl,
+        expiresAt: response.expiresAt,
+        pollIntervalMs: response.pollIntervalMs,
+      };
+      setPendingYouTubeConnect(nextPending);
+
+      if (isElectron() && window.electronAPI?.openExternalUrl) {
+        await window.electronAPI.openExternalUrl(response.authorizeUrl);
+      } else {
+        const opened = window.open(
+          response.authorizeUrl,
+          "_blank",
+          "noopener,noreferrer",
+        );
+        if (!opened) {
+          window.location.assign(response.authorizeUrl);
+        }
+      }
+      showToast(
+        "YouTube opened in your browser. Finish the connection there.",
+        "success",
+      );
+    } catch (nextError) {
+      setPendingYouTubeConnect(null);
+      showToast(
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not start the YouTube connection. Try again.",
+        "error",
+      );
+    } finally {
+      setIsYouTubeActing(false);
+    }
+  }, [churchId, showToast]);
+
+  const handleDisconnectYouTube = useCallback(async () => {
+    setIsYouTubeActing(true);
+    try {
+      await disconnectYouTube(churchId);
+      setPendingYouTubeConnect(null);
+      showToast("YouTube disconnected.", "success");
+    } catch (nextError) {
+      showToast(
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not disconnect YouTube. Try again.",
+        "error",
+      );
+    } finally {
+      setIsYouTubeActing(false);
+    }
+  }, [churchId, showToast]);
+
+  useEffect(() => {
+    if (!pendingYouTubeConnect) {
+      return;
+    }
+
+    if (pendingYouTubeConnect.expiresAt <= Date.now()) {
+      setPendingYouTubeConnect(null);
+      showToast(
+        "This YouTube connection attempt expired. Start again to continue.",
+        "error",
+      );
+      return;
+    }
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const result = await getYouTubeConnectStatus(churchId, {
+          connectRequestId: pendingYouTubeConnect.connectRequestId,
+          connectRequestSecret: pendingYouTubeConnect.connectRequestSecret,
+        });
+        if (cancelled) return;
+        if (result.status === "pending") return;
+        setPendingYouTubeConnect(null);
+        if (result.status === "completed") {
+          showToast(
+            result.accountLabel
+              ? `YouTube connected to ${result.accountLabel}.`
+              : "YouTube connected.",
+            "success",
+          );
+          return;
+        }
+        showToast(
+          result.errorMessage ||
+          (result.status === "expired"
+            ? "This YouTube connection attempt expired. Start again to continue."
+            : "Could not finish the YouTube connection. Try again."),
+          "error",
+        );
+      } catch (nextError) {
+        if (cancelled) return;
+        setPendingYouTubeConnect(null);
+        showToast(
+          nextError instanceof Error
+            ? nextError.message
+            : "Could not check the YouTube connection yet. Try again.",
+          "error",
+        );
+      }
+    };
+
+    void pollStatus();
+    const timerId = window.setInterval(
+      () => void pollStatus(),
+      Math.max(1000, pendingYouTubeConnect.pollIntervalMs || 1500),
+    );
+    return () => {
+      cancelled = true;
+      window.clearInterval(timerId);
+    };
+  }, [churchId, pendingYouTubeConnect, showToast]);
 
   const setServicePlanningEnabled = useCallback((enabled: boolean) => {
     setIsDraftDirty(true);
@@ -1204,6 +1348,109 @@ export const IntegrationsSettingsPanel = ({
         ) : null}
         {restream.lastError ? (
           <p className="mt-3 text-sm text-amber-100/90">{restream.lastError}</p>
+        ) : null}
+      </section>
+
+      <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">YouTube</h3>
+            <p className="mt-1 max-w-2xl text-sm text-gray-400">
+              Connect the church YouTube channel so moderators can post to that
+              channel&apos;s live chat from the board page. Connect the destination
+              channel, not a personal staff account.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {youtube.enabled ? (
+              <Button
+                type="button"
+                variant="destructive"
+                svg={Unplug}
+                iconSize="sm"
+                disabled={isYouTubeActing}
+                isLoading={isYouTubeActing}
+                onClick={() => void handleDisconnectYouTube()}
+              >
+                Disconnect YouTube
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="cta"
+                iconSize="sm"
+                disabled={isYouTubeActing}
+                isLoading={isYouTubeActing}
+                onClick={() => void handleConnectYouTube()}
+              >
+                Connect YouTube
+              </Button>
+            )}
+          </div>
+        </div>
+        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-gray-400">Status</dt>
+            <dd className="mt-0.5 font-medium text-gray-100">
+              {youtubeConnectionLabel}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-gray-400">Channel</dt>
+            <dd className="mt-0.5 font-medium text-gray-100">
+              {youtube.accountLabel || "No YouTube channel connected"}
+            </dd>
+          </div>
+        </dl>
+        {pendingYouTubeConnect ? (
+          <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
+            <p className="text-sm font-medium text-cyan-100">
+              Finish the YouTube connection in your browser.
+            </p>
+            <p className="mt-1 text-xs text-cyan-100/80">
+              This request stays open until it finishes or expires.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  if (isElectron() && window.electronAPI?.openExternalUrl) {
+                    void window.electronAPI.openExternalUrl(
+                      pendingYouTubeConnect.authorizeUrl,
+                    );
+                    return;
+                  }
+                  const opened = window.open(
+                    pendingYouTubeConnect.authorizeUrl,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                  if (!opened) {
+                    window.location.assign(pendingYouTubeConnect.authorizeUrl);
+                  }
+                }}
+              >
+                Reopen browser
+              </Button>
+              <Button
+                type="button"
+                variant="tertiary"
+                onClick={() => setPendingYouTubeConnect(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {youtube.lastPostedAt ? (
+          <p className="mt-2 text-xs text-gray-400">
+            Last YouTube chat post{" "}
+            {new Date(youtube.lastPostedAt).toLocaleString()}.
+          </p>
+        ) : null}
+        {youtube.lastError ? (
+          <p className="mt-3 text-sm text-amber-100/90">{youtube.lastError}</p>
         ) : null}
       </section>
 

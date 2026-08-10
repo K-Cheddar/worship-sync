@@ -25,6 +25,7 @@ export const normalizeChurchIntegrations = (
   const catalog = isRecord(value.catalog) ? value.catalog : {};
   const sp = isRecord(value.servicePlanning) ? value.servicePlanning : {};
   const restream = isRecord(value.restream) ? value.restream : {};
+  const youtube = isRecord(value.youtube) ? value.youtube : {};
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -69,8 +70,7 @@ export const normalizeChurchIntegrations = (
               )
                 ? (r.matchMode as ServicePlanningElementRule["matchMode"])
                 : "contains",
-              overlaySyncEnabled:
-                r.overlaySyncEnabled === false ? false : true,
+              overlaySyncEnabled: r.overlaySyncEnabled === false ? false : true,
               dedupeRepeatedOverlays:
                 r.dedupeRepeatedOverlays === true ? true : false,
               displayName: String(r.displayName ?? ""),
@@ -141,8 +141,20 @@ export const normalizeChurchIntegrations = (
         ? { sessionStartedAt: Number(restream.sessionStartedAt) }
         : {}),
       platformSummary: Array.isArray(restream.platformSummary)
-        ? restream.platformSummary.map(String).map((item) => item.trim()).filter(Boolean)
+        ? restream.platformSummary
+            .map(String)
+            .map((item) => item.trim())
+            .filter(Boolean)
         : [],
+    },
+    youtube: {
+      enabled: Boolean(youtube.enabled),
+      connected: Boolean(youtube.connected),
+      accountLabel: String(youtube.accountLabel ?? "").trim(),
+      lastError: String(youtube.lastError ?? "").trim(),
+      ...(Number.isFinite(Number(youtube.lastPostedAt))
+        ? { lastPostedAt: Number(youtube.lastPostedAt) }
+        : {}),
     },
   };
 };

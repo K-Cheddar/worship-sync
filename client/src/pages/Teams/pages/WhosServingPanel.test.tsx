@@ -23,6 +23,7 @@ const assignmentTeams: TeamsAssignmentSummaryTeamGroup[] = [
         columnKey: "pos-camera::0",
         slotLabel: "Camera - Roving 2",
         memberName: longName,
+        canNotify: true,
         microphoneIds: ["mic-lead"],
       },
     ],
@@ -55,5 +56,25 @@ describe("WhosServingPanel", () => {
     expect(within(dialog).getByText("Camera - Roving 2")).toBeInTheDocument();
     expect(within(dialog).getByText(longName)).toBeInTheDocument();
     expect(within(dialog).getByText("Lead")).toBeInTheDocument();
+  });
+
+  it("puts microphone chips on a second line under the role and name", () => {
+    render(
+      <WhosServingPanel
+        assignmentTeams={assignmentTeams}
+        onOpenSchedule={jest.fn()}
+        microphones={microphones}
+      />,
+    );
+
+    const micGroup = screen.getByRole("group", {
+      name: `Microphones for ${longName}`,
+    });
+    expect(within(micGroup).getByText("Lead")).toBeInTheDocument();
+    expect(micGroup).toHaveClass("border-t");
+    expect(screen.getByText("Camera - Roving 2")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Details for ${longName}` }),
+    ).toBeInTheDocument();
   });
 });

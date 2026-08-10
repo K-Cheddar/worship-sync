@@ -29,19 +29,37 @@ jest.mock("../../context/toastContext", () => ({
 // Covered by useCurrentServicePlanSource.test.tsx. Stubbed here so these tests
 // stay about the window itself and don't need Teams state in the store.
 const mockPlanSource = {
-  occurrences: [] as Array<{
-    occurrenceId: string;
+  savedPlans: [] as Array<{
+    planKey: string;
     serviceId: string;
     name: string;
-    startsAt: string;
+    date: string;
+    startsAt?: string;
   }>,
-  occurrence: null as { occurrenceId: string } | null,
+  selectedPlan: null as null | {
+    planKey: string;
+    serviceId: string;
+    name: string;
+    date: string;
+  },
+  selectedPlanKey: null as string | null,
+  selectPlan: jest.fn(),
+  pinSelectedPlan: jest.fn(),
+  isEnabled: true,
   isLoading: false,
+  isLoadingPlans: false,
+  plansError: null as string | null,
   isPlanSourced: false,
-  selectedOccurrenceId: null as string | null,
-  selectOccurrence: jest.fn(),
   refresh: jest.fn(),
+  refreshPlans: jest.fn(),
 };
+
+const mockCreateNewItemList = jest.fn();
+
+jest.mock("../../utils/itemUtil", () => ({
+  ...jest.requireActual("../../utils/itemUtil"),
+  createNewItemList: (...args: unknown[]) => mockCreateNewItemList(...args),
+}));
 
 jest.mock("./useCurrentServicePlanSource", () => ({
   useCurrentServicePlanSource: () => mockPlanSource,
@@ -89,10 +107,16 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       hideToast: jest.fn(),
       toasts: [],
     } as any);
-    mockPlanSource.occurrences = [];
-    mockPlanSource.occurrence = null;
+    mockPlanSource.savedPlans = [];
+    mockPlanSource.selectedPlan = null;
+    mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
-    mockPlanSource.selectedOccurrenceId = null;
+    mockCreateNewItemList.mockResolvedValue({
+      _id: "outline-new",
+      name: "Sabbath Service · Aug 1",
+      items: [],
+      overlays: [],
+    });
   });
 
   it("stays hidden on initial hydration until the user explicitly opens it", () => {
@@ -151,18 +175,20 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   it("opens the service picker inside the floating window", async () => {
     const user = userEvent.setup();
     mockPlanSource.isPlanSourced = true;
-    mockPlanSource.occurrence = { occurrenceId: "occurrence-1" };
-    mockPlanSource.occurrences = [
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.savedPlans = [
       {
-        occurrenceId: "occurrence-1",
+        planKey: "service-1@2026-07-30",
         serviceId: "service-1",
         name: "Test 1",
+        date: "2026-07-30",
         startsAt: "2026-07-30T19:00:00.000Z",
       },
       {
-        occurrenceId: "occurrence-2",
+        planKey: "service-2@2026-08-06",
         serviceId: "service-2",
         name: "Test 2",
+        date: "2026-08-06",
         startsAt: "2026-08-06T19:00:00.000Z",
       },
     ];
@@ -187,7 +213,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     renderWindow(store);
 
-    await user.click(screen.getByRole("combobox"));
+    await user.click(
+      screen.getByRole("combobox", { name: /Service plan/i }),
+    );
     expect(
       await screen.findByRole("option", { name: /Test 2/ }),
     ).toBeInTheDocument();
@@ -202,7 +230,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     ).toBeInTheDocument();
 
     await user.click(floatingWindow.getByRole("option", { name: /Test 2/ }));
-    expect(mockPlanSource.selectOccurrence).toHaveBeenCalledWith("occurrence-2");
+    expect(mockPlanSource.selectPlan).toHaveBeenCalledWith(
+      "service-2@2026-08-06",
+    );
   });
 
   it("shows every planning row in one list with selection badges", () => {
@@ -581,6 +611,15 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => ({
+          present: {
+            itemLists: {
+              currentLists: [{ _id: "outline-1", name: "Sunday AM" }],
+              selectedList: { _id: "outline-1", name: "Sunday AM" },
+            },
+            itemList: { isLoading: false },
+          },
+        }),
       },
     });
 
@@ -637,6 +676,81 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     expect(store.getState().servicePlanningImport.sync.status).toBe("running");
     expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
+  });
+
+  it("normalizes Sync All to overlays when no target outline is selected", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [{ action: "create", elementType: "Welcome" }],
+        outlineCandidates: [
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            elementType: "Welcome Song",
+            title: "Welcome Song",
+            outlineItemType: "song",
+            cleanedTitle: "Welcome Song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Welcome Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        lineItems: [],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync All" }));
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe("running");
+    expect(store.getState().servicePlanningImport.sync.mode).toBe("overlays");
+  });
+
+  it("pins the selected plan before creating and selecting a new outline", async () => {
+    mockPlanSource.selectedPlanKey = "service-1@2026-08-01";
+    mockPlanSource.selectedPlan = {
+      planKey: "service-1@2026-08-01",
+      serviceId: "service-1",
+      date: "2026-08-01",
+      name: "Sabbath Service",
+    };
+    mockPlanSource.savedPlans = [mockPlanSource.selectedPlan];
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => ({
+          present: {
+            itemLists: {
+              currentLists: [{ _id: "outline-1", name: "Sunday AM" }],
+              selectedList: { _id: "outline-1", name: "Sunday AM" },
+            },
+            itemList: { isLoading: false },
+          },
+        }),
+      },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+
+    await waitFor(() => expect(mockCreateNewItemList).toHaveBeenCalled());
+    expect(mockPlanSource.pinSelectedPlan).toHaveBeenCalledTimes(1);
   });
 
   it("shows Create song for unmatched outline songs instead of Add to list", () => {

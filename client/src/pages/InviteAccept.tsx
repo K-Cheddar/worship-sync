@@ -279,6 +279,18 @@ const InviteAccept = () => {
     }
   };
 
+  /**
+   * Drops the current session so the sign-in options return, for someone who
+   * opened an invite while signed in as a different account. The pending token
+   * is kept, so they land back here after signing in as the invited address.
+   */
+  const handleUseDifferentAccount = async () => {
+    setErrorMessage("");
+    setStatusMessage("");
+    await clearCurrentAccount();
+    setSignedInEmail("");
+  };
+
   const acceptInviteMembershipWithSignedInUser = async () => {
     const currentUser = getHumanAuth().currentUser;
     if (!currentUser) {
@@ -579,6 +591,19 @@ const InviteAccept = () => {
               disabled={isSaving}
             >
               Accept invite with this account
+            </Button>
+            {/* An invite only works for the address it was sent to (the server
+                rejects any other), so someone signed in as the wrong account
+                would otherwise be stuck clicking into a 403 with no way out.
+                The invited address is deliberately not shown: anyone holding a
+                forwarded token would learn who to target. */}
+            <Button
+              variant="textLink"
+              className="w-full justify-center"
+              disabled={isSaving}
+              onClick={() => void handleUseDifferentAccount()}
+            >
+              Use a different account
             </Button>
           </div>
         ) : (

@@ -80,6 +80,37 @@ describe("itemSlice", () => {
       );
     });
 
+    it("setActiveItem loads song links and attached audio", () => {
+      const store = createStore();
+
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "New Song",
+          _id: "item-123",
+          type: "song",
+          songLinks: [
+            { id: "link-1", label: "Chart", url: "https://example.com/chart" },
+          ],
+          songAudio: {
+            id: "audio-1",
+            key: "churches/church/songs/item-123/audio-1.mp3",
+            fileName: "reference.mp3",
+            contentType: "audio/mpeg",
+            sizeBytes: 1234,
+            uploadedAt: "2026-08-06T12:00:00.000Z",
+          },
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.songLinks).toEqual([
+        { id: "link-1", label: "Chart", url: "https://example.com/chart" },
+      ]);
+      expect(state.songAudio).toEqual(
+        expect.objectContaining({ id: "audio-1", fileName: "reference.mp3" }),
+      );
+    });
+
     it("setActiveItem clears background target UI state", () => {
       const store = createStore({
         item: {
@@ -208,6 +239,30 @@ describe("itemSlice", () => {
       expect(store.getState().item.songMetadata).toEqual(
         expect.objectContaining({ lrclibId: 12 }),
       );
+      expect(store.getState().item.hasPendingUpdate).toBe(true);
+    });
+
+    it("song resource updates mark the item dirty", () => {
+      const store = createStore();
+
+      store.dispatch(
+        itemSlice.actions.setSongLinks([
+          { id: "link-1", label: "Chart", url: "https://example.com/chart" },
+        ]),
+      );
+      store.dispatch(
+        itemSlice.actions.setSongAudio({
+          id: "audio-1",
+          key: "churches/church/songs/song/audio-1.mp3",
+          fileName: "reference.mp3",
+          contentType: "audio/mpeg",
+          sizeBytes: 1234,
+          uploadedAt: "2026-08-06T12:00:00.000Z",
+        }),
+      );
+
+      expect(store.getState().item.songLinks).toHaveLength(1);
+      expect(store.getState().item.songAudio?.id).toBe("audio-1");
       expect(store.getState().item.hasPendingUpdate).toBe(true);
     });
 

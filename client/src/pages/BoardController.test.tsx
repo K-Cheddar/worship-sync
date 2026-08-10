@@ -368,11 +368,20 @@ describe("BoardControllerContent", () => {
     mockUpdateBoardPostHighlighted.mockResolvedValue({ post: {} as any });
   });
 
-  const renderPage = () =>
+  const renderPage = (
+    options: {
+      globalOverrides?: Record<string, unknown>;
+    } = {},
+  ) =>
     render(
       <MemoryRouter>
         <GlobalInfoContext.Provider
-          value={createMockGlobalContext({ database: "test" }) as any}
+          value={
+            createMockGlobalContext({
+              database: "test",
+              ...options.globalOverrides,
+            }) as any
+          }
         >
           <ToastProvider>
             <BoardControllerContent />
@@ -910,5 +919,43 @@ describe("BoardControllerContent", () => {
     expect(within(tools).getByText("Share links")).toBeInTheDocument();
     expect(within(tools).getByText("Attendee link")).toBeInTheDocument();
     expect(within(tools).getByText("Board link")).toBeInTheDocument();
+  });
+
+  it("offers Sign in again when board sync is paused for auth", async () => {
+    const user = userEvent.setup();
+    const logout = jest.fn().mockResolvedValue(undefined);
+    mockUseBoardSync.mockReturnValue({
+      db: undefined,
+      status: "paused",
+      pullFromRemote: jest.fn(),
+      retryNow: jest.fn(),
+    } as any);
+
+    renderPage({ globalOverrides: { logout } });
+
+    expect(
+      screen.getByText(/Sign in again to load and moderate posts/i),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Sign in again/i }));
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Try again when board sync failed to connect", async () => {
+    const user = userEvent.setup();
+    const retryNow = jest.fn();
+    mockUseBoardSync.mockReturnValue({
+      db: undefined,
+      status: "failed",
+      pullFromRemote: jest.fn(),
+      retryNow,
+    } as any);
+
+    renderPage();
+
+    expect(
+      screen.getByText(/Check the server connection, then try again/i),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Try again/i }));
+    expect(retryNow).toHaveBeenCalledTimes(1);
   });
 });

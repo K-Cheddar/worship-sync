@@ -1,4 +1,4 @@
-import { Ban, UserRoundCog } from "lucide-react";
+import { Ban, ShieldPlus, UserRoundCog } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { InvitePeopleForm } from "../../Controller/AccountFormSections";
 import { useAccountPage } from "../AccountPageContext";
@@ -8,6 +8,7 @@ import { alternatingAdminListRowBg } from "../../../utils/listRowStripes";
 import MemberAccessSheet from "../components/MemberAccessSheet";
 import { formatMemberTeamsAccessSummary } from "../accountTeamsAccess";
 import { formatMemberServicesAccessSummary } from "../accountServicesAccess";
+import { formatMemberAccessLabel } from "../accountUtils";
 
 const AccountPeoplePage = () => {
   const accountPage = useAccountPage();
@@ -48,7 +49,9 @@ const AccountPeoplePage = () => {
           )}
           {sortedInvites.map((invite, inviteIndex) => {
             const accessLabel =
-              invite.role === "admin" ? "Admin" : invite.appAccess;
+              invite.role === "admin"
+                ? "Admin"
+                : formatMemberAccessLabel(invite.appAccess);
             const teamsAccessSummary = formatMemberTeamsAccessSummary(
               toTeamsAccessOption(invite.permissions, invite.role),
               getEditableTeamScopeIds(invite.permissions),
@@ -176,7 +179,8 @@ const AccountPeoplePage = () => {
                         isSelf ? "text-cyan-100/90" : "text-gray-300",
                       )}
                     >
-                      {isAdminMember ? "Admin" : "Member"} | {member.appAccess}
+                      {isAdminMember ? "Admin" : "Member"} |{" "}
+                      {formatMemberAccessLabel(member.appAccess)}
                     </p>
                     <p
                       className={cn(
@@ -207,16 +211,42 @@ const AccountPeoplePage = () => {
                   {!isSelf && (
                     <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
                       {!isAdminMember && targetUserId ? (
-                        <Button
-                          type="button"
-                          variant="tertiary"
-                          svg={UserRoundCog}
-                          iconSize="sm"
-                          aria-label={`Edit access for ${memberLabel}`}
-                          onClick={() => openMemberAccessSheet(member)}
-                        >
-                          Edit access
-                        </Button>
+                        <>
+                          <Button
+                            type="button"
+                            variant="tertiary"
+                            svg={UserRoundCog}
+                            iconSize="sm"
+                            aria-label={`Edit access for ${memberLabel}`}
+                            onClick={() => openMemberAccessSheet(member)}
+                          >
+                            Edit access
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="tertiary"
+                            svg={ShieldPlus}
+                            iconSize="sm"
+                            aria-label={`Make ${memberLabel} an admin`}
+                            isLoading={
+                              destructiveConfirmRunning &&
+                              destructiveConfirm?.kind === "makeAdmin" &&
+                              destructiveConfirm.membershipId ===
+                              member.membershipId
+                            }
+                            disabled={destructiveConfirmRunning}
+                            onClick={() =>
+                              setDestructiveConfirm({
+                                kind: "makeAdmin",
+                                membershipId: member.membershipId,
+                                memberLabel,
+                                targetUserId,
+                              })
+                            }
+                          >
+                            Make admin
+                          </Button>
+                        </>
                       ) : null}
                       {isAdminMember && targetUserId ? (
                         <Button

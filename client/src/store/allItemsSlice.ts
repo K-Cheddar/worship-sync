@@ -43,6 +43,16 @@ export const allItemsSlice = createSlice({
     addItemToAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
       state.list.push(action.payload);
     },
+    upsertItemInAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
+      const itemIndex = state.list.findIndex(
+        (item) => item._id === action.payload._id,
+      );
+      if (itemIndex >= 0) {
+        state.list[itemIndex] = action.payload;
+        return;
+      }
+      state.list.push(action.payload);
+    },
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
@@ -62,6 +72,7 @@ export const {
   updateAllItemsList,
   removeItemFromAllItemsList,
   addItemToAllItemsList,
+  upsertItemInAllItemsList,
   initiateAllItemsList,
   updateAllItemsListFromRemote,
   setIsInitialized,

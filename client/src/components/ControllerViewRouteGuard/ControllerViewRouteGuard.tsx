@@ -1,6 +1,7 @@
 import { ReactNode, useContext, useMemo } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 /** Controller segments view-only users must not open (creation and settings; content tools stay reachable read-only). */
 export const VIEW_BLOCKED_CONTROLLER_SEGMENTS = new Set([
@@ -23,7 +24,7 @@ const ControllerViewRouteGuard = ({ children }: ControllerViewRouteGuardProps) =
   const location = useLocation();
 
   const shouldRedirect = useMemo(() => {
-    if (access !== "view") return false;
+    if (!isViewOnlyAccess(access)) return false;
     const segments = location.pathname.split("/").filter(Boolean);
     const first = segments[0];
     const second = segments[1];

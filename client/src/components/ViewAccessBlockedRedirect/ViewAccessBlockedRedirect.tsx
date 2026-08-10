@@ -2,6 +2,7 @@ import { ReactNode, useContext } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { FULL_ACCESS_ONLY_EXACT } from "../../utils/sessionRouteAccess";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 type ViewAccessBlockedRedirectProps = {
   children: ReactNode;
@@ -18,7 +19,7 @@ const ViewAccessBlockedRedirect = ({
   const { access, sessionKind } = useContext(GlobalInfoContext) || {};
   const location = useLocation();
 
-  if (sessionKind !== "display" && access === "view") {
+  if (sessionKind !== "display" && isViewOnlyAccess(access)) {
     return <Navigate to="/home" replace state={{ from: location }} />;
   }
 

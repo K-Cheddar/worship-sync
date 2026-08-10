@@ -13,7 +13,20 @@ export const memberAccessOptions: {
   { value: "full", label: "Full access" },
   { value: "music", label: "Music access" },
   { value: "view", label: "View access" },
+  // Named for what it grants rather than matching the "<x> access" pattern:
+  // a volunteer who sees their own schedule and no operator surfaces.
+  { value: "member", label: "Schedule only" },
 ];
+
+/**
+ * Human label for an app access value, from the same list the pickers use so a
+ * new tier never shows as its raw key ("member") in one place and its label
+ * ("Schedule only") in another.
+ */
+export const formatMemberAccessLabel = (value?: string): string =>
+  memberAccessOptions.find((option) => option.value === value)?.label ||
+  value ||
+  "";
 
 export const formatLastSeenLabel = (value?: string | null) => {
   if (!value) return "Last seen unknown";
@@ -110,8 +123,15 @@ export const formatAccountError = (
 };
 
 export const toMemberAccessOption = (value?: string): MemberAccessOption => {
-  if (value === "full" || value === "music" || value === "view") {
+  if (
+    value === "full" ||
+    value === "music" ||
+    value === "view" ||
+    value === "member"
+  ) {
     return value;
   }
-  return "view";
+  // Falls back to the *narrower* of the readable tiers. Resolving an
+  // unrecognized value upward would silently widen someone's access on save.
+  return "member";
 };

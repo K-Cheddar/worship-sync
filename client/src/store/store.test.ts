@@ -114,6 +114,44 @@ const loadStoreWithMediaPersistence = () => {
   };
 };
 
+const loadStoreWithItemPersistence = () => {
+  let storeModule: any;
+  let itemSliceModule: any;
+  const postMessage = jest.fn();
+  const db = {
+    get: jest.fn(),
+    put: jest.fn(),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: { postMessage },
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    itemSliceModule = require("./itemSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    itemSlice: itemSliceModule.itemSlice,
+    db,
+    postMessage,
+  };
+};
+
 const createOverlay = (id: string, name: string) => ({
   id,
   type: "participant" as const,
@@ -145,6 +183,15 @@ const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
   slides: [],
   shouldSendTo: defaultShouldSendTo,
   ...overrides,
+});
+
+const createSongAudio = (id: string) => ({
+  id,
+  key: `churches/church-1/songs/song-1/${id}.mp3`,
+  fileName: `${id}.mp3`,
+  contentType: "audio/mpeg",
+  sizeBytes: 1234,
+  uploadedAt: "2026-08-09T12:00:00.000Z",
 });
 
 const createTimerItem = (overrides: Record<string, unknown> = {}) => ({
@@ -610,6 +657,92 @@ describe("store module", () => {
       expect(storeModule.hasFinishedInitialization).toBe(true);
       expect(clearHistory).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("cancels a pending item autosave when persisted song audio is applied", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const previousAudio = createSongAudio("audio-old");
+    const attachedAudio = createSongAudio("audio-new");
+
+    store.dispatch(
+      itemSlice.actions.setActiveItem(
+        createSongDoc({ _rev: "1-song", songAudio: previousAudio }),
+      ),
+    );
+    store.dispatch(itemSlice.actions._setName("Edited while uploading"));
+    store.dispatch(
+      itemSlice.actions.applyPersistedSongAudio({
+        songAudio: attachedAudio,
+        persistedDoc: createSongDoc({
+          _rev: "2-song",
+          name: "Edited while uploading",
+          songAudio: attachedAudio,
+        }),
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.songAudio).toEqual(
+      attachedAudio,
+    );
+  });
+
+  it("preserves newer persisted song audio during an ordinary item autosave", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const staleAudio = createSongAudio("audio-old");
+    const persistedAudio = createSongAudio("audio-new");
+    db.get.mockResolvedValue(
+      createSongDoc({ _rev: "2-song", songAudio: persistedAudio }),
+    );
+    db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
+
+    store.dispatch(
+      itemSlice.actions.setActiveItem(
+        createSongDoc({ _rev: "1-song", songAudio: staleAudio }),
+      ),
+    );
+    store.dispatch(itemSlice.actions._setName("Edited Song"));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Edited Song",
+        songAudio: persistedAudio,
+      }),
+    );
+  });
+
+  it("does not restore removed song audio during an ordinary item autosave", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const staleAudio = createSongAudio("audio-old");
+    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song" }));
+    db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
+
+    store.dispatch(
+      itemSlice.actions.setActiveItem(
+        createSongDoc({ _rev: "1-song", songAudio: staleAudio }),
+      ),
+    );
+    store.dispatch(itemSlice.actions._setName("Edited Song"));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Edited Song",
+        songAudio: undefined,
+      }),
+    );
   });
 
   it("clears transient item loading flags after undo restores a prior item snapshot", async () => {

@@ -1,4 +1,5 @@
 import { getDisplayHomePath } from "./displaySurface";
+import { isViewOnlyAccess } from "./accessTiers";
 
 type LoginState =
   | "idle"
@@ -10,7 +11,7 @@ type LoginState =
   | undefined;
 
 type SessionKind = "human" | "workstation" | "display" | null | undefined;
-type Access = "full" | "music" | "view" | null | undefined;
+type Access = "full" | "music" | "view" | "member" | null | undefined;
 type TeamsPermission = "none" | "view" | "edit" | null | undefined;
 type TeamScopedPermission = "view" | "edit";
 type ServicesPermission = "none" | "edit" | null | undefined;
@@ -36,9 +37,27 @@ const GUEST_ALLOWED_EXACT = new Set([
   "/credits-editor",
 ]);
 
+/**
+ * Everything a schedule-only member may open.
+ *
+ * An **allowlist**, not a subtraction from the human list: this tier exists so a
+ * volunteer never reaches an operator surface, and expressing that as "human
+ * routes minus some" would silently admit every route added later. Anything not
+ * named here is refused, so a new operator page is closed to members by default.
+ */
+const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule"]);
+
+/** Whether a schedule-only member may open this path. Deny by default. */
+export const isMemberAllowedPath = (pathname: string): boolean =>
+  MEMBER_ALLOWED_EXACT.has(pathname);
+
 const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account"];
 const HUMAN_ALLOWED_EXACT = new Set([
   "/home",
+  // Reachable by everyone, not only schedule-only members: an admin who is also
+  // on a roster uses it, and omitting it made Electron route restore fall back
+  // to /home.
+  "/my-schedule",
   "/overlay-controller",
   "/workstation/pair",
   "/display/pair",
@@ -153,6 +172,12 @@ export const isRouteAllowedForSession = (
   }
 
   if (context.sessionKind === "human") {
+    // Checked before the human allowlist and returning outright: hiding the
+    // links on Home is presentation only, and typing the URL would otherwise
+    // still open a read-only controller.
+    if (context.access === "member") {
+      return MEMBER_ALLOWED_EXACT.has(pathname);
+    }
     if (
       !matchesAllowedRoute(
         pathname,
@@ -166,7 +191,7 @@ export const isRouteAllowedForSession = (
     ) {
       return false;
     }
-    if (context.access === "view" && VIEW_BLOCKED_EXACT.has(pathname)) {
+    if (isViewOnlyAccess(context.access) && VIEW_BLOCKED_EXACT.has(pathname)) {
       return false;
     }
     if (context.access !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
@@ -185,7 +210,7 @@ export const isRouteAllowedForSession = (
     ) {
       return false;
     }
-    if (context.access === "view" && VIEW_BLOCKED_EXACT.has(pathname)) {
+    if (isViewOnlyAccess(context.access) && VIEW_BLOCKED_EXACT.has(pathname)) {
       return false;
     }
     if (context.access !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {

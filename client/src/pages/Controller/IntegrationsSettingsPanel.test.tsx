@@ -13,6 +13,9 @@ const mockUpdateChurchIntegrations = jest.fn();
 const mockDisconnectRestream = jest.fn();
 const mockGetRestreamConnectAuthorizeUrl = jest.fn();
 const mockGetRestreamConnectStatus = jest.fn();
+const mockDisconnectYouTube = jest.fn();
+const mockGetYouTubeConnectAuthorizeUrl = jest.fn();
+const mockGetYouTubeConnectStatus = jest.fn();
 
 jest.mock("../../utils/environment", () => ({
   isElectron: jest.fn(() => false),
@@ -30,6 +33,11 @@ jest.mock("../../boards/api", () => ({
     mockGetRestreamConnectAuthorizeUrl(...args),
   getRestreamConnectStatus: (...args: unknown[]) =>
     mockGetRestreamConnectStatus(...args),
+  disconnectYouTube: (...args: unknown[]) => mockDisconnectYouTube(...args),
+  getYouTubeConnectAuthorizeUrl: (...args: unknown[]) =>
+    mockGetYouTubeConnectAuthorizeUrl(...args),
+  getYouTubeConnectStatus: (...args: unknown[]) =>
+    mockGetYouTubeConnectStatus(...args),
 }));
 
 jest.mock("../../api/auth", () => ({
@@ -51,6 +59,19 @@ describe("IntegrationsSettingsPanel", () => {
       pollIntervalMs: 10_000,
     });
     mockGetRestreamConnectStatus.mockResolvedValue({
+      status: "pending",
+      errorMessage: "",
+    });
+    mockDisconnectYouTube.mockResolvedValue(undefined);
+    mockGetYouTubeConnectAuthorizeUrl.mockResolvedValue({
+      authorizeUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth?churchId=church-1",
+      connectRequestId: "youtube-connect-1",
+      connectRequestSecret: "youtube-secret-1",
+      expiresAt: Date.now() + 60_000,
+      pollIntervalMs: 10_000,
+    });
+    mockGetYouTubeConnectStatus.mockResolvedValue({
       status: "pending",
       errorMessage: "",
     });
@@ -153,6 +174,32 @@ describe("IntegrationsSettingsPanel", () => {
 
     await waitFor(() => {
       expect(mockDisconnectRestream).toHaveBeenCalledWith("church-1");
+    });
+  });
+
+  it("shows YouTube connection controls in the integrations panel", async () => {
+    const user = userEvent.setup();
+    const integrations = createDefaultChurchIntegrations();
+    integrations.youtube.enabled = true;
+    integrations.youtube.connected = true;
+    integrations.youtube.accountLabel = "Church Live";
+
+    render(
+      <IntegrationsSettingsPanel
+        churchId="church-1"
+        integrations={integrations}
+        integrationsStatus="ready"
+      />,
+    );
+
+    expect(screen.getByText("Church Live")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Disconnect YouTube/i }),
+    );
+
+    await waitFor(() => {
+      expect(mockDisconnectYouTube).toHaveBeenCalledWith("church-1");
     });
   });
 

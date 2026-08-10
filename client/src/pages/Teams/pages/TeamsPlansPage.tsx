@@ -11,15 +11,11 @@ import {
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
+import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import Select from "../../../components/Select/Select";
 import DatePicker from "@/components/ui/DatePicker";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
@@ -38,6 +34,12 @@ import {
 import { getServicePlanKey } from "../../../utils/servicePlanKeys";
 import ServicePlanEditor from "../../Services/ServicePlanEditor";
 import { useTeamsPage } from "../TeamsPageContext";
+import {
+  OCCURRENCE_ORGANIZE_OPTIONS,
+  readPlansOrganizeMode,
+  writePlansOrganizeMode,
+  type OccurrenceOrganizeMode,
+} from "../occurrenceOrganizeMode";
 import {
   getOccurrenceAssignmentSummary,
   getScheduledMicrophoneHolders,
@@ -179,6 +181,112 @@ const serviceTimingLabel = (shared: SharedOccurrenceTiming) => {
   return shared.sharedWeekday || shared.sharedTime || null;
 };
 
+/** Always show time on by-date tiles — service headers are not there to carry it. */
+const BY_DATE_TILE_SHARED: SharedOccurrenceTiming = {
+  sharedWeekday: null,
+  sharedTime: null,
+};
+
+type PlansOccurrenceTileProps = {
+  occurrence: TeamScheduleOccurrence;
+  shared: SharedOccurrenceTiming;
+  serviceName?: string;
+  hasPlan: boolean;
+  isPast: boolean;
+  isNextUpcoming: boolean;
+  planStatusLoading: boolean;
+  onOpen: () => void;
+};
+
+const PlansOccurrenceTile = ({
+  occurrence,
+  shared,
+  serviceName,
+  hasPlan,
+  isPast,
+  isNextUpcoming,
+  planStatusLoading,
+  onOpen,
+}: PlansOccurrenceTileProps) => {
+  const tile = getPlansTileParts(occurrence, shared);
+  let planActionLabel = `Add plan for ${tile.label}`;
+  if (planStatusLoading) {
+    planActionLabel = `Plan for ${tile.label}`;
+  } else if (hasPlan) {
+    planActionLabel = `Open plan for ${tile.label}`;
+  }
+  if (serviceName) {
+    planActionLabel = `${planActionLabel} (${serviceName})`;
+  }
+
+  return (
+    <li className="relative">
+      {isNextUpcoming ? (
+        <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
+          <ScheduleUpNextBadge />
+        </div>
+      ) : null}
+      <Button
+        type="button"
+        variant="tertiary"
+        aria-label={`${planActionLabel}${isNextUpcoming ? ", up next" : ""}`}
+        aria-busy={planStatusLoading || undefined}
+        className={cn(
+          "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
+          planStatusLoading
+            ? "border-gray-600/70 bg-gray-800/70 hover:border-gray-500/50 hover:bg-gray-800"
+            : hasPlan
+              ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
+              : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
+          isNextUpcoming && scheduleUpNextBorderClassName,
+          isPast && !hasPlan && !planStatusLoading && "opacity-55",
+        )}
+        onClick={onOpen}
+      >
+        <span className="flex w-full items-center justify-between gap-1">
+          <span
+            className={cn(
+              "text-[11px] font-semibold uppercase tracking-wide",
+              hasPlan ? "text-emerald-300/70" : "text-gray-400",
+            )}
+          >
+            {tile.weekday}
+          </span>
+          {planStatusLoading ? (
+            <span
+              className="size-3 shrink-0 animate-pulse rounded-sm bg-white/10"
+              aria-hidden
+            />
+          ) : hasPlan ? (
+            <Icon
+              svg={Check}
+              size="xs"
+              className="shrink-0 text-emerald-300"
+            />
+          ) : (
+            <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
+          )}
+        </span>
+        <span className="mt-0.5 text-left text-lg font-semibold leading-none text-gray-100">
+          {tile.day}
+        </span>
+        <span className="mt-1 flex w-full items-center justify-between gap-1 text-left text-[11px] text-gray-400">
+          <span>{tile.month}</span>
+          {tile.time ? <span>{tile.time}</span> : null}
+        </span>
+        {serviceName ? (
+          <span
+            className="mt-1 truncate text-left text-[11px] font-medium text-gray-300"
+            title={serviceName}
+          >
+            {serviceName}
+          </span>
+        ) : null}
+      </Button>
+    </li>
+  );
+};
+
 /**
  * Plans list: pick a date for a service and jump straight into building or
  * editing its order-of-service — no service/date-range/occurrence dropdown
@@ -204,6 +312,9 @@ const TeamsPlansPage = () => {
   const [windowEnd, setWindowEnd] = useState(initialRange.end);
   const [rangePreset, setRangePreset] = useState<RangePreset>("4w");
   const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
+  const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
+    readPlansOrganizeMode,
+  );
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
   // Mild placeholders for planned chips / progress / checks until listServicePlans
   // resolves. Stays false on revision refreshes so badges do not flash.
@@ -217,11 +328,9 @@ const TeamsPlansPage = () => {
   } | null>(null);
   const [pendingPlanRestore, setPendingPlanRestore] =
     useState<TeamsPlansRestore | null>(null);
-  // Mobile: Who's serving opens in a sheet so the plan keeps the full viewport.
-  // Desktop keeps the side panel. Opening from the list leaves the sheet closed;
-  // returning from a schedule deep-link reopens it.
-  const [servingSheetOpen, setServingSheetOpen] = useState(false);
+  const [openServingTabOnSelection, setOpenServingTabOnSelection] = useState(false);
   const [servingPanelOpen, setServingPanelOpen] = useState(true);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
@@ -290,8 +399,8 @@ const TeamsPlansPage = () => {
       (item) => item.serviceId === match.serviceId,
     );
     if (!service) return;
+    setOpenServingTabOnSelection(true);
     setSelection({ service, occurrence: match });
-    setServingSheetOpen(true);
     // Keep the list behind the editor showing this plan once the user backs out.
     if (date < windowStart) {
       setWindowStart(date);
@@ -403,12 +512,70 @@ const TeamsPlansPage = () => {
     [groups, serviceFilter],
   );
 
+  const showOrganizeToggle = activeServices.length > 1;
+
+  /** Effective organize mode — single-service lists are identical either way. */
+  const effectiveOrganizeMode: OccurrenceOrganizeMode =
+    showOrganizeToggle ? organizeMode : "byService";
+
+  const changeOrganizeMode = (mode: OccurrenceOrganizeMode) => {
+    setOrganizeMode(mode);
+    writePlansOrganizeMode(mode);
+  };
+
+  /**
+   * Chronological sequence across visible services — used for by-date tiles and
+   * for prev/next when browsing in date order.
+   */
+  const chronologicalEntries = useMemo(() => {
+    const entries = visibleGroups.flatMap((group) =>
+      group.occurrences.map((occurrence) => ({
+        service: group.service,
+        serviceName: group.name,
+        occurrence,
+      })),
+    );
+    return entries.sort(
+      (a, b) =>
+        new Date(a.occurrence.startsAt).getTime() -
+        new Date(b.occurrence.startsAt).getTime() ||
+        a.serviceName.localeCompare(b.serviceName),
+    );
+  }, [visibleGroups]);
+
+  const chronologicalMonths = useMemo(
+    () =>
+      groupOccurrencesByMonth(
+        chronologicalEntries.map((entry) => entry.occurrence),
+      ),
+    [chronologicalEntries],
+  );
+
+  const chronologicalPlannedCount = useMemo(
+    () =>
+      chronologicalEntries.filter((entry) =>
+        planKeysWithPlans.has(getServicePlanKey(entry.occurrence)),
+      ).length,
+    [chronologicalEntries, planKeysWithPlans],
+  );
+
+  const entryByOccurrenceId = useMemo(() => {
+    const map = new Map<
+      string,
+      { service: TeamService; serviceName: string; occurrence: TeamScheduleOccurrence }
+    >();
+    for (const entry of chronologicalEntries) {
+      map.set(entry.occurrence.occurrenceId, entry);
+    }
+    return map;
+  }, [chronologicalEntries]);
+
   const nextUpcomingOccurrenceId = useMemo(
     () =>
       findNextUpcomingOccurrenceId(
-        visibleGroups.flatMap((group) => group.occurrences),
+        chronologicalEntries.map((entry) => entry.occurrence),
       ),
-    [visibleGroups],
+    [chronologicalEntries],
   );
 
   const serviceFilterOptions = useMemo(
@@ -471,11 +638,38 @@ const TeamsPlansPage = () => {
   );
 
   /**
-   * Previous/next within the same service group and current date window —
-   * the same chronological sequence the Plans tiles show for that service.
+   * Previous/next within the current date window. By service stays on that
+   * series; by date walks the mixed chronological sequence.
    */
   const planNavigation = useMemo(() => {
     if (!selection) return undefined;
+
+    if (effectiveOrganizeMode === "byDate") {
+      const index = chronologicalEntries.findIndex(
+        (entry) =>
+          entry.occurrence.occurrenceId === selection.occurrence.occurrenceId,
+      );
+      if (index < 0) return undefined;
+      const previous = chronologicalEntries[index - 1];
+      const next = chronologicalEntries[index + 1];
+      return {
+        onPrevious: previous
+          ? () =>
+            setSelection({
+              service: previous.service,
+              occurrence: previous.occurrence,
+            })
+          : undefined,
+        onNext: next
+          ? () =>
+            setSelection({
+              service: next.service,
+              occurrence: next.occurrence,
+            })
+          : undefined,
+      };
+    }
+
     const group = visibleGroups.find((entry) =>
       entry.occurrences.some(
         (occurrence) =>
@@ -498,7 +692,7 @@ const TeamsPlansPage = () => {
         ? () => setSelection({ service: group.service, occurrence: next })
         : undefined,
     };
-  }, [selection, visibleGroups]);
+  }, [chronologicalEntries, effectiveOrganizeMode, selection, visibleGroups]);
 
   /**
    * Schedules covering the open plan's date whose assignments the bootstrap
@@ -573,90 +767,71 @@ const TeamsPlansPage = () => {
               }}
               canEdit={canEditPlan}
               onBack={() => {
-                setServingSheetOpen(false);
+                setOpenServingTabOnSelection(false);
                 setSelection(null);
               }}
               planNavigation={planNavigation}
-              headerActions={
-                <Button
-                  type="button"
-                  variant="secondary"
-                  svg={Users}
-                  iconSize="sm"
-                  className="max-md:min-h-0 lg:hidden"
-                  aria-label="Who's serving"
-                  aria-haspopup="dialog"
-                  onClick={() => setServingSheetOpen(true)}
-                />
+              initialTab={openServingTabOnSelection ? "serving" : "plan"}
+              mobileServingContent={
+                !isDesktop ? (
+                  <WhosServingPanel
+                    assignmentTeams={assignmentTeams}
+                    onOpenSchedule={openSchedule}
+                    microphones={microphones}
+                    assignmentsStatus={assignmentsStatus}
+                    showHeading={false}
+                  />
+                ) : undefined
               }
             />
           </div>
-          <aside
-            className={cn(
-              "relative hidden min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700/80 bg-gray-950/70 transition-[width] duration-300 ease-in-out lg:flex",
-              servingPanelOpen ? "w-64" : "w-10",
-            )}
-            aria-label="Who's serving"
-          >
-            <Button
-              type="button"
-              variant="tertiary"
-              padding="p-0"
-              className="absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-950 shadow-sm"
-              aria-expanded={servingPanelOpen}
-              aria-label={
-                servingPanelOpen ? "Hide serving panel" : "Show serving panel"
-              }
-              onClick={() => setServingPanelOpen((open) => !open)}
-            >
-              {servingPanelOpen ? (
-                <ChevronRight className="size-4 shrink-0" aria-hidden />
-              ) : (
-                <ChevronLeft className="size-4 shrink-0" aria-hidden />
+          {isDesktop ? (
+            <aside
+              className={cn(
+                "relative min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700/80 bg-gray-950/70 transition-[width] duration-300 ease-in-out lg:flex",
+                servingPanelOpen ? "w-64" : "w-10",
               )}
-            </Button>
-            {servingPanelOpen ? (
-              <div className="scrollbar-variable flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
-                <WhosServingPanel
-                  assignmentTeams={assignmentTeams}
-                  onOpenSchedule={openSchedule}
-                  microphones={microphones}
-                  assignmentsStatus={assignmentsStatus}
-                />
-              </div>
-            ) : (
-              <div className="flex h-full w-10 flex-col items-center py-3">
-                <Icon
-                  svg={Users}
-                  size="sm"
-                  className="text-orange-300"
-                  alt="Who's serving"
-                />
-              </div>
-            )}
-          </aside>
+              aria-label="Who's serving"
+            >
+              <Button
+                type="button"
+                variant="tertiary"
+                padding="p-0"
+                className="absolute left-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center -translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-950 shadow-sm"
+                aria-expanded={servingPanelOpen}
+                aria-label={
+                  servingPanelOpen ? "Hide serving panel" : "Show serving panel"
+                }
+                onClick={() => setServingPanelOpen((open) => !open)}
+              >
+                {servingPanelOpen ? (
+                  <ChevronRight className="size-4 shrink-0" aria-hidden />
+                ) : (
+                  <ChevronLeft className="size-4 shrink-0" aria-hidden />
+                )}
+              </Button>
+              {servingPanelOpen ? (
+                <div className="scrollbar-variable flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
+                  <WhosServingPanel
+                    assignmentTeams={assignmentTeams}
+                    onOpenSchedule={openSchedule}
+                    microphones={microphones}
+                    assignmentsStatus={assignmentsStatus}
+                  />
+                </div>
+              ) : (
+                <div className="flex h-full w-10 flex-col items-center py-3">
+                  <Icon
+                    svg={Users}
+                    size="sm"
+                    className="text-orange-300"
+                    alt="Who's serving"
+                  />
+                </div>
+              )}
+            </aside>
+          ) : null}
         </div>
-
-        <Sheet open={servingSheetOpen} onOpenChange={setServingSheetOpen}>
-          <SheetContent
-            side="right"
-            className="flex w-full max-w-sm flex-col border-gray-700 bg-gray-950/95 p-0"
-            aria-describedby={undefined}
-          >
-            <SheetHeader className="border-b border-gray-800">
-              <SheetTitle>Who&apos;s serving</SheetTitle>
-            </SheetHeader>
-            <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-4">
-              <WhosServingPanel
-                assignmentTeams={assignmentTeams}
-                onOpenSchedule={openSchedule}
-                microphones={microphones}
-                assignmentsStatus={assignmentsStatus}
-                showHeading={false}
-              />
-            </div>
-          </SheetContent>
-        </Sheet>
       </div>
     );
   }
@@ -684,8 +859,21 @@ const TeamsPlansPage = () => {
               />
             ) : null}
 
-            <div className="flex flex-col gap-1.5">
-              <span className="px-1 text-sm font-semibold">Range</span>
+            {showOrganizeToggle ? (
+              <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+                <span className="px-0.5 text-sm font-semibold">Organize</span>
+                <SegmentedControl
+                  ariaLabel="Organize plans"
+                  variant="compact"
+                  value={organizeMode}
+                  onChange={changeOrganizeMode}
+                  options={OCCURRENCE_ORGANIZE_OPTIONS}
+                />
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+              <span className="px-0.5 text-sm font-semibold">Range</span>
               <div
                 className="flex flex-wrap gap-1.5"
                 role="group"
@@ -757,6 +945,119 @@ const TeamsPlansPage = () => {
           No dates for this service in the selected range. Choose another
           service or widen the range.
         </p>
+      ) : effectiveOrganizeMode === "byDate" ? (
+        <div
+          className="space-y-4 rounded-xl border border-gray-700/80 bg-gray-950/80 pt-3 shadow-sm shadow-black/20"
+          {...(planStatusLoading
+            ? {
+              role: "status" as const,
+              "aria-busy": true,
+              "aria-label": "Loading plan status",
+            }
+            : {})}
+        >
+          <header className="space-y-3 border-b border-gray-800 px-3.5 pb-3">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+                <Icon
+                  svg={CalendarDays}
+                  size="sm"
+                  className="text-orange-300"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate text-base font-semibold text-gray-50">
+                  {serviceFilter === ALL_SERVICES
+                    ? "All services"
+                    : (activeServices.find(
+                      (service) => service.serviceId === serviceFilter,
+                    )?.name ?? "Plans")}
+                </h3>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                    {chronologicalEntries.length === 1
+                      ? "1 date"
+                      : `${chronologicalEntries.length} dates`}
+                  </span>
+                  {planStatusLoading ? (
+                    <span
+                      className="inline-block h-[22px] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                      aria-hidden
+                    />
+                  ) : (
+                    <span
+                      className={cn(
+                        "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                        chronologicalPlannedCount > 0
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                          : "border-gray-700 bg-gray-900/70 text-gray-400",
+                      )}
+                    >
+                      {chronologicalPlannedCount === 0
+                        ? "None planned"
+                        : `${chronologicalPlannedCount} planned`}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <div className="space-y-4 bg-black/20 p-3">
+            {chronologicalMonths.map((month) => (
+              <div key={month.key} className="space-y-2">
+                <div className="flex items-center gap-2 px-0.5">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                    {month.label}
+                  </h4>
+                  <div className="h-px flex-1 bg-gray-800" aria-hidden />
+                  <span className="text-[11px] text-gray-500">
+                    {month.occurrences.length}
+                  </span>
+                </div>
+                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                  {month.occurrences.map((occurrence) => {
+                    const entry = entryByOccurrenceId.get(
+                      occurrence.occurrenceId,
+                    );
+                    if (!entry) return null;
+                    const hasPlan =
+                      !planStatusLoading &&
+                      planKeysWithPlans.has(getServicePlanKey(occurrence));
+                    const isPast =
+                      getOccurrenceDate(occurrence) <
+                      formatPlainDate(new Date());
+                    return (
+                      <PlansOccurrenceTile
+                        key={occurrence.occurrenceId}
+                        occurrence={occurrence}
+                        shared={BY_DATE_TILE_SHARED}
+                        serviceName={
+                          serviceFilter === ALL_SERVICES
+                            ? entry.serviceName
+                            : undefined
+                        }
+                        hasPlan={hasPlan}
+                        isPast={isPast}
+                        isNextUpcoming={
+                          occurrence.occurrenceId === nextUpcomingOccurrenceId
+                        }
+                        planStatusLoading={planStatusLoading}
+                        onOpen={() => {
+                          setOpenServingTabOnSelection(false);
+                          setSelection({
+                            service: entry.service,
+                            occurrence,
+                          });
+                        }}
+                      />
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
       ) : (
         <div
           className={cn(
@@ -893,80 +1194,23 @@ const TeamsPlansPage = () => {
                           const isPast =
                             getOccurrenceDate(occurrence) <
                             formatPlainDate(new Date());
-                          const isNextUpcoming =
-                            occurrence.occurrenceId === nextUpcomingOccurrenceId;
-                          const tile = getPlansTileParts(occurrence, shared);
-                          let planActionLabel = `Add plan for ${tile.label}`;
-                          if (planStatusLoading) {
-                            planActionLabel = `Plan for ${tile.label}`;
-                          } else if (hasPlan) {
-                            planActionLabel = `Open plan for ${tile.label}`;
-                          }
                           return (
-                            <li
+                            <PlansOccurrenceTile
                               key={occurrence.occurrenceId}
-                              className="relative"
-                            >
-                              {isNextUpcoming ? (
-                                <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
-                                  <ScheduleUpNextBadge />
-                                </div>
-                              ) : null}
-                              <Button
-                                type="button"
-                                variant="tertiary"
-                                aria-label={`${planActionLabel}${isNextUpcoming ? ", up next" : ""}`}
-                                aria-busy={planStatusLoading || undefined}
-                                className={cn(
-                                  "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
-                                  planStatusLoading
-                                    ? "border-gray-600/70 bg-gray-800/70 hover:border-gray-500/50 hover:bg-gray-800"
-                                    : hasPlan
-                                      ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
-                                      : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
-                                  isNextUpcoming && scheduleUpNextBorderClassName,
-                                  isPast && !hasPlan && !planStatusLoading && "opacity-55",
-                                )}
-                                onClick={() => {
-                                  setServingSheetOpen(false);
-                                  setSelection({ service, occurrence });
-                                }}
-                              >
-                                <span className="flex w-full items-center justify-between gap-1">
-                                  <span
-                                    className={cn(
-                                      "text-[11px] font-semibold uppercase tracking-wide",
-                                      hasPlan
-                                        ? "text-emerald-300/70"
-                                        : "text-gray-400",
-                                    )}
-                                  >
-                                    {tile.weekday}
-                                  </span>
-                                  {planStatusLoading ? (
-                                    <span
-                                      className="size-3 shrink-0 animate-pulse rounded-sm bg-white/10"
-                                      aria-hidden
-                                    />
-                                  ) : hasPlan ? (
-                                    <Icon
-                                      svg={Check}
-                                      size="xs"
-                                      className="shrink-0 text-emerald-300"
-                                    />
-                                  ) : (
-                                    <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
-                                  )}
-                                </span>
-                                <span className="mt-0.5 text-left text-lg font-semibold leading-none text-gray-100">
-                                  {tile.day}
-                                </span>
-                                <span className="mt-1 flex w-full items-center justify-between gap-1 text-left text-[11px] text-gray-400">
-                                  <span>{tile.month}</span>
-                                  {tile.time ? <span>{tile.time}</span> : null}
-                                </span>
-                              </Button>
-                            </li>
+                              occurrence={occurrence}
+                              shared={shared}
+                              hasPlan={hasPlan}
+                              isPast={isPast}
+                              isNextUpcoming={
+                                occurrence.occurrenceId ===
+                                nextUpcomingOccurrenceId
+                              }
+                              planStatusLoading={planStatusLoading}
+                              onOpen={() => {
+                                setOpenServingTabOnSelection(false);
+                                setSelection({ service, occurrence });
+                              }}
+                            />
                           );
                         })}
                       </ul>

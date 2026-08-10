@@ -174,8 +174,24 @@ const bookAliasPattern = Object.keys(bookAliases)
  * deliberately lenient about the book so the search box can match while the
  * operator is still typing.
  */
-export const resolveBibleBookName = (value: string): string | null =>
-  bookAliases[normalizeBookName(value)] ?? null;
+export const resolveBibleBookName = (value: string): string | null => {
+  const normalized = normalizeBookName(value);
+  const exact = bookAliases[normalized];
+  if (exact) return exact;
+
+  /**
+   * Printouts and speech move the plural around — "Proverb 3", "Revelations
+   * 21", "Hebrew 11", "Lamentation 3". Trying the other number covers all of
+   * them at once instead of listing the ones anyone thought of; no book's
+   * name gains or loses an "s" to become a different book, so this can't
+   * redirect a reference. Only reached after an exact match fails, so a real
+   * book name is never bent.
+   */
+  const otherNumber = normalized.endsWith("s")
+    ? normalized.slice(0, -1)
+    : `${normalized}s`;
+  return bookAliases[otherNumber] ?? null;
+};
 
 /**
  * "Psalms 90 (NLT)" — bulletins and planning printouts bracket the version as

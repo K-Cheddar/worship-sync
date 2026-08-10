@@ -172,6 +172,32 @@ export type SongMetadata = {
   importedAt: string;
 };
 
+/** An operator-maintained external resource for a song, such as a chart or tutorial. */
+export type SongLinkSegment = {
+  id: string;
+  label?: string;
+  startSeconds: number;
+  endSeconds?: number;
+};
+
+export type SongLink = {
+  id: string;
+  label?: string;
+  url: string;
+  /** Optional replay ranges for a YouTube resource. Times are absolute seconds. */
+  segments?: SongLinkSegment[];
+};
+
+/** Durable R2 metadata for one original MP3; never persist signed delivery URLs. */
+export type SongAudio = {
+  id: string;
+  key: string;
+  fileName: string;
+  contentType: "audio/mpeg";
+  sizeBytes: number;
+  uploadedAt: string;
+};
+
 export type DBHeading = {
   _id: string;
   name: string;
@@ -230,6 +256,8 @@ export type ItemProperties = {
   shouldSendTo: ShouldSendTo;
   formattedSections?: FormattedSection[]; // For free form items
   songMetadata?: SongMetadata;
+  songLinks?: SongLink[];
+  songAudio?: SongAudio;
 };
 
 export type BibleFontMode = "fit" | "separate" | "multiple";
@@ -701,6 +729,19 @@ export type ItemList = {
   _id: string;
 };
 
+/**
+ * The saved service plan this controller outline was last synced from.
+ *
+ * This belongs to the derived outline rather than the church-wide plan: one
+ * plan may be used by more than one workstation or outline, while an outline
+ * should reopen in the same plan context the operator deliberately chose.
+ */
+export type ServicePlanOutlineBinding = {
+  planKey: string;
+  planName: string;
+  linkedAt: string;
+};
+
 export type DBItemList = {
   name: string;
   _id: string;
@@ -716,6 +757,7 @@ export type ItemListDetails = {
   items: ServiceItem[];
   overlays: string[];
   serviceOutline?: ServiceOutline;
+  servicePlanBinding?: ServicePlanOutlineBinding;
 };
 
 export type ItemLists = {

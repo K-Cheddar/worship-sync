@@ -14,6 +14,7 @@ import { HOURS, MINUTES, pad2 } from "../../constants";
 import {
   parseTimeCountdown,
   formatTimeCountdown,
+  resolveCountdownPartial,
   snapToNearest,
 } from "./utils";
 import type { BaseTimePickerProps, Segment, Meridiem } from "./types";
@@ -52,6 +53,29 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   const [minuteEntry, setMinuteEntry] = useState<string | null>(null);
   const pendingSegmentRef = useRef<Segment | null>(null);
   const activeSegmentRef = useRef<Segment | null>(null);
+  const openRef = useRef(false);
+  const hourRef = useRef(hour);
+  const minuteRef = useRef(minute);
+  const meridiemRef = useRef(meridiem);
+
+  const syncSegmentState = (
+    nextHour: string,
+    nextMinute: string,
+    nextMeridiem: Meridiem
+  ) => {
+    hourRef.current = nextHour;
+    minuteRef.current = nextMinute;
+    meridiemRef.current = nextMeridiem;
+    setHour(nextHour);
+    setMinute(nextMinute);
+    setMeridiem(nextMeridiem);
+  };
+
+  useEffect(() => {
+    hourRef.current = hour;
+    minuteRef.current = minute;
+    meridiemRef.current = meridiem;
+  }, [hour, minute, meridiem]);
 
   const getSegmentFromPos = (pos: number): Segment => {
     if (pos <= 1) return "hour";
@@ -96,16 +120,12 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
     if (typeof value === "number") return; // Timer variant uses numbers
     if (typeof value === "string") {
       if (!value) {
-        setHour("");
-        setMinute("");
-        setMeridiem("");
+        syncSegmentState("", "", "");
         return;
       }
       const parsed = parseTimeCountdown(value);
       if (parsed) {
-        setHour(parsed.hour);
-        setMinute(parsed.minute);
-        setMeridiem(parsed.meridiem);
+        syncSegmentState(parsed.hour, parsed.minute, parsed.meridiem);
       }
     }
   }, [value]);
@@ -136,10 +156,38 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
     }
 
     const time = formatTimeCountdown(String(h), m, nextMeridiem);
-    setHour(String(h));
-    setMinute(m);
-    setMeridiem(nextMeridiem);
+    syncSegmentState(String(h), m, nextMeridiem);
+    // Incomplete meridiem cannot produce a valid 24h value — keep local UI only.
+    if (!nextMeridiem || !time) return;
     onChange?.(time);
+  };
+
+  /** Commit a valid time when the operator left with only a partial selection. */
+  const completePartialOnBlur = () => {
+    const resolved = resolveCountdownPartial(
+      hourRef.current,
+      minuteRef.current,
+      meridiemRef.current
+    );
+    if (!resolved) return;
+    commitAndFormat(resolved.hour, resolved.minute, resolved.meridiem);
+  };
+
+  const handleInputBlur = () => {
+    // Defer so focus moving into the open popover listboxes does not complete early.
+    window.setTimeout(() => {
+      if (openRef.current) {
+        const active = document.activeElement;
+        const focusMovedIntoPopover =
+          active instanceof Element &&
+          Boolean(
+            active.closest('[role="listbox"]') ||
+            active.closest("[data-radix-popper-content-wrapper]")
+          );
+        if (focusMovedIntoPopover) return;
+      }
+      completePartialOnBlur();
+    }, 0);
   };
 
   const handleMaskedTyping = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -400,7 +448,11 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
         open={disabled ? false : open}
         onOpenChange={(nextOpen) => {
           if (disabled) return;
+          openRef.current = nextOpen;
           setOpen(nextOpen);
+          if (!nextOpen) {
+            completePartialOnBlur();
+          }
         }}
       >
         <PopoverTrigger asChild>
@@ -412,6 +464,7 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
               onChange={() => { }}
               onKeyDown={handleKeyDown}
               onFocus={handleFocus}
+              onBlur={handleInputBlur}
               onMouseUp={handleMouseUp}
               aria-label={label || "Time"}
               role="combobox"
@@ -441,8 +494,9 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
                 items={HOURS as readonly string[]}
                 value={hour}
                 onChange={(h) => {
+                  hourRef.current = h;
                   setHour(h);
-                  handleCommit(h, minute || "00", meridiem);
+                  handleCommit(h, minuteRef.current || "00", meridiemRef.current);
                   selectSegment("hour");
                 }}
               />
@@ -452,8 +506,9 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
                 items={MINUTES as readonly string[]}
                 value={minute}
                 onChange={(m) => {
+                  minuteRef.current = m;
                   setMinute(m);
-                  handleCommit(hour || "12", m, meridiem);
+                  handleCommit(hourRef.current || "12", m, meridiemRef.current);
                   selectSegment("minute");
                 }}
               />
@@ -463,8 +518,14 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
                 items={MERIDIEMS as readonly string[]}
                 value={meridiem}
                 onChange={(ap) => {
-                  setMeridiem(ap as Meridiem);
-                  handleCommit(hour || "12", minute || "00", ap as Meridiem);
+                  const next = ap as Meridiem;
+                  meridiemRef.current = next;
+                  setMeridiem(next);
+                  handleCommit(
+                    hourRef.current || "12",
+                    minuteRef.current || "00",
+                    next
+                  );
                   selectSegment("meridiem");
                 }}
               />

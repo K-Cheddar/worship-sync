@@ -5,31 +5,15 @@ import { useGSAP } from "@gsap/react";
 import { ScrollToPlugin } from "gsap/ScrollToPlugin";
 import Home from "./pages/Home";
 import AppEntry from "./pages/AppEntry";
-import Controller from "./pages/Controller/Controller";
-import CurrentServiceWorkspace from "./pages/Controller/CurrentServiceWorkspace";
-import OverlayController from "./pages/OverlayController/OverlayController";
-import Projector from "./pages/Projector";
-import Monitor from "./pages/Monitor";
-import Stream from "./pages/Stream";
 import { Provider } from "react-redux";
 import store from "./store/store";
 import Login from "./pages/Login";
-import DesktopSsoComplete from "./pages/DesktopSsoComplete";
-import RestreamConnectComplete from "./pages/RestreamConnectComplete";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
 import { ToastProvider } from "./context/toastContext";
-import Credits from "./pages/Credits";
-import ProjectorFull from "./pages/ProjectorFull";
-import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
-import StreamInfo from "./pages/StreamInfo";
-import BoardController from "./pages/BoardController";
-import BoardDisplay from "./pages/BoardDisplay";
-import BoardPage from "./pages/BoardPage";
-import BoardPresent from "./pages/BoardPresent";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
-import { useContext, useEffect, useLayoutEffect } from "react";
+import { Suspense, useContext, useEffect, useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -37,20 +21,78 @@ import { FloatingWindowZIndexProvider } from "./components/FloatingWindow/Floati
 import AuthGate from "./components/AuthGate";
 import AuthScreenMain from "./components/AuthScreenMain";
 import ViewAccessBlockedRedirect from "./components/ViewAccessBlockedRedirect/ViewAccessBlockedRedirect";
-import WorkstationPair from "./pages/WorkstationPair";
-import WorkstationOperator from "./pages/WorkstationOperator";
-import InviteAccept from "./pages/InviteAccept";
-import PasswordReset from "./pages/PasswordReset";
-import RecoveryConfirm from "./pages/RecoveryConfirm";
-import Account from "./pages/Account";
-import TeamsAndServices from "./pages/Teams/TeamsAndServices";
-import TeamIntakePublic from "./pages/Teams/TeamIntakePublic";
-import TeamSchedulePublic from "./pages/Teams/TeamSchedulePublic";
-import ServicePublic from "./pages/ServicePublic";
 import { GlobalInfoContext } from "./context/globalInfo";
 import WorshipSyncIcon from "./assets/WorshipSyncIconNoBg.png";
 import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
 import TeamsAccessGuard from "./components/TeamsAccessGuard";
+import { lazyRoute } from "./utils/lazyRoute";
+
+/**
+ * Route-level code splitting.
+ *
+ * The presentation surfaces pull in the heavy rendering stack (DisplayWindow,
+ * hls.js, tiptap, jspdf). Someone opening a service plan or practice playlist on
+ * a phone should not download that first, so each route below is its own chunk.
+ * `Home`, `AppEntry`, and `Login` stay eager: they are the common landing
+ * surfaces and a chunk hop there would show a blank frame on first paint.
+ *
+ * The grouping is the presentation/operator vs planning/people line, so this is
+ * also the seam to split on if these ever become two apps.
+ *
+ * `lazyRoute` (not bare `lazy`) recovers from stale chunk names after a deploy.
+ */
+
+// Presentation / operator
+const Controller = lazyRoute(() => import("./pages/Controller/Controller"));
+const CurrentServiceWorkspace = lazyRoute(
+  () => import("./pages/Controller/CurrentServiceWorkspace"),
+);
+const OverlayController = lazyRoute(
+  () => import("./pages/OverlayController/OverlayController"),
+);
+const Projector = lazyRoute(() => import("./pages/Projector"));
+const ProjectorFull = lazyRoute(() => import("./pages/ProjectorFull"));
+const Monitor = lazyRoute(() => import("./pages/Monitor"));
+const Stream = lazyRoute(() => import("./pages/Stream"));
+const StreamInfo = lazyRoute(() => import("./pages/StreamInfo"));
+const Credits = lazyRoute(() => import("./pages/Credits"));
+const CreditsEditor = lazyRoute(
+  () => import("./pages/CreditsEditor/CreditsEditor"),
+);
+const BoardController = lazyRoute(() => import("./pages/BoardController"));
+const BoardDisplay = lazyRoute(() => import("./pages/BoardDisplay"));
+const BoardPage = lazyRoute(() => import("./pages/BoardPage"));
+const BoardPresent = lazyRoute(() => import("./pages/BoardPresent"));
+
+// Planning / people
+const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
+const Account = lazyRoute(() => import("./pages/Account"));
+const TeamsAndServices = lazyRoute(
+  () => import("./pages/Teams/TeamsAndServices"),
+);
+const TeamIntakePublic = lazyRoute(
+  () => import("./pages/Teams/TeamIntakePublic"),
+);
+const TeamSchedulePublic = lazyRoute(
+  () => import("./pages/Teams/TeamSchedulePublic"),
+);
+const ServicePublic = lazyRoute(() => import("./pages/ServicePublic"));
+
+// Auth / pairing side trips
+const DesktopSsoComplete = lazyRoute(() => import("./pages/DesktopSsoComplete"));
+const RestreamConnectComplete = lazyRoute(
+  () => import("./pages/RestreamConnectComplete"),
+);
+const YouTubeConnectComplete = lazyRoute(
+  () => import("./pages/YouTubeConnectComplete"),
+);
+const WorkstationPair = lazyRoute(() => import("./pages/WorkstationPair"));
+const WorkstationOperator = lazyRoute(
+  () => import("./pages/WorkstationOperator"),
+);
+const InviteAccept = lazyRoute(() => import("./pages/InviteAccept"));
+const PasswordReset = lazyRoute(() => import("./pages/PasswordReset"));
+const RecoveryConfirm = lazyRoute(() => import("./pages/RecoveryConfirm"));
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -146,6 +188,26 @@ const BootstrapSplash = () => {
   );
 };
 
+/**
+ * Shown while a route chunk loads. Deliberately text-free so it reads as a
+ * continuation of {@link BootstrapSplash} rather than a second loading state.
+ */
+const RouteChunkSplash = () => (
+  // `route-chunk-splash` holds this invisible for 200ms, so a chunk served from
+  // the precache never flashes it. See globals.css.
+  <div className="route-chunk-splash">
+    <AuthScreenMain>
+      <img
+        src={WorshipSyncIcon}
+        alt=""
+        className="h-28 w-28 animate-pulse"
+        width={112}
+        height={112}
+      />
+    </AuthScreenMain>
+  </div>
+);
+
 const AppRoutes = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
@@ -171,195 +233,218 @@ const AppRoutes = () => {
     return <BootstrapSplash />;
   }
 
+  // Display surfaces stay blank (and transparent — the stream composites over
+  // it) while their chunk loads. A splash there would flash on the projector or
+  // into a live stream.
+  const chunkFallback = isTransparentDisplayRoute(location.pathname) ? null : (
+    <RouteChunkSplash />
+  );
+
   return (
     <ErrorBoundary>
-      <Routes>
-        <Route element={<ControllerContextWrapper />}>
-          <Route path="/" element={<AppEntry />} />
+      <Suspense fallback={chunkFallback}>
+        <Routes>
+          <Route element={<ControllerContextWrapper />}>
+            <Route path="/" element={<AppEntry />} />
+            <Route
+              path="/home"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
+                  <Home />
+                </AuthGate>
+              }
+            />
+            <Route
+              path="/controller/*"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
+                  <Controller />
+                </AuthGate>
+              }
+            />
+            <Route
+              path="/current-service"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]}>
+                  <TeamsAccessGuard>
+                    <CurrentServiceWorkspace />
+                  </TeamsAccessGuard>
+                </AuthGate>
+              }
+            />
+            <Route
+              path="/overlay-controller"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
+                  <OverlayController />
+                </AuthGate>
+              }
+            />
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/login/desktop-sso-complete"
+              element={<DesktopSsoComplete />}
+            />
+            <Route
+              path="/restream/connect-complete"
+              element={<RestreamConnectComplete />}
+            />
+            <Route
+              path="/youtube/connect-complete"
+              element={<YouTubeConnectComplete />}
+            />
+            <Route path="/invite" element={<InviteAccept />} />
+            <Route path="/auth/reset" element={<PasswordReset />} />
+            <Route path="/recovery/confirm" element={<RecoveryConfirm />} />
+            <Route
+              path="/workstation/pair"
+              element={<WorkstationPair lockedPairType="workstation" />}
+            />
+            <Route
+              path="/display/pair"
+              element={<WorkstationPair lockedPairType="display" />}
+            />
+            {/* The one Teams surface reachable with `teams: "none"`, so it is
+              gated on being signed in rather than on a teams permission. */}
+            <Route
+              path="/my-schedule"
+              element={
+                <AuthGate allowedKinds={["human"]}>
+                  <MySchedule />
+                </AuthGate>
+              }
+            />
+            <Route
+              path="/account/*"
+              element={
+                <AuthGate allowedKinds={["human"]}>
+                  <Account />
+                </AuthGate>
+              }
+            />
+            <Route
+              path="/teams-and-services/*"
+              element={
+                <AuthGate allowedKinds={["human"]}>
+                  <TeamsAccessGuard>
+                    <TeamsAndServices />
+                  </TeamsAccessGuard>
+                </AuthGate>
+              }
+            />
+            <Route
+              path="/teams/intake/:token"
+              element={<TeamIntakePublic />}
+            />
+            <Route
+              path="/teams/intake"
+              element={<TeamIntakePublic />}
+            />
+            <Route
+              path="/teams/schedule/:token"
+              element={<TeamSchedulePublic />}
+            />
+            <Route path="/teams/*" element={<RedirectLegacyTeamsPath />} />
+            <Route path="/services/:shareId" element={<ServicePublic />} />
+            <Route
+              path="/workstation/operator"
+              element={<WorkstationOperator />}
+            />
+            <Route
+              path="/credits-editor"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
+                  <CreditsEditor />
+                </AuthGate>
+              }
+            />
+          </Route>
           <Route
-            path="/home"
-            element={
-              <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
-                <Home />
-              </AuthGate>
-            }
-          />
-          <Route
-            path="/controller/*"
-            element={
-              <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
-                <Controller />
-              </AuthGate>
-            }
-          />
-          <Route
-            path="/current-service"
+            path="/boards/controller"
             element={
               <AuthGate allowedKinds={["human", "workstation"]}>
-                <TeamsAccessGuard>
-                  <CurrentServiceWorkspace />
-                </TeamsAccessGuard>
+                <ViewAccessBlockedRedirect>
+                  <BoardController />
+                </ViewAccessBlockedRedirect>
               </AuthGate>
             }
           />
           <Route
-            path="/overlay-controller"
+            path="/boards/display"
             element={
-              <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
-                <OverlayController />
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <BoardDisplay />
+                </ViewAccessBlockedRedirect>
               </AuthGate>
             }
           />
-          <Route path="/login" element={<Login />} />
+          {/* Public share links (buildBoardPublicUrl) — no WorshipSync session required */}
+          <Route path="/boards/:aliasId" element={<BoardPage />} />
+          <Route path="/boards/present/:aliasId" element={<BoardPresent />} />
           <Route
-            path="/login/desktop-sso-complete"
-            element={<DesktopSsoComplete />}
-          />
-          <Route
-            path="/restream/connect-complete"
-            element={<RestreamConnectComplete />}
-          />
-          <Route path="/invite" element={<InviteAccept />} />
-          <Route path="/auth/reset" element={<PasswordReset />} />
-          <Route path="/recovery/confirm" element={<RecoveryConfirm />} />
-          <Route
-            path="/workstation/pair"
-            element={<WorkstationPair lockedPairType="workstation" />}
-          />
-          <Route
-            path="/display/pair"
-            element={<WorkstationPair lockedPairType="display" />}
-          />
-          <Route
-            path="/account/*"
+            path="/projector"
             element={
-              <AuthGate allowedKinds={["human"]}>
-                <Account />
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <Projector />
+                </ViewAccessBlockedRedirect>
               </AuthGate>
             }
           />
           <Route
-            path="/teams-and-services/*"
+            path="/projector-full"
             element={
-              <AuthGate allowedKinds={["human"]}>
-                <TeamsAccessGuard>
-                  <TeamsAndServices />
-                </TeamsAccessGuard>
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <ProjectorFull />
+                </ViewAccessBlockedRedirect>
               </AuthGate>
             }
           />
           <Route
-            path="/teams/intake/:token"
-            element={<TeamIntakePublic />}
-          />
-          <Route
-            path="/teams/intake"
-            element={<TeamIntakePublic />}
-          />
-          <Route
-            path="/teams/schedule/:token"
-            element={<TeamSchedulePublic />}
-          />
-          <Route path="/teams/*" element={<RedirectLegacyTeamsPath />} />
-          <Route path="/services/:shareId" element={<ServicePublic />} />
-          <Route
-            path="/workstation/operator"
-            element={<WorkstationOperator />}
-          />
-          <Route
-            path="/credits-editor"
+            path="/monitor"
             element={
-              <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
-                <CreditsEditor />
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <Monitor />
+                </ViewAccessBlockedRedirect>
               </AuthGate>
             }
           />
-        </Route>
-        <Route
-          path="/boards/controller"
-          element={
-            <AuthGate allowedKinds={["human", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <BoardController />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route
-          path="/boards/display"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <BoardDisplay />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        {/* Public share links (buildBoardPublicUrl) — no WorshipSync session required */}
-        <Route path="/boards/:aliasId" element={<BoardPage />} />
-        <Route path="/boards/present/:aliasId" element={<BoardPresent />} />
-        <Route
-          path="/projector"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <Projector />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route
-          path="/projector-full"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <ProjectorFull />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route
-          path="/monitor"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <Monitor />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route
-          path="/stream"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <Stream />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route
-          path="/stream-info"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <StreamInfo />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route
-          path="/credits"
-          element={
-            <AuthGate allowedKinds={["human", "display", "workstation"]}>
-              <ViewAccessBlockedRedirect>
-                <Credits />
-              </ViewAccessBlockedRedirect>
-            </AuthGate>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          <Route
+            path="/stream"
+            element={
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <Stream />
+                </ViewAccessBlockedRedirect>
+              </AuthGate>
+            }
+          />
+          <Route
+            path="/stream-info"
+            element={
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <StreamInfo />
+                </ViewAccessBlockedRedirect>
+              </AuthGate>
+            }
+          />
+          <Route
+            path="/credits"
+            element={
+              <AuthGate allowedKinds={["human", "display", "workstation"]}>
+                <ViewAccessBlockedRedirect>
+                  <Credits />
+                </ViewAccessBlockedRedirect>
+              </AuthGate>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </ErrorBoundary>
   );
 };

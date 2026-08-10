@@ -560,13 +560,16 @@ test("restream service surfaces connection issues when Restream has no live chat
     sockets[0].emit("message", {
       data: JSON.stringify({
         action: "connection_info",
-        connectionIdentifier: "conn-1",
-        status: "error",
-        reason: "event_not_started",
-        eventSourceName: "YouTube",
-        target: {
-          owner: {
-            displayName: "Main Channel",
+        payload: {
+          connectionIdentifier: "conn-1",
+          connectionUuid: "connection-uuid-1",
+          eventSourceId: 13,
+          status: "error",
+          reason: "event_not_started",
+          target: {
+            owner: {
+              displayName: "Main Channel",
+            },
           },
         },
       }),
@@ -586,6 +589,148 @@ test("restream service surfaces connection issues when Restream has no live chat
     assert.deepEqual(status.session.connectionIssues, [
       "YouTube: Main Channel (event not started)",
     ]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service stores YouTube messages from the documented chat action envelope", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+
+    await service.ensureReceiver("church-1");
+    sockets[0].emit("open");
+    const connectionInfoPayload = {
+      connectionIdentifier: "conn-1",
+      connectionUuid: "connection-uuid-1",
+      eventSourceId: 13,
+      status: "connecting",
+      reason: null,
+      target: {
+        event: {
+          id: "youtube-event-1",
+          title: "Sunday Live",
+          url: "https://youtube.com/watch?v=video-1",
+        },
+        owner: {
+          id: "youtube-channel-1",
+          displayName: "Main Channel",
+        },
+      },
+    };
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        timestamp: 1_778_629_500,
+        payload: connectionInfoPayload,
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const connectingStatus = await service.getStatusForChurch({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    assert.equal(connectingStatus.session.connected, false);
+    assert.equal(connectingStatus.session.activeConnectionCount, 0);
+
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        timestamp: 1_778_629_501,
+        payload: {
+          ...connectionInfoPayload,
+          status: "connected",
+        },
+      }),
+    });
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "event",
+        timestamp: 1_778_629_519,
+        payload: {
+          connectionIdentifier: "conn-1",
+          eventIdentifier: "event-1",
+          eventSourceId: 13,
+          eventTypeId: 5,
+          eventPayload: {
+            author: {
+              id: "viewer-1",
+              avatar: "https://example.com/avatar.png",
+              displayName: "Evan",
+              isChatModerator: false,
+              isChatOwner: false,
+              isChatSponsor: false,
+              isVerified: false,
+            },
+            bot: false,
+            liveChatMessageId: "youtube-message-1",
+            text: "Hello from YouTube",
+          },
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const status = await service.getStatusForChurch({
+      churchId: "church-1",
+      database: "db-1",
+    });
+    const messages = await service.listCurrentSessionMessages({
+      churchId: "church-1",
+      database: "db-1",
+    });
+
+    assert.equal(status.session.connected, true);
+    assert.equal(status.session.streamTitle, "Sunday Live");
+    assert.deepEqual(status.session.platformSummary, ["YouTube: Main Channel"]);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].platform, "YouTube");
+    assert.equal(messages[0].author, "Evan");
+    assert.equal(messages[0].text, "Hello from YouTube");
+    assert.equal(messages[0].postedAt, 1_778_629_519_000);
   } finally {
     globalThis.WebSocket = originalWebSocket;
     process.env.RESTREAM_CLIENT_ID = originalClientId;

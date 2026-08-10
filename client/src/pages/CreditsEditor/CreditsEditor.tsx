@@ -101,6 +101,7 @@ import GeneratedCreditsFloatingWindow from "./GeneratedCreditsFloatingWindow";
 import { useAboutChangelogMenu } from "../../hooks/useAboutChangelogMenu";
 import { useInterfaceZoom } from "../../hooks/useInterfaceZoom";
 import { interfaceZoomMenuItem } from "../../components/InterfaceZoomMenuControl/InterfaceZoomMenuControl";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const cleanForRtdb = (obj: object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -162,7 +163,7 @@ const CreditsEditor = ({
   const isConnectionFailed = connectionStatus?.status === "failed";
   const isStartupStuck = useStuckDbProgress(dbProgressValue, isConnectionFailed);
   const { churchId, firebaseDb, user, access } = useContext(GlobalInfoContext) || {};
-  const canEditCredits = access !== "view";
+  const canEditCredits = !isViewOnlyAccess(access);
   const dispatch = useDispatch();
 
   const overlayCreditsSettingsDrawerOpen = useSelector(

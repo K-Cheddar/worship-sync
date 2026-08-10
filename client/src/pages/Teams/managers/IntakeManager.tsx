@@ -142,6 +142,7 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
   availabilityOccurrences: [],
   teamIds: [],
   active: true,
+  requireEmail: false,
   welcomeMessage: "",
   positionsMessage: "",
   availabilityMessage: "",
@@ -192,6 +193,7 @@ const IntakeManager = ({
         availabilityOccurrences: editing.availabilityOccurrences || [],
         teamIds: editing.teamIds || [],
         active: editing.active,
+        requireEmail: Boolean(editing.requireEmail),
         welcomeMessage: editing.welcomeMessage || "",
         positionsMessage: editing.positionsMessage || "",
         availabilityMessage: editing.availabilityMessage || "",
@@ -855,6 +857,16 @@ const IntakeManager = ({
         label="Open for submissions"
         checked={draft.active}
         onCheckedChange={(active) => setDraft((d) => ({ ...d, active }))}
+        labelClassName="text-sm"
+      />
+      {/* Off by default: an address is how anyone reaches this person later,
+          but requiring one turns away volunteers who do not have one to give. */}
+      <Checkbox
+        label="Require an email address"
+        checked={Boolean(draft.requireEmail)}
+        onCheckedChange={(requireEmail) =>
+          setDraft((d) => ({ ...d, requireEmail }))
+        }
         labelClassName="text-sm"
       />
       <EntityMultiSelect

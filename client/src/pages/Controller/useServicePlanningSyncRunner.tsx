@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useStore } from "react-redux";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
@@ -15,6 +15,7 @@ import {
   setServicePlanningSyncActiveStep,
   setServicePlanningSyncPhase,
   setServicePlanningSyncPlanInfo,
+  setServicePlanningOutlinePlanBinding,
 } from "../../store/servicePlanningImportSlice";
 import type {
   RootState,
@@ -22,6 +23,8 @@ import type {
 import type { ServicePlanningSyncSummary } from "../../store/servicePlanningImportSlice";
 import type { ExecutableOverlaySyncPlanItem } from "../../hooks/useServicePlanningImport";
 import type { ServicePlanningOutlineSyncStep } from "../../utils/servicePlanningOutlineImport";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
 
 const STEP_DELAY_MS = 300;
 const OVERLAYS_ROUTE = "/controller/overlays";
@@ -34,6 +37,9 @@ type PreparedSyncRun = {
   runId: number;
   outlineSteps: ServicePlanningOutlineSyncStep[];
   overlaySteps: ExecutableOverlaySyncPlanItem[];
+  targetOutlineId?: string;
+  servicePlanKey?: string;
+  servicePlanName?: string;
 };
 
 const delay = (ms: number) =>
@@ -100,6 +106,7 @@ export const useServicePlanningSyncRunner = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast, removeToast } = useToast();
+  const { db } = useContext(ControllerInfoContext) || {};
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
   const {
@@ -117,6 +124,7 @@ export const useServicePlanningSyncRunner = () => {
   const handledCompletionRunIdRef = useRef<number | null>(null);
   const handledFailureRunIdRef = useRef<number | null>(null);
   const handledCancelRunIdRef = useRef<number | null>(null);
+  const linkedOutlineRunIdRef = useRef<number | null>(null);
   // Id of the last overlay synced this run; threaded into the next overlay step
   // as its insertion anchor so synced overlays land in plan order.
   const overlayAnchorIdRef = useRef<string | undefined>(undefined);
@@ -145,6 +153,16 @@ export const useServicePlanningSyncRunner = () => {
       sync.mode === "outline"
         ? { steps: [], skippedCount: 0, skipReasons: [] as string[] }
         : planOverlaySyncSteps(preview);
+    const state = store.getState();
+    const targetOutlineId = state.undoable.present.itemLists.selectedList?._id;
+    if (sync.mode !== "overlays" && !targetOutlineId) {
+      dispatch(
+        failServicePlanningSync(
+          "Choose or create a target outline, then sync again.",
+        ),
+      );
+      return;
+    }
 
     const followUpItems =
       sync.mode === "overlays"
@@ -166,6 +184,10 @@ export const useServicePlanningSyncRunner = () => {
       runId: sync.runId,
       outlineSteps,
       overlaySteps: overlayPlanning.steps,
+      targetOutlineId,
+      servicePlanKey: state.servicePlanningImport.servicePlanKey ?? undefined,
+      servicePlanName:
+        state.servicePlanningImport.serviceOutline?.planLabel ?? undefined,
     };
     overlayAnchorIdRef.current = undefined;
     overlayClaimedIdsRef.current = new Set();
@@ -188,6 +210,7 @@ export const useServicePlanningSyncRunner = () => {
     sync.mode,
     sync.runId,
     sync.status,
+    store,
   ]);
 
   useEffect(() => {
@@ -212,12 +235,55 @@ export const useServicePlanningSyncRunner = () => {
       return true;
     };
 
+    const linkSyncedOutline = async () => {
+      if (
+        linkedOutlineRunIdRef.current === run.runId ||
+        !run.targetOutlineId ||
+        !run.servicePlanKey ||
+        !db
+      ) {
+        return;
+      }
+      const binding = {
+        planKey: run.servicePlanKey,
+        planName: run.servicePlanName?.trim() || "Service plan",
+        linkedAt: new Date().toISOString(),
+      };
+      try {
+        await persistItemListServicePlanBinding(
+          db,
+          run.targetOutlineId,
+          binding,
+        );
+        linkedOutlineRunIdRef.current = run.runId;
+        dispatch(setServicePlanningOutlinePlanBinding(binding));
+      } catch (error) {
+        // The outline changes are already complete. Keep the run successful,
+        // but do not pretend its plan association was persisted.
+        console.error("Could not link the synced outline to its service plan:", error);
+      }
+    };
+
     const executeNextStep = async () => {
       isExecutingRef.current = true;
       try {
         if (!isRunActive()) return;
+        const selectedOutlineId =
+          store.getState().undoable.present.itemLists.selectedList?._id;
+        if (
+          run.targetOutlineId &&
+          selectedOutlineId !== run.targetOutlineId
+        ) {
+          dispatch(
+            failServicePlanningSync(
+              "The target outline changed. Choose the outline and sync again.",
+            ),
+          );
+          return;
+        }
         if (sync.phase === "outline") {
           if (sync.currentStep >= outlineStepCount) {
+            await linkSyncedOutline();
             if (sync.mode === "both" && overlayStepCount > 0) {
               dispatch(setServicePlanningSyncPhase("overlays"));
               if (!overlayRouteReady) {
@@ -338,6 +404,7 @@ export const useServicePlanningSyncRunner = () => {
 
     void executeNextStep();
   }, [
+    db,
     dispatch,
     executeOutlineSyncStep,
     executeOverlaySyncStep,

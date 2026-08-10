@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getChurchIntegrationsPath,
+  normalizeChurchIntegrationsAdminUpdate,
   normalizeChurchIntegrationsForStorage,
 } from "./churchIntegrations.js";
 
@@ -23,6 +24,9 @@ test("normalizeChurchIntegrationsForStorage applies defaults", () => {
   assert.equal(out.restream.enabled, false);
   assert.equal(out.restream.connected, false);
   assert.deepEqual(out.restream.platformSummary, []);
+  assert.equal(out.youtube.enabled, false);
+  assert.equal(out.youtube.connected, false);
+  assert.equal(out.youtube.accountLabel, "");
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes a full service planning config", () => {
@@ -156,4 +160,29 @@ test("normalizeChurchIntegrationsForStorage normalizes restream status", () => {
   assert.equal(out.restream.lastEventAt, 123);
   assert.equal(out.restream.sessionStartedAt, 100);
   assert.deepEqual(out.restream.platformSummary, ["YouTube", "Facebook"]);
+});
+
+test("normalizeChurchIntegrationsAdminUpdate omits server-managed connection state", () => {
+  const update = normalizeChurchIntegrationsAdminUpdate({
+    servicePlanning: {
+      enabled: true,
+      elementRules: [],
+      sectionRules: [],
+      people: [],
+    },
+    restream: {
+      enabled: false,
+      connected: false,
+      accountLabel: "Stale Restream status",
+    },
+    youtube: {
+      enabled: false,
+      connected: false,
+      accountLabel: "Stale YouTube status",
+    },
+  });
+
+  assert.equal(update.servicePlanning.enabled, true);
+  assert.equal(Object.hasOwn(update, "restream"), false);
+  assert.equal(Object.hasOwn(update, "youtube"), false);
 });

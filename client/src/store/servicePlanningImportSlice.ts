@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { ServiceItem } from "../types";
+import type { ServicePlanOutlineBinding } from "../types";
 import type { ServiceOutline } from "../types/importedPlan";
 import type { ServicePlanningPreview } from "../types/servicePlanningImport";
 import { findBestServicePlanningSongMatch } from "../integrations/servicePlanning/findServicePlanningSongMatch";
@@ -76,6 +77,8 @@ export type ServicePlanningImportState = {
    * re-scraping `url` (which may be stale or belong to a different service).
    */
   servicePlanKey: string | null;
+  /** Plan deliberately associated with the currently selected outline. */
+  outlinePlanBinding: ServicePlanOutlineBinding | null;
   floatingWindowDismissed: boolean;
   floatingWindowRestoreId: number;
   /** Service Planning Import page: overlay sync summary list expanded. */
@@ -110,6 +113,7 @@ export const initialServicePlanningImportState: ServicePlanningImportState = {
   serviceOutline: null,
   preview: null,
   servicePlanKey: null,
+  outlinePlanBinding: null,
   floatingWindowDismissed: true,
   floatingWindowRestoreId: 0,
   overlaySummaryExpanded: false,
@@ -124,6 +128,12 @@ export const servicePlanningImportSlice = createSlice({
     setServicePlanningImportUrl: (state, action: PayloadAction<string>) => {
       state.url = action.payload;
     },
+    setServicePlanningOutlinePlanBinding: (
+      state,
+      action: PayloadAction<ServicePlanOutlineBinding | null>,
+    ) => {
+      state.outlinePlanBinding = action.payload;
+    },
     setServicePlanningServiceOutline: (
       state,
       action: PayloadAction<ServiceOutline | null>,
@@ -132,6 +142,23 @@ export const servicePlanningImportSlice = createSlice({
       state.preview = action.payload?.preview ?? null;
       // Pasting a URL is an explicit operator choice, so it takes over from a
       // plan-sourced preview until the next plan load.
+      state.servicePlanKey = null;
+      if (action.payload?.sourceUrl) {
+        state.url = action.payload.sourceUrl;
+      }
+    },
+    /**
+     * Restores an outline's legacy stored import only when the operator is not
+     * already reviewing a plan. Target-outline changes must not replace an
+     * explicit pasted-URL preview or an active saved-plan preview.
+     */
+    setStoredServicePlanningOutlineIfIdle: (
+      state,
+      action: PayloadAction<ServiceOutline | null>,
+    ) => {
+      if (state.preview) return;
+      state.serviceOutline = action.payload;
+      state.preview = action.payload?.preview ?? null;
       state.servicePlanKey = null;
       if (action.payload?.sourceUrl) {
         state.url = action.payload.sourceUrl;
@@ -354,7 +381,9 @@ export const servicePlanningImportSlice = createSlice({
 
 export const {
   setServicePlanningImportUrl,
+  setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
   setServicePlanningPlanOutline,
   clearServicePlanningPlanOutline,
   resetServicePlanningImportPreview,

@@ -38,6 +38,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
 import { isElectron } from "../utils/environment";
 import { getAppOs, isIosBrowser, isMobileBrowser } from "../utils/platform";
+import { isMemberOnlyAccess, isViewOnlyAccess } from "../utils/accessTiers";
 import {
   fetchLatestLinuxInstallerUrl,
   fetchLatestMacInstallerUrl,
@@ -74,6 +75,15 @@ const currentPlanLink: CardLink = {
   description:
     "Open the live workspace for the current service, with service plan and display previews together.",
   to: "/current-service",
+  icon: CalendarClock,
+};
+
+/** The only surface a `member` gets: their own assignments, nothing else. */
+const mySchedulelink: CardLink = {
+  title: "My schedule",
+  description:
+    "See the services and positions you are scheduled for, and when they start.",
+  to: "/my-schedule",
   icon: CalendarClock,
 };
 
@@ -313,22 +323,35 @@ const Welcome = () => {
     (link) => isAdmin || (link.to === "/teams-and-services" && canViewTeams),
   );
   const isMusicAccess = isLoggedIn && access === "music";
-  const visiblePrimaryControllers = isMusicAccess
-    ? primaryControllers.filter((link) => link.to === "/controller")
-    : primaryControllers;
-  const visibleControllerLinks = canViewTeams
-    ? [...visiblePrimaryControllers, currentPlanLink]
-    : visiblePrimaryControllers;
-  const visibleSecondaryControllers = isMusicAccess
+  /**
+   * A `member` is a volunteer, not an operator: they get their own schedule and
+   * no presentation surfaces at all. `view` still sees the controllers
+   * read-only, which is why this is a separate check rather than folding into
+   * `isViewOnlyAccess`.
+   */
+  const isMemberAccess = isMemberOnlyAccess(access);
+  const visiblePrimaryControllers = isMemberAccess
     ? []
-    : isLoggedIn
-      ? secondaryControllers.filter((link) => {
-        if (access === "view") {
-          return link.to !== "/boards/controller";
-        }
-        return true;
-      })
-      : secondaryControllers.filter((link) => link.to !== "/boards/controller");
+    : isMusicAccess
+      ? primaryControllers.filter((link) => link.to === "/controller")
+      : primaryControllers;
+  const visibleControllerLinks = isMemberAccess
+    ? []
+    : canViewTeams
+      ? [...visiblePrimaryControllers, currentPlanLink]
+      : visiblePrimaryControllers;
+  const visibleSecondaryControllers = isMemberAccess
+    ? []
+    : isMusicAccess
+      ? []
+      : isLoggedIn
+        ? secondaryControllers.filter((link) => {
+          if (isViewOnlyAccess(access)) {
+            return link.to !== "/boards/controller";
+          }
+          return true;
+        })
+        : secondaryControllers.filter((link) => link.to !== "/boards/controller");
   const { canShowInstall, installPwa, isStandalone } = usePwaInstallPrompt();
   const isWeb = !isElectron();
   const desktopOs = useMemo((): DesktopOs | null => {
@@ -512,43 +535,61 @@ const Welcome = () => {
           </section>
         )}
 
-        <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
-          <div className="space-y-2 text-center">
-            <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
-              <span aria-hidden className="text-orange-400">
-                <Icon
-                  svg={LayoutDashboard}
-                  size="lg"
-                  className="text-orange-400"
-                  svgClassName="text-orange-400"
-                />
-              </span>
-              Controllers
-            </h2>
-            <p className="text-sm text-gray-200">
-              These are the pages most teams use during the service.
-            </p>
-          </div>
+        {/* Shown to everyone signed in, not just the schedule-only tier: leaders
+            and operators are usually on a roster too, and scanning the full
+            grid for their own name is the problem this page removes. Its own
+            section because it is personal — Controllers is service-operation
+            surfaces, and Church administration is neither. */}
+        {isLoggedIn && (
+          <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              <HomeLinkCard {...mySchedulelink} />
+            </div>
+          </section>
+        )}
 
-          <div className="grid gap-4 md:grid-cols-2">
-            {visibleControllerLinks.map((link) => (
-              <HomeLinkCard key={link.to} {...link} />
-            ))}
-          </div>
+        {/* Hidden rather than shown empty: a schedule-only member has no
+            controllers, and a bare heading over nothing reads as broken. */}
+        {(visibleControllerLinks.length > 0 ||
+          visibleSecondaryControllers.length > 0) && (
+            <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
+              <div className="space-y-2 text-center">
+                <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
+                  <span aria-hidden className="text-orange-400">
+                    <Icon
+                      svg={LayoutDashboard}
+                      size="lg"
+                      className="text-orange-400"
+                      svgClassName="text-orange-400"
+                    />
+                  </span>
+                  Controllers
+                </h2>
+                <p className="text-sm text-gray-200">
+                  These are the pages most teams use during the service.
+                </p>
+              </div>
 
-          {visibleSecondaryControllers.length > 0 && (
-            <div className="space-y-3 border-t border-gray-700 pt-4">
-              <p className="text-center text-sm font-medium text-gray-300 md:text-left">
-                Credits and board moderation
-              </p>
               <div className="grid gap-4 md:grid-cols-2">
-                {visibleSecondaryControllers.map((link) => (
+                {visibleControllerLinks.map((link) => (
                   <HomeLinkCard key={link.to} {...link} />
                 ))}
               </div>
-            </div>
+
+              {visibleSecondaryControllers.length > 0 && (
+                <div className="space-y-3 border-t border-gray-700 pt-4">
+                  <p className="text-center text-sm font-medium text-gray-300 md:text-left">
+                    Credits and board moderation
+                  </p>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {visibleSecondaryControllers.map((link) => (
+                      <HomeLinkCard key={link.to} {...link} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
           )}
-        </section>
 
         {isLoggedIn && access === "full" ? (
           <details className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">

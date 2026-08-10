@@ -44,6 +44,7 @@ import {
 } from "./server/churchBranding.js";
 import {
   getChurchIntegrationsPath,
+  normalizeChurchIntegrationsAdminUpdate,
   normalizeChurchIntegrationsForStorage,
 } from "./server/churchIntegrations.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
@@ -134,7 +135,9 @@ const createNumericCode = () => crypto.randomInt(100000, 1000000).toString();
 const hashValue = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 const randomSecret = (bytes = 32) => crypto.randomBytes(bytes).toString("hex");
-const APP_ACCESS_VALUES = new Set(["full", "music", "view"]);
+// "member" is the narrowest tier: a volunteer who can see their own schedule
+// and nothing else. Strictly narrower than "view" — see client accessTiers.ts.
+const APP_ACCESS_VALUES = new Set(["full", "music", "view", "member"]);
 const TEAM_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
 const SERVICES_PERMISSION_VALUES = new Set(["none", "edit"]);
 const DESKTOP_AUTH_PROVIDER_VALUES = new Set(["google", "microsoft"]);
@@ -183,9 +186,23 @@ const normalizeTeamScopes = (teamScopes) => {
       .filter(([teamId, permission]) => teamId && permission),
   );
 };
-const normalizeMembershipPermissions = (permissions, role = "member") => {
+/**
+ * @param appAccess When "member", teams/services permissions are forced off.
+ *   A schedule-only volunteer cannot reach those surfaces (the route allowlist
+ *   refuses them), so retaining a grant would be a permission that reads as
+ *   active in Account while doing nothing — and would quietly come back to life
+ *   if their tier were later widened.
+ */
+const normalizeMembershipPermissions = (
+  permissions,
+  role = "member",
+  appAccess,
+) => {
   if (role === "admin") {
     return { teams: "edit", services: "edit", teamScopes: {} };
+  }
+  if (appAccess === "member") {
+    return { teams: "none", services: "none", teamScopes: {} };
   }
   return {
     teams: normalizeTeamPermission(permissions?.teams, "none"),
@@ -286,7 +303,7 @@ const validateUpdateInviteAccessPayload = (body) => {
   return {
     role,
     appAccess,
-    permissions: normalizeMembershipPermissions(permissions, role),
+    permissions: normalizeMembershipPermissions(permissions, role, appAccess),
   };
 };
 
@@ -475,6 +492,7 @@ const memoryState = {
   teamSchedules: new Map(),
   teamIntakeForms: new Map(),
   teamIntakeSubmissions: new Map(),
+  churchServiceTimes: new Map(),
   servicePlans: new Map(),
   servicePlanTemplates: new Map(),
   servicePlanAssignmentHistory: new Map(),
@@ -482,6 +500,37 @@ const memoryState = {
   securityEvents: new Map(),
   emailCodeChallenges: new Map(),
   humanApiCredentials: new Map(),
+};
+
+const normalizeChurchServiceTimes = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (!value || typeof value !== "object") return [];
+  return Object.values(value).filter(Boolean);
+};
+
+/**
+ * Service times live in Realtime Database rather than the Teams Firestore
+ * collections. Legacy schedules need this authoritative source only when an
+ * occurrence predates requirement snapshots.
+ */
+const readChurchServiceTimes = async (churchId) => {
+  const normalizedChurchId = String(churchId || "").trim();
+  if (!normalizedChurchId) return [];
+  if (!firebaseRuntime?.rtdb) {
+    return memoryState.churchServiceTimes.get(normalizedChurchId) || [];
+  }
+  try {
+    const snapshot = await firebaseRuntime.rtdb
+      .ref(`churches/${normalizedChurchId}/data/services`)
+      .once("value");
+    return normalizeChurchServiceTimes(snapshot.val());
+  } catch (error) {
+    logAuthEvent("warn", "church.service_times.read_failed", {
+      churchId: normalizedChurchId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 };
 
 const collectionMap = {
@@ -1424,7 +1473,11 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
   const acceptedDisplayName = user.displayName || "";
   const acceptedLabel = acceptedDisplayName.trim() || acceptedEmail;
   const role = invite.role || "member";
-  const permissions = normalizeMembershipPermissions(invite.permissions, role);
+  const permissions = normalizeMembershipPermissions(
+    invite.permissions,
+    role,
+    invite.appAccess || "view",
+  );
   const scopedTeamNames = await resolveScopedTeamNamesForInvite(invite);
   const accessLines = buildInviteAcceptedAccessLines({
     role,
@@ -1840,6 +1893,7 @@ const buildHumanBootstrap = ({
   permissions: normalizeMembershipPermissions(
     membership.permissions,
     membership.role,
+    membership.appAccess || "view",
   ),
   notifications: normalizeMembershipNotifications(membership.notifications),
   user: {
@@ -2491,6 +2545,67 @@ const acceptInviteMembership = async ({ invite, user }) => {
       { merge: true },
     );
   }
+
+  await linkInvitedRosterMember({ invite, user });
+};
+
+/**
+ * Attaches a roster member record to the account that accepted its invite.
+ *
+ * This is one of only two paths that may establish the link (the other is a
+ * logged-in intake submission). Both carry a certain identity. We never infer a
+ * link from a matching email address: addresses are legitimately shared — a
+ * parent covering two teen volunteers — so matching would attach someone to the
+ * wrong schedule.
+ *
+ * Runs after membership is committed rather than inside the transaction: the
+ * link only routes notifications, while membership is what grants access. A
+ * failure here must never block someone from joining their church, so it is
+ * logged and left for an admin to resolve.
+ */
+const linkInvitedRosterMember = async ({ invite, user }) => {
+  const memberId = String(invite?.memberId || "").trim();
+  if (!memberId) return;
+
+  try {
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    if (!member) return;
+    // Guard against an invite pointing at another church's roster.
+    if (member.churchId !== invite.churchId) return;
+    if (member.userId === user.uid) return;
+    if (member.userId) {
+      // Already claimed by someone else. Never reassign silently — an admin
+      // must unlink first, or two people would share one schedule identity.
+      await addSecurityEvent({
+        type: "team_member_link_conflict",
+        churchId: invite.churchId,
+        userId: user.uid,
+        memberId,
+        existingUserId: member.userId,
+      });
+      return;
+    }
+
+    await setDoc(
+      COLLECTIONS.teamRosterMembers,
+      memberId,
+      {
+        userId: user.uid,
+        linkedAt: nowIso(),
+        updatedAt: nowIso(),
+      },
+      { merge: true },
+    );
+    await addSecurityEvent({
+      type: "team_member_linked",
+      churchId: invite.churchId,
+      userId: user.uid,
+      memberId,
+      source: "invite",
+    });
+  } catch (error) {
+    console.error("Failed to link roster member to accepted invite:", error);
+  }
 };
 
 const removeChurchMembership = async ({ churchId, userId }) => {
@@ -2609,6 +2724,85 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
         adminCount,
         status:
           adminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
+      },
+      { merge: true },
+    );
+  }
+};
+
+const promoteAdminMembership = async ({ churchId, userId }) => {
+  const membershipId = membershipIdFor({ churchId, userId });
+  const db = requireFirestore();
+  if (db) {
+    await db.runTransaction(async (transaction) => {
+      const membershipRef = db
+        .collection(COLLECTIONS.memberships)
+        .doc(membershipId);
+      const churchRef = db.collection(COLLECTIONS.churches).doc(churchId);
+      const membershipSnap = await transaction.get(membershipRef);
+      if (!membershipSnap.exists) {
+        throw httpError(404, "Membership not found");
+      }
+      const membershipData = membershipSnap.data();
+      if (membershipData.status !== "active") {
+        throw httpError(400, "Only active members can be made admins.");
+      }
+      if (membershipData.role === "admin") {
+        throw httpError(400, "That member is already a church admin.");
+      }
+      const adminSnapshot = await transaction.get(
+        db
+          .collection(COLLECTIONS.memberships)
+          .where("churchId", "==", churchId)
+          .where("role", "==", "admin")
+          .where("status", "==", "active"),
+      );
+      const nextAdminCount = adminSnapshot.docs.some(
+        (doc) => doc.id === membershipId,
+      )
+        ? adminSnapshot.size
+        : adminSnapshot.size + 1;
+      transaction.update(membershipRef, {
+        role: "admin",
+        appAccess: "full",
+        permissions: normalizeMembershipPermissions(null, "admin"),
+      });
+      transaction.update(churchRef, {
+        adminCount: nextAdminCount,
+        status: CHURCH_STATUS_ACTIVE,
+      });
+    });
+  } else {
+    const membership = await getDoc(COLLECTIONS.memberships, membershipId);
+    if (!membership) {
+      throw httpError(404, "Membership not found");
+    }
+    if (membership.status !== "active") {
+      throw httpError(400, "Only active members can be made admins.");
+    }
+    if (membership.role === "admin") {
+      throw httpError(400, "That member is already a church admin.");
+    }
+    await setDoc(
+      COLLECTIONS.memberships,
+      membershipId,
+      {
+        role: "admin",
+        appAccess: "full",
+        permissions: normalizeMembershipPermissions(null, "admin"),
+      },
+      { merge: true },
+    );
+    const memberships = await listMembershipsForChurch(churchId);
+    const adminCount = memberships.filter(
+      (item) => item.role === "admin" && item.status === "active",
+    ).length;
+    await setDoc(
+      COLLECTIONS.churches,
+      churchId,
+      {
+        adminCount,
+        status: CHURCH_STATUS_ACTIVE,
       },
       { merge: true },
     );
@@ -3206,6 +3400,24 @@ export const seedActiveHumanBearerForServerTests = async ({
   return { humanApiToken, churchId, membershipId };
 };
 
+/** Test-only RTDB stand-in for legacy schedule requirement fallback coverage. */
+export const seedChurchServiceTimesForServerTests = ({ churchId, services }) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedChurchServiceTimesForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasRealtimeDatabase) {
+    throw new Error(
+      "seedChurchServiceTimesForServerTests refuses to run while Realtime Database is configured",
+    );
+  }
+  memoryState.churchServiceTimes.set(
+    String(churchId || "").trim(),
+    JSON.parse(JSON.stringify(Array.isArray(services) ? services : [])),
+  );
+};
+
 /**
  * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
  * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
@@ -3430,6 +3642,13 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
   addSecurityEvent,
+  // Shared so member contact addresses normalize identically to account
+  // emails; divergence here would make linked/unlinked comparisons unreliable.
+  normalizeEmail,
+  // Used to prove a target account actually belongs to the church before a
+  // roster member may be linked to it.
+  listMembershipsForChurch,
+  requireHumanSession,
   assertCsrf,
   createId,
   deleteDoc,
@@ -3441,6 +3660,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   nowIso,
   queryDocs,
   randomSecret,
+  readChurchServiceTimes,
   readChurchPublicBoardHeaderLogoUrl,
   readChurchPublicBrandingChrome,
   requireAdminSession,
@@ -4823,12 +5043,19 @@ export const authHandlers = {
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
-      const integrations = normalizeChurchIntegrationsForStorage(req.body);
+      const integrationUpdate = normalizeChurchIntegrationsAdminUpdate(
+        req.body,
+      );
       const rtdb = requireRealtimeDatabase();
+      const integrationsRef = rtdb.ref(
+        getChurchIntegrationsPath(req.params.churchId),
+      );
 
-      await rtdb
-        .ref(getChurchIntegrationsPath(req.params.churchId))
-        .set(integrations);
+      await integrationsRef.update(integrationUpdate);
+      const savedSnapshot = await integrationsRef.once("value");
+      const integrations = normalizeChurchIntegrationsForStorage(
+        savedSnapshot.val(),
+      );
       await addSecurityEvent({
         type: "church_integrations_updated",
         churchId: req.params.churchId,
@@ -4858,9 +5085,49 @@ export const authHandlers = {
       const permissions = normalizeMembershipPermissions(
         req.body?.permissions,
         role,
+        appAccess,
       );
       if (!email) {
         throw httpError(400, "Email is required.");
+      }
+      // Optional binding to a roster member. When present, accepting this
+      // invite links that member record to the new account — the only path
+      // besides a logged-in intake submission that may establish the link.
+      // Validated against this church so an invite cannot point at another
+      // church's roster.
+      const memberId = String(req.body?.memberId || "").trim();
+      if (memberId) {
+        const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+        if (!member || member.churchId !== req.params.churchId) {
+          throw httpError(404, "Member not found.");
+        }
+        if (member.userId) {
+          throw httpError(
+            400,
+            "That member is already linked to an account. Unlink them first.",
+          );
+        }
+        // An invite to someone who already belongs to this church is a dead
+        // end: `acceptInviteMembership` rejects them with "You are already a
+        // member of this church", so they would get mail they cannot act on
+        // and the member would stay unlinked. Linking is the right action.
+        const existingUser = await getUserByEmail(email);
+        if (existingUser) {
+          const memberships = await listMembershipsForChurch(
+            req.params.churchId,
+          );
+          const alreadyInChurch = memberships.some(
+            (membership) =>
+              membership.userId === existingUser.uid &&
+              membership.status === "active",
+          );
+          if (alreadyInChurch) {
+            throw httpError(
+              400,
+              "That person already has an account here. Link it to this member instead of inviting them.",
+            );
+          }
+        }
       }
       enforceRateLimit({
         scope: "invite-create",
@@ -4879,6 +5146,7 @@ export const authHandlers = {
         role,
         appAccess,
         permissions,
+        ...(memberId ? { memberId } : {}),
         status: "pending",
         tokenHash: hashValue(rawToken),
         expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
@@ -4887,6 +5155,17 @@ export const authHandlers = {
         createdByUid: admin.user.uid,
       };
       await setDoc(COLLECTIONS.invites, inviteId, invite);
+      if (memberId) {
+        // Recorded so the roster can show an invite is outstanding. Without it
+        // an admin gets no evidence one was sent and would keep re-sending.
+        // Cleared on unlink; superseded by `userId` once accepted.
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          { invitedAt: nowIso() },
+          { merge: true },
+        );
+      }
       const church = await getChurchById(req.params.churchId);
       if (!church) {
         throw httpError(404, "Church not found");
@@ -5127,6 +5406,47 @@ export const authHandlers = {
     }
   },
 
+  async makeAdmin(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const targetUserId = req.params.userId;
+      if (targetUserId === admin.user.uid) {
+        throw httpError(400, "This account already has admin access.");
+      }
+      const memberships = await listMembershipsForChurch(req.params.churchId);
+      const targetMembership = memberships.find(
+        (m) => m.userId === targetUserId,
+      );
+      if (!targetMembership) {
+        throw httpError(404, "Membership not found");
+      }
+      if (targetMembership.status !== "active") {
+        throw httpError(400, "Only active members can be made admins.");
+      }
+      if (targetMembership.role === "admin") {
+        throw httpError(400, "That member is already a church admin.");
+      }
+      await promoteAdminMembership({
+        churchId: req.params.churchId,
+        userId: targetUserId,
+      });
+      const church = await getChurchById(req.params.churchId);
+      await addSecurityEvent({
+        type: "admin_promoted",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        targetUserId: req.params.userId,
+      });
+      return res.json({ success: true, church });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
   async removeAdmin(req, res) {
     try {
       await assertCsrf(req);
@@ -5253,6 +5573,7 @@ export const authHandlers = {
       const permissions = normalizeMembershipPermissions(
         req.body?.permissions,
         targetMembership.role,
+        appAccess,
       );
       await updateMemberAccessSettings({
         churchId: req.params.churchId,

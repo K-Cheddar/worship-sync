@@ -47,7 +47,19 @@ import {
   createRestreamService,
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
+import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
+import {
+  SongAudioInputError,
+  SongAudioStorageNotConfiguredError,
+  createSongAudioStorage,
+} from "./server/songAudioStorage.js";
+import { createSongAudioUploadGuard } from "./server/songAudioUploadGuard.js";
+import {
+  RichLinkPreviewInputError,
+  RichLinkPreviewUnavailableError,
+  createRichLinkPreviewService,
+} from "./server/richLinkPreview.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -163,6 +175,65 @@ const requireFullAppAccess = (req, res, next) => {
     return res.status(403).json({ error: "Full access is required." });
   }
   next();
+};
+
+const requireSongAudioEditAccess = (req, res, next) => {
+  if (req.appSession?.access !== "full" && req.appSession?.access !== "music") {
+    return res.status(403).json({ error: "Music access is required." });
+  }
+  next();
+};
+
+const songAudioMaxBytes = (() => {
+  const configured = Number(process.env.SONG_AUDIO_MAX_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : 50 * 1024 * 1024;
+})();
+const parseSongAudioBytes = express.raw({
+  type: ["audio/mpeg", "audio/mp3", "audio/x-mpeg"],
+  limit: songAudioMaxBytes,
+});
+const guardSongAudioUpload = createSongAudioUploadGuard();
+const richLinkPreviewService = createRichLinkPreviewService({
+  httpClient: axios,
+});
+
+let songAudioStorage;
+const getSongAudioStorage = () => {
+  if (!songAudioStorage) {
+    songAudioStorage = createSongAudioStorage();
+  }
+  return songAudioStorage;
+};
+
+const assertSongAudioChurchAccess = (req, res) => {
+  if (req.appSession?.churchId !== req.params.churchId) {
+    res.status(403).json({ error: "That church is not available." });
+    return false;
+  }
+  return true;
+};
+
+const respondSongAudioError = (res, context, error) => {
+  if (error instanceof SongAudioInputError) {
+    return res.status(400).json({ error: error.message });
+  }
+  if (error instanceof SongAudioStorageNotConfiguredError) {
+    return res
+      .status(503)
+      .json({ error: "Song audio storage is not configured yet." });
+  }
+  if (error?.name === "NotFound" || error?.name === "NoSuchKey") {
+    return res.status(404).json({
+      error:
+        "The uploaded MP3 was not found. Select the file and upload it again.",
+    });
+  }
+  console.error(context, error);
+  return res
+    .status(502)
+    .json({ error: "Song audio could not be completed. Try again." });
 };
 
 const requireBoardDatabaseAccess = (req, res, database) => {
@@ -340,6 +411,8 @@ const bulkDeleteBoardDocs = async (docs) => {
 
 const RESTREAM_CLIENT_ERROR_MESSAGE =
   "Something went wrong. Try again in a moment.";
+const YOUTUBE_CLIENT_ERROR_MESSAGE =
+  "Something went wrong. Try again in a moment.";
 
 const restreamParseReturnTo = (raw) => {
   if (raw === undefined || raw === null) {
@@ -354,6 +427,8 @@ const restreamParseReturnTo = (raw) => {
   }
   return s;
 };
+
+const youtubeParseReturnTo = restreamParseReturnTo;
 
 const readRestreamConnectStatusBody = (body) => {
   const connectRequestId = body?.connectRequestId;
@@ -377,8 +452,12 @@ const readRestreamConnectStatusBody = (body) => {
   };
 };
 
+const readYouTubeConnectStatusBody = readRestreamConnectStatusBody;
+
 const isRestreamValidationError = (error) =>
   Boolean(error && error.statusCode === 400);
+
+const isYouTubeValidationError = isRestreamValidationError;
 
 const respondRestreamJsonError = (res, logLabel, error) => {
   console.error(logLabel, error);
@@ -387,6 +466,22 @@ const respondRestreamJsonError = (res, logLabel, error) => {
     return;
   }
   res.status(500).json({ error: RESTREAM_CLIENT_ERROR_MESSAGE });
+};
+
+const respondYouTubeJsonError = (res, logLabel, error) => {
+  console.error(logLabel, error);
+  if (isYouTubeValidationError(error)) {
+    res.status(400).json({
+      error:
+        error instanceof Error &&
+        error.message &&
+        error.message !== "INVALID_REQUEST"
+          ? error.message
+          : "Invalid request.",
+    });
+    return;
+  }
+  res.status(500).json({ error: YOUTUBE_CLIENT_ERROR_MESSAGE });
 };
 
 const boardAliasIdsByDatabase = new Map();
@@ -434,6 +529,13 @@ const restreamService = createRestreamService({
   getIntegrationsPath: getChurchIntegrationsPath,
   onBoardDisplayUpdate: (database) =>
     emitBoardEventForDatabase(database, "restream-session-updated"),
+  redirectBaseUrl: frontEndHost,
+});
+
+const youtubeLiveChatService = createYouTubeLiveChatService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  getIntegrationsPath: getChurchIntegrationsPath,
   redirectBaseUrl: frontEndHost,
 });
 
@@ -622,6 +724,8 @@ app.use(
       "x-display-token",
       "x-support-token",
       "x-csrf-token",
+      "x-song-audio-id",
+      "x-song-audio-key",
       "Authorization",
     ],
     credentials: true,
@@ -663,6 +767,166 @@ app.post(
   "/api/churches/:churchId/integrations",
   authHandlers.updateChurchIntegrations,
 );
+const respondRichLinkPreviewError = (res, error) => {
+  if (error instanceof RichLinkPreviewInputError) {
+    return res.status(400).json({ errorMessage: error.message });
+  }
+  if (error instanceof RichLinkPreviewUnavailableError) {
+    return res.status(404).json({ errorMessage: error.message });
+  }
+  console.error("Error loading rich link preview:", error);
+  return res.status(502).json({
+    errorMessage:
+      "Link details could not be loaded. You can still open the original link.",
+  });
+};
+
+app.get("/api/link-previews", requireAppSession, async (req, res) => {
+  try {
+    const preview = await richLinkPreviewService.getPreview(req.query.url);
+    return res.json({ preview });
+  } catch (error) {
+    return respondRichLinkPreviewError(res, error);
+  }
+});
+
+// Kept for older clients while the provider-neutral endpoint rolls out.
+app.get("/api/youtube/videos/:videoId", requireAppSession, async (req, res) => {
+  try {
+    const preview = await richLinkPreviewService.getPreview(
+      `https://www.youtube.com/watch?v=${req.params.videoId}`,
+    );
+    return res.json({
+      video: {
+        videoId: preview.resourceId,
+        title: preview.title,
+        authorName: preview.creator || "",
+        thumbnailUrl: preview.thumbnailUrl,
+        thumbnailWidth: preview.thumbnailWidth,
+        thumbnailHeight: preview.thumbnailHeight,
+        watchUrl: preview.canonicalUrl,
+        embedUrl: preview.embedUrl,
+      },
+    });
+  } catch (error) {
+    return respondRichLinkPreviewError(res, error);
+  }
+});
+app.use("/api/churches/:churchId/song-audio", requireAppSession);
+
+app.post(
+  "/api/churches/:churchId/song-audio/:songId/upload",
+  requireSongAudioEditAccess,
+  guardSongAudioUpload,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const result = await getSongAudioStorage().createUpload({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        upload: req.body,
+      });
+      res.json(result);
+    } catch (error) {
+      respondSongAudioError(res, "Error creating song audio upload:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/song-audio/:songId/complete",
+  requireSongAudioEditAccess,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const audio = await getSongAudioStorage().completeUpload({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        audio: req.body?.audio,
+        previousAudio: req.body?.previousAudio,
+      });
+      res.json({ audio });
+    } catch (error) {
+      respondSongAudioError(res, "Error completing song audio upload:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/song-audio/:songId/upload-from-app",
+  requireSongAudioEditAccess,
+  // Reject over-quota uploads from Content-Length before express.raw allocates
+  // and buffers as much as the full MP3 body.
+  guardSongAudioUpload,
+  parseSongAudioBytes,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const audio = await getSongAudioStorage().uploadFromServer({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        upload: {
+          fileName: req.query.fileName,
+          contentType: req.get("content-type"),
+        },
+        body: req.body,
+        previousAudio:
+          req.get("x-song-audio-id") || req.get("x-song-audio-key")
+            ? {
+                id: req.get("x-song-audio-id"),
+                key: req.get("x-song-audio-key"),
+              }
+            : undefined,
+      });
+      res.json({ audio });
+    } catch (error) {
+      respondSongAudioError(res, "Error uploading song audio from app:", error);
+    }
+  },
+);
+
+app.get(
+  "/api/churches/:churchId/song-audio/:songId/:audioId/url",
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      const result = await getSongAudioStorage().createReadUrl({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        audio: {
+          id: req.params.audioId,
+          key: req.query.key,
+          fileName: req.query.fileName,
+        },
+        disposition: req.query.disposition,
+      });
+      res.json(result);
+    } catch (error) {
+      respondSongAudioError(res, "Error creating song audio URL:", error);
+    }
+  },
+);
+
+app.delete(
+  "/api/churches/:churchId/song-audio/:songId/:audioId",
+  requireSongAudioEditAccess,
+  async (req, res) => {
+    if (!assertSongAudioChurchAccess(req, res)) return;
+    try {
+      await getSongAudioStorage().remove({
+        churchId: req.params.churchId,
+        songId: req.params.songId,
+        audio: {
+          id: req.params.audioId,
+          key: req.body?.key,
+        },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      respondSongAudioError(res, "Error deleting song audio:", error);
+    }
+  },
+);
 app.get(
   "/api/churches/:churchId/teams/bootstrap",
   authHandlers.getTeamsBootstrap,
@@ -700,6 +964,25 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/delete",
   authHandlers.deleteTeamRosterMember,
+);
+app.get(
+  "/api/churches/:churchId/my-team-assignments",
+  authHandlers.getMyTeamAssignments,
+);
+// Self-scoped: resolves the member from the session, not a :memberId, so a
+// schedule-only volunteer can maintain their own availability without any
+// teams permission.
+app.post(
+  "/api/churches/:churchId/my-blockout-dates",
+  authHandlers.updateMyBlockoutDates,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId/link",
+  authHandlers.linkTeamRosterMember,
+);
+app.post(
+  "/api/churches/:churchId/team-roster-members/:memberId/unlink",
+  authHandlers.unlinkTeamRosterMember,
 );
 app.post(
   "/api/churches/:churchId/team-positions",
@@ -822,10 +1105,7 @@ app.post(
   authHandlers.getTeamSchedulePublicLink,
 );
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
-app.get(
-  "/api/churches/:churchId/service-plans",
-  authHandlers.listServicePlans,
-);
+app.get("/api/churches/:churchId/service-plans", authHandlers.listServicePlans);
 app.get(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.getServicePlan,
@@ -894,6 +1174,10 @@ app.post(
 );
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);
+app.post(
+  "/api/churches/:churchId/members/:userId/make-admin",
+  authHandlers.makeAdmin,
+);
 app.post(
   "/api/churches/:churchId/members/:userId/remove-admin",
   authHandlers.removeAdmin,
@@ -1231,6 +1515,167 @@ app.post("/api/churches/:churchId/restream/session/reset", async (req, res) => {
     respondRestreamJsonError(res, "Error resetting Restream session:", error);
   }
 });
+
+app.get("/api/youtube/oauth/callback", async (req, res) => {
+  try {
+    const result = await youtubeLiveChatService.completeConnect({
+      state: req.query.state,
+      code: req.query.code,
+      denied: !req.query.code,
+    });
+    const redirectParams = new URLSearchParams({
+      status: "success",
+      returnTo: result.returnTo || "/account/integrations",
+    });
+    if (result.accountLabel) {
+      redirectParams.set("accountLabel", result.accountLabel);
+    }
+    if (result.desktop) {
+      redirectParams.set("desktop", "1");
+    }
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/youtube/connect-complete?${redirectParams.toString()}`,
+    );
+  } catch (error) {
+    console.error("Error completing YouTube connection:", error);
+    const redirectParams = new URLSearchParams({
+      status: "error",
+      message:
+        "The YouTube connection did not finish. Return to WorshipSync and try again.",
+      returnTo:
+        typeof error?.returnTo === "string" && error.returnTo.startsWith("/")
+          ? error.returnTo
+          : "/account/integrations",
+    });
+    if (error?.desktop) {
+      redirectParams.set("desktop", "1");
+    }
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/youtube/connect-complete?${redirectParams.toString()}`,
+    );
+  }
+});
+
+app.use(
+  "/api/churches/:churchId/youtube",
+  requireAppSession,
+  requireFullAppAccess,
+);
+
+app.get("/api/churches/:churchId/youtube/connect-url", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const result = await youtubeLiveChatService.startConnect({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+      userId: req.appSession.userId,
+      returnTo: youtubeParseReturnTo(req.query.returnTo),
+      desktop:
+        req.query.desktop === "1" ||
+        String(req.query.desktop || "").toLowerCase() === "true",
+    });
+    res.json(result);
+  } catch (error) {
+    respondYouTubeJsonError(
+      res,
+      "Error starting YouTube connection URL request:",
+      error,
+    );
+  }
+});
+
+app.post("/api/churches/:churchId/youtube/connect-status", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const { connectRequestId, connectRequestSecret } =
+      readYouTubeConnectStatusBody(req.body);
+    const result = await youtubeLiveChatService.getConnectStatus({
+      connectRequestId,
+      connectRequestSecret,
+    });
+    res.json(result);
+  } catch (error) {
+    respondYouTubeJsonError(
+      res,
+      "Error loading YouTube connect status:",
+      error,
+    );
+  }
+});
+
+app.post("/api/churches/:churchId/youtube/disconnect", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    await youtubeLiveChatService.disconnect({
+      churchId: req.params.churchId,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    respondYouTubeJsonError(res, "Error disconnecting YouTube:", error);
+  }
+});
+
+app.get("/api/churches/:churchId/youtube/status", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const status = await youtubeLiveChatService.getStatusForChurch({
+      churchId: req.params.churchId,
+    });
+    res.json(status);
+  } catch (error) {
+    respondYouTubeJsonError(res, "Error loading YouTube status:", error);
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/youtube/live-chat/messages",
+  async (req, res) => {
+    try {
+      if (req.appSession.churchId !== req.params.churchId) {
+        return res.status(403).json({ error: "That church is not available." });
+      }
+
+      const messageText =
+        typeof req.body?.messageText === "string"
+          ? req.body.messageText
+          : typeof req.body?.text === "string"
+            ? req.body.text
+            : "";
+      const videoIdOrUrl =
+        typeof req.body?.videoId === "string"
+          ? req.body.videoId
+          : typeof req.body?.videoUrl === "string"
+            ? req.body.videoUrl
+            : "";
+
+      const result = await youtubeLiveChatService.sendLiveChatMessage({
+        churchId: req.params.churchId,
+        messageText,
+        videoIdOrUrl,
+      });
+      res.json(result);
+    } catch (error) {
+      respondYouTubeJsonError(
+        res,
+        "Error posting YouTube live chat message:",
+        error,
+      );
+    }
+  },
+);
+
 app.use("/api/boards/admin", requireAppSession, requireFullAppAccess);
 
 app.get("/api/boards/stream/:aliasId", (req, res) => {

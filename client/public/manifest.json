@@ -32,7 +32,6 @@
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
-  "orientation": "any",
   "theme_color": "#2b3544",
   "background_color": "#2b3544",
   "categories": ["productivity", "utilities"]

@@ -5,6 +5,7 @@ import allItemsReducer, {
   updateAllItemsListFromRemote,
   removeItemFromAllItemsList,
   addItemToAllItemsList,
+  upsertItemInAllItemsList,
   setIsInitialized,
   setSongSearchValue,
   setFreeFormSearchValue,
@@ -92,6 +93,29 @@ describe("allItemsSlice", () => {
       );
       expect(store.getState().allItems.list).toHaveLength(1);
       expect(store.getState().allItems.list[0]._id).toBe("i1");
+    });
+  });
+
+  describe("upsertItemInAllItemsList", () => {
+    it("updates an existing library row without replacing the rest of the list", () => {
+      const store = createStore();
+      store.dispatch(
+        updateAllItemsList([
+          createServiceItem({ _id: "i1", name: "Old name" }),
+          createServiceItem({ _id: "i2", name: "Keep" }),
+        ]),
+      );
+
+      store.dispatch(
+        upsertItemInAllItemsList(
+          createServiceItem({ _id: "i1", name: "Updated name" }),
+        ),
+      );
+
+      expect(store.getState().allItems.list).toEqual([
+        expect.objectContaining({ _id: "i1", name: "Updated name" }),
+        expect.objectContaining({ _id: "i2", name: "Keep" }),
+      ]);
     });
   });
 

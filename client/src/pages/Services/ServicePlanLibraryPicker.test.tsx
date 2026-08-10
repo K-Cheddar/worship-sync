@@ -254,7 +254,7 @@ describe("ServicePlanLibraryPicker", () => {
       expect(screen.getByText(songTitleMatcher("Living Hope"))).toBeInTheDocument();
     });
 
-    expect(screen.getAllByRole("button", { name: /View lyrics/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /View song details/i }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /Add to outline/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Search external lyrics/i })).toBeInTheDocument();
     expect(

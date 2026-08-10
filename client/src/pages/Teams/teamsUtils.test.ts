@@ -2,9 +2,11 @@ import type { TeamBlockoutDateRange, TeamService } from "../../api/authTypes";
 import {
   buildIntakeAvailabilityServiceOptions,
   filterBlockoutDatesForScheduleRange,
+  findBlockoutRangeForDate,
   formatShortOccurrenceDate,
   isServiceActive,
   isServicePastEnd,
+  serviceDateBlockedOut,
 } from "./teamsUtils";
 
 const service = (overrides: Partial<TeamService>): TeamService => ({
@@ -173,5 +175,53 @@ describe("buildIntakeAvailabilityServiceOptions", () => {
         serviceIds: ["first"],
       }),
     ]);
+  });
+});
+
+// Shared by the assignment picker, the grid's stale-assignment flag, and the
+// volunteer's own schedule page. If these three ever disagree on what "blocked
+// out" means, an owner and a volunteer see different truths about one date.
+describe("findBlockoutRangeForDate", () => {
+  const away: TeamBlockoutDateRange = {
+    startDate: "2026-09-06",
+    endDate: "2026-09-13",
+    notes: "Away",
+  };
+
+  it("matches the range's first and last day inclusively", () => {
+    expect(findBlockoutRangeForDate([away], "2026-09-06")).toEqual(away);
+    expect(findBlockoutRangeForDate([away], "2026-09-13")).toEqual(away);
+    expect(findBlockoutRangeForDate([away], "2026-09-10")).toEqual(away);
+  });
+
+  it("returns null just outside the range", () => {
+    expect(findBlockoutRangeForDate([away], "2026-09-05")).toBeNull();
+    expect(findBlockoutRangeForDate([away], "2026-09-14")).toBeNull();
+  });
+
+  it("reads an entry with no end date as a single day", () => {
+    const single = { startDate: "2026-09-06", endDate: "" };
+    expect(findBlockoutRangeForDate([single], "2026-09-06")).toEqual(single);
+    expect(findBlockoutRangeForDate([single], "2026-09-07")).toBeNull();
+  });
+
+  it("is null for missing input rather than throwing", () => {
+    expect(findBlockoutRangeForDate(undefined, "2026-09-06")).toBeNull();
+    expect(findBlockoutRangeForDate([away], "")).toBeNull();
+    expect(
+      findBlockoutRangeForDate([{ startDate: "", endDate: "" }], "2026-09-06"),
+    ).toBeNull();
+  });
+
+  it("reports blockout state for a member", () => {
+    expect(serviceDateBlockedOut({ blockoutDates: [away] }, "2026-09-06")).toBe(
+      true,
+    );
+    expect(serviceDateBlockedOut({ blockoutDates: [away] }, "2026-09-20")).toBe(
+      false,
+    );
+    expect(serviceDateBlockedOut({ blockoutDates: [] }, "2026-09-06")).toBe(
+      false,
+    );
   });
 });

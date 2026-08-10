@@ -68,6 +68,22 @@ describe("parseBibleReference", () => {
     });
   });
 
+  it.each([
+    // Printouts and speech move the plural around; the book is the same book.
+    ["Proverb 3:5-6", "Proverbs", "3", "5-6"],
+    ["Revelations 21:1-4", "Revelation", "21", "1-4"],
+    ["Lamentation 3:22-23", "Lamentations", "3", "22-23"],
+    ["Hebrew 11:1", "Hebrews", "11", "1"],
+    ["1 Corinthian 13:4", "1 Corinthians", "13", "4"],
+  ])("reads %s as the book it names", (title, book, chapter, verseRange) => {
+    expect(parseBibleReference(title)).toEqual({
+      book,
+      chapter,
+      verseRange,
+      version: "",
+    });
+  });
+
   it("rejects titles that only look like a reference", () => {
     expect(parseBibleReference("Welcome 5")).toBeNull();
     expect(parseBibleReference("Offering")).toBeNull();

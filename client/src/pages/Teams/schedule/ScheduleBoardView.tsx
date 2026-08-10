@@ -22,6 +22,7 @@ import { scheduleUpNextBorderClassName } from "./scheduleUtils";
 
 /** The per-occurrence cell data ScheduleBoardView consumes from buildGridCellProps. */
 type BoardCellData = {
+  occurrenceDate: string;
   slot: number;
   requiredCount: number;
   isSlotEnabled: boolean;
@@ -186,6 +187,7 @@ const ScheduleBoardView = ({
                       key={column.columnKey}
                       occurrenceId={occurrence.occurrenceId}
                       occurrenceName={occurrence.name}
+                      occurrenceDate={cellProps.occurrenceDate}
                       columnKey={column.columnKey}
                       positionId={column.positionId}
                       positionLabel={column.label}

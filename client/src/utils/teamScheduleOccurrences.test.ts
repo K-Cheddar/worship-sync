@@ -86,6 +86,31 @@ describe("generateScheduleOccurrences", () => {
     ]);
   });
 
+  it("snapshots standalone service position requirements onto each occurrence", () => {
+    const positionRequirements = [
+      { positionId: "camera", count: 2, minLevelId: "trained" },
+    ];
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "sunday",
+          name: "Sunday",
+          dayOfWeek: 0,
+          positionRequirements,
+        }),
+      ],
+      serviceIds: ["sunday"],
+      startDate: "2026-07-01",
+      endDate: "2026-07-12",
+    });
+
+    expect(occurrences).toHaveLength(2);
+    expect(
+      occurrences.map((occurrence) => occurrence.positionRequirements),
+    ).toEqual([positionRequirements, positionRequirements]);
+    expect(occurrences[0].positionRequirements).not.toBe(positionRequirements);
+  });
+
   it("honors multi-weekly service end dates", () => {
     const occurrences = generateScheduleOccurrences({
       services: [

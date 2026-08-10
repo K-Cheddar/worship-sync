@@ -29,6 +29,7 @@ import {
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
 import Modal from "../../../components/Modal/Modal";
+import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
@@ -72,7 +73,6 @@ import {
   writeScheduleTeamFilter,
 } from "../teamsLocalStore";
 import SchedulePdfExportButton from "./SchedulePdfExportButton";
-import { SCHEDULE_EXPORT_LAYOUTS } from "./scheduleExportPdf";
 import { parsePlainDate } from "@/utils/plainDate";
 import {
   ADMIN_SCHEDULE_LAYOUTS,
@@ -83,6 +83,12 @@ import {
   writeTeamScheduleAdminLayout,
   type TeamScheduleAdminLayout,
 } from "../teamScheduleAdminLayout";
+import {
+  OCCURRENCE_ORGANIZE_OPTIONS,
+  readScheduleOrganizeMode,
+  writeScheduleOrganizeMode,
+  type OccurrenceOrganizeMode,
+} from "../occurrenceOrganizeMode";
 import {
   isHydratedSchedule,
   onlyHydratedSchedules,
@@ -129,6 +135,7 @@ import {
   normalizeAssignmentCell,
   scheduleMemberName,
   serializeAssignmentCell,
+  serviceDateBlockedOut,
   shadowKindLabel,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
@@ -629,6 +636,9 @@ const ScheduleTab = ({
   const [scheduleLayout, setScheduleLayout] = useState<TeamScheduleAdminLayout>(
     resolveInitialTeamScheduleAdminLayout,
   );
+  const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
+    readScheduleOrganizeMode,
+  );
   // Once the operator deliberately picks a layout it wins for the rest of the
   // session; until then the layout tracks the viewport (see the effect below).
   const hasExplicitLayoutPreference = useRef(hasStoredTeamScheduleAdminLayout());
@@ -646,10 +656,15 @@ const ScheduleTab = ({
       ADMIN_SCHEDULE_LAYOUTS.flatMap(
         (value): { value: TeamScheduleAdminLayout; label: string }[] => {
           if (value === "board") {
-            return [{ value, label: "By service (cards)" }];
+            return [{ value, label: "Cards" }];
           }
-          const option = SCHEDULE_EXPORT_LAYOUTS.find((item) => item.value === value);
-          return option ? [{ value, label: option.label }] : [];
+          if (value === "grid") {
+            return [{ value, label: "Grid" }];
+          }
+          if (value === "transpose") {
+            return [{ value, label: "By position" }];
+          }
+          return [];
         },
       ),
     [],
@@ -661,6 +676,11 @@ const ScheduleTab = ({
     hasExplicitLayoutPreference.current = true;
     setScheduleLayout(layout);
     writeTeamScheduleAdminLayout(layout);
+  }, []);
+
+  const changeOrganizeMode = useCallback((mode: OccurrenceOrganizeMode) => {
+    setOrganizeMode(mode);
+    writeScheduleOrganizeMode(mode);
   }, []);
   const [activeSlot, setActiveSlot] = useState<ScheduleFocusedCell | null>(null);
   // The standard grid flow supports replacing, shadowing, and clearing slots.
@@ -1210,14 +1230,6 @@ const ScheduleTab = ({
       </p>
     );
   })();
-
-  const serviceDateBlockedOut = (member: TeamRosterMember, serviceDate: string) =>
-    (member.blockoutDates || []).some((range) => {
-      if (!serviceDate) return false;
-      const start = range.startDate;
-      const end = range.endDate || start;
-      return start <= serviceDate && serviceDate <= end;
-    });
 
   const getAssignmentIssue = useCallback(
     (
@@ -2101,13 +2113,42 @@ const ScheduleTab = ({
     }
   };
 
+  const scheduleHasMultipleServices = useMemo(() => {
+    const serviceIds = new Set(
+      scheduleOccurrences.map((occurrence) => occurrence.serviceId),
+    );
+    return serviceIds.size > 1;
+  }, [scheduleOccurrences]);
+
+  const effectiveOrganizeMode: OccurrenceOrganizeMode =
+    scheduleHasMultipleServices ? organizeMode : "byService";
+
   const occurrencesByService = useMemo(() => {
-    const groups: {
+    type OccurrenceGroup = {
+      key: string;
       serviceId: string;
       serviceName: string;
       occurrences: TeamScheduleOccurrence[];
       sharedTiming: ReturnType<typeof getSharedOccurrenceTiming>;
-    }[] = [];
+    };
+
+    if (effectiveOrganizeMode === "byDate") {
+      return [...scheduleOccurrences]
+        .sort(
+          (a, b) =>
+            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
+            a.name.localeCompare(b.name),
+        )
+        .map((occurrence) => ({
+          key: occurrence.occurrenceId,
+          serviceId: occurrence.serviceId,
+          serviceName: occurrence.name,
+          occurrences: [occurrence],
+          sharedTiming: getSharedOccurrenceTiming([occurrence]),
+        }));
+    }
+
+    const groups: OccurrenceGroup[] = [];
     const groupIndex = new Map<string, number>();
 
     scheduleOccurrences.forEach((occurrence) => {
@@ -2118,6 +2159,7 @@ const ScheduleTab = ({
       }
       groupIndex.set(occurrence.serviceId, groups.length);
       groups.push({
+        key: occurrence.serviceId,
         serviceId: occurrence.serviceId,
         serviceName: occurrence.name,
         occurrences: [occurrence],
@@ -2129,7 +2171,7 @@ const ScheduleTab = ({
       ...group,
       sharedTiming: getSharedOccurrenceTiming(group.occurrences),
     }));
-  }, [scheduleOccurrences]);
+  }, [effectiveOrganizeMode, scheduleOccurrences]);
 
   const occurrenceRowOffsets = useMemo(() => {
     let offset = 0;
@@ -3373,6 +3415,10 @@ const ScheduleTab = ({
       return {
         occurrenceId: occurrence.occurrenceId,
         occurrenceName: occurrence.name,
+        // Lets a cell flag an assignee who has since blocked this date out.
+        // The picker only warns while filling a slot, so without this a
+        // blockout added after the fact is invisible in the grid.
+        occurrenceDate: getOccurrenceDate(occurrence),
         columnKey: column.columnKey,
         positionId: column.positionId,
         columnLabel: column.label,
@@ -3568,6 +3614,38 @@ const ScheduleTab = ({
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    {/* Desktop: Organize + Layout sit labeled in the toolbar.
+                        Narrow: both move into the overflow menu to save space. */}
+                    {!isNarrowViewport ? (
+                      <>
+                        {scheduleHasMultipleServices ? (
+                          <div className="flex flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2 py-1.5">
+                            <span className="px-0.5 text-xs font-semibold text-gray-300">
+                              Organize
+                            </span>
+                            <SegmentedControl
+                              ariaLabel="Organize schedule"
+                              variant="compact"
+                              value={organizeMode}
+                              onChange={changeOrganizeMode}
+                              options={OCCURRENCE_ORGANIZE_OPTIONS}
+                            />
+                          </div>
+                        ) : null}
+                        <div className="flex flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2 py-1.5">
+                          <span className="px-0.5 text-xs font-semibold text-gray-300">
+                            Layout
+                          </span>
+                          <SegmentedControl
+                            ariaLabel="Schedule layout"
+                            variant="compact"
+                            value={scheduleLayout}
+                            onChange={changeScheduleLayout}
+                            options={scheduleLayoutOptions}
+                          />
+                        </div>
+                      </>
+                    ) : null}
                     {/* Board accordion: expand/collapse every service at once. */}
                     {scheduleLayout === "board" && scheduleOccurrences.length > 1 ? (
                       <div className="flex items-center gap-1">
@@ -3639,7 +3717,8 @@ const ScheduleTab = ({
                       </>
                     ) : null}
 
-                    {/* Infrequent schedule actions, including auto-fill. */}
+                    {/* Infrequent schedule actions, including auto-fill.
+                        On narrow viewports, Organize and Layout live here too. */}
                     <Menu
                       align="end"
                       menuItems={[
@@ -3657,18 +3736,40 @@ const ScheduleTab = ({
                             },
                           ]
                           : []),
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <LayoutGrid className="h-4 w-4" aria-hidden />
-                              Layout
-                            </span>
-                          ),
-                          subItems: scheduleLayoutOptions.map((option) => ({
-                            text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                            onClick: () => changeScheduleLayout(option.value),
-                          })),
-                        },
+                        ...(isNarrowViewport && scheduleHasMultipleServices
+                          ? [
+                            {
+                              element: (
+                                <span className="flex items-center gap-2">
+                                  <CalendarDays className="h-4 w-4" aria-hidden />
+                                  Organize
+                                </span>
+                              ),
+                              subItems: OCCURRENCE_ORGANIZE_OPTIONS.map(
+                                (option) => ({
+                                  text: `${organizeMode === option.value ? "✓ " : ""}${option.label}`,
+                                  onClick: () => changeOrganizeMode(option.value),
+                                }),
+                              ),
+                            },
+                          ]
+                          : []),
+                        ...(isNarrowViewport
+                          ? [
+                            {
+                              element: (
+                                <span className="flex items-center gap-2">
+                                  <LayoutGrid className="h-4 w-4" aria-hidden />
+                                  Layout
+                                </span>
+                              ),
+                              subItems: scheduleLayoutOptions.map((option) => ({
+                                text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
+                                onClick: () => changeScheduleLayout(option.value),
+                              })),
+                            },
+                          ]
+                          : []),
                         {
                           element: (
                             <span className="flex items-center gap-2">
@@ -3875,7 +3976,7 @@ const ScheduleTab = ({
                                   </th>
                                   {occurrencesByService.map((group) => (
                                     <th
-                                      key={group.serviceId}
+                                      key={group.key}
                                       colSpan={group.occurrences.length}
                                       className={cn(
                                         "border-b bg-gray-950 text-center font-semibold text-white",
@@ -4027,67 +4128,203 @@ const ScheduleTab = ({
                                 </tr>
                               </thead>
                               <tbody>
-                                {occurrencesByService.map((group, groupIndex) => {
-                                  const service = data.services.find((item) => item.serviceId === group.serviceId);
-                                  return (
-                                    <Fragment key={group.serviceId}>
-                                      <tr className={cn("border-t", scheduleServiceHeaderTopBorderClassName, serviceHeaderRowTone)}>
-                                        <th colSpan={scheduleColumns.length + 1} className={cn("p-0 text-left align-top", serviceHeaderRowTone)}>
-                                          <div
-                                            className={cn(
-                                              "sticky left-0 z-10 inline-flex w-max max-w-full flex-nowrap items-center gap-x-2 p-2 font-semibold text-white",
+                                {effectiveOrganizeMode === "byDate"
+                                  ? flatOccurrences.map(({ occurrence, group }, rowIndex) => {
+                                    const service = data.services.find(
+                                      (item) => item.serviceId === group.serviceId,
+                                    );
+                                    const rowTone = scheduleRowTone(rowIndex);
+                                    const stickyTone = scheduleStickyRowTone(rowIndex);
+                                    const dateLabel = formatOccurrenceTiming(occurrence);
+                                    return (
+                                      <tr
+                                        key={occurrence.occurrenceId}
+                                        className={cn(
+                                          "border-t",
+                                          scheduleGridTopBorderClassName,
+                                          rowTone,
+                                        )}
+                                      >
+                                        <th
+                                          className={cn(
+                                            "sticky left-0 z-10 align-middle",
+                                            scheduleGridRightBorderClassName,
+                                            scheduleDateColumnClassName,
+                                            scheduleCellPaddingClassName,
+                                            stickyTone,
+                                            nextUpcomingOccurrenceId ===
+                                            occurrence.occurrenceId &&
+                                            scheduleUpNextHeaderHighlightClassName,
+                                            getAxisHighlightClassName(
+                                              occurrence.occurrenceId,
+                                              undefined,
+                                              { rowIndex, surface: "sticky" },
+                                            ),
+                                          )}
+                                        >
+                                          {renderUpNext(occurrence.occurrenceId)}
+                                          <div className="flex flex-col items-start gap-1">
+                                            <span className="text-xs font-semibold text-white">
+                                              {group.serviceName}
+                                              {service?.archivedAt ? (
+                                                <span className="ml-1.5 font-normal text-gray-500">
+                                                  Archived
+                                                </span>
+                                              ) : null}
+                                            </span>
+                                            <ScheduleOccurrenceDateButton
+                                              label={dateLabel}
+                                              ariaLabel={`View and copy assignments for ${group.serviceName} on ${dateLabel}`}
+                                              onClick={() =>
+                                                openServiceSummary(occurrence.occurrenceId)
+                                              }
+                                            />
+                                            {renderAdditionalPositionMenu(
+                                              occurrence.occurrenceId,
                                             )}
-                                          >
-                                            <span className="shrink-0">{group.serviceName}</span>
-                                            {group.sharedTiming.sharedWeekday ? (
-                                              <span className="shrink-0 font-normal text-gray-300">
-                                                {group.sharedTiming.sharedWeekday}
-                                              </span>
-                                            ) : null}
-                                            {group.sharedTiming.sharedTime ? (
-                                              <span className="shrink-0 font-normal text-gray-300">
-                                                {group.sharedTiming.sharedTime}
-                                              </span>
-                                            ) : null}
-                                            {service?.archivedAt ? (
-                                              <span className="shrink-0 text-xs font-normal text-gray-500">Archived</span>
-                                            ) : null}
                                           </div>
                                         </th>
+                                        {scheduleColumns.map((column) => (
+                                          <ScheduleGridCell
+                                            key={scheduleGridCellKey(
+                                              occurrence.occurrenceId,
+                                              column.columnKey,
+                                            )}
+                                            {...buildGridCellProps(
+                                              occurrence,
+                                              column,
+                                              rowTone,
+                                            )}
+                                          />
+                                        ))}
                                       </tr>
-                                      {group.occurrences.map((occurrence, occurrenceIndex) => {
-                                        const rowIndex = occurrenceRowOffsets[groupIndex] + occurrenceIndex;
-                                        const rowTone = scheduleRowTone(rowIndex);
-                                        const stickyTone = scheduleStickyRowTone(rowIndex);
-                                        return (
-                                          <Fragment key={occurrence.occurrenceId}>
-                                            <tr className={cn("border-t", scheduleGridTopBorderClassName, rowTone)}>
-                                              <th className={cn("sticky left-0 z-10 align-middle", scheduleGridRightBorderClassName, scheduleDateColumnClassName, scheduleCellPaddingClassName, stickyTone, nextUpcomingOccurrenceId === occurrence.occurrenceId && scheduleUpNextHeaderHighlightClassName, getAxisHighlightClassName(occurrence.occurrenceId, undefined, { rowIndex, surface: "sticky" }))}>
-                                                {/* Keep "Add position" with the date label — not a
-                                                    second bordered grid row. */}
-                                                {renderUpNext(occurrence.occurrenceId)}
-                                                <div className="flex flex-col items-start gap-1">
-                                                  <ScheduleOccurrenceDateButton
-                                                    label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
-                                                    ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
-                                                    onClick={() => openServiceSummary(occurrence.occurrenceId)}
-                                                  />
-                                                  {renderAdditionalPositionMenu(occurrence.occurrenceId)}
-                                                </div>
-                                              </th>
-                                              {scheduleColumns.map((column) => (
-                                                <ScheduleGridCell
-                                                  key={scheduleGridCellKey(occurrence.occurrenceId, column.columnKey)}
-                                                  {...buildGridCellProps(occurrence, column, rowTone)}
-                                                />
-                                              ))}
-                                            </tr>
-                                          </Fragment>
-                                        );
-                                      })}
-                                    </Fragment>
-                                  );
-                                })}
+                                    );
+                                  })
+                                  : occurrencesByService.map((group, groupIndex) => {
+                                    const service = data.services.find(
+                                      (item) => item.serviceId === group.serviceId,
+                                    );
+                                    return (
+                                      <Fragment key={group.key}>
+                                        <tr
+                                          className={cn(
+                                            "border-t",
+                                            scheduleServiceHeaderTopBorderClassName,
+                                            serviceHeaderRowTone,
+                                          )}
+                                        >
+                                          <th
+                                            colSpan={scheduleColumns.length + 1}
+                                            className={cn(
+                                              "p-0 text-left align-top",
+                                              serviceHeaderRowTone,
+                                            )}
+                                          >
+                                            <div
+                                              className={cn(
+                                                "sticky left-0 z-10 inline-flex w-max max-w-full flex-nowrap items-center gap-x-2 p-2 font-semibold text-white",
+                                              )}
+                                            >
+                                              <span className="shrink-0">
+                                                {group.serviceName}
+                                              </span>
+                                              {group.sharedTiming.sharedWeekday ? (
+                                                <span className="shrink-0 font-normal text-gray-300">
+                                                  {group.sharedTiming.sharedWeekday}
+                                                </span>
+                                              ) : null}
+                                              {group.sharedTiming.sharedTime ? (
+                                                <span className="shrink-0 font-normal text-gray-300">
+                                                  {group.sharedTiming.sharedTime}
+                                                </span>
+                                              ) : null}
+                                              {service?.archivedAt ? (
+                                                <span className="shrink-0 text-xs font-normal text-gray-500">
+                                                  Archived
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          </th>
+                                        </tr>
+                                        {group.occurrences.map(
+                                          (occurrence, occurrenceIndex) => {
+                                            const rowIndex =
+                                              occurrenceRowOffsets[groupIndex] +
+                                              occurrenceIndex;
+                                            const rowTone = scheduleRowTone(rowIndex);
+                                            const stickyTone =
+                                              scheduleStickyRowTone(rowIndex);
+                                            return (
+                                              <Fragment key={occurrence.occurrenceId}>
+                                                <tr
+                                                  className={cn(
+                                                    "border-t",
+                                                    scheduleGridTopBorderClassName,
+                                                    rowTone,
+                                                  )}
+                                                >
+                                                  <th
+                                                    className={cn(
+                                                      "sticky left-0 z-10 align-middle",
+                                                      scheduleGridRightBorderClassName,
+                                                      scheduleDateColumnClassName,
+                                                      scheduleCellPaddingClassName,
+                                                      stickyTone,
+                                                      nextUpcomingOccurrenceId ===
+                                                      occurrence.occurrenceId &&
+                                                      scheduleUpNextHeaderHighlightClassName,
+                                                      getAxisHighlightClassName(
+                                                        occurrence.occurrenceId,
+                                                        undefined,
+                                                        {
+                                                          rowIndex,
+                                                          surface: "sticky",
+                                                        },
+                                                      ),
+                                                    )}
+                                                  >
+                                                    {renderUpNext(
+                                                      occurrence.occurrenceId,
+                                                    )}
+                                                    <div className="flex flex-col items-start gap-1">
+                                                      <ScheduleOccurrenceDateButton
+                                                        label={formatOccurrenceRowLabel(
+                                                          occurrence,
+                                                          group.sharedTiming,
+                                                        )}
+                                                        ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
+                                                        onClick={() =>
+                                                          openServiceSummary(
+                                                            occurrence.occurrenceId,
+                                                          )
+                                                        }
+                                                      />
+                                                      {renderAdditionalPositionMenu(
+                                                        occurrence.occurrenceId,
+                                                      )}
+                                                    </div>
+                                                  </th>
+                                                  {scheduleColumns.map((column) => (
+                                                    <ScheduleGridCell
+                                                      key={scheduleGridCellKey(
+                                                        occurrence.occurrenceId,
+                                                        column.columnKey,
+                                                      )}
+                                                      {...buildGridCellProps(
+                                                        occurrence,
+                                                        column,
+                                                        rowTone,
+                                                      )}
+                                                    />
+                                                  ))}
+                                                </tr>
+                                              </Fragment>
+                                            );
+                                          },
+                                        )}
+                                      </Fragment>
+                                    );
+                                  })}
                               </tbody>
                             </table>
                           </div>

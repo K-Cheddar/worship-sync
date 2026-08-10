@@ -6,7 +6,17 @@ import {
 
 describe("normalizeSongTitleForMatch", () => {
   it.each([
-    ["There's a Welcome Here (C)", "theres a welcome here"],
+    // Plurals fold away, so a trailing "s" never decides a match on its own.
+    // Applied to both sides, so a contraction folding too is harmless.
+    ["There's a Welcome Here (C)", "there a welcome here"],
+    // A trailing number is kept whichever kind it is — the chapter that names a
+    // passage and the catalog number appended to a title both survive here, and
+    // the extension rule reads the catalog case as the same song.
+    ["Proverbs 3", "proverb 3"],
+    ["He Hideth My Soul 520", "he hideth my soul 520"],
+    // Not every trailing "s" is a plural.
+    ["Jesus Loves Me", "jesus love me"],
+    ["Bless the Lord", "bless the lord"],
     ["Oh How I Love Jesus", "o how i love jesus"],
     ["Great Is Thy Faithfulness", "great is your faithfulness"],
     ["Pass Me Not, O Gentle Saviour", "pass me not o gentle savior"],
@@ -14,7 +24,7 @@ describe("normalizeSongTitleForMatch", () => {
     ["He Hideth My Soul #520", "he hideth my soul"],
     ["520 He Hideth My Soul", "he hideth my soul"],
     // A longer number is part of the title, and its comma is not a word break.
-    ["10,000 Reasons", "10000 reasons"],
+    ["10,000 Reasons", "10000 reason"],
   ])("normalizes %s", (raw, expected) => {
     expect(normalizeSongTitleForMatch(raw)).toBe(expected);
   });
@@ -34,6 +44,11 @@ describe("songTitleSimilarity", () => {
     ["He Hideth My Soul 520", "He Hideth My Soul"],
     // Same words, rearranged around the subtitle.
     ["Bless the Lord (10,000 Reasons)", "10,000 Reasons (Bless the Lord)"],
+    // A plural is a systematic variation, not a typo — left to edit distance it
+    // would depend on how long the word happens to be.
+    ["Proverb 3", "Proverbs 3"],
+    ["Psalm 23", "Psalms 23"],
+    ["Revelations 21", "Revelation 21"],
   ];
 
   it.each(same)("reads %s and %s as one song", (planning, library) => {
@@ -67,6 +82,14 @@ describe("songTitleSimilarity", () => {
     // A single distinctive word is not enough to name a song.
     ["God", "How Great Is Our God"],
     ["Amazing Grace My Chains Are Gone", "Amazing Grace"],
+    // Folding plurals must not reach endings where the "s" isn't one.
+    ["Jesu", "Jesus"],
+    ["Ble", "Bless"],
+    ["Grade", "Grace"],
+    // Songs named for a passage: the chapter is what tells them apart, so it
+    // must not be mistaken for a hymnal number and dropped.
+    ["Proverbs 4", "Proverbs 3"],
+    ["Psalm 91", "Psalm 23"],
   ])("keeps %s and %s apart", (planning, library) => {
     expect(isConfidentSongTitleMatch(planning, library)).toBe(false);
   });

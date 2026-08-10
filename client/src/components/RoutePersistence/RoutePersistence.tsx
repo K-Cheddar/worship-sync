@@ -22,6 +22,7 @@ const RESTORE_STARTUP_ROUTES = new Set([
   "/login",
   "/login/desktop-sso-complete",
   "/restream/connect-complete",
+  "/youtube/connect-complete",
   "/home",
   "/workstation/operator",
 ]);
@@ -30,6 +31,7 @@ const ROUTES_TO_SKIP_SAVE = new Set([
   "/login",
   "/login/desktop-sso-complete",
   "/restream/connect-complete",
+  "/youtube/connect-complete",
   "/workstation/pair",
   "/workstation/operator",
   "/projector",

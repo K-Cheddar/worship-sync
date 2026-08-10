@@ -78,25 +78,23 @@ export const BoardDiscussionPostComposer = ({
 
   if (!expanded) {
     return (
-      <div className="sticky bottom-0 z-10 shrink-0">
-        <Button
-          variant="tertiary"
-          svg={MessageSquarePlus}
-          className="w-full justify-start rounded-xl border border-gray-600 bg-gray-900/95 px-3 py-2.5 text-left shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm"
-          onClick={() => setExpanded(true)}
-          disabled={!aliasId}
-        >
-          {text.trim()
-            ? "Continue drafting…"
-            : "Add to discussion board"}
-        </Button>
-      </div>
+      <Button
+        variant="tertiary"
+        svg={MessageSquarePlus}
+        className="w-full justify-start rounded-xl border border-gray-600 bg-gray-900/95 px-3 py-2.5 text-left shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+        onClick={() => setExpanded(true)}
+        disabled={!aliasId}
+      >
+        {text.trim()
+          ? "Continue drafting…"
+          : "Add to discussion board"}
+      </Button>
     );
   }
 
   return (
     <div
-      className="sticky bottom-0 z-10 shrink-0 rounded-xl border border-gray-600 bg-gray-900/95 p-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+      className="rounded-xl border border-gray-600 bg-gray-900/95 p-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.45)] backdrop-blur-sm"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();

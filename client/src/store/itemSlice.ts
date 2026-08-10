@@ -9,6 +9,8 @@ import {
   ItemSlideType,
   ItemState,
   MediaType,
+  SongAudio,
+  SongLink,
   SongMetadata,
   ShouldSendTo,
   TimerInfo,
@@ -22,7 +24,7 @@ import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
 import { mapSlidesUpdateBox0ById } from "../utils/slideBackgroundSubset";
-import { AppDispatch, RootState } from "./store";
+import type { AppDispatch, RootState } from "./store";
 
 const defaultShouldSendTo: ShouldSendTo = {
   projector: true,
@@ -61,6 +63,8 @@ const initialState: ItemState = {
   shouldSendTo: defaultShouldSendTo,
   restoreFocusToBox: null,
   songMetadata: undefined,
+  songLinks: [],
+  songAudio: undefined,
   backgroundTargetSlideIds: [],
   backgroundTargetRangeAnchorId: null,
   mobileBackgroundTargetSelectMode: false,
@@ -106,6 +110,8 @@ const createItemSnapshot = (
     shouldSendTo: item.shouldSendTo || defaultShouldSendTo,
     formattedSections: item.formattedSections,
     songMetadata: item.songMetadata,
+    songLinks: item.songLinks,
+    songAudio: item.songAudio,
     _rev: (item as DBItem)._rev,
     createdAt: (item as DBItem).createdAt,
     updatedAt: (item as DBItem).updatedAt,
@@ -133,6 +139,7 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
     arrangements: snap.arrangements ?? [],
     slides: snap.slides ?? [],
     shouldSendTo: snap.shouldSendTo ?? defaultShouldSendTo,
+    songLinks: snap.songLinks ?? [],
   };
 }
 
@@ -223,6 +230,8 @@ const applyItemDataToState = (
   state.timerInfo = payload.timerInfo;
   state.shouldSendTo = payload.shouldSendTo || defaultShouldSendTo;
   state.songMetadata = payload.songMetadata || undefined;
+  state.songLinks = payload.songLinks || [];
+  state.songAudio = payload.songAudio || undefined;
   resetTransientItemState(state);
 };
 
@@ -287,6 +296,27 @@ export const itemSlice = createSlice({
     ) => {
       state.songMetadata = action.payload ?? undefined;
       state.hasPendingUpdate = true;
+    },
+    setSongLinks: (state, action: PayloadAction<SongLink[]>) => {
+      state.songLinks = action.payload;
+      state.hasPendingUpdate = true;
+    },
+    setSongAudio: (state, action: PayloadAction<SongAudio | undefined>) => {
+      state.songAudio = action.payload;
+      state.hasPendingUpdate = true;
+    },
+    applyPersistedSongAudio: (
+      state,
+      action: PayloadAction<{ songAudio?: SongAudio; persistedDoc: DBItem }>,
+    ) => {
+      if (state._id !== action.payload.persistedDoc._id) return;
+      state.songAudio = action.payload.songAudio;
+      if (state.baseItem) {
+        state.baseItem.songAudio = action.payload.songAudio;
+        state.baseItem._rev = action.payload.persistedDoc._rev;
+        state.baseItem.updatedAt = action.payload.persistedDoc.updatedAt;
+        state.baseItem.updatedBy = action.payload.persistedDoc.updatedBy;
+      }
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
@@ -841,6 +871,9 @@ export const {
   setHasPendingUpdate,
   setSelectedBox,
   setSongMetadata,
+  setSongLinks,
+  setSongAudio,
+  applyPersistedSongAudio,
   setShouldSendTo,
   forceUpdate,
   bufferRemoteItemUpdate,

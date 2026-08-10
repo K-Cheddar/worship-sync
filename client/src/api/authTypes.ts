@@ -71,7 +71,7 @@ export type AuthBootstrap = {
   csrfToken?: string | null;
   database?: string;
   uploadPreset?: string;
-  appAccess?: "full" | "music" | "view";
+  appAccess?: "full" | "music" | "view" | "member";
   permissions?: MemberPermissions;
   notifications?: MemberNotifications;
   role?: string | null;
@@ -149,6 +149,22 @@ export type TeamRosterMember = {
   churchId: string;
   firstName: string;
   lastName: string;
+  /**
+   * Contact address for notifications — **not an identity**. Never used to
+   * infer which account this member is; that link is only established by an
+   * accepted invite or a logged-in intake submission. Addresses are
+   * legitimately shared (a parent covering two teen volunteers), so duplicates
+   * are allowed and matching on them would attach people to the wrong schedule.
+   * Absent on members added before addresses were collected.
+   */
+  email?: string;
+  /** Account this member is linked to, when one has been confirmed. */
+  userId?: string;
+  /**
+   * When an account invite bound to this member was last sent. Evidence only —
+   * superseded by `userId` once accepted, and cleared on unlink.
+   */
+  invitedAt?: string;
   dateOfBirth?: string;
   /** Positions the member can be scheduled for. The hard assignment gate. */
   positionIds: string[];
@@ -441,6 +457,8 @@ export type TeamIntakeForm = {
   // way).
   teamIds: string[];
   active: boolean;
+  /** When true the public form rejects a submission with no email address. */
+  requireEmail?: boolean;
   /**
    * Optional copy overrides shown on the public form. When blank, the public
    * form falls back to its built-in default wording.
@@ -467,6 +485,8 @@ export type TeamIntakeSubmission = {
   churchId: string;
   firstName: string;
   lastName: string;
+  /** Carried onto the member record on apply; absent on older submissions. */
+  email?: string;
   normalizedName: string;
   positionIds: string[];
   occurrenceAvailability: Record<string, "available" | "unavailable">;
@@ -493,6 +513,7 @@ export type TeamIntakePreview = {
     | "name"
     | "startDate"
     | "endDate"
+    | "requireEmail"
     | "availabilityServices"
     | "availabilityOccurrences"
     | "welcomeMessage"

@@ -21,6 +21,7 @@ const member = (overrides: Partial<TeamRosterMember> = {}): TeamRosterMember => 
 const baseProps = {
   occurrenceId: "o1",
   occurrenceName: "Sunday Service",
+  occurrenceDate: "2026-09-06",
   columnKey: "p1::0",
   positionId: "p1",
   positionLabel: "Front Of House Audio",
@@ -75,6 +76,40 @@ describe("ScheduleBoardCell", () => {
     const { activateSlot } = renderCell({ canEdit: false });
     fireEvent.click(screen.getByRole("button"));
     expect(activateSlot).not.toHaveBeenCalled();
+  });
+
+  // Members can now add their own blockouts after a schedule is built, so a
+  // filled slot can go stale. The picker only warns while filling a slot.
+  it("flags an assignee who has blocked the service date out", () => {
+    renderCell({
+      allMembers: [
+        member({
+          blockoutDates: [
+            { startDate: "2026-09-05", endDate: "2026-09-08", notes: "Away" },
+          ],
+        }),
+      ],
+      assignmentCell: { primaryMemberId: "m1" },
+    });
+
+    expect(
+      screen.getByRole("button", { name: /Blocked out/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not flag a blockout that misses the service date", () => {
+    renderCell({
+      allMembers: [
+        member({
+          blockoutDates: [{ startDate: "2026-10-01", endDate: "2026-10-05" }],
+        }),
+      ],
+      assignmentCell: { primaryMemberId: "m1" },
+    });
+
+    expect(
+      screen.queryByRole("button", { name: /Blocked out/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders shadow assignees below the primary slot", () => {

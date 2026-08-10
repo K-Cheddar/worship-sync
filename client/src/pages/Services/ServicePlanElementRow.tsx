@@ -32,6 +32,7 @@ import ServicePlanAssigneeList, {
   addServicePlanAssignee,
   addMicrophoneSlot,
 } from "./ServicePlanAssigneeList";
+import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import TimePicker from "../../components/TimePicker/TimePicker";
@@ -929,6 +930,10 @@ type ServicePlanElementRowProps = {
    * Create song instead of a lyrics viewer, then attach the new library song.
    */
   canCreateLibrarySong?: boolean;
+  /** Uses the editor-level creation flow so repeated exact refs stay linked. */
+  onCreatePendingSong?: (
+    songRef: Extract<ServicePlanSongReference, { kind: "pending" }>,
+  ) => void;
   /**
    * Overrides the element's stored song reference for display and actions, for
    * the case where a song an import couldn't find has since been added to the
@@ -984,6 +989,7 @@ const ServicePlanElementRow = ({
   isEditing = false,
   onViewSongLyrics,
   canCreateLibrarySong = false,
+  onCreatePendingSong,
   resolvedSongRef,
   resolvedSongRefs,
   structureOnly = false,
@@ -1331,11 +1337,18 @@ const ServicePlanElementRow = ({
         const canCreateMissingSong =
           isSongUnlinked && canCreateLibrarySong && !canLinkSong;
         const songChipInteractive =
-          canLinkSong ||
-          canCreateMissingSong ||
-          Boolean(!isSongUnlinked && onViewSongLyrics);
+          canLinkSong || canCreateMissingSong || Boolean(onViewSongLyrics);
         const pendingTitle =
           currentSongRef.kind === "pending" ? currentSongRef.title : "";
+
+        const requestCreatePendingSong = () => {
+          if (currentSongRef.kind !== "pending") return;
+          if (onCreatePendingSong) {
+            onCreatePendingSong(currentSongRef);
+            return;
+          }
+          openSongPicker(true, songIndex);
+        };
 
         const handleSongChipClick = () => {
           if (canLinkSong) {
@@ -1343,19 +1356,19 @@ const ServicePlanElementRow = ({
             return;
           }
           if (canCreateMissingSong) {
-            openSongPicker(true, songIndex);
+            requestCreatePendingSong();
             return;
           }
-          if (!isSongUnlinked) {
-            onViewSongLyrics?.(currentSongRef);
-          }
+          onViewSongLyrics?.(currentSongRef);
         };
 
-        let songChipLabel = `View lyrics for ${label}`;
+        let songChipLabel = `View song details for ${label}`;
         if (canLinkSong) {
           songChipLabel = `Link ${label} to a song in the library`;
         } else if (canCreateMissingSong) {
           songChipLabel = `Create ${label} in the library`;
+        } else if (isSongUnlinked) {
+          songChipLabel = `View reference lyrics for ${label}`;
         }
 
         const songChipContent = (
@@ -1427,7 +1440,7 @@ const ServicePlanElementRow = ({
                 onOpenLibrary={() => openSongPicker(false, songIndex)}
                 onCreateSong={
                   canCreateLibrarySong
-                    ? () => openSongPicker(true, songIndex)
+                    ? requestCreatePendingSong
                     : undefined
                 }
                 anchor={songChipButton}
@@ -1841,7 +1854,7 @@ const ServicePlanElementRow = ({
                 }}
               />
             </div>
-            <Input
+            <DebouncedInput
               label="Title"
               hideLabel
               placeholder="Item name"
@@ -1849,7 +1862,7 @@ const ServicePlanElementRow = ({
               inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
               value={titleText}
               onChange={(value) =>
-                onUpdate({ title: plainTextToRichText(String(value)) }, "title")
+                onUpdate({ title: plainTextToRichText(value) }, "title")
               }
             />
             {structureOnly ? null : (

@@ -66,14 +66,15 @@ import {
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
 import { hydrateOccurrenceSchedules } from "../../utils/hydrateOccurrenceSchedules";
 import { onlyHydratedSchedules } from "../../api/authTypes";
+import CurrentServiceRestreamPanel from "./CurrentServiceRestreamPanel";
 
-type WorkspaceTab = "plan" | "serving" | "displays" | "credits";
+type WorkspaceTab = "plan" | "serving" | "displays" | "credits" | "chat";
 /**
  * Whether this date's schedule cells are actually on the client. The bootstrap
  * hydrates a window around today, and the operator can page beyond it.
  */
 type AssignmentsStatus = "ready" | "loading" | "unavailable";
-type PreviewTab = "serving" | "displays" | "credits";
+type PreviewTab = "serving" | "displays" | "credits" | "chat";
 
 type ServiceHeadingProps = {
   service?: ServiceTime | null;
@@ -201,6 +202,10 @@ const PreviewPanel = ({
   microphones,
   assignmentsStatus,
   onOpenSchedule,
+  churchId,
+  youtubeConnected,
+  youtubeAccountLabel,
+  showToast,
 }: {
   credits: CreditsInfo[];
   value: PreviewTab;
@@ -213,6 +218,10 @@ const PreviewPanel = ({
     scheduleId: string;
     slot?: { occurrenceId: string; columnKey: string };
   }) => void;
+  churchId: string;
+  youtubeConnected: boolean;
+  youtubeAccountLabel: string;
+  showToast: (message: string, variant: "success" | "error") => void;
 }) => (
   <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
     <Tabs
@@ -235,6 +244,9 @@ const PreviewPanel = ({
             </TabsTrigger>
             <TabsTrigger value="serving" className={lineTabsTriggerSmClassName}>
               Team
+            </TabsTrigger>
+            <TabsTrigger value="chat" className={lineTabsTriggerSmClassName}>
+              Chat
             </TabsTrigger>
           </TabsList>
           {value === "displays" ? (
@@ -268,6 +280,17 @@ const PreviewPanel = ({
             onOpenSchedule={onOpenSchedule}
           />
         </div>
+        <div
+          className={value === "chat" ? "h-full min-h-0" : "hidden"}
+          aria-hidden={value !== "chat"}
+        >
+          <CurrentServiceRestreamPanel
+            churchId={churchId}
+            youtubeConnected={youtubeConnected}
+            youtubeAccountLabel={youtubeAccountLabel}
+            showToast={showToast}
+          />
+        </div>
       </div>
     </Tabs>
   </section>
@@ -283,6 +306,7 @@ const CurrentServiceWorkspace = () => {
     canEditServices,
     canEditTeams,
     churchId,
+    churchIntegrations,
     firebaseDb,
     loginState,
     sharedDataReady,
@@ -574,7 +598,9 @@ const CurrentServiceWorkspace = () => {
   );
 
   const desktopPreviewTab: PreviewTab =
-    tab === "credits" || tab === "serving" ? tab : "displays";
+    tab === "credits" || tab === "serving" || tab === "chat"
+      ? tab
+      : "displays";
 
   if (!canViewTeams) {
     return (
@@ -691,6 +717,24 @@ const CurrentServiceWorkspace = () => {
               ),
               contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
             },
+            {
+              value: "chat",
+              label: "Chat",
+              content: (
+                <CurrentServiceRestreamPanel
+                  churchId={churchId || ""}
+                  youtubeConnected={Boolean(
+                    loginState === "success" &&
+                      churchIntegrations?.youtube?.connected,
+                  )}
+                  youtubeAccountLabel={
+                    churchIntegrations?.youtube?.accountLabel || ""
+                  }
+                  showToast={showToast}
+                />
+              ),
+              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+            },
           ]}
         />
       </WorkspacePage>
@@ -713,6 +757,14 @@ const CurrentServiceWorkspace = () => {
           microphones={microphones}
           assignmentsStatus={assignmentsStatus}
           onOpenSchedule={openSchedule}
+          churchId={churchId || ""}
+          youtubeConnected={Boolean(
+            loginState === "success" && churchIntegrations?.youtube?.connected,
+          )}
+          youtubeAccountLabel={
+            churchIntegrations?.youtube?.accountLabel || ""
+          }
+          showToast={showToast}
         />
       </div>
     </WorkspacePage>

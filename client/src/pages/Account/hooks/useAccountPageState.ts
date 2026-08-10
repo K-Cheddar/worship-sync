@@ -6,6 +6,7 @@ import {
   listDisplayDevices,
   listTrustedDevices,
   listWorkstations,
+  makeAdmin,
   removeChurchMember,
   removeAdmin,
   requestAdminAccess,
@@ -224,6 +225,15 @@ export const useAccountPageState = () => {
       return null;
     }
     switch (destructiveConfirm.kind) {
+      case "makeAdmin":
+        return {
+          title: "Make admin",
+          message: "Are you sure you want to make this person an admin",
+          itemName: destructiveConfirm.memberLabel,
+          warningMessage:
+            "They'll get full account controls for this church. You can remove admin access later.",
+          confirmText: "Make admin",
+        };
       case "removeAdmin":
         return {
           title: "Remove admin access",
@@ -294,6 +304,11 @@ export const useAccountPageState = () => {
     const c = destructiveConfirm;
     try {
       switch (c.kind) {
+        case "makeAdmin":
+          await makeAdmin(churchId, c.targetUserId);
+          showStatus(`Made ${c.memberLabel} an admin.`);
+          await refresh();
+          break;
         case "removeAdmin":
           await removeAdmin(churchId, c.targetUserId);
           showStatus(`Removed admin access for ${c.memberLabel}.`);

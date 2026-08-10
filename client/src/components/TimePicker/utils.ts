@@ -21,7 +21,7 @@ export const formatTimeTo24Hour = (time: string | undefined) => {
       }
       return `${String(hour).padStart(2, "0")}:${String(minute).padStart(
         2,
-        "0"
+        "0",
       )}`;
     }
 
@@ -34,7 +34,7 @@ export const formatTimeTo24Hour = (time: string | undefined) => {
 
 // Parsing functions
 export const parseTimeCountdown = (
-  input: string | undefined
+  input: string | undefined,
 ): {
   hour: string;
   minute: string;
@@ -70,7 +70,7 @@ export const parseTimeCountdown = (
 };
 
 export const parseTimeTimer = (
-  input: string | undefined
+  input: string | undefined,
 ): {
   hour: string;
   minute: string;
@@ -111,11 +111,30 @@ export const parseTimeTimer = (
   return null;
 };
 
+/**
+ * Fill missing minute/meridiem when the operator has set an hour.
+ * Returns null when there is no hour (leave the field empty) or when
+ * hour, minute, and meridiem are already complete.
+ */
+export const resolveCountdownPartial = (
+  hour: string,
+  minute: string,
+  meridiem: Meridiem,
+): { hour: string; minute: string; meridiem: Meridiem } | null => {
+  if (!hour) return null;
+  if (minute && meridiem) return null;
+  return {
+    hour,
+    minute: minute || "00",
+    meridiem: meridiem || "AM",
+  };
+};
+
 // Formatting functions
 export const formatTimeCountdown = (
   hour: string,
   minute: string,
-  meridiem: Meridiem
+  meridiem: Meridiem,
 ) => {
   const hh = pad2(hour);
   const mm = pad2(minute);
@@ -126,7 +145,7 @@ export const formatTimeCountdown = (
 export const formatTimeTimer = (
   hour: string,
   minute: string,
-  second: string
+  second: string,
 ) => {
   const hh = pad2(hour);
   const mm = pad2(minute);
@@ -137,7 +156,7 @@ export const formatTimeTimer = (
 // Shared snap logic
 export const snapToNearest = (
   value: string,
-  options: readonly string[]
+  options: readonly string[],
 ): string => {
   const num = Number(value) || 0;
   const optionNums = options.map((x) => Number(x));
@@ -155,7 +174,7 @@ export const snapToNearest = (
 
 // Duration conversion utilities (for timer variant)
 export const durationToTime = (
-  durationSeconds: number | undefined
+  durationSeconds: number | undefined,
 ): {
   hour: string;
   minute: string;
@@ -176,7 +195,7 @@ export const durationToTime = (
 export const timeToDuration = (
   hour: string,
   minute: string,
-  second: string
+  second: string,
 ): number => {
   const h = Number(hour) || 0;
   const m = Number(minute) || 0;

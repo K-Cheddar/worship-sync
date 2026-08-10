@@ -3,11 +3,13 @@ import { EMPTY_RICH_TEXT } from "../../types/richText";
 import {
   getServicePlanElementAssignees,
   getServicePlanElementType,
+  getServicePlanElementSongRefs,
 } from "../../types/servicePlan";
 import type {
   ServicePlanElement,
   ServicePlanElementType,
   ServicePlanSection,
+  ServicePlanSongReference,
 } from "../../types/servicePlan";
 
 export const createEmptyServicePlanElement = (
@@ -112,6 +114,51 @@ export const updateElement = (
         }
       : section,
   );
+
+type PendingSongReference = Extract<
+  ServicePlanSongReference,
+  { kind: "pending" }
+>;
+type LibrarySongReference = Extract<
+  ServicePlanSongReference,
+  { kind: "library" }
+>;
+
+/**
+ * Replaces every occurrence of the exact pending reference that was created.
+ * Matching both title and stored lyrics avoids linking unrelated same-title
+ * songs while keeping a repeated/continued song consistent across the plan.
+ */
+export const replaceMatchingPendingSongReferences = (
+  sections: ServicePlanSection[],
+  target: PendingSongReference,
+  replacement: LibrarySongReference,
+): ServicePlanSection[] =>
+  sections.map((section) => {
+    let sectionChanged = false;
+    const elements = section.elements.map((element) => {
+      const songRefs = getServicePlanElementSongRefs(element);
+      let changed = false;
+      const nextSongRefs = songRefs.map((songRef) => {
+        const matches =
+          songRef.kind === "pending" &&
+          songRef.title === target.title &&
+          songRef.lyricsText === target.lyricsText;
+        if (!matches) return songRef;
+        changed = true;
+        return replacement;
+      });
+      if (!changed) return element;
+      sectionChanged = true;
+      const next = {
+        ...element,
+        songRef: undefined,
+        songRefs: nextSongRefs,
+      };
+      return { ...next, type: getServicePlanElementType(next) };
+    });
+    return sectionChanged ? { ...section, elements } : section;
+  });
 
 export const reorderElementsInSection = (
   sections: ServicePlanSection[],

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Book, BookOpen, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
@@ -14,7 +22,7 @@ import {
   useServicePlanningImport,
   overlayPlanHasExecutableChange,
 } from "../../hooks/useServicePlanningImport";
-import type { OverlayInfo } from "../../types";
+import type { ItemList, OverlayInfo } from "../../types";
 import {
   Popover,
   PopoverAnchor,
@@ -48,15 +56,27 @@ import { cn } from "../../utils/cnHelper";
 import { iconColorMap } from "../../utils/itemTypeMaps";
 
 import Select from "../../components/Select/Select";
-import { formatOccurrenceLabel } from "./currentServiceWorkspaceUtils";
 import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import {
+  selectItemList,
+  updateItemLists,
+} from "../../store/itemListsSlice";
+import { createNewItemList } from "../../utils/itemUtil";
+import { setItemListIsLoading } from "../../store/itemListSlice";
+import {
+  formatControllerServicePlanLabel,
+  isControllerServicePlanUpcoming,
+  limitControllerServicePlans,
+} from "./controllerServicePlanSelection";
 
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
+const EMPTY_ITEM_LISTS: ItemList[] = [];
 
 const StatusBadge = ({
   className,
@@ -263,6 +283,7 @@ const buildAssignmentsByTeam = (preview: ServicePlanningPreview | null) => {
 const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hideOutlineActions?: boolean }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const { db } = useContext(ControllerInfoContext) || {};
   const { loadPreview } = useServicePlanningImport();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -272,12 +293,18 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
   // Keeps the Controller's copy of the plan in step with the Services editor.
   const {
-    occurrences,
-    occurrence,
+    savedPlans,
+    selectedPlan,
+    selectedPlanKey,
+    selectPlan,
+    pinSelectedPlan,
+    isEnabled: isSavedPlanAccessEnabled,
+    isLoading,
+    isLoadingPlans,
+    plansError,
     isPlanSourced,
-    selectedOccurrenceId,
-    selectOccurrence,
     refresh: refreshPlan,
+    refreshPlans,
   } = useCurrentServicePlanSource();
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
@@ -291,6 +318,19 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   );
   const floatingWindowDismissed = useSelector(
     (s: RootState) => s.servicePlanningImport.floatingWindowDismissed,
+  );
+  const currentLists = useSelector(
+    (s: RootState) =>
+      s.undoable?.present?.itemLists?.currentLists ?? EMPTY_ITEM_LISTS,
+  );
+  const selectedList = useSelector(
+    (s: RootState) => s.undoable?.present?.itemLists?.selectedList,
+  );
+  const targetOutlineLoading = useSelector(
+    (s: RootState) => s.undoable?.present?.itemList?.isLoading ?? false,
+  );
+  const outlinePlanBinding = useSelector(
+    (s: RootState) => s.servicePlanningImport.outlinePlanBinding,
   );
   const autoCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
@@ -380,10 +420,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     url,
   ]);
 
+  const isContextChanging = isLoading || targetOutlineLoading;
+  const canSyncOverlays =
+    !isContextChanging && hasSyncableOverlayItems(preview, overlays);
+  const canSyncOutline =
+    !isContextChanging && Boolean(selectedList) && hasSyncableOutlineItems(preview);
+  const canSyncAny = canSyncOverlays || canSyncOutline;
+
   const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
-    if (!preview) return;
-    const canSyncOverlays = hasSyncableOverlayItems(preview, overlays);
-    const canSyncOutline = hasSyncableOutlineItems(preview);
     const shouldSyncOverlays = mode !== "outline" && canSyncOverlays;
     const shouldSyncOutline = mode !== "overlays" && canSyncOutline;
     if (!shouldSyncOverlays && !shouldSyncOutline) return;
@@ -396,7 +440,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           : "outline";
     dispatch(setServicePlanningFloatingWindowDismissed(false));
     dispatch(startServicePlanningSync({ mode: nextMode }));
-  }, [dispatch, overlays, preview]);
+  }, [canSyncOutline, canSyncOverlays, dispatch]);
 
   const handleStopSync = useCallback(() => {
     dispatch(cancelServicePlanningSync());
@@ -418,9 +462,56 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     navigate(`/controller/bible?${params.toString()}`);
   };
 
-  const canSyncOverlays = hasSyncableOverlayItems(preview, overlays);
-  const canSyncOutline = hasSyncableOutlineItems(preview);
-  const canSyncAny = canSyncOverlays || canSyncOutline;
+  const visiblePlans = useMemo(
+    () =>
+      limitControllerServicePlans({
+        plans: savedPlans,
+        selectedPlanKey,
+        boundPlanKey: outlinePlanBinding?.planKey,
+      }),
+    [outlinePlanBinding?.planKey, savedPlans, selectedPlanKey],
+  );
+  const planOptions = useMemo(
+    () =>
+      visiblePlans.map((plan) => ({
+        value: plan.planKey,
+        label: formatControllerServicePlanLabel(plan),
+        group: isControllerServicePlanUpcoming(plan) ? "Upcoming" : "Recent",
+      })),
+    [visiblePlans],
+  );
+  const outlineOptions = useMemo(
+    () =>
+      currentLists.map((list) => ({
+        value: list._id,
+        label: list.name,
+      })),
+    [currentLists],
+  );
+
+  const handleCreateOutline = useCallback(async () => {
+    const planName = selectedPlan?.name?.trim() || "Service plan";
+    const date = selectedPlan?.date
+      ? new Date(`${selectedPlan.date}T12:00:00`).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        })
+      : "";
+    try {
+      const newList = await createNewItemList({
+        db,
+        name: `${planName}${date ? ` · ${date}` : ""}`,
+        currentLists,
+      });
+      pinSelectedPlan();
+      dispatch(updateItemLists([...currentLists, newList]));
+      dispatch(setItemListIsLoading(true));
+      dispatch(selectItemList(newList._id));
+      showToast(`Created ${newList.name}`, "success");
+    } catch {
+      showToast("Could not create the outline. Try again.", "error");
+    }
+  }, [currentLists, db, dispatch, pinSelectedPlan, selectedPlan, showToast]);
 
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
@@ -512,8 +603,10 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
 
 
-  const isVisible =
-    !floatingWindowDismissed && (sync.status !== "idle" || Boolean(preview));
+  // The outline action can open this window before a plan is loaded. Keeping
+  // the empty state visible is what lets an operator recover when the nearest
+  // scheduled occurrence has no saved plan.
+  const isVisible = !floatingWindowDismissed;
   const windowWidth = getControllerRightPanelWidthPx(window.innerWidth);
   const maxWindowHeight = Math.max(window.innerHeight - MARGIN * 2, 240);
   const defaultPosition = {
@@ -596,6 +689,140 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     dispatch(setServicePlanningFloatingWindowDismissed(true));
   };
 
+  let savedPlanControl: ReactNode;
+  if (!isSavedPlanAccessEnabled) {
+    savedPlanControl = (
+      <p className="text-xs text-zinc-400">
+        Saved plans are not available for this account.
+      </p>
+    );
+  } else if (plansError) {
+    savedPlanControl = (
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-amber-300">{plansError}</p>
+        <Button
+          type="button"
+          variant="tertiary"
+          className="shrink-0 text-xs"
+          onClick={() => void refreshPlans()}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  } else if (isLoadingPlans) {
+    savedPlanControl = (
+      <div className="flex items-center gap-2 text-xs text-zinc-400">
+        <Spinner width="14px" borderWidth="2px" />
+        Loading saved plans…
+      </div>
+    );
+  } else if (planOptions.length > 0) {
+    savedPlanControl = (
+      <div className="flex flex-col gap-1">
+        <Select
+          label="Service plan"
+          selectClassName="h-8 text-xs"
+          disablePortal
+          value={selectedPlanKey || ""}
+          onChange={selectPlan}
+          disabled={isSyncActive}
+          options={planOptions}
+        />
+        <div className="flex items-center justify-between gap-2">
+          {savedPlans.length > planOptions.length ? (
+            <p className="text-[11px] text-zinc-500">
+              Showing {planOptions.length} of {savedPlans.length} plans
+            </p>
+          ) : (
+            <span />
+          )}
+          <Button
+            type="button"
+            variant="tertiary"
+            className="shrink-0 text-xs"
+            onClick={() => navigate("/teams-and-services/plans")}
+          >
+            View all plans
+          </Button>
+        </div>
+      </div>
+    );
+  } else {
+    savedPlanControl = (
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-zinc-400">No saved plans yet.</p>
+        <Button
+          type="button"
+          variant="tertiary"
+          className="shrink-0 text-xs"
+          onClick={() => navigate("/teams-and-services/plans")}
+        >
+          Open Plans
+        </Button>
+      </div>
+    );
+  }
+
+  let outlineBindingMessage: string | null = null;
+  if (selectedList && outlinePlanBinding) {
+    outlineBindingMessage =
+      outlinePlanBinding.planKey === selectedPlanKey
+        ? `Linked to ${outlinePlanBinding.planName}`
+        : `Currently linked to ${outlinePlanBinding.planName}. Syncing the outline will relink it.`;
+  } else if (selectedList && selectedPlan) {
+    outlineBindingMessage = `Syncing will link ${selectedList.name} to this plan.`;
+  }
+
+  let emptyPreviewMessage = "Choose a saved plan to review it in the controller.";
+  if (isLoading) {
+    emptyPreviewMessage = "Loading the selected plan…";
+  } else if (selectedPlan) {
+    emptyPreviewMessage =
+      "This plan has no controller preview yet. Refresh it or choose another plan.";
+  }
+
+  const planContextControls = (
+    <section className="rounded-lg border border-zinc-700 bg-zinc-950/35 p-2.5">
+      <div className="flex flex-col gap-2">
+        {savedPlanControl}
+
+        <div className="flex items-end gap-2">
+          <Select
+            label="Target outline"
+            className="min-w-0 flex-1"
+            selectClassName="h-8 text-xs"
+            disablePortal
+            value={selectedList?._id || ""}
+            onChange={(outlineId) => {
+              dispatch(setItemListIsLoading(true));
+              dispatch(selectItemList(outlineId));
+            }}
+            disabled={isSyncActive || outlineOptions.length === 0}
+            options={outlineOptions}
+          />
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={Plus}
+            iconSize="sm"
+            className="h-8 shrink-0 text-xs"
+            disabled={isSyncActive || !selectedPlan}
+            onClick={() => void handleCreateOutline()}
+          >
+            New
+          </Button>
+        </div>
+
+        {outlineBindingMessage ? (
+          <p className="text-[11px] text-zinc-400">
+            {outlineBindingMessage}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+
   return (
     <FloatingWindow
       ref={floatingWindowRef}
@@ -608,6 +835,8 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       autoHeight
     >
       <div className="flex flex-col gap-3 text-sm text-white">
+        {planContextControls}
+
         {isFailed ? (
           <p className="text-red-400">{sync.error || "Try again."}</p>
         ) : null}
@@ -657,24 +886,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                   {isPlanSourced ? "Updated" : "Imported"}{" "}
                   {new Date(serviceOutline.loadedAt).toLocaleString()}
                 </div>
-              ) : null}
-
-              {isPlanSourced && occurrences.length > 1 ? (
-                <Select
-                  label="Service"
-                  hideLabel
-                  className="mt-2"
-                  selectClassName="h-7 text-xs"
-                  // The menu must render inline: a portaled one escapes the
-                  // floating window's stacking context and never opens.
-                  disablePortal
-                  value={selectedOccurrenceId || occurrence?.occurrenceId || ""}
-                  onChange={selectOccurrence}
-                  options={occurrences.map((candidate) => ({
-                    value: candidate.occurrenceId,
-                    label: `${candidate.name} · ${formatOccurrenceLabel(candidate.startsAt)}`,
-                  }))}
-                />
               ) : null}
 
               <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
@@ -946,7 +1157,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
         ) : null}
 
         {!preview && !isFailed ? (
-          <p className="text-zinc-400">Nothing to update.</p>
+          <p className="text-zinc-400">{emptyPreviewMessage}</p>
         ) : null}
       </div>
     </FloatingWindow>
