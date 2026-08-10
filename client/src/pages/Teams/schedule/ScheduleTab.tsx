@@ -135,6 +135,7 @@ import {
   normalizeAssignmentCell,
   scheduleMemberName,
   serializeAssignmentCell,
+  serviceDateBlockedOut,
   shadowKindLabel,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
@@ -1229,14 +1230,6 @@ const ScheduleTab = ({
       </p>
     );
   })();
-
-  const serviceDateBlockedOut = (member: TeamRosterMember, serviceDate: string) =>
-    (member.blockoutDates || []).some((range) => {
-      if (!serviceDate) return false;
-      const start = range.startDate;
-      const end = range.endDate || start;
-      return start <= serviceDate && serviceDate <= end;
-    });
 
   const getAssignmentIssue = useCallback(
     (
@@ -3422,6 +3415,10 @@ const ScheduleTab = ({
       return {
         occurrenceId: occurrence.occurrenceId,
         occurrenceName: occurrence.name,
+        // Lets a cell flag an assignee who has since blocked this date out.
+        // The picker only warns while filling a slot, so without this a
+        // blockout added after the fact is invisible in the grid.
+        occurrenceDate: getOccurrenceDate(occurrence),
         columnKey: column.columnKey,
         positionId: column.positionId,
         columnLabel: column.label,

@@ -2,11 +2,57 @@ import { useEffect, useState } from "react";
 import Modal from "../Modal/Modal";
 import Input from "../Input/Input";
 import Button from "../Button/Button";
-import type { ItemType, SongAudio, SongLink, SongMetadata } from "../../types";
+import type {
+  ItemType,
+  SongAudio,
+  SongLink,
+  SongLinkSegment,
+  SongMetadata,
+} from "../../types";
 import { createManualSongMetadata } from "../../utils/lrclib";
+import {
+  formatYouTubeTimestamp,
+  getYouTubeVideoReference,
+  parseYouTubeTimestamp,
+} from "../../utils/youtube";
 import SongAudioAttachment from "./SongAudioAttachment";
 
 const EMPTY_SONG_LINKS: SongLink[] = [];
+
+type EditableSongLinkSegment = Omit<
+  SongLinkSegment,
+  "label" | "startSeconds" | "endSeconds"
+> & {
+  label: string;
+  startTime: string;
+  endTime: string;
+};
+
+type EditableSongLink = Omit<SongLink, "label" | "segments"> & {
+  label: string;
+  segments: EditableSongLinkSegment[];
+};
+
+const createEditorId = (prefix: string) =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const toEditableSongLinks = (links: SongLink[]): EditableSongLink[] =>
+  links.map((link) => ({
+    id: link.id,
+    label: link.label ?? "",
+    url: link.url,
+    segments: (link.segments ?? []).map((segment) => ({
+      id: segment.id,
+      label: segment.label ?? "",
+      startTime: formatYouTubeTimestamp(segment.startSeconds),
+      endTime:
+        segment.endSeconds === undefined
+          ? ""
+          : formatYouTubeTimestamp(segment.endSeconds),
+    })),
+  }));
 
 export type ItemDetailsModalProps = {
   isOpen: boolean;
@@ -104,7 +150,9 @@ export function ItemDetailsEditorFields({
   const [localName, setLocalName] = useState(itemName);
   const [artistName, setArtistName] = useState("");
   const [albumName, setAlbumName] = useState("");
-  const [localSongLinks, setLocalSongLinks] = useState<SongLink[]>(songLinks);
+  const [localSongLinks, setLocalSongLinks] = useState<EditableSongLink[]>(() =>
+    toEditableSongLinks(songLinks),
+  );
   const [linkError, setLinkError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -115,47 +163,128 @@ export function ItemDetailsEditorFields({
     setLocalName(itemName);
     setArtistName(songMetadata?.artistName ?? "");
     setAlbumName(songMetadata?.albumName ?? "");
-    setLocalSongLinks(songLinks);
+    setLocalSongLinks(toEditableSongLinks(songLinks));
     setLinkError("");
     setSaveError("");
   }, [isOpen, itemName, songLinks, songMetadata]);
 
-  const updateSongLink = (id: string, patch: Partial<SongLink>) => {
+  const updateSongLink = (id: string, patch: Partial<EditableSongLink>) => {
     setLocalSongLinks((links) =>
       links.map((link) => (link.id === id ? { ...link, ...patch } : link)),
     );
   };
 
   const addSongLink = () => {
-    const id =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `song-link-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setLocalSongLinks((links) => [...links, { id, label: "", url: "" }]);
+    setLocalSongLinks((links) => [
+      ...links,
+      { id: createEditorId("song-link"), label: "", url: "", segments: [] },
+    ]);
+  };
+
+  const addSongLinkSegment = (linkId: string) => {
+    setLocalSongLinks((links) =>
+      links.map((link) => {
+        if (link.id !== linkId) return link;
+        const linkedStart =
+          getYouTubeVideoReference(link.url)?.startSeconds ?? 0;
+        return {
+          ...link,
+          segments: [
+            ...link.segments,
+            {
+              id: createEditorId("song-link-segment"),
+              label: "",
+              startTime: formatYouTubeTimestamp(linkedStart),
+              endTime: "",
+            },
+          ],
+        };
+      }),
+    );
+  };
+
+  const updateSongLinkSegment = (
+    linkId: string,
+    segmentId: string,
+    patch: Partial<EditableSongLinkSegment>,
+  ) => {
+    setLocalSongLinks((links) =>
+      links.map((link) =>
+        link.id === linkId
+          ? {
+              ...link,
+              segments: link.segments.map((segment) =>
+                segment.id === segmentId
+                  ? { ...segment, ...patch }
+                  : segment,
+              ),
+            }
+          : link,
+      ),
+    );
   };
 
   const validateSongLinks = (): SongLink[] | null => {
-    const links = localSongLinks
-      .map((link) => ({
-        ...link,
-        label: link.label.trim(),
-        url: link.url.trim(),
-      }))
-      .filter((link) => link.label || link.url);
+    const links: SongLink[] = [];
+    for (const editableLink of localSongLinks) {
+      const label = editableLink.label.trim();
+      const url = editableLink.url.trim();
+      if (!label && !url) continue;
 
-    const invalidLink = links.find((link) => {
-      if (!link.label || !link.url) return true;
-      try {
-        const url = new URL(link.url);
-        return url.protocol !== "https:" && url.protocol !== "http:";
-      } catch {
-        return true;
+      if (!url) {
+        setLinkError("Enter a valid http(s) address or remove the empty link.");
+        return null;
       }
-    });
-    if (invalidLink) {
-      setLinkError("Each link needs a label and a valid http(s) address.");
-      return null;
+
+      try {
+        const parsedUrl = new URL(url);
+        if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+          throw new Error("Unsupported protocol");
+        }
+      } catch {
+        setLinkError("Enter a valid http(s) address for each link.");
+        return null;
+      }
+
+      const youtube = getYouTubeVideoReference(url);
+      if (editableLink.segments.length && !youtube) {
+        setLinkError(
+          "Reference segments require a valid YouTube address. Update the address or remove the segments.",
+        );
+        return null;
+      }
+
+      const segments: SongLinkSegment[] = [];
+      for (const editableSegment of editableLink.segments) {
+        const startSeconds = parseYouTubeTimestamp(editableSegment.startTime);
+        const endSeconds = editableSegment.endTime.trim()
+          ? parseYouTubeTimestamp(editableSegment.endTime)
+          : undefined;
+        if (startSeconds === null) {
+          setLinkError("Enter each start time as mm:ss or hh:mm:ss.");
+          return null;
+        }
+        if (endSeconds === null || (endSeconds !== undefined && endSeconds <= startSeconds)) {
+          setLinkError("Each end time must be later than its start time.");
+          return null;
+        }
+        const segmentLabel = editableSegment.label.trim();
+        segments.push({
+          id: editableSegment.id,
+          ...(segmentLabel ? { label: segmentLabel } : {}),
+          startSeconds,
+          ...(endSeconds === undefined ? {} : { endSeconds }),
+        });
+      }
+
+      links.push({
+        id: editableLink.id,
+        ...(label ? { label } : {}),
+        url,
+        ...(segments.length ? { segments } : {}),
+      });
     }
+    setLinkError("");
     return links;
   };
 
@@ -266,7 +395,7 @@ export function ItemDetailsEditorFields({
             {localSongLinks.map((link) => (
               <div key={link.id} className="mt-2 rounded bg-gray-800 p-2">
                 <Input
-                  label="Link label"
+                  label="Link label (optional)"
                   value={link.label}
                   onChange={(value) => updateSongLink(link.id, { label: String(value) })}
                 />
@@ -276,6 +405,83 @@ export function ItemDetailsEditorFields({
                   value={link.url}
                   onChange={(value) => updateSongLink(link.id, { url: String(value) })}
                 />
+                {getYouTubeVideoReference(link.url) || link.segments.length ? (
+                  <section className="mt-2 border-t border-gray-700 pt-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-white">
+                          Reference segments
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          Save exact portions using mm:ss or hh:mm:ss.
+                        </p>
+                      </div>
+                      {getYouTubeVideoReference(link.url) ? (
+                        <Button
+                          variant="tertiary"
+                          className="shrink-0 text-sm"
+                          onClick={() => addSongLinkSegment(link.id)}
+                        >
+                          Add segment
+                        </Button>
+                      ) : null}
+                    </div>
+                    {link.segments.map((segment, segmentIndex) => (
+                      <div
+                        key={segment.id}
+                        className="mt-2 rounded border border-gray-700 bg-gray-900/60 p-2"
+                      >
+                        <p className="mb-1 text-xs font-medium text-gray-300">
+                          Segment {segmentIndex + 1}
+                        </p>
+                        <Input
+                          label="Segment label (optional)"
+                          value={segment.label}
+                          onChange={(value) =>
+                            updateSongLinkSegment(link.id, segment.id, {
+                              label: String(value),
+                            })
+                          }
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            label="Start time"
+                            value={segment.startTime}
+                            placeholder="12:35"
+                            onChange={(value) =>
+                              updateSongLinkSegment(link.id, segment.id, {
+                                startTime: String(value),
+                              })
+                            }
+                          />
+                          <Input
+                            label="End time (optional)"
+                            value={segment.endTime}
+                            placeholder="16:08"
+                            onChange={(value) =>
+                              updateSongLinkSegment(link.id, segment.id, {
+                                endTime: String(value),
+                              })
+                            }
+                          />
+                        </div>
+                        <Button
+                          variant="textLink"
+                          className="mt-1 text-sm text-red-300"
+                          onClick={() =>
+                            updateSongLink(link.id, {
+                              segments: link.segments.filter(
+                                (entry) => entry.id !== segment.id,
+                              ),
+                            })
+                          }
+                        >
+                          Remove segment
+                        </Button>
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
                 <Button
                   variant="textLink"
                   className="mt-1 text-sm text-red-300"

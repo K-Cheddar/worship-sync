@@ -69,6 +69,21 @@ const mapEventTypeIdToPlatform = (eventTypeId) => {
   return "Restream";
 };
 
+const mapEventSourceIdToPlatform = (eventSourceId) => {
+  const id = Number(eventSourceId);
+  if (id === 2) return "Twitch";
+  if (id === 13) return "YouTube";
+  if ([19, 20].includes(id)) return "Facebook";
+  if (id === 24) return "DLive";
+  if (id === 25) return "Discord";
+  if (id === 26) return "LinkedIn";
+  if (id === 27) return "Trovo";
+  if (id === 28) return "X";
+  if (id === 29) return "Kick";
+  if (id === 33) return "Rumble";
+  return "";
+};
+
 const readAuthorName = (payload) => {
   const author = payload?.author;
   const names = [
@@ -130,6 +145,10 @@ const readConnectionPlatform = (connectionInfo, eventTypeId) => {
     connectionInfo?.platform,
   ].find((value) => typeof value === "string" && value.trim());
   if (direct) return direct.trim();
+  const eventSourcePlatform = mapEventSourceIdToPlatform(
+    connectionInfo?.eventSourceId,
+  );
+  if (eventSourcePlatform) return eventSourcePlatform;
   return mapEventTypeIdToPlatform(eventTypeId);
 };
 
@@ -212,8 +231,17 @@ const normalizeEventAction = (action) => {
   };
 };
 
+/** Restream action fields are nested in `payload`; keep top-level support for older fixtures/events. */
+const readActionPayload = (action) =>
+  action?.payload && typeof action.payload === "object"
+    ? action.payload
+    : action;
+
 const isConnectionHealthy = (connectionInfo) =>
-  readConnectionStatus(connectionInfo) !== "error";
+  readConnectionStatus(connectionInfo) === "connected";
+
+const isConnectionFailed = (connectionInfo) =>
+  readConnectionStatus(connectionInfo) === "error";
 
 const formatConnectionIssue = (connectionInfo) => {
   const platform = readConnectionPlatform(connectionInfo);
@@ -235,7 +263,7 @@ const buildConnectionInsights = (connectionMap) => {
     totalConnectionCount: connections.length,
     activeConnectionCount: connections.filter(isConnectionHealthy).length,
     connectionIssues: connections
-      .filter((connectionInfo) => !isConnectionHealthy(connectionInfo))
+      .filter(isConnectionFailed)
       .map(formatConnectionIssue)
       .sort((a, b) => a.localeCompare(b)),
   };
@@ -695,7 +723,7 @@ export const createRestreamService = ({
         enabled: Boolean(tokenDoc),
         connected:
           receiver?.state === "connected"
-            ? liveConnectionCount > 0 || Number(session.messageCount || 0) > 0
+            ? liveConnectionCount > 0
             : Boolean(session.connected),
         connectionState,
         accountLabel: tokenDoc?.accountLabel || session.accountLabel || "",
@@ -1206,10 +1234,13 @@ export const createRestreamService = ({
       return;
     }
 
+    const actionName = String(action?.action || "unknown").trim() || "unknown";
+
     if (action?.action === "connection_info") {
-      const connectionKey = getConnectionMapKey(action);
+      const connectionInfo = readActionPayload(action);
+      const connectionKey = getConnectionMapKey(connectionInfo);
       if (connectionKey) {
-        receiver.connections.set(connectionKey, action);
+        receiver.connections.set(connectionKey, connectionInfo);
       }
       const insights = buildConnectionInsights(receiver.connections);
       receiver.platformSummary = insights.platformSummary;
@@ -1221,7 +1252,8 @@ export const createRestreamService = ({
     }
 
     if (action?.action === "connection_closed") {
-      const closedUuid = String(action.connectionUuid || "").trim();
+      const connectionClosed = readActionPayload(action);
+      const closedUuid = String(connectionClosed?.connectionUuid || "").trim();
       if (closedUuid) {
         for (const [
           identifier,
@@ -1240,8 +1272,6 @@ export const createRestreamService = ({
       }
       return;
     }
-
-    const actionName = String(action?.action || "").trim();
 
     if (actionName === "reply_created") {
       const payload =
@@ -1382,7 +1412,10 @@ export const createRestreamService = ({
       void persistReceiverSnapshot(receiver);
     });
     ws.addEventListener("message", (event) => {
-      void handleSocketAction(receiver, event.data);
+      void handleSocketAction(receiver, event.data).catch(() => {
+        receiver.lastError = "Could not process a Restream chat update.";
+        void persistReceiverSnapshot(receiver).catch(() => undefined);
+      });
     });
     ws.addEventListener("error", () => {
       receiver.lastError = "Could not connect to Restream chat.";

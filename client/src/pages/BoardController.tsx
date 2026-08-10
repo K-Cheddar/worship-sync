@@ -75,6 +75,7 @@ import {
 import { BoardControllerMenu } from "../boards/BoardControllerMenu";
 import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
 import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
+import { BoardYouTubeChatComposer } from "../boards/BoardYouTubeChatComposer";
 import { BoardActivitySourceBadge } from "../boards/BoardActivitySourceBadge";
 import { ManageBoardsPanelBody } from "../boards/BoardControllerManageBoardsPanel";
 import {
@@ -236,8 +237,8 @@ const SessionResetToastAction = ({
 );
 
 export const BoardControllerContent = () => {
-  const { db, status, pullFromRemote } = useBoardSync() || {};
-  const { database, loginState, churchId, userId } =
+  const { db, status, pullFromRemote, retryNow } = useBoardSync() || {};
+  const { database, loginState, churchId, userId, logout, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
   const { showToast, removeToast } = useToast();
   const scrollbarWidth = useSelector(
@@ -771,6 +772,23 @@ export const BoardControllerContent = () => {
     isViewingCurrent &&
     loginState === "success" &&
     Boolean(String(userId || "").trim());
+  const showYouTubeChatComposer =
+    showBoardDiscussionComposer &&
+    Boolean(churchId) &&
+    Boolean(churchIntegrations?.youtube?.connected);
+
+  let boardSyncEmptyTitle = "Connecting discussion board data…";
+  let boardSyncEmptyDescription = "Loading the latest posts from the server.";
+  if (status === "failed") {
+    boardSyncEmptyTitle = "Could not connect discussion board data.";
+    boardSyncEmptyDescription = "Check the server connection, then try again.";
+  } else if (status === "paused") {
+    boardSyncEmptyTitle = "Sign-in required.";
+    boardSyncEmptyDescription = "Sign in again to load and moderate posts.";
+  } else if (status === "retrying") {
+    boardSyncEmptyTitle = "Connection failed. Retrying…";
+    boardSyncEmptyDescription = "This page will keep trying automatically.";
+  }
 
   const restreamStatusItems = (
     <>
@@ -1013,13 +1031,23 @@ export const BoardControllerContent = () => {
         )}
         <div ref={endRef} className="h-px shrink-0" aria-hidden />
       </div>
-      {showBoardDiscussionComposer ? (
-        <BoardDiscussionPostComposer
-          aliasId={selectedAliasId}
-          showToast={showToast}
-          userId={String(userId || "").trim()}
-          pullFromRemote={pullFromRemote}
-        />
+      {(showYouTubeChatComposer || showBoardDiscussionComposer) ? (
+        <div className="sticky bottom-0 z-10 shrink-0 space-y-2">
+          {showYouTubeChatComposer ? (
+            <BoardYouTubeChatComposer
+              churchId={churchId || ""}
+              accountLabel={churchIntegrations?.youtube?.accountLabel || ""}
+            />
+          ) : null}
+          {showBoardDiscussionComposer ? (
+            <BoardDiscussionPostComposer
+              aliasId={selectedAliasId}
+              showToast={showToast}
+              userId={String(userId || "").trim()}
+              pullFromRemote={pullFromRemote}
+            />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -1322,20 +1350,27 @@ export const BoardControllerContent = () => {
           {!db && (
             <div className="flex flex-1 items-center justify-center p-6 text-center">
               <div>
-                <p className="text-lg font-semibold">
-                  {status === "failed"
-                    ? "Could not connect discussion board data."
-                    : status === "paused"
-                      ? "Waiting for sign-in."
-                      : "Connecting discussion board data…"}
-                </p>
+                <p className="text-lg font-semibold">{boardSyncEmptyTitle}</p>
                 <p className="mt-2 text-sm text-gray-300">
-                  {status === "paused"
-                    ? "Sign in again to load and moderate posts."
-                    : loginState === "loading"
-                      ? "Checking your sign-in."
-                      : "You can moderate posts when you are online."}
+                  {boardSyncEmptyDescription}
                 </p>
+                {status === "paused" && logout ? (
+                  <Button
+                    className="mt-4 justify-center"
+                    variant="cta"
+                    onClick={() => void logout()}
+                  >
+                    Sign in again
+                  </Button>
+                ) : null}
+                {(status === "failed" || status === "retrying") && retryNow ? (
+                  <Button
+                    className="mt-4 justify-center"
+                    onClick={() => retryNow()}
+                  >
+                    Try again
+                  </Button>
+                ) : null}
               </div>
             </div>
           )}

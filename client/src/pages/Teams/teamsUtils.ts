@@ -702,6 +702,34 @@ export const formatBlockoutDateRangeLabel = (range: TeamBlockoutDateRange) => {
   return `${formatBlockoutDisplayDate(range.startDate)} – ${formatBlockoutDisplayDate(endDate)}`;
 };
 
+/**
+ * The blockout range covering `date`, or null. Plain "YYYY-MM-DD" strings, so
+ * string comparison is a valid date comparison.
+ *
+ * Shared by the three surfaces that must agree on what "blocked out" means: the
+ * assignment picker, the grid's conflict flag on an already-assigned member,
+ * and the volunteer's own schedule page. An older `endDate`-less entry is read
+ * as a single day.
+ */
+export const findBlockoutRangeForDate = (
+  blockoutDates: TeamBlockoutDateRange[] | undefined,
+  date: string,
+): TeamBlockoutDateRange | null => {
+  if (!date) return null;
+  return (
+    (blockoutDates || []).find((range) => {
+      const start = range.startDate;
+      if (!start) return false;
+      return start <= date && date <= (range.endDate || start);
+    }) || null
+  );
+};
+
+export const serviceDateBlockedOut = (
+  member: Pick<TeamRosterMember, "blockoutDates">,
+  serviceDate: string,
+) => findBlockoutRangeForDate(member.blockoutDates, serviceDate) !== null;
+
 const plainDateRangesOverlap = (
   rangeAStart: string,
   rangeAEnd: string,

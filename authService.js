@@ -44,6 +44,7 @@ import {
 } from "./server/churchBranding.js";
 import {
   getChurchIntegrationsPath,
+  normalizeChurchIntegrationsAdminUpdate,
   normalizeChurchIntegrationsForStorage,
 } from "./server/churchIntegrations.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
@@ -491,6 +492,7 @@ const memoryState = {
   teamSchedules: new Map(),
   teamIntakeForms: new Map(),
   teamIntakeSubmissions: new Map(),
+  churchServiceTimes: new Map(),
   servicePlans: new Map(),
   servicePlanTemplates: new Map(),
   servicePlanAssignmentHistory: new Map(),
@@ -498,6 +500,37 @@ const memoryState = {
   securityEvents: new Map(),
   emailCodeChallenges: new Map(),
   humanApiCredentials: new Map(),
+};
+
+const normalizeChurchServiceTimes = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (!value || typeof value !== "object") return [];
+  return Object.values(value).filter(Boolean);
+};
+
+/**
+ * Service times live in Realtime Database rather than the Teams Firestore
+ * collections. Legacy schedules need this authoritative source only when an
+ * occurrence predates requirement snapshots.
+ */
+const readChurchServiceTimes = async (churchId) => {
+  const normalizedChurchId = String(churchId || "").trim();
+  if (!normalizedChurchId) return [];
+  if (!firebaseRuntime?.rtdb) {
+    return memoryState.churchServiceTimes.get(normalizedChurchId) || [];
+  }
+  try {
+    const snapshot = await firebaseRuntime.rtdb
+      .ref(`churches/${normalizedChurchId}/data/services`)
+      .once("value");
+    return normalizeChurchServiceTimes(snapshot.val());
+  } catch (error) {
+    logAuthEvent("warn", "church.service_times.read_failed", {
+      churchId: normalizedChurchId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 };
 
 const collectionMap = {
@@ -3367,6 +3400,24 @@ export const seedActiveHumanBearerForServerTests = async ({
   return { humanApiToken, churchId, membershipId };
 };
 
+/** Test-only RTDB stand-in for legacy schedule requirement fallback coverage. */
+export const seedChurchServiceTimesForServerTests = ({ churchId, services }) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedChurchServiceTimesForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasRealtimeDatabase) {
+    throw new Error(
+      "seedChurchServiceTimesForServerTests refuses to run while Realtime Database is configured",
+    );
+  }
+  memoryState.churchServiceTimes.set(
+    String(churchId || "").trim(),
+    JSON.parse(JSON.stringify(Array.isArray(services) ? services : [])),
+  );
+};
+
 /**
  * Seeds an email code challenge in the dev in-memory store for getEmailCodeHint tests.
  * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
@@ -3609,6 +3660,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   nowIso,
   queryDocs,
   randomSecret,
+  readChurchServiceTimes,
   readChurchPublicBoardHeaderLogoUrl,
   readChurchPublicBrandingChrome,
   requireAdminSession,
@@ -4991,12 +5043,19 @@ export const authHandlers = {
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
-      const integrations = normalizeChurchIntegrationsForStorage(req.body);
+      const integrationUpdate = normalizeChurchIntegrationsAdminUpdate(
+        req.body,
+      );
       const rtdb = requireRealtimeDatabase();
+      const integrationsRef = rtdb.ref(
+        getChurchIntegrationsPath(req.params.churchId),
+      );
 
-      await rtdb
-        .ref(getChurchIntegrationsPath(req.params.churchId))
-        .set(integrations);
+      await integrationsRef.update(integrationUpdate);
+      const savedSnapshot = await integrationsRef.once("value");
+      const integrations = normalizeChurchIntegrationsForStorage(
+        savedSnapshot.val(),
+      );
       await addSecurityEvent({
         type: "church_integrations_updated",
         churchId: req.params.churchId,

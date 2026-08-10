@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../../store/store";
@@ -6,11 +6,12 @@ import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import MySchedule from "../MySchedule";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { getMyTeamAssignments } from "../../api/auth";
+import { getMyTeamAssignments, updateMyBlockoutDates } from "../../api/auth";
 import { usePublicServiceFlow } from "../../services/usePublicServiceFlow";
 
 jest.mock("../../api/auth", () => ({
   getMyTeamAssignments: jest.fn(),
+  updateMyBlockoutDates: jest.fn(),
 }));
 
 jest.mock("../../context/toastContext", () => ({
@@ -25,6 +26,7 @@ jest.mock("../../services/usePublicServiceFlow", () => ({
 }));
 
 const mockGetMyTeamAssignments = jest.mocked(getMyTeamAssignments);
+const mockUpdateMyBlockoutDates = jest.mocked(updateMyBlockoutDates);
 const mockUsePublicServiceFlow = jest.mocked(usePublicServiceFlow);
 
 /** Far future/past so these never drift buckets as the clock moves. */
@@ -82,19 +84,19 @@ const respond = (occurrences: unknown[], member: unknown = { memberId: "m1" }) =
 const renderPage = (role = "member") =>
   render(
     <Provider store={store}>
-    <MemoryRouter>
-    <GlobalInfoContext.Provider
-      value={
-        {
-          churchId: "church-1",
-          churchName: "Northside",
-          role,
-        } as ContextType<typeof GlobalInfoContext>
-      }
-    >
-      <MySchedule />
-    </GlobalInfoContext.Provider>
-    </MemoryRouter>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            {
+              churchId: "church-1",
+              churchName: "Northside",
+              role,
+            } as ContextType<typeof GlobalInfoContext>
+          }
+        >
+          <MySchedule />
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>
     </Provider>,
   );
 
@@ -312,6 +314,30 @@ describe("MySchedule", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides undated legacy assignments so they do not appear as upcoming", async () => {
+    respond([
+      occurrence({
+        occurrenceId: "legacy-service",
+        serviceIds: ["legacy-service"],
+        name: "Legacy Undated Service",
+        date: "2026-06-08",
+        startsAt: "",
+      }),
+      occurrence(),
+    ]);
+    renderPage();
+
+    expect(
+      await screen.findByRole("button", { name: /Open Sunday Gathering/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Open Legacy Undated Service/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Show .* past service/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("explains an unlinked account rather than showing an empty list", async () => {
     respond([], null);
     renderPage();
@@ -341,6 +367,139 @@ describe("MySchedule", () => {
     await user.type(screen.getByLabelText(/Search/i), "zzzz");
 
     expect(screen.getByText("Nothing matches that search.")).toBeInTheDocument();
+  });
+
+  describe("time off", () => {
+    const away = { startDate: "2099-09-06", endDate: "2099-09-06", notes: "Away" };
+
+    const expandTimeOff = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(await screen.findByRole("button", { name: /Time off/i }));
+    };
+
+    it("stays collapsed until asked for, so the schedule keeps the space", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()]);
+      renderPage();
+
+      expect(
+        screen.queryByRole("button", { name: /Add single day/i }),
+      ).not.toBeInTheDocument();
+
+      await expandTimeOff(user);
+
+      expect(
+        screen.getByRole("button", { name: /Add single day/i }),
+      ).toBeInTheDocument();
+    });
+
+    // Blocking a date you are already on is allowed — refusing would leave the
+    // owner believing the slot is covered. Both sides see the clash instead.
+    it("flags a service the member is already scheduled for", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()], { memberId: "m1", blockoutDates: [away] });
+      renderPage();
+
+      // Visible before expanding: a clash is worth interrupting for.
+      expect(await screen.findByText("1 conflict")).toBeInTheDocument();
+
+      await expandTimeOff(user);
+
+      const conflictList = screen.getByRole("list", {
+        name: /You are scheduled on some of these dates/i,
+      });
+      expect(within(conflictList).getByText(/Sunday Gathering/)).toBeInTheDocument();
+      expect(screen.getByText(/Your team lead sees the conflict/i)).toBeInTheDocument();
+    });
+
+    it("does not flag a blockout that misses every scheduled date", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()], {
+        memberId: "m1",
+        blockoutDates: [{ startDate: "2099-10-01", endDate: "2099-10-05" }],
+      });
+      renderPage();
+
+      await expandTimeOff(user);
+
+      expect(
+        screen.queryByText(/You are scheduled on some of these dates/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it("saves an edit and keeps what the server normalized", async () => {
+      const user = userEvent.setup();
+      const second = { startDate: "2099-10-01", endDate: "2099-10-05" };
+      respond([occurrence()], { memberId: "m1", blockoutDates: [away, second] });
+      mockUpdateMyBlockoutDates.mockResolvedValue({
+        success: true,
+        member: { memberId: "m1", blockoutDates: [second] },
+      } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+      renderPage();
+
+      await expandTimeOff(user);
+      const save = screen.getByRole("button", { name: /Save time off/i });
+      expect(save).toBeDisabled();
+
+      const removeButtons = screen.getAllByRole("button", {
+        name: /Remove blockout/i,
+      });
+      await user.click(removeButtons[0]);
+      expect(save).toBeEnabled();
+
+      await user.click(save);
+
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [
+        second,
+      ]);
+      // The conflicting entry is gone, so the header count clears.
+      expect(screen.queryByText("1 conflict")).not.toBeInTheDocument();
+    });
+
+    // A volunteer of several years would otherwise scroll past dozens of dead
+    // trips to reach next summer. Hidden is not deleted: the entries go back to
+    // the server untouched on the next save.
+    it("hides finished trips from the editor but still saves them", async () => {
+      const user = userEvent.setup();
+      const over = { startDate: "2000-01-01", endDate: "2000-01-05" };
+      const ahead = { startDate: "2099-10-01", endDate: "2099-10-05" };
+      respond([occurrence()], { memberId: "m1", blockoutDates: [over, ahead] });
+      mockUpdateMyBlockoutDates.mockResolvedValue({
+        success: true,
+        member: { memberId: "m1", blockoutDates: [over] },
+      } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+      renderPage();
+
+      // The header counts what is ahead, not the whole history.
+      expect(await screen.findByText("1 upcoming")).toBeInTheDocument();
+
+      await expandTimeOff(user);
+      expect(
+        screen.getByText(/1 is kept on your record for a year/i),
+      ).toBeInTheDocument();
+
+      // One editable row, for the upcoming trip only.
+      const removeButtons = screen.getAllByRole("button", {
+        name: /Remove blockout/i,
+      });
+      expect(removeButtons).toHaveLength(1);
+
+      await user.click(removeButtons[0]);
+      await user.click(screen.getByRole("button", { name: /Save time off/i }));
+
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [over]);
+    });
+
+    it("offers time off even when nothing is scheduled yet", async () => {
+      respond([]);
+      renderPage();
+
+      expect(
+        await screen.findByRole("button", { name: /Time off/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("You are not scheduled for anything coming up."),
+      ).toBeInTheDocument();
+    });
   });
 
   it("surfaces a load failure with a next step", async () => {

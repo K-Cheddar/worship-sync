@@ -50,6 +50,31 @@ import type {
 } from "./authTypes";
 import type { SongAudio } from "../types";
 
+export type RichLinkPreview = {
+  provider: "youtube" | "spotify";
+  kind:
+    | "video"
+    | "track"
+    | "album"
+    | "artist"
+    | "playlist"
+    | "show"
+    | "episode"
+    | "audiobook"
+    | "unknown";
+  resourceId: string;
+  title: string;
+  creator?: string;
+  thumbnailUrl?: string;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+  canonicalUrl: string;
+  embedUrl: string;
+  embedWidth?: number;
+  embedHeight?: number;
+  supportsSegments: boolean;
+};
+
 export type { AuthBootstrap, ChurchStatus, SessionKind } from "./authTypes";
 
 export class AuthApiError extends Error {
@@ -172,6 +197,13 @@ type SongAudioUploadIntent = {
 
 const songAudioPath = (churchId: string, songId: string) =>
   `api/churches/${encodeURIComponent(churchId)}/song-audio/${encodeURIComponent(songId)}`;
+
+export const getRichLinkPreview = async (url: string) => {
+  const result = await apiFetch<{ preview: RichLinkPreview }>(
+    `api/link-previews?${new URLSearchParams({ url }).toString()}`,
+  );
+  return result.preview;
+};
 
 const uploadSongAudioFromPackagedElectron = async ({
   churchId,
@@ -896,15 +928,13 @@ export type MySchedulePlan = {
 
 export type MyScheduleOccurrence = {
   occurrenceId: string;
-  /** Service name, or "A & B" when services are combined. */
+  /**
+   * Service name, or "A & B" when services are combined. Empty when older
+   * schedules never stored one.
+   */
   name: string;
   /** Every service this occurrence covers; more than one when combined. */
   serviceIds: string[];
-  /**
-   * Display name from the schedule occurrence (joined with " & " when combined).
-   * Empty when older schedules never stored a name.
-   */
-  name?: string;
   /** Calendar date (YYYY-MM-DD) — how plans are keyed. */
   date: string;
   /** ISO start of the service; "" when the id carries no timestamp. */
@@ -937,6 +967,30 @@ export const getMyTeamAssignments = async (churchId: string) =>
     member: TeamRosterMember | null;
     occurrences: MyScheduleOccurrence[];
   }>(`api/churches/${churchId}/my-team-assignments`);
+
+/**
+ * Replaces the signed-in person's own blockout dates.
+ *
+ * Self-scoped server-side — the record written is the one linked to this
+ * account — so a schedule-only volunteer can keep their availability current
+ * without any teams permission. Only `blockoutDates` is written; nothing else
+ * on the member record is touched.
+ *
+ * Dates they are already scheduled for are accepted. The conflict is surfaced
+ * to the volunteer here and to owners in the schedule grid, rather than being
+ * refused.
+ */
+export const updateMyBlockoutDates = async (
+  churchId: string,
+  blockoutDates: TeamRosterMember["blockoutDates"],
+) =>
+  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+    `api/churches/${churchId}/my-blockout-dates`,
+    {
+      method: "POST",
+      body: JSON.stringify({ blockoutDates }),
+    },
+  );
 
 /**
  * Links a member record to an account.

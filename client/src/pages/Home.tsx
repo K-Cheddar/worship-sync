@@ -542,7 +542,9 @@ const Welcome = () => {
             surfaces, and Church administration is neither. */}
         {isLoggedIn && (
           <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
-            <HomeLinkCard {...mySchedulelink} />
+            <div className="grid gap-4 md:grid-cols-2">
+              <HomeLinkCard {...mySchedulelink} />
+            </div>
           </section>
         )}
 
@@ -550,44 +552,44 @@ const Welcome = () => {
             controllers, and a bare heading over nothing reads as broken. */}
         {(visibleControllerLinks.length > 0 ||
           visibleSecondaryControllers.length > 0) && (
-        <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
-          <div className="space-y-2 text-center">
-            <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
-              <span aria-hidden className="text-orange-400">
-                <Icon
-                  svg={LayoutDashboard}
-                  size="lg"
-                  className="text-orange-400"
-                  svgClassName="text-orange-400"
-                />
-              </span>
-              Controllers
-            </h2>
-            <p className="text-sm text-gray-200">
-              These are the pages most teams use during the service.
-            </p>
-          </div>
+            <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
+              <div className="space-y-2 text-center">
+                <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
+                  <span aria-hidden className="text-orange-400">
+                    <Icon
+                      svg={LayoutDashboard}
+                      size="lg"
+                      className="text-orange-400"
+                      svgClassName="text-orange-400"
+                    />
+                  </span>
+                  Controllers
+                </h2>
+                <p className="text-sm text-gray-200">
+                  These are the pages most teams use during the service.
+                </p>
+              </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            {visibleControllerLinks.map((link) => (
-              <HomeLinkCard key={link.to} {...link} />
-            ))}
-          </div>
-
-          {visibleSecondaryControllers.length > 0 && (
-            <div className="space-y-3 border-t border-gray-700 pt-4">
-              <p className="text-center text-sm font-medium text-gray-300 md:text-left">
-                Credits and board moderation
-              </p>
               <div className="grid gap-4 md:grid-cols-2">
-                {visibleSecondaryControllers.map((link) => (
+                {visibleControllerLinks.map((link) => (
                   <HomeLinkCard key={link.to} {...link} />
                 ))}
               </div>
-            </div>
+
+              {visibleSecondaryControllers.length > 0 && (
+                <div className="space-y-3 border-t border-gray-700 pt-4">
+                  <p className="text-center text-sm font-medium text-gray-300 md:text-left">
+                    Credits and board moderation
+                  </p>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {visibleSecondaryControllers.map((link) => (
+                      <HomeLinkCard key={link.to} {...link} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
           )}
-        </section>
-        )}
 
         {isLoggedIn && access === "full" ? (
           <details className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">

@@ -291,14 +291,14 @@ const BoardSyncProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (isBoardAuthError(error)) {
           // Session expired or the operator signed out. Retrying without a fresh
-          // session is futile and just spams failures — stop and wait for
+          // session is futile and just spams failures — pause and wait for
           // re-sign-in (loginState → "success") to re-run this effect.
           console.warn(
             "Board sync paused — sign in again to resume:",
             describeBoardSyncError(error),
           );
           retryCountRef.current = 0;
-          setConnectionStatus({ status: "failed", retryCount: 0 });
+          setConnectionStatus({ status: "paused", retryCount: 0 });
           return;
         }
 

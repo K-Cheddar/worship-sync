@@ -872,7 +872,7 @@ const ServicePlanEditor = ({
       setImportUrl("");
       setIsEditing(true);
       showAllTeamNotesForReview();
-      showToast("Imported from Service Planning — review before saving.", "success");
+      showToast("Imported from Service Planning. Review the plan.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not import from Service Planning.");
     } finally {
@@ -904,7 +904,7 @@ const ServicePlanEditor = ({
     setImportUrl("");
     setIsEditing(true);
     showAllTeamNotesForReview();
-    showToast("Imported from Service Planning â€” review before saving.", "success");
+    showToast("Imported from Service Planning. Review the plan.", "success");
   };
 
   const updateRefreshOption = (
@@ -1116,7 +1116,7 @@ const ServicePlanEditor = ({
   const showServingTab = Boolean(mobileServingContent) && !isDesktop;
   const activeTab: ServicePlanEditorTab =
     (planTab === "microphones" && !showMicrophoneTab) ||
-    (planTab === "serving" && !showServingTab)
+      (planTab === "serving" && !showServingTab)
       ? "plan"
       : planTab;
   const roleNoteOptions = useMemo(

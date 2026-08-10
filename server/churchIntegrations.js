@@ -175,7 +175,9 @@ const normalizeElementRule = (raw, index) => {
   const outlineSync = isRecord(raw.outlineSync)
     ? {
         enabled: Boolean(raw.outlineSync.enabled),
-        itemType: ALLOWED_OUTLINE_ITEM_TYPES.has(String(raw.outlineSync.itemType))
+        itemType: ALLOWED_OUTLINE_ITEM_TYPES.has(
+          String(raw.outlineSync.itemType),
+        )
           ? String(raw.outlineSync.itemType)
           : "none",
       }
@@ -203,7 +205,11 @@ const normalizeSectionRule = (raw, index) => {
   if (!isRecord(raw)) {
     throw createIntegrationsError(`Section rule ${index + 1} is invalid.`);
   }
-  const id = clampString(raw.id, INTEGRATIONS_MAX_SHORT, `Section rule ${index + 1} id`);
+  const id = clampString(
+    raw.id,
+    INTEGRATIONS_MAX_SHORT,
+    `Section rule ${index + 1} id`,
+  );
   if (!id) {
     throw createIntegrationsError(`Section rule ${index + 1} requires an id.`);
   }
@@ -213,11 +219,15 @@ const normalizeSectionRule = (raw, index) => {
     `Section rule ${index + 1} match`,
   );
   if (!matchSectionName) {
-    throw createIntegrationsError(`Section rule ${index + 1} requires match text.`);
+    throw createIntegrationsError(
+      `Section rule ${index + 1} requires match text.`,
+    );
   }
   const matchMode = String(raw.matchMode || "contains").trim();
   if (!ALLOWED_MATCH_MODES.has(matchMode)) {
-    throw createIntegrationsError(`Section rule ${index + 1} has invalid match mode.`);
+    throw createIntegrationsError(
+      `Section rule ${index + 1} has invalid match mode.`,
+    );
   }
   const headingName = clampString(
     raw.headingName,
@@ -225,7 +235,9 @@ const normalizeSectionRule = (raw, index) => {
     `Section rule ${index + 1} heading name`,
   );
   if (!headingName) {
-    throw createIntegrationsError(`Section rule ${index + 1} requires a heading name.`);
+    throw createIntegrationsError(
+      `Section rule ${index + 1} requires a heading name.`,
+    );
   }
   return { id, matchSectionName, matchMode, headingName };
 };
@@ -291,6 +303,27 @@ const normalizeRestream = (raw) => {
   };
 };
 
+const normalizeYouTube = (raw) => {
+  const safe = isRecord(raw) ? raw : {};
+  const lastPostedAt = Number(safe.lastPostedAt);
+
+  return {
+    enabled: Boolean(safe.enabled),
+    connected: Boolean(safe.connected),
+    accountLabel: clampString(
+      safe.accountLabel,
+      INTEGRATIONS_MAX_LABEL,
+      "YouTube account label",
+    ),
+    lastError: clampString(
+      safe.lastError,
+      INTEGRATIONS_MAX_STRING,
+      "YouTube error",
+    ),
+    ...(Number.isFinite(lastPostedAt) ? { lastPostedAt } : {}),
+  };
+};
+
 /**
  * Validates and normalizes church integrations for RTDB storage (admin POST body).
  */
@@ -325,7 +358,9 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
       `You can save up to ${INTEGRATIONS_MAX_RULES} section rules.`,
     );
   }
-  const sectionRules = sectionRulesRaw.map((r, i) => normalizeSectionRule(r, i));
+  const sectionRules = sectionRulesRaw.map((r, i) =>
+    normalizeSectionRule(r, i),
+  );
 
   const peopleRaw = Array.isArray(sp.people) ? sp.people : [];
   if (peopleRaw.length > INTEGRATIONS_MAX_PEOPLE) {
@@ -335,6 +370,7 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
   }
   const people = peopleRaw.map((p, i) => normalizePerson(p, i));
   const restream = normalizeRestream(safe.restream);
+  const youtube = normalizeYouTube(safe.youtube);
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -346,6 +382,21 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
       people,
     },
     restream,
+    youtube,
+  };
+};
+
+/**
+ * Admin integration settings exclude connection state owned by OAuth receivers.
+ * Updating only these branches prevents a stale settings draft from overwriting
+ * Restream or YouTube status while an account connects or receives messages.
+ */
+export const normalizeChurchIntegrationsAdminUpdate = (input) => {
+  const normalized = normalizeChurchIntegrationsForStorage(input);
+  return {
+    version: normalized.version,
+    catalog: normalized.catalog,
+    servicePlanning: normalized.servicePlanning,
   };
 };
 

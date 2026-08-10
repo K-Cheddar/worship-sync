@@ -173,10 +173,19 @@ export type SongMetadata = {
 };
 
 /** An operator-maintained external resource for a song, such as a chart or tutorial. */
+export type SongLinkSegment = {
+  id: string;
+  label?: string;
+  startSeconds: number;
+  endSeconds?: number;
+};
+
 export type SongLink = {
   id: string;
-  label: string;
+  label?: string;
   url: string;
+  /** Optional replay ranges for a YouTube resource. Times are absolute seconds. */
+  segments?: SongLinkSegment[];
 };
 
 /** Durable R2 metadata for one original MP3; never persist signed delivery URLs. */

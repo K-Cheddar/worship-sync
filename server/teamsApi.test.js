@@ -21,6 +21,7 @@ const {
   authHandlers,
   canSeedHumanBearerAuthForServerTests,
   seedActiveHumanBearerForServerTests,
+  seedChurchServiceTimesForServerTests,
 } = await import("../authService.js");
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
@@ -1814,6 +1815,105 @@ test("schedule assignments support multiple slots of the same position", async (
     updatedSchedule.assignments?.[occurrenceId]?.[`${cameraId}::1`],
     undefined,
   );
+});
+
+test("legacy schedule occurrences use service requirements for slot validation", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("legacy_slot_requirements");
+
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Legacy Camera Team",
+    positions: [{ name: "Camera", icon: "Camera" }],
+    members: [
+      { firstName: "Ada", lastName: "Reed", positions: ["Camera"] },
+      { firstName: "Ben", lastName: "Cole", positions: ["Camera"] },
+    ],
+  });
+  const cameraId = positionIds.Camera;
+  const serviceId = "legacy-service-sunday";
+  const occurrenceId = `${serviceId}@2026-08-09T10:00:00.000Z`;
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      {
+        id: serviceId,
+        positionRequirements: [{ positionId: cameraId, count: 2 }],
+      },
+    ],
+  });
+
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Legacy August",
+      teamId,
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      serviceIds: [serviceId],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId,
+          name: "Sunday",
+          startsAt: "2026-08-09T10:00:00.000Z",
+          // Reproduces schedules generated before standalone occurrences
+          // copied their service requirement snapshot.
+          positionRequirements: [],
+        },
+      ],
+    },
+  });
+  const scheduleId = created.payload.schedule.scheduleId;
+  assert.deepEqual(
+    created.payload.schedule.occurrences[0].positionRequirements,
+    [],
+  );
+
+  const slotZero = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${cameraId}::0`,
+        memberId: memberIds.Ada,
+        serviceDate: "2026-08-09",
+      },
+    },
+  );
+  assert.equal(slotZero.statusCode, 200);
+
+  const slotOne = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${cameraId}::1`,
+        memberId: memberIds.Ben,
+        serviceDate: "2026-08-09",
+      },
+    },
+  );
+  assert.equal(slotOne.statusCode, 200);
+
+  const slotTwo = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${cameraId}::2`,
+        memberId: memberIds.Ada,
+        serviceDate: "2026-08-09",
+      },
+    },
+  );
+  assert.equal(slotTwo.statusCode, 400);
+  assert.match(slotTwo.payload.errorMessage, /add this position/i);
 });
 
 test("deleting a member scrubs primary and shadow slots of object cells", async (t) => {
@@ -4999,6 +5099,286 @@ test("my assignments includes occurrence name and published plan share urls", as
   assert.equal(
     entry.plan?.publicUrls?.general,
     published.payload.generalPublicUrl,
+  );
+});
+
+test("my blockout dates writes only the caller's own record", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_self");
+  const media = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Self",
+      lastName: "Serve",
+      positionIds: [media.positionIds.Camera],
+      notes: "Keep me",
+    },
+  });
+  const memberId = mine.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+
+  const res = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      blockoutDates: [
+        { startDate: "2026-09-06", endDate: "2026-09-13", notes: "Away" },
+      ],
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.payload.member.blockoutDates, [
+    { startDate: "2026-09-06", endDate: "2026-09-13", notes: "Away" },
+  ]);
+  // Only blockoutDates is written — this endpoint must never become a path to
+  // self-granting eligibility.
+  assert.deepEqual(res.payload.member.positionIds, [media.positionIds.Camera]);
+  assert.equal(res.payload.member.notes, "Keep me");
+});
+
+test("my blockout dates ignores a memberId supplied by the caller", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_other");
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Mine", lastName: "Record" },
+  });
+  const theirs = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Someone", lastName: "Else" },
+  });
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: mine.payload.member.memberId },
+  });
+
+  const res = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    params: { memberId: theirs.payload.member.memberId },
+    body: {
+      memberId: theirs.payload.member.memberId,
+      blockoutDates: [{ startDate: "2026-09-06", endDate: "2026-09-06" }],
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  // The record is resolved from the session, never from the request.
+  assert.equal(res.payload.member.memberId, mine.payload.member.memberId);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const other = (bootstrap.payload.members || []).find(
+    (item) => item.memberId === theirs.payload.member.memberId,
+  );
+  assert.deepEqual(other.blockoutDates, []);
+});
+
+test("my blockout dates accepts a date the member is already scheduled for", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_conflict");
+  const media = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Booked",
+      lastName: "Away",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  const memberId = member.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+
+  const occurrenceId = "svc-conflict@2026-09-06";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Conflict schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-conflict"],
+      startDate: "2026-09-06",
+      endDate: "2026-09-06",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc-conflict",
+          serviceIds: ["svc-conflict"],
+          name: "Sunday Gathering",
+          startsAt: "2026-09-06T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: schedule.payload.schedule.scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${media.positionIds.Camera}::0`,
+      memberId,
+    },
+  });
+
+  const res = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      blockoutDates: [{ startDate: "2026-09-06", endDate: "2026-09-06" }],
+    },
+  });
+
+  // Refusing would leave the owner believing the slot is covered. The blockout
+  // is stored and the assignment is left in place for them to resolve.
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.member.blockoutDates.length, 1);
+
+  const after = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  assert.equal(after.payload.occurrences.length, 1);
+  assert.equal(after.payload.occurrences[0].occurrenceId, occurrenceId);
+});
+
+test("my blockout dates rejects an unlinked account and a foreign church", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_guards");
+
+  await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Not", lastName: "Mine" },
+  });
+
+  const unlinked = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: { blockoutDates: [] },
+  });
+  assert.equal(unlinked.statusCode, 404);
+  assert.equal(unlinked.payload.success, false);
+
+  const crossChurch = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    params: { churchId: "some_other_church" },
+    body: { blockoutDates: [] },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+  assert.equal(crossChurch.payload.success, false);
+});
+
+test("my blockout dates bounds upcoming entries without counting expired ones", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_cap");
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Cap", lastName: "Test" },
+  });
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: mine.payload.member.memberId },
+  });
+
+  const offsetDay = (offsetDays) => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() + offsetDays);
+    return date.toISOString().slice(0, 10);
+  };
+  const entries = (count, startOffset, step = 1) =>
+    Array.from({ length: count }, (_, index) => {
+      const day = offsetDay(startOffset + index * step);
+      return { startDate: day, endDate: day };
+    });
+
+  // Recent history is kept and must not consume the allowance a volunteer
+  // needs for next summer, or a long-serving member eventually cannot book
+  // time off because of trips they already took.
+  const withHistory = [...entries(200, -200), ...entries(100, 1)];
+  const accepted = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: { blockoutDates: withHistory },
+  });
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(accepted.payload.member.blockoutDates.length, 300);
+
+  const tooManyUpcoming = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: { blockoutDates: entries(101, 1) },
+  });
+  assert.equal(tooManyUpcoming.statusCode, 400);
+  assert.match(
+    tooManyUpcoming.payload.errorMessage,
+    /over 100 upcoming blockout entries/,
+  );
+
+  // The absolute ceiling is about stored document size. Distinct dates cannot
+  // reach it inside the retention window, but duplicates can.
+  const sameDay = offsetDay(-30);
+  const tooLarge = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      blockoutDates: Array.from({ length: 401 }, () => ({
+        startDate: sameDay,
+        endDate: sameDay,
+      })),
+    },
+  });
+  assert.equal(tooLarge.statusCode, 400);
+  assert.match(tooLarge.payload.errorMessage, /too many blockout entries/);
+});
+
+test("my blockout dates prunes history past the retention window", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_prune");
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Long", lastName: "Serving" },
+  });
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: mine.payload.member.memberId },
+  });
+
+  const offsetDay = (offsetDays) => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() + offsetDays);
+    return date.toISOString().slice(0, 10);
+  };
+  const ancient = offsetDay(-800);
+  const recent = offsetDay(-30);
+  const upcoming = offsetDay(30);
+
+  const res = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      blockoutDates: [
+        { startDate: ancient, endDate: ancient, notes: "Two years ago" },
+        { startDate: recent, endDate: recent, notes: "Last month" },
+        { startDate: upcoming, endDate: upcoming, notes: "Next month" },
+      ],
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  // A year of history stays — it still explains a recent past service — while
+  // anything older is dropped so the array reaches a steady state.
+  assert.deepEqual(
+    res.payload.member.blockoutDates.map((range) => range.startDate),
+    [recent, upcoming],
   );
 });
 

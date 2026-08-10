@@ -1,5 +1,5 @@
 import { memo, useCallback, useContext, useMemo } from "react";
-import { X } from "lucide-react";
+import { TriangleAlert, X } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
 import Button from "@/components/Button/Button";
 import type {
@@ -7,6 +7,8 @@ import type {
   TeamScheduleCellAssignment,
 } from "../../../api/authTypes";
 import {
+  formatBlockoutDateRangeLabel,
+  findBlockoutRangeForDate,
   getCellPrimaryMemberId,
   getCellShadowAssignments,
   scheduleMemberName,
@@ -22,6 +24,8 @@ import {
 type ScheduleGridCellProps = {
   occurrenceId: string;
   occurrenceName: string;
+  /** YYYY-MM-DD, for checking the assignee's blockout dates. */
+  occurrenceDate: string;
   columnKey: string;
   positionId: string;
   columnLabel: string;
@@ -41,6 +45,7 @@ type ScheduleGridCellProps = {
 const ScheduleGridCell = memo(({
   occurrenceId,
   occurrenceName,
+  occurrenceDate,
   columnKey,
   positionId,
   columnLabel,
@@ -71,6 +76,19 @@ const ScheduleGridCell = memo(({
   const displayLabel = assignedMember
     ? scheduleMemberName(assignedMember, duplicateFirstNames)
     : "Empty";
+
+  // The person in this slot has since blocked the date out. Flagged rather than
+  // cleared: only the owner can decide whether to reassign.
+  const blockoutConflict = useMemo(
+    () =>
+      assignedMember
+        ? findBlockoutRangeForDate(assignedMember.blockoutDates, occurrenceDate)
+        : null,
+    [assignedMember, occurrenceDate],
+  );
+  const blockoutConflictLabel = blockoutConflict
+    ? `Blocked out ${formatBlockoutDateRangeLabel(blockoutConflict)}`
+    : "";
 
   const handleActivate = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -123,18 +141,31 @@ const ScheduleGridCell = memo(({
             data-cell-key={`${occurrenceId}|${columnKey}`}
             aria-haspopup="listbox"
             aria-expanded={isActiveSlot}
-            aria-label={`${cellLabel}, ${displayLabel}`}
+            aria-label={cn(
+              `${cellLabel}, ${displayLabel}`,
+              blockoutConflictLabel && `, ${blockoutConflictLabel}`,
+            )}
+            title={blockoutConflictLabel || undefined}
             disabled={!canEdit}
             className={cn(
               "min-w-0 flex-1 rounded-lg border px-2 py-1 text-left text-sm text-white focus:border-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
               rowTone ? "border-gray-800 bg-transparent" : "border-gray-800 bg-gray-950",
+              blockoutConflict && "border-amber-500/60 bg-amber-500/10",
               isActiveSlot && "border-cyan-400/60 ring-1 ring-cyan-400/40",
               !assignedMember && "text-gray-400 italic",
               !canEdit && "cursor-default",
             )}
             onClick={handleActivate}
           >
-            <span className="block truncate">{displayLabel}</span>
+            <span className="flex min-w-0 items-center gap-1">
+              {blockoutConflict ? (
+                <TriangleAlert
+                  className="h-3.5 w-3.5 shrink-0 text-amber-300"
+                  aria-hidden
+                />
+              ) : null}
+              <span className="block truncate">{displayLabel}</span>
+            </span>
           </button>
           {canEdit && isAdditionalPosition ? (
             <Button

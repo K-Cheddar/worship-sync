@@ -31,3 +31,25 @@ export const MicrosoftMark = (props: SVGProps<SVGSVGElement>) => (
     <path fill="#ffb900" d="M12 12h10v10H12z" />
   </svg>
 );
+
+/** YouTube play-button mark; path fills are fixed. */
+export const YouTubeMark = (props: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+    <path
+      fill="#FF0033"
+      d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.5 31.5 0 0 0 0 12a31.5 31.5 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.5 31.5 0 0 0 24 12a31.5 31.5 0 0 0-.5-5.8z"
+    />
+    <path fill="#fff" d="M9.75 15.5v-7l6 3.5-6 3.5z" />
+  </svg>
+);
+
+/** Compact Restream-style mark for auth handoff screens. */
+export const RestreamMark = (props: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+    <rect width="24" height="24" rx="6" fill="#6C5CE7" />
+    <path
+      fill="#fff"
+      d="M7.5 7.25h3.1c2.55 0 4.15 1.45 4.15 3.55 0 2.1-1.6 3.55-4.15 3.55H9.75V16.75H7.5V7.25zm2.95 2.1H9.75v2.85h.7c1.05 0 1.7-.55 1.7-1.45s-.65-1.4-1.7-1.4z"
+    />
+  </svg>
+);

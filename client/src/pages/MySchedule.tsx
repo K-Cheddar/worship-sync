@@ -22,7 +22,9 @@ import {
   getMyTeamAssignments,
   type MyScheduleOccurrence,
 } from "../api/auth";
+import type { TeamBlockoutDateRange } from "../api/authTypes";
 import { buildMyScheduleExportModel } from "./buildMyScheduleExportModel";
+import MyScheduleBlockouts from "./MyScheduleBlockouts";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
 import ScheduleExportTable from "./Teams/schedule/ScheduleExportTable";
 import ScheduleUpNextBadge from "./Teams/schedule/ScheduleUpNextBadge";
@@ -42,7 +44,8 @@ import { cn } from "@/utils/cnHelper";
  * Schedule and service plan tabs reuse the public schedule table and public
  * service plan chrome.
  *
- * Read-only by design: accept and decline arrive with the notification work.
+ * The one thing a member can change here is their own time off, via a
+ * self-scoped write. Accept and decline arrive with the notification work.
  */
 
 const ALL_TEAMS = "__all_teams__";
@@ -70,6 +73,14 @@ const formatWhen = (startsAt: string): string => {
     minute: "2-digit",
   });
 };
+
+/**
+ * My Schedule only lists services with a real start time. Older assignment rows
+ * can arrive with an empty `startsAt`; without a datetime they cannot be placed
+ * in past vs upcoming and would otherwise show as "?" in the upcoming list.
+ */
+const hasDatedStartsAt = (occurrence: MyScheduleOccurrence): boolean =>
+  Number.isFinite(Date.parse(occurrence.startsAt));
 
 const getOccurrenceTileParts = (
   occurrence: MyScheduleOccurrence,
@@ -410,6 +421,9 @@ const MySchedule = () => {
   const churchName = context?.churchName || "";
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
+  const [blockoutDates, setBlockoutDates] = useState<TeamBlockoutDateRange[]>(
+    [],
+  );
   const [showPast, setShowPast] = useState(false);
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
@@ -428,6 +442,7 @@ const MySchedule = () => {
         if (cancelled) return;
         setOccurrences(result.occurrences || []);
         setHasMemberRecord(Boolean(result.member));
+        setBlockoutDates(result.member?.blockoutDates || []);
         setStatus("ready");
       })
       .catch(() => {
@@ -438,10 +453,15 @@ const MySchedule = () => {
     };
   }, [churchId]);
 
+  const datedOccurrences = useMemo(
+    () => occurrences.filter(hasDatedStartsAt),
+    [occurrences],
+  );
+
   /** Only the teams this person actually serves on are worth offering. */
   const teamOptions = useMemo(() => {
     const names = new Map<string, string>();
-    occurrences.forEach((occurrence) =>
+    datedOccurrences.forEach((occurrence) =>
       occurrence.serving
         .filter((person) => person.isMe && person.teamId)
         .forEach((person) => names.set(person.teamId, person.teamName)),
@@ -453,12 +473,12 @@ const MySchedule = () => {
         label: label || "Team",
       })),
     ];
-  }, [occurrences]);
+  }, [datedOccurrences]);
 
   /** Service names from the schedule — same vocabulary as Plans / Schedule. */
   const serviceOptions = useMemo(() => {
     const names = new Map<string, string>();
-    occurrences.forEach((occurrence) => {
+    datedOccurrences.forEach((occurrence) => {
       const label = occurrenceServiceLabel(occurrence);
       const key = occurrence.serviceIds.slice().sort().join("|") || label;
       if (!names.has(key)) names.set(key, label);
@@ -467,11 +487,11 @@ const MySchedule = () => {
       { value: ALL_SERVICES, label: "All services" },
       ...[...names.entries()].map(([value, label]) => ({ value, label })),
     ];
-  }, [occurrences]);
+  }, [datedOccurrences]);
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    return occurrences.filter((occurrence) => {
+    return datedOccurrences.filter((occurrence) => {
       if (
         teamFilter !== ALL_TEAMS &&
         !occurrence.serving.some(
@@ -507,7 +527,7 @@ const MySchedule = () => {
         .toLowerCase();
       return haystack.includes(trimmed);
     });
-  }, [occurrences, query, serviceFilter, teamFilter]);
+  }, [datedOccurrences, query, serviceFilter, teamFilter]);
 
   /**
    * Past services are kept but pushed behind a toggle. A schedule that opens on
@@ -516,10 +536,8 @@ const MySchedule = () => {
    */
   const { upcoming, past } = useMemo(() => {
     const now = Date.now();
-    const isPast = (occurrence: MyScheduleOccurrence) => {
-      const time = Date.parse(occurrence.startsAt);
-      return Number.isFinite(time) && time < now;
-    };
+    const isPast = (occurrence: MyScheduleOccurrence) =>
+      Date.parse(occurrence.startsAt) < now;
     return {
       upcoming: filtered.filter((item) => !isPast(item)),
       past: filtered.filter(isPast).reverse(),
@@ -534,9 +552,10 @@ const MySchedule = () => {
   const selected = useMemo(
     () =>
       selectedId
-        ? occurrences.find((item) => item.occurrenceId === selectedId) || null
+        ? datedOccurrences.find((item) => item.occurrenceId === selectedId) ||
+        null
         : null,
-    [occurrences, selectedId],
+    [datedOccurrences, selectedId],
   );
 
   const selectedNavIndex = useMemo(() => {
@@ -625,7 +644,14 @@ const MySchedule = () => {
 
         {status === "ready" && hasMemberRecord && !selected ? (
           <>
-            {occurrences.length > 0 ? (
+            <MyScheduleBlockouts
+              churchId={churchId}
+              blockoutDates={blockoutDates}
+              occurrences={occurrences}
+              onSaved={setBlockoutDates}
+            />
+
+            {datedOccurrences.length > 0 ? (
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <Input
                   label="Search"

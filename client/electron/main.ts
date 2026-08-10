@@ -32,6 +32,7 @@ import {
   setupSharedSessionWindowOpenHandler,
   WORSHIPSYNC_SESSION_PARTITION,
 } from "./windowHelpers";
+import { shouldAttachAppCsp } from "./appCsp";
 import {
   getDisplayWindow,
   setDisplayWindow,
@@ -587,7 +588,7 @@ app.whenReady().then(() => {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://*.msftauth.net https://*.msauth.net; " +
     "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
     "font-src 'self' data:; " +
-    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com https://accounts.youtube.com https://*.msftauth.net https://*.msauth.net; " +
+    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +
     "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
     "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com https://*.r2.cloudflarestorage.com " +
     devConnectSrc +
@@ -600,7 +601,7 @@ app.whenReady().then(() => {
     "https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.msauth.net https://*.msftauth.net https://*.azureedge.net " +
     "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
     "form-action 'self' https://*.live.com https://login.microsoftonline.com https://*.microsoftonline.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.firebaseapp.com https://accounts.google.com; " +
-    "frame-src 'self' blob: https://*.worshipsync.net https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://accounts.youtube.com https://apis.google.com https://login.microsoftonline.com https://*.live.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com; " +
+    "frame-src 'self' blob: https://*.worshipsync.net https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://accounts.youtube.com https://www.youtube.com https://www.youtube-nocookie.com https://open.spotify.com https://apis.google.com https://login.microsoftonline.com https://*.live.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com; " +
     "worker-src 'self' blob:; " +
     "child-src 'self' blob:; " +
     "object-src 'none'; " +
@@ -610,6 +611,10 @@ app.whenReady().then(() => {
   );
   const attachCspHeaders = (targetSession: Electron.Session) => {
     targetSession.webRequest.onHeadersReceived((details, callback) => {
+      if (!shouldAttachAppCsp(details, app.isPackaged)) {
+        callback({});
+        return;
+      }
       callback({
         responseHeaders: {
           ...details.responseHeaders,
@@ -618,8 +623,30 @@ app.whenReady().then(() => {
       });
     });
   };
+  const attachYouTubeAppIdentity = (targetSession: Electron.Session) => {
+    targetSession.webRequest.onBeforeSendHeaders(
+      {
+        urls: [
+          "https://www.youtube.com/embed/*",
+          "https://www.youtube-nocookie.com/embed/*",
+        ],
+      },
+      (details, callback) => {
+        const requestHeaders = { ...details.requestHeaders };
+        Object.keys(requestHeaders).forEach((header) => {
+          if (header.toLowerCase() === "referer") delete requestHeaders[header];
+        });
+        // YouTube requires packaged desktop/mobile clients to identify the app
+        // in Referer when an ordinary web origin is unavailable.
+        requestHeaders.Referer = "https://com.worshipsync.app";
+        callback({ requestHeaders });
+      },
+    );
+  };
   attachCspHeaders(session.defaultSession);
   attachCspHeaders(appBrowserSession);
+  attachYouTubeAppIdentity(session.defaultSession);
+  attachYouTubeAppIdentity(appBrowserSession);
 
   // Register protocol handler for media-cache:// to serve files from filesystem
   const cacheDir = join(app.getPath("userData"), "media-cache");

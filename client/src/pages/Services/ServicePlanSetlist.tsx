@@ -1,9 +1,10 @@
-import { ExternalLink, Music2 } from "lucide-react";
+import { Music2 } from "lucide-react";
 import { useContext, useMemo } from "react";
 
 import { getSongAudioUrl } from "../../api/auth";
 import Button from "../../components/Button/Button";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
+import SongLinkPreview from "../../components/SongLinkPreview/SongLinkPreview";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import type { DBItem } from "../../types";
 import {
@@ -120,16 +121,7 @@ const ServicePlanSetlist = ({
             {song?.songLinks?.length || song?.songAudio ? (
               <div className="ml-7 flex min-w-0 flex-wrap items-center gap-1.5">
                 {song.songLinks?.map((link) => (
-                  <a
-                    key={link.id}
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex max-w-44 items-center gap-1 rounded border border-gray-600 bg-gray-800 px-1.5 py-1 text-xs text-cyan-200 hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                  >
-                    <span className="truncate">{link.label || "Link"}</span>
-                    <ExternalLink className="size-3 shrink-0" aria-hidden />
-                  </a>
+                  <SongLinkPreview key={link.id} link={link} compact />
                 ))}
                 {song.songAudio && churchId ? (
                   <SongAudioPlayer

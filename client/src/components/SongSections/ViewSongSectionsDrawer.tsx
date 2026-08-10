@@ -1,10 +1,11 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ExternalLink, Pencil, X } from "lucide-react";
+import { Pencil, X } from "lucide-react";
 import Drawer from "../Drawer";
 import Button from "../Button/Button";
 import SongArrangementSectionsPanel from "./SongArrangementSectionsPanel";
 import { DBItem, SongAudio } from "../../types";
 import SongAudioPlayer from "../SongAudioPlayer/SongAudioPlayer";
+import SongLinkPreview from "../SongLinkPreview/SongLinkPreview";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
@@ -274,18 +275,10 @@ const ViewSongSectionsDrawer = ({
             {song.songLinks?.length ? (
               <div>
                 <h3 className="mb-1 text-sm font-semibold text-white">Links</h3>
-                <ul className="flex flex-wrap gap-2">
+                <ul className="space-y-2">
                   {song.songLinks.map((link) => (
                     <li key={link.id}>
-                      <a
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-md border border-gray-600 bg-gray-800 px-2 py-1 text-sm text-cyan-200 hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                      >
-                        {link.label || link.url}
-                        <ExternalLink className="size-3.5" aria-hidden />
-                      </a>
+                      <SongLinkPreview link={link} />
                     </li>
                   ))}
                 </ul>

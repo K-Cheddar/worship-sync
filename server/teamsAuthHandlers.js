@@ -28,6 +28,29 @@ const teamIntakeTokenSecret =
 // cover realistic roster/submission growth while still bounding Firestore reads.
 const TEAM_COLLECTION_QUERY_LIMIT = 5000;
 
+// Bounds for the self-service blockout endpoint only.
+//
+// Entries are never pruned, so a single lifetime cap would eventually lock a
+// long-serving volunteer out of declaring next summer's holiday because of
+// trips they took years ago. Split in two: what a person can have *ahead* of
+// them, and how large the stored array may grow.
+//
+// 100 upcoming entries is far past any real calendar. 400 total keeps the
+// member document well inside Firestore's 1 MB limit even with the 500-char
+// note each entry allows, while still permitting decades of history.
+const MAX_SELF_UPCOMING_BLOCKOUT_RANGES = 100;
+const MAX_SELF_BLOCKOUT_RANGES = 400;
+
+// How long a finished blockout is kept before a self-service save drops it.
+//
+// A year is chosen so the schedule grid still explains a *recent* past service
+// ("why was this slot empty last July?") while the stored array reaches a
+// steady state instead of growing for the life of the account. Without this the
+// only thing standing between a long-serving volunteer and a hard ceiling is
+// arithmetic. Pruning happens only on the member's own save; the admin roster
+// editor still shows and keeps everything.
+const BLOCKOUT_HISTORY_RETENTION_DAYS = 365;
+
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
@@ -45,6 +68,7 @@ export const createTeamsAuthHandlers = ({
   nowIso,
   queryDocs,
   randomSecret,
+  readChurchServiceTimes = async () => [],
   readChurchPublicBoardHeaderLogoUrl,
   readChurchPublicBrandingChrome,
   requireAdminSession,
@@ -1840,6 +1864,54 @@ export const createTeamsAuthHandlers = ({
     return [...byPosition.values()];
   };
 
+  const mergeServicePositionRequirements = (services) => {
+    const byPosition = new Map();
+    (Array.isArray(services) ? services : []).forEach((service) => {
+      sanitizePositionRequirements(service?.positionRequirements).forEach(
+        (requirement) => {
+          const existing = byPosition.get(requirement.positionId);
+          if (!existing || requirement.count > existing.count) {
+            byPosition.set(requirement.positionId, requirement);
+          }
+        },
+      );
+    });
+    return [...byPosition.values()];
+  };
+
+  /**
+   * New schedules carry an immutable occurrence snapshot. Older standalone
+   * occurrences stored an empty array, while the client correctly fell back to
+   * the service-time requirements. Read that same authoritative source so
+   * legacy schedules validate exactly like the grid without requiring a manual
+   * schedule refresh.
+   */
+  const resolveScheduleOccurrenceRequirements = async ({
+    churchId,
+    occurrence,
+  }) => {
+    const stored = sanitizePositionRequirements(
+      occurrence?.positionRequirements,
+    );
+    if (stored.length > 0 || !occurrence) return stored;
+
+    const serviceIds = new Set(
+      [occurrence.serviceId, ...(occurrence.serviceIds || [])]
+        .map((serviceId) => normalizeShortText(serviceId, { max: 160 }))
+        .filter(Boolean),
+    );
+    if (serviceIds.size === 0) return stored;
+
+    const services = await readChurchServiceTimes(churchId);
+    return mergeServicePositionRequirements(
+      services.filter((service) =>
+        serviceIds.has(
+          normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
+        ),
+      ),
+    );
+  };
+
   const normalizeTeamMemberships = async (value, churchId) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return {};
@@ -3363,7 +3435,7 @@ export const createTeamsAuthHandlers = ({
     return checks;
   };
 
-  const buildValidatedScheduleAssignments = ({
+  const buildValidatedScheduleAssignments = async ({
     churchId,
     schedule,
     team,
@@ -3396,12 +3468,13 @@ export const createTeamsAuthHandlers = ({
     const occurrence = (schedule.occurrences || []).find(
       (item) => item.occurrenceId === serviceId,
     );
-    const requirements = sanitizePositionRequirements(
-      occurrence?.positionRequirements,
-    );
-    // Older schedules did not store requirements. The scheduling UI treats
-    // that as one required slot for each team position, so assignment
-    // validation must do the same instead of rejecting every slot.
+    const requirements = await resolveScheduleOccurrenceRequirements({
+      churchId,
+      occurrence,
+    });
+    // Services with no explicit requirements use one slot for each team
+    // position in the scheduling UI. Preserve that fallback after checking the
+    // saved snapshot and, for legacy occurrences, the live service definition.
     const requirement = requirements.find(
       (item) => item?.positionId === basePositionId,
     );
@@ -3834,7 +3907,7 @@ export const createTeamsAuthHandlers = ({
             },
           )
         : null;
-    const assignments = buildValidatedScheduleAssignments({
+    const assignments = await buildValidatedScheduleAssignments({
       churchId,
       schedule,
       team,
@@ -3999,7 +4072,7 @@ export const createTeamsAuthHandlers = ({
         }
       }
 
-      const assignments = buildValidatedScheduleAssignments({
+      const assignments = await buildValidatedScheduleAssignments({
         churchId,
         schedule,
         team,
@@ -4579,17 +4652,16 @@ export const createTeamsAuthHandlers = ({
             const startsAt = record?.startsAt || "";
             entry = {
               occurrenceId,
-              // Display name for the service (or "A & B" when combined), taken
-              // from the schedule's record so the client need not rebuild it.
-              name: record?.name || "",
               serviceIds:
                 record?.serviceIds?.length > 0
                   ? record.serviceIds
                   : [
                       record?.serviceId || String(occurrenceId).split("@")[0],
                     ].filter(Boolean),
-              // From the schedule occurrence — already joined with " & " when
-              // several services share a combined date.
+              // Display name for the service, taken from the schedule's own
+              // occurrence record — already joined with " & " when several
+              // services share a combined date — so the client need not
+              // rebuild it.
               name: String(record?.name || "").trim(),
               // Calendar date is what plans are keyed by; fall back to the id
               // suffix, which is already a date for combined occurrences.
@@ -4747,6 +4819,121 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not load your assignments.",
+        );
+      }
+    },
+
+    /**
+     * The signed-in person's own blockout dates.
+     *
+     * Self-scoped exactly like {@link getMyTeamAssignments}: the record written
+     * is the one whose `userId` matches the session, never a `memberId` from the
+     * request. A volunteer holds `teams: "none"`, so routing this through the
+     * admin roster endpoint would mean granting them edit rights over the whole
+     * roster to maintain their own availability.
+     *
+     * Writes `blockoutDates` and nothing else — the merge in `upsertTeamEntity`
+     * leaves positions, qualifications, and links untouched, so this cannot
+     * become a self-service path to eligibility.
+     *
+     * Dates the member is already scheduled for are accepted, not refused. The
+     * conflict is real information for both sides; swallowing the blockout to
+     * protect the grid would leave the owner believing a slot is covered.
+     */
+    async updateMyBlockoutDates(req, res) {
+      try {
+        await assertCsrf(req);
+        const session = await requireHumanSession(req);
+        if (session.churchId !== req.params.churchId) {
+          throw httpError(403, "Access required");
+        }
+        const userId = session.user?.uid;
+        if (!userId) {
+          throw httpError(401, "Authentication required");
+        }
+
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          req.params.churchId,
+        );
+        const member = members.find((row) => row.userId === userId);
+        if (!member) {
+          throw httpError(
+            404,
+            "Your account is not linked to a team member yet.",
+          );
+        }
+        // Load-bearing, not defensive: `upsertTeamEntity` writes
+        // `archivedAt: null` on every save, so without this an archived
+        // volunteer could restore themselves to the roster by saving a date.
+        if (member.archivedAt) {
+          throw httpError(
+            403,
+            "Your member record is archived. Ask an admin to restore it.",
+          );
+        }
+
+        const submitted = normalizeBlockoutDates(req.body?.blockoutDates);
+
+        // Drop history past the retention window, so the array reaches a steady
+        // state rather than growing for the life of the account.
+        const retentionCutoff = new Date(
+          Date.now() - BLOCKOUT_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+        )
+          .toISOString()
+          .slice(0, 10);
+        const blockoutDates = submitted.filter(
+          (range) => (range.endDate || range.startDate) >= retentionCutoff,
+        );
+
+        // Two bounds, because they answer different questions.
+        //
+        // Entries still accumulate within the retention window, so a limit
+        // counted across the whole array would blame last year's trips for
+        // refusing next month's. Only entries that have not ended yet count
+        // against the limit a person can actually feel.
+        const today = nowIso().slice(0, 10);
+        const upcoming = blockoutDates.filter(
+          (range) => (range.endDate || range.startDate) >= today,
+        );
+        if (upcoming.length > MAX_SELF_UPCOMING_BLOCKOUT_RANGES) {
+          throw httpError(
+            400,
+            `That is over ${MAX_SELF_UPCOMING_BLOCKOUT_RANGES} upcoming blockout entries. Remove one before adding another.`,
+          );
+        }
+        // The absolute ceiling is about document size, not about what anyone
+        // needs. The admin roster editor is behind an edit permission; this
+        // endpoint is reachable by the narrowest tier there is, and every
+        // member document is read on the Teams bootstrap, so one bloated record
+        // slows the whole church.
+        if (blockoutDates.length > MAX_SELF_BLOCKOUT_RANGES) {
+          throw httpError(
+            400,
+            "That is too many blockout entries to store. Remove some old ones and try again.",
+          );
+        }
+
+        const saved = await upsertTeamEntity({
+          kind: "member",
+          churchId: req.params.churchId,
+          id: member.memberId,
+          payload: { blockoutDates },
+          adminUserId: userId,
+        });
+        await addSecurityEvent({
+          type: "team_roster_member_blockouts_self_updated",
+          churchId: req.params.churchId,
+          userId,
+          memberId: member.memberId,
+        });
+        return res.json({ success: true, member: saved });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save your blockout dates.",
         );
       }
     },
@@ -7025,9 +7212,10 @@ export const createTeamsAuthHandlers = ({
         const occurrence = (schedule.occurrences || []).find(
           (item) => item.occurrenceId === occurrenceId,
         );
-        const requirements = Array.isArray(occurrence?.positionRequirements)
-          ? occurrence.positionRequirements
-          : [];
+        const requirements = await resolveScheduleOccurrenceRequirements({
+          churchId,
+          occurrence,
+        });
         const requirement = requirements.find(
           (item) => item?.positionId === slot.positionId,
         );
@@ -7131,7 +7319,11 @@ export const createTeamsAuthHandlers = ({
         const occurrence = (schedule.occurrences || []).find(
           (item) => item.occurrenceId === occurrenceId,
         );
-        const requirement = (occurrence?.positionRequirements || []).find(
+        const requirements = await resolveScheduleOccurrenceRequirements({
+          churchId,
+          occurrence,
+        });
+        const requirement = requirements.find(
           (item) => item?.positionId === slot.positionId,
         );
         const requiredCount = Math.max(
