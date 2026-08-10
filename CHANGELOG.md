@@ -1,3 +1,20 @@
+# [2.23.0](https://github.com/K-Cheddar/worship-sync/compare/v2.22.2...v2.23.0) (2026-08-10)
+
+
+### Bug Fixes
+
+* Improve TimePicker countdown draft completion ([6546229](https://github.com/K-Cheddar/worship-sync/commit/65462295a328562e98bac8ab3053adf833f6463a))
+* minor fixes ([bf1a3ad](https://github.com/K-Cheddar/worship-sync/commit/bf1a3adcfab7d54867a2c007610c5ac3025fbce2))
+
+
+### Features
+
+* Add schedule-only access and My Schedule ([0c40e93](https://github.com/K-Cheddar/worship-sync/commit/0c40e934e46e21eb3607ed3edf8778156e62ce73))
+* Add song audio attachments with private R2 storage ([907041d](https://github.com/K-Cheddar/worship-sync/commit/907041daac33afc78706b3fea5cfabb0b6da71c7))
+* Adding ability to post to youtube ([3578360](https://github.com/K-Cheddar/worship-sync/commit/3578360493013860f0f3a87168e17da321562847))
+* Improve service plan setlist editing and controller sync ([30a42dd](https://github.com/K-Cheddar/worship-sync/commit/30a42dd215198b2e7c902305a98c9c77f5a34793))
+* Improve Teams schedule organize mode and roster linking ([0bd82bb](https://github.com/K-Cheddar/worship-sync/commit/0bd82bbca9ead04f8e156de9b4897ea78cf3b612))
+
 ## [2.22.2](https://github.com/K-Cheddar/worship-sync/compare/v2.22.1...v2.22.2) (2026-08-06)
 
 
