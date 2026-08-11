@@ -5,6 +5,7 @@ import TransmitHandler from "./TransmitHandler";
 import { presentationSlice } from "../../store/presentationSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import { timersSlice } from "../../store/timersSlice";
+import userEvent from "@testing-library/user-event";
 
 jest.mock("../../components/Presentation/PresentationPreview", () => ({
   __esModule: true,
@@ -151,5 +152,90 @@ describe("TransmitHandler", () => {
     expect(
       screen.getByRole("button", { name: "Clear Overlays" }),
     ).toBeInTheDocument();
+  });
+
+  it("Clear Overlays dispatches clearStreamOverlaysOnly and keeps slide content", async () => {
+    const user = userEvent.setup();
+    const base = presentationSlice.getInitialState();
+    const store = configureStore({
+      reducer: {
+        presentation: presentationSlice.reducer,
+        timers: timersSlice.reducer,
+        undoable: (
+          state = {
+            present: {
+              preferences: preferencesSlice.getInitialState(),
+            },
+          },
+        ) => state,
+      },
+      preloadedState: {
+        presentation: {
+          ...base,
+          isStreamTransmitting: true,
+          streamInfo: {
+            ...base.streamInfo,
+            name: "Keep me",
+            type: "song",
+            slide: {
+              id: "s1",
+              type: "Verse" as const,
+              name: "Song",
+              boxes: [{ width: 100, height: 100, words: "Lyrics" }],
+            },
+            participantOverlayInfo: {
+              id: "p1",
+              name: "Ann",
+              time: 1,
+            },
+          },
+        },
+        timers: timersSlice.getInitialState(),
+        undoable: {
+          present: {
+            preferences: {
+              ...preferencesSlice.getInitialState(),
+              isMediaExpanded: false,
+            },
+          },
+        },
+      },
+    } as Parameters<typeof configureStore>[0]);
+
+    render(
+      <Provider store={store}>
+        <TransmitHandler
+          visibleScreens={["stream"]}
+          variant="overlayStreamFocus"
+          showClearStreamOverlaysButton
+        />
+      </Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Clear Overlays" }));
+
+    const state = store.getState().presentation;
+    expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
+    expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Ann");
+    expect(state.streamInfo.slide?.boxes?.[0]?.words).toBe("Lyrics");
+  });
+
+  it("Hide Content toggle sets streamItemContentBlocked", async () => {
+    const user = userEvent.setup();
+    const store = createStore();
+
+    render(
+      <Provider store={store}>
+        <TransmitHandler
+          visibleScreens={["stream"]}
+          variant="overlayStreamFocus"
+          showStreamOverlayOnlyToggle
+        />
+      </Provider>,
+    );
+
+    expect(store.getState().presentation.streamItemContentBlocked).toBe(false);
+    await user.click(screen.getByText("Hide Content:"));
+    expect(store.getState().presentation.streamItemContentBlocked).toBe(true);
   });
 });
