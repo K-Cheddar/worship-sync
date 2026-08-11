@@ -18,6 +18,10 @@ import Button from "../../../components/Button/Button";
 import PopOver from "../../../components/PopOver/PopOver";
 import Input from "../../../components/Input/Input";
 import { Switch } from "../../../components/ui/Switch";
+import {
+  NOTIFICATION_CATEGORY_COPY,
+  orderNotificationCategories,
+} from "../../../utils/notificationCategories";
 import { WORKSTATION_END_SESSION_LABEL } from "../../../components/WorkstationUnpairConfirmModal/WorkstationUnpairConfirmModal";
 import { getHumanAuth } from "../../../firebase/apps";
 import {
@@ -29,6 +33,8 @@ import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
 import type { Instance } from "../../../types";
 import { useSelector } from "../../../hooks";
 import { selectAnyAutosavePending } from "../../../store/autosaveIndicatorSlice";
+import ChatLauncher from "../../../chat/ChatLauncher";
+import { useChat } from "../../../chat/ChatContext";
 
 const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
 
@@ -62,22 +68,29 @@ const UserSection = () => {
     churchName,
     churchBranding,
     updateSelfDisplayName,
-    canManageIntakeNotifications,
-    intakeNotificationsEnabled,
-    setIntakeNotificationsEnabled,
+    notificationCategories,
+    notificationPreferences,
+    setNotificationPreference,
     exitGuestMode,
     endWorkstationOperatorSession,
   } = useContext(GlobalInfoContext) || {};
   const { isMobile, logout } = useContext(ControllerInfoContext) || {};
+  const chat = useChat();
   const isDemo = loginState === "guest";
   const isLoggedIn = loginState === "success";
   const [isPulsing, setIsPulsing] = useState(false);
   const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
+  const [isAccountPopoverOpen, setIsAccountPopoverOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [displaysExpanded, setDisplaysExpanded] = useState(false);
-  const [isSavingNotify, setIsSavingNotify] = useState(false);
+  /** Which switch is mid-save, so only that one disables. */
+  const [savingCategory, setSavingCategory] = useState("");
+  const visibleNotificationCategories = useMemo(
+    () => orderNotificationCategories(notificationCategories),
+    [notificationCategories],
+  );
   const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
   useEffect(() => {
@@ -184,11 +197,16 @@ const UserSection = () => {
     if (!isMobile && !isDemo) {
       label = `${label}. ${activeCount} active ${activeCount === 1 ? "session" : "sessions"}`;
     }
+    if (chat?.unreadCount) {
+      label = `${label}. ${chat.unreadCount} unread team chat ${chat.unreadCount === 1 ? "message" : "messages"}`;
+    }
     return label;
   })();
 
   const accountBlock = (
     <PopOver
+      open={isAccountPopoverOpen}
+      onOpenChange={setIsAccountPopoverOpen}
       TriggeringButton={
         <Button
           type="button"
@@ -253,10 +271,19 @@ const UserSection = () => {
               ) : null}
             </div>
           </div>
+          {chat?.unreadCount ? (
+            <span
+              className="pointer-events-none absolute -right-1 -top-1 min-w-5 rounded-full bg-cyan-400 px-1.5 py-0.5 text-center text-[10px] font-bold leading-none tabular-nums text-gray-950"
+              aria-hidden="true"
+            >
+              {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
+            </span>
+          ) : null}
         </Button>
       }
     >
       <div className="flex min-w-[220px] max-w-sm flex-col gap-3 pt-1">
+        <ChatLauncher onOpen={() => setIsAccountPopoverOpen(false)} />
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             User
@@ -352,38 +379,47 @@ const UserSection = () => {
             </span>
           </div>
         </div>
-        {isLoggedIn &&
-        canManageIntakeNotifications &&
-        setIntakeNotificationsEnabled ? (
-          <div className="flex flex-col gap-1 border-t border-gray-600 pt-3">
+        {isLoggedIn && visibleNotificationCategories.length > 0 ? (
+          <div className="flex flex-col gap-2 border-t border-gray-600 pt-3">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Notifications
+              Email notifications
             </span>
-            <label className="flex items-start justify-between gap-3">
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-sm font-medium text-white">
-                  New intake submissions
-                </span>
-                <span className="text-xs text-gray-400">
-                  Email me when someone submits a team availability form.
-                </span>
-              </span>
-              <Switch
-                checked={Boolean(intakeNotificationsEnabled)}
-                disabled={isSavingNotify}
-                aria-label="Email me about new intake submissions"
-                onCheckedChange={(checked) => {
-                  void (async () => {
-                    setIsSavingNotify(true);
-                    try {
-                      await setIntakeNotificationsEnabled(checked);
-                    } finally {
-                      setIsSavingNotify(false);
-                    }
-                  })();
-                }}
-              />
-            </label>
+            {visibleNotificationCategories.map((category) => {
+              const copy = NOTIFICATION_CATEGORY_COPY[category];
+              // Only an explicit "off" mutes; "default" and anything unset
+              // resolve to on, mirroring isNotificationEnabled on the server.
+              const enabled = notificationPreferences?.[category] !== "off";
+              return (
+                <label
+                  key={category}
+                  className="flex items-start justify-between gap-3"
+                >
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-sm font-medium text-white">
+                      {copy.label}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {copy.description}
+                    </span>
+                  </span>
+                  <Switch
+                    checked={enabled}
+                    disabled={savingCategory === category}
+                    aria-label={copy.ariaLabel}
+                    onCheckedChange={(checked) => {
+                      void (async () => {
+                        setSavingCategory(category);
+                        try {
+                          await setNotificationPreference(category, checked);
+                        } finally {
+                          setSavingCategory("");
+                        }
+                      })();
+                    }}
+                  />
+                </label>
+              );
+            })}
           </div>
         ) : null}
         {activeInstanceRows.length > 0 || displayRows.length > 0 ? (

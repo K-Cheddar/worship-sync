@@ -6,6 +6,11 @@ import type {
   TeamRosterMember,
   TeamScheduleCellAssignment,
 } from "../../../api/authTypes";
+import ScheduleResponseIndicator from "./ScheduleResponseIndicator";
+import {
+  readAssignmentResponse,
+  type TeamScheduleAssignmentResponse,
+} from "./scheduleResponseState";
 import {
   formatBlockoutDateRangeLabel,
   findBlockoutRangeForDate,
@@ -34,6 +39,8 @@ type ScheduleGridCellProps = {
   isAdditionalPosition: boolean;
   axisHighlightClassName: string;
   assignmentCell?: TeamScheduleCellAssignment;
+  /** This slot's accept/decline record, if the holder has answered. */
+  assignmentResponse?: TeamScheduleAssignmentResponse;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
   justFilled?: boolean;
@@ -54,6 +61,7 @@ const ScheduleGridCell = memo(({
   isAdditionalPosition,
   axisHighlightClassName,
   assignmentCell,
+  assignmentResponse,
   isMemberHighlighted,
   isActiveSlot,
   justFilled = false,
@@ -89,6 +97,7 @@ const ScheduleGridCell = memo(({
   const blockoutConflictLabel = blockoutConflict
     ? `Blocked out ${formatBlockoutDateRangeLabel(blockoutConflict)}`
     : "";
+  const response = readAssignmentResponse(assignmentResponse, assignedMemberId);
 
   const handleActivate = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -158,6 +167,12 @@ const ScheduleGridCell = memo(({
             onClick={handleActivate}
           >
             <span className="flex min-w-0 items-center gap-1">
+              {assignedMember ? (
+                <ScheduleResponseIndicator
+                  response={response}
+                  memberName={displayLabel}
+                />
+              ) : null}
               {blockoutConflict ? (
                 <TriangleAlert
                   className="h-3.5 w-3.5 shrink-0 text-amber-300"
@@ -165,6 +180,15 @@ const ScheduleGridCell = memo(({
                 />
               ) : null}
               <span className="block truncate">{displayLabel}</span>
+              {assignedMember?.scheduleGuest ? (
+                <span
+                  className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200"
+                  title="Guest"
+                  aria-label="Guest"
+                >
+                  G
+                </span>
+              ) : null}
             </span>
           </button>
           {canEdit && isAdditionalPosition ? (

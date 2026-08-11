@@ -1,4 +1,11 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -7,6 +14,8 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  TriangleAlert,
+  X,
 } from "lucide-react";
 import AppPageShell from "../components/AppPageShell/AppPageShell";
 import Button from "../components/Button/Button";
@@ -18,14 +27,22 @@ import SegmentedControl from "../components/SegmentedControl/SegmentedControl";
 import Select from "../components/Select/Select";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useToast } from "../context/toastContext";
+import { showApiErrorToast } from "../utils/apiErrorToast";
+import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
   getMyTeamAssignments,
+  respondToMyAssignment,
   type MyScheduleOccurrence,
+  type MyScheduleServing,
 } from "../api/auth";
-import type { TeamBlockoutDateRange } from "../api/authTypes";
+import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
 import { buildMyScheduleExportModel } from "./buildMyScheduleExportModel";
 import MyScheduleBlockouts from "./MyScheduleBlockouts";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
+import {
+  findBlockoutRangeForDate,
+  formatBlockoutDateRangeLabel,
+} from "./Teams/teamsUtils";
 import ScheduleExportTable from "./Teams/schedule/ScheduleExportTable";
 import ScheduleUpNextBadge from "./Teams/schedule/ScheduleUpNextBadge";
 import { scheduleUpNextBorderClassName } from "./Teams/schedule/scheduleUtils";
@@ -44,8 +61,9 @@ import { cn } from "@/utils/cnHelper";
  * Schedule and service plan tabs reuse the public schedule table and public
  * service plan chrome.
  *
- * The one thing a member can change here is their own time off, via a
- * self-scoped write. Accept and decline arrive with the notification work.
+ * Members can change two things here, both via self-scoped writes: their own
+ * time off, and accepting or declining an assignment. Emailed response links
+ * arrive with the dispatch work and write through the same endpoint.
  */
 
 const ALL_TEAMS = "__all_teams__";
@@ -127,6 +145,131 @@ const myRoleLabel = (occurrence: MyScheduleOccurrence): string => {
     .join("  |  ");
 };
 
+type AssignmentResponse = "pending" | "accepted" | "declined";
+
+const RESPONSE_CHIP: Record<
+  Exclude<AssignmentResponse, "pending">,
+  { label: string; className: string }
+> = {
+  accepted: {
+    label: "You accepted",
+    className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+  },
+  declined: {
+    // Red, matching the grid's decline marker. Amber is taken here: it already
+    // means "blocked out" both on this page and on the owner's cells, and the
+    // same colour for two different facts is worse than a strong one.
+    label: "You declined",
+    className: "border-red-500/40 bg-red-500/10 text-red-200",
+  },
+};
+
+/**
+ * Accept / decline for one slot this person holds.
+ *
+ * Two states, because the emphasis differs. Unanswered, the job is to answer:
+ * both choices sit in front of the reader. Once answered, the job is done and
+ * the row states plainly what they said — changing it is still possible, but
+ * leaving two equal buttons there reads as though nothing was recorded.
+ *
+ * Changing an answer stays one click away rather than being hidden: the
+ * alternative is emailing the worship leader, which is the back-and-forth this
+ * whole thing replaces.
+ */
+const AssignmentResponseRow = ({
+  slot,
+  disabled,
+  onRespond,
+}: {
+  slot: MyScheduleServing;
+  disabled: boolean;
+  onRespond: (
+    slot: MyScheduleServing,
+    response: "accepted" | "declined",
+  ) => void;
+}) => {
+  const response: AssignmentResponse = slot.response || "pending";
+  const answered = response !== "pending";
+  const chip = answered ? RESPONSE_CHIP[response] : null;
+  const role = [slot.positionName, slot.teamName].filter(Boolean).join(" · ");
+  const [changing, setChanging] = useState(false);
+  // A fresh answer collapses the row back to its confirmed state rather than
+  // leaving the picker open over a decision already made.
+  const showChoices = !answered || changing;
+
+  const choose = (next: "accepted" | "declined") => {
+    setChanging(false);
+    onRespond(slot, next);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-700/80 bg-gray-900/50 px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="truncate text-sm font-medium text-orange-300">
+          {role || "Your slot"}
+        </span>
+        {chip ? (
+          <span
+            className={cn(
+              "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+              chip.className,
+            )}
+          >
+            {chip.label}
+          </span>
+        ) : (
+          <span className="shrink-0 text-xs text-gray-400">
+            Needs your response
+          </span>
+        )}
+      </div>
+      {showChoices ? (
+        <ButtonGroup className="shrink-0 border-gray-500" display="flex">
+          <ButtonGroupItem
+            type="button"
+            variant="primary"
+            iconSize="sm"
+            svg={Check}
+            color="#6ee7b7"
+            className="max-md:min-h-0"
+            disabled={disabled}
+            isSelected={response === "accepted"}
+            aria-label={`Accept ${role || "this assignment"}`}
+            onClick={() => choose("accepted")}
+          >
+            Accept
+          </ButtonGroupItem>
+          <ButtonGroupItem
+            type="button"
+            variant="primary"
+            iconSize="sm"
+            svg={X}
+            color="#fca5a5"
+            className="max-md:min-h-0"
+            disabled={disabled}
+            isSelected={response === "declined"}
+            aria-label={`Decline ${role || "this assignment"}`}
+            onClick={() => choose("declined")}
+          >
+            Decline
+          </ButtonGroupItem>
+        </ButtonGroup>
+      ) : (
+        <Button
+          type="button"
+          variant="tertiary"
+          className="shrink-0 text-xs text-gray-300 underline underline-offset-2 hover:text-white max-md:min-h-0"
+          disabled={disabled}
+          aria-label={`Change your response for ${role || "this assignment"}`}
+          onClick={() => setChanging(true)}
+        >
+          Change response
+        </Button>
+      )}
+    </div>
+  );
+};
+
 const ShareViewActions = ({
   label,
   url,
@@ -173,6 +316,8 @@ type OccurrenceTileProps = {
   occurrence: MyScheduleOccurrence;
   isNextUpcoming: boolean;
   isPast: boolean;
+  /** True when this date falls inside one of the member's own blockouts. */
+  isBlockedOut: boolean;
   onOpen: () => void;
 };
 
@@ -180,6 +325,7 @@ const OccurrenceTile = ({
   occurrence,
   isNextUpcoming,
   isPast,
+  isBlockedOut,
   onOpen,
 }: OccurrenceTileProps) => {
   const tile = getOccurrenceTileParts(occurrence);
@@ -198,7 +344,11 @@ const OccurrenceTile = ({
       <Button
         type="button"
         variant="tertiary"
-        aria-label={`${openLabel}${isNextUpcoming ? ", up next" : ""}`}
+        aria-label={cn(
+          openLabel,
+          isNextUpcoming && ", up next",
+          isBlockedOut && ", blocked out",
+        )}
         className={cn(
           "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
           hasPlan
@@ -249,6 +399,15 @@ const OccurrenceTile = ({
             {role}
           </span>
         ) : null}
+        {/* Same wording the owner sees on the schedule grid, so the two
+            surfaces describe one fact the same way. Kept off the border, which
+            already carries plan and up-next meaning. */}
+        {isBlockedOut ? (
+          <span className="mt-1 flex items-center gap-1 text-left text-[11px] font-medium text-amber-300">
+            <Icon svg={TriangleAlert} size="xs" className="shrink-0" />
+            <span className="truncate">Blocked out</span>
+          </span>
+        ) : null}
       </Button>
     </li>
   );
@@ -264,6 +423,14 @@ type OccurrenceDetailProps = {
   onCopyLink: (url: string, label: string) => void;
   onViewLink: (url: string) => void;
   churchName?: string;
+  /** Label of the member's own blockout covering this date, when there is one. */
+  blockoutLabel?: string;
+  /** Omitted for past services — there is nothing left to answer. */
+  onRespond?: (
+    slot: MyScheduleServing,
+    response: "accepted" | "declined",
+  ) => void;
+  respondingKey?: string;
 };
 
 const OccurrenceDetail = ({
@@ -276,6 +443,9 @@ const OccurrenceDetail = ({
   onCopyLink,
   onViewLink,
   churchName = "",
+  blockoutLabel = "",
+  onRespond,
+  respondingKey = "",
 }: OccurrenceDetailProps) => {
   const [tab, setTab] = useState<DetailTab>("schedule");
   const serviceName = occurrenceServiceLabel(occurrence);
@@ -338,8 +508,20 @@ const OccurrenceDetail = ({
             <p className="mt-0.5 text-xs text-gray-400">
               {formatWhen(occurrence.startsAt)}
             </p>
-            {role ? (
+            {/* The role line is redundant once each slot renders its own row
+                with the same label plus its answer. */}
+            {role && !onRespond ? (
               <p className="mt-1 text-sm text-orange-300">{role}</p>
+            ) : null}
+            {/* Opening a tile must not drop the warning the tile carried. */}
+            {blockoutLabel ? (
+              <p className="mt-1 flex items-start gap-1.5 text-sm text-amber-300">
+                <Icon svg={TriangleAlert} size="sm" className="mt-0.5 shrink-0" />
+                <span>
+                  You are scheduled here but marked yourself away{" "}
+                  {blockoutLabel}. Your team lead sees this on the schedule.
+                </span>
+              </p>
             ) : null}
           </div>
           {jumpOptions.length > 1 ? (
@@ -352,6 +534,20 @@ const OccurrenceDetail = ({
             />
           ) : null}
         </div>
+        {onRespond ? (
+          <div className="space-y-2">
+            {occurrence.serving
+              .filter((person) => person.isMe && person.isPrimary)
+              .map((slot) => (
+                <AssignmentResponseRow
+                  key={slot.columnKey}
+                  slot={slot}
+                  disabled={respondingKey === slot.columnKey}
+                  onRespond={onRespond}
+                />
+              ))}
+          </div>
+        ) : null}
         <SegmentedControl
           ariaLabel="Schedule or service plan"
           variant="admin"
@@ -424,6 +620,8 @@ const MySchedule = () => {
   const [blockoutDates, setBlockoutDates] = useState<TeamBlockoutDateRange[]>(
     [],
   );
+  /** Precondition for the blockout write; see `updateMyBlockoutDates`. */
+  const [memberUpdatedAt, setMemberUpdatedAt] = useState("");
   const [showPast, setShowPast] = useState(false);
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
@@ -433,30 +631,152 @@ const MySchedule = () => {
     "loading",
   );
 
+  const mountedRef = useRef(true);
+  /** Drops a response that a newer request has already superseded. */
+  const requestRef = useRef(0);
+  /** Set by the Time off editor; a refresh must never discard an open edit. */
+  const timeOffDirtyRef = useRef(false);
+
   useEffect(() => {
-    if (!churchId) return;
-    let cancelled = false;
-    setStatus("loading");
-    void getMyTeamAssignments(churchId)
-      .then((result) => {
-        if (cancelled) return;
-        setOccurrences(result.occurrences || []);
-        setHasMemberRecord(Boolean(result.member));
-        setBlockoutDates(result.member?.blockoutDates || []);
-        setStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) setStatus("error");
-      });
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
-  }, [churchId]);
+  }, []);
+
+  const load = useCallback(
+    ({ showLoading }: { showLoading: boolean }) => {
+      if (!churchId) return;
+      const request = ++requestRef.current;
+      if (showLoading) setStatus("loading");
+      void getMyTeamAssignments(churchId)
+        .then((result) => {
+          if (!mountedRef.current || request !== requestRef.current) return;
+          setOccurrences(result.occurrences || []);
+          setHasMemberRecord(Boolean(result.member));
+          setBlockoutDates(result.member?.blockoutDates || []);
+          setMemberUpdatedAt(result.member?.updatedAt || "");
+          setStatus("ready");
+        })
+        .catch(() => {
+          if (!mountedRef.current || request !== requestRef.current) return;
+          // A background refresh that fails leaves the page as it is. Replacing
+          // a working schedule with an error because a resume failed is worse
+          // than showing data that is a few minutes old.
+          if (showLoading) setStatus("error");
+        });
+    },
+    [churchId],
+  );
+
+  useEffect(() => {
+    load({ showLoading: true });
+  }, [load]);
+
+  /**
+   * Catch up on return rather than staying live. Nobody watches this page for
+   * changes — they open it, read it, and leave — so the staleness that actually
+   * bites is a PWA resumed days later, which this covers for the cost of one
+   * request. Being told about a change is Phase 1/2 dispatch, not reactivity.
+   */
+  const refreshOnReturn = useCallback(() => {
+    if (timeOffDirtyRef.current) return;
+    load({ showLoading: false });
+  }, [load]);
+
+  useSyncOnReconnect(refreshOnReturn);
+
+  const handleTimeOffDirtyChange = useCallback((dirty: boolean) => {
+    timeOffDirtyRef.current = dirty;
+  }, []);
+
+  const handleBlockoutsSaved = useCallback((member: TeamRosterMember) => {
+    setBlockoutDates(member?.blockoutDates || []);
+    setMemberUpdatedAt(member?.updatedAt || "");
+  }, []);
+
+  /**
+   * The save was rejected because the record moved. Pull the current state in
+   * so the reader compares against what is stored — the editor keeps their
+   * draft, so nothing they typed is lost, and saving again now carries a write
+   * stamp the server will accept.
+   */
+  const refreshAfterConflict = useCallback(() => {
+    load({ showLoading: false });
+  }, [load]);
+
+  const [respondingKey, setRespondingKey] = useState("");
+
+  /**
+   * Answer one assignment, applied optimistically so the tap feels immediate.
+   *
+   * On any failure the page refetches rather than reverting locally: the common
+   * failure is a 409 because the slot moved to someone else, and in that case
+   * the old value is not the truth to go back to. The server message says what
+   * happened; the refetch makes the screen agree with it.
+   */
+  const respondToAssignment = useCallback(
+    async (slot: MyScheduleServing, response: "accepted" | "declined") => {
+      if (!selectedId) return;
+      setRespondingKey(slot.columnKey);
+      const apply = (value: MyScheduleServing["response"]) =>
+        setOccurrences((current) =>
+          current.map((occurrence) =>
+            occurrence.occurrenceId === selectedId
+              ? {
+                  ...occurrence,
+                  serving: occurrence.serving.map((person) =>
+                    person.isMe && person.columnKey === slot.columnKey
+                      ? { ...person, response: value }
+                      : person,
+                  ),
+                }
+              : occurrence,
+          ),
+        );
+      apply(response);
+      try {
+        await respondToMyAssignment(churchId, {
+          scheduleId: slot.scheduleId,
+          occurrenceId: selectedId,
+          cellKey: slot.columnKey,
+          response,
+        });
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not save your response.");
+        load({ showLoading: false });
+      } finally {
+        setRespondingKey("");
+      }
+    },
+    [churchId, load, selectedId, showToast],
+  );
 
   const datedOccurrences = useMemo(
     () => occurrences.filter(hasDatedStartsAt),
     [occurrences],
   );
+
+  /**
+   * Services this person is on that fall inside one of their own blockouts,
+   * keyed by occurrence so the tiles and the detail view read from one lookup.
+   *
+   * Without this the page contradicts itself: the schedule shows you serving,
+   * Time off says you are away, and nothing connects the two unless the reader
+   * expands a collapsed section. The label matches the owner's schedule grid so
+   * both sides describe the clash the same way.
+   */
+  const blockoutLabelByOccurrence = useMemo(() => {
+    const labels = new Map<string, string>();
+    if (blockoutDates.length === 0) return labels;
+    occurrences.forEach((occurrence) => {
+      const range = findBlockoutRangeForDate(blockoutDates, occurrence.date);
+      if (range) {
+        labels.set(occurrence.occurrenceId, formatBlockoutDateRangeLabel(range));
+      }
+    });
+    return labels;
+  }, [blockoutDates, occurrences]);
 
   /** Only the teams this person actually serves on are worth offering. */
   const teamOptions = useMemo(() => {
@@ -639,6 +959,19 @@ const MySchedule = () => {
             onCopyLink={copyLink}
             onViewLink={viewLink}
             churchName={churchName}
+            blockoutLabel={
+              blockoutLabelByOccurrence.get(selected.occurrenceId) || ""
+            }
+            // Past services have nothing left to answer, and offering the
+            // buttons there would invite pointless writes.
+            onRespond={
+              past.some(
+                (item) => item.occurrenceId === selected.occurrenceId,
+              )
+                ? undefined
+                : respondToAssignment
+            }
+            respondingKey={respondingKey}
           />
         ) : null}
 
@@ -647,8 +980,11 @@ const MySchedule = () => {
             <MyScheduleBlockouts
               churchId={churchId}
               blockoutDates={blockoutDates}
+              expectedUpdatedAt={memberUpdatedAt}
               occurrences={occurrences}
-              onSaved={setBlockoutDates}
+              onSaved={handleBlockoutsSaved}
+              onDirtyChange={handleTimeOffDirtyChange}
+              onStale={refreshAfterConflict}
             />
 
             {datedOccurrences.length > 0 ? (
@@ -707,6 +1043,9 @@ const MySchedule = () => {
                       occurrence={occurrence}
                       isNextUpcoming={occurrence.occurrenceId === nextUpcomingId}
                       isPast={false}
+                      isBlockedOut={blockoutLabelByOccurrence.has(
+                        occurrence.occurrenceId,
+                      )}
                       onOpen={() => setSelectedId(occurrence.occurrenceId)}
                     />
                   ))}
@@ -734,6 +1073,9 @@ const MySchedule = () => {
                         occurrence={occurrence}
                         isNextUpcoming={false}
                         isPast
+                        isBlockedOut={blockoutLabelByOccurrence.has(
+                          occurrence.occurrenceId,
+                        )}
                         onOpen={() => setSelectedId(occurrence.occurrenceId)}
                       />
                     ))}

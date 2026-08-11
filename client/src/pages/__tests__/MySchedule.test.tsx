@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../../store/store";
@@ -6,12 +6,23 @@ import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import MySchedule from "../MySchedule";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { getMyTeamAssignments, updateMyBlockoutDates } from "../../api/auth";
+import {
+  getMyTeamAssignments,
+  respondToMyAssignment,
+  updateMyBlockoutDates,
+} from "../../api/auth";
 import { usePublicServiceFlow } from "../../services/usePublicServiceFlow";
 
 jest.mock("../../api/auth", () => ({
   getMyTeamAssignments: jest.fn(),
   updateMyBlockoutDates: jest.fn(),
+  respondToMyAssignment: jest.fn(),
+  // showApiErrorToast narrows with `instanceof`, so the error path needs a real
+  // class here rather than an undefined export.
+  AuthApiError: class AuthApiError extends Error {
+    status?: number;
+    isReachabilityError = false;
+  },
 }));
 
 jest.mock("../../context/toastContext", () => ({
@@ -27,6 +38,7 @@ jest.mock("../../services/usePublicServiceFlow", () => ({
 
 const mockGetMyTeamAssignments = jest.mocked(getMyTeamAssignments);
 const mockUpdateMyBlockoutDates = jest.mocked(updateMyBlockoutDates);
+const mockRespondToMyAssignment = jest.mocked(respondToMyAssignment);
 const mockUsePublicServiceFlow = jest.mocked(usePublicServiceFlow);
 
 /** Far future/past so these never drift buckets as the clock moves. */
@@ -72,7 +84,13 @@ const occurrence = (overrides = {}) => ({
   ...overrides,
 });
 
-const respond = (occurrences: unknown[], member: unknown = { memberId: "m1" }) =>
+/** The write stamp the blockout save must echo back as its precondition. */
+const STAMP = "2099-01-01T00:00:00.000Z";
+
+const respond = (
+  occurrences: unknown[],
+  member: unknown = { memberId: "m1", updatedAt: STAMP },
+) =>
   mockGetMyTeamAssignments.mockResolvedValue({
     success: true,
     member,
@@ -429,7 +447,11 @@ describe("MySchedule", () => {
     it("saves an edit and keeps what the server normalized", async () => {
       const user = userEvent.setup();
       const second = { startDate: "2099-10-01", endDate: "2099-10-05" };
-      respond([occurrence()], { memberId: "m1", blockoutDates: [away, second] });
+      respond([occurrence()], {
+        memberId: "m1",
+        updatedAt: STAMP,
+        blockoutDates: [away, second],
+      });
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", blockoutDates: [second] },
@@ -448,9 +470,11 @@ describe("MySchedule", () => {
 
       await user.click(save);
 
-      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [
-        second,
-      ]);
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith(
+        "church-1",
+        [second],
+        STAMP,
+      );
       // The conflicting entry is gone, so the header count clears.
       expect(screen.queryByText("1 conflict")).not.toBeInTheDocument();
     });
@@ -462,7 +486,11 @@ describe("MySchedule", () => {
       const user = userEvent.setup();
       const over = { startDate: "2000-01-01", endDate: "2000-01-05" };
       const ahead = { startDate: "2099-10-01", endDate: "2099-10-05" };
-      respond([occurrence()], { memberId: "m1", blockoutDates: [over, ahead] });
+      respond([occurrence()], {
+        memberId: "m1",
+        updatedAt: STAMP,
+        blockoutDates: [over, ahead],
+      });
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", blockoutDates: [over] },
@@ -486,7 +514,74 @@ describe("MySchedule", () => {
       await user.click(removeButtons[0]);
       await user.click(screen.getByRole("button", { name: /Save time off/i }));
 
-      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [over]);
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith(
+        "church-1",
+        [over],
+        STAMP,
+      );
+    });
+
+    // Time off is collapsed by default, so without this the page contradicts
+    // itself: the schedule shows you serving and nothing says you are away.
+    it("marks a scheduled service the member has blocked out", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()], { memberId: "m1", blockoutDates: [away] });
+      renderPage();
+
+      expect(
+        await screen.findByRole("button", {
+          name: /Open Sunday Gathering.*blocked out/i,
+        }),
+      ).toBeInTheDocument();
+
+      // Opening the tile must not drop the warning it carried.
+      await openFirstService(user);
+      expect(
+        screen.getByText(/marked yourself away/i),
+      ).toBeInTheDocument();
+    });
+
+    it("leaves services outside a blockout unmarked", async () => {
+      respond([occurrence()], {
+        memberId: "m1",
+        blockoutDates: [{ startDate: "2099-10-01", endDate: "2099-10-05" }],
+      });
+      renderPage();
+
+      await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+      expect(
+        screen.queryByRole("button", { name: /blocked out/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    // The write replaces the whole array, so a save built on a stale page would
+    // silently discard whatever changed underneath it.
+    it("pulls in the current record when a save is rejected as stale", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()], {
+        memberId: "m1",
+        updatedAt: STAMP,
+        blockoutDates: [away],
+      });
+      const conflict = Object.assign(new Error("Your time off changed"), {
+        status: 409,
+      });
+      mockUpdateMyBlockoutDates.mockRejectedValue(conflict);
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(
+        screen.getAllByRole("button", { name: /Remove blockout/i })[0],
+      );
+      await user.click(screen.getByRole("button", { name: /Save time off/i }));
+
+      // Refetched so the reader is comparing against what is actually stored.
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
+      // The draft survives — discarding an edit to report a conflict would
+      // trade one kind of loss for another.
+      expect(
+        screen.getByRole("button", { name: /Save time off/i }),
+      ).toBeEnabled();
     });
 
     it("offers time off even when nothing is scheduled yet", async () => {
@@ -499,6 +594,215 @@ describe("MySchedule", () => {
       expect(
         screen.getByText("You are not scheduled for anything coming up."),
       ).toBeInTheDocument();
+    });
+  });
+
+  // Catching up on return rather than staying live: nobody watches this page,
+  // but a PWA resumed days later would otherwise read a stale snapshot.
+  describe("refresh on return", () => {
+    const returnToPage = async (awayMs: number) => {
+      const hidden = jest
+        .spyOn(document, "visibilityState", "get")
+        .mockReturnValue("hidden");
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      hidden.mockReturnValue("visible");
+      jest.setSystemTime(Date.now() + awayMs);
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      hidden.mockRestore();
+    };
+
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ["performance"] });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("refetches after a long absence but not a quick tab switch", async () => {
+      respond([occurrence()]);
+      renderPage();
+      await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+
+      await returnToPage(2_000);
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+
+      await returnToPage(60_000);
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
+    });
+
+    // The editor stays mounted across a refresh. If its draft kept the old
+    // snapshot it would read as edited, freeze further refreshes, and — worst —
+    // save the stale dates back over the newer ones carrying the refreshed
+    // write stamp, which the server's 409 guard would have no reason to reject.
+    it("adopts refreshed blockouts instead of inventing an edit", async () => {
+      const first = { startDate: "2099-09-06", endDate: "2099-09-06" };
+      const second = { startDate: "2099-11-20", endDate: "2099-11-22" };
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP, blockoutDates: [first] },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValue({
+          success: true,
+          member: {
+            memberId: "m1",
+            updatedAt: "2099-02-02T00:00:00.000Z",
+            blockoutDates: [first, second],
+          },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
+      renderPage();
+
+      expect(await screen.findByText("1 upcoming")).toBeInTheDocument();
+
+      await returnToPage(60_000);
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
+
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      await user.click(screen.getByRole("button", { name: /Time off/i }));
+
+      // The editor shows what came back, not the snapshot it opened with.
+      expect(
+        screen.getAllByRole("button", { name: /Remove blockout/i }),
+      ).toHaveLength(2);
+      // No user edit happened, so there is nothing to save.
+      expect(screen.getByRole("button", { name: /Save time off/i })).toBeDisabled();
+
+      // And the refresh is not frozen by a phantom dirty flag.
+      await returnToPage(60_000);
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(3);
+    });
+
+    it("leaves an open time off edit alone", async () => {
+      respond([occurrence()], {
+        memberId: "m1",
+        updatedAt: STAMP,
+        blockoutDates: [{ startDate: "2099-09-06", endDate: "2099-09-06" }],
+      });
+      renderPage();
+
+      // userEvent needs the fake-timer advance function to resolve its waits.
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      await user.click(await screen.findByRole("button", { name: /Time off/i }));
+      await user.click(
+        screen.getAllByRole("button", { name: /Remove blockout/i })[0],
+      );
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+
+      await returnToPage(60_000);
+
+      // Refetching would replace the draft with server state and lose the edit.
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("accept and decline", () => {
+    it("offers a response for an upcoming assignment and posts the answer", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()]);
+      mockRespondToMyAssignment.mockResolvedValue({
+        success: true,
+        response: "accepted",
+      } as unknown as Awaited<ReturnType<typeof respondToMyAssignment>>);
+      renderPage();
+
+      await openFirstService(user);
+      expect(screen.getByText("Needs your response")).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: /Accept Director . Media/i }),
+      );
+
+      expect(mockRespondToMyAssignment).toHaveBeenCalledWith("church-1", {
+        scheduleId: "sched-1",
+        occurrenceId: `service-1@${FUTURE}`,
+        cellKey: "pos-director::0",
+        response: "accepted",
+      });
+      // Applied optimistically, so the tap reads as done straight away.
+      expect(await screen.findByText("You accepted")).toBeInTheDocument();
+    });
+
+    it("shows an existing answer and still allows changing it", async () => {
+      const user = userEvent.setup();
+      respond([occurrence({ serving: [me({ response: "declined" }), other()] })]);
+      mockRespondToMyAssignment.mockResolvedValue({
+        success: true,
+        response: "accepted",
+      } as unknown as Awaited<ReturnType<typeof respondToMyAssignment>>);
+      renderPage();
+
+      await openFirstService(user);
+      expect(screen.getByText("You declined")).toBeInTheDocument();
+
+      // Answered rows state the decision rather than leaving two equal buttons,
+      // which would read as though nothing had been recorded.
+      expect(
+        screen.queryByRole("button", { name: /Accept Director . Media/i }),
+      ).not.toBeInTheDocument();
+
+      // Changing your mind is normal and stays one click away; the alternative
+      // is emailing the worship leader, which is what this replaces.
+      await user.click(
+        screen.getByRole("button", { name: /Change your response/i }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: /Accept Director . Media/i }),
+      );
+
+      expect(await screen.findByText("You accepted")).toBeInTheDocument();
+      // And it collapses back rather than leaving the picker open.
+      expect(
+        screen.queryByRole("button", { name: /Accept Director . Media/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("refetches when the answer is rejected rather than reverting blindly", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()]);
+      mockRespondToMyAssignment.mockRejectedValue(
+        Object.assign(new Error("That assignment changed"), { status: 409 }),
+      );
+      renderPage();
+
+      await openFirstService(user);
+      await user.click(
+        screen.getByRole("button", { name: /Decline Director . Media/i }),
+      );
+
+      // The common failure is the slot moving to someone else, so the old
+      // value is not the truth to go back to — the server is.
+      await screen.findByText("Needs your response");
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not offer a response on a past service", async () => {
+      const user = userEvent.setup();
+      respond([
+        occurrence({
+          occurrenceId: `service-1@${PAST}`,
+          date: PAST.slice(0, 10),
+          startsAt: PAST,
+          name: "Old Service",
+        }),
+      ]);
+      renderPage();
+
+      await user.click(
+        await screen.findByRole("button", { name: /Show 1 past service/ }),
+      );
+      await user.click(screen.getByRole("button", { name: /Open Old Service/i }));
+
+      expect(
+        screen.queryByRole("button", { name: /^Accept/i }),
+      ).not.toBeInTheDocument();
     });
   });
 

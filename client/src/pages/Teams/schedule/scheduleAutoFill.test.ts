@@ -163,6 +163,47 @@ describe("buildAutoFillPlan", () => {
     expect(picks[2]).toBe(picks[0]);
   });
 
+  it("honors monthly serving preferences while filling dated occurrences", () => {
+    const positions = [position("vocal")];
+    const occurrences = [
+      { occurrenceId: "occ1", startsAt: "2026-08-02T10:00:00.000Z" },
+      { occurrenceId: "occ2", startsAt: "2026-08-16T10:00:00.000Z" },
+    ];
+    const requirementsByOccurrence = new Map(
+      occurrences.map((occurrence) => [
+        occurrence.occurrenceId,
+        [{ positionId: "vocal", count: 1 }],
+      ]),
+    );
+    const columns = buildScheduleColumns({
+      occurrences,
+      requirementsByOccurrence,
+      positions,
+      teamPositionIds: ["vocal"],
+    });
+    const members = [
+      member("amy", ["vocal"], { servingFrequency: "monthly" }),
+      member("beth", ["vocal"], { servingFrequency: "monthly" }),
+    ];
+    const assignments: TeamScheduleAssignments = {};
+
+    const plan = buildAutoFillPlan({
+      occurrences,
+      columns,
+      requirementsByOccurrence,
+      assignments,
+      members,
+      positions,
+      qualificationLevels: [],
+      duplicateFirstNames,
+      getAssignmentIssue: makeGetAssignmentIssue(members, assignments),
+      getServiceAvailabilityWarning: noWarning,
+      getCrossTeamConflictWarning: noWarning,
+    });
+
+    expect(plan.entries.map((entry) => entry.memberId)).toEqual(["amy", "beth"]);
+  });
+
   it("never puts someone back-to-back even when they're far behind on overall fairness", () => {
     const positions = [position("vocal")];
     const occurrences = [{ occurrenceId: "occ1" }, { occurrenceId: "occ2" }];

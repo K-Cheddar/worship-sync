@@ -111,6 +111,8 @@ const normalizeMemberSavePayload = (
   firstName: payload.firstName.trim(),
   lastName: payload.lastName.trim(),
   dateOfBirth: payload.dateOfBirth || "",
+  isMinor: Boolean(payload.isMinor),
+  servingFrequency: payload.servingFrequency || "as_needed",
   positionIds: [...(payload.positionIds || [])],
   desiredPositionIds: [...(payload.desiredPositionIds || [])],
   teamMemberships: payload.teamMemberships || {},
@@ -128,6 +130,8 @@ const memberToSavePayload = (
     firstName: member.firstName,
     lastName: member.lastName,
     dateOfBirth: member.dateOfBirth || "",
+    isMinor: Boolean(member.isMinor),
+    servingFrequency: member.servingFrequency || "as_needed",
     positionIds: member.positionIds || [],
     desiredPositionIds: member.desiredPositionIds || [],
     teamMemberships: member.teamMemberships || {},
@@ -174,6 +178,12 @@ export const describeMemberSaveChanges = (
   }
   if (prior.dateOfBirth !== saved.dateOfBirth) {
     changes.push("Date of birth");
+  }
+  if (prior.isMinor !== saved.isMinor) {
+    changes.push("Minor status");
+  }
+  if (prior.servingFrequency !== saved.servingFrequency) {
+    changes.push("Serving preference");
   }
   if (prior.notes !== saved.notes) {
     changes.push("Notes");

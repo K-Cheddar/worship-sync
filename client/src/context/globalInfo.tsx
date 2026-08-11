@@ -61,7 +61,9 @@ import { registerAuthRecoveryHandler } from "../api/authErrorBus";
 import type {
   ChurchBranding,
   EmailCodeChallengeFields,
+  MemberNotifications,
   MemberPermissions,
+  NotificationCategory,
   NotificationPreference,
 } from "../api/authTypes";
 
@@ -419,11 +421,22 @@ type GlobalInfoContextType = {
   refreshAuthBootstrap: () => Promise<void>;
   refreshPresentationListeners: () => void;
   updateSelfDisplayName: (displayName: string) => Promise<boolean>;
-  /** True when this user can edit any team — gates the intake-notify toggle. */
-  canManageIntakeNotifications: boolean;
-  /** Resolved on/off for "email me about new intake submissions". */
-  intakeNotificationsEnabled: boolean;
-  setIntakeNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
+  /** Categories to offer this person, server-derived so the catalog has one owner. */
+  notificationCategories: NotificationCategory[];
+  /** Stored tri-state per category; "default" resolves at send time. */
+  notificationPreferences: MemberNotifications;
+  setNotificationPreference: (
+    category: NotificationCategory,
+    enabled: boolean
+  ) => Promise<boolean>;
+};
+
+/** Every category unset; "default" resolves per category at send time. */
+const emptyNotificationPreferences: MemberNotifications = {
+  scheduleAssignments: "default",
+  scheduleReminders: "default",
+  scheduleResponses: "default",
+  intakeSubmissions: "default",
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -522,8 +535,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [churchIntegrationsListenGeneration, setChurchIntegrationsListenGeneration] =
     useState(0);
   const [role, setRole] = useState("");
-  const [intakeNotifyPreference, setIntakeNotifyPreference] =
-    useState<NotificationPreference>("default");
+  // One tri-state per category. Which are *offered* comes from the server
+  // (`notificationCategories`) rather than being hardcoded here, so adding a
+  // category or changing who sees it does not need a client release.
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<MemberNotifications>(emptyNotificationPreferences);
+  const [notificationCategories, setNotificationCategories] = useState<
+    NotificationCategory[]
+  >([]);
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
     useState<string | null>(null);
@@ -555,14 +574,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     canEditServices ||
     permissions.teams === "view" ||
     hasScopedTeamsAccess;
-  // Anyone who can edit at least one team is a potential intake-notify
-  // recipient — same predicate the server derives recipients from.
-  const canManageIntakeNotifications =
-    canEditTeams ||
-    Object.values(permissions.teamScopes || {}).includes("edit");
-  // "default" (and anything unset) means on for editors; only explicit "off"
-  // mutes — mirrors isIntakeNotificationEnabled on the server.
-  const intakeNotificationsEnabled = intakeNotifyPreference !== "off";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
@@ -799,9 +810,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setChurchStatus(bootstrap.churchStatus || "active");
     setRecoveryEmail(bootstrap.recoveryEmail || "");
     setRole(bootstrap.role || "");
-    setIntakeNotifyPreference(
-      bootstrap.notifications?.intakeSubmissions || "default",
-    );
+    setNotificationPreferences({
+      ...emptyNotificationPreferences,
+      ...(bootstrap.notifications || {}),
+    });
+    setNotificationCategories(bootstrap.notificationCategories || []);
     if (bootstrap.sessionKind === "workstation") {
       clearLegacyWorkstationOperatorName();
       setOperatorNameState(workstationSessionOperator);
@@ -2424,17 +2437,26 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [refreshAuthBootstrap]);
 
-  const setIntakeNotificationsEnabled = useCallback(
-    async (enabled: boolean) => {
+  /**
+   * Toggle one category. Optimistic, then reconciled by the bootstrap refresh.
+   *
+   * Only the changed category is sent: the endpoint preserves the rest, so a
+   * client that does not know about a newer category cannot reset it.
+   */
+  const setNotificationPreference = useCallback(
+    async (category: NotificationCategory, enabled: boolean) => {
       const next: NotificationPreference = enabled ? "on" : "off";
-      const previous = intakeNotifyPreference;
-      setIntakeNotifyPreference(next); // optimistic; reconciled by refresh
+      const previous = notificationPreferences;
+      setNotificationPreferences((current) => ({
+        ...current,
+        [category]: next,
+      }));
       try {
-        await updateHumanNotificationPreferences({ intakeSubmissions: next });
+        await updateHumanNotificationPreferences({ [category]: next });
         await refreshAuthBootstrap();
         return true;
       } catch (error) {
-        setIntakeNotifyPreference(previous);
+        setNotificationPreferences(previous);
         setAuthError(
           error instanceof Error && error.message
             ? error.message
@@ -2443,7 +2465,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         return false;
       }
     },
-    [intakeNotifyPreference, refreshAuthBootstrap]
+    [notificationPreferences, refreshAuthBootstrap]
   );
 
   const setOperatorName = useCallback((value: string) => {
@@ -2584,9 +2606,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       refreshAuthBootstrap,
       refreshPresentationListeners,
       updateSelfDisplayName,
-      canManageIntakeNotifications,
-      intakeNotificationsEnabled,
-      setIntakeNotificationsEnabled,
+      notificationCategories,
+      notificationPreferences,
+      setNotificationPreference,
       sharedDataReady: isSharedDataScopeReady,
     }),
     [
@@ -2646,9 +2668,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       refreshAuthBootstrap,
       refreshPresentationListeners,
       updateSelfDisplayName,
-      canManageIntakeNotifications,
-      intakeNotificationsEnabled,
-      setIntakeNotificationsEnabled,
+      notificationCategories,
+      notificationPreferences,
+      setNotificationPreference,
       isSharedDataScopeReady,
     ]
   );

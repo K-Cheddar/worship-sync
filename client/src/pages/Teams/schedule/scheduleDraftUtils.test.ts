@@ -348,6 +348,53 @@ describe("buildScheduleDraft", () => {
     expect(draft.startDate).toBe("2026-08-01");
     expect(draft.endDate).toBe("2026-08-01");
   });
+
+  it("retains a known guest catalog when editing a schedule", () => {
+    const draft = buildScheduleDraft({
+      persistedDraft: {
+        name: "Unsaved August name",
+        teamId: "team1",
+        startDate: "2026-08-01",
+        endDate: "2026-08-31",
+        serviceIds: ["s1"],
+      },
+      selectedSchedule: {
+        scheduleId: "sch-with-guests",
+        churchId: "church1",
+        name: "August 2026",
+        teamId: "team1",
+        startDate: "2026-08-01",
+        endDate: "2026-08-31",
+        serviceIds: ["s1"],
+        guests: [{ guestId: "scheduleGuest_1", name: "Alex Rivera" }],
+      },
+      defaultTeamId: "team1",
+      defaultServiceIds: ["s1"],
+    });
+
+    expect(draft.guests).toEqual([
+      { guestId: "scheduleGuest_1", name: "Alex Rivera" },
+    ]);
+    expect(draft.name).toBe("Unsaved August name");
+  });
+
+  it("omits an unknown guest catalog so an update preserves server data", () => {
+    const draft = buildScheduleDraft({
+      selectedSchedule: {
+        scheduleId: "sch-summary",
+        churchId: "church1",
+        name: "August 2026",
+        teamId: "team1",
+        startDate: "2026-08-01",
+        endDate: "2026-08-31",
+        serviceIds: ["s1"],
+      },
+      defaultTeamId: "team1",
+      defaultServiceIds: ["s1"],
+    });
+
+    expect("guests" in draft).toBe(false);
+  });
 });
 
 describe("buildScheduleCopyDraft", () => {
@@ -364,6 +411,7 @@ describe("buildScheduleCopyDraft", () => {
     assignments: {
       "s1@2026-01-04T10:00:00.000Z": { keys: cell("m1") },
     },
+    guests: [{ guestId: "scheduleGuest_1", name: "Alex Rivera" }],
   };
 
   it("prefixes the name and carries team, services, dates, and assignments", () => {
@@ -378,5 +426,6 @@ describe("buildScheduleCopyDraft", () => {
     expect(draft.startDate).toBe("2026-01-01");
     expect(draft.endDate).toBe("2026-01-31");
     expect(draft.assignments).toEqual(source.assignments);
+    expect(draft.guests).toEqual(source.guests);
   });
 });

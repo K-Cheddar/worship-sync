@@ -182,6 +182,60 @@ describe("scheduleMemberPickerUtils", () => {
     expect(rows.map((row) => row.member.memberId)).toEqual(["rested", "busy"]);
   });
 
+  it("prefers members who have not reached their serving preference", () => {
+    const rows = buildScheduleMemberPickerMembers({
+      members: [
+        {
+          memberId: "reached",
+          churchId: "c1",
+          firstName: "Avery",
+          lastName: "Lee",
+          positionIds: ["position-vocal"],
+          servingFrequency: "monthly",
+          blockoutDates: [],
+        },
+        {
+          memberId: "available",
+          churchId: "c1",
+          firstName: "Morgan",
+          lastName: "Kay",
+          positionIds: ["position-vocal"],
+          servingFrequency: "monthly",
+          blockoutDates: [],
+        },
+      ],
+      positionId: "position-vocal",
+      assignmentQuery: "",
+      currentPrimaryMemberId: "",
+      hasPrimaryAssignee: false,
+      duplicateFirstNames,
+      getIssue: () => "",
+      recommendationStats: new Map([
+        [
+          "reached",
+          {
+            assignmentCount: 0,
+            nearestAssignmentDistance: null,
+            servingFrequencyTargetReached: true,
+          },
+        ],
+        [
+          "available",
+          {
+            assignmentCount: 3,
+            nearestAssignmentDistance: 1,
+            servingFrequencyTargetReached: false,
+          },
+        ],
+      ]),
+    });
+
+    expect(rows.map((row) => row.member.memberId)).toEqual([
+      "available",
+      "reached",
+    ]);
+  });
+
   it("prefers members spaced farther from their nearest assignment", () => {
     const rows = buildScheduleMemberPickerMembers({
       members: [

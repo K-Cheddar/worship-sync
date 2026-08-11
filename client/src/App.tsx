@@ -26,6 +26,8 @@ import WorshipSyncIcon from "./assets/WorshipSyncIconNoBg.png";
 import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
 import TeamsAccessGuard from "./components/TeamsAccessGuard";
 import { lazyRoute } from "./utils/lazyRoute";
+import { ChatProvider } from "./chat/ChatContext";
+import ChatWindowHost from "./chat/ChatWindowHost";
 
 /**
  * Route-level code splitting.
@@ -69,6 +71,9 @@ const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
 const Account = lazyRoute(() => import("./pages/Account"));
 const TeamsAndServices = lazyRoute(
   () => import("./pages/Teams/TeamsAndServices"),
+);
+const ScheduleResponsePublic = lazyRoute(
+  () => import("./pages/Teams/ScheduleResponsePublic"),
 );
 const TeamIntakePublic = lazyRoute(
   () => import("./pages/Teams/TeamIntakePublic"),
@@ -341,6 +346,10 @@ const AppRoutes = () => {
               element={<TeamIntakePublic />}
             />
             <Route
+              path="/schedule-response/:token"
+              element={<ScheduleResponsePublic />}
+            />
+            <Route
               path="/teams/schedule/:token"
               element={<TeamSchedulePublic />}
             />
@@ -468,9 +477,12 @@ const App: React.FC = () => {
         <GlobalInfoProvider>
           <FloatingWindowZIndexProvider>
             <ToastProvider>
-              <RoutePersistence />
-              <TimerManager />
-              <AppRoutes />
+              <ChatProvider>
+                <RoutePersistence />
+                <TimerManager />
+                <AppRoutes />
+                <ChatWindowHost />
+              </ChatProvider>
             </ToastProvider>
           </FloatingWindowZIndexProvider>
         </GlobalInfoProvider>

@@ -149,6 +149,34 @@ describe("getOccurrenceAssignmentSummary", () => {
     ]);
   });
 
+  it("resolves schedule-only guests and keeps roster notifications disabled", () => {
+    const rows = summaryFor([
+      schedule(
+        {
+          [occurrence.occurrenceId]: {
+            "position-keys::0": { primaryMemberId: "scheduleGuest_1" },
+          },
+        },
+        {
+          guests: [
+            {
+              guestId: "scheduleGuest_1",
+              name: "Alex Rivera",
+              email: "alex@example.com",
+            },
+          ],
+        },
+      ),
+    ]);
+
+    expect(
+      rows.find((row) => row.positionId === "position-keys"),
+    ).toMatchObject({
+      memberName: "Alex Rivera",
+      canNotify: false,
+    });
+  });
+
   it("carries the schedule and cell key so a row can deep-link into the grid", () => {
     const [row] = summaryFor([
       schedule({

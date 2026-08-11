@@ -112,6 +112,52 @@ describe("ScheduleBoardCell", () => {
     ).not.toBeInTheDocument();
   });
 
+  // Three surfaces show the same answer; if the grid said one thing and the
+  // volunteer's own page another, neither would be trusted.
+  it("marks the assignee's response, including no response", () => {
+    renderCell({ assignmentCell: { primaryMemberId: "m1" } });
+    // Pending is drawn, not blank: an empty space cannot be told apart from
+    // "this surface does not show responses".
+    expect(screen.getByRole("img", { name: /No response/i })).toBeInTheDocument();
+  });
+
+  it("distinguishes accepted from declined", () => {
+    const { unmount } = render(
+      <ScheduleBoardCell
+        {...baseProps}
+        assignmentCell={{ primaryMemberId: "m1" }}
+        assignmentResponse={{ memberId: "m1", response: "accepted" }}
+      />,
+    );
+    expect(screen.getByRole("img", { name: /Accepted/i })).toBeInTheDocument();
+    unmount();
+
+    render(
+      <ScheduleBoardCell
+        {...baseProps}
+        assignmentCell={{ primaryMemberId: "m1" }}
+        assignmentResponse={{ memberId: "m1", response: "declined" }}
+      />,
+    );
+    expect(screen.getByRole("img", { name: /Declined/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: /Accepted/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores a response left by someone who no longer holds the slot", () => {
+    renderCell({
+      assignmentCell: { primaryMemberId: "m1" },
+      assignmentResponse: { memberId: "someone-else", response: "accepted" },
+    });
+    expect(screen.getByRole("img", { name: /No response/i })).toBeInTheDocument();
+  });
+
+  it("shows no response marker on an empty slot", () => {
+    renderCell({ assignmentCell: undefined });
+    expect(screen.queryByRole("img", { name: /response/i })).not.toBeInTheDocument();
+  });
+
   it("renders shadow assignees below the primary slot", () => {
     renderCell({
       allMembers: [member(), member({ memberId: "m2", firstName: "Josh" })],

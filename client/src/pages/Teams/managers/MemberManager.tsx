@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { Plus, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import SearchableSelect from "../../../components/SearchableSelect";
@@ -71,6 +72,11 @@ import {
   memberMatchesListFilters,
 } from "../teamsSelectors";
 import type { TeamsData } from "../types";
+import {
+  DEFAULT_SERVING_FREQUENCY,
+  isMinorOnDate,
+  servingFrequencyOptions,
+} from "../memberPreferences";
 
 const NO_SELECTION_VALUE = "__none";
 
@@ -112,6 +118,8 @@ const buildMemberDraft = (
   lastName: member?.lastName || "",
   email: member?.email || "",
   dateOfBirth: member?.dateOfBirth || "",
+  isMinor: Boolean(member?.isMinor),
+  servingFrequency: member?.servingFrequency || DEFAULT_SERVING_FREQUENCY,
   positionIds: member?.positionIds || [],
   desiredPositionIds: member?.desiredPositionIds || [],
   teamIds,
@@ -175,6 +183,7 @@ const MemberManager = ({
   const [draft, setDraft] = useState<TeamRosterMemberPayload>(() =>
     buildMemberDraft(null, []),
   );
+  const derivedMinorStatus = isMinorOnDate(draft.dateOfBirth || "");
   // Members with a save currently in flight, keyed by memberId (or
   // CREATE_SAVING_KEY for a new member). Tracking per-editor keeps the Save
   // spinner on the member actually saving and lets editing continue back-to-back
@@ -582,6 +591,8 @@ const MemberManager = ({
       lastName: body.lastName.trim(),
       email: (body.email || "").trim().toLowerCase(),
       dateOfBirth: body.dateOfBirth || "",
+      isMinor: Boolean(body.isMinor),
+      servingFrequency: body.servingFrequency || DEFAULT_SERVING_FREQUENCY,
       positionIds: body.positionIds,
       desiredPositionIds: body.desiredPositionIds || [],
       teamMemberships: body.teamMemberships || {},
@@ -1120,7 +1131,53 @@ const MemberManager = ({
             ) : null}
           </div>
         ) : null}
-        <DatePicker label="Date of birth" value={draft.dateOfBirth || ""} onChange={(dateOfBirth) => setDraft((d) => ({ ...d, dateOfBirth }))} />
+        <DatePicker
+          label="Date of birth"
+          value={draft.dateOfBirth || ""}
+          onChange={(dateOfBirth) =>
+            setDraft((current) => ({
+              ...current,
+              dateOfBirth,
+              isMinor:
+                isMinorOnDate(dateOfBirth) ?? Boolean(current.isMinor),
+            }))
+          }
+        />
+        <Checkbox
+          label={(
+            <span className="flex flex-col gap-0.5">
+              <span>Minor</span>
+              <span className="text-xs text-gray-400">
+                {derivedMinorStatus === null
+                  ? "Hides their last name from generated credits."
+                  : "Set automatically from the date of birth."}
+              </span>
+            </span>
+          )}
+          checked={derivedMinorStatus ?? Boolean(draft.isMinor)}
+          disabled={derivedMinorStatus !== null}
+          onCheckedChange={(isMinor) =>
+            setDraft((current) => ({ ...current, isMinor }))
+          }
+        />
+        <div className="flex flex-col gap-1">
+          <Select
+            label="Serving preference"
+            value={draft.servingFrequency || DEFAULT_SERVING_FREQUENCY}
+            options={servingFrequencyOptions}
+            onChange={(servingFrequency) =>
+              setDraft((current) => ({
+                ...current,
+                servingFrequency:
+                  servingFrequency as TeamRosterMember["servingFrequency"],
+              }))
+            }
+          />
+          <span className="text-xs text-gray-400">
+            Used as a preference for recommendations and auto-fill, not as a
+            scheduling limit.
+          </span>
+        </div>
         <EntityMultiSelect
           label="Teams"
           description="Rosters this member belongs to. Choosing a position below adds its team automatically."

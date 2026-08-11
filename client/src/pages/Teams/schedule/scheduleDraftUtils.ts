@@ -40,7 +40,12 @@ export const buildScheduleDraft = ({
   );
 
   if (persistedDraft && !cachedDraftLooksBlank) {
-    return withClampedScheduleDates(persistedDraft);
+    return withClampedScheduleDates({
+      ...persistedDraft,
+      ...(selectedSchedule?.guests !== undefined
+        ? { guests: selectedSchedule.guests }
+        : {}),
+    });
   }
 
   if (selectedSchedule) {
@@ -53,6 +58,9 @@ export const buildScheduleDraft = ({
       serviceIds: selectedSchedule.serviceIds || [],
       occurrences: selectedSchedule.occurrences || [],
       assignments: selectedSchedule.assignments || {},
+      ...(selectedSchedule.guests !== undefined
+        ? { guests: selectedSchedule.guests }
+        : {}),
     });
   }
 
@@ -268,6 +276,7 @@ export const buildScheduleCopyDraft = ({
   serviceIds: source.serviceIds || [],
   occurrences,
   assignments: source.assignments || {},
+  guests: source.guests || [],
 });
 
 const occurrenceDate = (occurrence: TeamScheduleOccurrence) =>

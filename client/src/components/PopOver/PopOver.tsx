@@ -13,6 +13,7 @@ import { ButtonProps } from "../Button/Button";
 type PopOverProps = {
   children: React.ReactNode;
   TriggeringButton: ReactElement<ButtonProps>;
+  open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /** Merged onto the popover surface (border, background, width, etc.). */
   contentClassName?: string;
@@ -37,6 +38,7 @@ type PopOverProps = {
 const PopOver = ({
   children,
   TriggeringButton,
+  open,
   onOpenChange,
   contentClassName,
   bodyClassName,
@@ -50,7 +52,7 @@ const PopOver = ({
   onOpenAutoFocus,
 }: PopOverProps) => {
   return (
-    <Popover onOpenChange={onOpenChange}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{TriggeringButton}</PopoverTrigger>
       <PopoverContent
         align={align}

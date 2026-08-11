@@ -170,7 +170,7 @@ describe("computeOccurrenceFill", () => {
         "vocal::0": { primaryMemberId: "m1" },
         "camera::0": { primaryMemberId: "m2" },
       }),
-    ).toEqual({ filled: 2, required: 3 });
+    ).toEqual({ filled: 2, required: 3, accepted: 0, declined: 0 });
   });
 
   it("ignores columns the occurrence does not require", () => {
@@ -182,7 +182,7 @@ describe("computeOccurrenceFill", () => {
         "camera::1": { primaryMemberId: "should-not-count" },
         "vocal::0": { primaryMemberId: "should-not-count" },
       }),
-    ).toEqual({ filled: 1, required: 1 });
+    ).toEqual({ filled: 1, required: 1, accepted: 0, declined: 0 });
   });
 
   it("does not add an additional position to the fill requirement", () => {
@@ -200,7 +200,7 @@ describe("computeOccurrenceFill", () => {
         "vocal::0": { primaryMemberId: "m1" },
         "vocal::1": { primaryMemberId: "m2" },
       }),
-    ).toEqual({ filled: 1, required: 1 });
+    ).toEqual({ filled: 1, required: 1, accepted: 0, declined: 0 });
   });
 
   it("treats a slot without a primary member as unfilled", () => {
@@ -208,13 +208,59 @@ describe("computeOccurrenceFill", () => {
       computeOccurrenceFill(columns, requirementsByOccurrence.get("sun"), {
         "vocal::0": { shadows: [] },
       }),
-    ).toEqual({ filled: 0, required: 3 });
+    ).toEqual({ filled: 0, required: 3, accepted: 0, declined: 0 });
   });
 
   it("reports nothing required when the occurrence needs no positions", () => {
     expect(computeOccurrenceFill(columns, undefined, undefined)).toEqual({
       filled: 0,
       required: 0,
+      accepted: 0,
+      declined: 0,
     });
+  });
+});
+
+describe("computeOccurrenceFill with responses", () => {
+  const columns = [
+    { columnKey: "cam::0", positionId: "cam", slot: 0, label: "Camera", position: {} },
+    { columnKey: "cam::1", positionId: "cam", slot: 1, label: "Camera", position: {} },
+  ] as unknown as Parameters<typeof computeOccurrenceFill>[0];
+  const requirements = [{ positionId: "cam", count: 2 }] as PositionRequirement[];
+
+  // Before accept/decline, "assigned" and "covered" were the same thing. An
+  // owner scanning fill counts for gaps must not skip the one service where
+  // somebody has said no.
+  it("does not count a declined slot as filled", () => {
+    expect(
+      computeOccurrenceFill(
+        columns,
+        requirements,
+        { "cam::0": { primaryMemberId: "m1" }, "cam::1": { primaryMemberId: "m2" } },
+        { "cam::0": { memberId: "m1", response: "declined" } },
+      ),
+    ).toEqual({ filled: 1, required: 2, accepted: 0, declined: 1 });
+  });
+
+  it("counts a pending slot as filled and reports accepted separately", () => {
+    expect(
+      computeOccurrenceFill(
+        columns,
+        requirements,
+        { "cam::0": { primaryMemberId: "m1" }, "cam::1": { primaryMemberId: "m2" } },
+        { "cam::0": { memberId: "m1", response: "accepted" } },
+      ),
+    ).toEqual({ filled: 2, required: 2, accepted: 1, declined: 0 });
+  });
+
+  it("ignores a response from someone who no longer holds the slot", () => {
+    expect(
+      computeOccurrenceFill(
+        columns,
+        requirements,
+        { "cam::0": { primaryMemberId: "m9" } },
+        { "cam::0": { memberId: "m1", response: "declined" } },
+      ),
+    ).toEqual({ filled: 1, required: 2, accepted: 0, declined: 0 });
   });
 });

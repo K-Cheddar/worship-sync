@@ -203,13 +203,16 @@ export const getOccurrenceAssignmentSummary = ({
     if (!scheduleOccurrenceId) continue;
     scheduledTeamIds.add(schedule.teamId);
     const cells = schedule.assignments?.[scheduleOccurrenceId];
+    const guestById = new Map(
+      (schedule.guests || []).map((guest) => [guest.guestId, guest]),
+    );
     const isArchived = Boolean(schedule.archivedAt);
     if (isArchived && !cells) continue;
 
     const memberNameFor = (memberId?: string) => {
       if (!memberId) return null;
       const member = memberById.get(memberId);
-      if (!member) return null;
+      if (!member) return guestById.get(memberId)?.name || null;
       return `${member.firstName} ${member.lastName}`.trim();
     };
     // Resolved here, where the member record is already in hand — the panel
@@ -217,7 +220,7 @@ export const getOccurrenceAssignmentSummary = ({
     const canNotifyFor = (memberId?: string) => {
       if (!memberId) return null;
       const member = memberById.get(memberId);
-      if (!member) return null;
+      if (!member) return guestById.has(memberId) ? false : null;
       return canNotifyMember(member);
     };
     const rowFor = ({

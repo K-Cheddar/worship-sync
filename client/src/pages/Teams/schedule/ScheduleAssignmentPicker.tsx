@@ -17,7 +17,7 @@ import {
   PopoverAnchor,
   PopoverContent,
 } from "@/components/ui/Popover";
-import type { TeamRosterMember } from "../../../api/authTypes";
+import type { TeamRosterMember, TeamScheduleGuest } from "../../../api/authTypes";
 import type { TeamScheduleShadowKind } from "../../../api/authTypes";
 import { emptyDuplicateFirstNames } from "../teamsConstants";
 import { scheduleMemberName, shadowKindLabel } from "../teamsUtils";
@@ -39,7 +39,18 @@ type PickerMenuView =
   | "members"
   | "assignmentActions"
   | "createMember"
+  | "createGuest"
+  | "recentGuests"
   | "swapConfirmation";
+type PickerPopoverSide = "top" | "right" | "bottom" | "left";
+
+const readPopoverSide = (node: Element | null): PickerPopoverSide | null => {
+  const side = node?.getAttribute("data-side");
+  if (side === "top" || side === "right" || side === "bottom" || side === "left") {
+    return side;
+  }
+  return null;
+};
 
 export type ScheduleAssignmentSwapRecommendation = {
   swapId: string;
@@ -79,6 +90,8 @@ type ScheduleAssignmentPickerProps = {
   onAssignmentQueryChange: (query: string) => void;
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
+  currentAssigneeIsGuest?: boolean;
+  hasCurrentAssignee?: boolean;
   duplicateFirstNames?: Set<string>;
   recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   getIssue: (memberId: string) => string;
@@ -91,6 +104,10 @@ type ScheduleAssignmentPickerProps = {
     recommendation: ScheduleAssignmentSwapRecommendation,
   ) => void;
   onCreateMember?: (member: { firstName: string; lastName: string }) => Promise<void> | void;
+  recentGuests?: TeamScheduleGuest[];
+  onAssignGuest?: (
+    guest: Omit<TeamScheduleGuest, "guestId"> & { guestId?: string },
+  ) => Promise<void> | void;
   onClearAssignment?: () => void;
   /** Shadows currently on the active cell, offered for one-tap removal. */
   currentShadows?: { memberId: string; kind: TeamScheduleShadowKind; label: string }[];
@@ -118,6 +135,8 @@ const ScheduleAssignmentPicker = memo(({
   onAssignmentQueryChange,
   currentPrimaryMemberId,
   currentAssigneeLabel,
+  currentAssigneeIsGuest = false,
+  hasCurrentAssignee,
   duplicateFirstNames,
   recommendationStats,
   getIssue,
@@ -128,6 +147,8 @@ const ScheduleAssignmentPicker = memo(({
   swapRecommendations = [],
   onApplySwapRecommendation,
   onCreateMember,
+  recentGuests = [],
+  onAssignGuest,
   onClearAssignment,
   currentShadows = emptyShadows,
   onRemoveShadow,
@@ -140,11 +161,22 @@ const ScheduleAssignmentPicker = memo(({
   const anchorProxyRef = useRef<HTMLSpanElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [menuView, setMenuView] = useState<PickerMenuView>("members");
+  // Capture the first collision-aware placement, then freeze it so shorter
+  // submenu views (recent guests, create forms) do not flip the popover.
+  const [lockedSide, setLockedSide] = useState<PickerPopoverSide | null>(null);
   const [activeSubmenuMemberId, setActiveSubmenuMemberId] = useState<string | null>(null);
   const [activeSwapRecommendation, setActiveSwapRecommendation] =
     useState<ScheduleAssignmentSwapRecommendation | null>(null);
   const [createDraft, setCreateDraft] = useState({ firstName: "", lastName: "" });
+  const [guestDraft, setGuestDraft] = useState({
+    guestId: "",
+    name: "",
+    email: "",
+    phone: "",
+    note: "",
+  });
   const [creatingMember, setCreatingMember] = useState(false);
+  const [assigningGuest, setAssigningGuest] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const duplicateFirstNameKeys = duplicateFirstNames || emptyDuplicateFirstNames;
 
@@ -199,14 +231,37 @@ const ScheduleAssignmentPicker = memo(({
   useEffect(() => {
     if (!open) {
       setMenuView("members");
+      setLockedSide(null);
       setActiveSubmenuMemberId(null);
       setActiveSwapRecommendation(null);
       setHighlightedIndex(0);
       setCreateDraft({ firstName: "", lastName: "" });
+      setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
       setCreatingMember(false);
+      setAssigningGuest(false);
       return;
     }
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !anchorRect || lockedSide) return undefined;
+    let frame = 0;
+    let attempts = 0;
+    const captureSide = () => {
+      const side = readPopoverSide(
+        document.querySelector("[data-schedule-assignment-menu]"),
+      );
+      if (side) {
+        setLockedSide(side);
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 12) return;
+      frame = window.requestAnimationFrame(captureSide);
+    };
+    frame = window.requestAnimationFrame(captureSide);
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, anchorRect, lockedSide, menuView]);
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -240,6 +295,21 @@ const ScheduleAssignmentPicker = memo(({
     setMenuView("createMember");
   };
 
+  const openCreateGuest = () => {
+    setGuestDraft({
+      guestId: "",
+      name: assignmentQuery.trim(),
+      email: "",
+      phone: "",
+      note: "",
+    });
+    setMenuView("createGuest");
+  };
+
+  const openRecentGuests = () => {
+    setMenuView("recentGuests");
+  };
+
   const openSwapConfirmation = (
     recommendation: ScheduleAssignmentSwapRecommendation,
   ) => {
@@ -259,6 +329,35 @@ const ScheduleAssignmentPicker = memo(({
     } finally {
       setCreatingMember(false);
     }
+  };
+
+  const assignGuest = async (
+    guest: Omit<TeamScheduleGuest, "guestId"> & { guestId?: string },
+  ) => {
+    if (!onAssignGuest || assigningGuest) return;
+    setAssigningGuest(true);
+    try {
+      await onAssignGuest(guest);
+      resetMenuView();
+      setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
+    } catch {
+      // The parent owns the operator-facing error toast. Keep this form open so
+      // the guest details can be corrected or retried without retyping them.
+    } finally {
+      setAssigningGuest(false);
+    }
+  };
+
+  const submitCreateGuest = async () => {
+    const name = guestDraft.name.trim();
+    if (!name) return;
+    await assignGuest({
+      ...(guestDraft.guestId ? { guestId: guestDraft.guestId } : {}),
+      name,
+      ...(guestDraft.email.trim() ? { email: guestDraft.email.trim() } : {}),
+      ...(guestDraft.phone.trim() ? { phone: guestDraft.phone.trim() } : {}),
+      ...(guestDraft.note.trim() ? { note: guestDraft.note.trim() } : {}),
+    });
   };
 
   const selectableRows = positionMembers.filter((row) => row.eligible);
@@ -289,8 +388,25 @@ const ScheduleAssignmentPicker = memo(({
     swapRecommendations.length > 0 &&
     Boolean(onApplySwapRecommendation);
 
+  const currentAssigneePresent =
+    hasCurrentAssignee ?? Boolean(currentPrimaryMemberId);
+  let guestSubmitLabel = currentAssigneePresent
+    ? "Replace & assign"
+    : "Add & assign";
+  if (assigningGuest) guestSubmitLabel = "Assigning…";
+  // Guest memberIds are guestIds — skip the person already in this slot so they
+  // are not offered again under Recent guests.
+  const visibleRecentGuests = recentGuests
+    .filter((guest) => guest.guestId !== currentPrimaryMemberId)
+    .slice(0, 5);
+  const showRecentGuestsEntry =
+    menuView === "members" &&
+    !trimmedQuery &&
+    Boolean(onAssignGuest) &&
+    visibleRecentGuests.length > 0;
+
   const showClearAssignmentOption =
-    Boolean(currentPrimaryMemberId) &&
+    currentAssigneePresent &&
     !trimmedQuery &&
     menuView === "members" &&
     Boolean(onClearAssignment);
@@ -302,13 +418,15 @@ const ScheduleAssignmentPicker = memo(({
     Boolean(onRemoveShadow);
 
   const showCurrentAssigneeRow =
-    Boolean(currentPrimaryMemberId) &&
+    currentAssigneePresent &&
     menuView === "members" &&
     !pendingSubmenu;
 
   const showListContent =
     menuView === "assignmentActions" ||
     menuView === "createMember" ||
+    menuView === "createGuest" ||
+    menuView === "recentGuests" ||
     menuView === "swapConfirmation" ||
     Boolean(pendingSubmenu) ||
     selectableRows.length > 0 ||
@@ -316,7 +434,8 @@ const ScheduleAssignmentPicker = memo(({
     showCreateOption ||
     showClearAssignmentOption ||
     showClearShadowOptions ||
-    showCurrentAssigneeRow;
+    showCurrentAssigneeRow ||
+    Boolean(onAssignGuest);
 
   const pickerOpen = open && Boolean(anchorRect);
 
@@ -428,7 +547,7 @@ const ScheduleAssignmentPicker = memo(({
       event.key === "Enter" &&
       menuView === "members" &&
       !trimmedQuery &&
-      currentPrimaryMemberId &&
+      currentAssigneePresent &&
       onClearAssignment
     ) {
       event.preventDefault();
@@ -464,7 +583,9 @@ const ScheduleAssignmentPicker = memo(({
         data-schedule-assignment-menu
         role={menuView === "members" ? "listbox" : "menu"}
         align="start"
+        side={lockedSide ?? "bottom"}
         sideOffset={4}
+        avoidCollisions={!lockedSide}
         className="z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
@@ -583,6 +704,143 @@ const ScheduleAssignmentPicker = memo(({
                 </Button>
               </div>
             </form>
+          ) : menuView === "createGuest" ? (
+            <form
+              className="space-y-2 p-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitCreateGuest();
+              }}
+            >
+              <p className="px-1 text-xs font-semibold text-gray-300">Add guest</p>
+              <p className="px-1 text-xs text-gray-500">
+                This person will only appear on the schedule.
+              </p>
+              {currentAssigneePresent ? (
+                <p className="px-1 text-xs text-amber-200">
+                  This will replace {currentAssigneeLabel} in this slot.
+                </p>
+              ) : null}
+              <Input
+                autoFocus
+                hideLabel
+                label="Guest name"
+                placeholder="Name"
+                inputClassName="border-gray-700 bg-gray-950 focus:border-gray-500"
+                value={guestDraft.name}
+                onChange={(value) =>
+                  setGuestDraft((draft) => ({ ...draft, name: String(value) }))
+                }
+              />
+              <Input
+                hideLabel
+                label="Guest email"
+                placeholder="Email (optional)"
+                inputClassName="border-gray-700 bg-gray-950 focus:border-gray-500"
+                value={guestDraft.email}
+                onChange={(value) =>
+                  setGuestDraft((draft) => ({ ...draft, email: String(value) }))
+                }
+              />
+              <Input
+                hideLabel
+                label="Guest phone"
+                placeholder="Phone (optional)"
+                inputClassName="border-gray-700 bg-gray-950 focus:border-gray-500"
+                value={guestDraft.phone}
+                onChange={(value) =>
+                  setGuestDraft((draft) => ({ ...draft, phone: String(value) }))
+                }
+              />
+              <Input
+                hideLabel
+                label="Guest note"
+                placeholder="Note (optional)"
+                inputClassName="border-gray-700 bg-gray-950 focus:border-gray-500"
+                value={guestDraft.note}
+                onChange={(value) =>
+                  setGuestDraft((draft) => ({ ...draft, note: String(value) }))
+                }
+              />
+              {positionName ? (
+                <p className="px-1 text-xs text-gray-500">Position: {positionName}</p>
+              ) : null}
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  padding="px-2 py-1"
+                  className="text-xs"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    resetMenuView();
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  padding="px-3 py-1"
+                  className="text-xs"
+                  disabled={!guestDraft.name.trim() || assigningGuest}
+                  isLoading={assigningGuest}
+                >
+                  {guestSubmitLabel}
+                </Button>
+              </div>
+            </form>
+          ) : menuView === "recentGuests" ? (
+            <div className="p-1">
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={ChevronLeft}
+                iconSize="sm"
+                padding="px-2 py-1"
+                className="mb-1 text-xs"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  resetMenuView();
+                }}
+              >
+                Back
+              </Button>
+              <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-violet-200">
+                Recent guests
+              </p>
+              {visibleRecentGuests.map((guest) => (
+                <button
+                  key={guest.guestId}
+                  type="button"
+                  role="menuitem"
+                  disabled={assigningGuest}
+                  className="flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    if (currentAssigneePresent) {
+                      setGuestDraft({
+                        guestId: guest.guestId,
+                        name: guest.name,
+                        email: guest.email || "",
+                        phone: guest.phone || "",
+                        note: guest.note || "",
+                      });
+                      setMenuView("createGuest");
+                      return;
+                    }
+                    void assignGuest(guest);
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {guest.name}
+                  </span>
+                  <span className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
+                    Guest
+                  </span>
+                </button>
+              ))}
+            </div>
           ) : menuView === "swapConfirmation" && activeSwapRecommendation ? (
             <div className="space-y-3 p-2">
               <Button
@@ -657,9 +915,16 @@ const ScheduleAssignmentPicker = memo(({
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-300/90">
                         Current assignee
                       </p>
-                      <p className="mt-0.5 wrap-break-word text-sm font-semibold text-white">
-                        {currentAssigneeLabel}
-                      </p>
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        <p className="wrap-break-word text-sm font-semibold text-white">
+                          {currentAssigneeLabel}
+                        </p>
+                        {currentAssigneeIsGuest ? (
+                          <span className="rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
+                            Guest
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
                   {showClearAssignmentOption ? (
@@ -798,6 +1063,49 @@ const ScheduleAssignmentPicker = memo(({
                         }}
                       >
                         Add “{trimmedQuery}” to the team
+                      </Button>
+                    </div>
+                  ) : null}
+                  {onAssignGuest ? (
+                    <div
+                      className={cn(
+                        "px-1 pb-1 pt-1",
+                        (selectableRows.length > 0 ||
+                          showSwapRecommendations ||
+                          showCreateOption) &&
+                        "mt-1 border-t border-gray-800",
+                      )}
+                    >
+                      {showRecentGuestsEntry ? (
+                        <button
+                          type="button"
+                          className="flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-violet-200 hover:bg-gray-800"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            openRecentGuests();
+                          }}
+                        >
+                          <span className="min-w-0 flex-1 truncate">Recent guests</span>
+                          <ChevronRight
+                            className="h-4 w-4 shrink-0 text-violet-300/80"
+                            aria-hidden
+                          />
+                        </button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={Plus}
+                        iconSize="sm"
+                        color="#c4b5fd"
+                        padding="px-2 py-1"
+                        className="w-full justify-start text-sm font-medium text-violet-200 hover:bg-gray-800"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          openCreateGuest();
+                        }}
+                      >
+                        Add guest
                       </Button>
                     </div>
                   ) : null}
