@@ -1,3 +1,4 @@
+import { getBrowserDisplayLabel, getBrowserFamily } from "./browserFamily";
 import { isElectron } from "./environment";
 
 const normalizePlatform = (platform: string, userAgent: string) => {
@@ -9,17 +10,6 @@ const normalizePlatform = (platform: string, userAgent: string) => {
   return "This device";
 };
 
-const detectBrowser = (userAgent: string) => {
-  if (/edg\//i.test(userAgent)) return "Edge";
-  if (/opr\//i.test(userAgent) || /opera/i.test(userAgent)) return "Opera";
-  if (/firefox\//i.test(userAgent)) return "Firefox";
-  if (/chrome\//i.test(userAgent)) return "Chrome";
-  if (/safari\//i.test(userAgent) && !/chrome\//i.test(userAgent)) {
-    return "Safari";
-  }
-  return "";
-};
-
 export const getTrustedDeviceLabel = () => {
   if (typeof navigator === "undefined") {
     return "Trusted device";
@@ -28,7 +18,7 @@ export const getTrustedDeviceLabel = () => {
   if (isElectron()) {
     return `Electron on ${platform}`;
   }
-  const browser = detectBrowser(navigator.userAgent);
+  const browser = getBrowserDisplayLabel(getBrowserFamily(navigator.userAgent));
   return browser ? `${browser} on ${platform}` : `${platform} device`;
 };
 

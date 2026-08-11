@@ -16,6 +16,8 @@ import Icon from "../Icon/Icon";
 export type SectionTabItem<T extends string = string> = {
   value: T;
   label: string;
+  /** Optional trailing status, such as an unread count. */
+  badge?: React.ReactNode;
   /** Optional leading icon shown beside the label. */
   icon?: FunctionComponent<SVGProps<SVGSVGElement>>;
   description?: string;
@@ -118,6 +120,7 @@ export function SectionTabs<T extends string>({
                 />
               ) : null}
               {item.label}
+              {item.badge}
             </TabsTrigger>
           ))}
         </TabsList>

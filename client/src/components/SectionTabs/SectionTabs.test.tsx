@@ -95,4 +95,23 @@ describe("SectionTabs", () => {
 
     expect(screen.getByRole("tab", { name: /^Plans$/i })).toBeInTheDocument();
   });
+
+  it("renders a trailing status badge in a tab trigger", () => {
+    render(
+      <SectionTabs
+        items={[
+          {
+            value: "chat",
+            label: "Chat",
+            badge: <span aria-label="3 unread chat messages">3</span>,
+            content: <div>Chat content</div>,
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("tab", { name: /Chat 3 unread chat messages/i }),
+    ).toBeInTheDocument();
+  });
 });

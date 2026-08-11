@@ -37,7 +37,9 @@ import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
 import { isElectron } from "../utils/environment";
-import { getAppOs, isIosBrowser, isMobileBrowser } from "../utils/platform";
+import { getBrowserFamily } from "../utils/browserFamily";
+import { getAppOs, isMobileBrowser } from "../utils/platform";
+import { getPwaInstallGuidance } from "../utils/pwaInstallGuidance";
 import { isMemberOnlyAccess, isViewOnlyAccess } from "../utils/accessTiers";
 import {
   fetchLatestLinuxInstallerUrl,
@@ -372,7 +374,14 @@ const Welcome = () => {
   const [mobileInstallHelpDialogOpen, setMobileInstallHelpDialogOpen] =
     useState(false);
   const isMobileWeb = useMemo(() => isWeb && isMobileBrowser(), [isWeb]);
-  const isiOSWeb = useMemo(() => isWeb && isIosBrowser(), [isWeb]);
+  const mobileInstallGuidance = useMemo(
+    () =>
+      getPwaInstallGuidance({
+        os: getAppOs(),
+        browser: getBrowserFamily(),
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (isElectron() || !desktopOs) return;
@@ -697,27 +706,21 @@ const Welcome = () => {
           aria-label="Mobile install instructions"
         >
           <DialogHeader>
-            <DialogTitle className="text-white">Install WorshipSync</DialogTitle>
+            <DialogTitle className="text-white">
+              {mobileInstallGuidance.title}
+            </DialogTitle>
           </DialogHeader>
-          {isiOSWeb ? (
-            <p className="text-sm text-gray-200">
-              On iPhone and iPad, open Safari&apos;s Share menu, then choose
-              {" "}
-              <span className="font-semibold text-white">Add to Home Screen</span>
-              .
-            </p>
-          ) : (
-            <p className="text-sm text-gray-200">
-              Open your browser menu and choose
-              {" "}
-              <span className="font-semibold text-white">Install app</span>
-              {" "}
-              or
-              {" "}
-              <span className="font-semibold text-white">Add to Home screen</span>
-              .
-            </p>
-          )}
+          <p className="text-sm text-gray-200">
+            {mobileInstallGuidance.segments.map((segment, index) =>
+              segment.type === "emphasis" ? (
+                <span key={index} className="font-semibold text-white">
+                  {segment.value}
+                </span>
+              ) : (
+                <span key={index}>{segment.value}</span>
+              ),
+            )}
+          </p>
         </DialogContent>
       </Dialog>
     </main>

@@ -9,6 +9,7 @@ import React, {
 import { createPortal } from "react-dom";
 import ToastContainer, { ToastData } from "../components/Toast/ToastContainer";
 import { ToastPosition, ToastVariant } from "../components/Toast/Toast";
+import { appendToast } from "../components/Toast/toastQueue";
 import { registerAuthErrorHandler } from "../api/authErrorBus";
 import { showAuthErrorToast } from "../utils/apiErrorToast";
 
@@ -65,7 +66,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
         };
       }
 
-      setToasts((prev) => [...prev, toastData]);
+      setToasts((prev) => appendToast(prev, toastData));
       return toastData.id;
     },
     []

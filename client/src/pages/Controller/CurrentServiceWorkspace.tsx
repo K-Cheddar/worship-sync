@@ -76,6 +76,18 @@ type WorkspaceTab = "plan" | "serving" | "displays" | "credits" | "chat";
 type AssignmentsStatus = "ready" | "loading" | "unavailable";
 type PreviewTab = "serving" | "displays" | "credits" | "chat";
 
+const ChatUnreadBadge = ({ count }: { count: number }) => {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="min-w-5 rounded-full bg-cyan-400 px-1.5 py-0.5 text-center text-[10px] font-bold leading-none tabular-nums text-gray-950"
+      aria-label={`${count} unread chat ${count === 1 ? "message" : "messages"}`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+};
+
 type ServiceHeadingProps = {
   service?: ServiceTime | null;
   serviceTimeText?: string | null;
@@ -205,6 +217,8 @@ const PreviewPanel = ({
   churchId,
   youtubeConnected,
   youtubeAccountLabel,
+  chatUnreadCount,
+  onChatUnreadCountChange,
   showToast,
 }: {
   credits: CreditsInfo[];
@@ -221,6 +235,8 @@ const PreviewPanel = ({
   churchId: string;
   youtubeConnected: boolean;
   youtubeAccountLabel: string;
+  chatUnreadCount: number;
+  onChatUnreadCountChange: (count: number) => void;
   showToast: (message: string, variant: "success" | "error") => void;
 }) => (
   <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
@@ -247,6 +263,9 @@ const PreviewPanel = ({
             </TabsTrigger>
             <TabsTrigger value="chat" className={lineTabsTriggerSmClassName}>
               Chat
+              {value !== "chat" ? (
+                <ChatUnreadBadge count={chatUnreadCount} />
+              ) : null}
             </TabsTrigger>
           </TabsList>
           {value === "displays" ? (
@@ -288,6 +307,8 @@ const PreviewPanel = ({
             churchId={churchId}
             youtubeConnected={youtubeConnected}
             youtubeAccountLabel={youtubeAccountLabel}
+            isVisible={value === "chat"}
+            onUnreadCountChange={onChatUnreadCountChange}
             showToast={showToast}
           />
         </div>
@@ -321,6 +342,7 @@ const CurrentServiceWorkspace = () => {
   const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [tab, setTab] = useState<WorkspaceTab>("plan");
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [rolePositions, setRolePositions] = useState<TeamPosition[]>([]);
   const [roleTeams, setRoleTeams] = useState<TeamRecord[]>([]);
   const [roleMembers, setRoleMembers] = useState<TeamRosterMember[]>([]);
@@ -349,6 +371,10 @@ const CurrentServiceWorkspace = () => {
   useEffect(() => {
     setIsMobile?.(!isDesktop);
   }, [isDesktop, setIsMobile]);
+
+  useEffect(() => {
+    setChatUnreadCount(0);
+  }, [churchId]);
 
   useEffect(() => {
     if (!churchId || !canViewTeams || loginState === "guest") {
@@ -720,6 +746,10 @@ const CurrentServiceWorkspace = () => {
             {
               value: "chat",
               label: "Chat",
+              badge:
+                tab !== "chat" ? (
+                  <ChatUnreadBadge count={chatUnreadCount} />
+                ) : null,
               content: (
                 <CurrentServiceRestreamPanel
                   churchId={churchId || ""}
@@ -730,6 +760,8 @@ const CurrentServiceWorkspace = () => {
                   youtubeAccountLabel={
                     churchIntegrations?.youtube?.accountLabel || ""
                   }
+                  isVisible={tab === "chat"}
+                  onUnreadCountChange={setChatUnreadCount}
                   showToast={showToast}
                 />
               ),
@@ -764,6 +796,8 @@ const CurrentServiceWorkspace = () => {
           youtubeAccountLabel={
             churchIntegrations?.youtube?.accountLabel || ""
           }
+          chatUnreadCount={chatUnreadCount}
+          onChatUnreadCountChange={setChatUnreadCount}
           showToast={showToast}
         />
       </div>
