@@ -7,6 +7,11 @@ process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT = "1";
 process.env.FIREBASE_PROJECT_ID = "";
 process.env.FIREBASE_CLIENT_EMAIL = "";
 process.env.FIREBASE_PRIVATE_KEY = "";
+// Same treatment for Resend, and for the same reason: with a developer's real
+// key loaded from .env this suite makes live API calls to a third party — slow,
+// flaky, and capable of actually mailing someone. Blank means `sendEmail` logs
+// instead of sending, which is what a test should exercise.
+process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -1042,6 +1047,140 @@ test("schedule assignments fall back to one slot when occurrence requirements ar
   );
   assert.equal(optionalSlot.statusCode, 400);
   assert.match(optionalSlot.payload.errorMessage, /add this position/i);
+});
+
+test("schedule assignments support schedule-only guests without exposing contact details", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("guest_assignments");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }, { name: "Slides" }],
+  });
+  const occurrenceId = "service-main@2026-08-16T14:00:00.000Z";
+  const scheduleRes = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August Production",
+      teamId,
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      serviceIds: ["service-main"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-main",
+          name: "Sunday",
+          startsAt: "2026-08-16T14:00:00.000Z",
+          positionRequirements: [
+            { positionId: positionIds.Camera, count: 1 },
+            { positionId: positionIds.Slides, count: 1 },
+          ],
+        },
+      ],
+    },
+  });
+  const scheduleId = scheduleRes.payload.schedule.scheduleId;
+
+  const assigned = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Camera}::0`,
+      memberId: null,
+      serviceDate: "2026-08-16",
+      guest: {
+        name: "Jordan Avery",
+        email: "jordan@example.com",
+        phone: "555-0100",
+        note: "Visiting camera operator",
+      },
+    },
+  });
+  assert.equal(assigned.statusCode, 200);
+  const guest = assigned.payload.schedule.guests[0];
+  assert.match(guest.guestId, /^scheduleGuest_/);
+  assert.equal(guest.name, "Jordan Avery");
+  assert.equal(guest.email, "jordan@example.com");
+  assert.equal(
+    getMemberId(
+      assigned.payload.schedule.assignments[occurrenceId][
+        `${positionIds.Camera}::0`
+      ],
+    ),
+    guest.guestId,
+  );
+
+  const guestShadow = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionIds.Slides}::0`,
+        memberId: guest.guestId,
+        serviceDate: "2026-08-16",
+        shadowAction: "add",
+        shadowKind: "shadow",
+      },
+    },
+  );
+  assert.equal(guestShadow.statusCode, 400);
+  assert.match(
+    guestShadow.payload.errorMessage,
+    /Guests can only fill the primary assignment/i,
+  );
+
+  // Backward compatibility: a client released before guest catalogs existed
+  // can still edit the schedule without silently orphaning this assignment.
+  const legacyUpdate = await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId },
+    body: {
+      name: assigned.payload.schedule.name,
+      teamId,
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      serviceIds: ["service-main"],
+      occurrences: assigned.payload.schedule.occurrences,
+      assignments: assigned.payload.schedule.assignments,
+    },
+  });
+  assert.equal(legacyUpdate.statusCode, 200);
+  assert.equal(legacyUpdate.payload.schedule.guests[0].guestId, guest.guestId);
+
+  const duplicate = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Slides}::0`,
+      memberId: guest.guestId,
+      serviceDate: "2026-08-16",
+    },
+  });
+  assert.equal(duplicate.statusCode, 400);
+  assert.match(duplicate.payload.errorMessage, /one position per service/i);
+
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId },
+  });
+  const publicSchedule = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+  assert.equal(publicSchedule.statusCode, 200);
+  assert.deepEqual(
+    publicSchedule.payload.members.find(
+      (person) => person.memberId === guest.guestId,
+    ),
+    { memberId: guest.guestId, name: "Jordan", guest: true },
+  );
+  assert.equal("guests" in publicSchedule.payload.schedule, false);
+  assert.equal(JSON.stringify(publicSchedule.payload).includes("jordan@example.com"), false);
+  assert.equal(JSON.stringify(publicSchedule.payload).includes("555-0100"), false);
 });
 
 test("schedule assignments require confirmation for cross-team service conflicts", async (t) => {
@@ -2484,6 +2623,79 @@ test("creating a member with team positions adds them to those teams' rosters", 
   );
   // Positions are team-scoped, so eligibility implies roster membership.
   assert.ok(team.memberIds.includes(memberId));
+});
+
+test("member privacy and serving preferences are validated and birth dates are authoritative", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_preferences");
+  const currentYear = new Date().getUTCFullYear();
+
+  const minor = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Young",
+      lastName: "Person",
+      dateOfBirth: `${currentYear - 10}-01-01`,
+      isMinor: false,
+      servingFrequency: "monthly",
+      positionIds: [],
+    },
+  });
+  assert.equal(minor.statusCode, 200);
+  assert.equal(minor.payload.member.isMinor, true);
+  assert.equal(minor.payload.member.servingFrequency, "monthly");
+
+  const adult = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Adult",
+      lastName: "Person",
+      dateOfBirth: `${currentYear - 30}-01-01`,
+      isMinor: true,
+      servingFrequency: "weekly",
+      positionIds: [],
+    },
+  });
+  assert.equal(adult.statusCode, 200);
+  assert.equal(adult.payload.member.isMinor, false);
+
+  const manual = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Manual",
+      lastName: "Minor",
+      isMinor: true,
+      positionIds: [],
+    },
+  });
+  assert.equal(manual.statusCode, 200);
+  assert.equal(manual.payload.member.isMinor, true);
+  assert.equal(manual.payload.member.servingFrequency, "as_needed");
+
+  const invalidFrequency = await callHandler(
+    authHandlers.createTeamRosterMember,
+    {
+      context,
+      body: {
+        firstName: "Invalid",
+        lastName: "Preference",
+        servingFrequency: "occasionally",
+        positionIds: [],
+      },
+    },
+  );
+  assert.equal(invalidFrequency.statusCode, 400);
+
+  const invalidMinor = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Invalid",
+      lastName: "Minor",
+      isMinor: "yes",
+      positionIds: [],
+    },
+  });
+  assert.equal(invalidMinor.statusCode, 400);
 });
 
 test("adding a team position to an existing member joins that team's roster", async (t) => {
@@ -5102,6 +5314,13 @@ test("my assignments includes occurrence name and published plan share urls", as
   );
 });
 
+// The self-service blockout write requires an `expectedUpdatedAt` precondition,
+// so every save has to start from the record's current write stamp.
+const currentMemberStamp = async (context) => {
+  const res = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  return res.payload.member?.updatedAt || "";
+};
+
 test("my blockout dates writes only the caller's own record", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("my_blockouts_self");
@@ -5128,6 +5347,7 @@ test("my blockout dates writes only the caller's own record", async (t) => {
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
       blockoutDates: [
         { startDate: "2026-09-06", endDate: "2026-09-13", notes: "Away" },
       ],
@@ -5166,6 +5386,7 @@ test("my blockout dates ignores a memberId supplied by the caller", async (t) =>
     params: { memberId: theirs.payload.member.memberId },
     body: {
       memberId: theirs.payload.member.memberId,
+      expectedUpdatedAt: await currentMemberStamp(context),
       blockoutDates: [{ startDate: "2026-09-06", endDate: "2026-09-06" }],
     },
   });
@@ -5238,6 +5459,7 @@ test("my blockout dates accepts a date the member is already scheduled for", asy
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
       blockoutDates: [{ startDate: "2026-09-06", endDate: "2026-09-06" }],
     },
   });
@@ -5309,14 +5531,20 @@ test("my blockout dates bounds upcoming entries without counting expired ones", 
   const withHistory = [...entries(200, -200), ...entries(100, 1)];
   const accepted = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
-    body: { blockoutDates: withHistory },
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: withHistory,
+    },
   });
   assert.equal(accepted.statusCode, 200);
   assert.equal(accepted.payload.member.blockoutDates.length, 300);
 
   const tooManyUpcoming = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
-    body: { blockoutDates: entries(101, 1) },
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: entries(101, 1),
+    },
   });
   assert.equal(tooManyUpcoming.statusCode, 400);
   assert.match(
@@ -5330,6 +5558,7 @@ test("my blockout dates bounds upcoming entries without counting expired ones", 
   const tooLarge = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
       blockoutDates: Array.from({ length: 401 }, () => ({
         startDate: sameDay,
         endDate: sameDay,
@@ -5338,6 +5567,103 @@ test("my blockout dates bounds upcoming entries without counting expired ones", 
   });
   assert.equal(tooLarge.statusCode, 400);
   assert.match(tooLarge.payload.errorMessage, /too many blockout entries/);
+});
+
+test("my blockout dates rejects a save built on a stale record", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_conflict_guard");
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Concurrent", lastName: "Editor" },
+  });
+  const memberId = mine.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+
+  const loaded = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  const staleUpdatedAt = loaded.payload.member.updatedAt;
+  assert.ok(staleUpdatedAt, "the member record should carry a write stamp");
+
+  // `updatedAt` is millisecond-granular, so under a loaded full-suite run the
+  // admin edit can land in the same millisecond as the read above and produce
+  // an identical stamp. Wait past the tick so the test exercises a genuinely
+  // moved record rather than passing or failing on scheduling luck.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  // Something else edits the record — an admin on the roster screen.
+  const adminEdit = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: {
+      firstName: "Concurrent",
+      lastName: "Editor",
+      blockoutDates: [{ startDate: "2099-07-04", endDate: "2099-07-04" }],
+    },
+  });
+  assert.equal(adminEdit.statusCode, 200);
+  assert.notEqual(
+    adminEdit.payload.member.updatedAt,
+    staleUpdatedAt,
+    "the admin edit must move the write stamp for this test to mean anything",
+  );
+
+  // The member saves a page loaded before that edit. Without the precondition
+  // this silently discards the admin's change.
+  const stale = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: staleUpdatedAt,
+      blockoutDates: [{ startDate: "2099-08-01", endDate: "2099-08-01" }],
+    },
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.match(stale.payload.errorMessage, /changed somewhere else/i);
+
+  // The admin's edit is still there.
+  const afterConflict = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  assert.deepEqual(
+    afterConflict.payload.member.blockoutDates.map((r) => r.startDate),
+    ["2099-07-04"],
+  );
+
+  // Reloading and saving again succeeds.
+  const retry = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: afterConflict.payload.member.updatedAt,
+      blockoutDates: [{ startDate: "2099-08-01", endDate: "2099-08-01" }],
+    },
+  });
+  assert.equal(retry.statusCode, 200);
+});
+
+test("my blockout dates refuses a write with no precondition", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_no_precondition");
+
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "No", lastName: "Stamp" },
+  });
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: mine.payload.member.memberId },
+  });
+
+  const res = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: { blockoutDates: [] },
+  });
+
+  // Required, not advisory — an omitted stamp is the same lost-update risk.
+  assert.equal(res.statusCode, 409);
 });
 
 test("my blockout dates prunes history past the retention window", async (t) => {
@@ -5365,6 +5691,7 @@ test("my blockout dates prunes history past the retention window", async (t) => 
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
       blockoutDates: [
         { startDate: ancient, endDate: ancient, notes: "Two years ago" },
         { startDate: recent, endDate: recent, notes: "Last month" },
@@ -5413,4 +5740,660 @@ test("schedule-only access cannot retain teams or services permissions", async (
   assert.equal(narrowedBootstrap.statusCode, 200);
   assert.equal(narrowedBootstrap.payload.permissions.teams, "none");
   assert.equal(narrowedBootstrap.payload.permissions.services, "none");
+});
+
+const seedAssignedSchedule = async (
+  context,
+  suffix,
+  { link = true, cameraSlots = 1 } = {},
+) => {
+  const media = await seedTeam(context, {
+    teamName: `Media ${suffix}`,
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Res",
+      lastName: "Ponder",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  const memberId = mine.payload.member.memberId;
+  // Linking is what makes the member reachable via the caller's account email,
+  // so tests about *unreachable* people have to opt out of it.
+  if (link) {
+    await callHandler(authHandlers.linkTeamRosterMember, {
+      context,
+      params: { memberId },
+    });
+  }
+  const occurrenceId = `svc-${suffix}@2026-09-06`;
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Respond schedule",
+      teamId: media.teamId,
+      serviceIds: [`svc-${suffix}`],
+      startDate: "2026-09-06",
+      endDate: "2026-09-06",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: `svc-${suffix}`,
+          serviceIds: [`svc-${suffix}`],
+          name: "Sunday Gathering",
+          startsAt: "2026-09-06T14:00:00.000Z",
+          positionRequirements: [
+            { positionId: media.positionIds.Camera, count: cameraSlots },
+          ],
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  const cellKey = `${media.positionIds.Camera}::0`;
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: { serviceId: occurrenceId, positionSlotKey: cellKey, memberId },
+  });
+  return { memberId, scheduleId, occurrenceId, cellKey, media };
+};
+
+test("responding records the answer and leaves the assignment in place", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_ok");
+  const { memberId, scheduleId, occurrenceId, cellKey } =
+    await seedAssignedSchedule(context, "ok");
+
+  const res = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: { scheduleId, occurrenceId, cellKey, response: "declined" },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.response, "declined");
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const saved = (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+  // Declining must never empty the slot: the owner decides who covers it, and
+  // a slot silently clearing itself is how a service ends up short.
+  const cell = saved.assignments[occurrenceId][cellKey];
+  assert.equal(
+    typeof cell === "string" ? cell : cell.primaryMemberId,
+    memberId,
+  );
+  assert.equal(saved.responses[occurrenceId][cellKey].response, "declined");
+  assert.equal(saved.responses[occurrenceId][cellKey].memberId, memberId);
+
+  const mine = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  const own = mine.payload.occurrences[0].serving.find((p) => p.isMe);
+  assert.equal(own.response, "declined");
+});
+
+test("responding refuses a slot the caller does not hold", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_other");
+  const { scheduleId, occurrenceId, cellKey, media } =
+    await seedAssignedSchedule(context, "other");
+
+  // An owner moves the slot to someone else after the page was loaded.
+  const other = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Some",
+      lastName: "One",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: cellKey,
+      memberId: other.payload.member.memberId,
+    },
+  });
+
+  const res = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: { scheduleId, occurrenceId, cellKey, response: "accepted" },
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.payload.success, false);
+});
+
+test("responding rejects a missing answer and a foreign church", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_guards");
+  const { scheduleId, occurrenceId, cellKey } = await seedAssignedSchedule(
+    context,
+    "guards",
+  );
+
+  const noAnswer = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: { scheduleId, occurrenceId, cellKey, response: "maybe" },
+  });
+  assert.equal(noAnswer.statusCode, 400);
+
+  const crossChurch = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    params: { churchId: "some_other_church" },
+    body: { scheduleId, occurrenceId, cellKey, response: "accepted" },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+});
+
+test("an emailed token answers one assignment without any session", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_token");
+  const { memberId, scheduleId, occurrenceId, cellKey } =
+    await seedAssignedSchedule(context, "token");
+
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId,
+  });
+  const token = decodeURIComponent(url.split("/schedule-response/")[1]);
+
+  // No context headers and no session: this is the whole point of the path.
+  const res = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    body: { token, response: "accepted" },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.response, "accepted");
+  // Comes back with the reader's own slots so the page can show what it just
+  // answered — never the roster or anyone else's response.
+  assert.equal(res.payload.applied, 1);
+  assert.equal(res.payload.assignments[0].serviceName, "Sunday Gathering");
+  assert.equal(res.payload.assignments[0].response, "accepted");
+  assert.equal(res.payload.serving, undefined);
+  assert.equal(res.payload.members, undefined);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const saved = (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+  assert.equal(saved.responses[occurrenceId][cellKey].response, "accepted");
+  assert.equal(saved.responses[occurrenceId][cellKey].memberId, memberId);
+});
+
+test("a tampered or unsigned token is refused", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_token_bad");
+  const { memberId, scheduleId, occurrenceId, cellKey } =
+    await seedAssignedSchedule(context, "tokenbad");
+
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId,
+  });
+  const token = decodeURIComponent(url.split("/schedule-response/")[1]);
+  const anonymous = { churchId: context.churchId, headers: {}, session: {} };
+
+  // Repointing the token at another member must not work.
+  const parts = token.split(".");
+  parts[2] = Buffer.from("someone-else").toString("base64url");
+  const tampered = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: { token: parts.join("."), response: "accepted" },
+  });
+  assert.equal(tampered.statusCode, 404);
+
+  const garbage = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: { token: "nope", response: "accepted" },
+  });
+  assert.equal(garbage.statusCode, 404);
+
+  const noAnswer = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: { token, response: "" },
+  });
+  assert.equal(noAnswer.statusCode, 400);
+
+  // Nothing was written by any of the rejected attempts.
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const saved = (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+  assert.equal(saved.responses?.[occurrenceId]?.[cellKey], undefined);
+});
+
+test("an emailed token stops working once the slot moves on", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_token_moved");
+  const { memberId, scheduleId, occurrenceId, cellKey, media } =
+    await seedAssignedSchedule(context, "tokenmoved");
+
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId,
+  });
+  const token = decodeURIComponent(url.split("/schedule-response/")[1]);
+
+  const other = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Re",
+      lastName: "Assigned",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: cellKey,
+      memberId: other.payload.member.memberId,
+    },
+  });
+
+  const res = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    body: { token, response: "declined" },
+  });
+
+  // An old link must not write an answer about a slot someone else now holds.
+  assert.equal(res.statusCode, 409);
+});
+
+test("sending a schedule notifies once and is idempotent", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("send_sched");
+  const { memberId, scheduleId, occurrenceId } = await seedAssignedSchedule(
+    context,
+    "send",
+  );
+  // Reachable via the roster address; no linked account needed.
+  await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: { firstName: "Res", lastName: "Ponder", email: "vol@church.test" },
+  });
+
+  const first = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.payload.notified, 1);
+  assert.ok(first.payload.sentAt, "sending records when it happened");
+  assert.deepEqual(first.payload.unreachableMemberIds, []);
+
+  // Pressing send again must not re-mail anyone.
+  const second = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(second.statusCode, 200);
+  assert.equal(second.payload.notified, 0);
+  assert.equal(second.payload.alreadyNotified, 1);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const saved = (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+  assert.ok(saved.sentAt);
+  assert.ok(occurrenceId);
+});
+
+test("sending reports who could not be reached instead of skipping quietly", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("send_unreachable");
+  // No email and no linked account — the common shape for a volunteer added
+  // straight to the roster.
+  const { memberId: strandedId, scheduleId } = await seedAssignedSchedule(
+    context,
+    "unreach",
+    { link: false },
+  );
+
+  const res = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+
+  assert.equal(res.statusCode, 200);
+  // The dangerous failure is an owner assuming everyone was told, so the
+  // people who could not be reached come back by id rather than being skipped.
+  assert.deepEqual(res.payload.unreachableMemberIds, [strandedId]);
+});
+
+test("sending skips someone who muted schedule assignments", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("send_muted");
+  const { memberId, scheduleId } = await seedAssignedSchedule(
+    context,
+    "muted",
+  );
+  // Link the roster member to the calling account, then mute the category.
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  const muted = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: [],
+    },
+  });
+  assert.equal(muted.statusCode, 200);
+
+  const res = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+
+  // The account has an address, so this is a preference decision, not a
+  // reachability one — it must not show up as "could not reach".
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.payload.unreachableMemberIds, []);
+});
+
+test("one emailed link shows every service and can answer them all", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_all");
+  const { memberId, scheduleId, occurrenceId, cellKey, media } =
+    await seedAssignedSchedule(context, "all");
+
+  // A second service on the same schedule, same person.
+  const secondOccurrence = "svc-all-2@2026-09-13";
+  await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId },
+    body: {
+      name: "Respond schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-all", "svc-all-2"],
+      startDate: "2026-09-06",
+      endDate: "2026-09-13",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc-all",
+          serviceIds: ["svc-all"],
+          name: "Sunday Gathering",
+          startsAt: "2026-09-06T14:00:00.000Z",
+        },
+        {
+          occurrenceId: secondOccurrence,
+          serviceId: "svc-all-2",
+          serviceIds: ["svc-all-2"],
+          name: "Evening Service",
+          startsAt: "2026-09-13T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+  // Editing the schedule's occurrences clears assignments, so both slots are
+  // (re)assigned after the reshape.
+  for (const serviceId of [occurrenceId, secondOccurrence]) {
+    await callHandler(authHandlers.updateTeamScheduleAssignment, {
+      context,
+      params: { scheduleId },
+      body: { serviceId, positionSlotKey: cellKey, memberId },
+    });
+  }
+
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId,
+  });
+  const token = decodeURIComponent(url.split("/schedule-response/")[1]);
+  const anonymous = { churchId: context.churchId, headers: {}, session: {} };
+
+  // The page can name what it is asking about — the first version could not.
+  const context_ = await callHandler(
+    authHandlers.getAssignmentResponseContext,
+    { context: anonymous, query: { token } },
+  );
+  assert.equal(context_.statusCode, 200);
+  assert.deepEqual(
+    context_.payload.assignments.map((slot) => slot.serviceName),
+    ["Sunday Gathering", "Evening Service"],
+  );
+  assert.equal(context_.payload.assignments[0].response, "pending");
+
+  // Omitting the slot answers every one of them at once.
+  const all = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: { token, response: "accepted" },
+  });
+  assert.equal(all.statusCode, 200);
+  assert.equal(all.payload.applied, 2);
+  assert.deepEqual(
+    all.payload.assignments.map((slot) => slot.response),
+    ["accepted", "accepted"],
+  );
+
+  // And a single slot can still be answered on its own.
+  const one = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: {
+      token,
+      response: "declined",
+      occurrenceId: secondOccurrence,
+      cellKey,
+    },
+  });
+  assert.equal(one.payload.applied, 1);
+  assert.deepEqual(
+    one.payload.assignments.map((slot) => slot.response),
+    ["accepted", "declined"],
+  );
+});
+
+test("clearing a slot drops the answer that was about it", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("prune_stale");
+  const { memberId, scheduleId, occurrenceId, cellKey } =
+    await seedAssignedSchedule(context, "prune");
+
+  await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: { scheduleId, occurrenceId, cellKey, response: "declined" },
+  });
+
+  // Owner clears the slot, then puts the same person back on it.
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: { serviceId: occurrenceId, positionSlotKey: cellKey, memberId: null },
+  });
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: { serviceId: occurrenceId, positionSlotKey: cellKey, memberId },
+  });
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const saved = (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+  // Without pruning the old "declined" comes back as though they answered
+  // again — the owner sees a no nobody gave, and the slot reads uncovered.
+  assert.equal(saved.responses?.[occurrenceId]?.[cellKey], undefined);
+
+  const mine = await callHandler(authHandlers.getMyTeamAssignments, {
+    context,
+  });
+  const own = mine.payload.occurrences[0].serving.find((p) => p.isMe);
+  assert.equal(own.response, "pending");
+});
+
+test("sending notifies a schedule guest and counts one with no email", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("send_guests");
+  const { scheduleId, occurrenceId, media } = await seedAssignedSchedule(
+    context,
+    "guests",
+    { link: false, cameraSlots: 2 },
+  );
+
+  // Guests are schedule-only people, not roster members.
+  const reachable = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${media.positionIds.Camera}::1`,
+        guest: { name: "Gail Guest", email: "gail@church.test" },
+      },
+    },
+  );
+  assert.equal(reachable.statusCode, 200);
+
+  const res = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+
+  assert.equal(res.statusCode, 200);
+  // The guest is mailed like anyone else rather than being skipped in silence.
+  assert.equal(res.payload.notified, 1);
+  // And the roster member with no address is still reported, so the toast
+  // cannot claim everyone was told.
+  assert.equal(res.payload.unreachableMemberIds.length, 1);
+});
+
+test("answers open one coalescing digest window per schedule", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("response_digest");
+  const { memberId, scheduleId, occurrenceId, cellKey, media } =
+    await seedAssignedSchedule(context, "digest", { cameraSlots: 2 });
+
+  const second = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Second",
+      lastName: "Person",
+      positionIds: [media.positionIds.Camera],
+      email: "second@church.test",
+    },
+  });
+  const secondCell = `${media.positionIds.Camera}::1`;
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: secondCell,
+      memberId: second.payload.member.memberId,
+    },
+  });
+
+  const readMarker = async () => {
+    const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+      context,
+    });
+    return (bootstrap.payload.schedules || []).find(
+      (row) => row.scheduleId === scheduleId,
+    )?.pendingResponseDigestSince;
+  };
+
+  assert.equal(await readMarker(), undefined);
+
+  await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: { scheduleId, occurrenceId, cellKey, response: "declined" },
+  });
+  const opened = await readMarker();
+  assert.ok(opened, "the first answer opens a window");
+
+  // A second answer inside the window must ride the same digest rather than
+  // restarting the clock — otherwise a steady trickle never sends at all.
+  const url = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId,
+    memberId: second.payload.member.memberId,
+  });
+  const token = decodeURIComponent(
+    url.split("/schedule-response/")[1].split("?")[0],
+  );
+  await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    body: { token, response: "accepted" },
+  });
+
+  assert.equal(
+    await readMarker(),
+    opened,
+    "the window start does not move, so the digest still fires on time",
+  );
+  assert.ok(memberId);
+});
+
+test("reshaping a schedule's occurrences does not leave answers behind", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("prune_bulk");
+  const { memberId, scheduleId, occurrenceId, cellKey, media } =
+    await seedAssignedSchedule(context, "prunebulk");
+
+  await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: { scheduleId, occurrenceId, cellKey, response: "declined" },
+  });
+
+  // Editing occurrences rewrites assignments wholesale — the bulk save path,
+  // not the per-cell one.
+  await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId },
+    body: {
+      name: "Respond schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-prunebulk"],
+      startDate: "2026-09-06",
+      endDate: "2026-09-06",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc-prunebulk",
+          serviceIds: ["svc-prunebulk"],
+          name: "Sunday Gathering",
+          startsAt: "2026-09-06T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const saved = (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+  // The slot is empty now, so the answer about it must be gone too — otherwise
+  // re-adding the same person resurrects their decline.
+  assert.equal(saved.responses?.[occurrenceId]?.[cellKey], undefined);
+  assert.ok(memberId);
 });

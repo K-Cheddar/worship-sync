@@ -11,6 +11,8 @@ import {
   renderInviteAcceptedAdminEmail,
   renderInviteEmail,
   renderIntakeSubmissionsDigestEmail,
+  renderScheduleAssignmentEmail,
+  renderScheduleResponsesDigestEmail,
   renderPairingSetupCodeEmail,
   renderPasswordResetEmail,
   renderSignInCodeEmail,
@@ -32,9 +34,14 @@ import {
   collectDigestSubmitterNames,
   decideDigestAction,
   isTeamEditorForForm,
-  normalizeIntakeNotificationPreference,
   selectIntakeNotifyRecipients,
 } from "./server/intakeNotifyRecipients.js";
+import {
+  NOTIFICATION_CATEGORY_KEYS,
+  isNotificationEnabled,
+  normalizeNotificationPreferences,
+  visibleNotificationCategories,
+} from "./server/notificationPreferences.js";
 import {
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
@@ -124,6 +131,8 @@ const COLLECTIONS = {
   servicePlanAssignmentHistory: "servicePlanAssignmentHistory",
   adminRecoveryRequests: "adminRecoveryRequests",
   securityEvents: "securityEvents",
+  // Idempotency ledger for notification sends; see server/notificationLedger.js.
+  notificationDeliveries: "notificationDeliveries",
   emailCodeChallenges: "emailCodeChallenges",
   humanApiCredentials: "humanApiCredentials",
 };
@@ -210,14 +219,11 @@ const normalizeMembershipPermissions = (
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
   };
 };
-// Per-user notification preferences stored on the membership. Kept as a
-// tri-state ("default" resolves to on for editors at send time) so the default
-// can change without rewriting rows. See server/intakeNotifyRecipients.js.
-const normalizeMembershipNotifications = (notifications) => ({
-  intakeSubmissions: normalizeIntakeNotificationPreference(
-    notifications?.intakeSubmissions,
-  ),
-});
+// Per-user notification preferences stored on the membership, one tri-state per
+// category ("default" resolves per category at send time) so a default can
+// change without rewriting rows. Catalog: server/notificationPreferences.js.
+const normalizeMembershipNotifications = (notifications) =>
+  normalizeNotificationPreferences(notifications);
 const hasAnyTeamScope = (permissions) =>
   Object.keys(permissions?.teamScopes || {}).length > 0;
 const hasTeamScope = (permissions, teamId, required = "view") => {
@@ -498,6 +504,7 @@ const memoryState = {
   servicePlanAssignmentHistory: new Map(),
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
+  notificationDeliveries: new Map(),
   emailCodeChallenges: new Map(),
   humanApiCredentials: new Map(),
 };
@@ -559,6 +566,7 @@ const collectionMap = {
     memoryState.servicePlanAssignmentHistory,
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
+  [COLLECTIONS.notificationDeliveries]: memoryState.notificationDeliveries,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
   [COLLECTIONS.humanApiCredentials]: memoryState.humanApiCredentials,
 };
@@ -1001,6 +1009,28 @@ const setDoc = async (collectionName, id, data, { merge = false } = {}) => {
   const store = collectionMap[collectionName];
   const current = store.get(id) || {};
   store.set(id, merge ? { ...current, ...data } : { ...data });
+};
+
+/**
+ * Replace named top-level fields outright.
+ *
+ * `setDoc(..., { merge: true })` deep-merges nested maps, so a map with keys
+ * *removed* merges the old keys straight back. That silently defeats any prune:
+ * the write looks correct and the stale entries survive. Firestore's `update`
+ * replaces a named field wholesale, which is what pruning needs.
+ *
+ * The in-memory store shallow-merges, so it already behaved this way — which is
+ * exactly why the difference is invisible to a test suite that runs in memory.
+ */
+const updateDocFields = async (collectionName, id, data) => {
+  const db = requireFirestore();
+  if (db) {
+    await db.collection(collectionName).doc(id).update(data);
+    return;
+  }
+  const store = collectionMap[collectionName];
+  const current = store.get(id) || {};
+  store.set(id, { ...current, ...data });
 };
 
 const deleteDoc = async (collectionName, id) => {
@@ -1818,9 +1848,36 @@ const redeemDisplayPairingMemory = async (token) => {
   };
 };
 
+/** Test-only override for Firebase Auth verifyIdToken (invite accept happy paths). */
+let verifyIdTokenForServerTests = null;
+
 const verifyIdToken = async (idToken) => {
+  if (
+    process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
+    typeof verifyIdTokenForServerTests === "function"
+  ) {
+    return verifyIdTokenForServerTests(idToken);
+  }
   const auth = requireFirebaseAdmin();
   return auth.verifyIdToken(idToken);
+};
+
+/**
+ * Injects a verifyIdToken stand-in for in-memory server tests.
+ * Pass null to clear. Refuses when Firestore is configured.
+ */
+export const setVerifyIdTokenForServerTests = (fn) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setVerifyIdTokenForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setVerifyIdTokenForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  verifyIdTokenForServerTests = typeof fn === "function" ? fn : null;
 };
 
 const upsertProfileFromVerifiedToken = async (
@@ -1896,6 +1953,14 @@ const buildHumanBootstrap = ({
     membership.appAccess || "view",
   ),
   notifications: normalizeMembershipNotifications(membership.notifications),
+  // Which switches to render. Sent rather than derived client-side so the
+  // catalog has one owner; a client that hardcoded it would drift the first
+  // time a category is added or an audience rule changes.
+  notificationCategories: visibleNotificationCategories({
+    role: membership.role,
+    teamsPermission: membership.permissions?.teams,
+    teamScopes: membership.permissions?.teamScopes,
+  }),
   user: {
     uid: user.uid,
     email: user.email,
@@ -3401,7 +3466,10 @@ export const seedActiveHumanBearerForServerTests = async ({
 };
 
 /** Test-only RTDB stand-in for legacy schedule requirement fallback coverage. */
-export const seedChurchServiceTimesForServerTests = ({ churchId, services }) => {
+export const seedChurchServiceTimesForServerTests = ({
+  churchId,
+  services,
+}) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
     throw new Error(
       "seedChurchServiceTimesForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
@@ -3416,6 +3484,71 @@ export const seedChurchServiceTimesForServerTests = ({ churchId, services }) => 
     String(churchId || "").trim(),
     JSON.parse(JSON.stringify(Array.isArray(services) ? services : [])),
   );
+};
+
+/**
+ * Seeds a pending invite (+ church if missing) for invite preview/accept tests.
+ * Only when WORSHIPSYNC_SERVER_TEST_SUPPORT=1 and Firestore is not configured.
+ */
+export const seedPendingInviteForServerTests = async ({
+  churchId = "church_invite_seed_test",
+  churchName = "Invite seed test church",
+  email = "invitee@example.com",
+  token = `invite-seed-${crypto.randomUUID()}`,
+  role = "member",
+  appAccess = "view",
+  inviteId = createId("invite"),
+  expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+  createdByUid = "user_invite_seed",
+  permissions,
+} = {}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedPendingInviteForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedPendingInviteForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedEmail = normalizeEmail(email);
+  const existingChurch = await getDoc(COLLECTIONS.churches, churchId);
+  if (!existingChurch) {
+    await setDoc(
+      COLLECTIONS.churches,
+      churchId,
+      {
+        churchId,
+        name: churchName,
+        status: CHURCH_STATUS_ACTIVE,
+        adminCount: 1,
+        recoveryEmail: normalizedEmail,
+        contentDatabaseKey: `rtdb_${churchId}`,
+        firebaseNamespace: churchId,
+        cloudinaryUploadPreset: "bpqu4ma5",
+        createdAt: nowIso(),
+        createdByUid,
+      },
+      { merge: false },
+    );
+  }
+  const invite = {
+    inviteId,
+    churchId,
+    email: normalizedEmail,
+    role,
+    appAccess,
+    permissions: normalizeMembershipPermissions(permissions, role),
+    status: "pending",
+    tokenHash: hashValue(token),
+    expiresAt,
+    createdAt: nowIso(),
+    acceptedAt: null,
+    createdByUid,
+  };
+  await setDoc(COLLECTIONS.invites, inviteId, invite, { merge: false });
+  return { inviteId, token, churchId, email: normalizedEmail, churchName };
 };
 
 /**
@@ -3638,9 +3771,217 @@ const scheduleIntakeSubmissionDigest = async (
   armIntakeDigestTimer(formId);
 };
 
+// --- Schedule response digest ---------------------------------------------
+// Same shape as the intake digest, and deliberately the same 20-minute window:
+// one mechanism to reason about. A send produces a burst of answers in the first
+// hour, and one email per answer would be filtered within a week.
+//
+// The window cannot be stretched to hours or a day on this infrastructure. The
+// timer is in-process and recovers only when the *next* answer arrives, so a
+// restart with no further response drops the batch — a small exposure at 20
+// minutes, an unacceptable one at 24 hours. Longer digests need durable
+// scheduling first.
+const RESPONSE_DIGEST_WINDOW_MS =
+  Number(process.env.AUTH_SCHEDULE_RESPONSE_DIGEST_WINDOW_MS) ||
+  20 * 60 * 1000;
+const responseDigestTimers = new Map();
+const responseDigestInFlight = new Set();
+
+/** Editors of these teams who have not muted `category`. */
+const listTeamEditorNotifyRecipients = async (churchId, teamIds, category) => {
+  const memberships = (await listMembershipsForChurch(churchId)).filter(
+    (membership) => membership.status === "active",
+  );
+  const seen = new Set();
+  const recipients = [];
+  for (const membership of memberships) {
+    if (!membershipCanEditTeams(membership, teamIds)) continue;
+    const preferences = normalizeMembershipNotifications(
+      membership.notifications,
+    );
+    if (!isNotificationEnabled(category, preferences[category])) continue;
+    const user = await getUserByUid(membership.userId);
+    const email = String(user?.primaryEmail || user?.email || "").trim();
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    recipients.push(email);
+  }
+  return recipients;
+};
+
+const clearResponseDigestMarker = (scheduleId) =>
+  setDoc(
+    COLLECTIONS.teamSchedules,
+    scheduleId,
+    { pendingResponseDigestSince: null },
+    { merge: true },
+  );
+
+const sendScheduleResponseDigestInner = async (scheduleId) => {
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  if (!schedule?.pendingResponseDigestSince) return;
+  const since = schedule.pendingResponseDigestSince;
+
+  // Every fallible step happens before the marker is cleared, so a transient
+  // failure degrades to "late", never "lost".
+  const recipients = await listTeamEditorNotifyRecipients(
+    schedule.churchId,
+    [schedule.teamId].filter(Boolean),
+    "scheduleResponses",
+  );
+  if (recipients.length === 0) {
+    await clearResponseDigestMarker(scheduleId);
+    return;
+  }
+
+  const members = await queryDocs(
+    COLLECTIONS.teamRosterMembers,
+    [{ field: "churchId", value: schedule.churchId }],
+    { limit: 5000 },
+  );
+  const nameById = new Map(
+    members.map((row) => [
+      row.memberId,
+      `${row.firstName || ""} ${row.lastName || ""}`.trim() || "Someone",
+    ]),
+  );
+  (schedule.guests || []).forEach((guest) => {
+    if (guest?.guestId) nameById.set(guest.guestId, guest.name || "Guest");
+  });
+  const positions = await queryDocs(
+    COLLECTIONS.teamPositions,
+    [{ field: "churchId", value: schedule.churchId }],
+    { limit: 5000 },
+  );
+  const positionNameById = new Map(
+    positions.map((row) => [row.positionId, row.name]),
+  );
+
+  const entries = [];
+  Object.entries(schedule.responses || {}).forEach(([occurrenceId, row]) => {
+    Object.entries(row || {}).forEach(([cellKey, record]) => {
+      if (!record?.respondedAt || record.respondedAt < since) return;
+      const occurrence = (schedule.occurrences || []).find(
+        (item) => item?.occurrenceId === occurrenceId,
+      );
+      const startsAt = occurrence?.startsAt || "";
+      const parsed = startsAt ? new Date(startsAt) : null;
+      entries.push({
+        respondedAt: record.respondedAt,
+        name: nameById.get(record.memberId) || "Someone",
+        serviceName: occurrence?.name || "Service",
+        when:
+          parsed && !Number.isNaN(parsed.getTime())
+            ? parsed.toLocaleString("en-US", {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              })
+            : "Date to be confirmed",
+        positionName:
+          positionNameById.get(String(cellKey).split("::")[0]) || "",
+        accepted: record.response === "accepted",
+      });
+    });
+  });
+  if (entries.length === 0) {
+    await clearResponseDigestMarker(scheduleId);
+    return;
+  }
+  entries.sort((a, b) => a.respondedAt.localeCompare(b.respondedAt));
+
+  const church = await getChurchById(schedule.churchId);
+  const { html, text } = await renderScheduleResponsesDigestEmail({
+    churchName: church?.name || "",
+    scheduleName: schedule.name || "",
+    reviewUrl: `${APP_BASE_URL}/#/teams`,
+    responses: entries,
+  });
+  const declined = entries.filter((entry) => !entry.accepted).length;
+  // Declines drive the subject line: that is the part that needs action.
+  const subject =
+    declined > 0
+      ? `${declined} ${declined === 1 ? "person" : "people"} cannot serve — ${schedule.name || "schedule"}`
+      : `${entries.length} ${entries.length === 1 ? "response" : "responses"} on ${schedule.name || "your schedule"}`;
+
+  await Promise.all(
+    recipients.map((to) =>
+      sendEmail({
+        to,
+        subject,
+        textBody: text,
+        htmlBody: html,
+        tags: { type: "schedule_responses_digest" },
+      }).catch((error) =>
+        logAuthEvent("warn", "schedule.responses.digest.send-error", {
+          scheduleId,
+          errorMessage: error?.message || "send failed",
+        }),
+      ),
+    ),
+  );
+  await clearResponseDigestMarker(scheduleId);
+};
+
+const sendScheduleResponseDigest = async (scheduleId) => {
+  responseDigestTimers.delete(scheduleId);
+  if (responseDigestInFlight.has(scheduleId)) return;
+  responseDigestInFlight.add(scheduleId);
+  try {
+    await sendScheduleResponseDigestInner(scheduleId);
+  } finally {
+    responseDigestInFlight.delete(scheduleId);
+  }
+};
+
+const armResponseDigestTimer = (scheduleId) => {
+  const timer = setTimeout(() => {
+    sendScheduleResponseDigest(scheduleId).catch((error) =>
+      logAuthEvent("warn", "schedule.responses.digest.error", {
+        scheduleId,
+        errorMessage: error?.message || "digest failed",
+      }),
+    );
+  }, RESPONSE_DIGEST_WINDOW_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  responseDigestTimers.set(scheduleId, timer);
+};
+
+/** Called after every answer; coalesces a burst into one email per schedule. */
+const scheduleAssignmentResponseDigest = async (
+  scheduleId,
+  respondedAt = nowIso(),
+) => {
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  if (!schedule) return;
+  const action = decideDigestAction({
+    pendingSince: schedule.pendingResponseDigestSince,
+    hasArmedTimer: responseDigestTimers.has(scheduleId),
+    nowMs: Date.now(),
+    windowMs: RESPONSE_DIGEST_WINDOW_MS,
+  });
+  if (action === "noop") return;
+  if (action === "flush-now") {
+    await sendScheduleResponseDigest(scheduleId);
+    return;
+  }
+  if (action === "open-window") {
+    await setDoc(
+      COLLECTIONS.teamSchedules,
+      scheduleId,
+      { pendingResponseDigestSince: respondedAt },
+      { merge: true },
+    );
+  }
+  armResponseDigestTimer(scheduleId);
+};
+
 const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
+  scheduleAssignmentResponseDigest,
   addSecurityEvent,
   // Shared so member contact addresses normalize identically to account
   // emails; divergence here would make linked/unlinked comparisons unreliable.
@@ -3670,6 +4011,14 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireTeamsViewSession,
   requireFirestore,
   setDoc,
+  updateDocFields,
+  // Assignment notifications need the same primitives the intake digest uses.
+  getUserByUid,
+  getChurchById,
+  sendEmail,
+  renderScheduleAssignmentEmail,
+  renderScheduleResponsesDigestEmail,
+  logAuthEvent,
 });
 
 export const authHandlers = {
@@ -4805,13 +5154,19 @@ export const authHandlers = {
       if (!membership) {
         throw httpError(404, "Membership not found.");
       }
+      // Only the categories the client sent are overridden; the rest are
+      // preserved. A partial save must never reset switches the UI did not
+      // show — an older client that knows two categories would otherwise wipe
+      // the others back to default on every toggle.
+      const submitted = {};
+      for (const category of NOTIFICATION_CATEGORY_KEYS) {
+        if (req.body?.[category] !== undefined) {
+          submitted[category] = req.body[category];
+        }
+      }
       const notifications = normalizeMembershipNotifications({
         ...membership.notifications,
-        // Only the fields the client sent are overridden; the rest are
-        // preserved from the existing membership.
-        ...(req.body?.intakeSubmissions !== undefined
-          ? { intakeSubmissions: req.body.intakeSubmissions }
-          : {}),
+        ...submitted,
       });
       await setDoc(
         COLLECTIONS.memberships,
@@ -6282,3 +6637,5 @@ export const authHandlers = {
 export const getServerFirestore = () => requireFirestore();
 
 export const getServerRealtimeDatabase = () => requireRealtimeDatabase();
+
+export const assertServerCsrf = (req) => assertCsrf(req);

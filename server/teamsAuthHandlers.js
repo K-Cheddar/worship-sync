@@ -14,10 +14,41 @@ import {
 // validates, so a future ServicePlan -> ServiceFlow publish step needs no
 // translation.
 import { normalizeRichTextDocument } from "./serviceFlowService.js";
+import {
+  applyAssignmentResponses,
+  normalizeAssignmentResponse,
+  pruneStaleResponses,
+  readAssignmentResponse,
+  withAssignmentResponse,
+} from "./scheduleResponses.js";
+import {
+  ASSIGNMENT_TOKEN_TTL_MS,
+  createAssignmentResponseToken,
+  readAssignmentResponseToken,
+} from "./assignmentResponseToken.js";
+import {
+  createNotificationLedger,
+  deliveryKey,
+} from "./notificationLedger.js";
+import {
+  isNotificationEnabled,
+  normalizeNotificationPreferences,
+} from "./notificationPreferences.js";
+import {
+  findUnreachableMemberIds,
+  resolveMemberAddress,
+} from "./notificationRecipients.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
   "https://www.worshipsync.net";
+
+// Separate secret from the intake link: the two grant different things, so a
+// leak of one must not mint the other.
+const assignmentResponseTokenSecret =
+  process.env.AUTH_ASSIGNMENT_RESPONSE_TOKEN_SECRET ||
+  process.env.AUTH_SESSION_SECRET ||
+  "dev-auth-secret";
 
 const teamIntakeTokenSecret =
   process.env.AUTH_TEAM_INTAKE_TOKEN_SECRET ||
@@ -51,9 +82,16 @@ const MAX_SELF_BLOCKOUT_RANGES = 400;
 // editor still shows and keeps everything.
 const BLOCKOUT_HISTORY_RETENTION_DAYS = 365;
 
+// Guest records are deliberately schedule-scoped: they can be reused by the
+// scheduler without becoming roster members or receiving application access.
+// A generous per-schedule cap prevents an accidental unbounded document while
+// remaining far above the number of one-time helpers a service plan can need.
+const MAX_TEAM_SCHEDULE_GUESTS = 200;
+
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
+  scheduleAssignmentResponseDigest,
   addSecurityEvent,
   assertCsrf,
   createId,
@@ -80,6 +118,12 @@ export const createTeamsAuthHandlers = ({
   requireTeamsViewSession,
   requireFirestore,
   setDoc,
+  updateDocFields,
+  getUserByUid,
+  getChurchById,
+  sendEmail,
+  renderScheduleAssignmentEmail,
+  logAuthEvent,
 }) => {
   const requireTeamsEdit = requireTeamsEditSession || requireAdminSession;
   const requireServicesEdit = requireServicesEditSession || requireTeamsEdit;
@@ -133,6 +177,452 @@ export const createTeamsAuthHandlers = ({
       windowMs,
       blockMs,
     });
+
+  /**
+   * The link that goes in an assignment email. One per slot, because the token
+   * names the slot; a member on two positions gets two links.
+   */
+  /**
+   * The link that goes in an assignment email.
+   *
+   * `response` carries the reader's intent so Accept in the email *is* the
+   * answer — one click, not click-then-click-again. It rides in the URL hash,
+   * which is never sent to the server: the intent only becomes a write when the
+   * page POSTs it.
+   *
+   * That indirection is not ceremony. Corporate mail security (Safe Links,
+   * Proofpoint and friends) fetches every link in an email before a human sees
+   * it; if a GET recorded the answer, scanners would accept on behalf of people
+   * who never opened the message. Scanners do not run a single-page app and do
+   * not POST, so the write stays with the reader.
+   */
+  const buildAssignmentResponseUrl = (payload, response = "") => {
+    const token = createAssignmentResponseToken(
+      assignmentResponseTokenSecret,
+      payload,
+      Date.now() + ASSIGNMENT_TOKEN_TTL_MS,
+    );
+    const query = response
+      ? `?${new URLSearchParams({ respond: response }).toString()}`
+      : "";
+    return `${APP_BASE_URL}/#/schedule-response/${encodeURIComponent(token)}${query}`;
+  };
+
+  /**
+   * Ledger store over Firestore. Doc id is a hash of church + delivery key, so
+   * a "have we sent this?" check is a direct get rather than a query — the
+   * batch is one read per candidate and needs no index.
+   */
+  const notificationLedger = createNotificationLedger({
+    listKeys: async (churchId, keys) => {
+      const rows = await Promise.all(
+        keys.map(async (key) => {
+          const doc = await getDoc(
+            COLLECTIONS.notificationDeliveries,
+            hashValue(`${churchId}|${key}`),
+          );
+          return doc ? key : "";
+        }),
+      );
+      return rows.filter(Boolean);
+    },
+    saveKey: async (churchId, entry) =>
+      setDoc(
+        COLLECTIONS.notificationDeliveries,
+        hashValue(`${churchId}|${entry.deliveryKey}`),
+        { ...entry, churchId, createdAt: nowIso() },
+        { merge: true },
+      ),
+  });
+
+  /**
+   * Delivery identity for one assignment notification.
+   *
+   * The slot is part of it, not just the service: someone already told about
+   * Sunday who is then *also* given a second position that day must still hear
+   * about it. Keyed on the occurrence alone, that second slot is suppressed
+   * forever — invisible to any roster member without an account, since the app
+   * is the only other place it would show.
+   */
+  const assignmentDeliveryId = (schedule, entry) => ({
+    recipient: entry.email,
+    event: "schedule.assigned",
+    subject: schedule.scheduleId,
+    occurrence: `${entry.occurrenceId}#${entry.cellKey}`,
+  });
+
+  /** Local date/time for an occurrence, as the reader would say it aloud. */
+  const formatAssignmentWhen = (startsAt) => {
+    const parsed = startsAt ? new Date(startsAt) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) return "Date to be confirmed";
+    return parsed.toLocaleString("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  /**
+   * Email everyone newly on this schedule, once each.
+   *
+   * Three filters, in order, each for a different reason:
+   * 1. **Reachable** — no address means no email. Reported back so the owner
+   *    learns who was not told rather than assuming everyone was.
+   * 2. **Opted in** — only for linked accounts; an unlinked roster member has
+   *    no membership to hold a preference, and defaults to on.
+   * 3. **Not already sent** — the ledger, keyed per occurrence, so adding one
+   *    person and re-sending mails only the new slots.
+   */
+  const notifyScheduleAssignments = async ({ churchId, schedule, slots }) => {
+    const church = await getChurchById(churchId);
+    const memberships = (await listMembershipsForChurch(churchId)) || [];
+    const membershipByUserId = new Map(
+      memberships
+        .filter((row) => row.status === "active")
+        .map((row) => [row.userId, row]),
+    );
+
+    // Account addresses for linked members, resolved once.
+    const accountByUserId = new Map();
+    await Promise.all(
+      [...new Set(slots.map((slot) => slot.member.userId).filter(Boolean))].map(
+        async (userId) => {
+          const user = await getUserByUid(userId);
+          accountByUserId.set(userId, {
+            email: user?.primaryEmail || user?.email || "",
+          });
+        },
+      ),
+    );
+    const lookupAccount = (userId) => accountByUserId.get(userId) || null;
+
+    const unreachableMemberIds = [
+      ...new Set(
+        findUnreachableMemberIds(
+          slots.map((slot) => slot.member),
+          lookupAccount,
+        ),
+      ),
+    ];
+
+    const candidates = [];
+    for (const slot of slots) {
+      const { email, reachable } = resolveMemberAddress(
+        slot.member,
+        lookupAccount,
+      );
+      if (!reachable) continue;
+      const membership = slot.member.userId
+        ? membershipByUserId.get(slot.member.userId)
+        : null;
+      // Unlinked members have no membership and so no stored preference; the
+      // category default (on) applies, which is what keeps a roster-only
+      // volunteer reachable at all.
+      if (
+        membership &&
+        !isNotificationEnabled(
+          "scheduleAssignments",
+          normalizeNotificationPreferences(membership.notifications)
+            .scheduleAssignments,
+        )
+      ) {
+        continue;
+      }
+      candidates.push({ ...slot, email });
+    }
+
+    const { pending } = await notificationLedger.selectPending(
+      churchId,
+      candidates.map((candidate) => assignmentDeliveryId(schedule, candidate)),
+    );
+    const pendingKeys = new Set(pending.map((entry) => entry.deliveryKey));
+    const toSend = candidates.filter((candidate) =>
+      pendingKeys.has(deliveryKey(assignmentDeliveryId(schedule, candidate))),
+    );
+
+    // One email per person listing every slot, not one per slot: three emails
+    // for three Sundays is how people learn to ignore them.
+    const byRecipient = new Map();
+    for (const candidate of toSend) {
+      const bucket = byRecipient.get(candidate.email) || [];
+      bucket.push(candidate);
+      byRecipient.set(candidate.email, bucket);
+    }
+
+    let sentCount = 0;
+    await Promise.all(
+      [...byRecipient.entries()].map(async ([email, entries]) => {
+        const ordered = [...entries].sort((a, b) =>
+          String(a.startsAt).localeCompare(String(b.startsAt)),
+        );
+        try {
+          const { html, text } = await renderScheduleAssignmentEmail({
+            churchName: church?.name || "",
+            memberFirstName: ordered[0]?.member?.firstName || "",
+            scheduleUrl: `${APP_BASE_URL}/#/my-schedule`,
+            // One link for the whole email. It opens a page listing every
+            // service below, answerable individually or all at once — four
+            // services once meant four links to a page that could not even say
+            // which service it was asking about.
+            acceptUrl: buildAssignmentResponseUrl(
+              {
+                churchId,
+                scheduleId: schedule.scheduleId,
+                memberId: ordered[0].member.memberId,
+              },
+              "accepted",
+            ),
+            declineUrl: buildAssignmentResponseUrl(
+              {
+                churchId,
+                scheduleId: schedule.scheduleId,
+                memberId: ordered[0].member.memberId,
+              },
+              "declined",
+            ),
+            assignments: ordered.map((entry) => ({
+              serviceName: entry.serviceName,
+              when: formatAssignmentWhen(entry.startsAt),
+              positionName: entry.positionName,
+              teamName: schedule.teamName || "",
+            })),
+          });
+          await sendEmail({
+            to: email,
+            subject:
+              ordered.length === 1
+                ? `You are scheduled for ${ordered[0].serviceName}`
+                : `You are scheduled for ${ordered.length} services`,
+            textBody: text,
+            htmlBody: html,
+            tags: { type: "schedule_assigned" },
+          });
+          sentCount += 1;
+          // Recorded only after the send succeeds: a failure should retry on
+          // the next send, not be silently marked delivered.
+          await Promise.all(
+            ordered.map((entry) =>
+              notificationLedger.record(
+                churchId,
+                assignmentDeliveryId(schedule, entry),
+              ),
+            ),
+          );
+        } catch (error) {
+          logAuthEvent("warn", "schedule.assigned.send-error", {
+            scheduleId: schedule.scheduleId,
+            errorMessage: error?.message || "send failed",
+          });
+        }
+      }),
+    );
+
+    return {
+      notified: sentCount,
+      alreadyNotified: candidates.length - toSend.length,
+      unreachableMemberIds,
+    };
+  };
+
+  /**
+   * Verify an emailed response token, or throw the message the reader needs.
+   * Expired is worth distinguishing: they did nothing wrong and the fix is to
+   * ask for a fresh link, not to hunt for a typo.
+   */
+  const assertAssignmentToken = (token) => {
+    const read = readAssignmentResponseToken(
+      assignmentResponseTokenSecret,
+      token,
+    );
+    if (!read.valid) {
+      throw httpError(
+        read.reason === "expired" ? 410 : 404,
+        read.reason === "expired"
+          ? "This link has expired. Ask your team lead to resend it."
+          : "This link is not valid. Ask your team lead to resend it.",
+      );
+    }
+    return read.payload;
+  };
+
+  /**
+   * Responses re-derived against a new assignment map.
+   *
+   * Called wherever assignments change. Reads already treat a mismatched holder
+   * as pending, which is safe for whoever *arrives* in a slot — but the record
+   * lingers, so clearing someone off a cell and later putting them back
+   * resurrects their old decline as though they had answered again. The owner
+   * sees a "no" nobody gave, and the fill count treats the slot as uncovered.
+   */
+  const prunedResponsesForAssignments = (responses, assignments) =>
+    pruneStaleResponses(responses, (occurrenceId, cellKey) =>
+      readCellHolderId(assignments?.[occurrenceId]?.[cellKey]),
+    );
+
+  /**
+   * Re-derive and store responses after a write that rewrote assignments.
+   *
+   * Deliberately a separate, field-replacing write rather than part of the
+   * merged payload: a merged set deep-merges maps, so pruned entries would come
+   * straight back and the prune would be a no-op in production while passing in
+   * memory.
+   */
+  const syncScheduleResponsesToAssignments = async (schedule) => {
+    if (!schedule?.scheduleId) return schedule;
+    const responses = prunedResponsesForAssignments(
+      schedule.responses,
+      schedule.assignments,
+    );
+    if (
+      JSON.stringify(responses) === JSON.stringify(schedule.responses || {})
+    ) {
+      return schedule;
+    }
+    await updateDocFields(COLLECTIONS.teamSchedules, schedule.scheduleId, {
+      responses,
+    });
+    return { ...schedule, responses };
+  };
+
+  const readCellHolderId = (cell) =>
+    typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+
+  /**
+   * Write one or more answers for a member, atomically.
+   *
+   * **Transactional because the map is replaced wholesale.** `responses` is a
+   * single field; a read-modify-write from a stale snapshot silently discards
+   * whatever landed in between. Right after a send is exactly when several
+   * volunteers answer at once, so the lost write is not a rare race — it is the
+   * expected traffic pattern.
+   *
+   * Slots the member no longer holds are skipped rather than failing the whole
+   * batch: with one link covering a whole schedule, an owner reshuffling one
+   * date must not block the reader from answering the other three.
+   */
+  const writeAssignmentResponses = async ({
+    churchId,
+    scheduleId,
+    memberId,
+    targets,
+    response,
+    actorUid,
+  }) => {
+    // The decision is pure and unit-tested (`applyAssignmentResponses`), because
+    // only the in-memory branch below is reachable from the test suite.
+    const apply = (schedule) => {
+      if (!schedule || schedule.churchId !== churchId) {
+        throw httpError(404, "That schedule is no longer available.");
+      }
+      const result = applyAssignmentResponses(schedule, {
+        memberId,
+        targets,
+        response,
+        respondedAt: nowIso(),
+        readHolder: readCellHolderId,
+      });
+      if (result.applied === 0) {
+        throw httpError(
+          409,
+          "This assignment changed. Your team lead will be in touch.",
+        );
+      }
+      return result;
+    };
+
+    const db = requireFirestore();
+    if (!db) {
+      const schedule = await getTeamEntity("schedule", scheduleId);
+      const { responses, applied } = apply(schedule);
+      await setDoc(
+        COLLECTIONS.teamSchedules,
+        scheduleId,
+        {
+          responses,
+          updatedAt: nowIso(),
+          ...(actorUid ? { updatedByUid: actorUid } : {}),
+        },
+        { merge: true },
+      );
+      return { schedule: { ...schedule, responses }, applied };
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+      const snapshot = await transaction.get(ref);
+      const schedule = readTransactionTeamEntity(
+        snapshot,
+        "scheduleId",
+        "Schedule",
+      );
+      const { responses, applied } = apply(schedule);
+      transaction.set(
+        ref,
+        {
+          responses,
+          updatedAt: nowIso(),
+          ...(actorUid ? { updatedByUid: actorUid } : {}),
+        },
+        { merge: true },
+      );
+      return { schedule: { ...schedule, responses }, applied };
+    });
+  };
+
+  /**
+   * Every slot a member holds on a schedule, with enough context to answer:
+   * which service, when, and what they were asked to do. This is what the
+   * emailed link needs — a bare "Can you serve?" with no service named is not
+   * something anyone can answer.
+   */
+  const listMemberSlotKeys = (schedule, memberId) => {
+    const slots = [];
+    Object.entries(schedule.assignments || {}).forEach(([occurrenceId, row]) => {
+      Object.entries(row || {}).forEach(([cellKey, cell]) => {
+        if (readCellHolderId(cell) === memberId) {
+          slots.push({ occurrenceId, cellKey });
+        }
+      });
+    });
+    return slots;
+  };
+
+  const listMemberAssignmentsOnSchedule = async (schedule, memberId) => {
+    const positions = await listTeamCollectionForChurch(
+      COLLECTIONS.teamPositions,
+      "positionId",
+      schedule.churchId,
+    );
+    const positionNameById = new Map(
+      positions.map((row) => [row.positionId, row.name]),
+    );
+    const slots = [];
+    Object.entries(schedule.assignments || {}).forEach(([occurrenceId, row]) => {
+      Object.entries(row || {}).forEach(([cellKey, cell]) => {
+        if (readCellHolderId(cell) !== memberId) return;
+        const occurrence = (schedule.occurrences || []).find(
+          (item) => item?.occurrenceId === occurrenceId,
+        );
+        slots.push({
+          occurrenceId,
+          cellKey,
+          serviceName: occurrence?.name || "Service",
+          startsAt: occurrence?.startsAt || "",
+          positionName:
+            positionNameById.get(String(cellKey).split("::")[0]) || "",
+          ...readAssignmentResponse(
+            schedule.responses?.[occurrenceId]?.[cellKey],
+            memberId,
+          ),
+        });
+      });
+    });
+    return slots.sort((a, b) =>
+      String(a.startsAt).localeCompare(String(b.startsAt)),
+    );
+  };
 
   const buildTeamIntakePublicUrl = (token) =>
     `${APP_BASE_URL}/#/teams/intake/${encodeURIComponent(String(token || "").trim())}`;
@@ -237,6 +727,41 @@ export const createTeamsAuthHandlers = ({
   const normalizeOptionalPlainDate = (value, fieldLabel) => {
     const date = String(value || "").trim();
     return date ? assertPlainDate(date, fieldLabel) : "";
+  };
+
+  const TEAM_MEMBER_SERVING_FREQUENCIES = new Set([
+    "as_needed",
+    "weekly",
+    "twice_monthly",
+    "monthly",
+  ]);
+
+  const normalizeTeamMemberServingFrequency = (value) => {
+    const normalized = String(value || "as_needed").trim();
+    if (!TEAM_MEMBER_SERVING_FREQUENCIES.has(normalized)) {
+      throw httpError(400, "Choose a valid serving preference.");
+    }
+    return normalized;
+  };
+
+  const isMinorFromDateOfBirth = (dateOfBirth, referenceDate = new Date()) => {
+    if (!dateOfBirth) return null;
+    const [year, month, day] = dateOfBirth.split("-").map(Number);
+    const eighteenthBirthday = Date.UTC(year + 18, month - 1, day);
+    const today = Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate(),
+    );
+    return today < eighteenthBirthday;
+  };
+
+  const normalizeManualMinorStatus = (value) => {
+    if (value === undefined) return false;
+    if (typeof value !== "boolean") {
+      throw httpError(400, "Minor status must be true or false.");
+    }
+    return value;
   };
 
   const assertTeamScheduleDateTime = (value, fieldLabel) => {
@@ -2045,6 +2570,12 @@ export const createTeamsAuthHandlers = ({
       body?.dateOfBirth,
       "Date of birth",
     );
+    const isMinor =
+      isMinorFromDateOfBirth(dateOfBirth) ??
+      normalizeManualMinorStatus(body?.isMinor);
+    const servingFrequency = normalizeTeamMemberServingFrequency(
+      body?.servingFrequency,
+    );
     const positionIds = await assertTeamEntityIdsInChurch(
       "position",
       body?.positionIds,
@@ -2055,6 +2586,8 @@ export const createTeamsAuthHandlers = ({
       firstName,
       lastName,
       dateOfBirth,
+      isMinor,
+      servingFrequency,
       positionIds,
       blockoutDates: normalizeBlockoutDates(body?.blockoutDates),
       notes: normalizeLongText(body?.notes),
@@ -2332,7 +2865,7 @@ export const createTeamsAuthHandlers = ({
     return slots;
   };
 
-  const validateTeamSchedulePayload = async (body, churchId) => {
+  const validateTeamSchedulePayload = async (body, churchId, existing = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Schedule name is required.");
@@ -2362,6 +2895,11 @@ export const createTeamsAuthHandlers = ({
       (occurrence) => occurrence.occurrenceId,
     );
     const assignments = {};
+    // Older clients do not send the new schedule-only guest catalog. Preserve
+    // it on updates so editing dates or services cannot orphan guest slots.
+    const guests = normalizeTeamScheduleGuests(
+      body?.guests !== undefined ? body.guests : existing?.guests,
+    );
     const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
       body?.microphoneAssignments,
     );
@@ -2397,6 +2935,7 @@ export const createTeamsAuthHandlers = ({
       serviceIds,
       occurrences,
       assignments,
+      guests,
       microphoneAssignments,
       additionalPositionSlots,
     };
@@ -2750,6 +3289,92 @@ export const createTeamsAuthHandlers = ({
   };
 
   const TEAM_SCHEDULE_SHADOW_KINDS = new Set(["shadow", "reverse_shadow"]);
+
+  const normalizeTeamScheduleGuest = (value, { requireId = true } = {}) => {
+    if (!value || typeof value !== "object") return null;
+    const guestId = normalizeShortText(value.guestId, { max: 160 });
+    const name = normalizeShortText(value.name, { max: 120 });
+    if (!name || (requireId && !guestId)) return null;
+    const email = normalizeMemberEmail(value.email);
+    const phone = normalizeShortText(value.phone, { max: 40 });
+    const note = normalizeLongText(value.note, { max: 500 });
+    return {
+      ...(guestId ? { guestId } : {}),
+      name,
+      ...(email ? { email } : {}),
+      ...(phone ? { phone } : {}),
+      ...(note ? { note } : {}),
+    };
+  };
+
+  const normalizeTeamScheduleGuests = (value) => {
+    const byId = new Map();
+    (Array.isArray(value) ? value : []).forEach((guest) => {
+      const normalized = normalizeTeamScheduleGuest(guest);
+      if (normalized) byId.set(normalized.guestId, normalized);
+    });
+    return [...byId.values()].slice(0, MAX_TEAM_SCHEDULE_GUESTS);
+  };
+
+  const resolveTeamScheduleGuestAssignment = ({ schedule, guest, memberId }) => {
+    const guests = normalizeTeamScheduleGuests(schedule?.guests);
+    if (guest == null) {
+      const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
+      const existingGuest = guests.find(
+        (item) => item.guestId === normalizedMemberId,
+      );
+      return {
+        guests,
+        guest: existingGuest || null,
+        memberId: normalizedMemberId,
+      };
+    }
+    if (normalizeShortText(memberId, { max: 160 })) {
+      throw httpError(400, "Choose either a team member or a guest.");
+    }
+    const normalized = normalizeTeamScheduleGuest(guest, { requireId: false });
+    if (!normalized?.name) {
+      throw httpError(400, "Guest name is required.");
+    }
+    const requestedGuestId = normalizeShortText(normalized.guestId, {
+      max: 160,
+    });
+    const existingIndex = requestedGuestId
+      ? guests.findIndex((item) => item.guestId === requestedGuestId)
+      : -1;
+    if (
+      requestedGuestId &&
+      existingIndex === -1 &&
+      !/^scheduleGuest_[A-Za-z0-9_-]+$/.test(requestedGuestId)
+    ) {
+      throw httpError(400, "Guest id is invalid. Add the guest again.");
+    }
+    const guestId =
+      existingIndex >= 0
+        ? guests[existingIndex].guestId
+        : requestedGuestId || createId("scheduleGuest");
+    const nextGuest = { ...normalized, guestId };
+    if (existingIndex >= 0) {
+      guests[existingIndex] = nextGuest;
+    } else {
+      if (guests.length >= MAX_TEAM_SCHEDULE_GUESTS) {
+        const assignedIds = new Set(
+          Object.values(schedule?.assignments || {}).flatMap((row) =>
+            Object.values(row || {}).flatMap(getScheduleAssignmentCellMemberIds),
+          ),
+        );
+        const unusedIndex = guests.findIndex(
+          (item) => !assignedIds.has(item.guestId),
+        );
+        if (unusedIndex >= 0) guests.splice(unusedIndex, 1);
+      }
+      if (guests.length >= MAX_TEAM_SCHEDULE_GUESTS) {
+        throw httpError(400, "This schedule has reached its guest limit.");
+      }
+      guests.push(nextGuest);
+    }
+    return { guests, guest: nextGuest, memberId: guestId };
+  };
 
   const normalizeScheduleAssignmentCell = (cell) => {
     if (!cell || typeof cell !== "object") {
@@ -3129,8 +3754,23 @@ export const createTeamsAuthHandlers = ({
     return firstName;
   };
 
+  const scheduleGuestPublicNameParts = (guest) => {
+    const parts = String(guest?.name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    return {
+      firstName: parts[0] || "Guest",
+      lastName: parts.length > 1 ? parts[parts.length - 1] : "",
+    };
+  };
+
   const buildPublicTeamScheduleSnapshot = async (schedule) => {
     const churchId = schedule.churchId;
+    const scheduleGuests = normalizeTeamScheduleGuests(schedule.guests);
+    const scheduleGuestById = new Map(
+      scheduleGuests.map((guest) => [guest.guestId, guest]),
+    );
     const assignedMemberIds = new Set();
     Object.values(schedule.assignments || {}).forEach((row) => {
       Object.values(row || {}).forEach((cell) => {
@@ -3155,9 +3795,9 @@ export const createTeamsAuthHandlers = ({
           )
         : [],
       Promise.all(
-        [...assignedMemberIds].map((memberId) =>
-          getTeamEntity("member", memberId),
-        ),
+        [...assignedMemberIds]
+          .filter((memberId) => !scheduleGuestById.has(memberId))
+          .map((memberId) => getTeamEntity("member", memberId)),
       ),
       readChurchPublicBoardHeaderLogoUrl(churchId),
     ]);
@@ -3173,7 +3813,14 @@ export const createTeamsAuthHandlers = ({
     );
 
     const firstNameCounts = new Map();
-    assignedMembers.forEach((member) => {
+    const assignedGuests = [...assignedMemberIds]
+      .map((guestId) => scheduleGuestById.get(guestId))
+      .filter(Boolean);
+    const publicNameSources = [
+      ...assignedMembers,
+      ...assignedGuests.map(scheduleGuestPublicNameParts),
+    ];
+    publicNameSources.forEach((member) => {
       const firstName = String(member.firstName || "")
         .trim()
         .toLowerCase();
@@ -3211,7 +3858,16 @@ export const createTeamsAuthHandlers = ({
       members: assignedMembers.map((member) => ({
         memberId: member.memberId,
         name: scheduleMemberPublicName(member, duplicateFirstNames),
-      })),
+      })).concat(
+        assignedGuests.map((guest) => ({
+          memberId: guest.guestId,
+          name: scheduleMemberPublicName(
+            scheduleGuestPublicNameParts(guest),
+            duplicateFirstNames,
+          ),
+          guest: true,
+        })),
+      ),
     };
   };
 
@@ -3450,6 +4106,7 @@ export const createTeamsAuthHandlers = ({
     shadowAction,
     shadowKind,
     allowBlockout,
+    guestAssignment = false,
   }) => {
     const rowIds = (schedule.occurrences || []).map(
       (occurrence) => occurrence.occurrenceId,
@@ -3642,20 +4299,22 @@ export const createTeamsAuthHandlers = ({
       return assignments;
     }
 
-    if (!member || member.churchId !== churchId || member.archivedAt) {
-      throw httpError(400, "Member is archived.");
-    }
-    if (!(team.memberIds || []).includes(normalizedMemberId)) {
-      throw httpError(400, "That member is not part of this team.");
-    }
-    if (!(member.positionIds || []).includes(basePositionId)) {
-      throw httpError(400, "That member cannot serve in this position.");
-    }
-    if (
-      !allowBlockout &&
-      isMemberUnavailableForService(member, { date: serviceDate || "" })
-    ) {
-      throw httpError(400, "That member is unavailable for this service.");
+    if (!guestAssignment) {
+      if (!member || member.churchId !== churchId || member.archivedAt) {
+        throw httpError(400, "Member is archived.");
+      }
+      if (!(team.memberIds || []).includes(normalizedMemberId)) {
+        throw httpError(400, "That member is not part of this team.");
+      }
+      if (!(member.positionIds || []).includes(basePositionId)) {
+        throw httpError(400, "That member cannot serve in this position.");
+      }
+      if (
+        !allowBlockout &&
+        isMemberUnavailableForService(member, { date: serviceDate || "" })
+      ) {
+        throw httpError(400, "That member is unavailable for this service.");
+      }
     }
     // Intake service availability is a soft warning only (surfaced in the
     // picker); only blockout dates hard-block assignment here.
@@ -3863,6 +4522,7 @@ export const createTeamsAuthHandlers = ({
     serviceId,
     positionSlotKey,
     memberId,
+    guest,
     serviceDate,
     sourceServiceId,
     sourcePositionSlotKey,
@@ -3895,9 +4555,17 @@ export const createTeamsAuthHandlers = ({
       churchId,
       { label: "Position" },
     );
-    const normalizedMemberId = String(memberId || "").trim();
+    const resolvedGuest = resolveTeamScheduleGuestAssignment({
+      schedule,
+      guest,
+      memberId,
+    });
+    if (resolvedGuest.guest && shadowAction) {
+      throw httpError(400, "Guests can only fill the primary assignment.");
+    }
+    const normalizedMemberId = resolvedGuest.memberId;
     const member =
-      normalizedMemberId && shadowAction !== "remove"
+      normalizedMemberId && !resolvedGuest.guest && shadowAction !== "remove"
         ? await assertTeamEntityInChurch(
             "member",
             normalizedMemberId,
@@ -3915,15 +4583,20 @@ export const createTeamsAuthHandlers = ({
       member,
       serviceId,
       positionSlotKey,
-      memberId,
+      memberId: normalizedMemberId,
       serviceDate,
       sourceServiceId,
       sourcePositionSlotKey,
       shadowAction,
       shadowKind,
       allowBlockout,
+      guestAssignment: Boolean(resolvedGuest.guest),
     });
-    if (normalizedMemberId && shadowAction !== "remove") {
+    if (
+      normalizedMemberId &&
+      !resolvedGuest.guest &&
+      shadowAction !== "remove"
+    ) {
       const schedules = await listTeamCollectionForChurch(
         COLLECTIONS.teamSchedules,
         "scheduleId",
@@ -3937,7 +4610,7 @@ export const createTeamsAuthHandlers = ({
         allowCrossTeamConflict,
       });
     }
-    return assignments;
+    return { assignments, guests: resolvedGuest.guests };
   };
 
   const listTransactionSchedulesForChurch = async (
@@ -3984,6 +4657,7 @@ export const createTeamsAuthHandlers = ({
     serviceId,
     positionSlotKey,
     memberId,
+    guest,
     serviceDate,
     sourceServiceId,
     sourcePositionSlotKey,
@@ -3995,12 +4669,13 @@ export const createTeamsAuthHandlers = ({
   }) => {
     const db = requireFirestore();
     if (!db) {
-      const assignments = await validateScheduleAssignment({
+      const { assignments, guests } = await validateScheduleAssignment({
         churchId,
         scheduleId,
         serviceId,
         positionSlotKey,
         memberId,
+        guest,
         serviceDate,
         sourceServiceId,
         sourcePositionSlotKey,
@@ -4009,11 +4684,17 @@ export const createTeamsAuthHandlers = ({
         allowBlockout,
         allowCrossTeamConflict,
       });
+      const current = await getTeamEntity("schedule", scheduleId);
       await setDoc(
         COLLECTIONS.teamSchedules,
         scheduleId,
         {
           assignments,
+          guests,
+          responses: prunedResponsesForAssignments(
+            current?.responses,
+            assignments,
+          ),
           updatedAt: nowIso(),
           updatedByUid: adminUserId,
         },
@@ -4060,9 +4741,21 @@ export const createTeamsAuthHandlers = ({
         throw httpError(404, "Position not found.");
       }
 
-      const normalizedMemberId = String(memberId || "").trim();
+      const resolvedGuest = resolveTeamScheduleGuestAssignment({
+        schedule,
+        guest,
+        memberId,
+      });
+      if (resolvedGuest.guest && shadowAction) {
+        throw httpError(400, "Guests can only fill the primary assignment.");
+      }
+      const normalizedMemberId = resolvedGuest.memberId;
       let member = null;
-      if (normalizedMemberId && shadowAction !== "remove") {
+      if (
+        normalizedMemberId &&
+        !resolvedGuest.guest &&
+        shadowAction !== "remove"
+      ) {
         const memberSnap = await transaction.get(
           db.collection(COLLECTIONS.teamRosterMembers).doc(normalizedMemberId),
         );
@@ -4080,15 +4773,20 @@ export const createTeamsAuthHandlers = ({
         member,
         serviceId,
         positionSlotKey,
-        memberId,
+        memberId: normalizedMemberId,
         serviceDate,
         sourceServiceId,
         sourcePositionSlotKey,
         shadowAction,
         shadowKind,
         allowBlockout,
+        guestAssignment: Boolean(resolvedGuest.guest),
       });
-      if (normalizedMemberId && shadowAction !== "remove") {
+      if (
+        normalizedMemberId &&
+        !resolvedGuest.guest &&
+        shadowAction !== "remove"
+      ) {
         const schedules = await listTransactionSchedulesForChurch(
           transaction,
           db,
@@ -4104,6 +4802,14 @@ export const createTeamsAuthHandlers = ({
       }
       const update = {
         assignments,
+        guests: resolvedGuest.guests,
+        // Re-derived against the new map so an answer cannot outlive the slot
+        // it was about. Without this, clearing someone and putting them back
+        // resurrects their old decline as though they had answered again.
+        responses: prunedResponsesForAssignments(
+          schedule.responses,
+          assignments,
+        ),
         updatedAt: nowIso(),
         updatedByUid: adminUserId,
       };
@@ -4613,6 +5319,7 @@ export const createTeamsAuthHandlers = ({
           teams.map((team) => [team.teamId, team.name]),
         );
         // `members` is the church roster already fetched to find this person.
+        // `members` is the church roster already fetched to find this person.
         const memberById = new Map(members.map((row) => [row.memberId, row]));
 
         // Same display convention as the public schedule link the church
@@ -4712,7 +5419,22 @@ export const createTeamsAuthHandlers = ({
                   const person = memberById.get(assignedId);
                   if (!person) return;
                   const isMe = assignedId === member.memberId;
+                  // Only their own answer is returned. Whether a teammate
+                  // accepted is the owner's business, not a co-volunteer's.
+                  const own =
+                    isMe && assignedId === primaryId
+                      ? readAssignmentResponse(
+                          schedule.responses?.[occurrenceId]?.[columnKey],
+                          assignedId,
+                        )
+                      : null;
                   entry.serving.push({
+                    ...(own
+                      ? {
+                          response: own.response,
+                          respondedAt: own.respondedAt,
+                        }
+                      : {}),
                     memberId: isMe ? assignedId : "",
                     name: isMe
                       ? `${member.firstName} ${member.lastName}`.trim()
@@ -4824,6 +5546,354 @@ export const createTeamsAuthHandlers = ({
     },
 
     /**
+     * Accept or decline from an emailed link, with no account and no session.
+     *
+     * This is not a convenience path — it is the *primary* one. Volunteers
+     * routinely have no account (roster and account list are deliberately
+     * separate), so requiring sign-in to answer would mean the people most
+     * likely to need a reminder are the ones who cannot reply to it.
+     *
+     * Authority comes entirely from the signed token, which names one church,
+     * schedule, occurrence, cell, and member. Presenting it answers that one
+     * assignment and nothing else: it starts no session, and the response body
+     * deliberately carries only what the reader already knew from their own
+     * email — the service name and date — never the roster or anyone else's
+     * answer.
+     *
+     * Rate limited on the token, because unlike every other write here there is
+     * no session to throttle behind.
+     */
+    buildAssignmentResponseUrl,
+
+    /**
+     * Tell people they are on this schedule.
+     *
+     * Sending is a **deliberate act, separate from building**. An owner shuffles
+     * a grid for twenty minutes; if every assignment mailed on save, volunteers
+     * would get a stream of contradictory notices and stop reading them. Nothing
+     * leaves until someone presses send, and `sentAt` records that they did.
+     *
+     * Idempotent by (recipient, event, schedule, occurrence) through the ledger,
+     * so pressing send twice does not re-mail anyone. Adding one person later
+     * and sending again mails only them — which is the normal way schedules get
+     * built, not an edge case.
+     *
+     * Failures are per-recipient and swallowed: one bad address must not stop
+     * the rest of the team being told. Only addresses that actually sent are
+     * recorded, so a failure retries on the next send rather than going quiet.
+     */
+    async sendTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          req.params.churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          req.params.churchId,
+          [schedule.teamId].filter(Boolean),
+        );
+
+        const [members, positions, teams] = await Promise.all([
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamRosterMembers,
+            "memberId",
+            req.params.churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamPositions,
+            "positionId",
+            req.params.churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teams,
+            "teamId",
+            req.params.churchId,
+          ),
+        ]);
+        /**
+         * Holders include schedule guests, not just the roster.
+         *
+         * A guest can carry an email, and skipping them meant the toast could
+         * report everyone notified while guest slots were silently ignored —
+         * the exact false confidence `unreachableMemberIds` exists to prevent.
+         * Guests have no account, so they resolve through `member.email` and
+         * have no stored preference, which defaults them to on.
+         */
+        const memberById = new Map(members.map((row) => [row.memberId, row]));
+        (schedule.guests || []).forEach((guest) => {
+          if (!guest?.guestId || memberById.has(guest.guestId)) return;
+          const name = String(guest.name || "").trim();
+          memberById.set(guest.guestId, {
+            memberId: guest.guestId,
+            firstName: name.split(/\s+/)[0] || name,
+            lastName: "",
+            ...(guest.email ? { email: guest.email } : {}),
+          });
+        });
+        const positionNameById = new Map(
+          positions.map((row) => [row.positionId, row.name]),
+        );
+        const teamName =
+          teams.find((row) => row.teamId === schedule.teamId)?.name || "";
+
+        // One entry per (member, occurrence, slot) actually assigned.
+        const slots = [];
+        Object.entries(schedule.assignments || {}).forEach(
+          ([occurrenceId, row]) => {
+            Object.entries(row || {}).forEach(([cellKey, cell]) => {
+              const memberId =
+                typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+              const member = memberId ? memberById.get(memberId) : null;
+              if (!member || member.archivedAt) return;
+              const occurrence = (schedule.occurrences || []).find(
+                (item) => item?.occurrenceId === occurrenceId,
+              );
+              slots.push({
+                member,
+                occurrenceId,
+                cellKey,
+                serviceName: occurrence?.name || "Service",
+                startsAt: occurrence?.startsAt || "",
+                positionName:
+                  positionNameById.get(String(cellKey).split("::")[0]) || "",
+              });
+            });
+          },
+        );
+
+        const notified = await notifyScheduleAssignments({
+          churchId: req.params.churchId,
+          schedule,
+          slots,
+        });
+
+        const sentAt = nowIso();
+        await setDoc(
+          COLLECTIONS.teamSchedules,
+          req.params.scheduleId,
+          { sentAt, updatedAt: sentAt, updatedByUid: admin.user.uid },
+          { merge: true },
+        );
+        await addSecurityEvent({
+          type: "team_schedule_sent",
+          churchId: req.params.churchId,
+          userId: admin.user.uid,
+          scheduleId: req.params.scheduleId,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", {
+          schedule: { ...schedule, sentAt },
+        });
+
+        return res.json({ success: true, sentAt, ...notified, teamName });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not send this schedule.");
+      }
+    },
+
+    /**
+     * What an emailed link is asking about.
+     *
+     * Read-only companion to the write below. Without it the page can only say
+     * "Can you serve?" with no service named — which is what shipped first, and
+     * is not a question anyone can answer.
+     *
+     * Returns only this member's own slots on this one schedule: no roster, no
+     * teammates, no other schedules.
+     */
+    async getAssignmentResponseContext(req, res) {
+      try {
+        const token = String(req.query?.token || "").trim();
+        await enforcePublicTokenRateLimit({
+          req,
+          scope: "team_assignment_response_read",
+          token,
+          limit: 40,
+          windowMs: 10 * 60 * 1000,
+          blockMs: 10 * 60 * 1000,
+        });
+        const { churchId, scheduleId, memberId } = assertAssignmentToken(token);
+
+        const schedule = await getTeamEntity("schedule", scheduleId);
+        if (!schedule || schedule.churchId !== churchId) {
+          throw httpError(404, "That schedule is no longer available.");
+        }
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          churchId,
+        );
+        const member =
+          members.find((row) => row.memberId === memberId) ||
+          (schedule.guests || []).find((guest) => guest?.guestId === memberId);
+        const church = await getChurchById(churchId);
+
+        return res.json({
+          success: true,
+          churchName: church?.name || "",
+          firstName: String(member?.firstName || member?.name || "")
+            .trim()
+            .split(/\s+/)[0],
+          assignments: await listMemberAssignmentsOnSchedule(schedule, memberId),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open this link. Ask your team lead to resend it.",
+        );
+      }
+    },
+
+    /**
+     * Accept or decline from an emailed link, with no account and no session.
+     *
+     * This is not a convenience path — it is the *primary* one. Volunteers
+     * routinely have no account (roster and account list are deliberately
+     * separate), so requiring sign-in to answer would mean the people most
+     * likely to need a reminder are the ones who cannot reply to it.
+     *
+     * Answers one slot when given `occurrenceId` + `cellKey`, or **all** of the
+     * member's slots on this schedule when they are omitted. Answering four
+     * services should not mean opening four links.
+     *
+     * Rate limited on the token, because unlike every other write here there is
+     * no session to throttle behind.
+     */
+    async respondToAssignmentByToken(req, res) {
+      try {
+        const token = String(req.body?.token || "").trim();
+        await enforcePublicTokenRateLimit({
+          req,
+          scope: "team_assignment_response",
+          token,
+          limit: 20,
+          windowMs: 10 * 60 * 1000,
+          blockMs: 10 * 60 * 1000,
+        });
+
+        const response = normalizeAssignmentResponse(req.body?.response);
+        if (response === "pending") {
+          throw httpError(400, "Choose accept or decline.");
+        }
+        const { churchId, scheduleId, memberId } = assertAssignmentToken(token);
+
+        const existing = await getTeamEntity("schedule", scheduleId);
+        if (!existing || existing.churchId !== churchId) {
+          throw httpError(404, "That schedule is no longer available.");
+        }
+        const occurrenceId = normalizeShortText(req.body?.occurrenceId, {
+          max: 200,
+        });
+        const cellKey = normalizeShortText(req.body?.cellKey, { max: 200 });
+        // Slot coordinates only — the enriched list needs every position in the
+        // church, and that read is already paid for once when the answer is
+        // returned below.
+        const targets =
+          occurrenceId && cellKey
+            ? [{ occurrenceId, cellKey }]
+            : listMemberSlotKeys(existing, memberId);
+
+        const { schedule, applied } = await writeAssignmentResponses({
+          churchId,
+          scheduleId,
+          memberId,
+          targets,
+          response,
+        });
+        emitTeamsEvent(churchId, "schedule-updated", { schedule });
+        // Owners learn about this without watching the grid. Coalesced, so a
+        // burst of answers after a send arrives as one email.
+        await scheduleAssignmentResponseDigest(scheduleId);
+
+        return res.json({
+          success: true,
+          response,
+          applied,
+          assignments: await listMemberAssignmentsOnSchedule(schedule, memberId),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save your response.");
+      }
+    },
+
+    /**
+     * Accept or decline one of the signed-in person's own assignments.
+     *
+     * Self-scoped like the rest of `/my-schedule`: the member is resolved from
+     * the session, and the slot must actually be held by them, so a volunteer
+     * cannot answer on anyone else's behalf. Needs no teams permission.
+     *
+     * Writes only `schedule.responses` — never `assignments`. A volunteer
+     * declining must not remove themselves from the grid: the owner decides who
+     * covers the slot, and a slot silently emptying itself is how a service
+     * ends up short with nobody realising.
+     *
+     * This is the in-app path. The emailed signed-token path lands with the
+     * dispatch work; both write through here so the two can never disagree.
+     */
+    async respondToMyAssignment(req, res) {
+      try {
+        await assertCsrf(req);
+        const session = await requireHumanSession(req);
+        if (session.churchId !== req.params.churchId) {
+          throw httpError(403, "Access required");
+        }
+        const userId = session.user?.uid;
+        if (!userId) throw httpError(401, "Authentication required");
+
+        const response = normalizeAssignmentResponse(req.body?.response);
+        if (response === "pending") {
+          throw httpError(400, "Choose accept or decline.");
+        }
+        const occurrenceId = normalizeShortText(req.body?.occurrenceId, {
+          max: 200,
+        });
+        const cellKey = normalizeShortText(req.body?.cellKey, { max: 200 });
+        const scheduleId = normalizeShortText(req.body?.scheduleId, {
+          max: 160,
+        });
+        if (!occurrenceId || !cellKey || !scheduleId) {
+          throw httpError(400, "That assignment is no longer available.");
+        }
+
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          req.params.churchId,
+        );
+        const member = members.find((row) => row.userId === userId);
+        if (!member) {
+          throw httpError(
+            404,
+            "Your account is not linked to a team member yet.",
+          );
+        }
+
+        // Same writer as the emailed path, so the two can never disagree about
+        // who may answer or how a concurrent answer is handled.
+        const { schedule } = await writeAssignmentResponses({
+          churchId: req.params.churchId,
+          scheduleId,
+          memberId: member.memberId,
+          targets: [{ occurrenceId, cellKey }],
+          response,
+          actorUid: userId,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        // Owners learn about this without watching the grid. Coalesced, so a
+        // burst of answers after a send arrives as one email.
+        await scheduleAssignmentResponseDigest(scheduleId);
+        return res.json({ success: true, response });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save your response.");
+      }
+    },
+
+    /**
      * The signed-in person's own blockout dates.
      *
      * Self-scoped exactly like {@link getMyTeamAssignments}: the record written
@@ -4871,6 +5941,22 @@ export const createTeamsAuthHandlers = ({
           throw httpError(
             403,
             "Your member record is archived. Ask an admin to restore it.",
+          );
+        }
+
+        // The write replaces the whole array, so without a precondition an
+        // admin editing this member's blockouts loses their change the moment
+        // the member saves a page loaded beforehand — silently, with nothing
+        // but a securityEvents row saying the member saved. Required rather
+        // than advisory: this endpoint has only ever had one client.
+        const expectedUpdatedAt = normalizeShortText(
+          req.body?.expectedUpdatedAt,
+          { max: 64 },
+        );
+        if (member.updatedAt && expectedUpdatedAt !== member.updatedAt) {
+          throw httpError(
+            409,
+            "Your time off changed somewhere else. Check the dates and save again.",
           );
         }
 
@@ -6004,6 +7090,7 @@ export const createTeamsAuthHandlers = ({
         const payload = await validateTeamSchedulePayload(
           req.body,
           req.params.churchId,
+          existing,
         );
         const admin = await requireTeamsEditForTeamIds(
           req,
@@ -6034,13 +7121,16 @@ export const createTeamsAuthHandlers = ({
             ),
           });
         }
-        const schedule = await upsertTeamEntity({
+        const saved = await upsertTeamEntity({
           kind: "schedule",
           churchId: req.params.churchId,
           id: req.params.scheduleId,
           payload,
           adminUserId: admin.user.uid,
         });
+        // Editing occurrences rewrites assignments wholesale, so answers about
+        // slots that no longer exist have to go with them.
+        const schedule = await syncScheduleResponsesToAssignments(saved);
         await addSecurityEvent({
           type: "team_schedule_updated",
           churchId: req.params.churchId,
@@ -6964,6 +8054,8 @@ export const createTeamsAuthHandlers = ({
                 lastName: submission.lastName,
                 email: normalizeMemberEmail(submission.email),
                 dateOfBirth: "",
+                isMinor: false,
+                servingFrequency: "as_needed",
                 positionIds: [],
                 desiredPositionIds,
                 serviceAvailability: submissionAvailability,
@@ -7137,6 +8229,7 @@ export const createTeamsAuthHandlers = ({
           serviceId: String(req.body?.serviceId || "").trim(),
           positionSlotKey: String(req.body?.positionSlotKey || "").trim(),
           memberId: req.body?.memberId == null ? "" : String(req.body.memberId),
+          guest: req.body?.guest,
           serviceDate: normalizeOptionalPlainDate(
             req.body?.serviceDate,
             "Service date",
@@ -7159,6 +8252,7 @@ export const createTeamsAuthHandlers = ({
           serviceId: String(req.body?.serviceId || "").trim(),
           positionSlotKey: String(req.body?.positionSlotKey || "").trim(),
           memberId: req.body?.memberId || null,
+          guestAssignment: req.body?.guest != null,
         });
         emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
         return res.json({ success: true, schedule });

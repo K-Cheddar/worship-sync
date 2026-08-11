@@ -21,7 +21,9 @@ import {
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
   requireTeamsViewSession,
+  assertServerCsrf,
 } from "./authService.js";
+import { createAppSessionGuards } from "./server/appSessionGuards.js";
 import { createLyricsImportService } from "./lyricsImport.js";
 import {
   BOARD_DB_NAME,
@@ -60,6 +62,8 @@ import {
   RichLinkPreviewUnavailableError,
   createRichLinkPreviewService,
 } from "./server/richLinkPreview.js";
+import { createChatService } from "./server/chatService.js";
+import { createChatHandlers } from "./server/chatApi.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -141,48 +145,16 @@ const corsAllowedOrigins = Array.from(
   ),
 );
 
-const requireAppSession = async (req, res, next) => {
-  try {
-    const bootstrap = await resolveRequestBootstrap(req);
-    if (
-      bootstrap?.authenticated &&
-      bootstrap.sessionKind !== "display" &&
-      bootstrap.database
-    ) {
-      req.appSession = {
-        userId: bootstrap.user?.uid || "",
-        username:
-          bootstrap.user?.displayName ||
-          bootstrap.device?.operatorName ||
-          bootstrap.device?.label ||
-          "Operator",
-        database: bootstrap.database,
-        access: bootstrap.appAccess || "view",
-        churchId: bootstrap.churchId || "",
-      };
-      return next();
-    }
-
-    return res.status(401).json({ error: "Sign in to continue." });
-  } catch (error) {
-    console.error("Board auth error:", error);
-    return res.status(401).json({ error: "Sign in to continue." });
-  }
-};
-
-const requireFullAppAccess = (req, res, next) => {
-  if (req.appSession?.access !== "full") {
-    return res.status(403).json({ error: "Full access is required." });
-  }
-  next();
-};
-
-const requireSongAudioEditAccess = (req, res, next) => {
-  if (req.appSession?.access !== "full" && req.appSession?.access !== "music") {
-    return res.status(403).json({ error: "Music access is required." });
-  }
-  next();
-};
+const {
+  requireAppSession,
+  requireMutationCsrf,
+  requireFullAppAccess,
+  requireSongAudioEditAccess,
+  assertSongAudioChurchAccess,
+} = createAppSessionGuards({
+  resolveRequestBootstrap,
+  assertRequestCsrf: assertServerCsrf,
+});
 
 const songAudioMaxBytes = (() => {
   const configured = Number(process.env.SONG_AUDIO_MAX_BYTES);
@@ -205,14 +177,6 @@ const getSongAudioStorage = () => {
     songAudioStorage = createSongAudioStorage();
   }
   return songAudioStorage;
-};
-
-const assertSongAudioChurchAccess = (req, res) => {
-  if (req.appSession?.churchId !== req.params.churchId) {
-    res.status(403).json({ error: "That church is not available." });
-    return false;
-  }
-  return true;
 };
 
 const respondSongAudioError = (res, context, error) => {
@@ -539,6 +503,9 @@ const youtubeLiveChatService = createYouTubeLiveChatService({
   redirectBaseUrl: frontEndHost,
 });
 
+const chatService = createChatService({ getFirestore: getServerFirestore });
+const chatHandlers = createChatHandlers({ chatService });
+
 const serializeBoardAlias = (aliasDoc) => ({
   _id: aliasDoc._id,
   _rev: aliasDoc._rev,
@@ -714,7 +681,7 @@ app.use(
 
       callback(new Error("Origin not allowed by CORS"));
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Origin",
       "X-Requested-With",
@@ -767,6 +734,32 @@ app.post(
   "/api/churches/:churchId/integrations",
   authHandlers.updateChurchIntegrations,
 );
+
+app.use("/api/churches/:churchId/chat", requireAppSession);
+app.get("/api/churches/:churchId/chat/context", chatHandlers.getContext);
+app.get("/api/churches/:churchId/chat/messages", chatHandlers.listMessages);
+app.get("/api/churches/:churchId/chat/stream", chatHandlers.stream);
+app.post(
+  "/api/churches/:churchId/chat/messages",
+  requireMutationCsrf,
+  chatHandlers.createMessage,
+);
+app.patch(
+  "/api/churches/:churchId/chat/messages/:messageId",
+  requireMutationCsrf,
+  chatHandlers.updateMessage,
+);
+app.delete(
+  "/api/churches/:churchId/chat/messages/:messageId",
+  requireMutationCsrf,
+  chatHandlers.deleteMessage,
+);
+app.post(
+  "/api/churches/:churchId/chat/messages/:messageId/reactions",
+  requireMutationCsrf,
+  chatHandlers.toggleReaction,
+);
+
 const respondRichLinkPreviewError = (res, error) => {
   if (error instanceof RichLinkPreviewInputError) {
     return res.status(400).json({ errorMessage: error.message });
@@ -975,6 +968,25 @@ app.get(
 app.post(
   "/api/churches/:churchId/my-blockout-dates",
   authHandlers.updateMyBlockoutDates,
+);
+// Also self-scoped: the slot must be held by the session's own member.
+app.post(
+  "/api/churches/:churchId/my-assignments/respond",
+  authHandlers.respondToMyAssignment,
+);
+// Public and unauthenticated by design: volunteers often have no account, so a
+// signed single-purpose token is the only way they can answer at all.
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/send",
+  authHandlers.sendTeamSchedule,
+);
+app.get(
+  "/api/team-schedule-response",
+  authHandlers.getAssignmentResponseContext,
+);
+app.post(
+  "/api/team-schedule-response",
+  authHandlers.respondToAssignmentByToken,
 );
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/link",
@@ -2574,56 +2586,6 @@ app.get("/api/changelog", async (req, res) => {
   } catch (error) {
     console.error("Error reading changelog:", error);
     res.status(500).json({ error: "Failed to load changelog" });
-  }
-});
-
-app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    // Create a PouchDB instance to check credentials
-    const dbName = "worship-sync-logins";
-    const couchURL = `https://${process.env.COUCHDB_HOST}/${dbName}`;
-
-    const response = await axios({
-      method: "GET",
-      url: `${couchURL}/logins`,
-      headers: {
-        Authorization:
-          "Basic " +
-          Buffer.from(
-            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`,
-          ).toString("base64"),
-        "Content-Type": "application/json",
-      },
-    });
-
-    const db_logins = response.data;
-    const user = db_logins.logins.find(
-      (e) => e.username === username && e.password === password,
-    );
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, errorMessage: "Invalid credentials" });
-    }
-
-    res.json({
-      success: true,
-      user: {
-        username: user.username,
-        database: user.database,
-        upload_preset: user.upload_preset,
-        access: user.access,
-      },
-    });
-  } catch (error) {
-    console.error("Sign-in error:", error);
-    res.status(500).json({
-      success: false,
-      errorMessage: `Sign in failed: ${error.message}`,
-    });
   }
 });
 

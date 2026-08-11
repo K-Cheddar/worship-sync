@@ -3,25 +3,22 @@
  *
  * The recipient pool is *derived* from who can edit the form's teams (computed
  * in authService against the live membership/permission data) — this module
- * never stores a second list of people. Its job is the tri-state preference
- * resolution and the final filter/dedupe, which is the easy-to-get-wrong part.
+ * never stores a second list of people. Its job is the final filter/dedupe and
+ * the digest coalescing decision, which are the easy-to-get-wrong parts.
  */
 
-const PREFERENCE_VALUES = new Set(["on", "off", "default"]);
+import {
+  isNotificationEnabled,
+  normalizeNotificationPreference,
+} from "./notificationPreferences.js";
 
 /**
- * Resolve a stored preference to one of "on" | "off" | "default".
- * Unknown/missing values become "default" so we can change the default
- * behavior later without rewriting membership rows.
- * @param {unknown} value
- * @returns {"on" | "off" | "default"}
+ * Intake is one category in the shared catalog; the tri-state rules live there
+ * so every category resolves identically. Re-exported under the original names
+ * because this module's callers and tests predate the catalog.
  */
-export const normalizeIntakeNotificationPreference = (value) => {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
-  return PREFERENCE_VALUES.has(normalized) ? normalized : "default";
-};
+export const normalizeIntakeNotificationPreference = (value) =>
+  normalizeNotificationPreference(value);
 
 /**
  * Editors are notified unless they have explicitly turned it off. "default"
@@ -30,7 +27,7 @@ export const normalizeIntakeNotificationPreference = (value) => {
  * @returns {boolean}
  */
 export const isIntakeNotificationEnabled = (preference) =>
-  normalizeIntakeNotificationPreference(preference) !== "off";
+  isNotificationEnabled("intakeSubmissions", preference);
 
 /**
  * True when a member can edit at least one of the form's teams — the same rule
