@@ -48,6 +48,10 @@ import {
   type DesktopAuthCallbackPayload,
 } from "./desktopAuth";
 import { assertAllowedOpenExternalUrl } from "./openExternalUrlAllowlist";
+import {
+  isNewerVersion,
+  shouldForwardUpdaterErrorToRenderer,
+} from "./updaterHelpers";
 
 const { autoUpdater } = updaterPkg;
 
@@ -56,19 +60,6 @@ const DESKTOP_RELEASE_OWNER = "K-Cheddar";
 const DESKTOP_RELEASE_REPO = "worship-sync";
 const DESKTOP_RELEASE_API_URL = `https://api.github.com/repos/${DESKTOP_RELEASE_OWNER}/${DESKTOP_RELEASE_REPO}/releases/latest`;
 const DESKTOP_RELEASE_PAGE_URL = `https://github.com/${DESKTOP_RELEASE_OWNER}/${DESKTOP_RELEASE_REPO}/releases/latest`;
-
-/** Returns true only when newVersion is strictly greater than currentVersion (semver-style). */
-function isNewerVersion(newVersion: string, currentVersion: string): boolean {
-  const v1Parts = newVersion.split(".").map(Number);
-  const v2Parts = currentVersion.split(".").map(Number);
-  for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
-    const v1Part = v1Parts[i] ?? 0;
-    const v2Part = v2Parts[i] ?? 0;
-    if (v1Part > v2Part) return true;
-    if (v1Part < v2Part) return false;
-  }
-  return false;
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -84,15 +75,6 @@ const useElectronAutoUpdaterInMain = (): boolean =>
   !isDev &&
   (process.platform !== "darwin" ||
     process.env.WORSHIPSYNC_MAC_USE_AUTO_UPDATE === "1");
-
-function shouldForwardUpdaterErrorToRenderer(message: string): boolean {
-  const m = message.toLowerCase();
-  if (m.includes("code signature") && m.includes("validation")) return false;
-  if (m.includes("not pass validation")) return false;
-  if (m.includes("secerror") || m.includes("secerrordomain")) return false;
-  if (m.includes("failed to verify") && m.includes("signature")) return false;
-  return true;
-}
 
 /**
  * Get the icon path for the current platform
