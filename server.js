@@ -50,6 +50,7 @@ import {
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
 import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
+import { createCanvaService } from "./server/canvaService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
 import {
   SongAudioInputError,
@@ -64,6 +65,14 @@ import {
 } from "./server/richLinkPreview.js";
 import { createChatService } from "./server/chatService.js";
 import { createChatHandlers } from "./server/chatApi.js";
+import {
+  CHAT_IMAGE_MAX_BYTES,
+  createChatImageStorage,
+} from "./server/chatImageStorage.js";
+import {
+  createChatImageFinalizeGuard,
+  createChatImageUploadGuard,
+} from "./server/chatImageUploadGuard.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -149,6 +158,7 @@ const {
   requireAppSession,
   requireMutationCsrf,
   requireFullAppAccess,
+  requireChurchAdmin,
   requireSongAudioEditAccess,
   assertSongAudioChurchAccess,
 } = createAppSessionGuards({
@@ -167,6 +177,18 @@ const parseSongAudioBytes = express.raw({
   limit: songAudioMaxBytes,
 });
 const guardSongAudioUpload = createSongAudioUploadGuard();
+const chatImageMaxBytes = (() => {
+  const configured = Number(process.env.CHAT_IMAGE_MAX_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : CHAT_IMAGE_MAX_BYTES;
+})();
+const parseChatImageBytes = express.raw({
+  type: ["image/jpeg", "image/png", "image/webp"],
+  limit: chatImageMaxBytes,
+});
+const guardChatImageUpload = createChatImageUploadGuard();
+const guardChatImageFinalize = createChatImageFinalizeGuard();
 const richLinkPreviewService = createRichLinkPreviewService({
   httpClient: axios,
 });
@@ -177,6 +199,14 @@ const getSongAudioStorage = () => {
     songAudioStorage = createSongAudioStorage();
   }
   return songAudioStorage;
+};
+
+let chatImageStorage;
+const getChatImageStorage = () => {
+  if (!chatImageStorage) {
+    chatImageStorage = createChatImageStorage();
+  }
+  return chatImageStorage;
 };
 
 const respondSongAudioError = (res, context, error) => {
@@ -502,9 +532,15 @@ const youtubeLiveChatService = createYouTubeLiveChatService({
   getIntegrationsPath: getChurchIntegrationsPath,
   redirectBaseUrl: frontEndHost,
 });
+let canvaService;
 
-const chatService = createChatService({ getFirestore: getServerFirestore });
-const chatHandlers = createChatHandlers({ chatService });
+const chatService = createChatService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  onAttachmentRemoved: ({ churchId, attachment }) =>
+    getChatImageStorage().deleteAttachment({ churchId, attachment }),
+});
+const chatHandlers = createChatHandlers({ chatService, getChatImageStorage });
 
 const serializeBoardAlias = (aliasDoc) => ({
   _id: aliasDoc._id,
@@ -652,6 +688,16 @@ if (process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET) {
   });
 }
 
+canvaService = createCanvaService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  getIntegrationsPath: getChurchIntegrationsPath,
+  redirectBaseUrl: frontEndHost,
+  httpClient: axios,
+  cloudinaryClient: cloudinary,
+  getMuxClient: () => mux,
+});
+
 app.post(
   "/api/webhooks/resend",
   express.raw({ type: "application/json", limit: "1mb" }),
@@ -739,9 +785,32 @@ app.use("/api/churches/:churchId/chat", requireAppSession);
 app.get("/api/churches/:churchId/chat/context", chatHandlers.getContext);
 app.get("/api/churches/:churchId/chat/messages", chatHandlers.listMessages);
 app.get("/api/churches/:churchId/chat/stream", chatHandlers.stream);
+app.get(
+  "/api/churches/:churchId/chat/messages/:messageId/image/:variant",
+  chatHandlers.getImageUrl,
+);
+app.post(
+  "/api/churches/:churchId/chat/typing",
+  requireMutationCsrf,
+  chatHandlers.updateTyping,
+);
+app.post(
+  "/api/churches/:churchId/chat/images/upload",
+  requireMutationCsrf,
+  guardChatImageUpload,
+  chatHandlers.createImageUpload,
+);
+app.post(
+  "/api/churches/:churchId/chat/images/upload-from-app",
+  requireMutationCsrf,
+  guardChatImageUpload,
+  parseChatImageBytes,
+  chatHandlers.uploadImageFromApp,
+);
 app.post(
   "/api/churches/:churchId/chat/messages",
   requireMutationCsrf,
+  guardChatImageFinalize,
   chatHandlers.createMessage,
 );
 app.patch(
@@ -987,6 +1056,12 @@ app.get(
 app.post(
   "/api/team-schedule-response",
   authHandlers.respondToAssignmentByToken,
+);
+// Sends mail, so it is rate limited harder than answering. The address comes
+// from the roster record the token names, never from the request body.
+app.post(
+  "/api/team-schedule-response/invite",
+  authHandlers.requestAccountFromAssignmentToken,
 );
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/link",
@@ -1684,6 +1759,157 @@ app.post(
         "Error posting YouTube live chat message:",
         error,
       );
+    }
+  },
+);
+
+const respondCanvaError = (res, context, error) => {
+  console.error(context, error);
+  res.status(error?.statusCode || 500).json({
+    error:
+      error?.statusCode && error?.message
+        ? error.message
+        : "Canva could not complete that request. Try again.",
+  });
+};
+
+app.get("/api/canva/oauth/callback", async (req, res) => {
+  try {
+    const result = await canvaService.completeConnect({
+      state: req.query.state,
+      code: req.query.code,
+      denied: Boolean(req.query.error) || !req.query.code,
+    });
+    const params = new URLSearchParams({
+      status: "success",
+      returnTo: result.returnTo || "/account/integrations",
+      ...(result.accountLabel ? { accountLabel: result.accountLabel } : {}),
+      ...(result.desktop ? { desktop: "1" } : {}),
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/canva/connect-complete?${params}`,
+    );
+  } catch (error) {
+    console.error("Error completing Canva connection:", error);
+    const params = new URLSearchParams({
+      status: "error",
+      message:
+        "The Canva connection did not finish. Return to WorshipSync and try again.",
+      returnTo:
+        typeof error?.returnTo === "string" && error.returnTo.startsWith("/")
+          ? error.returnTo
+          : "/account/integrations",
+      ...(error?.desktop ? { desktop: "1" } : {}),
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/canva/connect-complete?${params}`,
+    );
+  }
+});
+
+app.use(
+  "/api/churches/:churchId/canva",
+  requireAppSession,
+  requireFullAppAccess,
+  (req, res, next) =>
+    req.appSession.churchId === req.params.churchId
+      ? next()
+      : res.status(403).json({ error: "That church is not available." }),
+);
+
+app.get("/api/churches/:churchId/canva/status", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.getStatusForChurch({ churchId: req.params.churchId }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error loading Canva status:", error);
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/canva/connect-url",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.startConnect({
+          churchId: req.params.churchId,
+          userId: req.appSession.userId,
+          returnTo: req.body?.returnTo,
+          desktop: Boolean(req.body?.desktop),
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error starting Canva connection:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/canva/connect-status",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.getConnectStatus({
+          churchId: req.params.churchId,
+          connectRequestId: req.body?.connectRequestId,
+          connectRequestSecret: req.body?.connectRequestSecret,
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error loading Canva connection status:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/canva/disconnect",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      await canvaService.disconnect({ churchId: req.params.churchId });
+      res.json({ success: true });
+    } catch (error) {
+      respondCanvaError(res, "Error disconnecting Canva:", error);
+    }
+  },
+);
+
+app.get("/api/churches/:churchId/canva/designs", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.listDesigns({
+        churchId: req.params.churchId,
+        query: req.query.query,
+        continuation: req.query.continuation,
+      }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error listing Canva designs:", error);
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/canva/imports",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.importDesign({
+          churchId: req.params.churchId,
+          designId: req.body?.designId,
+          pages: req.body?.pages,
+          format: req.body?.format,
+          existingImportKeys: req.body?.existingImportKeys,
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error importing from Canva:", error);
     }
   },
 );
