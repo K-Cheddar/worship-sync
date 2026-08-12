@@ -286,6 +286,10 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           ) : (
             <img
               className="max-w-full max-h-full object-contain"
+              style={{
+                // Broken-image alt text inherits overlay fontSize; keep it readable, not overlay-sized.
+                fontSize: 16,
+              }}
               src={
                 isOverlayVideo
                   ? getImageFromVideoUrl(overlayImageUrl)

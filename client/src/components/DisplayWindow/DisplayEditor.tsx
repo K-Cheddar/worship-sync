@@ -501,6 +501,8 @@ const DisplayEditorComponent = ({
             shouldImageBeHidden ? "opacity-0" : "opacity-100"
           )}
           style={{
+            // Broken-image alt text inherits parent fontSize; keep it readable, not slide-sized.
+            fontSize: 16,
             filter: `brightness(${box.brightness}%)`,
           }}
           src={background}
