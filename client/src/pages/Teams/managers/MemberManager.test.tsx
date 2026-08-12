@@ -193,6 +193,60 @@ afterEach(() => {
   window.matchMedia = originalMatchMedia;
 });
 
+describe("MemberManager member preferences", () => {
+  it("allows manual minor status and saves the serving preference without a birth date", async () => {
+    const user = userEvent.setup();
+    mockCreateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: {
+        ...worshipMember,
+        memberId: "member-new",
+        firstName: "Sky",
+        lastName: "Lane",
+        isMinor: true,
+        servingFrequency: "twice_monthly",
+      },
+    });
+    renderManager();
+    await openCreateForm(user);
+    await fillName(user);
+
+    const minorCheckbox = screen.getByRole("checkbox", { name: /Minor/ });
+    expect(minorCheckbox).toBeEnabled();
+    await user.click(minorCheckbox);
+    await user.click(screen.getByRole("combobox", { name: /Serving preference/ }));
+    await user.click(screen.getByRole("option", { name: "Twice a month" }));
+    await user.click(screen.getByRole("button", { name: "Save member" }));
+
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalled());
+    const [, body] = mockCreateTeamRosterMember.mock.calls[0];
+    expect(body.isMinor).toBe(true);
+    expect(body.servingFrequency).toBe("twice_monthly");
+  });
+
+  it("derives and disables minor status when a birth date is saved", async () => {
+    const user = userEvent.setup();
+    const dateOfBirth = `${new Date().getFullYear() - 10}-01-01`;
+    renderManager({
+      data: joinedData({
+        members: [
+          {
+            ...worshipMember,
+            dateOfBirth,
+            isMinor: false,
+          },
+        ],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+
+    const minorCheckbox = screen.getByRole("checkbox", { name: /Minor/ });
+    expect(minorCheckbox).toBeChecked();
+    expect(minorCheckbox).toBeDisabled();
+    expect(screen.getByText("Set automatically from the date of birth.")).toBeInTheDocument();
+  });
+});
+
 describe("MemberManager team membership", () => {
   it("checks a position's team, so eligibility and membership cannot disagree", async () => {
     const user = userEvent.setup();

@@ -257,6 +257,8 @@ const DisplayBox = ({
           src={displayImage}
           alt={box.label}
           style={{
+            // Broken-image alt text inherits parent fontSize; keep it readable, not slide-sized.
+            fontSize: 16,
             opacity: initialBackgroundOpacity,
           }}
         />

@@ -49,3 +49,20 @@ export function normalizeOverlayForSync(
     updatedBy: overlay.updatedBy,
   };
 }
+
+type OverlayDbGet = {
+  get: (id: string) => Promise<DBOverlay>;
+};
+
+/**
+ * Loads one overlay doc and normalizes it for Redux selection (operator row click).
+ * Throws when the pouch get fails so callers can clear selection.
+ */
+export async function loadOverlayForSelection(
+  db: OverlayDbGet,
+  overlayId: string,
+): Promise<OverlayInfo | undefined> {
+  const loadedOverlay = await db.get(`overlay-${overlayId}`);
+  if (!loadedOverlay) return undefined;
+  return normalizeOverlayForSync(loadedOverlay);
+}

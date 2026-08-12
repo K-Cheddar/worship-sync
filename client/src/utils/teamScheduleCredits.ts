@@ -15,6 +15,7 @@ import {
   memberName,
   sortPositionsByOrder,
 } from "../pages/Teams/teamsUtils";
+import { resolveMemberMinorStatus } from "../pages/Teams/memberPreferences";
 
 export type TeamScheduleCreditEntry = {
   heading: string;
@@ -191,7 +192,12 @@ const pushMemberName = ({
 }) => {
   if (!memberId || seenMemberIds.has(memberId)) return;
   seenMemberIds.add(memberId);
-  names.push(memberName(membersById.get(memberId)));
+  const member = membersById.get(memberId);
+  names.push(
+    member && resolveMemberMinorStatus(member)
+      ? member.firstName.trim()
+      : memberName(member),
+  );
 };
 
 const collectCellMemberNames = ({

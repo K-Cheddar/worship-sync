@@ -1,6 +1,11 @@
 import { app, screen, BrowserWindow } from "electron";
 import { join } from "node:path";
 import * as fs from "node:fs";
+import {
+  findDisplayByBounds,
+  findDisplayById,
+  pickFallbackDisplay,
+} from "./windowDisplayMatch";
 
 export type WindowType = "projector" | "monitor" | "board";
 
@@ -63,7 +68,7 @@ export class WindowStateManager {
       fs.writeFileSync(
         this.stateFilePath,
         JSON.stringify(this.states, null, 2),
-        "utf-8"
+        "utf-8",
       );
     } catch (error) {
       console.error("Error saving window states:", error);
@@ -74,10 +79,7 @@ export class WindowStateManager {
     return this.states[windowType];
   }
 
-  saveWindowState(
-    windowType: WindowType,
-    window: BrowserWindow
-  ): void {
+  saveWindowState(windowType: WindowType, window: BrowserWindow): void {
     // Since windows are always fullscreen, just detect which display they're on
     const bounds = window.getBounds();
     const detectedDisplay = screen.getDisplayMatching(bounds);
@@ -115,38 +117,28 @@ export class WindowStateManager {
     const state = this.states[windowType];
     const displays = screen.getAllDisplays();
 
-    // 1. Try saved display ID (works when IDs are stable)
-    if (state.displayId !== undefined && state.displayId !== null) {
-      const byId = displays.find((d) => d.id === state.displayId);
-      if (byId) return byId;
-    }
+    const byId = findDisplayById(displays, state.displayId);
+    if (byId) return byId;
 
-    // 2. After reboot, display IDs often change on Windows. Match by saved bounds so the same
-    //    physical screen is used (position + size is stable for a given layout).
-    if (state.displayBounds) {
-      const { x, y, width, height } = state.displayBounds;
-      const byBounds = displays.find((d) => {
-        const b = d.bounds;
-        return b.x === x && b.y === y && b.width === width && b.height === height;
-      });
-      if (byBounds) return byBounds;
-    }
+    const byBounds = findDisplayByBounds(displays, state.displayBounds);
+    if (byBounds) return byBounds;
 
-    // 3. Fallback: assign by index (projector = second; monitor and board = third when available)
-    if (displays.length > 1) {
-      if (windowType === "projector") return displays[1];
-      if (windowType === "monitor" || windowType === "board") {
-        return displays.length > 2 ? displays[2] : displays[1];
-      }
-    }
-
-    return screen.getPrimaryDisplay();
+    return pickFallbackDisplay(
+      displays,
+      windowType,
+      screen.getPrimaryDisplay(),
+    );
   }
 
   /**
    * Get window bounds for a specific display (always fullscreen)
    */
-  getWindowBounds(display: Electron.Display): { x: number; y: number; width: number; height: number } {
+  getWindowBounds(display: Electron.Display): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } {
     // Windows are always fullscreen, so just use the display's bounds
     return {
       x: display.bounds.x,
@@ -179,7 +171,12 @@ export class WindowStateManager {
   saveMainWindowState(window: BrowserWindow): void {
     const bounds = window.getBounds();
     this.states.main = {
-      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      bounds: {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      },
       isMaximized: window.isMaximized(),
     };
     this.saveStates();
@@ -200,7 +197,9 @@ export class WindowStateManager {
       width: 1,
       height: 1,
     });
-    const onCurrentDisplay = displays.some((d) => d.id === displayContainingCenter.id);
+    const onCurrentDisplay = displays.some(
+      (d) => d.id === displayContainingCenter.id,
+    );
     if (onCurrentDisplay) return main;
 
     const primary = screen.getPrimaryDisplay().bounds;

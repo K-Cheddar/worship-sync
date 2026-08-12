@@ -19,6 +19,19 @@ module.exports = {
   setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   coverageProvider: "v8",
+  collectCoverageFrom: [
+    "src/store/**/*.{ts,tsx}",
+    "src/utils/**/*.{ts,tsx}",
+    "src/hooks/useSyncOnReconnect.ts",
+    "src/hooks/useElectronWindows.ts",
+    "src/components/DisplayWindow/**/*.{ts,tsx}",
+    "electron/windowDisplayMatch.ts",
+    "electron/windowHelpers.ts",
+    "electron/displayWindowStore.ts",
+    "electron/updaterHelpers.ts",
+    "!**/*.test.{ts,tsx}",
+    "!**/__tests__/**",
+  ],
   // Large UI / layout surfaces excluded from coverage; thresholds apply to the rest (see tests + threshold below).
   coveragePathIgnorePatterns: [
     "/node_modules/",

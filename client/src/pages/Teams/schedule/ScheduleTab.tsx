@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   Link2,
   MoreHorizontal,
+  Send,
   Plus,
   Printer,
   Redo2,
@@ -48,6 +49,7 @@ import {
 import {
   createTeamRosterMember,
   getTeamScheduleDetail,
+  sendTeamSchedule,
   getTeamSchedulePublicLink,
   updateTeam,
   updateTeamSchedule,
@@ -98,6 +100,7 @@ import {
   type TeamRosterMember,
   type TeamSchedule,
   type TeamScheduleAssignments,
+  type TeamScheduleGuest,
   type TeamScheduleOccurrence,
   type TeamScheduleShadowKind,
 } from "../../../api/authTypes";
@@ -134,11 +137,13 @@ import {
   isActive,
   normalizeAssignmentCell,
   scheduleMemberName,
+  scheduleGuestToDisplayMember,
   serializeAssignmentCell,
   serviceDateBlockedOut,
   shadowKindLabel,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
+import { servingFrequencyTargetReached } from "../memberPreferences";
 import {
   useTeamsRestoreOnMount,
   useTeamsReturnNavigation,
@@ -319,6 +324,28 @@ const ScheduleTab = ({
   const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
     ? selectedScheduleRecord
     : null;
+  const scheduleDisplayMembers = useMemo(
+    () => [
+      ...data.members,
+      ...(selectedSchedule?.guests || []).map((guest) =>
+        scheduleGuestToDisplayMember(guest, churchId),
+      ),
+    ],
+    [churchId, data.members, selectedSchedule?.guests],
+  );
+  const recentScheduleGuests = useMemo(() => {
+    const byId = new Map<string, TeamScheduleGuest>();
+    const newestFirst = [...schedules].sort(
+      (left, right) =>
+        String(right.startDate || "").localeCompare(String(left.startDate || "")),
+    );
+    [selectedScheduleRecord, ...newestFirst].forEach((schedule) => {
+      (schedule?.guests || []).forEach((guest) => {
+        if (!byId.has(guest.guestId)) byId.set(guest.guestId, guest);
+      });
+    });
+    return [...byId.values()];
+  }, [schedules, selectedScheduleRecord]);
   const isSelectedScheduleLoading = Boolean(
     selectedScheduleRecord && !selectedSchedule,
   );
@@ -827,12 +854,14 @@ const ScheduleTab = ({
   const describeMemberName = useCallback(
     (memberId: string | null | undefined) => {
       if (!memberId) return "member";
-      const member = data.members.find((item) => item.memberId === memberId);
+      const member = scheduleDisplayMembers.find(
+        (item) => item.memberId === memberId,
+      );
       return member
         ? scheduleMemberName(member, duplicateScheduleFirstNames)
         : "member";
     },
-    [data.members, duplicateScheduleFirstNames],
+    [duplicateScheduleFirstNames, scheduleDisplayMembers],
   );
 
   // Push a completed assignment edit onto the undo stack. Cells whose value did
@@ -1161,11 +1190,11 @@ const ScheduleTab = ({
       columns: scheduleColumns,
       requirements: requirementsByOccurrence.get(detailOccurrence.occurrenceId),
       assignmentsRow: selectedSchedule?.assignments?.[detailOccurrence.occurrenceId],
-      members: data.members,
+      members: scheduleDisplayMembers,
       duplicateFirstNames: duplicateScheduleFirstNames,
     });
   }, [
-    data.members,
+    scheduleDisplayMembers,
     detailOccurrence,
     duplicateScheduleFirstNames,
     requirementsByOccurrence,
@@ -1295,6 +1324,64 @@ const ScheduleTab = ({
     },
     [data.members, scheduleOccurrences],
   );
+
+  const [isSendingSchedule, setIsSendingSchedule] = useState(false);
+  const [isConfirmingSend, setIsConfirmingSend] = useState(false);
+
+  /**
+   * How many distinct people a send would email. Shown before the click,
+   * because sending is irreversible — there is no unsend, and an owner
+   * exploring the button should not discover what it does by mailing the whole
+   * team. Counts people, not slots: someone on four services gets one email.
+   */
+  const sendRecipientCount = useMemo(() => {
+    const holders = new Set<string>();
+    Object.values(selectedSchedule?.assignments || {}).forEach((row) => {
+      Object.values(row || {}).forEach((cell) => {
+        getCellMemberIds(cell).forEach((id) => holders.add(id));
+      });
+    });
+    return holders.size;
+  }, [selectedSchedule?.assignments]);
+
+  /**
+   * Tell everyone on this schedule. Deliberately a button rather than a
+   * side-effect of saving: an owner shuffles the grid for a while, and mailing
+   * on every change trains volunteers to ignore the emails.
+   *
+   * Re-sending is safe and is the normal way schedules get built — the server
+   * skips anyone already told about a service, so this only reaches newly
+   * added slots.
+   */
+  const handleSendSchedule = useCallback(async () => {
+    if (!selectedSchedule || !churchId) return;
+    setIsSendingSchedule(true);
+    try {
+      const result = await sendTeamSchedule(
+        churchId,
+        selectedSchedule.scheduleId,
+      );
+      const unreachable = result.unreachableMemberIds?.length || 0;
+      const sentLabel =
+        result.notified === 0
+          ? "Everyone on this schedule has already been notified."
+          : `Sent to ${result.notified} ${result.notified === 1 ? "person" : "people"}.`;
+      // Who could *not* be told is the part worth interrupting for: the failure
+      // that matters is an owner assuming everyone knows.
+      showToast(
+        unreachable > 0
+          ? `${sentLabel} ${unreachable} ${unreachable === 1 ? "person has" : "people have"} no email on file.`
+          : sentLabel,
+        unreachable > 0 ? "warning" : "success",
+      );
+      onScheduleSaved({ ...selectedSchedule, sentAt: result.sentAt });
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this schedule.");
+    } finally {
+      setIsSendingSchedule(false);
+      setIsConfirmingSend(false);
+    }
+  }, [churchId, onScheduleSaved, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -1463,6 +1550,55 @@ const ScheduleTab = ({
         showApiErrorToast(showToast, error, "Could not update this assignment.");
       }
     });
+  };
+
+  const commitGuestAssignment = async (
+    guest: Omit<TeamScheduleGuest, "guestId"> & { guestId?: string },
+  ) => {
+    if (!canEdit || !selectedSchedule || !activeSlot) return;
+    const occurrence = scheduleOccurrences.find(
+      (item) => item.occurrenceId === activeSlot.occurrenceId,
+    );
+    const column = scheduleColumns.find(
+      (item) => item.columnKey === activeSlot.columnKey,
+    );
+    if (!occurrence || !column) return;
+
+    const previousSchedule = selectedSchedule;
+    const before =
+      previousSchedule.assignments?.[activeSlot.occurrenceId]?.[
+        activeSlot.columnKey
+      ] ?? "";
+    try {
+      const response = await enqueueAssignmentSave(() =>
+        updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+          serviceId: activeSlot.occurrenceId,
+          positionSlotKey: activeSlot.columnKey,
+          memberId: null,
+          guest,
+          serviceDate: getOccurrenceDate(occurrence),
+        }),
+      );
+      const after =
+        response.schedule.assignments?.[activeSlot.occurrenceId]?.[
+          activeSlot.columnKey
+        ] ?? "";
+      onScheduleSaved(response.schedule);
+      recordAssignmentChange(`assign ${guest.name} to ${column.label}`, [
+        {
+          occurrenceId: activeSlot.occurrenceId,
+          cellKey: activeSlot.columnKey,
+          serviceDate: getOccurrenceDate(occurrence),
+          before,
+          after,
+        },
+      ]);
+      clearActiveSlot();
+      showToast(`${guest.name} added as a guest.`, "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not assign this guest.");
+      throw error;
+    }
   };
 
   const requestCellMemberAction = ({
@@ -2210,7 +2346,7 @@ const ScheduleTab = ({
             getAssignmentCellContentLabel({
               assignmentCell,
               positionName: column.label,
-              members: data.members,
+              members: scheduleDisplayMembers,
               duplicateFirstNames: duplicateScheduleFirstNames,
             }),
           ),
@@ -2227,7 +2363,7 @@ const ScheduleTab = ({
     });
     return minChByColumn;
   }, [
-    data.members,
+    scheduleDisplayMembers,
     duplicateScheduleFirstNames,
     scheduleColumns,
     scheduleOccurrences,
@@ -2301,12 +2437,12 @@ const ScheduleTab = ({
       requiredCountFor: (occurrenceId, positionId) =>
         getRequiredCount(requirementsByOccurrence.get(occurrenceId), positionId),
       assignments: selectedSchedule.assignments,
-      members: data.members,
+      members: scheduleDisplayMembers,
       duplicateFirstNames: duplicateScheduleFirstNames,
     });
   }, [
     churchName,
-    data.members,
+    scheduleDisplayMembers,
     duplicateScheduleFirstNames,
     occurrencesByService,
     requirementsByOccurrence,
@@ -2399,11 +2535,13 @@ const ScheduleTab = ({
     const assignmentCell =
       selectedSchedule?.assignments?.[activeSlot.occurrenceId]?.[activeSlot.columnKey];
     const primaryMemberId = getCellPrimaryMemberId(assignmentCell);
-    const primaryMember = data.members.find(
+    const primaryMember = scheduleDisplayMembers.find(
       (item) => item.memberId === primaryMemberId,
     );
     const currentShadows = getCellShadowAssignments(assignmentCell).map((shadow) => {
-      const member = data.members.find((item) => item.memberId === shadow.memberId);
+      const member = scheduleDisplayMembers.find(
+        (item) => item.memberId === shadow.memberId,
+      );
       return {
         memberId: shadow.memberId,
         kind: shadow.kind,
@@ -2420,16 +2558,18 @@ const ScheduleTab = ({
         : "Empty",
       positionId: column.positionId,
       currentPrimaryMemberId: primaryMemberId,
+      currentAssigneeIsGuest: Boolean(primaryMember?.scheduleGuest),
+      hasCurrentAssignee: Boolean(primaryMemberId),
       currentShadows,
       occurrenceName: occurrence.name,
     };
   }, [
     activeSlot,
-    data.members,
     duplicateScheduleFirstNames,
     occurrenceTimingById,
     scheduleColumns,
     scheduleOccurrences,
+    scheduleDisplayMembers,
     selectedSchedule?.assignments,
   ]);
 
@@ -2447,14 +2587,23 @@ const ScheduleTab = ({
       (occurrence) => occurrence.occurrenceId === activeSlot.occurrenceId,
     );
     if (activeOccurrenceIndex < 0) return stats;
+    const activeOccurrenceDate = new Date(
+      scheduleOccurrences[activeOccurrenceIndex].startsAt,
+    );
 
     const activeMemberIds = new Set(activeTeamMembers.map((member) => member.memberId));
+    const assignedDatesByMember = new Map<string, Date[]>();
     const occurrenceIndexById = new Map(
       scheduleOccurrences.map((occurrence, index) => [occurrence.occurrenceId, index]),
+    );
+    const occurrenceById = new Map(
+      scheduleOccurrences.map((occurrence) => [occurrence.occurrenceId, occurrence]),
     );
     Object.entries(selectedSchedule.assignments).forEach(([occurrenceId, row]) => {
       const occurrenceIndex = occurrenceIndexById.get(occurrenceId);
       if (occurrenceIndex === undefined || !row) return;
+      const occurrence = occurrenceById.get(occurrenceId);
+      const occurrenceDate = occurrence ? new Date(occurrence.startsAt) : undefined;
       const distance = Math.abs(occurrenceIndex - activeOccurrenceIndex);
       const assignedMemberIds = new Set<string>();
       Object.values(row).forEach((cell) => {
@@ -2472,6 +2621,26 @@ const ScheduleTab = ({
               ? distance
               : Math.min(current.nearestAssignmentDistance, distance),
         });
+        if (occurrenceDate && !Number.isNaN(occurrenceDate.getTime())) {
+          const dates = assignedDatesByMember.get(memberId) || [];
+          dates.push(occurrenceDate);
+          assignedDatesByMember.set(memberId, dates);
+        }
+      });
+    });
+
+    activeTeamMembers.forEach((member) => {
+      const current = stats.get(member.memberId);
+      if (!current) return;
+      stats.set(member.memberId, {
+        ...current,
+        servingFrequencyTargetReached: servingFrequencyTargetReached({
+          servingFrequency: member.servingFrequency,
+          occurrenceDate: Number.isNaN(activeOccurrenceDate.getTime())
+            ? undefined
+            : activeOccurrenceDate,
+          assignedDates: assignedDatesByMember.get(member.memberId) || [],
+        }),
       });
     });
 
@@ -3076,6 +3245,7 @@ const ScheduleTab = ({
           scheduleColumns,
           requirementsByOccurrence.get(occurrence.occurrenceId),
           selectedSchedule?.assignments?.[occurrence.occurrenceId],
+          selectedSchedule?.responses?.[occurrence.occurrenceId],
         ),
       );
     });
@@ -3085,6 +3255,9 @@ const ScheduleTab = ({
     requirementsByOccurrence,
     scheduleOccurrences,
     selectedSchedule?.assignments,
+    // Without this the badge would not move when an accept or decline arrives
+    // over SSE — the count would only catch up on a full reload.
+    selectedSchedule?.responses,
   ]);
 
   // The soonest service from today onward, highlighted in every layout.
@@ -3151,7 +3324,7 @@ const ScheduleTab = ({
             getAssignmentCellContentLabel({
               assignmentCell,
               positionName: column.label,
-              members: data.members,
+              members: scheduleDisplayMembers,
               duplicateFirstNames: duplicateScheduleFirstNames,
             }),
           ),
@@ -3164,7 +3337,7 @@ const ScheduleTab = ({
     });
     return chByOccurrence;
   }, [
-    data.members,
+    scheduleDisplayMembers,
     duplicateScheduleFirstNames,
     flatOccurrences,
     scheduleColumns,
@@ -3429,12 +3602,16 @@ const ScheduleTab = ({
         isAdditionalPosition,
         axisHighlightClassName: cellAxisHighlightMap.get(cellKey) ?? "",
         assignmentCell,
+        assignmentResponse:
+          selectedSchedule?.responses?.[occurrence.occurrenceId]?.[
+            column.columnKey
+          ],
         isMemberHighlighted: getCellMemberIds(assignmentCell).some((memberId) =>
           highlightedMemberIdSet.has(memberId),
         ),
         isActiveSlot,
         justFilled: justFilledCellKeys.has(cellKey),
-        allMembers: data.members,
+        allMembers: scheduleDisplayMembers,
         duplicateFirstNames: duplicateScheduleFirstNames,
         canEdit,
       };
@@ -3443,7 +3620,7 @@ const ScheduleTab = ({
       activeSlot,
       canEdit,
       cellAxisHighlightMap,
-      data.members,
+      scheduleDisplayMembers,
       duplicateScheduleFirstNames,
       highlightedMemberIdSet,
       justFilledCellKeys,
@@ -3556,6 +3733,45 @@ const ScheduleTab = ({
                     >
                       New schedule
                     </Button>
+                  ) : null}
+                  {canEdit && selectedSchedule && !isConfirmingSend ? (
+                    <Button
+                      variant="cta"
+                      svg={Send}
+                      iconSize="sm"
+                      disabled={isSendingSchedule || sendRecipientCount === 0}
+                      onClick={() => setIsConfirmingSend(true)}
+                    >
+                      {selectedSchedule.sentAt ? "Send updates" : "Send schedule"}
+                    </Button>
+                  ) : null}
+                  {/* Confirm in place rather than in a dialog: it is one
+                      question, and the count is the whole point of asking. */}
+                  {canEdit && selectedSchedule && isConfirmingSend ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-gray-300">
+                        Email {sendRecipientCount}{" "}
+                        {sendRecipientCount === 1 ? "person" : "people"} on this
+                        schedule?
+                      </span>
+                      <Button
+                        variant="cta"
+                        svg={Send}
+                        iconSize="sm"
+                        disabled={isSendingSchedule}
+                        onClick={handleSendSchedule}
+                      >
+                        {isSendingSchedule ? "Sending…" : "Yes, send"}
+                      </Button>
+                      <Button
+                        variant="tertiary"
+                        iconSize="sm"
+                        disabled={isSendingSchedule}
+                        onClick={() => setIsConfirmingSend(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
                   ) : null}
                   {canEdit && selectedSchedule ? (
                     <Menu
@@ -4343,6 +4559,8 @@ const ScheduleTab = ({
                     onAssignmentQueryChange={setAssignmentQuery}
                     currentPrimaryMemberId={activeSlotMeta?.currentPrimaryMemberId || ""}
                     currentAssigneeLabel={activeSlotMeta?.currentAssigneeLabel || "Empty"}
+                    currentAssigneeIsGuest={activeSlotMeta?.currentAssigneeIsGuest}
+                    hasCurrentAssignee={activeSlotMeta?.hasCurrentAssignee}
                     duplicateFirstNames={duplicateScheduleFirstNames}
                     recommendationStats={activeSlotRecommendationStats}
                     getIssue={activeSlotGetIssue}
@@ -4362,6 +4580,12 @@ const ScheduleTab = ({
                       slotPickerMode === "replace"
                         ? undefined
                         : handleActiveSlotCreateMember
+                    }
+                    recentGuests={recentScheduleGuests}
+                    onAssignGuest={
+                      slotPickerMode === "replace"
+                        ? undefined
+                        : commitGuestAssignment
                     }
                     onClearAssignment={
                       slotPickerMode === "replace"

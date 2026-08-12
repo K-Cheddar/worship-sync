@@ -5,6 +5,11 @@ import type {
   TeamScheduleOccurrence,
   TeamService,
 } from "../../../api/authTypes";
+import {
+  readAssignmentResponse,
+  readCellPrimaryMemberId,
+  type TeamScheduleAssignmentResponse,
+} from "./scheduleResponseState";
 
 /**
  * Schedule slot keying + position-requirement resolution.
@@ -98,12 +103,26 @@ export type ScheduleSlotColumn = {
   label: string;
 };
 
-export type OccurrenceFill = { filled: number; required: number };
+export type OccurrenceFill = {
+  filled: number;
+  required: number;
+  /** Filled slots whose holder has accepted. Subset of `filled`. */
+  accepted: number;
+  /** Slots whose holder declined — assigned, but not covered. */
+  declined: number;
+};
 
 /**
  * How many required slots an occurrence has and how many are filled, using the
  * same `slot < requiredCount` guard the grid and board render with. Shared so
  * every schedule layout shows an identical fill indicator.
+ *
+ * **A declined slot is not filled.** Before accept/decline existed, "assigned"
+ * and "covered" were the same thing. They are not any more, and counting a
+ * decline as filled is worse than counting nothing — an owner scanning for gaps
+ * would skip the one service that actually has one. A *pending* slot still
+ * counts: someone is on it, there is just no confirmation yet, which `accepted`
+ * reports separately.
  */
 export const computeOccurrenceFill = (
   columns: ScheduleSlotColumn[],
@@ -111,17 +130,31 @@ export const computeOccurrenceFill = (
   assignmentsForOccurrence:
     | Record<string, TeamScheduleCellAssignment>
     | undefined,
+  responsesForOccurrence?: Record<string, TeamScheduleAssignmentResponse>,
 ): OccurrenceFill => {
   let filled = 0;
   let required = 0;
+  let accepted = 0;
+  let declined = 0;
   columns.forEach((column) => {
     if (column.slot >= getRequiredCount(requirements, column.positionId)) return;
     required += 1;
-    if (assignmentsForOccurrence?.[column.columnKey]?.primaryMemberId) {
-      filled += 1;
+    const memberId = readCellPrimaryMemberId(
+      assignmentsForOccurrence?.[column.columnKey],
+    );
+    if (!memberId) return;
+    const response = readAssignmentResponse(
+      responsesForOccurrence?.[column.columnKey],
+      memberId,
+    );
+    if (response === "declined") {
+      declined += 1;
+      return;
     }
+    filled += 1;
+    if (response === "accepted") accepted += 1;
   });
-  return { filled, required };
+  return { filled, required, accepted, declined };
 };
 
 /**

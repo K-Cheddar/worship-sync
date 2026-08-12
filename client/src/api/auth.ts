@@ -22,6 +22,7 @@ import type {
   EmailCodeChallengeFields,
   MemberNotifications,
   MemberPermissions,
+  NotificationCategory,
   NotificationPreference,
   DesktopAuthCompleteResponse,
   DesktopAuthProvider,
@@ -42,6 +43,7 @@ import type {
   TeamRosterMember,
   TeamSchedule,
   TeamScheduleAssignments,
+  TeamScheduleGuest,
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
   TeamsBootstrap,
@@ -533,9 +535,13 @@ export const updateHumanProfile = async (body: { displayName: string }) =>
     body: JSON.stringify(body),
   });
 
-export const updateHumanNotificationPreferences = async (body: {
-  intakeSubmissions?: NotificationPreference;
-}) =>
+/**
+ * Saves a subset of notification categories. The server preserves the ones not
+ * sent, so a client that does not know about a newer category cannot reset it.
+ */
+export const updateHumanNotificationPreferences = async (
+  body: Partial<Record<NotificationCategory, NotificationPreference>>,
+) =>
   apiFetch<{
     success: boolean;
     notifications: MemberNotifications;
@@ -623,6 +629,8 @@ export type TeamRosterMemberPayload = {
   /** Omit to leave an existing address untouched; send "" to clear it. */
   email?: string;
   dateOfBirth?: string;
+  isMinor?: boolean;
+  servingFrequency?: TeamRosterMember["servingFrequency"];
   positionIds: string[];
   desiredPositionIds?: string[];
   /**
@@ -684,6 +692,7 @@ export type TeamSchedulePayload = {
   serviceIds: string[];
   occurrences?: TeamSchedule["occurrences"];
   assignments?: TeamScheduleAssignments;
+  guests?: TeamScheduleGuest[];
   microphoneAssignments?: TeamSchedule["microphoneAssignments"];
   additionalPositionSlots?: TeamSchedule["additionalPositionSlots"];
   allowCrossTeamConflict?: boolean;
@@ -904,6 +913,12 @@ export type MyScheduleServing = {
   columnKey: string;
   /** False when shadowing the slot rather than holding it. */
   isPrimary: boolean;
+  /**
+   * Present only on this person's own primary rows. A teammate's answer is the
+   * owner's business, not a co-volunteer's, so it is never sent here.
+   */
+  response?: "pending" | "accepted" | "declined";
+  respondedAt?: string;
 };
 
 export type MySchedulePlanElement = {
@@ -969,6 +984,120 @@ export const getMyTeamAssignments = async (churchId: string) =>
   }>(`api/churches/${churchId}/my-team-assignments`);
 
 /**
+ * Answer an assignment from an emailed link, with no session.
+ *
+ * Public by design: volunteers routinely have no account. Authority is the
+ * signed token, which covers exactly one slot. The answer is chosen here rather
+ * than baked into the link, so a forwarded URL cannot answer for someone.
+ */
+export type AssignmentResponseSlot = {
+  occurrenceId: string;
+  cellKey: string;
+  serviceName: string;
+  startsAt: string;
+  positionName: string;
+  response: "pending" | "accepted" | "declined";
+  respondedAt?: string;
+};
+
+/**
+ * What an emailed link is asking about: this person's slots on one schedule,
+ * with service names and dates. Without it the page can only say "Can you
+ * serve?" and name nothing.
+ */
+export const getAssignmentResponseContext = async (token: string) =>
+  apiFetch<{
+    success: boolean;
+    churchName: string;
+    firstName: string;
+    assignments: AssignmentResponseSlot[];
+  }>(
+    `api/team-schedule-response?${new URLSearchParams({ token }).toString()}`,
+  );
+
+/**
+ * Answer from an emailed link. Omit `occurrenceId`/`cellKey` to answer every
+ * slot the link covers — answering four services should not need four links.
+ */
+export const respondToAssignmentByToken = async (body: {
+  token: string;
+  response: "accepted" | "declined";
+  occurrenceId?: string;
+  cellKey?: string;
+}) =>
+  apiFetch<{
+    success: boolean;
+    response: "accepted" | "declined";
+    applied: number;
+    assignments: AssignmentResponseSlot[];
+  }>("api/team-schedule-response", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+/**
+ * Ask for an account from the emailed response page.
+ *
+ * Takes nothing but the token. The invite is addressed to the email already on
+ * the roster record — deliberately not something this call can influence, or a
+ * public endpoint would become a way to send WorshipSync-branded mail anywhere.
+ * The address comes back only so the page can say which inbox to check.
+ */
+export const requestAccountFromAssignmentToken = async (token: string) =>
+  apiFetch<{ success: boolean; email: string }>(
+    "api/team-schedule-response/invite",
+    {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    },
+  );
+
+/**
+ * Sends a schedule to everyone on it.
+ *
+ * Separate from saving on purpose: an owner shuffles a grid for a while, and
+ * mailing on every save would train volunteers to ignore the emails. Idempotent
+ * per person per service, so pressing send again only mails newly added slots.
+ */
+export const sendTeamSchedule = async (churchId: string, scheduleId: string) =>
+  apiFetch<{
+    success: boolean;
+    sentAt: string;
+    notified: number;
+    alreadyNotified: number;
+    /** Members with no address and no linked account — nobody told them. */
+    unreachableMemberIds: string[];
+  }>(`api/churches/${churchId}/team-schedules/${scheduleId}/send`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+/**
+ * Accept or decline one of the signed-in person's own assignments.
+ *
+ * Self-scoped server-side: the slot must be held by the member linked to this
+ * account, so this cannot answer for anyone else. Writes only the response —
+ * declining never removes them from the schedule, because who covers the slot
+ * is the owner's call.
+ *
+ * Returns 409 when the slot moved to someone else between loading the page and
+ * answering; refetch rather than retrying.
+ */
+export const respondToMyAssignment = async (
+  churchId: string,
+  body: {
+    scheduleId: string;
+    occurrenceId: string;
+    cellKey: string;
+    response: "accepted" | "declined";
+  },
+) =>
+  apiFetch<{ success: boolean; response: "accepted" | "declined" }>(
+    `api/churches/${churchId}/my-assignments/respond`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+/**
  * Replaces the signed-in person's own blockout dates.
  *
  * Self-scoped server-side — the record written is the one linked to this
@@ -979,16 +1108,21 @@ export const getMyTeamAssignments = async (churchId: string) =>
  * Dates they are already scheduled for are accepted. The conflict is surfaced
  * to the volunteer here and to owners in the schedule grid, rather than being
  * refused.
+ *
+ * `expectedUpdatedAt` is the `updatedAt` of the member record this edit started
+ * from, and is required: the write replaces the whole array, so without it an
+ * admin's concurrent edit is silently discarded. A mismatch returns 409.
  */
 export const updateMyBlockoutDates = async (
   churchId: string,
   blockoutDates: TeamRosterMember["blockoutDates"],
+  expectedUpdatedAt: string,
 ) =>
   apiFetch<{ success: boolean; member: TeamRosterMember }>(
     `api/churches/${churchId}/my-blockout-dates`,
     {
       method: "POST",
-      body: JSON.stringify({ blockoutDates }),
+      body: JSON.stringify({ blockoutDates, expectedUpdatedAt }),
     },
   );
 
@@ -1323,6 +1457,7 @@ export const updateTeamScheduleAssignment = async (
     serviceId: string;
     positionSlotKey: string;
     memberId: string | null;
+    guest?: Omit<TeamScheduleGuest, "guestId"> & { guestId?: string };
     serviceDate?: string;
     sourceServiceId?: string;
     sourcePositionSlotKey?: string;

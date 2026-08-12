@@ -27,6 +27,26 @@ test("normalizeChurchIntegrationsForStorage applies defaults", () => {
   assert.equal(out.youtube.enabled, false);
   assert.equal(out.youtube.connected, false);
   assert.equal(out.youtube.accountLabel, "");
+  assert.equal(out.canva.enabled, false);
+  assert.equal(out.canva.connected, false);
+  assert.equal(out.canva.accountLabel, "");
+});
+
+test("normalizeChurchIntegrationsForStorage normalizes Canva status", () => {
+  const out = normalizeChurchIntegrationsForStorage({
+    canva: {
+      enabled: true,
+      connected: true,
+      accountLabel: "Church Creative",
+      lastError: "",
+      lastImportedAt: 123,
+    },
+  });
+
+  assert.equal(out.canva.enabled, true);
+  assert.equal(out.canva.connected, true);
+  assert.equal(out.canva.accountLabel, "Church Creative");
+  assert.equal(out.canva.lastImportedAt, 123);
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes a full service planning config", () => {

@@ -52,13 +52,12 @@ import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
 import OverlaysListSkeleton from "./OverlaysListSkeleton";
-import { getDefaultFormatting } from "../../utils/overlayUtils";
+import { getDefaultFormatting, normalizeOverlayForSync, loadOverlayForSelection } from "../../utils/overlayUtils";
 import {
   shouldKeepLocalListRowForRemoteOverlay,
   syncSelectedOverlayFromRemote,
   type OverlaySyncRootSlice,
 } from "../../utils/overlayRemoteSync";
-import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
 import { createPortal } from "react-dom";
@@ -397,19 +396,10 @@ const Overlays = ({
     }
     try {
       dispatch(setIsOverlayLoading(true));
-      const loadedOverlay: DBOverlay | undefined = await db?.get(
-        `overlay-${overlayId}`,
-      );
+      if (!db) return;
+      const loadedOverlay = await loadOverlayForSelection(db, overlayId);
       if (loadedOverlay) {
-        dispatch(
-          selectOverlay({
-            ...loadedOverlay,
-            formatting: {
-              ...getDefaultFormatting(loadedOverlay.type || "participant"),
-              ...loadedOverlay.formatting,
-            },
-          }),
-        );
+        dispatch(selectOverlay(loadedOverlay));
         onDetailRequested?.();
       }
     } catch (error) {
@@ -582,12 +572,12 @@ const Overlays = ({
               </section>
               {detailTarget
                 ? isDetailActive &&
-                  createPortal(
-                    <div className="absolute inset-0 z-10 overflow-y-auto p-2">
-                      {overlayEditor}
-                    </div>,
-                    detailTarget,
-                  )
+                createPortal(
+                  <div className="absolute inset-0 z-10 overflow-y-auto p-2">
+                    {overlayEditor}
+                  </div>,
+                  detailTarget,
+                )
                 : overlayEditor}
             </div>
           </div>

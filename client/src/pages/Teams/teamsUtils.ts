@@ -16,6 +16,7 @@ import {
   type TeamRosterMember,
   type TeamSchedule,
   type TeamScheduleCellAssignment,
+  type TeamScheduleGuest,
   type TeamScheduleShadowAssignment,
   type TeamScheduleShadowKind,
   type TeamScheduleSummary,
@@ -28,11 +29,14 @@ import generateRandomId from "../../utils/generateRandomId";
 import { parsePlainDate } from "../../utils/plainDate";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
 import { emptyData } from "./teamsConstants";
+import { DEFAULT_SERVING_FREQUENCY, resolveMemberMinorStatus } from "./memberPreferences";
 import { parseSlotKey } from "./schedule/scheduleRequirements";
 import type { TeamsData, TeamsDataKey } from "./types";
 
 const normalizeRosterMember = (member: TeamRosterMember): TeamRosterMember => ({
   ...member,
+  isMinor: resolveMemberMinorStatus(member),
+  servingFrequency: member.servingFrequency || DEFAULT_SERVING_FREQUENCY,
   positionIds: member.positionIds || [],
   teamMemberships: member.teamMemberships || {},
   qualifications: member.qualifications || [],
@@ -625,6 +629,24 @@ export const scheduleMemberName = (
   }
   return firstName || memberName(member);
 };
+
+/**
+ * Guest ids share assignment cells with roster member ids, so display-only
+ * surfaces can reuse the established name/export rendering without treating a
+ * guest as eligible for roster pickers, availability, or notifications.
+ */
+export const scheduleGuestToDisplayMember = (
+  guest: TeamScheduleGuest,
+  churchId = "",
+): TeamRosterMember => ({
+  memberId: guest.guestId,
+  churchId,
+  firstName: guest.name,
+  lastName: "",
+  positionIds: [],
+  blockoutDates: [],
+  scheduleGuest: true,
+});
 
 export const compareTeamRosterMembersByScheduleDisplay = (
   a: TeamRosterMember,

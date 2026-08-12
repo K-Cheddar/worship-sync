@@ -492,6 +492,55 @@ describe("presentationSlice", () => {
       ).toBe(new Date("2026-05-17T12:00:30.000Z").getTime());
     });
 
+    it("uses the shared Firebase-offset clock when minting board-post overlay timestamps", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
+      setServerTimeOffset(30_000);
+
+      const base = presentationSlice.getInitialState();
+      const store = createStore({
+        presentation: {
+          ...base,
+          isStreamTransmitting: true,
+          streamInfo: {
+            ...base.streamInfo,
+            participantOverlayInfo: {
+              id: "p1",
+              name: "Host",
+              time: 1,
+              transitionSequence: 3,
+            },
+            stbOverlayInfo: { id: "stb-prev", heading: "", time: 2 },
+            qrCodeOverlayInfo: { id: "qr-prev", description: "", time: 3 },
+            imageOverlayInfo: { id: "img-prev", imageUrl: "", time: 4 },
+            boardPostStreamInfo: {
+              author: "",
+              authorHexColor: "#e7e5e4",
+              text: "",
+              time: 5,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateBoardPostStreamInfo({
+          author: "Alex",
+          authorHexColor: "#0ea5e9",
+          text: "Praying",
+        }),
+      );
+
+      const state = store.getState().presentation;
+      expect(state.streamInfo.boardPostStreamInfo?.text).toBe("Praying");
+      expect(state.streamInfo.boardPostStreamInfo?.time).toBe(
+        new Date("2026-05-17T12:00:30.000Z").getTime(),
+      );
+      expect(state.streamInfo.boardPostStreamInfo?.transitionSequence).toBe(4);
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
+      expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Host");
+    });
+
     it("setStreamItemContentBlocked sets and clearStream resets streamItemContentBlocked", () => {
       const store = createStore({
         presentation: {
@@ -946,6 +995,22 @@ describe("presentationSlice", () => {
         ) => {
           expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
             "https://example.com/connect",
+          );
+        },
+      },
+      {
+        label: "board-post",
+        send: () =>
+          presentationSlice.actions.updateBoardPostStreamInfo({
+            author: "Jordan",
+            authorHexColor: "#22c55e",
+            text: "Praying for you",
+          }),
+        assert: (
+          state: ReturnType<typeof presentationSlice.getInitialState>,
+        ) => {
+          expect(state.streamInfo.boardPostStreamInfo?.text).toBe(
+            "Praying for you",
           );
         },
       },
@@ -2863,6 +2928,182 @@ describe("presentationSlice", () => {
       expect(state.streamInfo.slide).toBeNull();
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
       expect(state.streamInfo.qrCodeOverlayInfo?.description).toBe("");
+    });
+
+    describe("board-post overlay machine", () => {
+      it("updateBoardPostStreamInfo no-ops when stream is not transmitting", () => {
+        const store = createStore({
+          presentation: {
+            ...presentationSlice.getInitialState(),
+            isStreamTransmitting: false,
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateBoardPostStreamInfo({
+            author: "Alex",
+            authorHexColor: "#0ea5e9",
+            text: "Hello church",
+          }),
+        );
+
+        expect(
+          store.getState().presentation.streamInfo.boardPostStreamInfo?.text,
+        ).toBe("");
+      });
+
+      it("updateBoardPostStreamInfo preserves outgoing board post in prev on same-type replacement", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(20_000);
+
+        const base = presentationSlice.getInitialState();
+        const store = createStore({
+          presentation: {
+            ...base,
+            isStreamTransmitting: true,
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateBoardPostStreamInfo({
+            author: "First",
+            authorHexColor: "#f97316",
+            text: "First post",
+          }),
+        );
+        const firstSeq =
+          store.getState().presentation.streamInfo.boardPostStreamInfo
+            ?.transitionSequence;
+
+        store.dispatch(
+          presentationSlice.actions.updateBoardPostStreamInfo({
+            author: "Second",
+            authorHexColor: "#22c55e",
+            text: "Second post",
+          }),
+        );
+
+        const state = store.getState().presentation;
+        expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe(
+          "First post",
+        );
+        expect(state.streamInfo.boardPostStreamInfo?.text).toBe("Second post");
+        expect(
+          state.streamInfo.boardPostStreamInfo?.transitionSequence,
+        ).toBeGreaterThan(firstSeq ?? 0);
+      });
+
+      it("updateBoardPostStreamInfoFromRemote handoffs current to prev", () => {
+        const base = presentationSlice.getInitialState();
+        const store = createStore({
+          presentation: {
+            ...base,
+            streamInfo: {
+              ...base.streamInfo,
+              boardPostStreamInfo: {
+                author: "Local",
+                authorHexColor: "#e7e5e4",
+                text: "Local post",
+                time: 100,
+                transitionSequence: 1,
+              },
+            },
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateBoardPostStreamInfoFromRemote({
+            author: "Remote",
+            authorHexColor: "#6366f1",
+            text: "Remote post",
+            time: 200,
+            transitionSequence: 2,
+          }),
+        );
+
+        const state = store.getState().presentation;
+        expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe(
+          "Local post",
+        );
+        expect(state.streamInfo.boardPostStreamInfo?.text).toBe("Remote post");
+        expect(state.streamInfo.boardPostStreamInfo?.transitionSequence).toBe(
+          2,
+        );
+      });
+
+      it("clearStreamOverlaysOnly moves live board post to prev with a newer timestamp", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(30_000);
+
+        const base = presentationSlice.getInitialState();
+        const store = createStore({
+          presentation: {
+            ...base,
+            isStreamTransmitting: true,
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateBoardPostStreamInfo({
+            author: "Ann",
+            authorHexColor: "#e11d48",
+            text: "Clear me",
+            duration: 10,
+          }),
+        );
+        const liveTime =
+          store.getState().presentation.streamInfo.boardPostStreamInfo?.time ??
+          0;
+
+        store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
+
+        const state = store.getState().presentation;
+        expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe("Clear me");
+        expect(state.streamInfo.boardPostStreamInfo?.text).toBe("");
+        expect(state.streamInfo.boardPostStreamInfo?.time).toBeGreaterThan(
+          liveTime,
+        );
+        expect(
+          state.streamInfo.boardPostStreamInfo?.transitionSequence,
+        ).toBeGreaterThan(
+          state.prevStreamInfo.boardPostStreamInfo?.transitionSequence ?? 0,
+        );
+      });
+
+      it("sending participant after board post preserves board post in prev for exit", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(40_000);
+
+        const base = presentationSlice.getInitialState();
+        const store = createStore({
+          presentation: {
+            ...base,
+            isStreamTransmitting: true,
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateBoardPostStreamInfo({
+            author: "Pat",
+            authorHexColor: "#14b8a6",
+            text: "Board first",
+          }),
+        );
+        store.dispatch(
+          presentationSlice.actions.updateParticipantOverlayInfo({
+            id: "p-next",
+            type: "participant",
+            name: "Speaker",
+          } as never),
+        );
+
+        const state = store.getState().presentation;
+        expect(state.streamInfo.boardPostStreamInfo?.text).toBe("");
+        expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe(
+          "Board first",
+        );
+        expect(state.streamInfo.participantOverlayInfo?.name).toBe("Speaker");
+      });
     });
   });
 });

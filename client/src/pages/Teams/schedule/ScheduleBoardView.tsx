@@ -14,6 +14,7 @@ import {
 } from "@/utils/teamScheduleOccurrences";
 import type { OccurrenceFill, ScheduleSlotColumn } from "./scheduleRequirements";
 import ScheduleBoardCell from "./ScheduleBoardCell";
+import type { TeamScheduleAssignmentResponse } from "./scheduleResponseState";
 import ScheduleFillBadge from "./ScheduleFillBadge";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
 import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
@@ -28,6 +29,7 @@ type BoardCellData = {
   isSlotEnabled: boolean;
   isAdditionalPosition: boolean;
   assignmentCell?: TeamScheduleCellAssignment;
+  assignmentResponse?: TeamScheduleAssignmentResponse;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
   justFilled?: boolean;
@@ -194,6 +196,7 @@ const ScheduleBoardView = ({
                       positionIcon={column.position.icon}
                       positionArchived={Boolean(column.position.archivedAt)}
                       assignmentCell={cellProps.assignmentCell}
+                      assignmentResponse={cellProps.assignmentResponse}
                       isMemberHighlighted={cellProps.isMemberHighlighted}
                       isActiveSlot={cellProps.isActiveSlot}
                       isAdditionalPosition={cellProps.isAdditionalPosition}

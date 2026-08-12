@@ -57,6 +57,22 @@ describe("Toast", () => {
     expect(screen.queryByTestId("toast-progress")).not.toBeInTheDocument();
   });
 
+  it("uses the chat treatment for incoming team messages", () => {
+    render(
+      <Toast
+        id="toast-chat"
+        message="New team message"
+        variant="chat"
+        position="top-right"
+        onClose={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveStyle({
+      borderColor: "#22d3ee",
+    });
+  });
+
   it("pauses the progress bar while hovered", () => {
     render(
       <Toast
@@ -140,5 +156,48 @@ describe("Toast", () => {
       jest.advanceTimersByTime(201);
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Toast variants", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  it("renders the warning variant for a partial success", () => {
+    render(
+      <Toast
+        id="toast-warning"
+        message="Sent to 4 people. 1 person has no email on file."
+        variant="warning"
+        onClose={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText(/1 person has no email on file/),
+    ).toBeInTheDocument();
+  });
+
+  // An unrecognised variant used to read `config.textColor` off undefined and
+  // take the whole page down. A styling choice must never be able to do that.
+  it("falls back instead of crashing on an unknown variant", () => {
+    render(
+      <Toast
+        id="toast-unknown"
+        message="Still readable"
+        variant={"nonsense" as never}
+        onClose={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Still readable")).toBeInTheDocument();
   });
 });

@@ -1,22 +1,111 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { LoaderCircle } from "lucide-react";
 import Button from "../../components/Button/Button";
 import {
   filterRestreamMessagesForDisplay,
   RestreamActivityCard,
 } from "../../boards/BoardRestreamTabContent";
-import {
-  BoardYouTubeChatComposer,
-} from "../../boards/BoardYouTubeChatComposer";
+import { BoardYouTubeChatComposer } from "../../boards/BoardYouTubeChatComposer";
 import { useRestreamSession } from "../../boards/useRestreamSession";
 import { useStickToBottomScroll } from "../../hooks/useStickToBottomScroll";
-import type { RestreamSession } from "../../types";
+import type { RestreamMessage, RestreamSession } from "../../types";
 
 type CurrentServiceRestreamPanelProps = {
   churchId: string;
   youtubeConnected: boolean;
   youtubeAccountLabel?: string;
+  isVisible?: boolean;
+  onUnreadCountChange?: (count: number) => void;
   showToast: (message: string, variant: "success" | "error") => void;
+};
+
+type ChatReadMarker = {
+  churchId: string;
+  sessionId: string;
+  receivedAt: number;
+  messageId: string;
+};
+
+type StoredChatReadMarker = Partial<ChatReadMarker> & {
+  messageIds?: unknown;
+};
+
+const getChatReadStorageKey = (churchId: string) =>
+  `worshipsync:current-service-chat-read:v1:${churchId}`;
+
+const getMessageReadTime = (message: RestreamMessage) =>
+  Number.isFinite(message.receivedAt) ? message.receivedAt : message.postedAt;
+
+const getLatestViewerMessage = (messages: RestreamMessage[]) =>
+  messages.reduce<RestreamMessage | null>((latest, message) => {
+    if (!latest) return message;
+
+    const timeDifference =
+      getMessageReadTime(message) - getMessageReadTime(latest);
+    if (timeDifference !== 0) return timeDifference > 0 ? message : latest;
+
+    return message.id.localeCompare(latest.id) > 0 ? message : latest;
+  }, null);
+
+const createReadMarker = (
+  churchId: string,
+  sessionId: string,
+  message: RestreamMessage | null,
+): ChatReadMarker => ({
+  churchId,
+  sessionId,
+  receivedAt: message ? getMessageReadTime(message) : 0,
+  messageId: message?.id ?? "",
+});
+
+const isMessageAfterMarker = (
+  message: RestreamMessage,
+  marker: ChatReadMarker,
+) => {
+  const timeDifference = getMessageReadTime(message) - marker.receivedAt;
+  if (timeDifference !== 0) return timeDifference > 0;
+  return message.id.localeCompare(marker.messageId) > 0;
+};
+
+const parseStoredReadMarker = (
+  stored: string,
+  churchId: string,
+  sessionId: string,
+  viewerMessages: RestreamMessage[],
+): ChatReadMarker | null => {
+  const parsed = JSON.parse(stored) as StoredChatReadMarker;
+  if (parsed.churchId !== churchId || parsed.sessionId !== sessionId) {
+    return null;
+  }
+
+  if (
+    typeof parsed.receivedAt === "number" &&
+    Number.isFinite(parsed.receivedAt) &&
+    typeof parsed.messageId === "string"
+  ) {
+    return {
+      churchId,
+      sessionId,
+      receivedAt: parsed.receivedAt,
+      messageId: parsed.messageId,
+    };
+  }
+
+  if (Array.isArray(parsed.messageIds)) {
+    const legacyReadIds = new Set(
+      parsed.messageIds.filter(
+        (messageId): messageId is string => typeof messageId === "string",
+      ),
+    );
+    const latestLegacyMessage = getLatestViewerMessage(
+      viewerMessages.filter((message) => legacyReadIds.has(message.id)),
+    );
+    return latestLegacyMessage
+      ? createReadMarker(churchId, sessionId, latestLegacyMessage)
+      : null;
+  }
+
+  return null;
 };
 
 const getConnectionLabel = (
@@ -59,9 +148,12 @@ const CurrentServiceRestreamPanel = ({
   churchId,
   youtubeConnected,
   youtubeAccountLabel = "",
+  isVisible = false,
+  onUnreadCountChange,
   showToast,
 }: CurrentServiceRestreamPanelProps) => {
   const restream = useRestreamSession(churchId);
+  const readMarkerFallbackRef = useRef<ChatReadMarker | null>(null);
   const messages = useMemo(
     () =>
       filterRestreamMessagesForDisplay(restream.messages)
@@ -69,6 +161,101 @@ const CurrentServiceRestreamPanel = ({
         .sort((a, b) => a.postedAt - b.postedAt || a.id.localeCompare(b.id)),
     [restream.messages],
   );
+  const viewerMessages = useMemo(
+    () => messages.filter((message) => message.kind === "viewer_message"),
+    [messages],
+  );
+  const latestViewerMessage = useMemo(
+    () => getLatestViewerMessage(viewerMessages),
+    [viewerMessages],
+  );
+  const sessionId = restream.session?.sessionId;
+
+  useEffect(() => {
+    if (!churchId || !sessionId) {
+      onUnreadCountChange?.(0);
+      return;
+    }
+
+    let readMarker =
+      readMarkerFallbackRef.current?.churchId === churchId &&
+        readMarkerFallbackRef.current.sessionId === sessionId
+        ? readMarkerFallbackRef.current
+        : null;
+    try {
+      const stored = window.sessionStorage.getItem(
+        getChatReadStorageKey(churchId),
+      );
+      if (stored) {
+        const storedMarker = parseStoredReadMarker(
+          stored,
+          churchId,
+          sessionId,
+          viewerMessages,
+        );
+        if (storedMarker) {
+          readMarker = storedMarker;
+          readMarkerFallbackRef.current = storedMarker;
+        }
+      }
+    } catch {
+      // Session storage can be unavailable in privacy-restricted browsers.
+    }
+
+    if (!isVisible) {
+      onUnreadCountChange?.(
+        readMarker
+          ? viewerMessages.filter((message) =>
+            isMessageAfterMarker(message, readMarker),
+          ).length
+          : viewerMessages.length,
+      );
+      return;
+    }
+
+    readMarkerFallbackRef.current = createReadMarker(
+      churchId,
+      sessionId,
+      latestViewerMessage,
+    );
+    onUnreadCountChange?.(0);
+  }, [
+    churchId,
+    isVisible,
+    latestViewerMessage,
+    onUnreadCountChange,
+    sessionId,
+    viewerMessages,
+  ]);
+
+  useEffect(() => {
+    if (!churchId || !sessionId || !isVisible) return;
+
+    const persistReadMarker = () => {
+      const marker = readMarkerFallbackRef.current;
+      if (
+        marker?.churchId !== churchId ||
+        marker.sessionId !== sessionId
+      ) {
+        return;
+      }
+
+      try {
+        window.sessionStorage.setItem(
+          getChatReadStorageKey(churchId),
+          JSON.stringify(marker),
+        );
+      } catch {
+        // Keep the in-memory marker for this mounted workspace as a fallback.
+      }
+    };
+
+    window.addEventListener("pagehide", persistReadMarker);
+    return () => {
+      window.removeEventListener("pagehide", persistReadMarker);
+      persistReadMarker();
+    };
+  }, [churchId, isVisible, sessionId]);
   const scrollTrigger = useMemo(
     () =>
       messages
@@ -81,7 +268,8 @@ const CurrentServiceRestreamPanel = ({
   );
   const { scrollRef, endRef, onScroll } = useStickToBottomScroll({
     scrollTrigger,
-    resetKey: restream.session?.sessionId ?? churchId,
+    // Jump to latest when opening the Chat tab; hidden panels lose scroll layout.
+    resetKey: `${restream.session?.sessionId ?? churchId}:${isVisible ? "open" : "closed"}`,
   });
   const connectionLabel = getConnectionLabel(
     restream.session,

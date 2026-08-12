@@ -6,6 +6,11 @@ import type {
   TeamRosterMember,
   TeamScheduleCellAssignment,
 } from "../../../api/authTypes";
+import ScheduleResponseIndicator from "./ScheduleResponseIndicator";
+import {
+  readAssignmentResponse,
+  type TeamScheduleAssignmentResponse,
+} from "./scheduleResponseState";
 import {
   formatBlockoutDateRangeLabel,
   findBlockoutRangeForDate,
@@ -28,6 +33,8 @@ type ScheduleBoardCellProps = {
   positionIcon?: string;
   positionArchived?: boolean;
   assignmentCell?: TeamScheduleCellAssignment;
+  /** This slot's accept/decline record, if the holder has answered. */
+  assignmentResponse?: TeamScheduleAssignmentResponse;
   isMemberHighlighted: boolean;
   isActiveSlot: boolean;
   isAdditionalPosition: boolean;
@@ -53,6 +60,7 @@ const ScheduleBoardCell = memo(({
   positionIcon,
   positionArchived = false,
   assignmentCell,
+  assignmentResponse,
   isMemberHighlighted,
   isActiveSlot,
   isAdditionalPosition,
@@ -88,6 +96,7 @@ const ScheduleBoardCell = memo(({
   const blockoutConflictLabel = blockoutConflict
     ? `Blocked out ${formatBlockoutDateRangeLabel(blockoutConflict)}`
     : "";
+  const response = readAssignmentResponse(assignmentResponse, assignedMemberId);
 
   const handleActivate = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -144,11 +153,26 @@ const ScheduleBoardCell = memo(({
           </span>
           <span
             className={cn(
-              "truncate text-sm font-medium",
+              "flex min-w-0 items-center gap-1.5 truncate text-sm font-medium",
               assignedMember ? "text-white" : "text-gray-500 italic",
             )}
           >
-            {assigneeLabel || "Unassigned"}
+            {assignedMember ? (
+              <ScheduleResponseIndicator
+                response={response}
+                memberName={assigneeLabel}
+              />
+            ) : null}
+            <span className="truncate">{assigneeLabel || "Unassigned"}</span>
+            {assignedMember?.scheduleGuest ? (
+              <span
+                className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200"
+                title="Guest"
+                aria-label="Guest"
+              >
+                G
+              </span>
+            ) : null}
           </span>
           {blockoutConflictLabel ? (
             <span className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-300">

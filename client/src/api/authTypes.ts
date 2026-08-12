@@ -1,4 +1,5 @@
 import type { PositionRequirement, ServiceTime } from "../types";
+import type { TeamScheduleResponses } from "../pages/Teams/schedule/scheduleResponseState";
 
 export type { PositionRequirement };
 
@@ -54,12 +55,30 @@ export type MemberPermissions = {
   teamScopes?: Record<string, TeamScopedPermission>;
 };
 
-/** "default" resolves to on for editors; the server stores the tri-state. */
+/** "default" resolves per category at send time; the server stores the tri-state. */
 export type NotificationPreference = "on" | "off" | "default";
 
+/**
+ * One tri-state per notification *category*, not per event — an event list
+ * grows with every feature and nobody wants twelve switches. Catalog of record
+ * is `server/notificationPreferences.js`.
+ *
+ * Member categories (`schedule*` for the volunteer) are offered to everyone;
+ * owner categories are gated on team-edit access. Which to render comes from
+ * `AuthBootstrap.notificationCategories` rather than being hardcoded here.
+ */
 export type MemberNotifications = {
+  /** Added to, moved on, or removed from a schedule. */
+  scheduleAssignments: NotificationPreference;
+  /** A nudge before a service you are on. */
+  scheduleReminders: NotificationPreference;
+  /** Someone accepted, declined, or blocked out a date they are on. */
+  scheduleResponses: NotificationPreference;
+  /** Someone submitted a team availability form. */
   intakeSubmissions: NotificationPreference;
 };
+
+export type NotificationCategory = keyof MemberNotifications;
 
 export type AuthBootstrap = {
   authenticated: boolean;
@@ -74,6 +93,12 @@ export type AuthBootstrap = {
   appAccess?: "full" | "music" | "view" | "member";
   permissions?: MemberPermissions;
   notifications?: MemberNotifications;
+  /**
+   * Categories this person should be offered, server-derived. Sent rather than
+   * computed client-side so the catalog has one owner and cannot drift when a
+   * category is added or an audience rule changes.
+   */
+  notificationCategories?: NotificationCategory[];
   role?: string | null;
   user?: {
     uid: string;
@@ -144,6 +169,12 @@ export type TeamBlockoutDateRange = {
   notes?: string;
 };
 
+export type TeamMemberServingFrequency =
+  | "as_needed"
+  | "weekly"
+  | "twice_monthly"
+  | "monthly";
+
 export type TeamRosterMember = {
   memberId: string;
   churchId: string;
@@ -166,6 +197,14 @@ export type TeamRosterMember = {
    */
   invitedAt?: string;
   dateOfBirth?: string;
+  /**
+   * Privacy flag used when publishing names outside the team workspace. A
+   * saved date of birth is authoritative; without one an operator may set this
+   * manually.
+   */
+  isMinor?: boolean;
+  /** Desired cadence used as a soft scheduling recommendation signal. */
+  servingFrequency?: TeamMemberServingFrequency;
   /** Positions the member can be scheduled for. The hard assignment gate. */
   positionIds: string[];
   /**
@@ -185,6 +224,19 @@ export type TeamRosterMember = {
   blockoutDates: TeamBlockoutDateRange[];
   notes?: string;
   archivedAt?: string | null;
+  /**
+   * When this schedule was last sent to the people on it. Set only by the send
+   * action, never by saving — building and telling people are separate acts.
+   */
+  sentAt?: string | null;
+  /**
+   * Server-owned write stamp. Sent back as `expectedUpdatedAt` on the
+   * self-service blockout write so a concurrent admin edit is rejected rather
+   * than silently overwritten.
+   */
+  updatedAt?: string;
+  /** Client-only marker on a schedule display person synthesized from a guest. */
+  scheduleGuest?: boolean;
 };
 
 export type TeamMemberMembership = {
@@ -284,6 +336,15 @@ export type TeamService = ServiceTime & {
 
 export type TeamScheduleShadowKind = "shadow" | "reverse_shadow";
 
+/** A one-time helper stored with a schedule, never added to the team roster. */
+export type TeamScheduleGuest = {
+  guestId: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  note?: string;
+};
+
 export type TeamScheduleShadowAssignment = {
   memberId: string;
   kind: TeamScheduleShadowKind;
@@ -348,7 +409,7 @@ export type TeamSchedulePublicSnapshot = {
     archivedAt: string | null;
   }[];
   /** Names are pre-resolved server-side (first name + last initial on collision). */
-  members: { memberId: string; name: string }[];
+  members: { memberId: string; name: string; guest?: boolean }[];
 };
 
 /**
@@ -371,6 +432,8 @@ export type TeamScheduleSummary = {
   endDate?: string;
   serviceIds: string[];
   occurrences?: TeamScheduleOccurrence[];
+  /** Schedule-only people available for guest assignments and recent reuse. */
+  guests?: TeamScheduleGuest[];
   archivedAt?: string | null;
   /** Set by the server when the heavy per-cell maps were stripped. */
   assignmentsOmitted?: boolean;
@@ -386,6 +449,8 @@ export type TeamScheduleSummary = {
 
 export type TeamSchedule = TeamScheduleSummary & {
   assignments: TeamScheduleAssignments;
+  /** Accept/decline state, keyed occurrenceId -> cellKey. */
+  responses?: TeamScheduleResponses;
   microphoneAssignments?: TeamScheduleMicrophoneAssignments;
   additionalPositionSlots?: TeamScheduleAdditionalPositionSlots;
 };

@@ -20,6 +20,8 @@ import {
   Maximize,
   Minimize,
   Plus,
+  ImageUp,
+  Upload,
   Folder,
   ZoomIn,
   ZoomOut,
@@ -31,6 +33,12 @@ import { RootState } from "../../store/store";
 import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/DropdownMenu";
 import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import {
   MEDIA_LIBRARY_ROOT_VIEW,
@@ -154,6 +162,7 @@ type MediaModalProps = {
   uploadProgress?: { isUploading: boolean; progress: number };
   /** When set, Add Media uses this instead of opening the ref directly (e.g. guest guard + toast). */
   onAddMediaClick?: () => void;
+  onImportFromCanva?: () => void;
   /** When true, Add Media shows the guest-mode tooltip (upload still routes through `onAddMediaClick`). */
   mediaUploadDisabled?: boolean;
 };
@@ -185,12 +194,13 @@ const MediaModal = ({
   mediaUploadInputRef,
   uploadProgress,
   onAddMediaClick,
+  onImportFromCanva,
   mediaUploadDisabled = false,
 }: MediaModalProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
   const { showToast } = useToast();
-  const { db, isMobile } = useContext(ControllerInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   const notifyMediaAction = useCallback(
     (message: string, variant: ToastVariant = "success") => {
@@ -238,6 +248,42 @@ const MediaModal = ({
     uploadProgress?.progress,
     mediaUploadDisabled,
   ]);
+
+  const addMediaMenu = mediaUploadInputRef ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="tertiary"
+          svg={Plus}
+          title={fullscreenAddMediaTitle}
+          aria-label="Add media"
+          disabled={uploadProgress?.isUploading || mediaUploadDisabled}
+        >
+          {uploadProgress?.isUploading
+            ? `${Math.round(uploadProgress.progress)}%`
+            : ""}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          disabled={mediaUploadDisabled}
+          onSelect={() =>
+            onAddMediaClick
+              ? onAddMediaClick()
+              : mediaUploadInputRef.current?.openModal()
+          }
+        >
+          <Upload /> Upload files
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={mediaUploadDisabled || !onImportFromCanva}
+          onSelect={onImportFromCanva}
+        >
+          <ImageUp /> Import from Canva
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const isLoading = item.isLoading;
@@ -734,7 +780,7 @@ const MediaModal = ({
       headerClassName="bg-homepage-canvas px-4 pb-0 pt-2"
       titleClassName="text-lg"
     >
-      <div className="relative w-full overflow-hidden" style={{ height: isMobile ? "calc(100vh - 60px)" : "calc(90vh - 120px)" }}>
+      <div className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden">
         {/* Expanded fullscreen view */}
         <div
           className={cn(
@@ -788,8 +834,8 @@ const MediaModal = ({
             className={cn(
               "relative w-full flex flex-col items-center gap-2 overflow-hidden border-b border-gray-500 bg-homepage-canvas px-4 py-1 transition-all duration-300 ease-in-out",
               modalPreviewMedia
-                ? "h-[40vh] flex-1 min-h-[40vh] opacity-100"
-                : "h-0 opacity-0"
+                ? "h-[40vh] max-h-[40vh] shrink-0 opacity-100"
+                : "h-0 shrink-0 opacity-0"
             )}
           >
             {modalPreviewMedia && (
@@ -850,21 +896,7 @@ const MediaModal = ({
                 />
                 {mediaUploadInputRef && (
                   <div className="shrink-0">
-                    <Button
-                      variant="tertiary"
-                      svg={Plus}
-                      onClick={() =>
-                        onAddMediaClick
-                          ? onAddMediaClick()
-                          : mediaUploadInputRef.current?.openModal()
-                      }
-                      title={fullscreenAddMediaTitle}
-                      disabled={uploadProgress?.isUploading}
-                    >
-                      {uploadProgress?.isUploading
-                        ? `${Math.round(uploadProgress.progress)}%`
-                        : ""}
-                    </Button>
+                    {addMediaMenu}
                   </div>
                 )}
               </div>
@@ -928,21 +960,7 @@ const MediaModal = ({
               </div>
               {mediaUploadInputRef && (
                 <div className="shrink-0">
-                  <Button
-                    variant="tertiary"
-                    svg={Plus}
-                    onClick={() =>
-                      onAddMediaClick
-                        ? onAddMediaClick()
-                        : mediaUploadInputRef.current?.openModal()
-                    }
-                    title={fullscreenAddMediaTitle}
-                    disabled={uploadProgress?.isUploading}
-                  >
-                    {uploadProgress?.isUploading
-                      ? `${Math.round(uploadProgress.progress)}%`
-                      : ""}
-                  </Button>
+                  {addMediaMenu}
                 </div>
               )}
             </div>

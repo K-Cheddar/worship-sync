@@ -9,6 +9,17 @@ export const getApiErrorMessage = (error: unknown, fallback: string) => {
   return message || fallback;
 };
 
+/**
+ * HTTP status off a thrown API error, without `instanceof`. Call sites live in
+ * components whose tests mock the whole auth module, where the real
+ * `AuthApiError` class is not available to compare against.
+ */
+export const getApiErrorStatus = (error: unknown): number | undefined => {
+  if (!error || typeof error !== "object") return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+};
+
 export const isAuthApiError = (error: unknown): error is AuthApiError =>
   error instanceof AuthApiError &&
   (error.status === 401 || error.status === 403);

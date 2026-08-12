@@ -1,4 +1,5 @@
 import React from "react";
+import cn from "classnames";
 import Toast, { ToastPosition, ToastVariant } from "./Toast";
 
 export type ToastData = {
@@ -15,6 +16,15 @@ export type ToastData = {
 type ToastContainerProps = {
   toasts: ToastData[];
   onRemove: (id: string) => void;
+};
+
+const positionGroupClassName: Record<ToastPosition, string> = {
+  "top-left": "top-4 left-4 items-start",
+  "top-right": "top-4 right-4 items-end",
+  "top-center": "top-4 left-1/2 -translate-x-1/2 items-center",
+  "bottom-left": "bottom-4 left-4 items-start",
+  "bottom-right": "bottom-4 right-4 items-end",
+  "bottom-center": "bottom-4 left-1/2 -translate-x-1/2 items-center",
 };
 
 const ToastContainer: React.FC<ToastContainerProps> = ({
@@ -36,30 +46,42 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
 
   return (
     <div className="absolute inset-0 pointer-events-none z-9999">
-      {Object.entries(toastsByPosition).map(([position, positionToasts]) => (
-        <div
-          key={position}
-          className={`toast-group toast-group-${position}`}
-          data-testid={`toast-group-${position}`}
-        >
-          {positionToasts.map((toast, stackIndex) => {
-            const children =
-              typeof toast.children === "function"
-                ? toast.children(toast.id)
-                : toast.children;
+      {Object.entries(toastsByPosition).map(([position, positionToasts]) => {
+        const toastPosition = position as ToastPosition;
+        const isTop = toastPosition.startsWith("top");
+        // Newest closest to the viewport edge; older toasts stay fully readable.
+        const orderedToasts = isTop
+          ? [...positionToasts].reverse()
+          : positionToasts;
 
-            return (
-              <Toast
-                key={toast.id}
-                {...toast}
-                children={children}
-                stackIndex={stackIndex}
-                onClose={() => onRemove(toast.id)}
-              />
-            );
-          })}
-        </div>
-      ))}
+        return (
+          <div
+            key={position}
+            className={cn(
+              "toast-group fixed flex flex-col gap-2 max-w-[75vw]",
+              `toast-group-${position}`,
+              positionGroupClassName[toastPosition]
+            )}
+            data-testid={`toast-group-${position}`}
+          >
+            {orderedToasts.map((toast) => {
+              const children =
+                typeof toast.children === "function"
+                  ? toast.children(toast.id)
+                  : toast.children;
+
+              return (
+                <Toast
+                  key={toast.id}
+                  {...toast}
+                  children={children}
+                  onClose={() => onRemove(toast.id)}
+                />
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 };

@@ -26,6 +26,8 @@ import WorshipSyncIcon from "./assets/WorshipSyncIconNoBg.png";
 import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
 import TeamsAccessGuard from "./components/TeamsAccessGuard";
 import { lazyRoute } from "./utils/lazyRoute";
+import { ChatProvider } from "./chat/ChatContext";
+import ChatWindowHost from "./chat/ChatWindowHost";
 
 /**
  * Route-level code splitting.
@@ -70,6 +72,9 @@ const Account = lazyRoute(() => import("./pages/Account"));
 const TeamsAndServices = lazyRoute(
   () => import("./pages/Teams/TeamsAndServices"),
 );
+const ScheduleResponsePublic = lazyRoute(
+  () => import("./pages/Teams/ScheduleResponsePublic"),
+);
 const TeamIntakePublic = lazyRoute(
   () => import("./pages/Teams/TeamIntakePublic"),
 );
@@ -85,6 +90,9 @@ const RestreamConnectComplete = lazyRoute(
 );
 const YouTubeConnectComplete = lazyRoute(
   () => import("./pages/YouTubeConnectComplete"),
+);
+const CanvaConnectComplete = lazyRoute(
+  () => import("./pages/CanvaConnectComplete"),
 );
 const WorkstationPair = lazyRoute(() => import("./pages/WorkstationPair"));
 const WorkstationOperator = lazyRoute(
@@ -293,6 +301,10 @@ const AppRoutes = () => {
               path="/youtube/connect-complete"
               element={<YouTubeConnectComplete />}
             />
+            <Route
+              path="/canva/connect-complete"
+              element={<CanvaConnectComplete />}
+            />
             <Route path="/invite" element={<InviteAccept />} />
             <Route path="/auth/reset" element={<PasswordReset />} />
             <Route path="/recovery/confirm" element={<RecoveryConfirm />} />
@@ -339,6 +351,10 @@ const AppRoutes = () => {
             <Route
               path="/teams/intake"
               element={<TeamIntakePublic />}
+            />
+            <Route
+              path="/schedule-response/:token"
+              element={<ScheduleResponsePublic />}
             />
             <Route
               path="/teams/schedule/:token"
@@ -468,9 +484,12 @@ const App: React.FC = () => {
         <GlobalInfoProvider>
           <FloatingWindowZIndexProvider>
             <ToastProvider>
-              <RoutePersistence />
-              <TimerManager />
-              <AppRoutes />
+              <ChatProvider>
+                <RoutePersistence />
+                <TimerManager />
+                <AppRoutes />
+                <ChatWindowHost />
+              </ChatProvider>
             </ToastProvider>
           </FloatingWindowZIndexProvider>
         </GlobalInfoProvider>

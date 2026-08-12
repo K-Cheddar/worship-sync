@@ -28,6 +28,10 @@ import {
   type ScheduleMemberRecommendationStats,
 } from "./scheduleMemberPickerUtils";
 import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
+import {
+  resolveMemberMinorStatus,
+  servingFrequencyLabel,
+} from "../memberPreferences";
 
 export type ScheduleMembersPanelMode = "browse" | "assign";
 
@@ -163,6 +167,18 @@ const ScheduleMembersPanel = ({
             <dd className="mt-0.5 text-gray-200">{dateOfBirth}</dd>
           </div>
         ) : null}
+        <div>
+          <dt className="font-semibold text-gray-400">Minor</dt>
+          <dd className="mt-0.5 text-gray-200">
+            {resolveMemberMinorStatus(member) ? "Yes" : "No"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-gray-400">Serving preference</dt>
+          <dd className="mt-0.5 text-gray-200">
+            {servingFrequencyLabel(member.servingFrequency)}
+          </dd>
+        </div>
         {member.notes ? (
           <div>
             <dt className="font-semibold text-gray-400">Notes</dt>

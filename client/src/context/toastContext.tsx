@@ -9,6 +9,7 @@ import React, {
 import { createPortal } from "react-dom";
 import ToastContainer, { ToastData } from "../components/Toast/ToastContainer";
 import { ToastPosition, ToastVariant } from "../components/Toast/Toast";
+import { appendToast } from "../components/Toast/toastQueue";
 import { registerAuthErrorHandler } from "../api/authErrorBus";
 import { showAuthErrorToast } from "../utils/apiErrorToast";
 
@@ -18,6 +19,7 @@ type ToastContextType = {
     variant?: ToastVariant,
     position?: ToastPosition
   ) => string;
+  updateToast: (id: string, patch: Partial<Omit<ToastData, "id">>) => void;
   removeToast: (id: string) => void;
 };
 
@@ -39,6 +41,15 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
+
+  const updateToast = useCallback(
+    (id: string, patch: Partial<Omit<ToastData, "id">>) => {
+      setToasts((prev) =>
+        prev.map((toast) => (toast.id === id ? { ...toast, ...patch } : toast)),
+      );
+    },
+    [],
+  );
 
   const showToast = useCallback(
     (
@@ -65,7 +76,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
         };
       }
 
-      setToasts((prev) => [...prev, toastData]);
+      setToasts((prev) => appendToast(prev, toastData));
       return toastData.id;
     },
     []
@@ -87,7 +98,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   return (
-    <ToastContext.Provider value={{ showToast, removeToast }}>
+    <ToastContext.Provider value={{ showToast, updateToast, removeToast }}>
       {children}
       {toastPortal}
     </ToastContext.Provider>

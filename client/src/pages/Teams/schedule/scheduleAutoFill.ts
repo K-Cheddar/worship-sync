@@ -12,6 +12,7 @@ import {
   computeLevelBalanceBoost,
   type ScheduleMemberRecommendationStats,
 } from "./scheduleMemberPickerUtils";
+import { servingFrequencyTargetReached } from "../memberPreferences";
 
 export type AutoFillEntry = {
   occurrenceId: string;
@@ -32,7 +33,7 @@ export type AutoFillPlan = {
 
 export type BuildAutoFillPlanArgs = {
   /** Chronological, matches how spacing/distance is interpreted elsewhere. */
-  occurrences: { occurrenceId: string }[];
+  occurrences: { occurrenceId: string; startsAt?: string }[];
   columns: ScheduleSlotColumn[];
   requirementsByOccurrence: Map<string, PositionRequirement[]>;
   /** The schedule's current (persisted) assignments — never mutated here. */
@@ -101,6 +102,7 @@ export const buildAutoFillPlan = ({
     );
   });
   const assignedOccurrenceIndices = new Map<string, number[]>();
+  const assignedDates = new Map<string, Date[]>();
   const usedInOccurrence = new Map<string, Set<string>>();
   occurrences.forEach((occurrence) => {
     const row = assignments?.[occurrence.occurrenceId];
@@ -108,12 +110,20 @@ export const buildAutoFillPlan = ({
     usedInOccurrence.set(occurrence.occurrenceId, used);
     if (!row) return;
     const occurrenceIndex = occurrenceIndexById.get(occurrence.occurrenceId) ?? 0;
+    const occurrenceDate = occurrence.startsAt
+      ? new Date(occurrence.startsAt)
+      : undefined;
     Object.values(row).forEach((cell) => {
       getCellMemberIds(cell).forEach((memberId) => {
         used.add(memberId);
         const indices = assignedOccurrenceIndices.get(memberId) || [];
         indices.push(occurrenceIndex);
         assignedOccurrenceIndices.set(memberId, indices);
+        if (occurrenceDate && !Number.isNaN(occurrenceDate.getTime())) {
+          const dates = assignedDates.get(memberId) || [];
+          dates.push(occurrenceDate);
+          assignedDates.set(memberId, dates);
+        }
       });
     });
   });
@@ -127,6 +137,9 @@ export const buildAutoFillPlan = ({
     const occurrenceAssignments = assignments?.[occurrenceId] || {};
     const used = usedInOccurrence.get(occurrenceId) || new Set<string>();
     const occurrenceIndex = occurrenceIndexById.get(occurrenceId) ?? 0;
+    const occurrenceDate = occurrence.startsAt
+      ? new Date(occurrence.startsAt)
+      : undefined;
 
     const emptyColumns = columns.filter(
       (column) =>
@@ -202,6 +215,14 @@ export const buildAutoFillPlan = ({
         recommendationStats.set(member.memberId, {
           assignmentCount: runningAssignmentCount.get(member.memberId) || 0,
           nearestAssignmentDistance,
+          servingFrequencyTargetReached: servingFrequencyTargetReached({
+            servingFrequency: member.servingFrequency,
+            occurrenceDate:
+              occurrenceDate && !Number.isNaN(occurrenceDate.getTime())
+                ? occurrenceDate
+                : undefined,
+            assignedDates: assignedDates.get(member.memberId) || [],
+          }),
           levelBalanceBoost: levelBoosts.get(member.memberId),
         });
       });
@@ -218,15 +239,14 @@ export const buildAutoFillPlan = ({
         filterByQuery: false,
       });
 
-      // The shared ranking checks fairness (fewest total assignments) before
-      // spacing, so someone significantly behind on overall assignments can
-      // still rank first immediately after being picked, getting placed on
-      // consecutive occurrences while auto-fill tries to catch them up to
-      // parity. The manual picker has a human reviewing "Recommended" before
-      // confirming, so that's a minor quirk there; auto-fill has no one
-      // reviewing it, so it must not do this on its own. Skip straight past
-      // anyone who'd be back-to-back (the immediately adjacent occurrence) as
-      // long as a non-adjacent eligible alternative exists.
+      // After serving preference, the shared ranking checks fairness (fewest
+      // total assignments) before spacing. Someone significantly behind on
+      // overall assignments can therefore still rank first immediately after
+      // being picked and land on consecutive occurrences. The manual picker
+      // has a human reviewing "Recommended" before confirming; auto-fill has
+      // no one reviewing it, so it must not do this on its own. Skip straight
+      // past anyone who'd be back-to-back (the immediately adjacent
+      // occurrence) as long as a non-adjacent eligible alternative exists.
       const eligibleRows = rows.filter((row) => row.eligible);
       const picked =
         eligibleRows.find((row) => row.recommendationStats?.nearestAssignmentDistance !== 1) ??
@@ -243,6 +263,11 @@ export const buildAutoFillPlan = ({
       const indices = assignedOccurrenceIndices.get(memberId) || [];
       indices.push(occurrenceIndex);
       assignedOccurrenceIndices.set(memberId, indices);
+      if (occurrenceDate && !Number.isNaN(occurrenceDate.getTime())) {
+        const dates = assignedDates.get(memberId) || [];
+        dates.push(occurrenceDate);
+        assignedDates.set(memberId, dates);
+      }
     });
   });
 

@@ -332,8 +332,10 @@ async function clickMediaLibraryRouteAction(name: RegExp) {
 
 const renderMedia = async ({
   isMobile = false,
+  isGuestSession = false,
 }: {
   isMobile?: boolean;
+  isGuestSession?: boolean;
 } = {}) => {
   const db = {
     get: jest.fn().mockResolvedValue({ list: [], folders: [] }),
@@ -349,6 +351,7 @@ const renderMedia = async ({
           cloud,
           updater,
           isMobile,
+          isGuestSession,
         } as any
       }
     >
@@ -403,11 +406,31 @@ describe("Media", () => {
     expect(screen.getByText('No media found matching "does-not-exist"')).toBeInTheDocument();
   });
 
-  it("opens upload modal from add-media button", async () => {
+  it("opens the add-media menu and preserves file upload", async () => {
+    const user = userEvent.setup();
     await renderMedia();
 
-    fireEvent.click(screen.getByTitle("Add Media"));
+    await user.click(screen.getByTitle("Add Media"));
+    expect(
+      screen.getByRole("menuitem", { name: /import from canva/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: /upload files/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not allow guests to open Canva import from the panel menu", async () => {
+    const user = userEvent.setup();
+    await renderMedia({ isGuestSession: true });
+
+    await user.click(screen.getByTitle(/Guest mode/i));
+    const importItem = screen.getByRole("menuitem", {
+      name: /import from canva/i,
+    });
+    expect(importItem).toHaveAttribute("data-disabled");
+    await user.click(importItem);
+    expect(
+      screen.queryByRole("heading", { name: /import from canva/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("disables media entry points until the library is initialized", async () => {

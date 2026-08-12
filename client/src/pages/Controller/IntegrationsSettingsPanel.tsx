@@ -32,6 +32,7 @@ import ExpandCollapseAllToolbar from "../../components/ExpandCollapseAllToolbar/
 import IntegrationsCollapsibleCardHeader from "../../components/IntegrationsCollapsibleCardHeader/IntegrationsCollapsibleCardHeader";
 import cn from "classnames";
 import { isElectron } from "../../utils/environment";
+import CanvaIntegrationSection from "./CanvaIntegrationSection";
 
 type IntegrationsSettingsPanelProps = {
   churchId: string;
@@ -1453,6 +1454,8 @@ export const IntegrationsSettingsPanel = ({
           <p className="mt-3 text-sm text-amber-100/90">{youtube.lastError}</p>
         ) : null}
       </section>
+
+      <CanvaIntegrationSection churchId={churchId} canva={integrations.canva} />
 
       <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">

@@ -47,6 +47,15 @@ type ImageOverlayMockProps = {
   prevKeepAliveKey?: string | null;
   prevKeepAliveMs?: number | null;
 };
+type BoardPostOverlayMockProps = {
+  boardPostStreamInfo?: { text?: string; author?: string };
+  currentKeepAliveKey?: string | null;
+  currentKeepAliveMs?: number | null;
+  onLocalKeepAliveStart?: KeepAliveStart;
+  prevBoardPostStreamInfo?: { text?: string; author?: string };
+  prevKeepAliveKey?: string | null;
+  prevKeepAliveMs?: number | null;
+};
 type MonitorViewMockProps = {
   showNextSlide?: boolean;
   effectiveShowClock?: boolean;
@@ -274,6 +283,57 @@ jest.mock("../DisplayImageOverlay", () => ({
     };
 
     return MockDisplayImageOverlay;
+  })(),
+}));
+jest.mock("../DisplayBoardPostOverlay", () => ({
+  __esModule: true,
+  default: (() => {
+    const React = require("react") as typeof import("react");
+
+    const MockDisplayBoardPostOverlay = ({
+      boardPostStreamInfo,
+      currentKeepAliveKey,
+      currentKeepAliveMs,
+      onLocalKeepAliveStart,
+      prevBoardPostStreamInfo,
+      prevKeepAliveKey,
+      prevKeepAliveMs,
+    }: BoardPostOverlayMockProps) => {
+      React.useEffect(() => {
+        if (boardPostStreamInfo?.text?.trim()) {
+          onLocalKeepAliveStart?.(
+            currentKeepAliveKey ?? null,
+            currentKeepAliveMs ?? null,
+            "max",
+          );
+        }
+        if (prevBoardPostStreamInfo?.text?.trim()) {
+          onLocalKeepAliveStart?.(
+            prevKeepAliveKey ?? null,
+            prevKeepAliveMs ?? null,
+            "replace",
+          );
+        }
+      }, [
+        boardPostStreamInfo?.text,
+        currentKeepAliveKey,
+        currentKeepAliveMs,
+        onLocalKeepAliveStart,
+        prevBoardPostStreamInfo?.text,
+        prevKeepAliveKey,
+        prevKeepAliveMs,
+      ]);
+
+      return (
+        <div
+          data-testid="display-board-post-overlay-mock"
+          data-current-text={boardPostStreamInfo?.text || ""}
+          data-prev-text={prevBoardPostStreamInfo?.text || ""}
+        />
+      );
+    };
+
+    return MockDisplayBoardPostOverlay;
   })(),
 }));
 jest.mock("../DisplayStreamFormattedText", () => ({
@@ -815,6 +875,355 @@ describe("DisplayWindow core paths", () => {
 
     expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("restores stream item content shortly after an early board-post clear instead of waiting for the original duration", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        boardPostStreamInfo={{
+          author: "Alex",
+          authorHexColor: "#0ea5e9",
+          text: "Praying for you",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        boardPostStreamInfo={{
+          author: "",
+          authorHexColor: "#e7e5e4",
+          text: "",
+          time: t0 + 250,
+          transitionSequence: 2,
+        }}
+        prevBoardPostStreamInfo={{
+          author: "Alex",
+          authorHexColor: "#0ea5e9",
+          text: "Praying for you",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
+      "data-prev-text",
+      "Praying for you",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_499);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(
+      screen.queryByTestId("display-board-post-overlay-mock"),
+    ).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("keeps a previous board-post exit mounted long enough when the clear reaches the device late", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0 + 250);
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        boardPostStreamInfo={{
+          author: "",
+          authorHexColor: "#e7e5e4",
+          text: "",
+          time: t0 + 250,
+          transitionSequence: 2,
+        }}
+        prevBoardPostStreamInfo={{
+          author: "Alex",
+          authorHexColor: "#0ea5e9",
+          text: "Late clear",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
+      "data-prev-text",
+      "Late clear",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_250);
+    });
+
+    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
+      "data-prev-text",
+      "Late clear",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(249);
+    });
+
+    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
+      "data-prev-text",
+      "Late clear",
+    );
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(
+      screen.queryByTestId("display-board-post-overlay-mock"),
+    ).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("restores stream item content shortly after an early stb clear instead of waiting for the original duration", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        stbOverlayInfo={{
+          id: "stb-long",
+          type: "stick-to-bottom",
+          heading: "Welcome",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        stbOverlayInfo={{
+          id: "stb-cleared",
+          type: "stick-to-bottom",
+          time: t0 + 250,
+          transitionSequence: 2,
+        }}
+        prevStbOverlayInfo={{
+          id: "stb-long",
+          type: "stick-to-bottom",
+          heading: "Welcome",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_499);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(screen.queryByTestId("display-stb-overlay-mock")).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("restores stream item content shortly after an early qr clear instead of waiting for the original duration", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        qrCodeOverlayInfo={{
+          id: "qr-long",
+          type: "qr-code",
+          url: "https://example.com/qr",
+          description: "Scan",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        qrCodeOverlayInfo={{
+          id: "qr-cleared",
+          type: "qr-code",
+          time: t0 + 250,
+          transitionSequence: 2,
+        }}
+        prevQrCodeOverlayInfo={{
+          id: "qr-long",
+          type: "qr-code",
+          url: "https://example.com/qr",
+          description: "Scan",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_499);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(screen.queryByTestId("display-qr-overlay-mock")).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("restores stream item content shortly after an early image clear instead of waiting for the original duration", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        imageOverlayInfo={{
+          id: "img-long",
+          type: "image",
+          imageUrl: "https://cdn.example.com/photo.jpg",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        imageOverlayInfo={{
+          id: "img-cleared",
+          type: "image",
+          imageUrl: "",
+          time: t0 + 250,
+          transitionSequence: 2,
+        }}
+        prevImageOverlayInfo={{
+          id: "img-long",
+          type: "image",
+          imageUrl: "https://cdn.example.com/photo.jpg",
+          time: t0,
+          duration: 10,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1_499);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(21);
+    });
+
+    expect(screen.queryByTestId("display-image-overlay-mock")).not.toBeInTheDocument();
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("keeps the stream item layer hidden while a live board post is active even when overlay-only is off", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        streamItemContentBlocked={false}
+        boardPostStreamInfo={{
+          author: "Alex",
+          authorHexColor: "#0ea5e9",
+          text: "Live post",
+          time: t0,
+          transitionSequence: 1,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
+      "data-current-text",
+      "Live post",
+    );
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "0" });
   });
 
   it("does not keep the stream item layer hidden when clearing an overlay that had already expired", () => {

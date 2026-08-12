@@ -390,9 +390,9 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
-  it("shows iOS install instructions when prompt event is unavailable on mobile", async () => {
+  it("shows iOS Safari install instructions when prompt event is unavailable on mobile", async () => {
     setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile Safari/604.1");
-    mockGetAppOs.mockReturnValue("unknown");
+    mockGetAppOs.mockReturnValue("ios");
     const user = userEvent.setup();
 
     render(
@@ -416,6 +416,39 @@ describe("Home", () => {
       screen.getByText(/On iPhone and iPad, open Safari's Share menu/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/Add to Home Screen/i)).toBeInTheDocument();
+  });
+
+  it("tells iOS Chrome users to open Safari for Add to Home Screen", async () => {
+    setUserAgent(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/123.0.6312.52 Mobile/15E148 Safari/604.1",
+    );
+    mockGetAppOs.mockReturnValue("ios");
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await openHomeHubMenu(user);
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /Install WorshipSync/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Add to Home Screen only works in Safari/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Open this site in Safari/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/On iPhone and iPad, open Safari's Share menu/i),
+    ).not.toBeInTheDocument();
   });
 
   it("offers iPad the mobile install path, not a Mac installer", async () => {
@@ -456,7 +489,7 @@ describe("Home", () => {
 
   it("uses beforeinstallprompt install flow on mobile when available", async () => {
     setUserAgent("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36");
-    mockGetAppOs.mockReturnValue("unknown");
+    mockGetAppOs.mockReturnValue("android");
     let canShowInstall = true;
     const installPwa = jest.fn().mockImplementation(async () => {
       canShowInstall = false;
@@ -529,7 +562,7 @@ describe("Home", () => {
     setUserAgent(
       "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
     );
-    mockGetAppOs.mockReturnValue("unknown");
+    mockGetAppOs.mockReturnValue("android");
     render(providerTree);
     await openHomeHubMenu(user);
     expect(

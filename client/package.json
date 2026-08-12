@@ -99,6 +99,7 @@
     "electron:build:mac": "electron-vite build && electron-builder --mac",
     "electron:build:linux": "electron-vite build && electron-builder --linux",
     "test": "jest --watchAll=false",
+    "test:coverage": "jest --watchAll=false --coverage",
     "test:watch": "jest",
     "eject": "vite eject",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",

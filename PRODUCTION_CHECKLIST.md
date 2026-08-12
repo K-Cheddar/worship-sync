@@ -56,6 +56,32 @@ Before enabling the new auth flow in production:
 - Verify the Firebase project can mint custom tokens for shared Realtime Database access
 - Rotate any previously exposed shared Firebase credentials and disable that account
 
+#### Schedule notification emails
+
+- Set `AUTH_ASSIGNMENT_RESPONSE_TOKEN_SECRET`, and use a **different value in
+  each environment**. Generate one with:
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+  ```
+  It signs the accept/decline links volunteers get by email. Unset, it falls back
+  to `AUTH_SESSION_SECRET` and then to the literal `"dev-auth-secret"`, which is
+  committed to this repository — anyone could then mint a link that answers on a
+  volunteer's behalf. Distinct values per environment also mean a staging link is
+  inert against production. Links live for 120 days, so a rotation invalidates
+  every outstanding one.
+- `AUTH_APP_BASE_URL` **must** be set per environment, not only in production.
+  It is what these emails build their links from, and it defaults to the
+  production URL. Left unset on staging, staging emails send volunteers to
+  production carrying staging-signed tokens, which production rejects as invalid
+  — a dead link with a 120-day tail.
+- **Existing editors start receiving schedule-response digests on deploy.**
+  Preferences default to on for all four notification categories, so anyone with
+  team-edit access begins getting mail without having seen a switch. Intended,
+  but it lands without warning; the switches are in the account popover.
+- **The digests assume a single instance.** They coalesce with in-process timers
+  plus a marker on the document. Correct on one dyno; the moment a second exists,
+  both instances send the same digest, and nothing warns you.
+
 **CORS note (production vs earlier behavior):** Previously, production still used `http://localhost:3000` as the default `frontEndHost` while `AUTH_APP_BASE_URL` was added separately to the allowlist. The server now uses the **origin of `AUTH_APP_BASE_URL`** as the default production `frontEndHost`, so the primary allowed origin matches your deployed app URL. Localhost remains the fallback when `AUTH_APP_BASE_URL` is unset (for local production-style testing).
 
 Validate these operator paths before cutover:

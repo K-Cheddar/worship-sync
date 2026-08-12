@@ -925,6 +925,8 @@ export type MediaType = {
   source?: "cloudinary" | "mux";
   muxPlaybackId?: string;
   muxAssetId?: string;
+  /** Stable identity for an asset copied from Canva. */
+  canvaImportKey?: string;
   /** App media library folder; root / unset = null */
   folderId?: string | null;
 };

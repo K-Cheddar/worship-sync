@@ -6,6 +6,8 @@ import {
   InviteAcceptedAdminEmail,
   InviteEmail,
   IntakeSubmissionsDigestEmail,
+  ScheduleAssignmentEmail,
+  ScheduleResponsesDigestEmail,
   PairingSetupCodeEmail,
   PasswordResetEmail,
   SignInCodeEmail,
@@ -72,6 +74,37 @@ export async function renderIntakeSubmissionsDigestEmail(props: {
   submitterNames: string[];
 }) {
   return renderEmailHtmlAndText(<IntakeSubmissionsDigestEmail {...props} />);
+}
+
+export async function renderScheduleAssignmentEmail(props: {
+  churchName: string;
+  memberFirstName: string;
+  assignments: {
+    serviceName: string;
+    when: string;
+    positionName: string;
+    teamName: string;
+  }[];
+  acceptUrl: string;
+  declineUrl: string;
+  scheduleUrl: string;
+}) {
+  return renderEmailHtmlAndText(<ScheduleAssignmentEmail {...props} />);
+}
+
+export async function renderScheduleResponsesDigestEmail(props: {
+  churchName: string;
+  scheduleName: string;
+  reviewUrl: string;
+  responses: {
+    name: string;
+    serviceName: string;
+    when: string;
+    positionName: string;
+    kind: "accepted" | "declined" | "blockout";
+  }[];
+}) {
+  return renderEmailHtmlAndText(<ScheduleResponsesDigestEmail {...props} />);
 }
 
 export async function renderPairingSetupCodeEmail(props: {

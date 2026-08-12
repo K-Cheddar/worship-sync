@@ -209,6 +209,7 @@ const TeamSchedulePublic = () => {
             lastName: "",
             churchId: "",
             positionIds: [],
+            scheduleGuest: Boolean(member.guest),
           }) as unknown as TeamRosterMember,
       ),
     [snapshot?.members],

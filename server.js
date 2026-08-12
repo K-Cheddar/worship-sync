@@ -21,7 +21,9 @@ import {
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
   requireTeamsViewSession,
+  assertServerCsrf,
 } from "./authService.js";
+import { createAppSessionGuards } from "./server/appSessionGuards.js";
 import { createLyricsImportService } from "./lyricsImport.js";
 import {
   BOARD_DB_NAME,
@@ -48,6 +50,7 @@ import {
   normalizeRestreamPostedAtMs,
 } from "./server/restreamService.js";
 import { createYouTubeLiveChatService } from "./server/youtubeLiveChatService.js";
+import { createCanvaService } from "./server/canvaService.js";
 import { addTeamsSseClient, removeTeamsSseClient } from "./server/teamsSse.js";
 import {
   SongAudioInputError,
@@ -60,6 +63,16 @@ import {
   RichLinkPreviewUnavailableError,
   createRichLinkPreviewService,
 } from "./server/richLinkPreview.js";
+import { createChatService } from "./server/chatService.js";
+import { createChatHandlers } from "./server/chatApi.js";
+import {
+  CHAT_IMAGE_MAX_BYTES,
+  createChatImageStorage,
+} from "./server/chatImageStorage.js";
+import {
+  createChatImageFinalizeGuard,
+  createChatImageUploadGuard,
+} from "./server/chatImageUploadGuard.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -141,48 +154,17 @@ const corsAllowedOrigins = Array.from(
   ),
 );
 
-const requireAppSession = async (req, res, next) => {
-  try {
-    const bootstrap = await resolveRequestBootstrap(req);
-    if (
-      bootstrap?.authenticated &&
-      bootstrap.sessionKind !== "display" &&
-      bootstrap.database
-    ) {
-      req.appSession = {
-        userId: bootstrap.user?.uid || "",
-        username:
-          bootstrap.user?.displayName ||
-          bootstrap.device?.operatorName ||
-          bootstrap.device?.label ||
-          "Operator",
-        database: bootstrap.database,
-        access: bootstrap.appAccess || "view",
-        churchId: bootstrap.churchId || "",
-      };
-      return next();
-    }
-
-    return res.status(401).json({ error: "Sign in to continue." });
-  } catch (error) {
-    console.error("Board auth error:", error);
-    return res.status(401).json({ error: "Sign in to continue." });
-  }
-};
-
-const requireFullAppAccess = (req, res, next) => {
-  if (req.appSession?.access !== "full") {
-    return res.status(403).json({ error: "Full access is required." });
-  }
-  next();
-};
-
-const requireSongAudioEditAccess = (req, res, next) => {
-  if (req.appSession?.access !== "full" && req.appSession?.access !== "music") {
-    return res.status(403).json({ error: "Music access is required." });
-  }
-  next();
-};
+const {
+  requireAppSession,
+  requireMutationCsrf,
+  requireFullAppAccess,
+  requireChurchAdmin,
+  requireSongAudioEditAccess,
+  assertSongAudioChurchAccess,
+} = createAppSessionGuards({
+  resolveRequestBootstrap,
+  assertRequestCsrf: assertServerCsrf,
+});
 
 const songAudioMaxBytes = (() => {
   const configured = Number(process.env.SONG_AUDIO_MAX_BYTES);
@@ -195,6 +177,18 @@ const parseSongAudioBytes = express.raw({
   limit: songAudioMaxBytes,
 });
 const guardSongAudioUpload = createSongAudioUploadGuard();
+const chatImageMaxBytes = (() => {
+  const configured = Number(process.env.CHAT_IMAGE_MAX_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : CHAT_IMAGE_MAX_BYTES;
+})();
+const parseChatImageBytes = express.raw({
+  type: ["image/jpeg", "image/png", "image/webp"],
+  limit: chatImageMaxBytes,
+});
+const guardChatImageUpload = createChatImageUploadGuard();
+const guardChatImageFinalize = createChatImageFinalizeGuard();
 const richLinkPreviewService = createRichLinkPreviewService({
   httpClient: axios,
 });
@@ -207,12 +201,12 @@ const getSongAudioStorage = () => {
   return songAudioStorage;
 };
 
-const assertSongAudioChurchAccess = (req, res) => {
-  if (req.appSession?.churchId !== req.params.churchId) {
-    res.status(403).json({ error: "That church is not available." });
-    return false;
+let chatImageStorage;
+const getChatImageStorage = () => {
+  if (!chatImageStorage) {
+    chatImageStorage = createChatImageStorage();
   }
-  return true;
+  return chatImageStorage;
 };
 
 const respondSongAudioError = (res, context, error) => {
@@ -538,6 +532,15 @@ const youtubeLiveChatService = createYouTubeLiveChatService({
   getIntegrationsPath: getChurchIntegrationsPath,
   redirectBaseUrl: frontEndHost,
 });
+let canvaService;
+
+const chatService = createChatService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  onAttachmentRemoved: ({ churchId, attachment }) =>
+    getChatImageStorage().deleteAttachment({ churchId, attachment }),
+});
+const chatHandlers = createChatHandlers({ chatService, getChatImageStorage });
 
 const serializeBoardAlias = (aliasDoc) => ({
   _id: aliasDoc._id,
@@ -685,6 +688,16 @@ if (process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET) {
   });
 }
 
+canvaService = createCanvaService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  getIntegrationsPath: getChurchIntegrationsPath,
+  redirectBaseUrl: frontEndHost,
+  httpClient: axios,
+  cloudinaryClient: cloudinary,
+  getMuxClient: () => mux,
+});
+
 app.post(
   "/api/webhooks/resend",
   express.raw({ type: "application/json", limit: "1mb" }),
@@ -714,7 +727,7 @@ app.use(
 
       callback(new Error("Origin not allowed by CORS"));
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Origin",
       "X-Requested-With",
@@ -767,6 +780,55 @@ app.post(
   "/api/churches/:churchId/integrations",
   authHandlers.updateChurchIntegrations,
 );
+
+app.use("/api/churches/:churchId/chat", requireAppSession);
+app.get("/api/churches/:churchId/chat/context", chatHandlers.getContext);
+app.get("/api/churches/:churchId/chat/messages", chatHandlers.listMessages);
+app.get("/api/churches/:churchId/chat/stream", chatHandlers.stream);
+app.get(
+  "/api/churches/:churchId/chat/messages/:messageId/image/:variant",
+  chatHandlers.getImageUrl,
+);
+app.post(
+  "/api/churches/:churchId/chat/typing",
+  requireMutationCsrf,
+  chatHandlers.updateTyping,
+);
+app.post(
+  "/api/churches/:churchId/chat/images/upload",
+  requireMutationCsrf,
+  guardChatImageUpload,
+  chatHandlers.createImageUpload,
+);
+app.post(
+  "/api/churches/:churchId/chat/images/upload-from-app",
+  requireMutationCsrf,
+  guardChatImageUpload,
+  parseChatImageBytes,
+  chatHandlers.uploadImageFromApp,
+);
+app.post(
+  "/api/churches/:churchId/chat/messages",
+  requireMutationCsrf,
+  guardChatImageFinalize,
+  chatHandlers.createMessage,
+);
+app.patch(
+  "/api/churches/:churchId/chat/messages/:messageId",
+  requireMutationCsrf,
+  chatHandlers.updateMessage,
+);
+app.delete(
+  "/api/churches/:churchId/chat/messages/:messageId",
+  requireMutationCsrf,
+  chatHandlers.deleteMessage,
+);
+app.post(
+  "/api/churches/:churchId/chat/messages/:messageId/reactions",
+  requireMutationCsrf,
+  chatHandlers.toggleReaction,
+);
+
 const respondRichLinkPreviewError = (res, error) => {
   if (error instanceof RichLinkPreviewInputError) {
     return res.status(400).json({ errorMessage: error.message });
@@ -975,6 +1037,31 @@ app.get(
 app.post(
   "/api/churches/:churchId/my-blockout-dates",
   authHandlers.updateMyBlockoutDates,
+);
+// Also self-scoped: the slot must be held by the session's own member.
+app.post(
+  "/api/churches/:churchId/my-assignments/respond",
+  authHandlers.respondToMyAssignment,
+);
+// Public and unauthenticated by design: volunteers often have no account, so a
+// signed single-purpose token is the only way they can answer at all.
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/send",
+  authHandlers.sendTeamSchedule,
+);
+app.get(
+  "/api/team-schedule-response",
+  authHandlers.getAssignmentResponseContext,
+);
+app.post(
+  "/api/team-schedule-response",
+  authHandlers.respondToAssignmentByToken,
+);
+// Sends mail, so it is rate limited harder than answering. The address comes
+// from the roster record the token names, never from the request body.
+app.post(
+  "/api/team-schedule-response/invite",
+  authHandlers.requestAccountFromAssignmentToken,
 );
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/link",
@@ -1672,6 +1759,157 @@ app.post(
         "Error posting YouTube live chat message:",
         error,
       );
+    }
+  },
+);
+
+const respondCanvaError = (res, context, error) => {
+  console.error(context, error);
+  res.status(error?.statusCode || 500).json({
+    error:
+      error?.statusCode && error?.message
+        ? error.message
+        : "Canva could not complete that request. Try again.",
+  });
+};
+
+app.get("/api/canva/oauth/callback", async (req, res) => {
+  try {
+    const result = await canvaService.completeConnect({
+      state: req.query.state,
+      code: req.query.code,
+      denied: Boolean(req.query.error) || !req.query.code,
+    });
+    const params = new URLSearchParams({
+      status: "success",
+      returnTo: result.returnTo || "/account/integrations",
+      ...(result.accountLabel ? { accountLabel: result.accountLabel } : {}),
+      ...(result.desktop ? { desktop: "1" } : {}),
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/canva/connect-complete?${params}`,
+    );
+  } catch (error) {
+    console.error("Error completing Canva connection:", error);
+    const params = new URLSearchParams({
+      status: "error",
+      message:
+        "The Canva connection did not finish. Return to WorshipSync and try again.",
+      returnTo:
+        typeof error?.returnTo === "string" && error.returnTo.startsWith("/")
+          ? error.returnTo
+          : "/account/integrations",
+      ...(error?.desktop ? { desktop: "1" } : {}),
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/canva/connect-complete?${params}`,
+    );
+  }
+});
+
+app.use(
+  "/api/churches/:churchId/canva",
+  requireAppSession,
+  requireFullAppAccess,
+  (req, res, next) =>
+    req.appSession.churchId === req.params.churchId
+      ? next()
+      : res.status(403).json({ error: "That church is not available." }),
+);
+
+app.get("/api/churches/:churchId/canva/status", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.getStatusForChurch({ churchId: req.params.churchId }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error loading Canva status:", error);
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/canva/connect-url",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.startConnect({
+          churchId: req.params.churchId,
+          userId: req.appSession.userId,
+          returnTo: req.body?.returnTo,
+          desktop: Boolean(req.body?.desktop),
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error starting Canva connection:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/canva/connect-status",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.getConnectStatus({
+          churchId: req.params.churchId,
+          connectRequestId: req.body?.connectRequestId,
+          connectRequestSecret: req.body?.connectRequestSecret,
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error loading Canva connection status:", error);
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/canva/disconnect",
+  requireMutationCsrf,
+  requireChurchAdmin,
+  async (req, res) => {
+    try {
+      await canvaService.disconnect({ churchId: req.params.churchId });
+      res.json({ success: true });
+    } catch (error) {
+      respondCanvaError(res, "Error disconnecting Canva:", error);
+    }
+  },
+);
+
+app.get("/api/churches/:churchId/canva/designs", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.listDesigns({
+        churchId: req.params.churchId,
+        query: req.query.query,
+        continuation: req.query.continuation,
+      }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error listing Canva designs:", error);
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/canva/imports",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(
+        await canvaService.importDesign({
+          churchId: req.params.churchId,
+          designId: req.body?.designId,
+          pages: req.body?.pages,
+          format: req.body?.format,
+          existingImportKeys: req.body?.existingImportKeys,
+        }),
+      );
+    } catch (error) {
+      respondCanvaError(res, "Error importing from Canva:", error);
     }
   },
 );
@@ -2574,56 +2812,6 @@ app.get("/api/changelog", async (req, res) => {
   } catch (error) {
     console.error("Error reading changelog:", error);
     res.status(500).json({ error: "Failed to load changelog" });
-  }
-});
-
-app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    // Create a PouchDB instance to check credentials
-    const dbName = "worship-sync-logins";
-    const couchURL = `https://${process.env.COUCHDB_HOST}/${dbName}`;
-
-    const response = await axios({
-      method: "GET",
-      url: `${couchURL}/logins`,
-      headers: {
-        Authorization:
-          "Basic " +
-          Buffer.from(
-            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`,
-          ).toString("base64"),
-        "Content-Type": "application/json",
-      },
-    });
-
-    const db_logins = response.data;
-    const user = db_logins.logins.find(
-      (e) => e.username === username && e.password === password,
-    );
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, errorMessage: "Invalid credentials" });
-    }
-
-    res.json({
-      success: true,
-      user: {
-        username: user.username,
-        database: user.database,
-        upload_preset: user.upload_preset,
-        access: user.access,
-      },
-    });
-  } catch (error) {
-    console.error("Sign-in error:", error);
-    res.status(500).json({
-      success: false,
-      errorMessage: `Sign in failed: ${error.message}`,
-    });
   }
 });
 

@@ -1,12 +1,12 @@
-import { useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { CalendarOff, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import BlockoutDatesField from "./Teams/components/BlockoutDatesField";
 import { findBlockoutRangeForDate } from "./Teams/teamsUtils";
 import { updateMyBlockoutDates, type MyScheduleOccurrence } from "../api/auth";
-import type { TeamBlockoutDateRange } from "../api/authTypes";
-import { showApiErrorToast } from "../utils/apiErrorToast";
+import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
+import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 import { useToast } from "../context/toastContext";
 
 /**
@@ -25,9 +25,15 @@ import { useToast } from "../context/toastContext";
 type MyScheduleBlockoutsProps = {
   churchId: string;
   blockoutDates: TeamBlockoutDateRange[];
+  /** `updatedAt` of the record this edit started from; the write precondition. */
+  expectedUpdatedAt: string;
   /** Used to spot dates the member is already scheduled for. */
   occurrences: MyScheduleOccurrence[];
-  onSaved: (blockoutDates: TeamBlockoutDateRange[]) => void;
+  onSaved: (member: TeamRosterMember) => void;
+  /** Lets the page skip a background refresh while an edit is open. */
+  onDirtyChange: (dirty: boolean) => void;
+  /** Called when the record moved underneath this edit, to pick up the change. */
+  onStale: () => void;
 };
 
 type BlockoutConflict = {
@@ -70,11 +76,17 @@ const partitionByEnded = (ranges: TeamBlockoutDateRange[]) => {
   };
 };
 
+/** Value identity for a range list, for comparing a draft against a baseline. */
+const signRanges = (ranges: TeamBlockoutDateRange[]) => JSON.stringify(ranges);
+
 const MyScheduleBlockouts = ({
   churchId,
   blockoutDates,
+  expectedUpdatedAt,
   occurrences,
   onSaved,
+  onDirtyChange,
+  onStale,
 }: MyScheduleBlockoutsProps) => {
   const { showToast } = useToast();
   const conflictHeadingId = useId();
@@ -85,9 +97,25 @@ const MyScheduleBlockouts = ({
   );
   const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(current);
   const [saving, setSaving] = useState(false);
-  // BlockoutDatesField seeds its rows from `value` once, so discarding needs a
+  // BlockoutDatesField seeds its rows from `value` once, so re-seeding needs a
   // remount rather than a prop change.
   const [fieldKey, setFieldKey] = useState(0);
+  /**
+   * What `draft` was last seeded from — *not* the latest props.
+   *
+   * Dirty has to mean "the reader changed something", not "the draft differs
+   * from the server". A background refresh moves the props underneath a mounted
+   * editor; measuring against those would invent an edit nobody made, and
+   * saving it would push the older dates back over the newer ones with a
+   * freshly refreshed write stamp the server has no reason to reject.
+   */
+  const [baseline, setBaseline] = useState(() => signRanges(current));
+
+  const seedDraft = useCallback((ranges: TeamBlockoutDateRange[]) => {
+    setDraft(ranges);
+    setBaseline(signRanges(ranges));
+    setFieldKey((key) => key + 1);
+  }, []);
 
   /**
    * Services the member is on that fall inside a drafted blockout. Computed
@@ -110,31 +138,55 @@ const MyScheduleBlockouts = ({
       }));
   }, [draft, occurrences]);
 
-  const isDirty = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(current),
-    [current, draft],
-  );
+  const draftSignature = signRanges(draft);
+  const currentSignature = signRanges(current);
+  const isDirty = draftSignature !== baseline;
 
-  const discard = () => {
-    setDraft(current);
-    setFieldKey((key) => key + 1);
-  };
+  /**
+   * Adopt server state that arrived while this editor was mounted — a
+   * background refresh, or the pull after a 409 — but only when the reader has
+   * nothing in flight. With an edit open the draft wins and the conflict is
+   * theirs to resolve on save; without one, silently keeping the old snapshot
+   * is how stale dates get written back.
+   */
+  useEffect(() => {
+    if (currentSignature === baseline) return;
+    if (draftSignature !== baseline) return;
+    seedDraft(current);
+  }, [baseline, current, currentSignature, draftSignature, seedDraft]);
+
+  // Reported up so a background refresh cannot replace an open edit. Cleared on
+  // unmount, or leaving the list view would pin the page as permanently dirty.
+  useEffect(() => {
+    onDirtyChange(isDirty);
+    return () => onDirtyChange(false);
+  }, [isDirty, onDirtyChange]);
+
+  const discard = () => seedDraft(current);
 
   const save = async () => {
     setSaving(true);
     try {
       // Entries hidden from the editor are sent back untouched. Editing what is
       // actionable must not amount to deleting the rest.
-      const result = await updateMyBlockoutDates(churchId, [...ended, ...draft]);
+      const result = await updateMyBlockoutDates(
+        churchId,
+        [...ended, ...draft],
+        expectedUpdatedAt,
+      );
       const saved = result.member?.blockoutDates || [];
       // Re-seed from the server so its normalization is what stays on screen: a
       // single day collapsed to one date, a blank row dropped, history past the
-      // retention window pruned.
-      setDraft(partitionByEnded(saved).current);
-      setFieldKey((key) => key + 1);
-      onSaved(saved);
+      // retention window pruned. Seeding also moves the baseline, so the save
+      // leaves the editor clean rather than looking edited again.
+      seedDraft(partitionByEnded(saved).current);
+      onSaved(result.member);
       showToast("Time off saved.", "success");
     } catch (error) {
+      // 409: the record moved under this edit. Pull the change in so the reader
+      // is comparing against what is actually stored, but keep their draft —
+      // discarding an edit to report a conflict trades one loss for another.
+      if (getApiErrorStatus(error) === 409) onStale();
       showApiErrorToast(showToast, error, "Could not save your time off.");
     } finally {
       setSaving(false);

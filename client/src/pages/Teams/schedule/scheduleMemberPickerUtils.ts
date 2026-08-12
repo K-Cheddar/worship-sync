@@ -27,6 +27,8 @@ export type ScheduleMemberPickerMember = {
 export type ScheduleMemberRecommendationStats = {
   assignmentCount: number;
   nearestAssignmentDistance: number | null;
+  /** The member already reached their requested cadence for this week/month. */
+  servingFrequencyTargetReached?: boolean;
   /**
    * True when picking this member would improve the qualification-level mix
    * across a multi-slot position (e.g. avoid a second lowest-level camera
@@ -158,6 +160,13 @@ export const sortScheduleMemberPickerRows = (
     const bQualifies = memberQualifiesForPosition(b.member, positionId);
     if (aQualifies !== bQualifies) {
       return aQualifies ? -1 : 1;
+    }
+    const aServingTargetReached =
+      a.recommendationStats?.servingFrequencyTargetReached ?? false;
+    const bServingTargetReached =
+      b.recommendationStats?.servingFrequencyTargetReached ?? false;
+    if (aServingTargetReached !== bServingTargetReached) {
+      return aServingTargetReached ? 1 : -1;
     }
     const aAssignmentCount = a.recommendationStats?.assignmentCount ?? 0;
     const bAssignmentCount = b.recommendationStats?.assignmentCount ?? 0;

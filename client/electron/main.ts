@@ -32,7 +32,7 @@ import {
   setupSharedSessionWindowOpenHandler,
   WORSHIPSYNC_SESSION_PARTITION,
 } from "./windowHelpers";
-import { shouldAttachAppCsp } from "./appCsp";
+import { buildAppCspHeader, shouldAttachAppCsp } from "./appCsp";
 import {
   getDisplayWindow,
   setDisplayWindow,
@@ -48,6 +48,10 @@ import {
   type DesktopAuthCallbackPayload,
 } from "./desktopAuth";
 import { assertAllowedOpenExternalUrl } from "./openExternalUrlAllowlist";
+import {
+  isNewerVersion,
+  shouldForwardUpdaterErrorToRenderer,
+} from "./updaterHelpers";
 
 const { autoUpdater } = updaterPkg;
 
@@ -56,19 +60,6 @@ const DESKTOP_RELEASE_OWNER = "K-Cheddar";
 const DESKTOP_RELEASE_REPO = "worship-sync";
 const DESKTOP_RELEASE_API_URL = `https://api.github.com/repos/${DESKTOP_RELEASE_OWNER}/${DESKTOP_RELEASE_REPO}/releases/latest`;
 const DESKTOP_RELEASE_PAGE_URL = `https://github.com/${DESKTOP_RELEASE_OWNER}/${DESKTOP_RELEASE_REPO}/releases/latest`;
-
-/** Returns true only when newVersion is strictly greater than currentVersion (semver-style). */
-function isNewerVersion(newVersion: string, currentVersion: string): boolean {
-  const v1Parts = newVersion.split(".").map(Number);
-  const v2Parts = currentVersion.split(".").map(Number);
-  for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
-    const v1Part = v1Parts[i] ?? 0;
-    const v2Part = v2Parts[i] ?? 0;
-    if (v1Part > v2Part) return true;
-    if (v1Part < v2Part) return false;
-  }
-  return false;
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -84,15 +75,6 @@ const useElectronAutoUpdaterInMain = (): boolean =>
   !isDev &&
   (process.platform !== "darwin" ||
     process.env.WORSHIPSYNC_MAC_USE_AUTO_UPDATE === "1");
-
-function shouldForwardUpdaterErrorToRenderer(message: string): boolean {
-  const m = message.toLowerCase();
-  if (m.includes("code signature") && m.includes("validation")) return false;
-  if (m.includes("not pass validation")) return false;
-  if (m.includes("secerror") || m.includes("secerrordomain")) return false;
-  if (m.includes("failed to verify") && m.includes("signature")) return false;
-  return true;
-}
 
 /**
  * Get the icon path for the current platform
@@ -580,32 +562,7 @@ app.whenReady().then(() => {
 
   // Strict CSP for Electron; allowlists for Firebase (Realtime DB + Auth), Cloudinary, Mux, R2, Sentry.
   // Dev: local origins only when unpackaged. Prod: Firebase/Google must be explicit (app may load from file://).
-  const devConnectSrc = app.isPackaged
-    ? ""
-    : "https://local.worshipsync.net:5000 https://localhost:5000 ";
-  const cspHeaderValue =
-    "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://*.msftauth.net https://*.msauth.net; " +
-    "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
-    "font-src 'self' data:; " +
-    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +
-    "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
-    "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com https://*.r2.cloudflarestorage.com " +
-    devConnectSrc +
-    "https://*.worshipsync.net " +
-    "https://*.firebaseio.com wss://*.firebaseio.com " +
-    "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
-    "https://*.firebaseapp.com https://*.googleapis.com " +
-    "https://securetoken.googleapis.com https://www.googleapis.com " +
-    "https://apis.google.com https://www.google.com https://accounts.youtube.com https://login.microsoftonline.com https://*.live.com " +
-    "https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.msauth.net https://*.msftauth.net https://*.azureedge.net " +
-    "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
-    "form-action 'self' https://*.live.com https://login.microsoftonline.com https://*.microsoftonline.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.firebaseapp.com https://accounts.google.com; " +
-    "frame-src 'self' blob: https://*.worshipsync.net https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://accounts.youtube.com https://www.youtube.com https://www.youtube-nocookie.com https://open.spotify.com https://apis.google.com https://login.microsoftonline.com https://*.live.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com; " +
-    "worker-src 'self' blob:; " +
-    "child-src 'self' blob:; " +
-    "object-src 'none'; " +
-    "base-uri 'self';";
+  const cspHeaderValue = buildAppCspHeader(app.isPackaged);
   const appBrowserSession = session.fromPartition(
     WORSHIPSYNC_SESSION_PARTITION,
   );

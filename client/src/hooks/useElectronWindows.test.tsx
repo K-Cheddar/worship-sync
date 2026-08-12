@@ -103,4 +103,20 @@ describe("useElectronWindows", () => {
       )
     );
   });
+
+  it("opens and closes the board display window", async () => {
+    const { result } = renderHook(() => useElectronWindows());
+
+    await waitFor(() => expect(result.current.isElectron).toBe(true));
+
+    await act(async () => {
+      await result.current.openWindow("board");
+    });
+    expect(window.electronAPI?.openWindow).toHaveBeenCalledWith("board");
+
+    await act(async () => {
+      await result.current.closeWindow("board");
+    });
+    expect(window.electronAPI?.closeWindow).toHaveBeenCalledWith("board");
+  });
 });

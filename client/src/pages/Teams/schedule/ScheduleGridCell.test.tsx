@@ -9,6 +9,7 @@ import ScheduleGridCell from "./ScheduleGridCell";
 const baseProps = {
   occurrenceId: "occ-1",
   occurrenceName: "Sunday Service",
+  occurrenceDate: "2026-08-16",
   columnKey: "cam::1",
   positionId: "cam",
   columnLabel: "Camera 2",
@@ -91,5 +92,30 @@ describe("ScheduleGridCell", () => {
     expect(
       screen.getByRole("button", { name: /Sunday Service Camera 2, Empty/i }),
     ).toBeInTheDocument();
+  });
+
+  it("labels a schedule-only guest without treating the slot as empty", () => {
+    renderCell({
+      assignmentCell: { primaryMemberId: "scheduleGuest_1" },
+      allMembers: [
+        {
+          memberId: "scheduleGuest_1",
+          churchId: "church-1",
+          firstName: "Alex Rivera",
+          lastName: "",
+          positionIds: [],
+          blockoutDates: [],
+          scheduleGuest: true,
+        },
+      ],
+      isAdditionalPosition: false,
+    });
+
+    expect(
+      screen.getByRole("button", {
+        name: "Sunday Service Camera 2, Alex Rivera",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Guest")).toHaveTextContent("G");
   });
 });

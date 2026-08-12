@@ -34,6 +34,14 @@ const ctaButtonStyle = {
   textDecoration: "none",
 } as const;
 
+/** Decline shares the CTA shape but reads as the lesser action, not an error. */
+const declineButtonStyle = {
+  backgroundColor: "transparent",
+  border: `1px solid ${worshipSyncEmailBrand.textDim}`,
+  color: worshipSyncEmailBrand.textPrimary,
+  marginLeft: "8px",
+};
+
 const digestListItemStyle = {
   color: worshipSyncEmailBrand.textPrimary,
   fontSize: "15px",
@@ -448,6 +456,236 @@ export function AccountRestoredEmail({
         <Link href={resetUrl} style={{ color: worshipSyncEmailBrand.link }}>
           {resetUrl}
         </Link>
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}
+
+type ScheduleAssignmentEmailProps = {
+  churchName: string;
+  /** First name is enough — this is the person's own schedule. */
+  memberFirstName: string;
+  /** One entry per slot they hold, oldest service first. */
+  assignments: {
+    serviceName: string;
+    /** Already formatted in the church's timezone by the caller. */
+    when: string;
+    positionName: string;
+    teamName: string;
+  }[];
+  /** One click = the answer. Both cover every service listed. */
+  acceptUrl: string;
+  declineUrl: string;
+  /** Where to see everything, for anyone who does have an account. */
+  scheduleUrl: string;
+};
+
+/**
+ * "You are scheduled" — the email the whole notification system exists to send.
+ *
+ * **One click is the answer.** Accept and Decline are the buttons; the page
+ * they open records it and confirms, rather than asking again. The intent rides
+ * in the URL hash and is only written when that page POSTs, so mail-security
+ * scanners fetching links cannot answer on the reader's behalf.
+ *
+ * **One pair of buttons for the whole email**, not one per service. The reader may have no
+ * account and no app, so everything has to be doable from here — but four
+ * services once meant four links to a page that could not even say which
+ * service it was asking about. The single link opens a page listing all of
+ * them, answerable individually or together.
+ *
+ * The answer is chosen on that page rather than encoded in the URL, so a
+ * forwarded link cannot answer on their behalf.
+ */
+export function ScheduleAssignmentEmail({
+  churchName,
+  memberFirstName,
+  assignments,
+  acceptUrl,
+  declineUrl,
+  scheduleUrl,
+}: ScheduleAssignmentEmailProps) {
+  const churchDisplay = churchName.trim() || "your church";
+  const greeting = memberFirstName.trim() ? `Hi ${memberFirstName.trim()},` : "Hi,";
+  const count = assignments.length;
+  const summary =
+    count === 1
+      ? "You are scheduled for one service."
+      : `You are scheduled for ${count} services.`;
+
+  return (
+    <WorshipSyncEmailLayout
+      previewText={summary}
+      title="You are on the schedule"
+    >
+      <Text style={bodyText}>{greeting}</Text>
+      <Text style={bodyText}>
+        {summary} Let{" "}
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          {churchDisplay}
+        </strong>{" "}
+        know if you can make it.
+      </Text>
+      {assignments.map((assignment, index) => (
+        <Section
+          key={`${assignment.respondUrl}-${index}`}
+          style={{ margin: "0 0 20px" }}
+        >
+          <Text
+            style={{
+              ...bodyText,
+              color: worshipSyncEmailBrand.textPrimary,
+              margin: "0 0 4px",
+              fontWeight: 600,
+            }}
+          >
+            {assignment.serviceName}
+          </Text>
+          <Text style={{ ...digestListItemStyle, margin: "0 0 2px" }}>
+            {assignment.when}
+          </Text>
+          <Text style={{ ...digestListItemStyle, margin: "0 0 10px" }}>
+            {[assignment.positionName, assignment.teamName]
+              .filter(Boolean)
+              .join(" · ")}
+          </Text>
+        </Section>
+      ))}
+      <Section style={{ margin: "0 0 16px", textAlign: "center" }}>
+        <Button href={acceptUrl} style={ctaButtonStyle}>
+          {count === 1 ? "Accept" : "Accept all"}
+        </Button>
+        <Button
+          href={declineUrl}
+          style={{ ...ctaButtonStyle, ...declineButtonStyle }}
+        >
+          {count === 1 ? "Decline" : "Decline all"}
+        </Button>
+      </Section>
+      {count > 1 ? (
+        <Text style={{ ...finePrint, margin: "0 0 8px", textAlign: "center" }}>
+          You can answer services separately on the next page.
+        </Text>
+      ) : null}
+      <Text style={finePrint}>
+        You can also see everything at{" "}
+        <Link href={scheduleUrl} style={{ color: worshipSyncEmailBrand.accent }}>
+          My schedule
+        </Link>
+        . Turn these emails off anytime from your account menu in WorshipSync.
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}
+
+type ScheduleResponsesDigestEmailProps = {
+  churchName: string;
+  scheduleName: string;
+  reviewUrl: string;
+  /** One entry per change in this window, oldest first. */
+  responses: {
+    name: string;
+    serviceName: string;
+    when: string;
+    positionName: string;
+    /** `blockout` is someone marking time off on a date they are still scheduled for. */
+    kind: "accepted" | "declined" | "blockout";
+  }[];
+};
+
+/**
+ * "People answered your schedule" — coalesced.
+ *
+ * Declines lead. An acceptance is reassurance; a decline is work, and burying
+ * it under four confirmations is how an owner misses the one slot that needs
+ * refilling. The subject line carries the count for the same reason.
+ *
+ * Blockouts sit in that same list rather than a section or an email of their
+ * own. The owner's job is identical — refill this slot — and the only thing
+ * they need told apart is *why*, which the line says.
+ */
+export function ScheduleResponsesDigestEmail({
+  churchName,
+  scheduleName,
+  reviewUrl,
+  responses,
+}: ScheduleResponsesDigestEmailProps) {
+  const unavailable = responses.filter((entry) => entry.kind !== "accepted");
+  const accepted = responses.filter((entry) => entry.kind === "accepted");
+  const churchDisplay = churchName.trim() || "your church";
+  const scheduleDisplay = scheduleName.trim() || "your schedule";
+
+  const line = (
+    entry: ScheduleResponsesDigestEmailProps["responses"][number],
+    index: number,
+  ) => (
+    <Text key={`${entry.name}-${index}`} style={digestListItemStyle}>
+      • <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+        {entry.name}
+      </strong>{" "}
+      — {entry.serviceName}, {entry.when}
+      {entry.positionName ? ` (${entry.positionName})` : ""}
+      {entry.kind === "blockout" ? " — marked time off" : ""}
+    </Text>
+  );
+
+  return (
+    <WorshipSyncEmailLayout
+      previewText={
+        unavailable.length > 0
+          ? `${unavailable.length} cannot serve on ${scheduleDisplay}`
+          : `${accepted.length} accepted on ${scheduleDisplay}`
+      }
+      title="Schedule responses"
+    >
+      <Text style={bodyText}>
+        Here is what changed on{" "}
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          {scheduleDisplay}
+        </strong>{" "}
+        for {churchDisplay}.
+      </Text>
+
+      {unavailable.length > 0 ? (
+        <Section style={{ margin: "0 0 20px" }}>
+          <Text
+            style={{
+              ...bodyText,
+              margin: "0 0 6px",
+              color: worshipSyncEmailBrand.textPrimary,
+              fontWeight: 600,
+            }}
+          >
+            Cannot serve ({unavailable.length})
+          </Text>
+          {unavailable.map(line)}
+        </Section>
+      ) : null}
+
+      {accepted.length > 0 ? (
+        <Section style={{ margin: "0 0 20px" }}>
+          <Text
+            style={{
+              ...bodyText,
+              margin: "0 0 6px",
+              color: worshipSyncEmailBrand.textPrimary,
+              fontWeight: 600,
+            }}
+          >
+            Confirmed ({accepted.length})
+          </Text>
+          {accepted.map(line)}
+        </Section>
+      ) : null}
+
+      <Section style={{ margin: "0 0 16px", textAlign: "center" }}>
+        <Button href={reviewUrl} style={ctaButtonStyle}>
+          Open the schedule
+        </Button>
+      </Section>
+      <Text style={finePrint}>
+        You receive these because you can edit this team. Turn them off anytime
+        from your account menu in WorshipSync.
       </Text>
     </WorshipSyncEmailLayout>
   );

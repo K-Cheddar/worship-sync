@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { X, CircleAlert, CheckCircle2, Info } from "lucide-react";
+import {
+  X,
+  CircleAlert,
+  CheckCircle2,
+  Info,
+  MessageCircle,
+  TriangleAlert,
+} from "lucide-react";
 import cn from "classnames";
 import Button from "../Button/Button";
 import Icon from "../Icon/Icon";
@@ -12,7 +19,13 @@ export type ToastPosition =
   | "bottom-right"
   | "bottom-center";
 
-export type ToastVariant = "info" | "success" | "error" | "neutral";
+export type ToastVariant =
+  | "info"
+  | "success"
+  | "error"
+  | "neutral"
+  | "warning"
+  | "chat";
 
 export type ToastProps = {
   id: string;
@@ -23,7 +36,6 @@ export type ToastProps = {
   persist?: boolean;
   duration?: number;
   showCloseButton?: boolean;
-  stackIndex?: number;
   onClose: () => void;
 };
 
@@ -36,7 +48,6 @@ const Toast: React.FC<ToastProps> = ({
   persist = false,
   duration = 7000,
   showCloseButton = true,
-  stackIndex = 0,
   onClose,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
@@ -45,6 +56,7 @@ const Toast: React.FC<ToastProps> = ({
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissStartedAtRef = useRef<number | null>(null);
   const remainingDurationRef = useRef(duration);
+  const entersFromTop = position.startsWith("top");
 
   const handleClose = useCallback(() => {
     if (dismissTimeoutRef.current) {
@@ -148,24 +160,30 @@ const Toast: React.FC<ToastProps> = ({
       borderColor: "#a1a1aa",
       textColor: "text-zinc-100",
     },
+    // For an action that succeeded but left something for the operator to
+    // notice — "sent, but two people have no email". `error` would overstate it
+    // and `success` would bury the part they need to act on.
+    warning: {
+      icon: TriangleAlert,
+      iconColor: "#fbbf24", // amber-400
+      borderColor: "#fbbf24",
+      textColor: "text-zinc-100",
+    },
+    chat: {
+      icon: MessageCircle,
+      iconColor: "#22d3ee", // cyan-400
+      borderColor: "#22d3ee",
+      textColor: "text-zinc-100",
+    },
   };
 
-  const config = variantConfig[variant];
-
-  const positionStyles = {
-    "top-left": "top-4 left-4",
-    "top-right": "top-4 right-4",
-    "top-center": "top-4 left-1/2 -translate-x-1/2",
-    "bottom-left": "bottom-4 left-4",
-    "bottom-right": "bottom-4 right-4",
-    "bottom-center": "bottom-4 left-1/2 -translate-x-1/2",
-  };
-
-  const stackOffsetPx = stackIndex * 12;
-  const stackOffsetStyle =
-    position.startsWith("top")
-      ? { top: `${16 + stackOffsetPx}px` }
-      : { bottom: `${16 + stackOffsetPx}px` };
+  // Fall back rather than index into nothing: an unrecognised variant used to
+  // crash the whole page on `config.textColor`, which is a severe outcome for
+  // what is only a styling choice. A plain toast is always better than none.
+  const config = variantConfig[variant] || variantConfig.neutral;
+  const hiddenOffset = entersFromTop
+    ? "-translate-y-2"
+    : "translate-y-2";
 
   const showProgress = !persist && duration > 0;
 
@@ -173,17 +191,15 @@ const Toast: React.FC<ToastProps> = ({
     <div
       role="status"
       className={cn(
-        "fixed z-9999 min-w-[300px] max-w-[75vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
+        "relative z-9999 min-w-[300px] max-w-[75vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
         config.textColor,
-        positionStyles[position],
         isVisible && !isExiting && "opacity-100 translate-y-0",
-        !isVisible && !isExiting && "opacity-0 -translate-y-2",
-        isExiting && "opacity-0 -translate-y-2",
+        !isVisible && !isExiting && `opacity-0 ${hiddenOffset}`,
+        isExiting && `opacity-0 ${hiddenOffset}`,
         "transition-[opacity,transform] duration-200 ease-in-out"
       )}
       style={{
         borderColor: config.borderColor,
-        ...stackOffsetStyle,
       }}
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}

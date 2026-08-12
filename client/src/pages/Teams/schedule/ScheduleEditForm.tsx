@@ -327,6 +327,7 @@ const ScheduleEditForm = ({
         serviceIds: payload.serviceIds,
         occurrences,
         assignments,
+        ...(payload.guests !== undefined ? { guests: payload.guests } : {}),
         microphoneAssignments: payload.microphoneAssignments,
         additionalPositionSlots: payload.additionalPositionSlots,
         archivedAt: selectedSchedule?.archivedAt || null,
@@ -343,6 +344,8 @@ const ScheduleEditForm = ({
           draftKey,
           buildScheduleDraft({ defaultTeamId, defaultServiceIds, defaultRange }),
         );
+      } else {
+        onScheduleSaved(response.schedule);
       }
       setSelectedScheduleId(response.schedule.scheduleId);
       showToast(saveToastMessage, "success");

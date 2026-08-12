@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import ToastContainer from "./ToastContainer";
 
 describe("ToastContainer", () => {
@@ -39,5 +39,25 @@ describe("ToastContainer", () => {
 
     expect(screen.getByText("Hello")).toBeInTheDocument();
     expect(screen.getByTestId("toast-group-top-center")).toBeInTheDocument();
+  });
+
+  it("stacks toasts in a readable column with newest closest to the edge", () => {
+    render(
+      <ToastContainer
+        toasts={[
+          { id: "older", message: "Older", position: "top-center" },
+          { id: "newer", message: "Newer", position: "top-center" },
+        ]}
+        onRemove={jest.fn()}
+      />,
+    );
+
+    const group = screen.getByTestId("toast-group-top-center");
+    expect(group).toHaveClass("flex", "flex-col", "gap-2");
+
+    const statuses = within(group).getAllByRole("status");
+    expect(statuses).toHaveLength(2);
+    expect(statuses[0]).toHaveTextContent("Newer");
+    expect(statuses[1]).toHaveTextContent("Older");
   });
 });

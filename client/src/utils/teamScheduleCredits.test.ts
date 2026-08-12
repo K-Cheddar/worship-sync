@@ -36,6 +36,7 @@ const member = (
   memberId: string,
   firstName: string,
   lastName: string,
+  overrides: Partial<TeamRosterMember> = {},
 ): TeamRosterMember => ({
   memberId,
   churchId: "church-1",
@@ -43,6 +44,7 @@ const member = (
   lastName,
   positionIds: [],
   blockoutDates: [],
+  ...overrides,
 });
 
 const schedule = (
@@ -201,6 +203,28 @@ describe("buildTeamScheduleCreditEntries", () => {
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
       },
     ]);
+  });
+
+  it("omits last names for minors in generated schedule credits", () => {
+    const { entries } = buildTeamScheduleCreditEntries({
+      teams,
+      positions,
+      members: [
+        member("minor", "Taylor", "Morgan", { isMinor: true }),
+        member("adult", "Alex", "Rivera", { isMinor: false }),
+      ],
+      now: new Date("2026-07-04T10:30:00.000Z"),
+      schedules: [
+        schedule("2026-07-04T10:00:00.000Z", {
+          "occ-1": {
+            "camera::0": { primaryMemberId: "minor" },
+            "camera::1": { primaryMemberId: "adult" },
+          },
+        }),
+      ],
+    });
+
+    expect(entries[0].names).toBe("Taylor\nAlex Rivera");
   });
 
   it("returns an empty list when there is no media team or target occurrence", () => {

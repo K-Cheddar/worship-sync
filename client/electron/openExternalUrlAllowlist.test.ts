@@ -47,6 +47,15 @@ describe("assertAllowedOpenExternalUrl", () => {
     ).not.toThrow();
   });
 
+  it("allows Canva OAuth authorize URLs", () => {
+    expect(() =>
+      assertAllowedOpenExternalUrl(
+        "https://www.canva.com/api/oauth/authorize?response_type=code&client_id=example",
+        { isDev: false },
+      ),
+    ).not.toThrow();
+  });
+
   it("allows http localhost only when isDev", () => {
     expect(() =>
       assertAllowedOpenExternalUrl("http://localhost:3000/", { isDev: true }),
