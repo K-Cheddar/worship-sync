@@ -4,21 +4,47 @@ export const CHAT_MESSAGE_COLLECTION = "chatMessages";
 export const CHAT_SETTINGS_COLLECTION = "chatSettings";
 export const CHAT_MESSAGE_MAX_LENGTH = 1000;
 export const CHAT_RETENTION_DAYS = 365;
+export const CHAT_TYPING_TTL_MS = 10_000;
+export const CHAT_TYPING_ROOT = "worshipsyncChatTyping";
 export const CHAT_REACTION_EMOJIS = Object.freeze([
-  "👍",
-  "❤️",
+  "😀",
+  "😁",
   "😂",
-  "🎉",
+  "😅",
+  "😊",
+  "😍",
+  "🤩",
+  "😎",
+  "🤔",
+  "😮",
+  "😢",
+  "😭",
+  "😤",
+  "👍",
+  "👎",
   "👏",
+  "🙌",
+  "🙏",
+  "💪",
+  "🔥",
+  "🎉",
+  "❤️",
+  "💯",
+  "⭐",
+  "✅",
   "👀",
+  "🎵",
+  "✝️",
 ]);
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9:_-]{8,160}$/;
 const MAX_PAGE_SIZE = 100;
-const LIVE_QUERY_LIMIT = 500;
+const LIVE_QUERY_LIMIT = 100;
 const MESSAGE_RATE_LIMIT = 30;
 const MESSAGE_RATE_WINDOW_MS = 60_000;
+const TYPING_RATE_LIMIT = 12;
+const TYPING_RATE_WINDOW_MS = 10_000;
 
 const createChatError = (message, statusCode = 400) => {
   const error = new Error(message);
@@ -58,17 +84,81 @@ export const chatDayKey = (date, timeZone) => {
   return `${value.year}-${value.month}-${value.day}`;
 };
 
-const normalizeMessageText = (value) => {
+const normalizeMessageText = (value, { allowEmpty = false } = {}) => {
   const text = String(value || "")
     .replace(/\r\n/g, "\n")
     .trim();
-  if (!text) throw createChatError("Write a message before sending it.");
+  if (!text && !allowEmpty)
+    throw createChatError("Write a message before sending it.");
   if (text.length > CHAT_MESSAGE_MAX_LENGTH) {
     throw createChatError(
       `Keep messages under ${CHAT_MESSAGE_MAX_LENGTH.toLocaleString()} characters.`,
     );
   }
   return text;
+};
+
+const normalizeImageAttachment = (value) => {
+  if (value == null) return undefined;
+  if (
+    value?.type !== "image" ||
+    !value?.id ||
+    !value?.key ||
+    !value?.thumbnailKey ||
+    value?.contentType !== "image/webp"
+  ) {
+    throw createChatError("That photo could not be attached. Try again.");
+  }
+  const numericFields = [
+    "sizeBytes",
+    "thumbnailSizeBytes",
+    "width",
+    "height",
+    "thumbnailWidth",
+    "thumbnailHeight",
+  ];
+  if (
+    numericFields.some(
+      (field) =>
+        !Number.isSafeInteger(value[field]) || Number(value[field]) < 1,
+    )
+  ) {
+    throw createChatError("That photo could not be attached. Try again.");
+  }
+  return {
+    type: "image",
+    id: String(value.id),
+    key: String(value.key),
+    thumbnailKey: String(value.thumbnailKey),
+    contentType: "image/webp",
+    sizeBytes: Number(value.sizeBytes),
+    thumbnailSizeBytes: Number(value.thumbnailSizeBytes),
+    width: Number(value.width),
+    height: Number(value.height),
+    thumbnailWidth: Number(value.thumbnailWidth),
+    thumbnailHeight: Number(value.thumbnailHeight),
+  };
+};
+
+const serializeImageAttachment = (attachment) => {
+  let normalized;
+  try {
+    normalized = normalizeImageAttachment(attachment);
+  } catch {
+    return undefined;
+  }
+  if (!normalized) return undefined;
+  return {
+    type: normalized.type,
+    id: normalized.id,
+    contentType: normalized.contentType,
+    sizeBytes: normalized.sizeBytes,
+    thumbnailSizeBytes: normalized.thumbnailSizeBytes,
+    width: normalized.width,
+    height: normalized.height,
+    thumbnailWidth: normalized.thumbnailWidth,
+    thumbnailHeight: normalized.thumbnailHeight,
+  };
 };
 
 const normalizeClientMessageId = (value) => {
@@ -124,6 +214,9 @@ export const serializeChatMessage = (doc) => ({
   createdAt: timestampMs(doc?.createdAt),
   editedAt: timestampMs(doc?.editedAt) || undefined,
   deletedAt: timestampMs(doc?.deletedAt) || undefined,
+  attachment: doc?.deletedAt
+    ? undefined
+    : serializeImageAttachment(doc?.attachment),
   reactions: Array.isArray(doc?.reactions)
     ? doc.reactions.map(serializeReaction).filter((reaction) => reaction.emoji)
     : [],
@@ -147,39 +240,85 @@ const actorFromSession = (session) => {
 
 export const createChatService = ({
   getFirestore,
+  getRealtimeDatabase,
   now = () => new Date(),
+  onAttachmentRemoved = async () => {},
 } = {}) => {
   const memoryMessages = new Map();
   const memorySettings = new Map();
+  const memoryTyping = new Map();
   const memorySubscribers = new Map();
   const liveWatches = new Map();
+  const typingWatches = new Map();
   const rateWindows = new Map();
+  const typingRateWindows = new Map();
 
   const getDb = () => getFirestore?.() || null;
+  const getRealtimeDb = () => {
+    try {
+      return getRealtimeDatabase?.() || null;
+    } catch {
+      return null;
+    }
+  };
   const liveKey = (churchId, dayKey) => `${churchId}:${dayKey}`;
+  const realtimeKey = (value) =>
+    crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 32);
+  const typingDayPath = (churchId, dayKey) =>
+    `${CHAT_TYPING_ROOT}/${realtimeKey(churchId)}/${dayKey}`;
 
   const emitMemoryEvent = (churchId, dayKey, event) => {
     const subscribers = memorySubscribers.get(liveKey(churchId, dayKey));
     subscribers?.forEach((subscriber) => subscriber(event));
   };
 
+  const serializeTypers = (value) => {
+    const currentMs = now().getTime();
+    return Object.values(value || {})
+      .map((typer) => ({
+        actorId: String(typer?.actorId || ""),
+        name: String(typer?.name || "Operator"),
+        expiresAt: Number(typer?.expiresAt) || 0,
+      }))
+      .filter((typer) => typer.actorId && typer.expiresAt > currentMs)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const removeExpiredTypers = (ref, value) => {
+    const currentMs = now().getTime();
+    const removals = Object.fromEntries(
+      Object.entries(value || {})
+        .filter(([, typer]) => Number(typer?.expiresAt) <= currentMs)
+        .map(([key]) => [key, null]),
+    );
+    if (!Object.keys(removals).length) return;
+    void ref.update(removals).catch((error) => {
+      console.error("Could not clean up expired chat typing state:", error);
+    });
+  };
+
   const resolveTimeZone = async (churchId, hint) => {
     const fallback = isValidChatTimeZone(hint) ? String(hint).trim() : "UTC";
+    const cached = memorySettings.get(churchId);
+    if (isValidChatTimeZone(cached)) return cached;
     const db = getDb();
     if (!db) {
-      if (!memorySettings.has(churchId)) memorySettings.set(churchId, fallback);
-      return memorySettings.get(churchId);
+      memorySettings.set(churchId, fallback);
+      return fallback;
     }
 
     const ref = db.collection(CHAT_SETTINGS_COLLECTION).doc(churchId);
     const existing = await ref.get();
     if (existing.exists && isValidChatTimeZone(existing.data()?.timeZone)) {
-      return existing.data().timeZone;
+      const timeZone = existing.data().timeZone;
+      memorySettings.set(churchId, timeZone);
+      return timeZone;
     }
     await ref.set(
       { churchId, timeZone: fallback, createdAt: now(), updatedAt: now() },
       { merge: true },
     );
+    memorySettings.set(churchId, fallback);
     return fallback;
   };
 
@@ -279,18 +418,52 @@ export const createChatService = ({
     rateWindows.set(key, recent);
   };
 
+  const enforceTypingRateLimit = (churchId, actorId) => {
+    const key = `${churchId}:${actorId}`;
+    const currentMs = now().getTime();
+    const recent = (typingRateWindows.get(key) || []).filter(
+      (entry) => currentMs - entry < TYPING_RATE_WINDOW_MS,
+    );
+    if (recent.length >= TYPING_RATE_LIMIT) {
+      throw createChatError("Typing updates are arriving too quickly.", 429);
+    }
+    recent.push(currentMs);
+    typingRateWindows.set(key, recent);
+  };
+
   const createMessage = async ({
     churchId,
     session,
     text,
     clientMessageId,
     timeZoneHint,
+    attachment,
+    completeAttachment,
   }) => {
     const actor = actorFromSession(session);
     enforceMessageRateLimit(churchId, actor.actorId);
-    const normalizedText = normalizeMessageText(text);
+    let normalizedAttachment = normalizeImageAttachment(attachment);
+    const normalizedText = normalizeMessageText(text, {
+      allowEmpty:
+        Boolean(normalizedAttachment) || typeof completeAttachment === "function",
+    });
+    if (
+      !normalizedText &&
+      !normalizedAttachment &&
+      typeof completeAttachment !== "function"
+    ) {
+      throw createChatError("Write a message or add a photo before sending it.");
+    }
     const normalizedClientId = normalizeClientMessageId(clientMessageId);
     const context = await getContext({ churchId, session, timeZoneHint });
+    if (typeof completeAttachment === "function") {
+      normalizedAttachment = normalizeImageAttachment(
+        await completeAttachment(),
+      );
+    }
+    if (!normalizedText && !normalizedAttachment) {
+      throw createChatError("Write a message or add a photo before sending it.");
+    }
     const messageId = chatMessageId({
       churchId,
       actorId: actor.actorId,
@@ -312,6 +485,7 @@ export const createChatService = ({
       createdAt,
       expiresAt,
       reactions: [],
+      ...(normalizedAttachment ? { attachment: normalizedAttachment } : {}),
     };
     const db = getDb();
     if (db) {
@@ -338,7 +512,7 @@ export const createChatService = ({
 
   const updateMessage = async ({ churchId, session, messageId, text }) => {
     const actor = actorFromSession(session);
-    const normalizedText = normalizeMessageText(text);
+    const normalizedText = normalizeMessageText(text, { allowEmpty: true });
     const db = getDb();
     let updated;
     if (db) {
@@ -354,6 +528,9 @@ export const createChatService = ({
           throw createChatError("You can only edit your own messages.", 403);
         if (current.deletedAt)
           throw createChatError("That message was already removed.", 409);
+        if (!normalizedText && !current.attachment) {
+          throw createChatError("Write a message before saving it.");
+        }
         const next = { ...current, text: normalizedText, editedAt: now() };
         transaction.update(ref, { text: next.text, editedAt: next.editedAt });
         return next;
@@ -368,6 +545,9 @@ export const createChatService = ({
         throw createChatError("You can only edit your own messages.", 403);
       if (current.deletedAt)
         throw createChatError("That message was already removed.", 409);
+      if (!normalizedText && !current.attachment) {
+        throw createChatError("Write a message before saving it.");
+      }
       updated = { ...current, text: normalizedText, editedAt: now() };
       memoryMessages.set(messageId, updated);
       emitMemoryEvent(churchId, updated.dayKey, {
@@ -383,6 +563,7 @@ export const createChatService = ({
     const canModerate = session?.role === "admin";
     const db = getDb();
     let updated;
+    let removedAttachment;
     if (db) {
       const ref = db.collection(CHAT_MESSAGE_COLLECTION).doc(messageId);
       updated = await db.runTransaction(async (transaction) => {
@@ -395,11 +576,19 @@ export const createChatService = ({
         if (current.authorId !== actor.actorId && !canModerate) {
           throw createChatError("You can only remove your own messages.", 403);
         }
-        const next = { ...current, text: "", deletedAt: now(), reactions: [] };
+        removedAttachment = current.attachment;
+        const next = {
+          ...current,
+          text: "",
+          deletedAt: now(),
+          reactions: [],
+          attachment: null,
+        };
         transaction.update(ref, {
           text: "",
           deletedAt: next.deletedAt,
           reactions: [],
+          attachment: null,
         });
         return next;
       });
@@ -412,14 +601,52 @@ export const createChatService = ({
       if (current.authorId !== actor.actorId && !canModerate) {
         throw createChatError("You can only remove your own messages.", 403);
       }
-      updated = { ...current, text: "", deletedAt: now(), reactions: [] };
+      removedAttachment = current.attachment;
+      updated = {
+        ...current,
+        text: "",
+        deletedAt: now(),
+        reactions: [],
+        attachment: null,
+      };
       memoryMessages.set(messageId, updated);
       emitMemoryEvent(churchId, updated.dayKey, {
         type: "message-updated",
         message: serializeChatMessage(updated),
       });
     }
+    if (removedAttachment) {
+      try {
+        await onAttachmentRemoved({ churchId, attachment: removedAttachment });
+      } catch (error) {
+        console.error("Error removing chat image attachment:", error);
+      }
+    }
     return serializeChatMessage(updated);
+  };
+
+  const getImageAttachment = async ({ churchId, messageId }) => {
+    const db = getDb();
+    let message;
+    if (db) {
+      const snapshot = await db
+        .collection(CHAT_MESSAGE_COLLECTION)
+        .doc(messageId)
+        .get();
+      if (snapshot.exists) {
+        message = { id: snapshot.id, ...snapshot.data() };
+      }
+    } else {
+      message = memoryMessages.get(messageId);
+    }
+    if (!message || message.churchId !== churchId || message.deletedAt) {
+      throw createChatError("That photo is no longer available.", 404);
+    }
+    const attachment = normalizeImageAttachment(message.attachment);
+    if (!attachment) {
+      throw createChatError("That message does not include a photo.", 404);
+    }
+    return attachment;
   };
 
   const toggleReaction = async ({ churchId, session, messageId, emoji }) => {
@@ -490,6 +717,89 @@ export const createChatService = ({
     return serializeChatMessage(updated);
   };
 
+  const updateTyping = async ({
+    churchId,
+    session,
+    isTyping,
+    timeZoneHint,
+  }) => {
+    if (typeof isTyping !== "boolean") {
+      throw createChatError("Choose whether typing is active.");
+    }
+    const actor = actorFromSession(session);
+    enforceTypingRateLimit(churchId, actor.actorId);
+    const context = await getContext({ churchId, session, timeZoneHint });
+    const key = liveKey(churchId, context.todayKey);
+    const expiresAt = now().getTime() + CHAT_TYPING_TTL_MS;
+    const typer = {
+      actorId: actor.actorId,
+      name: actor.name,
+      expiresAt,
+    };
+    const realtimeDb = getRealtimeDb();
+
+    if (realtimeDb) {
+      const ref = realtimeDb.ref(
+        `${typingDayPath(churchId, context.todayKey)}/${realtimeKey(actor.actorId)}`,
+      );
+      if (isTyping) await ref.set(typer);
+      else await ref.remove();
+    } else {
+      const current = memoryTyping.get(key) || new Map();
+      if (isTyping) current.set(actor.actorId, typer);
+      else current.delete(actor.actorId);
+      if (current.size) memoryTyping.set(key, current);
+      else memoryTyping.delete(key);
+      emitMemoryEvent(churchId, context.todayKey, {
+        type: "typing-updated",
+        typers: serializeTypers(Object.fromEntries(current)),
+      });
+    }
+
+    return { active: isTyping, expiresAt: isTyping ? expiresAt : undefined };
+  };
+
+  const subscribeToTyping = ({ churchId, dayKey, onEvent }) => {
+    const realtimeDb = getRealtimeDb();
+    if (!realtimeDb) return () => {};
+    const key = liveKey(churchId, dayKey);
+    let entry = typingWatches.get(key);
+    if (!entry) {
+      const listeners = new Set();
+      const ref = realtimeDb.ref(typingDayPath(churchId, dayKey));
+      entry = { listeners, ref, listener: null, latest: null };
+      const listener = (snapshot) => {
+        const value = snapshot.val();
+        const typers = serializeTypers(value);
+        entry.latest = typers;
+        listeners.forEach((listenerCallback) =>
+          listenerCallback({ type: "typing-updated", typers }),
+        );
+        removeExpiredTypers(ref, value);
+      };
+      entry.listener = listener;
+      typingWatches.set(key, entry);
+      ref.on("value", listener, () => {
+        const typers = [];
+        entry.latest = typers;
+        listeners.forEach((listenerCallback) =>
+          listenerCallback({ type: "typing-updated", typers }),
+        );
+      });
+    }
+    entry.listeners.add(onEvent);
+    if (entry.latest) {
+      onEvent({ type: "typing-updated", typers: entry.latest });
+    }
+    return () => {
+      entry.listeners.delete(onEvent);
+      if (!entry.listeners.size) {
+        entry.ref.off("value", entry.listener);
+        typingWatches.delete(key);
+      }
+    };
+  };
+
   const subscribe = ({ churchId, dayKey, onEvent }) => {
     const selectedDayKey = normalizeDayKey(dayKey);
     const key = liveKey(churchId, selectedDayKey);
@@ -499,7 +809,21 @@ export const createChatService = ({
       subscribers.add(onEvent);
       memorySubscribers.set(key, subscribers);
       queueMicrotask(() => {
-        if (subscribers.has(onEvent)) onEvent({ type: "stream-ready" });
+        if (!subscribers.has(onEvent)) return;
+        const allMessages = Array.from(memoryMessages.values())
+          .filter(
+            (message) =>
+              message.churchId === churchId &&
+              message.dayKey === selectedDayKey,
+          )
+          .sort((a, b) => timestampMs(a.createdAt) - timestampMs(b.createdAt));
+        onEvent({
+          type: "initial-messages",
+          dayKey: selectedDayKey,
+          messages: allMessages.slice(-LIVE_QUERY_LIMIT).map(serializeChatMessage),
+          hasMore: allMessages.length > LIVE_QUERY_LIMIT,
+        });
+        onEvent({ type: "stream-ready" });
       });
       return () => {
         subscribers.delete(onEvent);
@@ -510,7 +834,13 @@ export const createChatService = ({
     let entry = liveWatches.get(key);
     if (!entry) {
       const listeners = new Set();
-      entry = { listeners, unsubscribe: null, initialized: false };
+      entry = {
+        listeners,
+        unsubscribe: null,
+        initialized: false,
+        latestMessages: [],
+        hasMore: false,
+      };
       liveWatches.set(key, entry);
       const query = db
         .collection(CHAT_MESSAGE_COLLECTION)
@@ -520,6 +850,28 @@ export const createChatService = ({
         .limit(LIVE_QUERY_LIMIT);
       const unsubscribe = query.onSnapshot(
         (snapshot) => {
+          entry.latestMessages = snapshot.docs
+            .map((snapshotDoc) =>
+              serializeChatMessage({
+                id: snapshotDoc.id,
+                ...snapshotDoc.data(),
+              }),
+            )
+            .reverse();
+          entry.hasMore = snapshot.size >= LIVE_QUERY_LIMIT;
+          if (!entry.initialized) {
+            entry.initialized = true;
+            listeners.forEach((listener) => {
+              listener({
+                type: "initial-messages",
+                dayKey: selectedDayKey,
+                messages: entry.latestMessages,
+                hasMore: entry.hasMore,
+              });
+              listener({ type: "stream-ready" });
+            });
+            return;
+          }
           snapshot.docChanges().forEach((change) => {
             if (change.type === "removed") return;
             const message = serializeChatMessage({
@@ -530,12 +882,6 @@ export const createChatService = ({
               listener({ type: "message-updated", message }),
             );
           });
-          if (!entry.initialized) {
-            entry.initialized = true;
-            listeners.forEach((listener) =>
-              listener({ type: "stream-ready" }),
-            );
-          }
         },
         (error) => {
           listeners.forEach((listener) =>
@@ -549,8 +895,22 @@ export const createChatService = ({
       entry.unsubscribe = unsubscribe;
     }
     entry.listeners.add(onEvent);
-    if (entry.initialized) onEvent({ type: "stream-ready" });
+    if (entry.initialized) {
+      onEvent({
+        type: "initial-messages",
+        dayKey: selectedDayKey,
+        messages: entry.latestMessages,
+        hasMore: entry.hasMore,
+      });
+      onEvent({ type: "stream-ready" });
+    }
+    const unsubscribeTyping = subscribeToTyping({
+      churchId,
+      dayKey: selectedDayKey,
+      onEvent,
+    });
     return () => {
+      unsubscribeTyping();
       entry.listeners.delete(onEvent);
       if (!entry.listeners.size) {
         entry.unsubscribe?.();
@@ -565,7 +925,9 @@ export const createChatService = ({
     createMessage,
     updateMessage,
     deleteMessage,
+    getImageAttachment,
     toggleReaction,
+    updateTyping,
     subscribe,
   };
 };

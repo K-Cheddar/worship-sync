@@ -19,6 +19,7 @@ type ToastContextType = {
     variant?: ToastVariant,
     position?: ToastPosition
   ) => string;
+  updateToast: (id: string, patch: Partial<Omit<ToastData, "id">>) => void;
   removeToast: (id: string) => void;
 };
 
@@ -40,6 +41,15 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
+
+  const updateToast = useCallback(
+    (id: string, patch: Partial<Omit<ToastData, "id">>) => {
+      setToasts((prev) =>
+        prev.map((toast) => (toast.id === id ? { ...toast, ...patch } : toast)),
+      );
+    },
+    [],
+  );
 
   const showToast = useCallback(
     (
@@ -88,7 +98,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   return (
-    <ToastContext.Provider value={{ showToast, removeToast }}>
+    <ToastContext.Provider value={{ showToast, updateToast, removeToast }}>
       {children}
       {toastPortal}
     </ToastContext.Provider>

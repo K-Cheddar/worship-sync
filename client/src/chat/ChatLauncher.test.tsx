@@ -22,7 +22,7 @@ describe("ChatLauncher", () => {
       available: true,
       unreadCount: 3,
       openChat,
-    } as ReturnType<typeof useChat>);
+    } as unknown as ReturnType<typeof useChat>);
 
     render(<ChatLauncher onOpen={onOpen} />);
     fireEvent.click(

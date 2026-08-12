@@ -67,5 +67,37 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "desktopAuthRequests",
+      "fieldPath": "ttlExpireAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "collectionGroup": "chatMessages",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "chatMessages",
+      "fieldPath": "text",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "chatMessages",
+      "fieldPath": "reactions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "chatMessages",
+      "fieldPath": "attachment",
+      "indexes": []
+    }
+  ]
 }

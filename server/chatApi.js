@@ -1,14 +1,19 @@
 const respondChatError = (res, context, error) => {
-  const statusCode =
+  let statusCode =
     Number.isInteger(error?.statusCode) && error.statusCode >= 400
       ? error.statusCode
       : 500;
+  if (error?.name === "NotFound" || error?.name === "NoSuchKey") {
+    statusCode = 404;
+  }
   if (statusCode >= 500) console.error(context, error);
+  let message = "Could not complete that chat request. Try again.";
+  if (statusCode < 500 && error?.message) message = error.message;
+  if (error?.name === "NotFound" || error?.name === "NoSuchKey") {
+    message = "The uploaded photo was not found. Add it again and try again.";
+  }
   return res.status(statusCode).json({
-    error:
-      statusCode < 500 && error?.message
-        ? error.message
-        : "Chat is unavailable right now. Try again.",
+    error: message,
   });
 };
 
@@ -23,7 +28,7 @@ const assertChurchAccess = (req, res) => {
   return true;
 };
 
-export const createChatHandlers = ({ chatService }) => ({
+export const createChatHandlers = ({ chatService, getChatImageStorage }) => ({
   async getContext(req, res) {
     if (!assertChurchAccess(req, res)) return;
     try {
@@ -32,7 +37,18 @@ export const createChatHandlers = ({ chatService }) => ({
         session: req.appSession,
         timeZoneHint: req.query.timeZone,
       });
-      res.json({ context });
+      let imageUploadsEnabled = false;
+      if (getChatImageStorage) {
+        try {
+          getChatImageStorage();
+          imageUploadsEnabled = true;
+        } catch (error) {
+          if (error?.statusCode !== 503) {
+            console.error("Error checking chat image storage:", error);
+          }
+        }
+      }
+      res.json({ context: { ...context, imageUploadsEnabled } });
     } catch (error) {
       respondChatError(res, "Error loading chat context:", error);
     }
@@ -56,7 +72,10 @@ export const createChatHandlers = ({ chatService }) => ({
   },
 
   async createMessage(req, res) {
-    if (!assertChurchAccess(req, res)) return;
+    if (!assertChurchAccess(req, res)) {
+      res.locals?.releaseChatImageFinalize?.();
+      return;
+    }
     try {
       const message = await chatService.createMessage({
         churchId: req.params.churchId,
@@ -64,10 +83,76 @@ export const createChatHandlers = ({ chatService }) => ({
         text: req.body?.text,
         clientMessageId: req.body?.clientMessageId,
         timeZoneHint: req.body?.timeZone,
+        completeAttachment: req.body?.imageUpload
+          ? () =>
+              getChatImageStorage().completeUpload({
+                churchId: req.params.churchId,
+                actorId: req.appSession.actorId,
+                clientMessageId: req.body?.clientMessageId,
+                upload: req.body.imageUpload,
+              })
+          : undefined,
       });
       res.status(201).json({ message });
     } catch (error) {
       respondChatError(res, "Error sending chat message:", error);
+    } finally {
+      res.locals?.releaseChatImageFinalize?.();
+    }
+  },
+
+  async createImageUpload(req, res) {
+    if (!assertChurchAccess(req, res)) return;
+    try {
+      const result = await getChatImageStorage().createUpload({
+        churchId: req.params.churchId,
+        actorId: req.appSession.actorId,
+        upload: req.body,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      respondChatError(res, "Error creating chat image upload:", error);
+    }
+  },
+
+  async uploadImageFromApp(req, res) {
+    if (!assertChurchAccess(req, res)) return;
+    try {
+      const result = await getChatImageStorage().createUploadFromBuffer({
+        churchId: req.params.churchId,
+        actorId: req.appSession.actorId,
+        upload: {
+          fileName: req.query.fileName,
+          contentType: req.get("content-type"),
+        },
+        body: req.body,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      respondChatError(res, "Error uploading chat image from app:", error);
+    }
+  },
+
+  async getImageUrl(req, res) {
+    if (!assertChurchAccess(req, res)) return;
+    const variant = String(req.params.variant || "").trim();
+    if (variant !== "full" && variant !== "thumbnail") {
+      res.status(400).json({ error: "Choose a valid photo size." });
+      return;
+    }
+    try {
+      const attachment = await chatService.getImageAttachment({
+        churchId: req.params.churchId,
+        messageId: req.params.messageId,
+      });
+      const result = await getChatImageStorage().getDownloadUrl({
+        churchId: req.params.churchId,
+        attachment,
+        variant,
+      });
+      res.json(result);
+    } catch (error) {
+      respondChatError(res, "Error loading chat image URL:", error);
     }
   },
 
@@ -112,6 +197,21 @@ export const createChatHandlers = ({ chatService }) => ({
       res.json({ message });
     } catch (error) {
       respondChatError(res, "Error updating chat reaction:", error);
+    }
+  },
+
+  async updateTyping(req, res) {
+    if (!assertChurchAccess(req, res)) return;
+    try {
+      const typing = await chatService.updateTyping({
+        churchId: req.params.churchId,
+        session: req.appSession,
+        isTyping: req.body?.isTyping,
+        timeZoneHint: req.body?.timeZone,
+      });
+      res.json({ typing });
+    } catch (error) {
+      respondChatError(res, "Error updating chat typing state:", error);
     }
   },
 

@@ -136,10 +136,10 @@ const Modal = ({
 
             <div
               className={cn(
-                "min-h-0 flex-1 overflow-y-auto scrollbar-variable",
+                "min-h-0 flex-1",
                 size === "full"
-                  ? "max-h-none"
-                  : "max-h-[calc(90vh-120px)] max-md:max-h-[calc(100vh)]",
+                  ? "flex max-h-none flex-col overflow-hidden"
+                  : "max-h-[calc(90vh-120px)] overflow-y-auto scrollbar-variable max-md:max-h-[calc(100vh)]",
                 contentPadding
               )}
             >

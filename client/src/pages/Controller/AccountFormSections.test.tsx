@@ -38,7 +38,9 @@ const renderBrandingForm = (brandingOverride?: any) => {
   const showToast = jest.fn();
 
   render(
-    <ToastContext.Provider value={{ showToast, removeToast: jest.fn() }}>
+    <ToastContext.Provider
+      value={{ showToast, updateToast: jest.fn(), removeToast: jest.fn() }}
+    >
       <GlobalInfoContext.Provider
         value={
           createMockGlobalContext({

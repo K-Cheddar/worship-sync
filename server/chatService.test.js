@@ -31,6 +31,48 @@ test("chat day keys respect the church timezone", () => {
   assert.equal(chatDayKey(instant, "America/New_York"), "2026-08-09");
 });
 
+test("caches the church timezone before typing heartbeats", async () => {
+  let reads = 0;
+  let writes = 0;
+  const service = createChatService({
+    now: () => new Date("2026-08-10T16:00:00.000Z"),
+    getFirestore: () => ({
+      collection: () => ({
+        doc: () => ({
+          get: async () => {
+            reads += 1;
+            return { exists: false };
+          },
+          set: async () => {
+            writes += 1;
+          },
+        }),
+      }),
+    }),
+  });
+
+  await service.getContext({
+    churchId: "church_1",
+    session: humanSession,
+    timeZoneHint: "America/New_York",
+  });
+  await service.updateTyping({
+    churchId: "church_1",
+    session: humanSession,
+    isTyping: true,
+    timeZoneHint: "America/New_York",
+  });
+  await service.updateTyping({
+    churchId: "church_1",
+    session: humanSession,
+    isTyping: false,
+    timeZoneHint: "America/New_York",
+  });
+
+  assert.equal(reads, 1);
+  assert.equal(writes, 1);
+});
+
 test("creates, lists, and idempotently retries a daily message", async () => {
   const { service } = createService();
   const payload = {
@@ -223,8 +265,334 @@ test("publishes memory-store changes to daily subscribers", async () => {
     timeZoneHint: "UTC",
   });
   unsubscribe();
-  assert.equal(events.length, 2);
-  assert.equal(events[0].type, "stream-ready");
-  assert.equal(events[1].type, "message-updated");
-  assert.equal(events[1].message.text, "Live update");
+  assert.equal(events.length, 3);
+  assert.equal(events[0].type, "initial-messages");
+  assert.deepEqual(events[0].messages, []);
+  assert.equal(events[1].type, "stream-ready");
+  assert.equal(events[2].type, "message-updated");
+  assert.equal(events[2].message.text, "Live update");
+});
+
+test("batches existing messages when a daily subscriber connects", async () => {
+  const { service } = createService();
+  await service.createMessage({
+    churchId: "church_1",
+    session: humanSession,
+    text: "Already here",
+    clientMessageId: "client-message-existing",
+    timeZoneHint: "UTC",
+  });
+  const events = [];
+  const unsubscribe = service.subscribe({
+    churchId: "church_1",
+    dayKey: "2026-08-10",
+    onEvent: (event) => events.push(event),
+  });
+  await Promise.resolve();
+  unsubscribe();
+
+  assert.equal(events[0].type, "initial-messages");
+  assert.deepEqual(events[0].messages.map((message) => message.text), [
+    "Already here",
+  ]);
+  assert.equal(events[1].type, "stream-ready");
+});
+
+test("shares one Firestore live snapshot and replays its cached batch", () => {
+  let snapshotHandler;
+  let listenerCount = 0;
+  let unsubscribeCount = 0;
+  const query = {
+    where() {
+      return this;
+    },
+    orderBy() {
+      return this;
+    },
+    limit() {
+      return this;
+    },
+    onSnapshot(onSnapshot) {
+      listenerCount += 1;
+      snapshotHandler = onSnapshot;
+      return () => {
+        unsubscribeCount += 1;
+      };
+    },
+  };
+  const service = createChatService({
+    getFirestore: () => ({ collection: () => query }),
+  });
+  const firstEvents = [];
+  const secondEvents = [];
+  const unsubscribeFirst = service.subscribe({
+    churchId: "church_1",
+    dayKey: "2026-08-10",
+    onEvent: (event) => firstEvents.push(event),
+  });
+  const older = {
+    id: "chat_older",
+    data: () => ({
+      messageId: "chat_older",
+      churchId: "church_1",
+      dayKey: "2026-08-10",
+      text: "Older",
+      authorId: "user_1",
+      authorName: "Ada",
+      createdAt: new Date("2026-08-10T15:00:00.000Z"),
+      reactions: [],
+    }),
+  };
+  const newer = {
+    id: "chat_newer",
+    data: () => ({
+      ...older.data(),
+      messageId: "chat_newer",
+      text: "Newer",
+      createdAt: new Date("2026-08-10T16:00:00.000Z"),
+    }),
+  };
+
+  snapshotHandler({
+    size: 2,
+    docs: [newer, older],
+    docChanges: () => [
+      { type: "added", doc: newer },
+      { type: "added", doc: older },
+    ],
+  });
+  const unsubscribeSecond = service.subscribe({
+    churchId: "church_1",
+    dayKey: "2026-08-10",
+    onEvent: (event) => secondEvents.push(event),
+  });
+
+  assert.equal(listenerCount, 1);
+  assert.deepEqual(
+    firstEvents[0].messages.map((message) => message.text),
+    ["Older", "Newer"],
+  );
+  assert.equal(firstEvents[1].type, "stream-ready");
+  assert.deepEqual(secondEvents, firstEvents);
+
+  unsubscribeFirst();
+  assert.equal(unsubscribeCount, 0);
+  unsubscribeSecond();
+  assert.equal(unsubscribeCount, 1);
+});
+
+test("filters and removes expired Realtime Database typing entries", async () => {
+  let typingListener;
+  let cleanupUpdate;
+  const query = {
+    where() {
+      return this;
+    },
+    orderBy() {
+      return this;
+    },
+    limit() {
+      return this;
+    },
+    onSnapshot() {
+      return () => {};
+    },
+  };
+  const typingRef = {
+    on(_event, listener) {
+      typingListener = listener;
+    },
+    off() {},
+    async update(value) {
+      cleanupUpdate = value;
+    },
+  };
+  const service = createChatService({
+    now: () => new Date("2026-08-10T16:00:00.000Z"),
+    getFirestore: () => ({ collection: () => query }),
+    getRealtimeDatabase: () => ({ ref: () => typingRef }),
+  });
+  const events = [];
+  const unsubscribe = service.subscribe({
+    churchId: "church_1",
+    dayKey: "2026-08-10",
+    onEvent: (event) => events.push(event),
+  });
+
+  typingListener({
+    val: () => ({
+      expired: {
+        actorId: "user_old",
+        name: "Old",
+        expiresAt: Date.parse("2026-08-10T15:59:59.000Z"),
+      },
+      active: {
+        actorId: "user_2",
+        name: "Morgan",
+        expiresAt: Date.parse("2026-08-10T16:00:05.000Z"),
+      },
+    }),
+  });
+  await Promise.resolve();
+  unsubscribe();
+
+  assert.deepEqual(events.at(-1).typers.map((typer) => typer.name), [
+    "Morgan",
+  ]);
+  assert.deepEqual(cleanupUpdate, { expired: null });
+});
+
+test("rate limits excessive typing traffic before it reaches Firebase", async () => {
+  const { service } = createService();
+  for (let index = 0; index < 12; index += 1) {
+    await service.updateTyping({
+      churchId: "church_1",
+      session: humanSession,
+      isTyping: true,
+      timeZoneHint: "UTC",
+    });
+  }
+  await assert.rejects(
+    service.updateTyping({
+      churchId: "church_1",
+      session: humanSession,
+      isTyping: true,
+      timeZoneHint: "UTC",
+    }),
+    /arriving too quickly/i,
+  );
+});
+
+test("publishes short-lived typing state without storing a message", async () => {
+  const { service } = createService();
+  const events = [];
+  const unsubscribe = service.subscribe({
+    churchId: "church_1",
+    dayKey: "2026-08-10",
+    onEvent: (event) => events.push(event),
+  });
+
+  await service.updateTyping({
+    churchId: "church_1",
+    session: humanSession,
+    isTyping: true,
+    timeZoneHint: "UTC",
+  });
+  await service.updateTyping({
+    churchId: "church_1",
+    session: humanSession,
+    isTyping: false,
+    timeZoneHint: "UTC",
+  });
+  unsubscribe();
+
+  assert.equal(events[0].type, "initial-messages");
+  assert.equal(events[1].type, "stream-ready");
+  assert.equal(events[2].type, "typing-updated");
+  assert.deepEqual(events[2].typers.map((typer) => typer.name), ["Ada"]);
+  assert.equal(events[3].type, "typing-updated");
+  assert.deepEqual(events[3].typers, []);
+  const result = await service.listMessages({
+    churchId: "church_1",
+    session: humanSession,
+    dayKey: "2026-08-10",
+    timeZoneHint: "UTC",
+  });
+  assert.deepEqual(result.messages, []);
+});
+
+test("stores private image keys while serializing only safe attachment metadata", async () => {
+  let removed;
+  const service = createChatService({
+    now: () => new Date("2026-08-10T16:00:00.000Z"),
+    onAttachmentRemoved: async (value) => {
+      removed = value;
+    },
+  });
+  const attachment = {
+    type: "image",
+    id: "12345678-1234-4123-8123-123456789abc",
+    key: "churches/church_1/chat/id/image.webp",
+    thumbnailKey: "churches/church_1/chat/id/thumbnail.webp",
+    contentType: "image/webp",
+    sizeBytes: 1200,
+    thumbnailSizeBytes: 300,
+    width: 1200,
+    height: 800,
+    thumbnailWidth: 480,
+    thumbnailHeight: 320,
+  };
+  const message = await service.createMessage({
+    churchId: "church_1",
+    session: humanSession,
+    text: "",
+    clientMessageId: "client_image_1234",
+    timeZoneHint: "UTC",
+    attachment,
+  });
+
+  assert.equal(message.text, "");
+  assert.equal(message.attachment.id, attachment.id);
+  assert.equal("key" in message.attachment, false);
+  assert.deepEqual(
+    await service.getImageAttachment({
+      churchId: "church_1",
+      messageId: message.messageId,
+    }),
+    attachment,
+  );
+
+  const edited = await service.updateMessage({
+    churchId: "church_1",
+    session: humanSession,
+    messageId: message.messageId,
+    text: "",
+  });
+  assert.equal(edited.text, "");
+
+  const deleted = await service.deleteMessage({
+    churchId: "church_1",
+    session: humanSession,
+    messageId: message.messageId,
+  });
+  assert.equal(deleted.attachment, undefined);
+  assert.equal(removed.churchId, "church_1");
+  assert.deepEqual(removed.attachment, attachment);
+  await assert.rejects(
+    service.getImageAttachment({
+      churchId: "church_1",
+      messageId: message.messageId,
+    }),
+    /no longer available/i,
+  );
+});
+
+test("rate limits a photo message before completing its upload", async () => {
+  const { service } = createService();
+  for (let index = 0; index < 30; index += 1) {
+    await service.createMessage({
+      churchId: "church_1",
+      session: humanSession,
+      text: `Message ${index}`,
+      clientMessageId: `client-rate-${String(index).padStart(4, "0")}`,
+      timeZoneHint: "UTC",
+    });
+  }
+
+  let completionCalls = 0;
+  await assert.rejects(
+    service.createMessage({
+      churchId: "church_1",
+      session: humanSession,
+      text: "",
+      clientMessageId: "client-rate-photo",
+      timeZoneHint: "UTC",
+      completeAttachment: async () => {
+        completionCalls += 1;
+        return null;
+      },
+    }),
+    /too many messages/i,
+  );
+  assert.equal(completionCalls, 0);
 });
