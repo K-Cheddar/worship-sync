@@ -5978,6 +5978,194 @@ test("a tampered or unsigned token is refused", async (t) => {
   assert.equal(saved.responses?.[occurrenceId]?.[cellKey], undefined);
 });
 
+const publicContext = (churchId) => ({ churchId, headers: {}, session: {} });
+
+const tokenForMember = (churchId, scheduleId, memberId) =>
+  decodeURIComponent(
+    authHandlers
+      .buildAssignmentResponseUrl({ churchId, scheduleId, memberId })
+      .split("/schedule-response/")[1]
+      .split("?")[0],
+  );
+
+test("asking for an account invites the roster address, not a supplied one", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("self_invite");
+  const media = await seedTeam(context, {
+    teamName: "Media invite",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Vol",
+      lastName: "Unteer",
+      positionIds: [media.positionIds.Camera],
+      email: "vol@church.test",
+    },
+  });
+  const memberId = created.payload.member.memberId;
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Invite schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-invite"],
+      startDate: "2026-09-06",
+      endDate: "2026-09-06",
+      occurrences: [
+        {
+          occurrenceId: "svc-invite@2026-09-06",
+          serviceId: "svc-invite",
+          serviceIds: ["svc-invite"],
+          name: "Sunday Gathering",
+          startsAt: "2026-09-06T14:00:00.000Z",
+          positionRequirements: [
+            { positionId: media.positionIds.Camera, count: 1 },
+          ],
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  const res = await callHandler(
+    authHandlers.requestAccountFromAssignmentToken,
+    {
+      context: publicContext(context.churchId),
+      body: {
+        token: tokenForMember(context.churchId, scheduleId, memberId),
+        // An unauthenticated caller must not be able to aim the invite. If this
+        // were ever honoured, the endpoint would be a way to send
+        // WorshipSync-branded mail to anyone.
+        email: "attacker@evil.test",
+      },
+    },
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.email, "vol@church.test");
+
+  const invites = await callHandler(authHandlers.listChurchInvites, {
+    context,
+    params: { churchId: context.churchId },
+  });
+  const invite = invites.payload.invites.find(
+    (row) => row.memberId === memberId,
+  );
+  assert.equal(invite.email, "vol@church.test");
+  // The narrowest tier there is: accepting produces an account that can see its
+  // own schedule and nothing else. Self-service is only defensible with that
+  // ceiling.
+  assert.equal(invite.appAccess, "member");
+  assert.equal(invite.role, "member");
+  assert.deepEqual(invite.permissions, {
+    teams: "none",
+    services: "none",
+    teamScopes: {},
+  });
+
+  // Shown on the roster so an owner is not surprised by an account appearing.
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const member = (bootstrap.payload.members || []).find(
+    (row) => row.memberId === memberId,
+  );
+  assert.ok(member.invitedAt);
+});
+
+test("asking for an account refuses when there is nowhere to send it", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("self_invite_guards");
+  const { memberId, scheduleId } = await seedAssignedSchedule(
+    context,
+    "inviteguard",
+  );
+
+  // seedAssignedSchedule links the member to the caller's account.
+  const linked = await callHandler(
+    authHandlers.requestAccountFromAssignmentToken,
+    {
+      context: publicContext(context.churchId),
+      body: { token: tokenForMember(context.churchId, scheduleId, memberId) },
+    },
+  );
+  assert.equal(linked.statusCode, 409);
+
+  // Someone the token names who is not on the roster — a schedule guest gets
+  // emailed too, and an account for them would show an empty schedule for ever.
+  const stranger = await callHandler(
+    authHandlers.requestAccountFromAssignmentToken,
+    {
+      context: publicContext(context.churchId),
+      body: {
+        token: tokenForMember(context.churchId, scheduleId, "guest-nobody"),
+      },
+    },
+  );
+  assert.equal(stranger.statusCode, 404);
+});
+
+test("asking for an account refuses a member with no email", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("self_invite_noemail");
+  const { memberId, scheduleId } = await seedAssignedSchedule(
+    context,
+    "invitenoemail",
+    { link: false },
+  );
+
+  // Scheduling someone with no address stays allowed, so this is a normal
+  // state, not a corrupt one — and the reader needs to be told which it is.
+  const res = await callHandler(
+    authHandlers.requestAccountFromAssignmentToken,
+    {
+      context: publicContext(context.churchId),
+      body: { token: tokenForMember(context.churchId, scheduleId, memberId) },
+    },
+  );
+
+  assert.equal(res.statusCode, 400);
+  const invites = await callHandler(authHandlers.listChurchInvites, {
+    context,
+    params: { churchId: context.churchId },
+  });
+  assert.equal(
+    invites.payload.invites.some((row) => row.memberId === memberId),
+    false,
+  );
+});
+
+test("a forged token cannot request an invite", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("self_invite_forged");
+  const { memberId, scheduleId } = await seedAssignedSchedule(
+    context,
+    "inviteforged",
+    { link: false },
+  );
+  const token = tokenForMember(context.churchId, scheduleId, memberId);
+
+  const tampered = await callHandler(
+    authHandlers.requestAccountFromAssignmentToken,
+    {
+      context: publicContext(context.churchId),
+      body: { token: `${token.slice(0, -3)}xyz` },
+    },
+  );
+  assert.equal(tampered.statusCode, 404);
+
+  const garbage = await callHandler(
+    authHandlers.requestAccountFromAssignmentToken,
+    {
+      context: publicContext(context.churchId),
+      body: { token: "not-a-token" },
+    },
+  );
+  assert.equal(garbage.statusCode, 404);
+});
+
 test("an emailed token stops working once the slot moves on", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_token_moved");
@@ -6350,6 +6538,250 @@ test("answers open one coalescing digest window per schedule", async (t) => {
     "the window start does not move, so the digest still fires on time",
   );
   assert.ok(memberId);
+});
+
+const readScheduleRow = async (context, scheduleId) => {
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  return (bootstrap.payload.schedules || []).find(
+    (row) => row.scheduleId === scheduleId,
+  );
+};
+
+test("blocking out a date you are scheduled for tells the owner", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("blockout_conflict");
+  const { memberId, scheduleId, occurrenceId, cellKey } =
+    await seedAssignedSchedule(context, "blockconflict");
+
+  const res = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: [{ startDate: "2026-09-06", endDate: "2026-09-06" }],
+    },
+  });
+  assert.equal(res.statusCode, 200);
+
+  const saved = await readScheduleRow(context, scheduleId);
+  assert.deepEqual(Object.values(saved.pendingBlockoutConflicts || {}), [
+    {
+      memberId,
+      occurrenceId,
+      cellKey,
+      blockedAt: Object.values(saved.pendingBlockoutConflicts)[0].blockedAt,
+    },
+  ]);
+  // It rides the existing response window rather than opening a second one.
+  assert.ok(saved.pendingResponseDigestSince);
+
+  // The slot itself is untouched: the owner decides who covers it. A volunteer
+  // marking time off must not empty a service.
+  const cell = saved.assignments[occurrenceId][cellKey];
+  assert.equal(
+    typeof cell === "string" ? cell : cell.primaryMemberId,
+    memberId,
+  );
+});
+
+test("blocking out a date you do not serve notifies nobody", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("blockout_clear");
+  const { scheduleId } = await seedAssignedSchedule(context, "blockclear");
+
+  await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      // A week after the only service on this schedule.
+      blockoutDates: [{ startDate: "2026-09-13", endDate: "2026-09-13" }],
+    },
+  });
+
+  const saved = await readScheduleRow(context, scheduleId);
+  assert.deepEqual(saved.pendingBlockoutConflicts, undefined);
+  assert.equal(saved.pendingResponseDigestSince, undefined);
+});
+
+test("re-saving the same blockout does not re-notify", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("blockout_resave");
+  const { scheduleId } = await seedAssignedSchedule(context, "blockresave");
+  const away = [{ startDate: "2026-09-06", endDate: "2026-09-06" }];
+
+  await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: { expectedUpdatedAt: await currentMemberStamp(context), blockoutDates: away },
+  });
+  const first = await readScheduleRow(context, scheduleId);
+  const firstBlockedAt = Object.values(first.pendingBlockoutConflicts)[0]
+    .blockedAt;
+
+  // Editing the note keeps the same range, so nothing was newly blocked. The
+  // recorded moment must stay put, or a trickle of unrelated saves would keep
+  // pushing the same conflict forward and it would read as new each time.
+  await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: [{ ...away[0], notes: "Wedding" }],
+    },
+  });
+
+  const second = await readScheduleRow(context, scheduleId);
+  assert.equal(Object.keys(second.pendingBlockoutConflicts).length, 1);
+  assert.equal(
+    Object.values(second.pendingBlockoutConflicts)[0].blockedAt,
+    firstBlockedAt,
+  );
+});
+
+test("a second blockout adds to the pending map instead of replacing it", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("blockout_accumulate");
+  const media = await seedTeam(context, {
+    teamName: "Media accumulate",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Multi",
+      lastName: "Date",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  const memberId = mine.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  const occurrences = ["2026-09-06", "2026-09-13"].map((date) => ({
+    occurrenceId: `svc-acc@${date}`,
+    serviceId: "svc-acc",
+    serviceIds: ["svc-acc"],
+    name: "Sunday Gathering",
+    startsAt: `${date}T14:00:00.000Z`,
+    positionRequirements: [{ positionId: media.positionIds.Camera, count: 1 }],
+  }));
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Accumulate schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-acc"],
+      startDate: "2026-09-06",
+      endDate: "2026-09-13",
+      occurrences,
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  for (const occurrence of occurrences) {
+    await callHandler(authHandlers.updateTeamScheduleAssignment, {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrence.occurrenceId,
+        positionSlotKey: `${media.positionIds.Camera}::0`,
+        memberId,
+      },
+    });
+  }
+
+  const away = [{ startDate: "2026-09-06", endDate: "2026-09-06" }];
+  await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: away,
+    },
+  });
+  await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: [...away, { startDate: "2026-09-13", endDate: "2026-09-13" }],
+    },
+  });
+
+  // The second save writes only its own key. Writing the merged map back would
+  // re-assert the first — and would erase anything a digest deleted in between.
+  const saved = await readScheduleRow(context, scheduleId);
+  assert.deepEqual(
+    Object.values(saved.pendingBlockoutConflicts)
+      .map((entry) => entry.occurrenceId)
+      .sort(),
+    ["svc-acc@2026-09-06", "svc-acc@2026-09-13"],
+  );
+});
+
+test("a past service is not reported as a new blockout conflict", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("blockout_past");
+  const media = await seedTeam(context, {
+    teamName: "Media past",
+    positions: [{ name: "Camera", icon: "Camera" }],
+  });
+  const mine = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Late",
+      lastName: "Logger",
+      positionIds: [media.positionIds.Camera],
+    },
+  });
+  const memberId = mine.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  const occurrenceId = "svc-past@2020-01-05";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Old schedule",
+      teamId: media.teamId,
+      serviceIds: ["svc-past"],
+      startDate: "2020-01-05",
+      endDate: "2020-01-05",
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc-past",
+          serviceIds: ["svc-past"],
+          name: "Old Gathering",
+          startsAt: "2020-01-05T14:00:00.000Z",
+          positionRequirements: [
+            { positionId: media.positionIds.Camera, count: 1 },
+          ],
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${media.positionIds.Camera}::0`,
+      memberId,
+    },
+  });
+
+  // Volunteers routinely log time off after the fact; an owner cannot refill a
+  // service that already happened.
+  await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: [{ startDate: "2020-01-05", endDate: "2020-01-05" }],
+    },
+  });
+
+  const saved = await readScheduleRow(context, scheduleId);
+  assert.deepEqual(saved.pendingBlockoutConflicts, undefined);
 });
 
 test("reshaping a schedule's occurrences does not leave answers behind", async (t) => {

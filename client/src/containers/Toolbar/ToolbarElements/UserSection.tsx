@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   MonitorSmartphone,
+  MessageCircle,
   Pencil,
 } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -85,12 +86,27 @@ const UserSection = () => {
   const [isSavingName, setIsSavingName] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [displaysExpanded, setDisplaysExpanded] = useState(false);
+  const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   /** Which switch is mid-save, so only that one disables. */
   const [savingCategory, setSavingCategory] = useState("");
   const visibleNotificationCategories = useMemo(
     () => orderNotificationCategories(notificationCategories),
     [notificationCategories],
   );
+  const enabledNotificationCount = useMemo(
+    () =>
+      visibleNotificationCategories.filter(
+        (category) => notificationPreferences?.[category] !== "off",
+      ).length,
+    [notificationPreferences, visibleNotificationCategories],
+  );
+  const notificationSummary = (() => {
+    const total = visibleNotificationCategories.length;
+    if (total === 0) return "";
+    if (enabledNotificationCount === total) return "All on";
+    if (enabledNotificationCount === 0) return "All off";
+    return `${enabledNotificationCount} of ${total} on`;
+  })();
   const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
   useEffect(() => {
@@ -114,6 +130,16 @@ const UserSection = () => {
       }),
     [sessionKind, firebaseDisplayName, user],
   );
+
+  const handleAccountPopoverOpenChange = (open: boolean) => {
+    setIsAccountPopoverOpen(open);
+    if (!open) {
+      setDisplaysExpanded(false);
+      setNotificationsExpanded(false);
+      setIsEditingName(false);
+      setNameDraft(fullDisplayName || "");
+    }
+  };
 
   const toolbarFirstName = firstNameFromDisplayName(fullDisplayName);
   const churchLine = churchName?.trim() ?? "";
@@ -206,7 +232,7 @@ const UserSection = () => {
   const accountBlock = (
     <PopOver
       open={isAccountPopoverOpen}
-      onOpenChange={setIsAccountPopoverOpen}
+      onOpenChange={handleAccountPopoverOpenChange}
       TriggeringButton={
         <Button
           type="button"
@@ -242,10 +268,10 @@ const UserSection = () => {
                     {anyAutosavePending ? "Syncing..." : "Synced"}
                   </span>
                 </div>
-                {!isMobile && !isDemo ? (
-                  <span className="flex items-center gap-1">
+                <div className="flex shrink-0 items-center gap-2">
+                  {!isMobile && !isDemo ? (
                     <span
-                      className="inline-flex shrink-0"
+                      className="flex items-center gap-1"
                       title="Active sessions"
                     >
                       <Icon
@@ -254,10 +280,33 @@ const UserSection = () => {
                         color="#22d3ee"
                         className={isPulsing ? "animate-pulse" : ""}
                       />
+                      <span className="text-sm tabular-nums">{activeCount}</span>
                     </span>
-                    <span className="shrink-0 text-sm">{activeCount}</span>
+                  ) : null}
+                  {chat?.unreadCount ? (
+                    <span
+                      className="flex items-center gap-1"
+                      title={`${chat.unreadCount} unread team chat ${chat.unreadCount === 1 ? "message" : "messages"}`}
+                    >
+                      <Icon svg={MessageCircle} size="xs" color="#22d3ee" />
+                      <span className="text-sm tabular-nums text-cyan-300">
+                        {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
+                      </span>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : chat?.unreadCount ? (
+              <div className="flex w-full min-w-0 items-center justify-end gap-1">
+                <span
+                  className="flex items-center gap-1"
+                  title={`${chat.unreadCount} unread team chat ${chat.unreadCount === 1 ? "message" : "messages"}`}
+                >
+                  <Icon svg={MessageCircle} size="xs" color="#22d3ee" />
+                  <span className="text-sm tabular-nums text-cyan-300">
+                    {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
                   </span>
-                ) : null}
+                </span>
               </div>
             ) : null}
             <div className="flex min-w-0 w-full flex-col gap-0.5 text-center">
@@ -271,157 +320,115 @@ const UserSection = () => {
               ) : null}
             </div>
           </div>
-          {chat?.unreadCount ? (
-            <span
-              className="pointer-events-none absolute -right-1 -top-1 min-w-5 rounded-full bg-cyan-400 px-1.5 py-0.5 text-center text-[10px] font-bold leading-none tabular-nums text-gray-950"
-              aria-hidden="true"
-            >
-              {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
-            </span>
-          ) : null}
         </Button>
       }
     >
-      <div className="flex min-w-[220px] max-w-sm flex-col gap-3 pt-1">
+      <div className="flex min-w-[240px] max-w-sm flex-col gap-3 pt-1">
         <ChatLauncher onOpen={() => setIsAccountPopoverOpen(false)} />
-        <div className="flex flex-col gap-1">
+
+        <div className="flex flex-col gap-3">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-            User
+            Account
           </span>
-          {isEditingName ? (
-            <>
-              <Input
-                id="account-display-name"
-                label="Display name"
-                hideLabel
-                value={nameDraft}
-                onChange={(value) => setNameDraft(String(value))}
-                disabled={isSavingName}
-              />
-              <div className="mt-1 flex gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="flex-1 justify-center text-sm"
-                  disabled={isSavingName}
-                  onClick={() => {
-                    setNameDraft(fullDisplayName || "");
-                    setIsEditingName(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  svg={Save}
-                  iconSize="sm"
-                  color="#22d3ee"
-                  className="flex-1 justify-center text-sm"
-                  isLoading={isSavingName}
-                  disabled={isSavingName || !nameDraft.trim() || nameDraft.trim() === fullDisplayName}
-                  onClick={() => {
-                    void (async () => {
-                      setIsSavingName(true);
-                      try {
-                        const didUpdate = await updateSelfDisplayName?.(nameDraft);
-                        if (didUpdate) {
-                          setFirebaseDisplayName(nameDraft.trim());
-                          setIsEditingName(false);
-                        }
-                      } finally {
-                        setIsSavingName(false);
-                      }
-                    })();
-                  }}
-                >
-                  Save
-                </Button>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center justify-between gap-2">
-              <span className="wrap-break-word text-sm font-semibold text-white">
-                {fullDisplayName || "—"}
-              </span>
-              {sessionKind === "human" && updateSelfDisplayName ? (
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  aria-label="Edit name"
-                  className="shrink-0 rounded p-0.5"
-                  onClick={() => setIsEditingName(true)}
-                  svg={Pencil}
-                >
-                </Button>
-              ) : null}
-            </div>
-          )}
-        </div>
-        {emailLine ? (
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Email
-            </span>
-            <span className="wrap-break-word text-sm text-gray-300">{emailLine}</span>
-          </div>
-        ) : null}
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-            Church
-          </span>
-          <div className="flex min-w-0 items-center gap-2.5">
-            {churchLogoUrl ? (
-              <ChurchLogoImg src={churchLogoUrl} variant="popover" />
-            ) : null}
-            <span className="min-w-0 flex-1 wrap-break-word text-sm leading-snug text-gray-300">
-              {churchLine || "—"}
-            </span>
-          </div>
-        </div>
-        {isLoggedIn && visibleNotificationCategories.length > 0 ? (
-          <div className="flex flex-col gap-2 border-t border-gray-600 pt-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Email notifications
-            </span>
-            {visibleNotificationCategories.map((category) => {
-              const copy = NOTIFICATION_CATEGORY_COPY[category];
-              // Only an explicit "off" mutes; "default" and anything unset
-              // resolve to on, mirroring isNotificationEnabled on the server.
-              const enabled = notificationPreferences?.[category] !== "off";
-              return (
-                <label
-                  key={category}
-                  className="flex items-start justify-between gap-3"
-                >
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-sm font-medium text-white">
-                      {copy.label}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {copy.description}
-                    </span>
-                  </span>
-                  <Switch
-                    checked={enabled}
-                    disabled={savingCategory === category}
-                    aria-label={copy.ariaLabel}
-                    onCheckedChange={(checked) => {
+            <span className="text-[11px] font-medium text-gray-500">Name</span>
+            {isEditingName ? (
+              <>
+                <Input
+                  id="account-display-name"
+                  label="Display name"
+                  hideLabel
+                  value={nameDraft}
+                  onChange={(value) => setNameDraft(String(value))}
+                  disabled={isSavingName}
+                />
+                <div className="mt-1 flex gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="flex-1 justify-center text-sm"
+                    disabled={isSavingName}
+                    onClick={() => {
+                      setNameDraft(fullDisplayName || "");
+                      setIsEditingName(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    svg={Save}
+                    iconSize="sm"
+                    color="#22d3ee"
+                    className="flex-1 justify-center text-sm"
+                    isLoading={isSavingName}
+                    disabled={
+                      isSavingName ||
+                      !nameDraft.trim() ||
+                      nameDraft.trim() === fullDisplayName
+                    }
+                    onClick={() => {
                       void (async () => {
-                        setSavingCategory(category);
+                        setIsSavingName(true);
                         try {
-                          await setNotificationPreference(category, checked);
+                          const didUpdate =
+                            await updateSelfDisplayName?.(nameDraft);
+                          if (didUpdate) {
+                            setFirebaseDisplayName(nameDraft.trim());
+                            setIsEditingName(false);
+                          }
                         } finally {
-                          setSavingCategory("");
+                          setIsSavingName(false);
                         }
                       })();
                     }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between gap-2">
+                <span className="wrap-break-word text-sm font-semibold text-white">
+                  {fullDisplayName || "—"}
+                </span>
+                {sessionKind === "human" && updateSelfDisplayName ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    aria-label="Edit name"
+                    className="shrink-0 rounded p-0.5"
+                    onClick={() => setIsEditingName(true)}
+                    svg={Pencil}
                   />
-                </label>
-              );
-            })}
+                ) : null}
+              </div>
+            )}
           </div>
-        ) : null}
+          {emailLine ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-gray-500">
+                Email
+              </span>
+              <span className="wrap-break-word text-sm text-gray-300">
+                {emailLine}
+              </span>
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-500">Church</span>
+            <div className="flex min-w-0 items-center gap-2.5">
+              {churchLogoUrl ? (
+                <ChurchLogoImg src={churchLogoUrl} variant="popover" />
+              ) : null}
+              <span className="min-w-0 flex-1 wrap-break-word text-sm leading-snug text-gray-300">
+                {churchLine || "—"}
+              </span>
+            </div>
+          </div>
+        </div>
+
         {activeInstanceRows.length > 0 || displayRows.length > 0 ? (
           <div className="border-t border-gray-600 pt-3">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -448,7 +455,9 @@ const UserSection = () => {
                     ) : null}
                   </div>
                   {instance.detail ? (
-                    <span className="text-xs text-gray-400">{instance.detail}</span>
+                    <span className="text-xs text-gray-400">
+                      {instance.detail}
+                    </span>
                   ) : null}
                 </li>
               ))}
@@ -465,7 +474,8 @@ const UserSection = () => {
                     <span className="flex min-w-0 items-center gap-2">
                       <MonitorSmartphone className="size-4 shrink-0 text-cyan-300" />
                       <span className="text-sm text-white">
-                        {displayRows.length} {displayRows.length === 1 ? "display" : "displays"}
+                        {displayRows.length}{" "}
+                        {displayRows.length === 1 ? "display" : "displays"}
                       </span>
                     </span>
                     {displaysExpanded ? (
@@ -511,6 +521,83 @@ const UserSection = () => {
             </ul>
           </div>
         ) : null}
+
+        {isLoggedIn && visibleNotificationCategories.length > 0 ? (
+          <div className="border-t border-gray-600 pt-3">
+            <div className="rounded-md border border-gray-700/80 bg-black/15">
+              <Button
+                type="button"
+                variant="none"
+                className="w-full justify-between gap-3 px-2 py-2 text-left"
+                onClick={() =>
+                  setNotificationsExpanded((current) => !current)
+                }
+                aria-expanded={notificationsExpanded}
+                aria-controls="email-notification-preferences"
+              >
+                <span className="flex min-w-0 flex-col items-start gap-0.5">
+                  <span className="text-sm text-white">Email notifications</span>
+                  <span className="text-xs text-gray-400">
+                    {notificationSummary}
+                  </span>
+                </span>
+                {notificationsExpanded ? (
+                  <ChevronDown className="size-4 shrink-0 text-gray-400" />
+                ) : (
+                  <ChevronRight className="size-4 shrink-0 text-gray-400" />
+                )}
+              </Button>
+              {notificationsExpanded ? (
+                <div
+                  id="email-notification-preferences"
+                  className="flex flex-col gap-3 border-t border-gray-700/80 px-2 py-3"
+                >
+                  {visibleNotificationCategories.map((category) => {
+                    const copy = NOTIFICATION_CATEGORY_COPY[category];
+                    // Only an explicit "off" mutes; "default" and anything unset
+                    // resolve to on, mirroring isNotificationEnabled on the server.
+                    const enabled =
+                      notificationPreferences?.[category] !== "off";
+                    return (
+                      <label
+                        key={category}
+                        className="flex items-start justify-between gap-3"
+                      >
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="text-sm font-medium text-white">
+                            {copy.label}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {copy.description}
+                          </span>
+                        </span>
+                        <Switch
+                          checked={enabled}
+                          disabled={savingCategory === category}
+                          aria-label={copy.ariaLabel}
+                          onCheckedChange={(checked) => {
+                            void (async () => {
+                              setSavingCategory(category);
+                              try {
+                                await setNotificationPreference(
+                                  category,
+                                  checked,
+                                );
+                              } finally {
+                                setSavingCategory("");
+                              }
+                            })();
+                          }}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         {isLoggedIn &&
           (sessionKind === "workstation" && endWorkstationOperatorSession ? (
             <div className="border-t border-gray-600 pt-3">
@@ -549,8 +636,8 @@ const UserSection = () => {
               Return to start
             </Button>
             <p className="mt-2 text-xs text-gray-400">
-              Leave the local demo and open the screen where you choose sign-in, link a
-              device, or guest mode.
+              Leave the local demo and open the screen where you choose sign-in,
+              link a device, or guest mode.
             </p>
           </div>
         ) : null}

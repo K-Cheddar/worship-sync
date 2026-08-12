@@ -18,6 +18,17 @@
 const RESPONSE_VALUES = new Set(["pending", "accepted", "declined"]);
 
 /**
+ * The member who holds an assignment cell.
+ *
+ * Lives here, and is shared by everything that has to read a cell, because the
+ * shape has two forms — a bare member-id string on legacy rows, and
+ * `{ primaryMemberId, shadows }` on the rest. A second copy of this that only
+ * handled one form would fail silently on exactly the older churches.
+ */
+export const readAssignmentCellHolderId = (cell) =>
+  typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+
+/**
  * Absence is the normal state — most assignments are never answered — so it
  * normalizes to "pending" rather than being an error. Unknown values also
  * become "pending": an unreadable answer must not be mistaken for a real one.

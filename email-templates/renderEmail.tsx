@@ -101,7 +101,7 @@ export async function renderScheduleResponsesDigestEmail(props: {
     serviceName: string;
     when: string;
     positionName: string;
-    accepted: boolean;
+    kind: "accepted" | "declined" | "blockout";
   }[];
 }) {
   return renderEmailHtmlAndText(<ScheduleResponsesDigestEmail {...props} />);

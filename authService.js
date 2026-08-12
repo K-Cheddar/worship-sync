@@ -3,7 +3,12 @@ import crypto from "node:crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import {
+  FieldPath,
+  FieldValue,
+  getFirestore,
+  Timestamp,
+} from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
   renderAccountRestoredEmail,
@@ -42,6 +47,16 @@ import {
   normalizeNotificationPreferences,
   visibleNotificationCategories,
 } from "./server/notificationPreferences.js";
+import {
+  blockoutConflictKey,
+  normalizePendingBlockoutConflicts,
+  verifiedBlockoutConflicts,
+} from "./server/blockoutConflicts.js";
+import {
+  buildScheduleDigestEntries,
+  scheduleDigestSubject,
+} from "./server/scheduleDigestEntries.js";
+import { readAssignmentCellHolderId } from "./server/scheduleResponses.js";
 import {
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
@@ -1033,6 +1048,67 @@ const updateDocFields = async (collectionName, id, data) => {
   store.set(id, { ...current, ...data });
 };
 
+/**
+ * Add or remove individual keys inside a nested map field, without reading it.
+ *
+ * The read-modify-write this replaces is the bug it exists to prevent. Writing a
+ * whole map back means every key the writer read is re-asserted: anything added
+ * in between is erased, and anything *deleted* in between comes back. For a map
+ * used as a work queue — write a key, email it, delete it — both directions are
+ * live, and the gap is the seconds an email send takes.
+ *
+ * Firestore addresses each key on its own via `FieldPath` segments, so keys are
+ * never parsed for dots and concurrent writers touching different keys cannot
+ * clobber each other. The in-memory store is single-threaded, so a merge of the
+ * nested map is equivalent there.
+ *
+ * `fields` piggybacks plain top-level replacements onto the same write, so a
+ * marker and the keys it accounts for move together.
+ */
+const updateDocMapKeys = async (
+  collectionName,
+  id,
+  field,
+  { set = {}, remove = [], fields = {} } = {},
+) => {
+  const setEntries = Object.entries(set);
+  const fieldEntries = Object.entries(fields);
+  if (
+    setEntries.length === 0 &&
+    remove.length === 0 &&
+    fieldEntries.length === 0
+  ) {
+    return;
+  }
+  const db = requireFirestore();
+  if (db) {
+    const args = [];
+    setEntries.forEach(([key, value]) =>
+      args.push(new FieldPath(field, key), value),
+    );
+    remove.forEach((key) =>
+      args.push(new FieldPath(field, key), FieldValue.delete()),
+    );
+    fieldEntries.forEach(([key, value]) => args.push(key, value));
+    await db
+      .collection(collectionName)
+      .doc(id)
+      .update(...args);
+    return;
+  }
+  const store = collectionMap[collectionName];
+  const current = store.get(id);
+  if (!current) return;
+  const nextMap = { ...(current[field] || {}) };
+  setEntries.forEach(([key, value]) => {
+    nextMap[key] = value;
+  });
+  remove.forEach((key) => {
+    delete nextMap[key];
+  });
+  store.set(id, { ...current, ...fields, [field]: nextMap });
+};
+
 const deleteDoc = async (collectionName, id) => {
   const db = requireFirestore();
   if (db) {
@@ -1545,6 +1621,92 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
       ),
     ),
   );
+};
+
+/**
+ * Mint and send an account invite for someone already on a team roster.
+ *
+ * **Takes the member record, never an address.** That is the security property,
+ * and it is structural on purpose: the only caller is a public, unauthenticated
+ * endpoint reached from an emailed link, so a signature accepting an `email`
+ * would turn "let me make an account" into a way to send WorshipSync-branded
+ * mail to anywhere the caller likes. Deriving the address here means there is no
+ * parameter through which one could arrive — and the address it lands on is the
+ * same inbox that received the link being redeemed.
+ *
+ * Grants the narrowest tier there is: `appAccess: "member"` forces
+ * `teams: "none"` / `services: "none"`, so accepting produces an account that
+ * can see its own schedule and nothing else. Self-service is only defensible
+ * because of that ceiling — an owner already put this person on the roster with
+ * this address, and the invite adds no access they were not already implicitly
+ * given.
+ *
+ * Not deduplicated against outstanding invites: only `tokenHash` is stored, so
+ * an existing one cannot be re-sent, and the reader clicking again is asking for
+ * mail they did not get. The caller's rate limit is what bounds it.
+ *
+ * @param {{ churchId: string, member: { memberId: string, email?: string, userId?: string } }} params
+ * @returns {Promise<{ inviteId: string, email: string }>}
+ */
+const sendRosterMemberInvite = async ({ churchId, member }) => {
+  const email = normalizeEmail(member?.email);
+  if (!email) {
+    throw httpError(
+      400,
+      "We do not have an email address for you. Ask your team lead to add one.",
+    );
+  }
+  const church = await getChurchById(churchId);
+  if (!church) {
+    throw httpError(404, "Church not found");
+  }
+
+  const rawToken = `${createNumericCode()}-${crypto.randomUUID()}`;
+  const inviteId = createId("invite");
+  const invite = {
+    inviteId,
+    churchId,
+    email,
+    role: "member",
+    appAccess: "member",
+    permissions: normalizeMembershipPermissions(null, "member", "member"),
+    memberId: member.memberId,
+    status: "pending",
+    tokenHash: hashValue(rawToken),
+    expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+    createdAt: nowIso(),
+    acceptedAt: null,
+    // No admin authored this one. Left blank rather than attributed to someone
+    // who did not do it.
+    createdByUid: "",
+  };
+  await setDoc(COLLECTIONS.invites, inviteId, invite);
+  // Shows on the roster as an outstanding invite, so an owner is not surprised
+  // by an account appearing and can see the request happened.
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    member.memberId,
+    { invitedAt: nowIso() },
+    { merge: true },
+  );
+
+  const churchNameTrimmed = church.name ? String(church.name).trim() : "";
+  const inviteEmail = await renderInviteEmail(buildInviteUrl(rawToken), {
+    churchName: churchNameTrimmed || "your church",
+  });
+  await sendEmail({
+    to: email,
+    subject: `${churchNameTrimmed || "Your church"} invites you to join WorshipSync`,
+    textBody: inviteEmail.text,
+    htmlBody: inviteEmail.html,
+    tags: {
+      category: "church_invite",
+      churchId,
+      inviteId,
+      role: "member",
+    },
+  });
+  return { inviteId, email };
 };
 
 const getTrustedHumanDeviceByFingerprint = async ({
@@ -3811,18 +3973,63 @@ const listTeamEditorNotifyRecipients = async (churchId, teamIds, category) => {
   return recipients;
 };
 
-const clearResponseDigestMarker = (scheduleId) =>
-  setDoc(
+/**
+ * Close the window when this cycle produced no email — nobody listening, or
+ * nothing left worth reporting once conflicts were re-verified.
+ *
+ * Drops the conflicts **this cycle actually read**, and only those. Keeping them
+ * would mean a church that has muted the category accumulates a map for ever;
+ * dropping the whole field would take anything written while we were deciding.
+ * Nothing is lost that anyone would have been told about: a digest reports what
+ * changed while someone was listening, so un-muting later starts from then.
+ */
+const abandonResponseDigest = (scheduleId, seenConflicts) =>
+  updateDocMapKeys(
     COLLECTIONS.teamSchedules,
     scheduleId,
-    { pendingResponseDigestSince: null },
-    { merge: true },
+    "pendingBlockoutConflicts",
+    {
+      remove: Object.keys(normalizePendingBlockoutConflicts(seenConflicts)),
+      fields: { pendingResponseDigestSince: null },
+    },
+  );
+
+/**
+ * Close out a digest that actually sent, accounting only for what it reported.
+ *
+ * **Never a blanket clear.** Sending takes seconds — a roster read, a render,
+ * one email per recipient — and an answer or a blockout landing inside that
+ * window was decided about before it existed. Wiping the whole map would delete
+ * it unread, and a blockout deleted here is gone for good: the next save only
+ * reports *newly* blocked dates, so nothing would ever mention it again.
+ *
+ * So the emailed keys are removed individually, and the marker moves forward to
+ * the moment the schedule was read rather than to null. Everything reported is
+ * now behind the marker; anything that arrived during the send is still in front
+ * of it. A fresh timer is armed so that leftover actually goes out — the next
+ * cycle finds nothing and closes the window for real.
+ */
+const finishResponseDigest = async (
+  scheduleId,
+  { emailedConflictKeys, nextSince },
+) =>
+  updateDocMapKeys(
+    COLLECTIONS.teamSchedules,
+    scheduleId,
+    "pendingBlockoutConflicts",
+    {
+      remove: emailedConflictKeys,
+      fields: { pendingResponseDigestSince: nextSince },
+    },
   );
 
 const sendScheduleResponseDigestInner = async (scheduleId) => {
   const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
   if (!schedule?.pendingResponseDigestSince) return;
   const since = schedule.pendingResponseDigestSince;
+  // The boundary between "reported by this digest" and "arrived while it was
+  // sending". Taken from the read, not the send, so nothing can fall between.
+  const readAt = nowIso();
 
   // Every fallible step happens before the marker is cleared, so a transient
   // failure degrades to "late", never "lost".
@@ -3832,7 +4039,7 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
     "scheduleResponses",
   );
   if (recipients.length === 0) {
-    await clearResponseDigestMarker(scheduleId);
+    await abandonResponseDigest(scheduleId, schedule.pendingBlockoutConflicts);
     return;
   }
 
@@ -3859,38 +4066,37 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
     positions.map((row) => [row.positionId, row.name]),
   );
 
-  const entries = [];
-  Object.entries(schedule.responses || {}).forEach(([occurrenceId, row]) => {
-    Object.entries(row || {}).forEach(([cellKey, record]) => {
-      if (!record?.respondedAt || record.respondedAt < since) return;
-      const occurrence = (schedule.occurrences || []).find(
-        (item) => item?.occurrenceId === occurrenceId,
-      );
-      const startsAt = occurrence?.startsAt || "";
-      const parsed = startsAt ? new Date(startsAt) : null;
-      entries.push({
-        respondedAt: record.respondedAt,
-        name: nameById.get(record.memberId) || "Someone",
-        serviceName: occurrence?.name || "Service",
-        when:
-          parsed && !Number.isNaN(parsed.getTime())
-            ? parsed.toLocaleString("en-US", {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-              })
-            : "Date to be confirmed",
-        positionName:
-          positionNameById.get(String(cellKey).split("::")[0]) || "",
-        accepted: record.response === "accepted",
-      });
-    });
+  // Blockouts join the same email rather than getting their own. To an owner a
+  // blockout and a decline are the same job — refill this slot — and two
+  // messages twenty minutes apart about the same Sunday is how a digest starts
+  // getting ignored. They cannot be filtered by timestamp the way responses are
+  // (a blockout range carries none), so they come from a recorded map that is
+  // re-verified here against live assignments and live blockout dates: anything
+  // fixed or undone during the window quietly produces no line.
+  const blockoutConflicts = verifiedBlockoutConflicts(
+    schedule.pendingBlockoutConflicts,
+    {
+      schedule,
+      blockoutRangesByMemberId: new Map(
+        members.map((row) => [row.memberId, row.blockoutDates || []]),
+      ),
+      readHolder: readAssignmentCellHolderId,
+    },
+  );
+  const entries = buildScheduleDigestEntries({
+    schedule,
+    since,
+    blockoutConflicts,
+    nameById,
+    positionNameById,
   });
+
   if (entries.length === 0) {
-    await clearResponseDigestMarker(scheduleId);
+    // Conflicts that failed verification go too: the slot was refilled or the
+    // blockout undone, so there is nothing to report and nothing to keep.
+    await abandonResponseDigest(scheduleId, schedule.pendingBlockoutConflicts);
     return;
   }
-  entries.sort((a, b) => a.respondedAt.localeCompare(b.respondedAt));
 
   const church = await getChurchById(schedule.churchId);
   const { html, text } = await renderScheduleResponsesDigestEmail({
@@ -3899,12 +4105,7 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
     reviewUrl: `${APP_BASE_URL}/#/teams`,
     responses: entries,
   });
-  const declined = entries.filter((entry) => !entry.accepted).length;
-  // Declines drive the subject line: that is the part that needs action.
-  const subject =
-    declined > 0
-      ? `${declined} ${declined === 1 ? "person" : "people"} cannot serve — ${schedule.name || "schedule"}`
-      : `${entries.length} ${entries.length === 1 ? "response" : "responses"} on ${schedule.name || "your schedule"}`;
+  const subject = scheduleDigestSubject(entries, schedule.name);
 
   await Promise.all(
     recipients.map((to) =>
@@ -3922,7 +4123,15 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
       ),
     ),
   );
-  await clearResponseDigestMarker(scheduleId);
+
+  await finishResponseDigest(scheduleId, {
+    emailedConflictKeys: blockoutConflicts.map(blockoutConflictKey),
+    nextSince: readAt,
+  });
+  // The window stays open at `readAt`, so anything that arrived mid-send is
+  // still ahead of it and needs something to come back for it. This terminates:
+  // the next cycle finds nothing and closes the window outright.
+  armResponseDigestTimer(scheduleId);
 };
 
 const sendScheduleResponseDigest = async (scheduleId) => {
@@ -4012,12 +4221,16 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireFirestore,
   setDoc,
   updateDocFields,
+  updateDocMapKeys,
   // Assignment notifications need the same primitives the intake digest uses.
   getUserByUid,
   getChurchById,
   sendEmail,
   renderScheduleAssignmentEmail,
   renderScheduleResponsesDigestEmail,
+  // Takes the member record rather than an address, so the public endpoint that
+  // calls it has no way to redirect the invite.
+  sendRosterMemberInvite,
   logAuthEvent,
 });
 

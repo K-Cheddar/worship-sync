@@ -37,7 +37,8 @@ export const NOTIFICATION_CATEGORY_COPY: Record<
   },
   scheduleResponses: {
     label: "Responses from my team",
-    description: "Email me when someone accepts or declines a schedule.",
+    description:
+      "Email me when someone accepts, declines, or marks time off on a date they are scheduled.",
     ariaLabel: "Email me when someone responds to a schedule",
   },
   intakeSubmissions: {

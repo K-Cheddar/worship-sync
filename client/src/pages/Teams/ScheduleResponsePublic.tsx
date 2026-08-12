@@ -7,6 +7,7 @@ import ButtonGroup from "../../components/Button/ButtonGroup";
 import ButtonGroupItem from "../../components/Button/ButtonGroupItem";
 import {
   getAssignmentResponseContext,
+  requestAccountFromAssignmentToken,
   respondToAssignmentByToken,
   type AssignmentResponseSlot,
 } from "../../api/auth";
@@ -73,7 +74,16 @@ const ScheduleResponsePublic = () => {
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  const [answered, setAnswered] = useState(false);
+  /**
+   * The invite is only ever addressed to the email already on the roster
+   * record, so there is no field to fill in here — just the outcome, naming the
+   * inbox so the reader knows where to look.
+   */
+  const [inviteState, setInviteState] = useState<"idle" | "sending" | "sent">(
+    "idle",
+  );
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteError, setInviteError] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -91,7 +101,6 @@ const ScheduleResponsePublic = () => {
       setSlots(result.assignments || []);
       setChurchName(result.churchName || "");
       setFirstName(result.firstName || "");
-      setAnswered(Boolean(clickedResponse));
       setStatus("ready");
     } catch (caught) {
       // The server tells expired from invalid apart, and each needs a different
@@ -124,8 +133,8 @@ const ScheduleResponsePublic = () => {
           ? { occurrenceId: slot.occurrenceId, cellKey: slot.cellKey }
           : {}),
       });
+      // The returned slots carry the new state, which is what `answered` reads.
       setSlots(result.assignments || []);
-      setAnswered(true);
     } catch (caught) {
       setError(
         getApiErrorMessage(caught, "Could not save your response. Try again."),
@@ -135,7 +144,36 @@ const ScheduleResponsePublic = () => {
     }
   };
 
+  const requestAccount = async () => {
+    setInviteState("sending");
+    setInviteError("");
+    try {
+      const result = await requestAccountFromAssignmentToken(token);
+      setInviteEmail(result.email || "");
+      setInviteState("sent");
+    } catch (caught) {
+      // "You already have an account", "you are not on the roster" and "we have
+      // no address for you" each need a different next step, so the server's
+      // wording is shown rather than one generic line.
+      setInviteError(
+        getApiErrorMessage(
+          caught,
+          "Could not send your invite. Ask your team lead for one.",
+        ),
+      );
+      setInviteState("idle");
+    }
+  };
+
   const unanswered = slots.filter((slot) => slot.response === "pending");
+  /**
+   * Derived from the slots, not from having clicked this visit. Someone who
+   * answered yesterday and reopens the bare link — no `?respond=` — has still
+   * answered, and the page has to agree with the "You said: Accepted" it is
+   * already showing them. Reading it off local state instead left them asked the
+   * question again and hid the account offer for good.
+   */
+  const answered = slots.some((slot) => slot.response !== "pending");
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
 
   return (
@@ -259,11 +297,35 @@ const ScheduleResponsePublic = () => {
                     </a>{" "}
                     to see the plan and set your time off.
                   </p>
-                ) : (
-                  <p className="text-sm text-gray-400">
-                    Want the full plan, reminders, and a place to set your time
-                    off? Ask your team lead for an account.
+                ) : inviteState === "sent" ? (
+                  <p className="text-sm text-emerald-300">
+                    Invite sent{inviteEmail ? ` to ${inviteEmail}` : ""}. Open it
+                    to finish setting up your account.
                   </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-400">
+                      Want the full plan, reminders, and a place to set your time
+                      off?
+                    </p>
+                    {/* No email field on purpose: the invite goes to the address
+                        your team already has, which is the inbox this link
+                        arrived in. */}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="mt-2 max-md:min-h-0"
+                      disabled={inviteState === "sending"}
+                      onClick={() => void requestAccount()}
+                    >
+                      {inviteState === "sending"
+                        ? "Sending…"
+                        : "Email me an invite"}
+                    </Button>
+                    {inviteError ? (
+                      <p className="mt-2 text-sm text-red-400">{inviteError}</p>
+                    ) : null}
+                  </>
                 )}
               </div>
             ) : null}

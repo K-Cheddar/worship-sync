@@ -18,6 +18,7 @@ import {
   applyAssignmentResponses,
   normalizeAssignmentResponse,
   pruneStaleResponses,
+  readAssignmentCellHolderId,
   readAssignmentResponse,
   withAssignmentResponse,
 } from "./scheduleResponses.js";
@@ -26,6 +27,11 @@ import {
   createAssignmentResponseToken,
   readAssignmentResponseToken,
 } from "./assignmentResponseToken.js";
+import {
+  findNewlyBlockedSlots,
+  hasAddedBlockoutRanges,
+  newBlockoutConflictEntries,
+} from "./blockoutConflicts.js";
 import {
   createNotificationLedger,
   deliveryKey,
@@ -119,10 +125,12 @@ export const createTeamsAuthHandlers = ({
   requireFirestore,
   setDoc,
   updateDocFields,
+  updateDocMapKeys,
   getUserByUid,
   getChurchById,
   sendEmail,
   renderScheduleAssignmentEmail,
+  sendRosterMemberInvite,
   logAuthEvent,
 }) => {
   const requireTeamsEdit = requireTeamsEditSession || requireAdminSession;
@@ -486,8 +494,8 @@ export const createTeamsAuthHandlers = ({
     return { ...schedule, responses };
   };
 
-  const readCellHolderId = (cell) =>
-    typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+  // One definition, shared with the pure modules that also have to read cells.
+  const readCellHolderId = readAssignmentCellHolderId;
 
   /**
    * Write one or more answers for a member, atomically.
@@ -587,6 +595,72 @@ export const createTeamsAuthHandlers = ({
       });
     });
     return slots;
+  };
+
+  /**
+   * Tell owners when a member's own time-off save clashes with a slot they hold.
+   *
+   * Rides the existing response digest — same 20-minute window, same marker,
+   * same email. A blockout and a decline are the same fact to an owner ("this
+   * person cannot serve, refill the slot"), and splitting them into two messages
+   * twenty minutes apart is worse for the person who has to act on both.
+   *
+   * The write is a **merging set with no `updatedAt`**. Bumping the stamp would
+   * hand a spurious 409 to an editor mid-save over a change that touches nothing
+   * they are editing, and merge is what lets two members blocking out at the
+   * same moment each land their own keys in the map.
+   *
+   * Best-effort by construction: the member's save has already succeeded by the
+   * time this runs, and failing their request because an owner's email could not
+   * be queued would be the wrong trade every time.
+   */
+  const recordBlockoutConflicts = async ({
+    churchId,
+    memberId,
+    previousRanges,
+    nextRanges,
+  }) => {
+    // Most saves remove a finished trip or fix a note. Reading every schedule in
+    // the church for those is pure cost.
+    if (!hasAddedBlockoutRanges(previousRanges, nextRanges)) return;
+
+    const schedules = await listTeamCollectionForChurch(
+      COLLECTIONS.teamSchedules,
+      "scheduleId",
+      churchId,
+    );
+    const blockedAt = nowIso();
+
+    for (const schedule of schedules) {
+      if (!schedule?.scheduleId || schedule.archivedAt) continue;
+      const slots = findNewlyBlockedSlots(schedule, {
+        memberId,
+        previousRanges,
+        nextRanges,
+        readHolder: readCellHolderId,
+        fromDate: blockedAt.slice(0, 10),
+      });
+      if (slots.length === 0) continue;
+
+      const added = newBlockoutConflictEntries(
+        schedule.pendingBlockoutConflicts,
+        slots.map((slot) => ({ ...slot, memberId })),
+        blockedAt,
+      );
+      if (Object.keys(added).length === 0) continue;
+
+      // Only the new keys, written individually. Writing the merged map back
+      // would re-assert everything this snapshot happened to contain — and a
+      // digest clearing keys in between would see them resurrected and email
+      // the same clash twice.
+      await updateDocMapKeys(
+        COLLECTIONS.teamSchedules,
+        schedule.scheduleId,
+        "pendingBlockoutConflicts",
+        { set: added },
+      );
+      await scheduleAssignmentResponseDigest(schedule.scheduleId, blockedAt);
+    }
   };
 
   const listMemberAssignmentsOnSchedule = async (schedule, memberId) => {
@@ -5821,6 +5895,82 @@ export const createTeamsAuthHandlers = ({
     },
 
     /**
+     * "Send me an account" from the emailed response page.
+     *
+     * The end of the loop this phase started: someone with no account has just
+     * answered from a link, and the next thing they want is the plan, their time
+     * off, and reminders. Until now that ended at "ask your team lead", which is
+     * the back-and-forth the whole feature exists to remove.
+     *
+     * **The invite goes to the address on the member record**, resolved by
+     * `sendRosterMemberInvite` from the record itself — this handler never sees
+     * or forwards an address, and the request body carries nothing but the
+     * token. A public endpoint that mailed an address from its body would be a
+     * way to send WorshipSync-branded invites anywhere. In practice the invite
+     * lands in the same inbox that received the link being redeemed, so
+     * redeeming it proves no more than reading that mailbox already did.
+     *
+     * Rate limited hard: unlike answering, this sends mail, and the only thing
+     * throttling it is the token.
+     */
+    async requestAccountFromAssignmentToken(req, res) {
+      try {
+        const token = String(req.body?.token || "").trim();
+        await enforcePublicTokenRateLimit({
+          req,
+          scope: "team_assignment_account_request",
+          token,
+          limit: 3,
+          windowMs: 60 * 60 * 1000,
+          blockMs: 60 * 60 * 1000,
+        });
+        const { churchId, memberId } = assertAssignmentToken(token);
+
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          churchId,
+        );
+        const member = members.find((row) => row.memberId === memberId);
+        // Schedule guests are emailed too and carry no roster record. An account
+        // for someone not on the roster would show an empty schedule for ever,
+        // so this is a real answer rather than a failure.
+        if (!member || member.archivedAt) {
+          throw httpError(
+            404,
+            "You are not on this team's roster. Ask your team lead to add you.",
+          );
+        }
+        if (member.userId) {
+          throw httpError(
+            409,
+            "You already have an account here. Sign in with your email address.",
+          );
+        }
+
+        const { email } = await sendRosterMemberInvite({ churchId, member });
+        await addSecurityEvent({
+          type: "team_roster_member_self_invite_requested",
+          churchId,
+          memberId,
+        });
+
+        return res.json({
+          success: true,
+          // Echoed so the page can say which inbox to check. Safe to return:
+          // this is the address the link was mailed to in the first place.
+          email,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not send your invite. Ask your team lead for one.",
+        );
+      }
+    },
+
+    /**
      * Accept or decline one of the signed-in person's own assignments.
      *
      * Self-scoped like the rest of `/my-schedule`: the member is resolved from
@@ -6014,6 +6164,25 @@ export const createTeamsAuthHandlers = ({
           userId,
           memberId: member.memberId,
         });
+
+        // Owners have no other way to learn about this. The person who made the
+        // change cannot see the schedule, and the amber grid flag only reaches
+        // someone who happens to open it. Deliberately after the response is
+        // committed and never fatal: the volunteer's time off is saved either
+        // way, and a queueing failure must not read to them as a failed save.
+        await recordBlockoutConflicts({
+          churchId: req.params.churchId,
+          memberId: member.memberId,
+          previousRanges: member.blockoutDates || [],
+          nextRanges: blockoutDates,
+        }).catch((error) =>
+          logAuthEvent("warn", "schedule.blockout.conflict-notify-error", {
+            churchId: req.params.churchId,
+            memberId: member.memberId,
+            errorMessage: error?.message || "notify failed",
+          }),
+        );
+
         return res.json({ success: true, member: saved });
       } catch (error) {
         return sendTeamsJsonError(

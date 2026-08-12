@@ -1036,6 +1036,23 @@ export const respondToAssignmentByToken = async (body: {
   });
 
 /**
+ * Ask for an account from the emailed response page.
+ *
+ * Takes nothing but the token. The invite is addressed to the email already on
+ * the roster record — deliberately not something this call can influence, or a
+ * public endpoint would become a way to send WorshipSync-branded mail anywhere.
+ * The address comes back only so the page can say which inbox to check.
+ */
+export const requestAccountFromAssignmentToken = async (token: string) =>
+  apiFetch<{ success: boolean; email: string }>(
+    "api/team-schedule-response/invite",
+    {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    },
+  );
+
+/**
  * Sends a schedule to everyone on it.
  *
  * Separate from saving on purpose: an owner shuffles a grid for a while, and

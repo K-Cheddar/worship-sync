@@ -3,10 +3,20 @@ import type { ReactNode } from "react";
 import UserSection from "./UserSection";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
+import { useChat } from "../../../chat/ChatContext";
 import {
   createMockControllerContext,
   createMockGlobalInfo,
 } from "../../../test/mocks";
+
+jest.mock("../../../chat/ChatContext", () => ({
+  useChat: jest.fn(() => null),
+}));
+
+jest.mock("../../../chat/ChatLauncher", () => ({
+  __esModule: true,
+  default: () => null,
+}));
 
 jest.mock("firebase/auth", () => ({
   onAuthStateChanged: jest.fn((_auth, callback) => {
@@ -18,6 +28,8 @@ jest.mock("firebase/auth", () => ({
 jest.mock("../../../firebase/apps", () => ({
   getHumanAuth: jest.fn(() => ({})),
 }));
+
+const mockedUseChat = jest.mocked(useChat);
 
 jest.mock("../../../hooks", () => ({
   useSelector: () => false,
@@ -95,6 +107,10 @@ jest.mock("../../../components/Icon/Icon", () => ({
 }));
 
 describe("UserSection", () => {
+  beforeEach(() => {
+    mockedUseChat.mockReturnValue(null);
+  });
+
   it("does not count displays in the active session total", () => {
     const globalInfo = createMockGlobalInfo({
       user: "Alex Operator",
@@ -238,5 +254,95 @@ describe("UserSection", () => {
     expect(screen.getByText("Stream Mac")).toBeInTheDocument();
     expect(screen.getByText("Projector")).toBeInTheDocument();
     expect(screen.getByText("Stream")).toBeInTheDocument();
+  });
+
+  it("keeps email notifications collapsed until expanded", () => {
+    const setNotificationPreference = jest.fn().mockResolvedValue(true);
+    const globalInfo = createMockGlobalInfo({
+      user: "Alex Operator",
+      userEmail: "alex@example.com",
+      sessionKind: "human",
+      notificationPreferences: {
+        scheduleAssignments: "default",
+        scheduleReminders: "off",
+        scheduleResponses: "default",
+        intakeSubmissions: "off",
+      },
+      setNotificationPreference,
+    });
+    const controllerInfo = createMockControllerContext();
+
+    render(
+      <GlobalInfoContext.Provider value={globalInfo as never}>
+        <ControllerInfoContext.Provider value={controllerInfo as never}>
+          <UserSection />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    );
+
+    expect(
+      screen.getByRole("button", { name: /email notifications/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 of 4 on")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: /email me when i am scheduled/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /email notifications/i }),
+    );
+
+    expect(
+      screen.getByRole("switch", { name: /email me when i am scheduled/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", {
+        name: /email me reminders before i serve/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows unread chat count beside active sessions instead of an overlapping badge", () => {
+    mockedUseChat.mockReturnValue({
+      available: true,
+      unreadCount: 3,
+    } as ReturnType<typeof useChat>);
+    const globalInfo = createMockGlobalInfo({
+      user: "Alex Operator",
+      userEmail: "alex@example.com",
+      hostId: "host-1",
+      activeInstances: [
+        {
+          database: "main",
+          hostId: "host-1",
+          isOnController: true,
+          lastActive: new Date().toISOString(),
+          user: "Alex Operator",
+          name: "Alex Operator",
+          sessionKind: "human",
+          presenceSurface: "controller",
+          presenceRoute: "/controller",
+        },
+      ],
+    });
+    const controllerInfo = createMockControllerContext({ isMobile: false });
+
+    render(
+      <GlobalInfoContext.Provider value={globalInfo as never}>
+        <ControllerInfoContext.Provider value={controllerInfo as never}>
+          <UserSection />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    const accountButton = screen.getByRole("button", {
+      name: /3 unread team chat messages/i,
+    });
+    expect(accountButton).toHaveTextContent("1");
+    expect(accountButton).toHaveTextContent("3");
+    expect(
+      screen.getByTitle("3 unread team chat messages"),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle("Active sessions")).toBeInTheDocument();
   });
 });

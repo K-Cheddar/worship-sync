@@ -582,13 +582,14 @@ type ScheduleResponsesDigestEmailProps = {
   churchName: string;
   scheduleName: string;
   reviewUrl: string;
-  /** One entry per answer in this window, oldest first. */
+  /** One entry per change in this window, oldest first. */
   responses: {
     name: string;
     serviceName: string;
     when: string;
     positionName: string;
-    accepted: boolean;
+    /** `blockout` is someone marking time off on a date they are still scheduled for. */
+    kind: "accepted" | "declined" | "blockout";
   }[];
 };
 
@@ -597,7 +598,11 @@ type ScheduleResponsesDigestEmailProps = {
  *
  * Declines lead. An acceptance is reassurance; a decline is work, and burying
  * it under four confirmations is how an owner misses the one slot that needs
- * refilling. The subject line carries the decline count for the same reason.
+ * refilling. The subject line carries the count for the same reason.
+ *
+ * Blockouts sit in that same list rather than a section or an email of their
+ * own. The owner's job is identical — refill this slot — and the only thing
+ * they need told apart is *why*, which the line says.
  */
 export function ScheduleResponsesDigestEmail({
   churchName,
@@ -605,8 +610,8 @@ export function ScheduleResponsesDigestEmail({
   reviewUrl,
   responses,
 }: ScheduleResponsesDigestEmailProps) {
-  const declined = responses.filter((entry) => !entry.accepted);
-  const accepted = responses.filter((entry) => entry.accepted);
+  const unavailable = responses.filter((entry) => entry.kind !== "accepted");
+  const accepted = responses.filter((entry) => entry.kind === "accepted");
   const churchDisplay = churchName.trim() || "your church";
   const scheduleDisplay = scheduleName.trim() || "your schedule";
 
@@ -620,27 +625,28 @@ export function ScheduleResponsesDigestEmail({
       </strong>{" "}
       — {entry.serviceName}, {entry.when}
       {entry.positionName ? ` (${entry.positionName})` : ""}
+      {entry.kind === "blockout" ? " — marked time off" : ""}
     </Text>
   );
 
   return (
     <WorshipSyncEmailLayout
       previewText={
-        declined.length > 0
-          ? `${declined.length} declined on ${scheduleDisplay}`
+        unavailable.length > 0
+          ? `${unavailable.length} cannot serve on ${scheduleDisplay}`
           : `${accepted.length} accepted on ${scheduleDisplay}`
       }
       title="Schedule responses"
     >
       <Text style={bodyText}>
-        Responses came in on{" "}
+        Here is what changed on{" "}
         <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
           {scheduleDisplay}
         </strong>{" "}
         for {churchDisplay}.
       </Text>
 
-      {declined.length > 0 ? (
+      {unavailable.length > 0 ? (
         <Section style={{ margin: "0 0 20px" }}>
           <Text
             style={{
@@ -650,9 +656,9 @@ export function ScheduleResponsesDigestEmail({
               fontWeight: 600,
             }}
           >
-            Cannot serve ({declined.length})
+            Cannot serve ({unavailable.length})
           </Text>
-          {declined.map(line)}
+          {unavailable.map(line)}
         </Section>
       ) : null}
 
