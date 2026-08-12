@@ -1,3 +1,21 @@
+# [2.24.0](https://github.com/K-Cheddar/worship-sync/compare/v2.23.0...v2.24.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* Harden Electron display matching and updater helpers ([0a29330](https://github.com/K-Cheddar/worship-sync/commit/0a29330951866a0e412d0c1ccca8237a15826de8))
+* Keep broken-image alt text readable on display surfaces ([e91b6eb](https://github.com/K-Cheddar/worship-sync/commit/e91b6eb84410223bc427a4d680933ce05e16fe3f))
+
+
+### Features
+
+* Add Canva connect and media library import ([434fe07](https://github.com/K-Cheddar/worship-sync/commit/434fe07b75300a52686050006682196565ddf9d5))
+* Add chat image attachments and richer messaging UI ([23b97db](https://github.com/K-Cheddar/worship-sync/commit/23b97dbf9c314eddc5f5c4fcf70e150e09b881e4))
+* Add schedule response UI, guests, and team chat client ([1a8d568](https://github.com/K-Cheddar/worship-sync/commit/1a8d568d67ea9fb1fc3babcbaeaeae5af5e434a6))
+* Add schedule responses, notifications, and team chat APIs ([472ae7c](https://github.com/K-Cheddar/worship-sync/commit/472ae7c8795490817b37d73c27cb8aebedf60b5d))
+* Improve toasts, overlay selection, restream chat, and PWA guidance ([db597ca](https://github.com/K-Cheddar/worship-sync/commit/db597caa9bb7da4dc7c0db171e3737229b8dc177))
+* Include blockout conflicts in schedule response digests ([5d9f307](https://github.com/K-Cheddar/worship-sync/commit/5d9f307147e25ca7cefaa2cce293c3761803e5b8))
+
 # [2.23.0](https://github.com/K-Cheddar/worship-sync/compare/v2.22.2...v2.23.0) (2026-08-10)
 
 ### Bug Fixes
