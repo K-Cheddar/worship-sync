@@ -49,4 +49,6 @@ export type MuxUploadResult = {
   playbackUrl: string;
   thumbnailUrl: string;
   name: string;
+  /** Stable identity for detecting an already-imported Canva page selection. */
+  canvaImportKey?: string;
 };

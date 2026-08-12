@@ -27,6 +27,8 @@ export type mediaInfoType = {
   path: string;
   thumbnail_url: string;
   done: boolean;
+  /** Stable identity for detecting an already-imported Canva design page. */
+  canvaImportKey?: string;
 
   // Video-specific properties (optional)
   playback_url?: string;

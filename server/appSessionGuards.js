@@ -46,6 +46,15 @@ export const createAppSessionGuards = ({
     next();
   };
 
+  const requireChurchAdmin = (req, res, next) => {
+    if (req.appSession?.role !== "admin") {
+      return res.status(403).json({
+        error: "A church admin must manage this connection.",
+      });
+    }
+    next();
+  };
+
   const requireMutationCsrf = async (req, res, next) => {
     try {
       await assertRequestCsrf?.(req);
@@ -79,6 +88,7 @@ export const createAppSessionGuards = ({
     requireAppSession,
     requireMutationCsrf,
     requireFullAppAccess,
+    requireChurchAdmin,
     requireSongAudioEditAccess,
     assertSongAudioChurchAccess,
   };

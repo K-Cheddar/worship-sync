@@ -8,6 +8,7 @@ const DEFAULT_ALLOWED_HOSTS = [
   "local.worshipsync.net",
   "api.restream.io",
   "accounts.google.com",
+  "www.canva.com",
 ];
 
 const parseAllowedHosts = (): Set<string> => {

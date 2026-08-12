@@ -324,6 +324,27 @@ const normalizeYouTube = (raw) => {
   };
 };
 
+const normalizeCanva = (raw) => {
+  const safe = isRecord(raw) ? raw : {};
+  const lastImportedAt = Number(safe.lastImportedAt);
+
+  return {
+    enabled: Boolean(safe.enabled),
+    connected: Boolean(safe.connected),
+    accountLabel: clampString(
+      safe.accountLabel,
+      INTEGRATIONS_MAX_LABEL,
+      "Canva account label",
+    ),
+    lastError: clampString(
+      safe.lastError,
+      INTEGRATIONS_MAX_STRING,
+      "Canva error",
+    ),
+    ...(Number.isFinite(lastImportedAt) ? { lastImportedAt } : {}),
+  };
+};
+
 /**
  * Validates and normalizes church integrations for RTDB storage (admin POST body).
  */
@@ -371,6 +392,7 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
   const people = peopleRaw.map((p, i) => normalizePerson(p, i));
   const restream = normalizeRestream(safe.restream);
   const youtube = normalizeYouTube(safe.youtube);
+  const canva = normalizeCanva(safe.canva);
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -383,13 +405,14 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
     },
     restream,
     youtube,
+    canva,
   };
 };
 
 /**
  * Admin integration settings exclude connection state owned by OAuth receivers.
  * Updating only these branches prevents a stale settings draft from overwriting
- * Restream or YouTube status while an account connects or receives messages.
+ * Restream, YouTube, or Canva status while an account connects or receives data.
  */
 export const normalizeChurchIntegrationsAdminUpdate = (input) => {
   const normalized = normalizeChurchIntegrationsForStorage(input);

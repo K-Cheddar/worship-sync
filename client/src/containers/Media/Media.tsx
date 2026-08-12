@@ -6,7 +6,9 @@ import {
   ChevronUp,
   LayoutGrid,
   Maximize,
+  ImageUp,
   Plus,
+  Upload,
   X,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -35,6 +37,13 @@ import MediaLibraryGrid from "./MediaLibraryGrid";
 import { useMediaLibraryController } from "./useMediaLibraryController";
 import type { MediaFolder } from "../../types";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/DropdownMenu";
+import CanvaImportSheet from "./CanvaImportSheet";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -56,6 +65,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
+  const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
 
   const handleNewFolderCreated = useCallback(
     (nf: MediaFolder) => {
@@ -127,17 +137,32 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             />
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="tertiary"
-              svg={Plus}
-              onClick={() => void c.requestMediaUpload()}
-              title={toolbarAddMediaTitle}
-              disabled={c.uploadProgress.isUploading || c.isMediaReadOnly}
-            >
-              {c.uploadProgress.isUploading
-                ? `${Math.round(c.uploadProgress.progress)}%`
-                : ""}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="tertiary"
+                  svg={Plus}
+                  title={toolbarAddMediaTitle}
+                  aria-label="Add media"
+                  disabled={c.uploadProgress.isUploading || c.isMediaReadOnly}
+                >
+                  {c.uploadProgress.isUploading
+                    ? `${Math.round(c.uploadProgress.progress)}%`
+                    : ""}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
+                  <Upload /> Upload files
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={c.isGuestSession || c.isMediaReadOnly}
+                  onSelect={() => setIsCanvaImportOpen(true)}
+                >
+                  <ImageUp /> Import from Canva
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="tertiary"
               svg={Maximize}
@@ -361,7 +386,15 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaUploadInputRef={c.mediaUploadInputRef}
           uploadProgress={c.uploadProgress}
           onAddMediaClick={c.requestMediaUpload}
+          onImportFromCanva={() => setIsCanvaImportOpen(true)}
           mediaUploadDisabled={c.isGuestSession || c.isMediaReadOnly}
+        />
+        <CanvaImportSheet
+          open={isCanvaImportOpen}
+          onOpenChange={setIsCanvaImportOpen}
+          onImageComplete={c.addNewBackground}
+          onVideoComplete={c.addMuxVideo}
+          existingMedia={c.list}
         />
         {selectedCount === 1 && c.mediaRenameOpen ? (
           <FloatingWindow

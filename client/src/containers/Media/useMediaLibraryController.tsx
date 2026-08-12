@@ -11,6 +11,7 @@ import {
 } from "../../store/mediaSlice";
 import { mediaInfoType } from "./cloudinaryTypes";
 import type { MediaUploadInputRef } from "./MediaUploadInput";
+import type { MuxUploadResult } from "./MediaUploadInput.types";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -1019,12 +1020,20 @@ export function useMediaLibraryController({
     frame_rate,
     duration,
     is_audio,
+    canvaImportKey,
   }: mediaInfoType) => {
     if (isGuestSession) {
       notifyMediaAction(
         "Guest mode uses sample media only. Sign in to upload images or videos.",
         "error",
       );
+      return;
+    }
+    if (
+      canvaImportKey &&
+      list.some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
+    ) {
+      notifyMediaAction("That Canva page is already in Media.", "error");
       return;
     }
     let placeholderImage = "";
@@ -1061,6 +1070,7 @@ export function useMediaLibraryController({
       hasAudio: is_audio,
       source: "cloudinary",
       folderId: uploadTargetFolderId,
+      ...(canvaImportKey ? { canvaImportKey } : {}),
     };
 
     dispatch(addItemToMediaList(newMedia));
@@ -1072,18 +1082,20 @@ export function useMediaLibraryController({
     playbackUrl,
     thumbnailUrl,
     name,
-  }: {
-    playbackId: string;
-    assetId: string;
-    playbackUrl: string;
-    thumbnailUrl: string;
-    name: string;
-  }) => {
+    canvaImportKey,
+  }: MuxUploadResult) => {
     if (isGuestSession) {
       notifyMediaAction(
         "Guest mode uses sample media only. Sign in to upload videos.",
         "error",
       );
+      return;
+    }
+    if (
+      canvaImportKey &&
+      list.some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
+    ) {
+      notifyMediaAction("That Canva video is already in Media.", "error");
       return;
     }
     const currentTime = new Date().toISOString();
@@ -1106,6 +1118,7 @@ export function useMediaLibraryController({
       muxPlaybackId: playbackId,
       muxAssetId: assetId,
       folderId: uploadTargetFolderId,
+      ...(canvaImportKey ? { canvaImportKey } : {}),
     };
 
     dispatch(addItemToMediaList(newMedia));

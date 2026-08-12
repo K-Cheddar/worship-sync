@@ -32,7 +32,7 @@ import {
   setupSharedSessionWindowOpenHandler,
   WORSHIPSYNC_SESSION_PARTITION,
 } from "./windowHelpers";
-import { shouldAttachAppCsp } from "./appCsp";
+import { buildAppCspHeader, shouldAttachAppCsp } from "./appCsp";
 import {
   getDisplayWindow,
   setDisplayWindow,
@@ -562,32 +562,7 @@ app.whenReady().then(() => {
 
   // Strict CSP for Electron; allowlists for Firebase (Realtime DB + Auth), Cloudinary, Mux, R2, Sentry.
   // Dev: local origins only when unpackaged. Prod: Firebase/Google must be explicit (app may load from file://).
-  const devConnectSrc = app.isPackaged
-    ? ""
-    : "https://local.worshipsync.net:5000 https://localhost:5000 ";
-  const cspHeaderValue =
-    "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://*.msftauth.net https://*.msauth.net; " +
-    "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
-    "font-src 'self' data:; " +
-    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +
-    "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
-    "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com https://*.r2.cloudflarestorage.com " +
-    devConnectSrc +
-    "https://*.worshipsync.net " +
-    "https://*.firebaseio.com wss://*.firebaseio.com " +
-    "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
-    "https://*.firebaseapp.com https://*.googleapis.com " +
-    "https://securetoken.googleapis.com https://www.googleapis.com " +
-    "https://apis.google.com https://www.google.com https://accounts.youtube.com https://login.microsoftonline.com https://*.live.com " +
-    "https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.msauth.net https://*.msftauth.net https://*.azureedge.net " +
-    "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
-    "form-action 'self' https://*.live.com https://login.microsoftonline.com https://*.microsoftonline.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.firebaseapp.com https://accounts.google.com; " +
-    "frame-src 'self' blob: https://*.worshipsync.net https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://accounts.youtube.com https://www.youtube.com https://www.youtube-nocookie.com https://open.spotify.com https://apis.google.com https://login.microsoftonline.com https://*.live.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com; " +
-    "worker-src 'self' blob:; " +
-    "child-src 'self' blob:; " +
-    "object-src 'none'; " +
-    "base-uri 'self';";
+  const cspHeaderValue = buildAppCspHeader(app.isPackaged);
   const appBrowserSession = session.fromPartition(
     WORSHIPSYNC_SESSION_PARTITION,
   );

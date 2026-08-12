@@ -156,6 +156,24 @@ test("requireFullAppAccess allows full and blocks view", async () => {
   assert.match(String(blocked.res.payload?.error || ""), /full access/i);
 });
 
+test("requireChurchAdmin allows admins and blocks other church members", async () => {
+  const { requireChurchAdmin } = createAppSessionGuards({
+    resolveRequestBootstrap: async () => ({}),
+  });
+
+  const allowed = await runMiddleware(requireChurchAdmin, {
+    appSession: { role: "admin" },
+  });
+  assert.equal(allowed.nextCalled, true);
+
+  const blocked = await runMiddleware(requireChurchAdmin, {
+    appSession: { role: "member" },
+  });
+  assert.equal(blocked.nextCalled, false);
+  assert.equal(blocked.res.statusCode, 403);
+  assert.match(String(blocked.res.payload?.error || ""), /church admin/i);
+});
+
 test("requireSongAudioEditAccess allows full and music, blocks view", async () => {
   const { requireSongAudioEditAccess } = createAppSessionGuards({
     resolveRequestBootstrap: async () => ({}),

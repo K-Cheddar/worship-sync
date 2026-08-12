@@ -96,12 +96,21 @@ export type YouTubeIntegrationConfig = {
   lastPostedAt?: number;
 };
 
+export type CanvaIntegrationConfig = {
+  enabled: boolean;
+  connected: boolean;
+  accountLabel: string;
+  lastError: string;
+  lastImportedAt?: number;
+};
+
 export type ChurchIntegrations = {
   version: number;
   catalog: ChurchIntegrationsCatalog;
   servicePlanning: ServicePlanningConfig;
   restream: RestreamIntegrationConfig;
   youtube: YouTubeIntegrationConfig;
+  canva: CanvaIntegrationConfig;
 };
 
 export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
@@ -125,6 +134,12 @@ export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
     platformSummary: [],
   },
   youtube: {
+    enabled: false,
+    connected: false,
+    accountLabel: "",
+    lastError: "",
+  },
+  canva: {
     enabled: false,
     connected: false,
     accountLabel: "",

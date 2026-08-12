@@ -1,4 +1,28 @@
-import { shouldAttachAppCsp } from "./appCsp";
+import { buildAppCspHeader, shouldAttachAppCsp } from "./appCsp";
+
+describe("buildAppCspHeader", () => {
+  it("allows Canva-hosted images without allowing Canva scripts or connections", () => {
+    const header = buildAppCspHeader(true);
+    const directives = new Map(
+      header
+        .split(";")
+        .map((directive) => directive.trim())
+        .filter(Boolean)
+        .map((directive) => {
+          const [name, ...sources] = directive.split(/\s+/);
+          return [name, sources];
+        }),
+    );
+
+    expect(directives.get("img-src")).toContain("https://*.canva.com");
+    expect(directives.get("script-src")).not.toContain(
+      "https://*.canva.com",
+    );
+    expect(directives.get("connect-src")).not.toContain(
+      "https://*.canva.com",
+    );
+  });
+});
 
 describe("shouldAttachAppCsp", () => {
   it("allows the development WorshipSync main renderer", () => {

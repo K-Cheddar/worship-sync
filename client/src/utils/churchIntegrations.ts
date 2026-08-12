@@ -26,6 +26,7 @@ export const normalizeChurchIntegrations = (
   const sp = isRecord(value.servicePlanning) ? value.servicePlanning : {};
   const restream = isRecord(value.restream) ? value.restream : {};
   const youtube = isRecord(value.youtube) ? value.youtube : {};
+  const canva = isRecord(value.canva) ? value.canva : {};
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -154,6 +155,15 @@ export const normalizeChurchIntegrations = (
       lastError: String(youtube.lastError ?? "").trim(),
       ...(Number.isFinite(Number(youtube.lastPostedAt))
         ? { lastPostedAt: Number(youtube.lastPostedAt) }
+        : {}),
+    },
+    canva: {
+      enabled: Boolean(canva.enabled),
+      connected: Boolean(canva.connected),
+      accountLabel: String(canva.accountLabel ?? "").trim(),
+      lastError: String(canva.lastError ?? "").trim(),
+      ...(Number.isFinite(Number(canva.lastImportedAt))
+        ? { lastImportedAt: Number(canva.lastImportedAt) }
         : {}),
     },
   };

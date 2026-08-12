@@ -91,6 +91,9 @@ const RestreamConnectComplete = lazyRoute(
 const YouTubeConnectComplete = lazyRoute(
   () => import("./pages/YouTubeConnectComplete"),
 );
+const CanvaConnectComplete = lazyRoute(
+  () => import("./pages/CanvaConnectComplete"),
+);
 const WorkstationPair = lazyRoute(() => import("./pages/WorkstationPair"));
 const WorkstationOperator = lazyRoute(
   () => import("./pages/WorkstationOperator"),
@@ -297,6 +300,10 @@ const AppRoutes = () => {
             <Route
               path="/youtube/connect-complete"
               element={<YouTubeConnectComplete />}
+            />
+            <Route
+              path="/canva/connect-complete"
+              element={<CanvaConnectComplete />}
             />
             <Route path="/invite" element={<InviteAccept />} />
             <Route path="/auth/reset" element={<PasswordReset />} />
