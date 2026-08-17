@@ -4,24 +4,27 @@
 
 This file defines review expectations for agents and contributors working in this repository. The goal is to keep changes correct, regression-resistant, performant, maintainable, and polished for real operators during live use.
 
-This repository supports a critical live workflow. Regressions are not minor inconveniences here: they can disrupt a worship service, create operator confusion under time pressure, and be immediately visible to an audience. Reviewers should apply a high bar for safety, clarity, and confidence before approving changes.
+This repository supports critical live and weekly church workflows. Regressions are not minor inconveniences here: they can disrupt a worship service, break scheduling for volunteers, interrupt chat or discussion boards that teams rely on every week, create operator confusion under time pressure, and be immediately visible to an audience. Reviewers should apply a high bar for safety, clarity, and confidence before approving changes.
 
 ## Product Context
 
-WorshipSync is a live presentation application with:
+WorshipSync is a live presentation application **and** a set of church operations surfaces:
 
 - A React + TypeScript + Electron client in `client/`
 - A Node/Express server at the repo root
 - Real-time sync across controller, projector, monitor, and stream surfaces
 - Media-heavy workflows including video playback, overlays, timers, and multi-window behavior
+- **Teams and scheduling** for volunteer planning, assignments, responses, and related notifications (actively onboarding users)
+- **Chat** for day-to-day coordination across the church workspace
+- **Discussion boards** used weekly for posts, moderation, and presentation/stream handoff
 
 ### Product requirements
 
 - **Stream surface:** The stream output must **always use a transparent background**. Do not add opaque black (or other solid page backgrounds) behind stream composition so OBS, browser captures, or other tools can composite or show content behind it. Projector and monitor surfaces may still use intentional black bars or stages where product behavior calls for them.
 
-Changes should be reviewed with the mindset that this software is used live and mistakes are highly visible.
+Changes should be reviewed with the mindset that this software is used live and weekly, and mistakes are highly visible.
 
-Treat every change as if it could be exercised during a live event with little time to recover.
+Treat presentation changes as if they could be exercised during a live event with little time to recover. Treat Teams/scheduling, chat, and boards changes as if they could break a church’s next service week.
 
 ## Review Priorities
 
@@ -36,12 +39,14 @@ Review in this order:
 
 ## Non-Negotiables
 
-- This is a mission-critical workflow. We cannot afford avoidable regressions.
+- These are mission-critical workflows. We cannot afford avoidable regressions.
 - Do not introduce regressions in existing presentation, overlay, timer, media, or sync behavior.
+- Do not introduce regressions in Teams/scheduling workflows (plans, schedules, fill, responses, notifications), chat reliability (send/receive, attachments, notifications), or discussion board flows (sync, posting, moderation, present/stream handoff).
 - Prefer the simplest change that fully solves the problem.
 - Follow existing architectural patterns unless there is a clear reason to improve them.
 - Preserve responsiveness during live operation. Avoid changes that can cause UI stalls, flicker, dropped frames, or delayed input handling.
 - Treat controller workflows as high stakes. Operators must be able to understand the state of the system quickly and act confidently.
+- Treat Teams, chat, and board operator surfaces as high stakes for weekly use: unclear state, lost messages, or broken schedules erode trust quickly.
 - Keep cross-window and remote-sync behavior consistent. Local fixes must not silently break projector, monitor, stream, Electron, localStorage, or Firebase-backed flows.
 - If a change has meaningful regression risk, require stronger validation rather than relying on assumption.
 
@@ -67,9 +72,13 @@ Pay extra attention to:
 - Multi-window state and display assignment
 - Timer updates and time-based logic
 - Mobile layout versus desktop layout
+- Teams schedule create/edit/fill, assignment responses, and notification paths
+- Chat send/receive, attachments, and notification behavior
+- Board sync, posting, moderation, and presentation/stream handoff
 
 If a change touches shared rendering paths, assume blast radius is large until proven otherwise.
 If a change touches live presentation paths, shared state, sync code, timers, overlays, media, or window management, review it as high-risk by default.
+If a change touches Teams/scheduling, chat, or discussion boards (client or server), review it as high-risk by default.
 
 ### 3. User experience
 
@@ -131,6 +140,9 @@ Expect tests when logic changes in:
 - Media handling
 - Overlay behavior
 - Timer behavior
+- Teams/schedule logic (fill, responses, selectors, occurrence helpers)
+- Chat API, context, and notification behavior
+- Board sync, utils, and presentation handoff helpers
 
 **Failing tests: intent before rewriting expectations**
 
@@ -263,6 +275,11 @@ Server changes should be reviewed for:
 - Input validation
 - Failure modes for upload and third-party integrations
 - Avoiding silent data shape changes
+- Proportional tests when changing Teams/schedule, chat, board, auth, or notification modules (server already has focused suites for these; keep them green and extend them when behavior changes)
+
+### Client coverage scope
+
+Client Jest coverage is scoped (see `client/jest.config.cjs`), not whole-app. It must include live presentation paths **and** Teams/scheduling, chat, and boards logic modules. Large pure layout shells may be path-ignored when they add little unit-test signal; do not use that escape hatch to hide product logic.
 
 ## Best-Practice Expectations
 
@@ -296,7 +313,7 @@ A change is ready only when it is:
 - Adequately verified for its risk level
 
 If any of those are missing, the review should not treat the change as complete.
-When in doubt, favor protecting the live workflow over moving quickly.
+When in doubt, favor protecting live presentation and weekly Teams/chat/board workflows over moving quickly.
 
 ## Brand voice
 
