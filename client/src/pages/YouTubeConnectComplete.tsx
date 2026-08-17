@@ -10,7 +10,9 @@ const YouTubeConnectComplete = () => {
     [location.search],
   );
 
-  const status = String(params.get("status") || "").trim().toLowerCase();
+  const status = String(params.get("status") || "")
+    .trim()
+    .toLowerCase();
   const accountLabel = String(params.get("accountLabel") || "").trim();
   const message = String(params.get("message") || "").trim();
   const fromDesktop =
@@ -43,8 +45,9 @@ const YouTubeConnectComplete = () => {
         <AuthHandoffMarks provider="youtube" />
         <h1 className="text-2xl font-semibold">{title}</h1>
         <p
-          className={`mt-3 text-sm leading-relaxed ${wasSuccessful ? "text-gray-200" : "text-amber-200"
-            }`}
+          className={`mt-3 text-sm leading-relaxed ${
+            wasSuccessful ? "text-gray-200" : "text-amber-200"
+          }`}
         >
           {detail}
         </p>

@@ -25,7 +25,9 @@ describe("YouTubeConnectComplete", () => {
       screen.getByRole("img", { name: /YouTube to WorshipSync/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Return to WorshipSync\. You can close this browser tab\./i),
+      screen.getByText(
+        /Return to WorshipSync\. You can close this browser tab\./i,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /Return to WorshipSync/i }),

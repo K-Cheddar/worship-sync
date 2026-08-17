@@ -122,7 +122,7 @@ const InviteAccept = () => {
   const [searchParams] = useSearchParams();
   const context = useContext(GlobalInfoContext);
   const [signedInEmail, setSignedInEmail] = useState(
-    () => getHumanAuth().currentUser?.email || ""
+    () => getHumanAuth().currentUser?.email || "",
   );
   const token = useMemo(() => {
     const fromUrl = searchParams.get("token") || "";
@@ -145,9 +145,9 @@ const InviteAccept = () => {
   const [inviteAccepted, setInviteAccepted] = useState(false);
   const [needsSessionRetry, setNeedsSessionRetry] = useState(false);
   /** `undefined` while loading preview for a token; `null` if load failed or missing name. */
-  const [inviteChurchName, setInviteChurchName] = useState<string | null | undefined>(
-    undefined
-  );
+  const [inviteChurchName, setInviteChurchName] = useState<
+    string | null | undefined
+  >(undefined);
   const passwordStrengthDescId = useId();
 
   const persistInviteRecovery = (acceptedToken: string) => {
@@ -159,7 +159,10 @@ const InviteAccept = () => {
       token: acceptedToken,
       acceptedAt: Date.now(),
     };
-    window.sessionStorage.setItem(INVITE_RECOVERY_STORAGE_KEY, JSON.stringify(payload));
+    window.sessionStorage.setItem(
+      INVITE_RECOVERY_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
   };
 
   const clearInviteRecovery = () => {
@@ -294,7 +297,9 @@ const InviteAccept = () => {
   const acceptInviteMembershipWithSignedInUser = async () => {
     const currentUser = getHumanAuth().currentUser;
     if (!currentUser) {
-      setErrorMessage("Sign in with the invited email address before accepting this invite.");
+      setErrorMessage(
+        "Sign in with the invited email address before accepting this invite.",
+      );
       throw new Error("No signed-in user was found.");
     }
 
@@ -335,7 +340,9 @@ const InviteAccept = () => {
         displayToken: undefined,
       });
       if (!confirmed.authenticated || confirmed.sessionKind !== "human") {
-        throw new Error("Invite accepted, but we could not finish sign-in. Select Continue sign-in.");
+        throw new Error(
+          "Invite accepted, but we could not finish sign-in. Select Continue sign-in.",
+        );
       }
       clearInviteRecovery();
       setInviteAccepted(false);
@@ -355,7 +362,9 @@ const InviteAccept = () => {
       clearInviteRecovery();
       setInviteAccepted(false);
       setNeedsSessionRetry(false);
-      const params = new URLSearchParams({ pendingAuthId: session.pendingAuthId });
+      const params = new URLSearchParams({
+        pendingAuthId: session.pendingAuthId,
+      });
       navigate(`/login?${params.toString()}`, {
         replace: true,
         state: { from: { pathname: "/invite" } },
@@ -370,7 +379,7 @@ const InviteAccept = () => {
     setErrorMessage(
       error instanceof Error && error.message
         ? error.message
-        : "Invite accepted, but we could not finish sign-in. Select Continue sign-in."
+        : "Invite accepted, but we could not finish sign-in. Select Continue sign-in.",
     );
   };
 
@@ -400,7 +409,9 @@ const InviteAccept = () => {
       return;
     }
     if (!getHumanAuth().currentUser) {
-      setErrorMessage("Sign in with the invited email address before accepting this invite.");
+      setErrorMessage(
+        "Sign in with the invited email address before accepting this invite.",
+      );
       return;
     }
 
@@ -414,7 +425,7 @@ const InviteAccept = () => {
       idToken = await acceptInviteMembershipWithSignedInUser();
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Could not accept this invite"
+        error instanceof Error ? error.message : "Could not accept this invite",
       );
       setIsSaving(false);
       return;
@@ -443,20 +454,22 @@ const InviteAccept = () => {
     setNeedsSessionRetry(false);
     await clearCurrentAccount();
     setInviteAccepted(false);
-    let createdUserCredential:
-      | Awaited<ReturnType<typeof createUserWithEmailAndPassword>>
-      | null = null;
+    let createdUserCredential: Awaited<
+      ReturnType<typeof createUserWithEmailAndPassword>
+    > | null = null;
     let idToken: string | null = null;
     try {
       const auth = getHumanAuth();
       const credential = await createUserWithEmailAndPassword(
         auth,
         email.trim(),
-        password
+        password,
       );
       createdUserCredential = credential;
       if (displayName.trim()) {
-        await updateProfile(credential.user, { displayName: displayName.trim() });
+        await updateProfile(credential.user, {
+          displayName: displayName.trim(),
+        });
       }
       idToken = await acceptInviteMembershipWithSignedInUser();
     } catch (error) {
@@ -467,7 +480,7 @@ const InviteAccept = () => {
       setErrorMessage(
         createdUserCredential
           ? getInviteFlowErrorMessage(error)
-          : getCreateAccountErrorMessage(error)
+          : getCreateAccountErrorMessage(error),
       );
       setIsSaving(false);
       return;
@@ -486,7 +499,9 @@ const InviteAccept = () => {
   const handleContinueSignIn = async () => {
     const currentUser = getHumanAuth().currentUser;
     if (!inviteAccepted || !currentUser) {
-      setErrorMessage("Sign in with the invited email address before continuing.");
+      setErrorMessage(
+        "Sign in with the invited email address before continuing.",
+      );
       return;
     }
     setIsSaving(true);
@@ -502,7 +517,9 @@ const InviteAccept = () => {
     }
   };
 
-  const handleProviderSignInAndAccept = async (method: "google" | "microsoft") => {
+  const handleProviderSignInAndAccept = async (
+    method: "google" | "microsoft",
+  ) => {
     if (!token) {
       setErrorMessage("This invite link is missing its token.");
       return;
@@ -555,7 +572,8 @@ const InviteAccept = () => {
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">{joinHeadline}</h1>
         <p className="mt-2 text-sm text-gray-200">
-          Create your account with the invited email address to accept this invite.
+          Create your account with the invited email address to accept this
+          invite.
         </p>
         {signedInEmail ? (
           <p className="mt-4 rounded-lg border border-gray-600/80 bg-gray-900/50 px-3 py-2 text-sm text-gray-200">
@@ -678,7 +696,9 @@ const InviteAccept = () => {
                 }}
                 svg={showPassword ? EyeOff : Eye}
                 svgAction={() => setShowPassword((current) => !current)}
-                svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
+                svgActionAriaLabel={
+                  showPassword ? "Hide password" : "Show password"
+                }
                 autoComplete="new-password"
                 disabled={isSaving}
                 aria-describedby={passwordStrengthDescId}

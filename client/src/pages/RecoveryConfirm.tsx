@@ -25,7 +25,7 @@ const RecoveryConfirm = () => {
       setStatusMessage("Admin access restored for this church.");
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Could not approve recovery"
+        error instanceof Error ? error.message : "Could not approve recovery",
       );
     } finally {
       setIsSaving(false);
@@ -37,7 +37,8 @@ const RecoveryConfirm = () => {
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">Approve admin recovery</h1>
         <p className="mt-2 text-sm text-gray-200">
-          Confirm this request to restore admin access for the requesting member.
+          Confirm this request to restore admin access for the requesting
+          member.
         </p>
 
         {statusMessage && (
@@ -57,7 +58,10 @@ const RecoveryConfirm = () => {
           >
             Approve recovery
           </Button>
-          <Button className="w-full justify-center" onClick={() => navigate("/")}>
+          <Button
+            className="w-full justify-center"
+            onClick={() => navigate("/")}
+          >
             Home
           </Button>
         </div>

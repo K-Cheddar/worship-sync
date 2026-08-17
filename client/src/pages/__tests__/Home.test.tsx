@@ -121,6 +121,13 @@ describe("Home", () => {
     ).toHaveAttribute("href", "/teams-and-services");
 
     expect(
+      screen.getByRole("link", { name: /Privacy Policy/i }),
+    ).toHaveAttribute("href", "/privacy");
+    expect(
+      screen.getByRole("link", { name: /Terms of Service/i }),
+    ).toHaveAttribute("href", "/terms");
+
+    expect(
       screen.getByText(
         /Fullscreen in the browser/,
       ),

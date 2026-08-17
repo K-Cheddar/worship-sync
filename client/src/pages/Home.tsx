@@ -66,7 +66,8 @@ const primaryControllers: CardLink[] = [
   },
   {
     title: "Overlay Controller",
-    description: "Manage overlays, service timers, credits, and lower thirds for the stream.",
+    description:
+      "Manage overlays, service timers, credits, and lower thirds for the stream.",
     to: "/overlay-controller",
     icon: Layers,
   },
@@ -126,19 +127,22 @@ const adminLinks: CardLink[] = [
 const standaloneDisplays: CardLink[] = [
   {
     title: "Monitor",
-    description: "Open the monitor view, move to the desired display, then enter fullscreen when you are ready to show it.",
+    description:
+      "Open the monitor view, move to the desired display, then enter fullscreen when you are ready to show it.",
     to: "/monitor",
     icon: Monitor,
   },
   {
     title: "Projector",
-    description: "Open the projector view, move to the desired display, then enter fullscreen when you are ready to show it.",
+    description:
+      "Open the projector view, move to the desired display, then enter fullscreen when you are ready to show it.",
     to: "/projector",
     icon: Projector,
   },
   {
     title: "Discussion Board",
-    description: "Open the discussion board view, move to the desired display, then enter fullscreen when you are ready to show it.",
+    description:
+      "Open the discussion board view, move to the desired display, then enter fullscreen when you are ready to show it.",
     to: "/boards/display",
     icon: MessagesSquare,
   },
@@ -147,19 +151,22 @@ const standaloneDisplays: CardLink[] = [
 const obsDisplays: CardLink[] = [
   {
     title: "Stream",
-    description: "Main program output for a browser source in your streaming software.",
+    description:
+      "Main program output for a browser source in your streaming software.",
     to: "/stream",
     icon: Radio,
   },
   {
     title: "Stream Info",
-    description: "Information pages for a browser source in your streaming software.",
+    description:
+      "Information pages for a browser source in your streaming software.",
     to: "/stream-info",
     icon: Info,
   },
   {
     title: "Projector",
-    description: "Projector-sized output for a browser source in your streaming software.",
+    description:
+      "Projector-sized output for a browser source in your streaming software.",
     to: "/projector-full",
     icon: Projector,
   },
@@ -268,25 +275,24 @@ const DesktopDownloadHelp = ({
   if (os === "windows") {
     body = (
       <>
-        Your download should begin automatically. If it does not, try again
-        or open the {releaseLink} and choose the Windows installer from Assets.
+        Your download should begin automatically. If it does not, try again or
+        open the {releaseLink} and choose the Windows installer from Assets.
       </>
     );
   } else if (os === "mac") {
     body = (
       <>
-        Your download should begin automatically. If it does not, try again
-        or open the {releaseLink} and choose the Mac disk image (.dmg) from
-        Assets. If macOS warns that the app cannot be checked for malicious
-        software, Control-click WorshipSync in Finder, choose Open, then
-        confirm.
+        Your download should begin automatically. If it does not, try again or
+        open the {releaseLink} and choose the Mac disk image (.dmg) from Assets.
+        If macOS warns that the app cannot be checked for malicious software,
+        Control-click WorshipSync in Finder, choose Open, then confirm.
       </>
     );
   } else {
     body = (
       <>
-        Your download should begin automatically. If it does not, try again
-        or open the {releaseLink} and choose the Linux AppImage or .deb from
+        Your download should begin automatically. If it does not, try again or
+        open the {releaseLink} and choose the Linux AppImage or .deb from
         Assets. AppImage runs without installing a package; use the .deb if you
         prefer a system package.
       </>
@@ -348,12 +354,14 @@ const Welcome = () => {
       ? []
       : isLoggedIn
         ? secondaryControllers.filter((link) => {
-          if (isViewOnlyAccess(access)) {
-            return link.to !== "/boards/controller";
-          }
-          return true;
-        })
-        : secondaryControllers.filter((link) => link.to !== "/boards/controller");
+            if (isViewOnlyAccess(access)) {
+              return link.to !== "/boards/controller";
+            }
+            return true;
+          })
+        : secondaryControllers.filter(
+            (link) => link.to !== "/boards/controller",
+          );
   const { canShowInstall, installPwa, isStandalone } = usePwaInstallPrompt();
   const isWeb = !isElectron();
   const desktopOs = useMemo((): DesktopOs | null => {
@@ -429,13 +437,13 @@ const Welcome = () => {
         subItems: [
           ...(canShowInstall
             ? [
-              {
-                text: "Install app",
-                onClick: () => {
-                  void installPwa();
+                {
+                  text: "Install app",
+                  onClick: () => {
+                    void installPwa();
+                  },
                 },
-              },
-            ]
+              ]
             : []),
           {
             text: getDesktopDownloadButtonLabel(desktopOs),
@@ -510,8 +518,8 @@ const Welcome = () => {
               and keep each display in sync during the service.
             </p>
             <p className="mx-auto max-w-3xl text-sm text-gray-200 md:hidden">
-              For the full experience on room outputs, use the Windows or Mac desktop app.
-              Most browsers also work well.
+              For the full experience on room outputs, use the Windows or Mac
+              desktop app. Most browsers also work well.
             </p>
           </div>
         </section>
@@ -561,44 +569,44 @@ const Welcome = () => {
             controllers, and a bare heading over nothing reads as broken. */}
         {(visibleControllerLinks.length > 0 ||
           visibleSecondaryControllers.length > 0) && (
-            <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
-              <div className="space-y-2 text-center">
-                <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
-                  <span aria-hidden className="text-orange-400">
-                    <Icon
-                      svg={LayoutDashboard}
-                      size="lg"
-                      className="text-orange-400"
-                      svgClassName="text-orange-400"
-                    />
-                  </span>
-                  Controllers
-                </h2>
-                <p className="text-sm text-gray-200">
-                  These are the pages most teams use during the service.
+          <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
+            <div className="space-y-2 text-center">
+              <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
+                <span aria-hidden className="text-orange-400">
+                  <Icon
+                    svg={LayoutDashboard}
+                    size="lg"
+                    className="text-orange-400"
+                    svgClassName="text-orange-400"
+                  />
+                </span>
+                Controllers
+              </h2>
+              <p className="text-sm text-gray-200">
+                These are the pages most teams use during the service.
+              </p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {visibleControllerLinks.map((link) => (
+                <HomeLinkCard key={link.to} {...link} />
+              ))}
+            </div>
+
+            {visibleSecondaryControllers.length > 0 && (
+              <div className="space-y-3 border-t border-gray-700 pt-4">
+                <p className="text-center text-sm font-medium text-gray-300 md:text-left">
+                  Credits and board moderation
                 </p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                {visibleControllerLinks.map((link) => (
-                  <HomeLinkCard key={link.to} {...link} />
-                ))}
-              </div>
-
-              {visibleSecondaryControllers.length > 0 && (
-                <div className="space-y-3 border-t border-gray-700 pt-4">
-                  <p className="text-center text-sm font-medium text-gray-300 md:text-left">
-                    Credits and board moderation
-                  </p>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {visibleSecondaryControllers.map((link) => (
-                      <HomeLinkCard key={link.to} {...link} />
-                    ))}
-                  </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {visibleSecondaryControllers.map((link) => (
+                    <HomeLinkCard key={link.to} {...link} />
+                  ))}
                 </div>
-              )}
-            </section>
-          )}
+              </div>
+            )}
+          </section>
+        )}
 
         {isLoggedIn && access === "full" ? (
           <details className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
@@ -617,7 +625,8 @@ const Welcome = () => {
                     Display outputs
                   </h2>
                   <p className="text-sm text-gray-200">
-                    URLs for room screens or browser sources in streaming software.
+                    URLs for room screens or browser sources in streaming
+                    software.
                   </p>
                 </div>
                 <span className="shrink-0 self-start rounded-full border border-gray-400 px-3 py-1 text-sm font-semibold text-gray-100 md:self-center">
@@ -664,12 +673,34 @@ const Welcome = () => {
               URLs for room screens or browser sources in streaming software.
             </p>
             <p className="mt-4 text-sm leading-relaxed text-gray-300">
-              Sign in to show display links. Projector, monitor, and stream pages
-              require a signed-in account or a linked display device, so those
-              URLs are available after you authenticate.
+              Sign in to show display links. Projector, monitor, and stream
+              pages require a signed-in account or a linked display device, so
+              those URLs are available after you authenticate.
             </p>
           </section>
         ) : null}
+
+        <footer className="mx-auto mt-2 flex w-full max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-700 pt-6 text-sm text-gray-300">
+          <Button
+            component="link"
+            to="/privacy"
+            variant="none"
+            className="h-auto p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+          >
+            Privacy Policy
+          </Button>
+          <span aria-hidden className="text-gray-600">
+            ·
+          </span>
+          <Button
+            component="link"
+            to="/terms"
+            variant="none"
+            className="h-auto p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+          >
+            Terms of Service
+          </Button>
+        </footer>
       </div>
 
       {desktopOs ? (

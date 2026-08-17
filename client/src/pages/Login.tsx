@@ -10,7 +10,13 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { ArrowLeft, CheckCircle, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle,
+  Eye,
+  EyeOff,
+  LoaderCircle,
+} from "lucide-react";
 import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
 import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
@@ -26,9 +32,7 @@ import {
 } from "../api/auth";
 import type { DesktopAuthProvider } from "../api/authTypes";
 import { GlobalInfoContext } from "../context/globalInfo";
-import {
-  getAuthRedirectPathnameFromState,
-} from "../utils/authRedirectPath";
+import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
   isValidEmailFormat,
@@ -140,69 +144,71 @@ const Login = () => {
   const forgotPasswordSubmitBlockTimeoutRef = useRef(0);
   const [lastSignInMethod] = useState(() => getLastSignInMethod());
   const isElectronRuntime = isElectron();
-  const { desktopAuthId: desktopBrowserAuthId, provider: desktopBrowserProvider } =
-    useMemo(() => {
-      const idFromUrl = String(searchParams.get("desktopAuthId") || "").trim();
-      if (idFromUrl && isDesktopBrokerAuthCompleted(idFromUrl)) {
-        return {
-          desktopAuthId: "",
-          provider: null as DesktopAuthProvider | null,
-        };
-      }
-      const rawProv = String(searchParams.get("provider") || "")
-        .trim()
-        .toLowerCase();
-      const provFromUrl =
-        rawProv === "google" || rawProv === "microsoft"
-          ? (rawProv as DesktopAuthProvider)
-          : null;
-      if (idFromUrl && provFromUrl) {
-        try {
-          sessionStorage.setItem(
-            HOSTED_DESKTOP_SSO_SESSION_KEY,
-            JSON.stringify({
-              desktopAuthId: idFromUrl,
-              provider: provFromUrl,
-            }),
-          );
-        } catch {
-          // ignore storage failures (private mode, quota)
-        }
-        return { desktopAuthId: idFromUrl, provider: provFromUrl };
-      }
-      try {
-        const raw = sessionStorage.getItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
-        if (raw) {
-          // One-time recovery after redirect; do not allow stale handoff to persist.
-          sessionStorage.removeItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
-          const parsed = JSON.parse(raw) as {
-            desktopAuthId?: unknown;
-            provider?: unknown;
-          };
-          const storedId =
-            typeof parsed.desktopAuthId === "string"
-              ? parsed.desktopAuthId.trim()
-              : "";
-          const storedProvRaw =
-            typeof parsed.provider === "string"
-              ? parsed.provider.trim().toLowerCase()
-              : "";
-          const storedProv =
-            storedProvRaw === "google" || storedProvRaw === "microsoft"
-              ? (storedProvRaw as DesktopAuthProvider)
-              : null;
-          if (storedId && storedProv && !isDesktopBrokerAuthCompleted(storedId)) {
-            return { desktopAuthId: storedId, provider: storedProv };
-          }
-        }
-      } catch {
-        // ignore invalid persisted payload
-      }
+  const {
+    desktopAuthId: desktopBrowserAuthId,
+    provider: desktopBrowserProvider,
+  } = useMemo(() => {
+    const idFromUrl = String(searchParams.get("desktopAuthId") || "").trim();
+    if (idFromUrl && isDesktopBrokerAuthCompleted(idFromUrl)) {
       return {
         desktopAuthId: "",
         provider: null as DesktopAuthProvider | null,
       };
-    }, [searchParams]);
+    }
+    const rawProv = String(searchParams.get("provider") || "")
+      .trim()
+      .toLowerCase();
+    const provFromUrl =
+      rawProv === "google" || rawProv === "microsoft"
+        ? (rawProv as DesktopAuthProvider)
+        : null;
+    if (idFromUrl && provFromUrl) {
+      try {
+        sessionStorage.setItem(
+          HOSTED_DESKTOP_SSO_SESSION_KEY,
+          JSON.stringify({
+            desktopAuthId: idFromUrl,
+            provider: provFromUrl,
+          }),
+        );
+      } catch {
+        // ignore storage failures (private mode, quota)
+      }
+      return { desktopAuthId: idFromUrl, provider: provFromUrl };
+    }
+    try {
+      const raw = sessionStorage.getItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
+      if (raw) {
+        // One-time recovery after redirect; do not allow stale handoff to persist.
+        sessionStorage.removeItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
+        const parsed = JSON.parse(raw) as {
+          desktopAuthId?: unknown;
+          provider?: unknown;
+        };
+        const storedId =
+          typeof parsed.desktopAuthId === "string"
+            ? parsed.desktopAuthId.trim()
+            : "";
+        const storedProvRaw =
+          typeof parsed.provider === "string"
+            ? parsed.provider.trim().toLowerCase()
+            : "";
+        const storedProv =
+          storedProvRaw === "google" || storedProvRaw === "microsoft"
+            ? (storedProvRaw as DesktopAuthProvider)
+            : null;
+        if (storedId && storedProv && !isDesktopBrokerAuthCompleted(storedId)) {
+          return { desktopAuthId: storedId, provider: storedProv };
+        }
+      }
+    } catch {
+      // ignore invalid persisted payload
+    }
+    return {
+      desktopAuthId: "",
+      provider: null as DesktopAuthProvider | null,
+    };
+  }, [searchParams]);
 
   useLayoutEffect(() => {
     if (isElectronRuntime || mode !== "signIn") {
@@ -242,14 +248,14 @@ const Login = () => {
    */
   const showWebSessionNavigatingChrome = Boolean(
     isFinishingSignIn &&
-      !isHostedDesktopBrowserFlow &&
-      // A device-code challenge outranks "navigating". Firebase sign-in can
-      // succeed (so `loginState` is "success") while the server still requires
-      // a code for an unrecognized device — as happens right after accepting an
-      // invite. Showing "Signed in — hang tight, this screen will switch in a
-      // moment" over the code form tells the operator to wait for something
-      // that will never arrive, while the action they must take sits below.
-      mode !== "code",
+    !isHostedDesktopBrowserFlow &&
+    // A device-code challenge outranks "navigating". Firebase sign-in can
+    // succeed (so `loginState` is "success") while the server still requires
+    // a code for an unrecognized device — as happens right after accepting an
+    // invite. Showing "Signed in — hang tight, this screen will switch in a
+    // moment" over the code form tells the operator to wait for something
+    // that will never arrive, while the action they must take sits below.
+    mode !== "code",
   );
   /**
    * `isFinishingSignIn` means "signed in, navigating away", which normally
@@ -312,7 +318,7 @@ const Login = () => {
     () => () => {
       window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
     },
-    []
+    [],
   );
 
   const finishingProviderSignInRef = useRef<"google" | "microsoft" | null>(
@@ -366,10 +372,7 @@ const Login = () => {
       return;
     }
 
-    if (
-      providerSignInSeenLoadingRef.current ||
-      Boolean(context?.authError)
-    ) {
+    if (providerSignInSeenLoadingRef.current || Boolean(context?.authError)) {
       clearProviderSignInAttempt();
     }
   }, [
@@ -425,7 +428,7 @@ const Login = () => {
         next.delete("pendingAuthId");
         return next;
       },
-      { replace: true }
+      { replace: true },
     );
   }, [searchParams, setSearchParams]);
 
@@ -464,13 +467,16 @@ const Login = () => {
     clearProviderSignInAttempt();
   }, [clearProviderSignInAttempt]);
 
-  const openDesktopBrowserUrl = useCallback(async (url: string) => {
-    if (isElectronRuntime && window.electronAPI?.openExternalUrl) {
-      await window.electronAPI.openExternalUrl(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, [isElectronRuntime]);
+  const openDesktopBrowserUrl = useCallback(
+    async (url: string) => {
+      if (isElectronRuntime && window.electronAPI?.openExternalUrl) {
+        await window.electronAPI.openExternalUrl(url);
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [isElectronRuntime],
+  );
 
   const pollDesktopAuthStatus = useCallback(async () => {
     if (
@@ -491,10 +497,7 @@ const Login = () => {
         return;
       }
 
-      if (
-        response.status === "requires_email_code" &&
-        response.pendingAuthId
-      ) {
+      if (response.status === "requires_email_code" && response.pendingAuthId) {
         context?.clearAuthError();
         setPendingEmailCodeSignInMethod(pendingDesktopAuth.provider);
         openVerificationCodeStep({
@@ -541,7 +544,12 @@ const Login = () => {
     } finally {
       desktopAuthPollInFlightRef.current = false;
     }
-  }, [clearPendingDesktopAuth, context, openVerificationCodeStep, pendingDesktopAuth]);
+  }, [
+    clearPendingDesktopAuth,
+    context,
+    openVerificationCodeStep,
+    pendingDesktopAuth,
+  ]);
 
   const handleElectronProviderSignIn = useCallback(
     async (method: DesktopAuthProvider) => {
@@ -634,9 +642,9 @@ const Login = () => {
     } catch (error) {
       const errorCode =
         typeof error === "object" &&
-          error &&
-          "code" in error &&
-          typeof (error as { code?: unknown }).code === "string"
+        error &&
+        "code" in error &&
+        typeof (error as { code?: unknown }).code === "string"
           ? String((error as { code: string }).code)
           : "";
       setDesktopBrowserFlowStatus("idle");
@@ -659,7 +667,9 @@ const Login = () => {
     const expiresAt = Date.parse(pendingDesktopAuth.expiresAt);
     if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
       clearPendingDesktopAuth();
-      setLocalAuthError("This browser sign-in expired. Start again to continue.");
+      setLocalAuthError(
+        "This browser sign-in expired. Start again to continue.",
+      );
     }
   }, [clearPendingDesktopAuth, isElectronRuntime, pendingDesktopAuth]);
 
@@ -680,9 +690,12 @@ const Login = () => {
       return;
     }
     void pollDesktopAuthStatus();
-    const timerId = window.setInterval(() => {
-      void pollDesktopAuthStatus();
-    }, Math.max(1000, pendingDesktopAuth.pollIntervalMs || 1500));
+    const timerId = window.setInterval(
+      () => {
+        void pollDesktopAuthStatus();
+      },
+      Math.max(1000, pendingDesktopAuth.pollIntervalMs || 1500),
+    );
     return () => window.clearInterval(timerId);
   }, [isElectronRuntime, mode, pendingDesktopAuth, pollDesktopAuthStatus]);
 
@@ -958,7 +971,10 @@ const Login = () => {
     if (localAuthError) {
       return "text-red-400";
     }
-    if (context?.authError && !(mode === "forgotPassword" && forgotPasswordEmailSent)) {
+    if (
+      context?.authError &&
+      !(mode === "forgotPassword" && forgotPasswordEmailSent)
+    ) {
       return "text-red-400";
     }
     if (infoBanner) {
@@ -1047,15 +1063,19 @@ const Login = () => {
           <div className="mt-3 space-y-1.5">
             <p className="text-base font-medium leading-snug text-gray-100">
               Finish{" "}
-              {pendingDesktopAuth?.provider === "google" ? "Google" : "Microsoft"} sign-in
-              in your browser.
+              {pendingDesktopAuth?.provider === "google"
+                ? "Google"
+                : "Microsoft"}{" "}
+              sign-in in your browser.
             </p>
             <p className="text-sm leading-relaxed text-gray-400">
               This window updates when sign-in completes.
             </p>
           </div>
         ) : loginSubtext ? (
-          <p className="mt-2 text-sm leading-relaxed text-gray-300">{loginSubtext}</p>
+          <p className="mt-2 text-sm leading-relaxed text-gray-300">
+            {loginSubtext}
+          </p>
         ) : null}
 
         {globalBannerMessage && (
@@ -1068,8 +1088,11 @@ const Login = () => {
               showWebSessionNavigatingChrome ||
               (isHostedDesktopBrowserFlow &&
                 desktopBrowserFlowStatus === "loading")) && (
-                <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
-              )}
+              <LoaderCircle
+                className="h-4 w-4 shrink-0 animate-spin"
+                aria-hidden="true"
+              />
+            )}
             <span className="min-w-0">{globalBannerMessage}</span>
             {authServerStatus === "offline" && authServerRetryCount > 0 && (
               <Button
@@ -1089,10 +1112,16 @@ const Login = () => {
             provider={desktopBrowserProvider}
             flowStatus={desktopBrowserFlowStatus}
             isAuthServerOnline={isAuthServerOnline}
-            onContinueWithProvider={() => void handleHostedDesktopBrowserCompletion()}
+            onContinueWithProvider={() =>
+              void handleHostedDesktopBrowserCompletion()
+            }
           />
         ) : (
-          <form className="flex flex-col" onSubmit={handleFormSubmit} noValidate>
+          <form
+            className="flex flex-col"
+            onSubmit={handleFormSubmit}
+            noValidate
+          >
             {mode === "signIn" && (
               <>
                 {hasPendingDesktopAuth ? (
@@ -1101,8 +1130,8 @@ const Login = () => {
                       Having trouble?
                     </p>
                     <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                      Closed the sign-in tab? Use Reopen browser. To go back to other sign-in
-                      options, use Cancel.
+                      Closed the sign-in tab? Use Reopen browser. To go back to
+                      other sign-in options, use Cancel.
                     </p>
                     <div className="mt-4 flex flex-col gap-2">
                       <Button
@@ -1113,7 +1142,9 @@ const Login = () => {
                         disabled={isStartingDesktopAuth || !pendingDesktopAuth}
                         onClick={() =>
                           pendingDesktopAuth
-                            ? void openDesktopBrowserUrl(pendingDesktopAuth.browserUrl)
+                            ? void openDesktopBrowserUrl(
+                                pendingDesktopAuth.browserUrl,
+                              )
                             : undefined
                         }
                       >
@@ -1177,7 +1208,9 @@ const Login = () => {
                         className="pointer-events-none absolute inset-y-0 right-2 flex items-center"
                         aria-hidden={lastSignInMethod !== "microsoft"}
                       >
-                        <LastUsedBadge show={lastSignInMethod === "microsoft"} />
+                        <LastUsedBadge
+                          show={lastSignInMethod === "microsoft"}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1204,7 +1237,10 @@ const Login = () => {
                         setEmail(String(value));
                         setInfoBanner("");
                         if (fieldErrors.email) {
-                          setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            email: undefined,
+                          }));
                         }
                       }}
                       autoComplete="email"
@@ -1221,12 +1257,17 @@ const Login = () => {
                         setPassword(String(value));
                         setInfoBanner("");
                         if (fieldErrors.password) {
-                          setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            password: undefined,
+                          }));
                         }
                       }}
                       svg={showPassword ? EyeOff : Eye}
                       svgAction={() => setShowPassword((current) => !current)}
-                      svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
+                      svgActionAriaLabel={
+                        showPassword ? "Hide password" : "Show password"
+                      }
                       autoComplete="current-password"
                       disabled={isSignInFormFieldsLocked}
                     />
@@ -1237,7 +1278,9 @@ const Login = () => {
                         disabled={isSignInFormFieldsLocked}
                         aria-disabled={isSignInFormFieldsLocked}
                         onClick={() => {
-                          window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
+                          window.clearTimeout(
+                            forgotPasswordSubmitBlockTimeoutRef.current,
+                          );
                           setForgotPasswordSubmitBlocked(false);
                           setFieldErrors({});
                           setInfoBanner("");
@@ -1251,8 +1294,12 @@ const Login = () => {
                     </div>
                     {pendingLinkState ? (
                       <p className="mt-2 text-sm text-amber-200">
-                        This email already exists. Sign in with the existing method to link{" "}
-                        {pendingLinkState.providerId === "google.com" ? "Google" : "Microsoft"}.
+                        This email already exists. Sign in with the existing
+                        method to link{" "}
+                        {pendingLinkState.providerId === "google.com"
+                          ? "Google"
+                          : "Microsoft"}
+                        .
                       </p>
                     ) : null}
                   </>
@@ -1293,7 +1340,9 @@ const Login = () => {
                   aria-hidden="true"
                 />
                 <p className="text-sm text-gray-200">
-                  Request received for <span className="font-medium text-white">{email.trim()}</span>.
+                  Request received for{" "}
+                  <span className="font-medium text-white">{email.trim()}</span>
+                  .
                 </p>
               </div>
             )}
@@ -1359,14 +1408,14 @@ const Login = () => {
                       setInfoBanner("");
                       setEmail("");
                       setFieldErrors({});
-                      window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
-                      setForgotPasswordSubmitBlocked(true);
-                      forgotPasswordSubmitBlockTimeoutRef.current = window.setTimeout(
-                        () => {
-                          setForgotPasswordSubmitBlocked(false);
-                        },
-                        300
+                      window.clearTimeout(
+                        forgotPasswordSubmitBlockTimeoutRef.current,
                       );
+                      setForgotPasswordSubmitBlocked(true);
+                      forgotPasswordSubmitBlockTimeoutRef.current =
+                        window.setTimeout(() => {
+                          setForgotPasswordSubmitBlocked(false);
+                        }, 300);
                     }}
                   >
                     Change email
@@ -1378,7 +1427,9 @@ const Login = () => {
                     className="w-full justify-center"
                     isLoading={isForgotSending}
                     disabled={
-                      !isAuthServerOnline || isForgotSending || forgotPasswordSubmitBlocked
+                      !isAuthServerOnline ||
+                      isForgotSending ||
+                      forgotPasswordSubmitBlocked
                     }
                   >
                     Send reset link

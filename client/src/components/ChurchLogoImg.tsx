@@ -12,8 +12,8 @@ const variantClass: Record<ChurchLogoImgVariant, string> = {
     "sm:mt-0 md:size-20",
   ),
   "board-presentation": cn(
-    "size-20 shrink-0 rounded-lg border border-cyan-400/25 bg-slate-950/80",
-    "md:size-24",
+    "size-12 shrink-0 rounded-md border border-cyan-400/25 bg-slate-950/80",
+    "md:size-14",
   ),
   "account-header": cn(
     "max-h-16 w-auto max-w-full shrink-0 rounded-md border border-gray-600/80 bg-gray-900",

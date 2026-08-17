@@ -3,6 +3,13 @@ import type { ComponentPropsWithoutRef, ReactNode } from "react";
 type AuthScreenMainProps = Omit<ComponentPropsWithoutRef<"main">, "className"> & {
   children: ReactNode;
   className?: string;
+  /**
+   * `center` vertically centers content when it fits, and still scrolls from
+   * the top when content is taller than the viewport (via `min-h-full` +
+   * `items-center`, not `my-auto` on a short flex child).
+   * `start` keeps content top-aligned.
+   */
+  contentAlign?: "center" | "start";
 };
 
 /**
@@ -14,20 +21,31 @@ type AuthScreenMainProps = Omit<ComponentPropsWithoutRef<"main">, "className"> &
  *
  * `html` / `body` / `#root` use `overflow: hidden`, so this surface must own
  * scrolling. Use a bounded viewport height (`h-dvh`), not `min-h-dvh`, or the
- * main grows with content and nothing scrolls. `my-auto` centers the short
- * cards these screens are made of.
+ * main grows with content and nothing scrolls.
  */
-const AuthScreenMain = ({ children, className, ...rest }: AuthScreenMainProps) => (
+const AuthScreenMain = ({
+  children,
+  className,
+  contentAlign = "center",
+  ...rest
+}: AuthScreenMainProps) => (
   <main
     className={[
-      "flex h-dvh min-h-0 w-full flex-col overflow-y-auto overscroll-y-contain bg-homepage-canvas px-4 py-8 text-white",
+      "h-dvh min-h-0 w-full overflow-y-auto overscroll-y-contain bg-homepage-canvas text-white",
       className,
     ]
       .filter(Boolean)
       .join(" ")}
     {...rest}
   >
-    <div className="my-auto flex w-full justify-center">{children}</div>
+    <div
+      className={[
+        "flex min-h-full w-full justify-center px-4 py-8",
+        contentAlign === "center" ? "items-center" : "items-start",
+      ].join(" ")}
+    >
+      {children}
+    </div>
   </main>
 );
 

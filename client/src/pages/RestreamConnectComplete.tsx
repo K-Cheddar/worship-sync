@@ -10,19 +10,23 @@ const RestreamConnectComplete = () => {
     [location.search],
   );
 
-  const status = String(params.get("status") || "").trim().toLowerCase();
+  const status = String(params.get("status") || "")
+    .trim()
+    .toLowerCase();
   const accountLabel = String(params.get("accountLabel") || "").trim();
   const message = String(params.get("message") || "").trim();
 
   const wasSuccessful = status === "success";
   let title = "Restream connection problem";
   if (wasSuccessful) {
-    title = accountLabel ? `Connected to ${accountLabel}` : "Restream connected";
+    title = accountLabel
+      ? `Connected to ${accountLabel}`
+      : "Restream connected";
   }
   const detail = wasSuccessful
     ? "Return to WorshipSync. You can close this browser tab."
     : message ||
-    "The Restream connection did not finish. Return to WorshipSync and try again.";
+      "The Restream connection did not finish. Return to WorshipSync and try again.";
 
   return (
     <AuthScreenMain>
@@ -30,8 +34,9 @@ const RestreamConnectComplete = () => {
         <AuthHandoffMarks provider="restream" />
         <h1 className="text-2xl font-semibold">{title}</h1>
         <p
-          className={`mt-3 text-sm leading-relaxed ${wasSuccessful ? "text-gray-200" : "text-amber-200"
-            }`}
+          className={`mt-3 text-sm leading-relaxed ${
+            wasSuccessful ? "text-gray-200" : "text-amber-200"
+          }`}
         >
           {detail}
         </p>

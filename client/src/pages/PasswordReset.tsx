@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { confirmPasswordReset, verifyPasswordResetCode } from "firebase/auth";
 import { Eye, EyeOff } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -35,7 +29,10 @@ const getPasswordResetErrorMessage = (error: unknown) => {
 const PasswordReset = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const oobCode = useMemo(() => searchParams.get("oobCode") || "", [searchParams]);
+  const oobCode = useMemo(
+    () => searchParams.get("oobCode") || "",
+    [searchParams],
+  );
   const [password, setPassword] = useState("");
   const [passwordFieldError, setPasswordFieldError] = useState("");
   const [bannerError, setBannerError] = useState("");
@@ -140,8 +137,13 @@ const PasswordReset = () => {
 
         {isPostSuccess ? (
           <div className="mt-4 flex flex-col gap-4">
-            <p className="text-sm text-cyan-300" role="status" aria-live="polite">
-              Password updated. Redirecting to sign in in {redirectSecondsRemaining}{" "}
+            <p
+              className="text-sm text-cyan-300"
+              role="status"
+              aria-live="polite"
+            >
+              Password updated. Redirecting to sign in in{" "}
+              {redirectSecondsRemaining}{" "}
               {redirectSecondsRemaining === 1 ? "second" : "seconds"}.
             </p>
             <Button
@@ -173,7 +175,9 @@ const PasswordReset = () => {
               }}
               svg={showPassword ? EyeOff : Eye}
               svgAction={() => setShowPassword((current) => !current)}
-              svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
+              svgActionAriaLabel={
+                showPassword ? "Hide password" : "Show password"
+              }
               autoComplete="new-password"
               disabled={isSaving}
               aria-describedby={passwordStrengthDescId}
