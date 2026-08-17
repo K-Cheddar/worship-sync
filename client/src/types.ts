@@ -14,6 +14,8 @@ export type ServiceItem = {
   name: string;
   _id: string;
   background?: string;
+  localImage?: LocalImageAssetReference;
+  localVideoFile?: LocalVideoFileReference;
   listId: string;
   type:
     | "song"
@@ -104,12 +106,42 @@ export type ItemSlideType = {
   name: string;
   id: string;
   boxes: Box[];
+  /** Durable slide-level source. Hardware bindings remain local to each workstation. */
+  mediaSource?: SlideMediaSource;
   /** Pre-calculated boxes for monitor "current" band (50% height). Set when slide is formatted. */
   monitorCurrentBandBoxes?: Box[];
   /** Pre-calculated boxes for monitor "next" band (30% height). Set when slide is formatted. */
   monitorNextBandBoxes?: Box[];
   overflow?: OverflowMode;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+};
+
+export type LocalVideoInputMediaSource = {
+  kind: "local-video-input";
+  /** Stable logical source id saved with the item; never a browser deviceId. */
+  sourceId: string;
+  label: string;
+  fit?: "contain" | "cover";
+  /** Outputs that normally carry programme audio may play the locally bound input. */
+  audioEnabled?: boolean;
+};
+
+export type SlideMediaSource = LocalVideoInputMediaSource;
+
+/** Durable metadata for a video file whose bytes remain on one workstation. */
+export type LocalVideoFileReference = {
+  id: string;
+  contentRevision?: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fileName: string;
+  contentType: string;
+  storagePolicy: LocalAssetStoragePolicy;
+  /** Local video files follow the same programme-audio default as USB inputs. */
+  audioEnabled?: boolean;
+  /** Optional portable copy attached after a background/cloud upload. */
+  cloudUrl?: string;
+  cloudMediaId?: string;
 };
 
 export type LinkType = "media" | "slide" | "overlay";
@@ -120,6 +152,12 @@ export type QuickLinkType = {
   id: string;
   action?: "clear";
   displayType?: DisplayType;
+  /**
+   * Display output this link belongs to. Links created before outputs existed
+   * have none; those fall back to the built-in display of their
+   * {@link displayType} rather than appearing on every screen of that kind.
+   */
+  outputId?: string;
   linkType?: LinkType;
   canDelete: boolean;
 };
@@ -240,6 +278,12 @@ export type ShouldSendTo = {
   projector: boolean;
   monitor: boolean;
   stream: boolean;
+  /**
+   * Displays this item sends to. Empty or absent means every display of the
+   * enabled surfaces, which is how sends behaved before displays were
+   * addressable — so items saved before this keep their behavior.
+   */
+  outputIds?: string[];
 };
 
 export type ItemProperties = {
@@ -346,6 +390,22 @@ export type Presentation = {
   imageOverlayInfo?: OverlayInfo;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   boardPostStreamInfo?: BoardPostStreamInfo;
+  /**
+   * A capture device selected on one physical workstation. Only that device can
+   * resolve `deviceId`; other clients render an unavailable status instead of
+   * attempting to open a similarly named camera.
+   */
+  localVideoInput?: LocalVideoInputPresentation;
+};
+
+export type LocalVideoInputPresentation = {
+  /** Resolves to a hardware device id only in the owning browser profile. */
+  sourceId: string;
+  deviceLabel: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fit?: "contain" | "cover";
+  audioEnabled?: boolean;
 };
 
 export type BoardPostStreamInfo = {
@@ -709,6 +769,14 @@ export type PreferencesType = {
   defaultIsMediaExpanded: boolean;
   defaultBibleFontMode: BibleFontMode;
   defaultFreeFormFontMode: OverflowMode;
+  /**
+   * Displays the overlay controller sends to. Empty means every live display it
+   * can drive, which is how overlays behaved before the choice existed.
+   *
+   * Not restricted to streams: the overlay controller is expected to gain
+   * projector targets, and the reducers already accept any output id.
+   */
+  overlayTargetOutputIds?: string[];
 };
 
 export type MonitorSettingsType = {
@@ -905,6 +973,35 @@ export type DBAllItems = {
   docType?: DocType;
 };
 
+export type CanvaMediaSource = {
+  designId: string;
+  designTitle: string;
+  revision: number;
+  format: "png" | "mp4";
+  pageNumbers: number[];
+};
+
+export type LocalAssetStoragePolicy = "local-only" | "local-and-cloud";
+
+/**
+ * Safe metadata for a device-owned image. The image bytes and original file
+ * path never enter persisted outline documents or synchronized presentation
+ * state.
+ */
+export type LocalImageAssetReference = {
+  id: string;
+  /** Stable revision of the local bytes; changes on relink, not cloud attach. */
+  contentRevision?: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fileName: string;
+  contentType: string;
+  storagePolicy: LocalAssetStoragePolicy;
+  /** Present after the optional background upload completes. */
+  cloudUrl?: string;
+  cloudMediaId?: string;
+};
+
 export type MediaType = {
   path: string;
   createdAt: string;
@@ -922,11 +1019,17 @@ export type MediaType = {
   frameRate?: number;
   hasAudio?: boolean;
   duration?: number;
-  source?: "cloudinary" | "mux";
+  source?: "cloudinary" | "mux" | "local";
+  localImage?: LocalImageAssetReference;
+  localVideoFile?: LocalVideoFileReference;
+  /** Logical live input stored in Media; hardware binding remains workstation-local. */
+  localVideoInput?: LocalVideoInputMediaSource;
   muxPlaybackId?: string;
   muxAssetId?: string;
   /** Stable identity for an asset copied from Canva. */
   canvaImportKey?: string;
+  /** Source metadata used to check and refresh Canva imports. */
+  canvaSource?: CanvaMediaSource;
   /** App media library folder; root / unset = null */
   folderId?: string | null;
 };

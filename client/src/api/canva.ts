@@ -29,6 +29,8 @@ export type CanvaDesign = {
   thumbnailUrl: string;
   pageCount: number;
   updatedAt: number | string;
+  editUrl: string;
+  viewUrl: string;
 };
 
 export type CanvaImportedAsset =
@@ -117,6 +119,11 @@ export const listCanvaDesigns = (churchId: string, query = "") => {
     `${base(churchId)}/designs${params.size ? `?${params}` : ""}`,
   );
 };
+
+export const getCanvaDesign = (churchId: string, designId: string) =>
+  fetchJson<CanvaDesign>(
+    `${base(churchId)}/designs/${encodeURIComponent(designId)}`,
+  );
 
 export const importCanvaDesign = (
   churchId: string,

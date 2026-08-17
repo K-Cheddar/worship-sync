@@ -11,6 +11,13 @@ Before exporting, the server fetches the design again and skips only identities
 already present in the church's Media library. Editing the design changes its
 revision and allows it to be imported again.
 
+Canva-sourced Media items also retain structured source metadata. Operators can
+open **Manage Canva source** on a selected item to check the current design
+revision, open Canva's fresh edit URL, and manually refresh the item. Refreshing
+keeps the WorshipSync media ID, name, folder, and creation date while replacing
+its stored Cloudinary or Mux rendition. Existing saved or live service content
+is not rewritten automatically.
+
 ## Canva Developer Portal
 
 Create a Canva Connect integration and enable these scopes:

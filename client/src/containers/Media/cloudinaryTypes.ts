@@ -1,3 +1,5 @@
+import type { CanvaMediaSource } from "../../types";
+
 export type mediaInfoType = {
   // Common properties
   id: string;
@@ -29,6 +31,7 @@ export type mediaInfoType = {
   done: boolean;
   /** Stable identity for detecting an already-imported Canva design page. */
   canvaImportKey?: string;
+  canvaSource?: CanvaMediaSource;
 
   // Video-specific properties (optional)
   playback_url?: string;

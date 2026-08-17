@@ -46,6 +46,25 @@ export const safeCanvaReturnTo = (value) => {
 };
 const safeName = (value, fallback) =>
   String(value || fallback || "Canva design").trim().slice(0, 160);
+const safeCanvaDesignUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:" && parsed.hostname === "www.canva.com"
+      ? parsed.toString()
+      : "";
+  } catch {
+    return "";
+  }
+};
+const normalizeCanvaDesign = (design = {}) => ({
+  id: String(design.id || ""),
+  title: safeName(design.title, "Untitled design"),
+  thumbnailUrl: design.thumbnail?.url || "",
+  pageCount: Number(design.page_count || 0),
+  updatedAt: Math.max(0, Number(design.updated_at) || 0),
+  editUrl: safeCanvaDesignUrl(design.urls?.edit_url),
+  viewUrl: safeCanvaDesignUrl(design.urls?.view_url),
+});
 const canvaPngImportKey = (designId, revision, pageNumber) =>
   `canva:${designId}:rev:${revision}:png:${pageNumber}`;
 const canvaMp4ImportKey = (designId, revision, pageNumbers) =>
@@ -447,15 +466,20 @@ export const createCanvaService = ({
       ...(String(continuation || "").trim() ? { continuation } : {}),
     });
     return {
-      items: (response.data?.items || []).map((item) => ({
-        id: item.id,
-        title: safeName(item.title, "Untitled design"),
-        thumbnailUrl: item.thumbnail?.url || "",
-        pageCount: Number(item.page_count || 0),
-        updatedAt: item.updated_at || 0,
-      })),
+      items: (response.data?.items || []).map(normalizeCanvaDesign),
       continuation: response.data?.continuation || "",
     };
+  };
+
+  const getDesign = async ({ churchId, designId }) => {
+    if (!/^[A-Za-z0-9_-]{3,200}$/.test(String(designId || ""))) {
+      throw createClientError("Choose a valid Canva design.");
+    }
+    const response = await canvaGet(
+      churchId,
+      `/designs/${encodeURIComponent(designId)}`,
+    );
+    return normalizeCanvaDesign(response.data?.design || response.data || {});
   };
 
   const waitForExport = async (churchId, initialJob) => {
@@ -496,6 +520,13 @@ export const createCanvaService = ({
     const design = designResponse.data?.design || designResponse.data || {};
     const title = safeName(design.title, "Canva design");
     const revision = Math.max(0, Number(design.updated_at) || 0);
+    const sourceFor = (pageNumbers) => ({
+      designId,
+      designTitle: title,
+      revision,
+      format,
+      pageNumbers,
+    });
     const existingKeySet = new Set(
       (Array.isArray(existingImportKeys) ? existingImportKeys : [])
         .slice(0, 500)
@@ -565,6 +596,9 @@ export const createCanvaService = ({
               revision,
               selectedPages[index] || index + 1,
             ),
+            canvaSource: sourceFor([
+              selectedPages[index] || index + 1,
+            ]),
           },
         });
       }
@@ -594,6 +628,7 @@ export const createCanvaService = ({
           thumbnailUrl: `https://image.mux.com/${playbackId}/thumbnail.jpg`,
           name: title,
           canvaImportKey: mp4ImportKey,
+          canvaSource: sourceFor(selectedPages),
         },
       });
     }
@@ -608,6 +643,7 @@ export const createCanvaService = ({
     getStatusForChurch,
     disconnect,
     listDesigns,
+    getDesign,
     importDesign,
   };
 };
