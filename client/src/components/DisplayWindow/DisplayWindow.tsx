@@ -1,5 +1,6 @@
 import React, {
   useCallback,
+  useContext,
   forwardRef,
   useEffect,
   useLayoutEffect,
@@ -13,6 +14,7 @@ import {
   Box,
   DisplayType,
   FormattedTextDisplayInfo,
+  LocalVideoInputPresentation,
   MonitorLayoutMode,
   OverlayInfo,
   TimerInfo,
@@ -30,10 +32,20 @@ import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
 import DisplayBoardPostOverlay from "./DisplayBoardPostOverlay";
 import HLSPlayer from "./HLSVideoPlayer";
 import MonitorView from "./MonitorView";
+import ProjectorClockTimer from "./ProjectorClockTimer";
 import { useSelector } from "../../hooks";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import {
+  resolveDisplaySettings,
+  resolveOutputDefaults,
+} from "../../utils/displaySettings";
+import { useScreenOverrides } from "../../hooks/useScreenOverrides";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { serverNow } from "../../utils/serverTime";
+import LocalVideoInputLayer from "./LocalVideoInputLayer";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
@@ -83,17 +95,15 @@ const hasStbOverlayData = (overlay?: OverlayInfo) =>
 const hasQrOverlayData = (overlay?: OverlayInfo) =>
   Boolean(overlay?.url || overlay?.description);
 
-const hasImageOverlayData = (overlay?: OverlayInfo) => Boolean(overlay?.imageUrl);
+const hasImageOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.imageUrl);
 
 const hasBoardPostData = (info?: BoardPostStreamInfo) =>
   Boolean(info?.text?.trim());
 
 const buildStreamOverlayIdentityKey = (
   type: string,
-  info:
-    | OverlayInfo
-    | BoardPostStreamInfo
-    | undefined,
+  info: OverlayInfo | BoardPostStreamInfo | undefined,
   primaryValue: string | undefined,
 ) => {
   const trimmedPrimaryValue = primaryValue?.trim();
@@ -103,7 +113,7 @@ const buildStreamOverlayIdentityKey = (
     type,
     info.transitionSequence ?? "",
     info?.time ?? "",
-    "id" in (info ?? {}) ? info?.id ?? "" : "",
+    "id" in info ? (info.id ?? "") : "",
     trimmedPrimaryValue,
   ].join("::");
 };
@@ -234,6 +244,14 @@ type DisplayWindowProps = {
   width?: number; // Optional: if not provided, component will scale to fit container
   showBorder?: boolean;
   displayType?: DisplayType;
+  /** Display output whose settings this surface renders with. */
+  outputId?: string;
+  /**
+   * Opt in to opening the local capture device. Only live output surfaces set
+   * this; previews render without it so they never compete with the projector
+   * for the same camera.
+   */
+  canCaptureLocalVideo?: boolean;
   participantOverlayInfo?: OverlayInfo;
   prevParticipantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
@@ -260,7 +278,7 @@ type DisplayWindowProps = {
   boxCursorPositions?: Record<number, number>;
   disabled?: boolean;
   className?: string;
-  showMonitorClockTimer?: boolean;
+  showClockTimer?: boolean;
   /** When true with displayType="stream", renders only overlay(s) filling the container (e.g. for preview). */
   overlayPreviewMode?: boolean;
   /** For monitor with "display next slide": boxes for the next slide. */
@@ -274,6 +292,10 @@ type DisplayWindowProps = {
   streamItemContentBlocked?: boolean;
   /** Monitor rendering mode: full monitor chrome only for the live monitor surfaces. */
   monitorLayoutMode?: MonitorLayoutMode;
+  /** Projector-only capture source. Remote devices render an unavailable status. */
+  localVideoInput?: LocalVideoInputPresentation;
+  /** Outgoing capture source retained briefly for the media crossfade. */
+  prevLocalVideoInput?: LocalVideoInputPresentation;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -285,6 +307,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       width,
       showBorder = false,
       displayType,
+
+      outputId,
+
+      canCaptureLocalVideo = false,
       participantOverlayInfo,
       prevParticipantOverlayInfo,
       stbOverlayInfo,
@@ -311,7 +337,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       boxCursorPositions,
       disabled = false,
       className,
-      showMonitorClockTimer = false,
+      showClockTimer = false,
       overlayPreviewMode = false,
       nextBoxes = [],
       prevNextBoxes = [],
@@ -319,8 +345,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       transitionDirection,
       streamItemContentBlocked = false,
       monitorLayoutMode = "content-only",
+      localVideoInput,
+      prevLocalVideoInput,
     }: DisplayWindowProps,
-    ref
+    ref,
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const elementRef = useRef<HTMLDivElement | null>(null);
@@ -330,7 +358,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       elementRef.current = node;
       fallbackRef.current = node;
 
-      if (typeof ref === 'function') {
+      if (typeof ref === "function") {
         ref(node);
       } else if (ref) {
         (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
@@ -348,6 +376,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const [streamPrevTextLayerBoxes, setStreamPrevTextLayerBoxes] = useState<
       Box[]
     >([]);
+    const [activePrevLocalVideoInput, setActivePrevLocalVideoInput] =
+      useState<LocalVideoInputPresentation>();
+    const [hiddenPrevLocalVideoSourceId, setHiddenPrevLocalVideoSourceId] =
+      useState<string>();
     const displayPrevLayerTokenRef = useRef(0);
     const streamPrevTextLayerTokenRef = useRef(0);
 
@@ -360,8 +392,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         const timeoutId = setTimeout(() => {
           const retryElement = elementRef.current || fallbackRef.current;
           if (retryElement) {
-            const widthInPixels = retryElement.offsetWidth || retryElement.clientWidth;
-            const heightInPixels = retryElement.offsetHeight || retryElement.clientHeight;
+            const widthInPixels =
+              retryElement.offsetWidth || retryElement.clientWidth;
+            const heightInPixels =
+              retryElement.offsetHeight || retryElement.clientHeight;
             if (widthInPixels > 0) {
               setActualWidthPx(widthInPixels);
             }
@@ -376,8 +410,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       const resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
         if (entry) {
-          const widthInPixels = entry.borderBoxSize?.[0]?.inlineSize || entry.contentRect.width;
-          const heightInPixels = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
+          const widthInPixels =
+            entry.borderBoxSize?.[0]?.inlineSize || entry.contentRect.width;
+          const heightInPixels =
+            entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
           if (widthInPixels > 0) {
             setActualWidthPx(widthInPixels);
           }
@@ -398,19 +434,16 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // Use the smaller scale factor to ensure content fits within both constraints.
     // Always use transform scaling. Until we've measured the container, render at scale 0.
     const widthScale = actualWidthPx > 0 ? actualWidthPx / REFERENCE_WIDTH : 0;
-    const heightScale = actualHeightPx > 0 ? actualHeightPx / REFERENCE_HEIGHT : 0;
-    const scaleFactor = actualWidthPx > 0 && actualHeightPx > 0
-      ? Math.min(widthScale, heightScale)
-      : widthScale; // Fallback to width scale if height not measured yet
+    const heightScale =
+      actualHeightPx > 0 ? actualHeightPx / REFERENCE_HEIGHT : 0;
+    const scaleFactor =
+      actualWidthPx > 0 && actualHeightPx > 0
+        ? Math.min(widthScale, heightScale)
+        : widthScale; // Fallback to width scale if height not measured yet
 
     // Components should use reference width for calculations
     const effectiveWidth = (REFERENCE_WIDTH / window.innerWidth) * 100; // Convert px to vw for compatibility
 
-
-    const showBackground =
-      displayType === "projector" ||
-      displayType === "slide" ||
-      displayType === "editor";
     const isStream = displayType === "stream";
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
@@ -418,20 +451,108 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
     const isSlide = displayType === "slide";
-    const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() => serverNow());
+    useLayoutEffect(() => {
+      if (
+        !shouldAnimate ||
+        !prevLocalVideoInput ||
+        prevLocalVideoInput.sourceId === localVideoInput?.sourceId
+      ) {
+        setActivePrevLocalVideoInput(undefined);
+        setHiddenPrevLocalVideoSourceId(undefined);
+        return;
+      }
+      setActivePrevLocalVideoInput(prevLocalVideoInput);
+      setHiddenPrevLocalVideoSourceId(undefined);
+      const timeoutId = window.setTimeout(() => {
+        setActivePrevLocalVideoInput(undefined);
+        setHiddenPrevLocalVideoSourceId(prevLocalVideoInput.sourceId);
+      }, DISPLAY_PREV_LAYER_VISIBLE_MS);
+      return () => window.clearTimeout(timeoutId);
+    }, [localVideoInput?.sourceId, prevLocalVideoInput, shouldAnimate]);
+    const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() =>
+      serverNow(),
+    );
     const [streamOverlayKeepAliveByKey, setStreamOverlayKeepAliveByKey] =
       useState<StreamOverlayKeepAliveMap>({});
-    const storedMonitorSettings = useSelector(
-      (state) => state.undoable.present.preferences.monitorSettings
+    // Settings resolve per display: registry defaults, then this screen's own
+    // overrides. Previews and editors are not tied to a display, so they fall
+    // back to the built-in surface for their render profile.
+    const fallbackOutputType =
+      displayType === "monitor" ||
+      displayType === "stream" ||
+      displayType === "projector"
+        ? displayType
+        : "projector";
+    const settingsOutputId = outputId ?? fallbackOutputType;
+    const registryOutputs = useSelector(selectDisplayOutputs);
+    const pairedDeviceSettings =
+      useContext(GlobalInfoContext)?.device?.settings;
+    // The built-in monitor keeps honouring the church-wide monitorSettings until
+    // it is configured as a display, so legacy monitor settings do not silently
+    // stop affecting anything.
+    const legacyMonitorSettings = useSelector((state) =>
+      settingsOutputId === "monitor"
+        ? state.undoable?.present?.preferences?.monitorSettings
+        : undefined,
     );
+    // Subscribed rather than read once: a screen setting changed on the
+    // controller has to reach this window without a reload.
+    const screenOverrides = useScreenOverrides(
+      settingsOutputId,
+      pairedDeviceSettings,
+    );
+    const resolvedDisplaySettings = useMemo(() => {
+      const output = registryOutputs.find(
+        (candidate) => candidate.id === settingsOutputId,
+      );
+      const outputDefaults = resolveOutputDefaults(
+        output?.settings,
+        legacyMonitorSettings,
+      );
+      // The profile decides the defaults: a monitor keeps backgrounds off until
+      // an operator opts in, where a projector has always shown them.
+      return resolveDisplaySettings(
+        outputDefaults,
+        screenOverrides,
+        output?.type ?? fallbackOutputType,
+      );
+    }, [
+      fallbackOutputType,
+      legacyMonitorSettings,
+      screenOverrides,
+      registryOutputs,
+      settingsOutputId,
+    ]);
+
+    // Slide thumbnails and the editor always show their background; the surfaces
+    // that render to a room honour the display's own setting.
+    const supportsBackground =
+      displayType === "projector" ||
+      displayType === "monitor" ||
+      displayType === "slide" ||
+      displayType === "editor";
+    // Room surfaces honour the display's own setting; thumbnails and the editor
+    // always show their background.
+    const isRoomSurface =
+      displayType === "projector" || displayType === "monitor";
+    const showBackground =
+      supportsBackground &&
+      (!isRoomSurface || resolvedDisplaySettings.showBackground);
 
     const hasStreamItemData = useMemo(() => {
       const hasBoxes = (boxes?.length ?? 0) > 0;
-      const hasBible =
-        !!(bibleDisplayInfo?.title?.trim() || bibleDisplayInfo?.text?.trim());
-      const hasFormatted = !!(formattedTextDisplayInfo?.text?.trim());
-      return hasBoxes || hasBible || hasFormatted;
-    }, [boxes?.length, bibleDisplayInfo?.title, bibleDisplayInfo?.text, formattedTextDisplayInfo?.text]);
+      const hasBible = !!(
+        bibleDisplayInfo?.title?.trim() || bibleDisplayInfo?.text?.trim()
+      );
+      const hasFormatted = !!formattedTextDisplayInfo?.text?.trim();
+      return hasBoxes || hasBible || hasFormatted || Boolean(localVideoInput);
+    }, [
+      boxes?.length,
+      bibleDisplayInfo?.title,
+      bibleDisplayInfo?.text,
+      formattedTextDisplayInfo?.text,
+      localVideoInput,
+    ]);
 
     // Item content still animating out (e.g. after Clear, when current is empty but
     // prev holds the outgoing bible/formatted/text). Keep the item layer visible so
@@ -443,12 +564,18 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         prevBibleDisplayInfo?.text?.trim()
       );
       const hasPrevFormatted = !!prevFormattedTextDisplayInfo?.text?.trim();
-      return hasPrevBoxes || hasPrevBible || hasPrevFormatted;
+      return (
+        hasPrevBoxes ||
+        hasPrevBible ||
+        hasPrevFormatted ||
+        Boolean(activePrevLocalVideoInput)
+      );
     }, [
       streamPrevTextLayerBoxes.length,
       prevBibleDisplayInfo?.title,
       prevBibleDisplayInfo?.text,
       prevFormattedTextDisplayInfo?.text,
+      activePrevLocalVideoInput,
     ]);
 
     // Keep the scheduled state clock for automatic rerenders, but never let a
@@ -487,10 +614,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         const keepUntilMs = serverNow() + localVisibleMs;
         setStreamOverlayKeepAliveByKey((prev) => {
           const next = pruneExpiredOverlayKeepAliveEntries(prev, serverNow());
-          if (
-            mode === "max" &&
-            (next[overlayKey] ?? 0) >= keepUntilMs
-          ) {
+          if (mode === "max" && (next[overlayKey] ?? 0) >= keepUntilMs) {
             return next;
           }
 
@@ -507,7 +631,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       hasData: hasParticipantOverlayData(participantOverlayInfo),
       time: participantOverlayInfo?.time,
       duration: participantOverlayInfo?.duration,
-      totalVisibleMs: getParticipantOverlayTotalVisibleMs(participantOverlayInfo),
+      totalVisibleMs: getParticipantOverlayTotalVisibleMs(
+        participantOverlayInfo,
+      ),
     });
     const participantPrevOverlayVisibleUntilMs = getPrevOverlayVisibleUntilMs({
       prevHasData: hasParticipantOverlayData(prevParticipantOverlayInfo),
@@ -635,7 +761,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const participantOverlayKey = buildStreamOverlayIdentityKey(
       "participant",
       participantOverlayInfo,
-      [participantOverlayInfo?.name, participantOverlayInfo?.title, participantOverlayInfo?.event]
+      [
+        participantOverlayInfo?.name,
+        participantOverlayInfo?.title,
+        participantOverlayInfo?.event,
+      ]
         .filter((value): value is string => Boolean(value))
         .join("|"),
     );
@@ -701,7 +831,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const isLocallyKeptAlive = (overlayKey: string | null) =>
       overlayKey != null &&
-      (streamOverlayKeepAliveByKey[overlayKey] ?? 0) > streamOverlayEvaluationNowMs;
+      (streamOverlayKeepAliveByKey[overlayKey] ?? 0) >
+        streamOverlayEvaluationNowMs;
 
     const participantOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
       participantOverlayInfo?.duration,
@@ -725,7 +856,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
 
     const showParticipantOverlay =
-      participantOverlaySyncVisible || isLocallyKeptAlive(participantOverlayKey);
+      participantOverlaySyncVisible ||
+      isLocallyKeptAlive(participantOverlayKey);
     const showPrevParticipantOverlay =
       prevParticipantOverlaySyncVisible ||
       isLocallyKeptAlive(prevParticipantOverlayKey);
@@ -788,7 +920,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
 
     const visiblePrevParticipantOverlayInfo = useMemo(
-      () => (showPrevParticipantOverlay ? prevParticipantOverlayInfo : undefined),
+      () =>
+        showPrevParticipantOverlay ? prevParticipantOverlayInfo : undefined,
       [prevParticipantOverlayInfo, showPrevParticipantOverlay],
     );
 
@@ -850,16 +983,15 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         return;
       }
 
-      const timeoutId = window.setTimeout(() => {
-        setStreamOverlayNowMs(serverNow());
-      }, Math.max(0, streamOverlayHideUntilMs - nowMs) + 20);
+      const timeoutId = window.setTimeout(
+        () => {
+          setStreamOverlayNowMs(serverNow());
+        },
+        Math.max(0, streamOverlayHideUntilMs - nowMs) + 20,
+      );
 
       return () => window.clearTimeout(timeoutId);
-    }, [
-      isStream,
-      overlayPreviewMode,
-      streamOverlayHideUntilMs,
-    ]);
+    }, [isStream, overlayPreviewMode, streamOverlayHideUntilMs]);
 
     // Item content is shown only when we have item data, the operator hasn't manually hidden it,
     // and no active stream overlay is temporarily overriding the item layer.
@@ -870,7 +1002,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const slideHasWords = useMemo(
       () => boxes.some((box) => Boolean(box.words?.trim())),
-      [boxes]
+      [boxes],
     );
     const displayPrevLayerKey = useMemo(
       () => getBoxesLayerKey(prevBoxes),
@@ -945,30 +1077,43 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     }, [isStream, overlayPreviewMode, prevBoxes]);
 
     // Determine the active background video (if any) from boxes
-    const { videoBox, desiredVideoUrl } = useMemo(() => {
+    const { videoBox, rawDesiredVideoUrl } = useMemo(() => {
       if (!shouldPlayVideo || !showBackground)
-        return { videoBox: undefined, desiredVideoUrl: undefined };
+        return { videoBox: undefined, rawDesiredVideoUrl: undefined };
       const videoBox = boxes.find(
-        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background
+        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background,
       );
-      return { videoBox, desiredVideoUrl: videoBox?.mediaInfo?.background };
+      return {
+        videoBox,
+        rawDesiredVideoUrl: videoBox?.mediaInfo?.background,
+      };
     }, [boxes, showBackground, shouldPlayVideo]);
+    const localVideoFile = useLocalVideoFileUrl(
+      videoBox?.mediaInfo?.localVideoFile,
+    );
+    const desiredVideoUrl = localVideoFile.isLocalVideoFile
+      ? localVideoFile.url
+      : rawDesiredVideoUrl;
 
     const [activeVideoUrl, setActiveVideoUrl] = useState<string | undefined>(
-      undefined
+      undefined,
     );
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
-    const resolvedVideoUrl = useCachedVideoUrl(activeVideoUrl);
+    const cachedVideoUrl = useCachedVideoUrl(activeVideoUrl);
+    const resolvedVideoUrl = localVideoFile.isLocalVideoFile
+      ? activeVideoUrl
+      : cachedVideoUrl;
 
-    const showClock = storedMonitorSettings?.showClock ?? true;
-    const showTimer = storedMonitorSettings?.showTimer ?? true;
-    const showNextSlide = storedMonitorSettings?.showNextSlide ?? false;
-    const clockFontSize = storedMonitorSettings?.clockFontSize ?? 75;
-    const timerFontSize = storedMonitorSettings?.timerFontSize ?? 75;
+    const showClock = resolvedDisplaySettings.showClock;
+    const showTimer = resolvedDisplaySettings.showTimer;
+    const showNextSlide = resolvedDisplaySettings.showNextSlide;
+    const clockFontSize = resolvedDisplaySettings.clockFontSize;
+    const timerFontSize = resolvedDisplaySettings.timerFontSize;
 
-    // Only show clock and timer when showMonitorClockTimer is true
-    const effectiveShowClock = showMonitorClockTimer ? showClock : false;
-    const effectiveShowTimer = showMonitorClockTimer ? showTimer : false;
+    // Previews and quick-link thumbnails leave this off; only live output
+    // surfaces and the transmit-handler tiles render the clock and timer.
+    const effectiveShowClock = showClockTimer ? showClock : false;
+    const effectiveShowTimer = showClockTimer ? showTimer : false;
 
     // Keep the video element mounted and update src only when the URL changes
     useEffect(() => {
@@ -989,6 +1134,71 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         setIsWindowVideoLoaded(true);
       }
     }, [resolvedVideoUrl]);
+
+    // Overlay activity hides lyrics/Bible/formatted text only. Hide Content
+    // still hides and mutes local video so operators can drop the camera.
+    const localVideoContentVisible = !isStream || !streamItemContentBlocked;
+    const localVideoVolume = resolvedDisplaySettings.localVideoVolume / 100;
+    const localVideoFileAudioEnabled = Boolean(
+      videoBox?.mediaInfo?.localVideoFile &&
+      videoBox.mediaInfo.localVideoFile.audioEnabled !== false &&
+      resolvedDisplaySettings.localVideoAudioEnabled &&
+      displayType !== "editor" &&
+      displayType !== "slide" &&
+      (!isStream || !streamItemContentBlocked),
+    );
+    const immediatePrevLocalVideoInput =
+      shouldAnimate &&
+      prevLocalVideoInput &&
+      prevLocalVideoInput.sourceId !== localVideoInput?.sourceId &&
+      prevLocalVideoInput.sourceId !== hiddenPrevLocalVideoSourceId
+        ? prevLocalVideoInput
+        : undefined;
+    const renderedPrevLocalVideoInput =
+      immediatePrevLocalVideoInput ??
+      (activePrevLocalVideoInput?.sourceId !== localVideoInput?.sourceId
+        ? activePrevLocalVideoInput
+        : undefined);
+    const localVideoLayer = localVideoInput ? (
+      <LocalVideoInputLayer
+        key={`local-video-${localVideoInput.sourceId}`}
+        input={localVideoInput}
+        shouldAnimate={shouldAnimate}
+        playAudio={
+          canCaptureLocalVideo &&
+          resolvedDisplaySettings.localVideoAudioEnabled &&
+          localVideoInput.audioEnabled !== false &&
+          localVideoContentVisible
+        }
+        volume={localVideoVolume}
+        captureEnabled={canCaptureLocalVideo && displayType === "editor"}
+        receiveHighQuality={canCaptureLocalVideo && displayType !== "editor"}
+        publishPreview={canCaptureLocalVideo && displayType === "editor"}
+        showErrors={!canCaptureLocalVideo || displayType === "editor"}
+        transparentBackground={displayType === "stream"}
+        contentVisible={localVideoContentVisible}
+      />
+    ) : null;
+    const previousLocalVideoLayer = renderedPrevLocalVideoInput ? (
+      <LocalVideoInputLayer
+        key={`local-video-${renderedPrevLocalVideoInput.sourceId}`}
+        input={renderedPrevLocalVideoInput}
+        isPrevious
+        shouldAnimate={shouldAnimate}
+        playAudio={false}
+        captureEnabled={false}
+        receiveHighQuality={canCaptureLocalVideo && displayType !== "editor"}
+        showErrors={false}
+        transparentBackground={displayType === "stream"}
+        contentVisible={localVideoContentVisible}
+      />
+    ) : null;
+    const localVideoMediaLayers = (
+      <>
+        {previousLocalVideoLayer}
+        {localVideoLayer}
+      </>
+    );
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
@@ -1029,7 +1239,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               timerFontSize={timerFontSize}
               onVideoLoaded={() => setIsWindowVideoLoaded(true)}
               onVideoError={() => setIsWindowVideoLoaded(false)}
+              videoMuted={!localVideoFileAudioEnabled}
+              videoVolume={localVideoVolume}
               transitionDirection={transitionDirection}
+              currentMediaLayer={localVideoMediaLayers}
             />
           </div>
         );
@@ -1064,7 +1277,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ) : null;
 
       const prevDisplayLayer =
-        isDisplay && !shouldUseFullMonitorLayout && activeDisplayPrevLayerBoxes.length > 0 ? (
+        isDisplay &&
+        !shouldUseFullMonitorLayout &&
+        activeDisplayPrevLayerBoxes.length > 0 ? (
           <div className="absolute inset-0" data-testid="prev-display-layer">
             {activeDisplayPrevLayerBoxes.map((box, index) => (
               <DisplayBox
@@ -1090,7 +1305,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       const currentStreamTextLayer =
         isStream && !overlayPreviewMode ? (
-          <div className="absolute inset-0" data-testid="current-stream-text-layer">
+          <div
+            className="absolute inset-0"
+            data-testid="current-stream-text-layer"
+          >
             {boxes.map((box, index) => (
               <DisplayStreamText
                 key={`current-${box.id}`}
@@ -1108,8 +1326,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ) : null;
 
       const prevStreamTextLayer =
-        isStream && !overlayPreviewMode && streamPrevTextLayerBoxes.length > 0 ? (
-          <div className="absolute inset-0" data-testid="prev-stream-text-layer">
+        isStream &&
+        !overlayPreviewMode &&
+        streamPrevTextLayerBoxes.length > 0 ? (
+          <div
+            className="absolute inset-0"
+            data-testid="prev-stream-text-layer"
+          >
             {streamPrevTextLayerBoxes.map((box, index) => (
               <DisplayStreamText
                 key={`prev-${box.id}`}
@@ -1155,6 +1378,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         <>
           {showBackground &&
             shouldPlayVideo &&
+            !localVideoInput &&
             activeVideoUrl &&
             resolvedVideoUrl && (
               <HLSPlayer
@@ -1163,17 +1387,33 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 onLoadedData={() => setIsWindowVideoLoaded(true)}
                 onError={() => setIsWindowVideoLoaded(false)}
                 videoBox={videoBox}
+                muted={!localVideoFileAudioEnabled}
+                volume={localVideoVolume}
               />
             )}
 
+          {!isStream && localVideoMediaLayers}
 
           {editorLayer}
           {currentDisplayLayer}
           {prevDisplayLayer}
 
+          {isDisplay && !shouldUseFullMonitorLayout && (
+            <ProjectorClockTimer
+              showClock={effectiveShowClock}
+              showTimer={effectiveShowTimer}
+              clockFontSize={clockFontSize}
+              timerFontSize={timerFontSize}
+              timerInfo={timerInfo}
+            />
+          )}
+
           {isStream && !overlayPreviewMode && (
             <>
-              {/* Layer 1: stream item (text/bible/formatted). Hidden when overlay-only ON; fades back when turned OFF. */}
+              {/* Media background: local input stays below slide text and overlays. */}
+              {localVideoMediaLayers}
+
+              {/* Item content: hidden while an overlay is active or Hide Content is on. */}
               <div
                 data-testid="stream-item-layer"
                 className="absolute inset-0 transition-opacity duration-500 ease-out"
@@ -1199,124 +1439,134 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 />
               </div>
 
-              {/* Layer 2: stream overlays. Active overlays temporarily override the item layer without destroying it. */}
+              {/* Stream overlays remain the top layer so lower-thirds/QR/board posts composite over the camera. */}
               {(visibleStbOverlayInfo != null ||
                 visiblePrevStbOverlayInfo != null) && (
-                  <DisplayStbOverlay
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    stbOverlayInfo={visibleStbOverlayInfo}
-                    prevStbOverlayInfo={visiblePrevStbOverlayInfo}
-                    currentKeepAliveKey={stbOverlayKey}
-                    prevKeepAliveKey={prevStbOverlayKey}
-                    currentKeepAliveMs={stbOverlayLocalVisibleMs}
-                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                    ref={containerRef}
-                  />
-                )}
+                <DisplayStbOverlay
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  stbOverlayInfo={visibleStbOverlayInfo}
+                  prevStbOverlayInfo={visiblePrevStbOverlayInfo}
+                  currentKeepAliveKey={stbOverlayKey}
+                  prevKeepAliveKey={prevStbOverlayKey}
+                  currentKeepAliveMs={stbOverlayLocalVisibleMs}
+                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                  ref={containerRef}
+                />
+              )}
 
               {(visibleParticipantOverlayInfo != null ||
                 visiblePrevParticipantOverlayInfo != null) && (
-                  <DisplayParticipantOverlay
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    participantOverlayInfo={visibleParticipantOverlayInfo}
-                    prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
-                    currentKeepAliveKey={participantOverlayKey}
-                    prevKeepAliveKey={prevParticipantOverlayKey}
-                    currentKeepAliveMs={participantOverlayLocalVisibleMs}
-                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                    ref={containerRef}
-                  />
-                )}
+                <DisplayParticipantOverlay
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  participantOverlayInfo={visibleParticipantOverlayInfo}
+                  prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
+                  currentKeepAliveKey={participantOverlayKey}
+                  prevKeepAliveKey={prevParticipantOverlayKey}
+                  currentKeepAliveMs={participantOverlayLocalVisibleMs}
+                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                  ref={containerRef}
+                />
+              )}
 
               {(visibleQrCodeOverlayInfo != null ||
                 visiblePrevQrCodeOverlayInfo != null) && (
-                  <DisplayQrCodeOverlay
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
-                    prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
-                    currentKeepAliveKey={qrOverlayKey}
-                    prevKeepAliveKey={prevQrOverlayKey}
-                    currentKeepAliveMs={qrOverlayLocalVisibleMs}
-                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                    ref={containerRef}
-                  />
-                )}
+                <DisplayQrCodeOverlay
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
+                  prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
+                  currentKeepAliveKey={qrOverlayKey}
+                  prevKeepAliveKey={prevQrOverlayKey}
+                  currentKeepAliveMs={qrOverlayLocalVisibleMs}
+                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                  ref={containerRef}
+                />
+              )}
 
               {(visibleImageOverlayInfo != null ||
                 visiblePrevImageOverlayInfo != null) && (
-                  <DisplayImageOverlay
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    imageOverlayInfo={visibleImageOverlayInfo}
-                    prevImageOverlayInfo={visiblePrevImageOverlayInfo}
-                    currentKeepAliveKey={imageOverlayKey}
-                    prevKeepAliveKey={prevImageOverlayKey}
-                    currentKeepAliveMs={imageOverlayLocalVisibleMs}
-                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                    ref={containerRef}
-                  />
-                )}
+                <DisplayImageOverlay
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  imageOverlayInfo={visibleImageOverlayInfo}
+                  prevImageOverlayInfo={visiblePrevImageOverlayInfo}
+                  currentKeepAliveKey={imageOverlayKey}
+                  prevKeepAliveKey={prevImageOverlayKey}
+                  currentKeepAliveMs={imageOverlayLocalVisibleMs}
+                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                  ref={containerRef}
+                />
+              )}
 
               {(visibleBoardPostStreamInfo != null ||
                 visiblePrevBoardPostStreamInfo != null) && (
-                  <DisplayBoardPostOverlay
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    boardPostStreamInfo={visibleBoardPostStreamInfo}
-                    prevBoardPostStreamInfo={visiblePrevBoardPostStreamInfo}
-                    currentKeepAliveKey={boardPostOverlayKey}
-                    prevKeepAliveKey={prevBoardPostOverlayKey}
-                    currentKeepAliveMs={boardPostOverlayLocalVisibleMs}
-                    prevKeepAliveMs={STREAM_PREV_BOARD_POST_EXIT_MS}
-                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                  />
-                )}
+                <DisplayBoardPostOverlay
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  boardPostStreamInfo={visibleBoardPostStreamInfo}
+                  prevBoardPostStreamInfo={visiblePrevBoardPostStreamInfo}
+                  currentKeepAliveKey={boardPostOverlayKey}
+                  prevKeepAliveKey={prevBoardPostOverlayKey}
+                  currentKeepAliveMs={boardPostOverlayLocalVisibleMs}
+                  prevKeepAliveMs={STREAM_PREV_BOARD_POST_EXIT_MS}
+                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                />
+              )}
             </>
           )}
 
-          {isStream && overlayPreviewMode && (() => {
-            const previewWidth = actualWidthPx > 0 ? (actualWidthPx / window.innerWidth) * 100 : effectiveWidth;
-            const previewProps = { width: previewWidth, shouldAnimate, ref: containerRef, shouldFillContainer: true };
-            return (
-              <>
-                {stbOverlayInfo != null && (
-                  <DisplayStbOverlay
-                    {...previewProps}
-                    stbOverlayInfo={stbOverlayInfo}
-                    prevStbOverlayInfo={prevStbOverlayInfo}
-                  />
-                )}
-                {participantOverlayInfo != null && (
-                  <DisplayParticipantOverlay
-                    {...previewProps}
-                    participantOverlayInfo={participantOverlayInfo}
-                    prevParticipantOverlayInfo={prevParticipantOverlayInfo}
-                  />
-                )}
-                {qrCodeOverlayInfo != null && (
-                  <DisplayQrCodeOverlay
-                    {...previewProps}
-                    qrCodeOverlayInfo={qrCodeOverlayInfo}
-                    prevQrCodeOverlayInfo={prevQrCodeOverlayInfo}
-                  />
-                )}
-                {imageOverlayInfo != null && (
-                  <DisplayImageOverlay
-                    {...previewProps}
-                    imageOverlayInfo={imageOverlayInfo}
-                    prevImageOverlayInfo={prevImageOverlayInfo}
-                  />
-                )}
-              </>
-            );
-          })()}
+          {isStream &&
+            overlayPreviewMode &&
+            (() => {
+              const previewWidth =
+                actualWidthPx > 0
+                  ? (actualWidthPx / window.innerWidth) * 100
+                  : effectiveWidth;
+              const previewProps = {
+                width: previewWidth,
+                shouldAnimate,
+                ref: containerRef,
+                shouldFillContainer: true,
+              };
+              return (
+                <>
+                  {stbOverlayInfo != null && (
+                    <DisplayStbOverlay
+                      {...previewProps}
+                      stbOverlayInfo={stbOverlayInfo}
+                      prevStbOverlayInfo={prevStbOverlayInfo}
+                    />
+                  )}
+                  {participantOverlayInfo != null && (
+                    <DisplayParticipantOverlay
+                      {...previewProps}
+                      participantOverlayInfo={participantOverlayInfo}
+                      prevParticipantOverlayInfo={prevParticipantOverlayInfo}
+                    />
+                  )}
+                  {qrCodeOverlayInfo != null && (
+                    <DisplayQrCodeOverlay
+                      {...previewProps}
+                      qrCodeOverlayInfo={qrCodeOverlayInfo}
+                      prevQrCodeOverlayInfo={prevQrCodeOverlayInfo}
+                    />
+                  )}
+                  {imageOverlayInfo != null && (
+                    <DisplayImageOverlay
+                      {...previewProps}
+                      imageOverlayInfo={imageOverlayInfo}
+                      prevImageOverlayInfo={prevImageOverlayInfo}
+                    />
+                  )}
+                </>
+              );
+            })()}
         </>
       );
 
@@ -1379,7 +1629,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         className={cn(
           "relative overflow-hidden overflow-anywhere text-white aspect-video",
           showBorder && "border border-gray-500",
-          className
+          className,
         )}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
@@ -1399,7 +1649,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     ) : (
       inner
     );
-  }
+  },
 );
 
 export default DisplayWindow;

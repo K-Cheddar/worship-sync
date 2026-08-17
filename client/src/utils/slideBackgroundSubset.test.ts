@@ -38,4 +38,26 @@ describe("mapSlidesUpdateBox0ById", () => {
     expect(next[1].boxes[0].mediaInfo).toBeUndefined();
     expect(next[1].boxes[1]).toEqual(slides[1].boxes[1]);
   });
+
+  it("stores a live input as the media layer and preserves text boxes", () => {
+    const localVideoInput = {
+      kind: "local-video-input" as const,
+      sourceId: "camera-1",
+      label: "Sanctuary camera",
+      fit: "cover" as const,
+      audioEnabled: false,
+    };
+    const next = mapSlidesUpdateBox0ById(slides, new Set(["s1"]), {
+      background: "local-video-input://camera-1",
+      mediaInfo: {
+        id: "input-1",
+        type: "video",
+        localVideoInput,
+      } as any,
+    });
+
+    expect(next[1].mediaSource).toEqual(localVideoInput);
+    expect(next[1].boxes[0].background).toBe("local-video-input://camera-1");
+    expect(next[1].boxes[1]).toBe(slides[1].boxes[1]);
+  });
 });

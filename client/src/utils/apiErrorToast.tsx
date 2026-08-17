@@ -62,7 +62,7 @@ export const authErrorToastContent = (): Omit<ToastData, "id"> => ({
   variant: "error",
   persist: true,
   children: () => (
-    <div className="mt-2">
+    <div className="mt-2 flex justify-center">
       <Button
         variant="cta"
         className="text-sm"

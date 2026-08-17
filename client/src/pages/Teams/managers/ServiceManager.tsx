@@ -191,8 +191,10 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       return { ...current, positionRequirements: next };
     });
   };
-  const setPositionCount = (positionId: string, count: number) => {
-    const safeCount = Math.max(1, Math.floor(Number(count) || 1));
+  const setPositionCount = (positionId: string, count: string | number) => {
+    // Allow clearing while typing; shared number Input coerces empty → min on blur.
+    if (count === "") return;
+    const safeCount = Math.max(1, Math.floor(Number(count) || 0));
     setDraft((current) => {
       const list = current.positionRequirements || [];
       const next = list.some((req) => req.positionId === positionId)
@@ -494,7 +496,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                           value={needed ? count : 1}
                           inputWidth="w-14"
                           inputTextSize="text-xs"
-                          onChange={(value) => setPositionCount(position.positionId, Number(value))}
+                          onChange={(value) => setPositionCount(position.positionId, value)}
                         />
                       </div>
                     </div>

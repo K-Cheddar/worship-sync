@@ -1,4 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { selectOutputSlots } from "../../store/presentationSlice";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import { useNavigate } from "react-router-dom";
 import { ListChecks } from "lucide-react";
 import { onValue, ref } from "firebase/database";
@@ -338,8 +340,8 @@ const CurrentServiceWorkspace = () => {
   const { showToast } = useToast();
   const serviceTimes = useSelector((state) => state.undoable.present.serviceTimes.list);
   const liveCredits = useSelector((state) => state.undoable.present.credits.liveCredits);
-  const projectorInfo = useSelector((state) => state.presentation.projectorInfo);
-  const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const outputSlots = useSelector(selectOutputSlots);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [tab, setTab] = useState<WorkspaceTab>("plan");
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
@@ -361,10 +363,19 @@ const CurrentServiceWorkspace = () => {
     null,
   );
 
-  const liveSlideProgress = useMemo(
-    () => resolveLiveSlideProgress(projectorInfo, monitorInfo),
-    [monitorInfo, projectorInfo],
-  );
+  // Projectors first — a projector is what the room sees — then monitors, each
+  // in the order the operator arranged them.
+  const liveSlideProgress = useMemo(() => {
+    const ordered = [
+      ...displayOutputs.filter((o) => o.enabled && o.type === "projector"),
+      ...displayOutputs.filter((o) => o.enabled && o.type === "monitor"),
+    ];
+    return resolveLiveSlideProgress(
+      ordered
+        .map((output) => outputSlots[output.id]?.info)
+        .filter((info) => info != null),
+    );
+  }, [displayOutputs, outputSlots]);
 
   useSyncMonitorSettings(firebaseDb, churchId, !!sharedDataReady);
 

@@ -680,6 +680,53 @@ const parseAuthorizationBearerToken = (req) => {
   return match ? match[1].trim() : "";
 };
 
+/**
+ * Per-screen display setting overrides, validated server-side.
+ *
+ * Only known keys with the right types survive, and font sizes are clamped, so
+ * a crafted request cannot store values a display surface would then render.
+ * Absent keys mean "inherit the display's default" and are dropped rather than
+ * stored as null.
+ */
+const DISPLAY_SETTING_BOOLEANS = [
+  "showClock",
+  "showTimer",
+  "showNextSlide",
+  "showBackground",
+  "localVideoAudioEnabled",
+  "isHeadless",
+];
+
+const sanitizeDisplaySettings = (raw) => {
+  if (!raw || typeof raw !== "object") return null;
+  const next = {};
+  for (const key of DISPLAY_SETTING_BOOLEANS) {
+    if (typeof raw[key] === "boolean") next[key] = raw[key];
+  }
+  for (const key of ["clockFontSize", "timerFontSize"]) {
+    const size = Number(raw[key]);
+    if (Number.isFinite(size)) {
+      next[key] = Math.min(200, Math.max(10, Math.round(size)));
+    }
+  }
+  const localVideoVolume = Number(raw.localVideoVolume);
+  if (raw.localVideoVolume != null && Number.isFinite(localVideoVolume)) {
+    next.localVideoVolume = Math.min(
+      100,
+      Math.max(0, Math.round(localVideoVolume)),
+    );
+  }
+  if (typeof raw.timerId === "string" && raw.timerId.trim()) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(raw.timerId.trim())) {
+      throw httpError(400, "That timer is not valid.");
+    }
+    next.timerId = raw.timerId.trim();
+  } else if (raw.timerId === null) {
+    next.timerId = null;
+  }
+  return Object.keys(next).length ? next : null;
+};
+
 const humanApiCredentialDocId = (userId, deviceId) =>
   `hac_${hashValue(`${userId}|${deviceId || ""}`)}`;
 
@@ -1939,6 +1986,7 @@ const redeemDisplayPairingFirestore = async (token) => {
       churchId: pairing.churchId,
       label: pairing.label,
       surfaceType: pairing.surfaceType,
+      outputId: pairing.outputId ?? null,
       status: "active",
       credentialHash: hashValue(credential),
       createdAt: nowIso(),
@@ -1984,6 +2032,7 @@ const redeemDisplayPairingMemory = async (token) => {
     churchId: pairing.churchId,
     label: pairing.label,
     surfaceType: pairing.surfaceType,
+    outputId: pairing.outputId ?? null,
     status: "active",
     credentialHash: hashValue(credential),
     createdAt: nowIso(),
@@ -2177,6 +2226,8 @@ const buildDisplayBootstrap = ({ church, display }) => ({
     label: display.label,
     operatorName: null,
     surfaceType: display.surfaceType,
+    outputId: display.outputId ?? null,
+    settings: display.settings ?? null,
   },
 });
 
@@ -6649,6 +6700,13 @@ export const authHandlers = {
       });
       const label = String(req.body?.label || "").trim();
       const surfaceType = req.body?.surfaceType || "display";
+      // Display output this screen renders. Optional: a screen paired without
+      // one falls back to the built-in surface for its type on the client.
+      const rawOutputId = String(req.body?.outputId || "").trim();
+      if (rawOutputId && !/^[A-Za-z0-9_-]{1,64}$/.test(rawOutputId)) {
+        throw httpError(400, "That display output is not valid.");
+      }
+      const outputId = rawOutputId || null;
       if (!label) {
         throw httpError(400, "A display label is required.");
       }
@@ -6659,6 +6717,7 @@ export const authHandlers = {
         churchId: req.params.churchId,
         label,
         surfaceType,
+        outputId,
         tokenHash: hashValue(rawToken),
         status: "pending",
         expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
@@ -6802,6 +6861,45 @@ export const authHandlers = {
           sanitizeDisplayDeviceForClient({ deviceId: item.id, ...item }),
         ),
       });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
+  async updateDisplayDeviceSettings(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const display = await getDoc(
+        COLLECTIONS.displayDevices,
+        req.params.deviceId,
+      );
+      if (!display || display.churchId !== req.params.churchId) {
+        throw httpError(404, "Display not found");
+      }
+      const settings = sanitizeDisplaySettings(req.body?.settings);
+      // sanitize returns null when nothing survived validation. Merging that in
+      // wrote `settings: null`, wiping every override on the screen — including
+      // isHeadless — on a malformed or empty request. Reject instead.
+      if (!settings) {
+        throw httpError(400, "No display settings to save.");
+      }
+      await setDoc(
+        COLLECTIONS.displayDevices,
+        req.params.deviceId,
+        { settings },
+        { merge: true },
+      );
+      await addSecurityEvent({
+        type: "display_settings_updated",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        deviceId: req.params.deviceId,
+      });
+      return res.json({ success: true, settings });
     } catch (error) {
       return res.status(error.statusCode || 500).json({
         success: false,

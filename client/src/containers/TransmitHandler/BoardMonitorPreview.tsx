@@ -1,12 +1,18 @@
-import { useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { MonitorUp } from "lucide-react";
 import BoardPresentationFontScaleControl from "../../boards/BoardPresentationFontScaleControl";
 import ScaledBoardPreview from "../../boards/ScaledBoardPreview";
 import { setStoredBoardDisplayAliasId } from "../../boards/boardUtils";
 import { useBoardPresentationFontScale } from "../../boards/useBoardPresentationFontScale";
 import Toggle from "../../components/Toggle/Toggle";
+import Select from "../../components/Select/Select";
 import { useDispatch, useSelector } from "../../hooks";
-import { setMonitorBoardAliasId } from "../../store/presentationSlice";
+import {
+  setDisplayBoardAliasId,
+  selectOutputSlots,
+} from "../../store/presentationSlice";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { supportsBoardTakeover } from "../../utils/displayOutputs";
 import { cn } from "../../utils/cnHelper";
 
 type BoardMonitorPreviewProps = {
@@ -43,9 +49,36 @@ const BoardMonitorPreview = ({
   fillWidth = false,
 }: BoardMonitorPreviewProps) => {
   const dispatch = useDispatch();
-  const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
+  // Any full-frame display can host the board, so the operator picks which one.
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const boardCapableOutputs = useMemo(
+    () =>
+      displayOutputs.filter(
+        (output) => output.enabled && supportsBoardTakeover(output.type),
+      ),
+    [displayOutputs],
   );
+  const outputSlots = useSelector(selectOutputSlots);
+  // The display already showing a board wins, so the control always describes
+  // what is actually up rather than what this operator last picked.
+  const liveBoardOutputId = useMemo(
+    () =>
+      boardCapableOutputs.find(
+        (output) => (outputSlots[output.id]?.boardAliasId ?? "") !== "",
+      )?.id ?? "",
+    [boardCapableOutputs, outputSlots],
+  );
+  const [pickedOutputId, setPickedOutputId] = useState("");
+  const targetOutputId =
+    liveBoardOutputId ||
+    (boardCapableOutputs.some((output) => output.id === pickedOutputId)
+      ? pickedOutputId
+      : (boardCapableOutputs.find((output) => output.id === "monitor")?.id ??
+        boardCapableOutputs[0]?.id ??
+        ""));
+  const monitorBoardAliasId = targetOutputId
+    ? (outputSlots[targetOutputId]?.boardAliasId ?? "")
+    : "";
   const isShowingOnMonitor = monitorBoardAliasId !== "";
 
   // While a board is live on the monitor, mirror exactly that board so the preview
@@ -60,7 +93,7 @@ const BoardMonitorPreview = ({
   // here instead of opening the board controller. Idle while collapsed.
   const { fontScale, changeFontScale } = useBoardPresentationFontScale(
     targetAliasId,
-    { enabled: isOpen }
+    { enabled: isOpen },
   );
 
   const handleToggle = useCallback(
@@ -71,9 +104,14 @@ const BoardMonitorPreview = ({
       if (next && aliasId) {
         setStoredBoardDisplayAliasId(aliasId);
       }
-      dispatch(setMonitorBoardAliasId(next ? aliasId : ""));
+      dispatch(
+        setDisplayBoardAliasId({
+          aliasId: next ? aliasId : "",
+          outputIds: targetOutputId ? [targetOutputId] : undefined,
+        }),
+      );
     },
-    [dispatch, aliasId]
+    [dispatch, aliasId, targetOutputId],
   );
 
   // Match PresentationPreview so the board tile is the same footprint as
@@ -112,8 +150,29 @@ const BoardMonitorPreview = ({
             fillWidth ? "w-full flex-row flex-wrap" : "flex-1",
           )}
         >
+          {boardCapableOutputs.length > 1 && (
+            <Select
+              className="w-full max-w-40"
+              label="Display"
+              hideLabel
+              value={targetOutputId}
+              options={boardCapableOutputs.map((output) => ({
+                value: output.id,
+                label: output.name,
+              }))}
+              // Locked while a board is up: moving it would need to clear the
+              // old display and set the new one, and a half-applied swap during
+              // a service leaves the board on a screen nobody chose.
+              disabled={isShowingOnMonitor}
+              onChange={(value) => setPickedOutputId(value)}
+            />
+          )}
           <Toggle
-            label="On monitor"
+            label={
+              boardCapableOutputs.length > 1
+                ? `On ${boardCapableOutputs.find((o) => o.id === targetOutputId)?.name ?? "display"}`
+                : "On monitor"
+            }
             labelClassName="min-w-0 shrink truncate text-xs"
             className="min-w-0 max-w-full shrink items-center"
             icon={MonitorUp}

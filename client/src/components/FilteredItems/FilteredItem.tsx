@@ -65,6 +65,8 @@ const FilteredItem = ({
       _id: item._id,
       listId: item.listId,
       background: item.background,
+      localImage: item.localImage,
+      localVideoFile: item.localVideoFile,
     };
     addItemToList(itemToAdd);
     setJustAdded(true);

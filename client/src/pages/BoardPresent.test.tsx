@@ -58,7 +58,9 @@ describe("BoardPresent", () => {
     );
 
   it("renders only highlighted posts and refreshes on event stream updates", async () => {
-    let refreshCallback: ((event: { type: string; presentationFontScale?: number }) => void) | undefined;
+    let refreshCallback:
+      | ((event: { type: string; presentationFontScale?: number }) => void)
+      | undefined;
     mockUseBoardEventStream.mockImplementation((_aliasId, onMessage) => {
       refreshCallback = onMessage;
     });
@@ -84,7 +86,9 @@ describe("BoardPresent", () => {
 
     renderPage();
 
-    expect(await screen.findByText(/No highlighted messages yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No highlighted messages yet/i),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("0 highlighted")).toHaveTextContent("0");
 
     await act(async () => {

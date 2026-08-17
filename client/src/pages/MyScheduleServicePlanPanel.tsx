@@ -25,7 +25,9 @@ const MyScheduleServicePlanPanel = ({
   // Prefer the detailed/team public token — never the simple/general link.
   const shareId = useMemo(() => {
     const teamUrl = occurrence.plan?.publicUrls?.team || "";
-    return occurrence.plan?.published ? shareIdFromPublicServiceUrl(teamUrl) : "";
+    return occurrence.plan?.published
+      ? shareIdFromPublicServiceUrl(teamUrl)
+      : "";
   }, [occurrence.plan?.published, occurrence.plan?.publicUrls?.team]);
 
   const { snapshot, error, loading, connection, refresh } =
@@ -52,7 +54,10 @@ const MyScheduleServicePlanPanel = ({
   if (shareId) {
     if (loading && !snapshot) {
       return (
-        <div className="flex items-center gap-3 py-8 text-sm text-neutral-300" aria-live="polite">
+        <div
+          className="flex items-center gap-3 py-8 text-sm text-neutral-300"
+          aria-live="polite"
+        >
           <Spinner width="20px" borderWidth="3px" /> Loading service plan…
         </div>
       );

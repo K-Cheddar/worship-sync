@@ -5,7 +5,7 @@ import AuthScreenMain from "./AuthScreenMain";
 import Button from "./Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
-import { getElectronDisplayWindowTypeFromPathname } from "../utils/electronDisplayWindowFromPath";
+import { getElectronDisplayWindowKeyFromLocation } from "../utils/electronDisplayWindowFromPath";
 import {
   isMemberAllowedPath,
   isWorkstationDisplaySurfacePath,
@@ -37,11 +37,16 @@ const DisplayBlockedScreen = () => {
   const location = useLocation();
   const closeDisplayWindow = useCallback(async () => {
     if (!window.electronAPI) return;
-    const windowType = getElectronDisplayWindowTypeFromPathname(location.pathname);
-    if (windowType) {
-      await window.electronAPI.closeWindow(windowType);
+    // Keyed by the display this window renders, not just its surface — closing
+    // a blocked Lobby window must not close the live main projector.
+    const windowKey = getElectronDisplayWindowKeyFromLocation(
+      location.pathname,
+      location.search,
+    );
+    if (windowKey) {
+      await window.electronAPI.closeWindow(windowKey);
     }
-  }, [location.pathname]);
+  }, [location.pathname, location.search]);
   useCloseOnEscape(closeDisplayWindow);
   return (
     <ValidationScreen

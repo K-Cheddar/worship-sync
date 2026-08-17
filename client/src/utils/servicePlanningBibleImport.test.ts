@@ -1,4 +1,9 @@
-import { createBibleItemFromParsedReference } from "./servicePlanningBibleImport";
+import {
+  createBibleItemFromParsedReference,
+  getBibleImportDisplayName,
+  loadBibleChapterVerses,
+  selectBibleVersesFromRange,
+} from "./servicePlanningBibleImport";
 import { createNewBible } from "./itemUtil";
 import { getVerses as getVersesApi } from "../api/getVerses";
 
@@ -280,5 +285,146 @@ describe("createBibleItemFromParsedReference", () => {
         ],
       }),
     );
+  });
+});
+
+describe("bible import helpers", () => {
+  it("formats display names with and without verse ranges", () => {
+    expect(
+      getBibleImportDisplayName({
+        book: "John",
+        chapter: "3",
+        verseRange: "16",
+        version: "NIV",
+      }),
+    ).toBe("John 3:16 NKJV");
+    expect(
+      getBibleImportDisplayName(
+        {
+          book: "John",
+          chapter: "3",
+          verseRange: "",
+          version: "NIV",
+        },
+        "niv",
+      ),
+    ).toBe("John 3 NIV");
+  });
+
+  it("selects verse ranges and rejects invalid ranges", () => {
+    const verses = [
+      { name: "1", index: 0, text: "a" },
+      { name: "2", index: 1, text: "b" },
+      { name: "3", index: 2, text: "c" },
+    ];
+    expect(selectBibleVersesFromRange(verses, undefined)).toEqual(verses);
+    expect(
+      selectBibleVersesFromRange(verses, "2-3").map((v) => v.name),
+    ).toEqual(["2", "3"]);
+    expect(selectBibleVersesFromRange(verses, "2").map((v) => v.name)).toEqual([
+      "2",
+    ]);
+    expect(selectBibleVersesFromRange(verses, "abc")).toEqual(verses);
+    expect(selectBibleVersesFromRange(verses, "3-1")).toEqual(verses);
+  });
+
+  it("loads chapter verses with cache write, stale fallback, and invalid chapters", async () => {
+    expect(
+      await loadBibleChapterVerses({
+        book: "John",
+        chapter: "0",
+      }),
+    ).toEqual([]);
+
+    const bibleDb = {
+      get: jest.fn().mockRejectedValue(new Error("missing")),
+      put: jest.fn().mockRejectedValue(new Error("write failed")),
+    };
+    mockedGetVersesApi.mockResolvedValue({
+      name: "3",
+      index: 2,
+      verses: [{ name: "1", index: 0, text: "Live" }],
+    });
+    const consoleSpy = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    await expect(
+      loadBibleChapterVerses({
+        book: "Song of Songs",
+        chapter: "1",
+        version: "NIV",
+        bibleDb,
+      }),
+    ).resolves.toEqual([{ name: "1", index: 0, text: "Live" }]);
+    expect(bibleDb.put).toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalled();
+
+    const staleDb = {
+      get: jest.fn().mockResolvedValue({
+        _id: "niv-John-3",
+        verses: [{ name: "1", index: 0, text: "Stale" }],
+        lastUpdated: "not-a-date",
+        isFromBibleGateway: true,
+      }),
+      put: jest.fn().mockResolvedValue(undefined),
+    };
+    mockedGetVersesApi.mockRejectedValue(new Error("network"));
+    await expect(
+      loadBibleChapterVerses({
+        book: "John",
+        chapter: "3",
+        version: "NIV",
+        bibleDb: staleDb,
+      }),
+    ).resolves.toEqual([{ name: "1", index: 0, text: "Stale" }]);
+
+    consoleSpy.mockRestore();
+  });
+
+  it("throws when a parsed reference cannot load or select verses", async () => {
+    mockedGetVersesApi.mockResolvedValue({
+      name: "3",
+      index: 2,
+      verses: [],
+    });
+    await expect(
+      createBibleItemFromParsedReference({
+        parsedRef: {
+          book: "John",
+          chapter: "3",
+          verseRange: "1",
+          version: "NIV",
+        },
+        db: undefined,
+        bibleDb: undefined,
+        allItems: [],
+        background: "#000",
+        brightness: 60,
+        fontMode: "separate",
+      }),
+    ).rejects.toThrow(/Could not load Bible passage/);
+
+    mockedGetVersesApi.mockResolvedValue({
+      name: "3",
+      index: 2,
+      verses: [{ name: "1", index: 0, text: "Only verse 1" }],
+    });
+    await expect(
+      createBibleItemFromParsedReference({
+        parsedRef: {
+          book: "John",
+          chapter: "3",
+          verseRange: "9-10",
+          version: "NIV",
+        },
+        db: undefined,
+        bibleDb: undefined,
+        allItems: [],
+        background: "#000",
+        brightness: 60,
+        fontMode: "separate",
+      }),
+    ).rejects.toThrow(/Could not find the requested Bible verses/);
   });
 });

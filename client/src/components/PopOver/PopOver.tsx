@@ -24,6 +24,8 @@ type PopOverProps = {
   align?: "start" | "center" | "end";
   side?: "top" | "right" | "bottom" | "left";
   sideOffset?: number;
+  /** Render inline when the popover must remain inside a parent stacking context. */
+  portal?: boolean;
   /**
    * Forwarded to Radix PopoverContent. Use e.g. onFocusOutside preventDefault
    * when a child (color wheel) must restore selection into another field
@@ -46,6 +48,7 @@ const PopOver = ({
   align = "end",
   side = "bottom",
   sideOffset = 4,
+  portal = true,
   onFocusOutside,
   onPointerDownOutside,
   onInteractOutside,
@@ -58,6 +61,7 @@ const PopOver = ({
         align={align}
         side={side}
         sideOffset={sideOffset}
+        portal={portal}
         className={cn(
           "w-auto max-w-[85vw] overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-0 text-white shadow-md",
           contentClassName,

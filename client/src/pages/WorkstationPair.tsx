@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
@@ -32,7 +39,7 @@ const WorkstationPair = ({
   const context = useContext(GlobalInfoContext);
   const tokenFromQuery = useMemo(
     () => String(searchParams.get("token") || "").trim(),
-    [searchParams]
+    [searchParams],
   );
   const [pairingCode, setPairingCode] = useState(tokenFromQuery);
   const [codeFieldError, setCodeFieldError] = useState("");
@@ -41,10 +48,10 @@ const WorkstationPair = ({
   const lastAutoPairTokenRef = useRef("");
   const returnPath =
     typeof location.state === "object" &&
-      location.state &&
-      "from" in location.state &&
-      typeof (location.state as { from?: { pathname?: string } }).from?.pathname ===
-      "string"
+    location.state &&
+    "from" in location.state &&
+    typeof (location.state as { from?: { pathname?: string } }).from
+      ?.pathname === "string"
       ? (location.state as { from: { pathname: string } }).from.pathname
       : "";
 
@@ -86,6 +93,7 @@ const WorkstationPair = ({
             getDisplayPairingDestination(
               returnPath,
               response.device?.surfaceType,
+              response.device?.outputId,
             ),
             { replace: true },
           );
@@ -110,11 +118,15 @@ const WorkstationPair = ({
         setIsLoading(false);
       }
     },
-    [context, lockedPairType, navigate, pairingCode, returnPath]
+    [context, lockedPairType, navigate, pairingCode, returnPath],
   );
 
   useEffect(() => {
-    if (!tokenFromQuery || isLoading || lastAutoPairTokenRef.current === tokenFromQuery) {
+    if (
+      !tokenFromQuery ||
+      isLoading ||
+      lastAutoPairTokenRef.current === tokenFromQuery
+    ) {
       return;
     }
     lastAutoPairTokenRef.current = tokenFromQuery;
@@ -127,8 +139,8 @@ const WorkstationPair = ({
         <SetupScreenBackButton />
         <h1 className="text-2xl font-semibold">Link this device</h1>
         <p className="mt-2 text-sm text-gray-200">
-          Enter the link code from WorshipSync account settings to connect this device
-          to your church.
+          Enter the link code from WorshipSync account settings to connect this
+          device to your church.
         </p>
         <p
           className="mt-3 rounded-lg border border-gray-600/80 bg-gray-900/50 px-3 py-2 text-sm text-gray-300"
@@ -138,7 +150,8 @@ const WorkstationPair = ({
         </p>
         {tokenFromQuery && (
           <p className="mt-3 text-sm text-cyan-300">
-            Device link detected. We&apos;ll try to connect this device automatically.
+            Device link detected. We&apos;ll try to connect this device
+            automatically.
           </p>
         )}
 

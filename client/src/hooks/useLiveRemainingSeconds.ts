@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { serverNow } from "../utils/serverTime";
 import type { TimerInfo } from "../types";
+import { isTimerLive } from "../utils/timerUtils";
 
 /** Display refresh cadence. Re-renders happen only when the whole-second value
  * actually changes, so this is cheap. */
@@ -29,15 +30,20 @@ const subscribeToTicker = (listener: () => void): (() => void) => {
   };
 };
 
-const computeRemaining = (timer?: TimerInfo): number => {
-  if (!timer) return 0;
-  if (timer.status === "running" && timer.endTime) {
+// Absent is `null`, never 0. "No timer to show" and "zero seconds left" are
+// different facts, and collapsing them is what painted a bare "0" on screen
+// while sync was still in flight.
+const computeRemaining = (timer?: TimerInfo): number | null => {
+  if (!timer) return null;
+  // Only derive from endTime while the timer is genuinely live. A stale
+  // `running` timer whose end has long passed would otherwise clamp to 0.
+  if (isTimerLive(timer) && timer.endTime) {
     return Math.max(
       0,
-      Math.floor((new Date(timer.endTime).getTime() - serverNow()) / 1000)
+      Math.floor((new Date(timer.endTime).getTime() - serverNow()) / 1000),
     );
   }
-  return timer.remainingTime ?? 0;
+  return timer.remainingTime ?? null;
 };
 
 /**
@@ -49,7 +55,7 @@ const computeRemaining = (timer?: TimerInfo): number => {
  * re-renders only the component showing it — not every `timers` subscriber
  * (which on the controller was the whole transmit panel and service list).
  */
-export const useLiveRemainingSeconds = (timer?: TimerInfo): number => {
+export const useLiveRemainingSeconds = (timer?: TimerInfo): number | null => {
   const timerRef = useRef(timer);
   timerRef.current = timer;
 
@@ -73,5 +79,10 @@ export const useLiveRemainingSeconds = (timer?: TimerInfo): number => {
     timer?.status,
   ]);
 
-  return seconds;
+  // A non-running timer is a pure function of the timer, so read it during
+  // render. `seconds` is seeded once at mount and only corrected by the effect
+  // above, which runs after paint — so a component mounting before its timer
+  // resolved painted one frame of the mount-time value (a bare 0) and then
+  // snapped to the real one. Only the ticking case needs state.
+  return isRunning ? seconds : computeRemaining(timer);
 };

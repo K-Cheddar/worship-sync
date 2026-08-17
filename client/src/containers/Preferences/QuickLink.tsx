@@ -19,6 +19,8 @@ import { useToast } from "../../context/toastContext";
 import QuickLinkSelection from "./QuickLinkSelection";
 import { useSelector } from "../../hooks";
 import { mergeStoredPresentationWithLiveOverlay } from "../../utils/quickLinkOverlayPresentation";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { isPushOutputType } from "../../utils/displayOutputs";
 
 const baseImgUrl =
   "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds";
@@ -34,7 +36,10 @@ const LABEL_COMMIT_DEBOUNCE_MS = 300;
 
 type QuickLinkProps = QuickLinkType & {
   removeQuickLink: () => void;
-  updateQuickLink: (key: keyof QuickLinkType, value: any) => void;
+  updateQuickLink: (
+    keyOrPatch: keyof QuickLinkType | Partial<QuickLinkType>,
+    value?: any,
+  ) => void;
   isMobile?: boolean;
   isSelected: boolean;
   setSelectedQuickLink: () => void;
@@ -42,6 +47,8 @@ type QuickLinkProps = QuickLinkType & {
   index: number;
   /** Overlay stream-only drawer: display type is always stream. */
   hideDisplayTypeSelect?: boolean;
+  /** Display this link belongs to; unset means the built-in for its type. */
+  outputId?: string;
   /** Drag handle and sortable wiring from parent when reordering is enabled. */
   dragHandle?: ReactNode;
   listItemRef?: Ref<HTMLLIElement>;
@@ -63,19 +70,29 @@ const QuickLink = ({
   timers,
   id,
   hideDisplayTypeSelect = false,
+  outputId,
   dragHandle,
   listItemRef,
   sortableStyle,
 }: QuickLinkProps) => {
+  // Displays an operator can bind a quick link to, named rather than typed.
+  const pushOutputs = useSelector(selectDisplayOutputs).filter(
+    (output) => output.enabled && isPushOutputType(output.type),
+  );
+  const displayOptions = pushOutputs.map((output) => ({
+    value: output.id,
+    label: output.name,
+  }));
   const { showToast } = useToast();
 
   const overlaysList = useSelector(
-    (state) => state.undoable.present.overlays.list
+    (state) => state.undoable.present.overlays.list,
   );
 
   const resolvedPresentation = useMemo(
-    () => mergeStoredPresentationWithLiveOverlay(presentationInfo, overlaysList),
-    [presentationInfo, overlaysList]
+    () =>
+      mergeStoredPresentationWithLiveOverlay(presentationInfo, overlaysList),
+    [presentationInfo, overlaysList],
   );
 
   const [labelDraft, setLabelDraft] = useState(() => label ?? "");
@@ -92,7 +109,7 @@ const QuickLink = ({
   labelPropRef.current = label ?? "";
 
   const labelCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
+    null,
   );
 
   useEffect(() => {
@@ -233,7 +250,7 @@ const QuickLink = ({
       style={sortableStyle}
       className={cn(
         "flex gap-4 items-center justify-around flex-wrap border-b-2 border-gray-400 p-2 max-lg:pb-6 rounded-md",
-        index % 2 === 0 && "bg-gray-600"
+        index % 2 === 0 && "bg-gray-600",
       )}
       id={`quick-link-${id}`}
     >
@@ -243,24 +260,21 @@ const QuickLink = ({
           className="flex flex-col"
           selectClassName="bg-gray-900"
           textColor="text-white"
-          label="Display Type"
+          label="Display"
           disabled={!canDelete}
-          options={[
-            {
-              label: "Projector",
-              value: "projector",
-            },
-            {
-              label: "Monitor",
-              value: "monitor",
-            },
-            {
-              label: "Stream",
-              value: "stream",
-            },
-          ]}
-          value={displayType || "projector"}
-          onChange={(val) => updateQuickLink("displayType", val as DisplayType)}
+          options={displayOptions}
+          value={outputId || displayType || "projector"}
+          onChange={(val) => {
+            // Keep `displayType` in step: it still selects which editor controls
+            // this link shows, and older clients read it directly.
+            const chosen = pushOutputs.find((output) => output.id === val);
+            // Both fields in one update: sequential calls would each map from
+            // the same list and the second would drop the first.
+            updateQuickLink({
+              outputId: val,
+              ...(chosen ? { displayType: chosen.type as DisplayType } : {}),
+            });
+          }}
         />
       )}
       <Input
@@ -289,7 +303,7 @@ const QuickLink = ({
           content={
             presentationInfo?.slide?.boxes[0]?.background?.replace(
               baseImgUrl,
-              ""
+              "",
             ) || ""
           }
           helpText="Click to choose media for this link."

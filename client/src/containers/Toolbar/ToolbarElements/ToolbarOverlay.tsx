@@ -10,6 +10,7 @@ import {
   Check,
   RefreshCcw,
   Settings,
+  MonitorCog,
 } from "lucide-react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -59,12 +60,14 @@ const ToolbarOverlay = ({
     overlaysAndPosts: HTMLButtonElement | HTMLAnchorElement | null;
     credits: HTMLButtonElement | HTMLAnchorElement | null;
     serviceTimes: HTMLButtonElement | HTMLAnchorElement | null;
+    displays: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     overlays: null,
     boardPosts: null,
     overlaysAndPosts: null,
     credits: null,
     serviceTimes: null,
+    displays: null,
   });
 
   useLayoutEffect(() => {
@@ -197,6 +200,18 @@ const ToolbarOverlay = ({
             isActive={overlayControllerPanel === "serviceTimes"}
           >
             Service Times
+          </ToolbarButton>
+        )}
+        {!isViewOnlyAccess(access) && (
+          <ToolbarButton
+            ref={(el) => {
+              overlayPanelTabRefs.current.displays = el;
+            }}
+            svg={MonitorCog}
+            onClick={() => dispatch(setOverlayControllerPanel("displays"))}
+            isActive={overlayControllerPanel === "displays"}
+          >
+            Displays
           </ToolbarButton>
         )}
       </div>

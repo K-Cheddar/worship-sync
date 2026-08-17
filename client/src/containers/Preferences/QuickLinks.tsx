@@ -9,11 +9,7 @@ import {
   setQuickLinks,
   setSelectedQuickLink,
 } from "../../store/preferencesSlice";
-import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-} from "@dnd-kit/core";
+import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
@@ -23,6 +19,9 @@ import { applyQuickLinkReorder } from "../../utils/quickLinksReorder";
 import SortableQuickLink from "./SortableQuickLink";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { isPushOutputType } from "../../utils/displayOutputs";
+import { isQuickLinkForOutput } from "../../utils/quickLinksForOutput";
 
 const maxQuickLinks = 12;
 
@@ -34,109 +33,82 @@ type QuickLinksProps = {
 const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
   const dispatch = useDispatch();
   const { quickLinks, selectedQuickLink } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state) => state.undoable.present.preferences,
   );
 
   const { timers } = useSelector((state) => state.timers);
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
-  const [newQuickLinkDisplayType, setNewQuickLinkDisplayType] =
-    useState<DisplayType>(streamOnly ? "stream" : "projector");
+  // Quick links belong to a display, so authoring targets one by name. The
+  // overlay drawer still scopes itself to stream-type displays.
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const authorableOutputs = useMemo(
+    () =>
+      displayOutputs.filter(
+        (output) =>
+          output.enabled &&
+          isPushOutputType(output.type) &&
+          (!streamOnly || output.type === "stream"),
+      ),
+    [displayOutputs, streamOnly],
+  );
+  const [newQuickLinkOutputId, setNewQuickLinkOutputId] = useState("");
+  const activeOutputId =
+    newQuickLinkOutputId || authorableOutputs[0]?.id || "projector";
 
-  const projectorQuickLinks = quickLinks.filter(
-    (ql) => ql.displayType === "projector"
+  const linksForOutput = useCallback(
+    (outputId: string) => {
+      const output = displayOutputs.find((item) => item.id === outputId);
+      return output
+        ? quickLinks.filter((link) => isQuickLinkForOutput(link, output))
+        : [];
+    },
+    [displayOutputs, quickLinks],
   );
-  const monitorQuickLinks = quickLinks.filter(
-    (ql) => ql.displayType === "monitor"
+  const visibleQuickLinks = useMemo(
+    () =>
+      authorableOutputs.flatMap((output) =>
+        quickLinks.filter((link) => isQuickLinkForOutput(link, output)),
+      ),
+    [authorableOutputs, quickLinks],
   );
-  const streamQuickLinks = quickLinks.filter(
-    (ql) => ql.displayType === "stream"
-  );
-  const visibleQuickLinks = streamOnly
-    ? streamQuickLinks
-    : [...projectorQuickLinks, ...monitorQuickLinks, ...streamQuickLinks];
 
-  const newQuickLinkOptions = useMemo(() => {
-    const options: Option[] = [];
-    if (streamOnly) {
-      if (streamQuickLinks.length < maxQuickLinks) {
-        options.push({ label: "Stream", value: "stream" });
-      }
-      return options;
-    }
-    if (projectorQuickLinks.length < maxQuickLinks) {
-      options.push({ label: "Projector", value: "projector" });
-    }
-    if (monitorQuickLinks.length < maxQuickLinks) {
-      options.push({ label: "Monitor", value: "monitor" });
-    }
-    if (streamQuickLinks.length < maxQuickLinks) {
-      options.push({ label: "Stream", value: "stream" });
-    }
-    return options;
-  }, [
-    streamOnly,
-    projectorQuickLinks.length,
-    monitorQuickLinks.length,
-    streamQuickLinks.length,
-  ]);
+  const newQuickLinkOptions: Option[] = useMemo(
+    () =>
+      authorableOutputs
+        .filter((output) => linksForOutput(output.id).length < maxQuickLinks)
+        .map((output) => ({ label: output.name, value: output.id })),
+    [authorableOutputs, linksForOutput],
+  );
 
   const updateQuickLink = (
     id: string,
-    key: keyof QuickLinkType,
-    value: any
+    keyOrPatch: keyof QuickLinkType | Partial<QuickLinkType>,
+    value?: any,
   ) => {
+    const patch =
+      typeof keyOrPatch === "string" ? { [keyOrPatch]: value } : keyOrPatch;
     dispatch(
       setQuickLinks(
-        quickLinks.map((ql) => (ql.id === id ? { ...ql, [key]: value } : ql))
-      )
+        quickLinks.map((ql) => (ql.id === id ? { ...ql, ...patch } : ql)),
+      ),
     );
   };
 
-  const updateNewQuickLinkDisplayType = (
-    updatedQuickLinks: QuickLinkType[]
-  ) => {
-    if (streamOnly) {
-      setNewQuickLinkDisplayType("stream");
-      return;
-    }
-
-    let newDisplayType = newQuickLinkDisplayType;
-
-    const nextProjector = updatedQuickLinks.filter(
-      (ql) => ql.displayType === "projector"
-    );
-    const nextMonitor = updatedQuickLinks.filter(
-      (ql) => ql.displayType === "monitor"
-    );
-    const nextStream = updatedQuickLinks.filter(
-      (ql) => ql.displayType === "stream"
-    );
-
-    if (
-      nextProjector.length < maxQuickLinks &&
-      nextMonitor.length === maxQuickLinks &&
-      nextStream.length === maxQuickLinks
-    ) {
-      newDisplayType = "projector";
-    }
-    if (
-      nextProjector.length === maxQuickLinks &&
-      nextMonitor.length < maxQuickLinks &&
-      nextStream.length === maxQuickLinks
-    ) {
-      newDisplayType = "monitor";
-    }
-    if (
-      nextProjector.length === maxQuickLinks &&
-      nextMonitor.length === maxQuickLinks &&
-      nextStream.length < maxQuickLinks
-    ) {
-      newDisplayType = "stream";
-    }
-
-    setNewQuickLinkDisplayType(newDisplayType);
+  /** Move authoring to a display that still has room, after an add or remove. */
+  const updateNewQuickLinkOutput = (updatedQuickLinks: QuickLinkType[]) => {
+    const stillHasRoom = (outputId: string) => {
+      const output = displayOutputs.find((item) => item.id === outputId);
+      if (!output) return false;
+      return (
+        updatedQuickLinks.filter((link) => isQuickLinkForOutput(link, output))
+          .length < maxQuickLinks
+      );
+    };
+    if (stillHasRoom(activeOutputId)) return;
+    const next = authorableOutputs.find((output) => stillHasRoom(output.id));
+    setNewQuickLinkOutputId(next?.id ?? "");
   };
 
   const sensors = useSensors();
@@ -149,13 +121,13 @@ const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
         quickLinks,
         streamOnly,
         String(active.id),
-        String(over.id)
+        String(over.id),
       );
       if (next) {
         dispatch(setQuickLinks(next));
       }
     },
-    [dispatch, quickLinks, streamOnly]
+    [dispatch, quickLinks, streamOnly],
   );
 
   return (
@@ -178,18 +150,20 @@ const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
                   key={id}
                   index={index}
                   isSelected={selectedQuickLink?.id === id}
-                  setSelectedQuickLink={() => dispatch(setSelectedQuickLink(id))}
+                  setSelectedQuickLink={() =>
+                    dispatch(setSelectedQuickLink(id))
+                  }
                   isMobile={isMobile}
                   hideDisplayTypeSelect={streamOnly}
-                  updateQuickLink={(key, value) =>
-                    updateQuickLink(id, key, value)
+                  updateQuickLink={(keyOrPatch, value) =>
+                    updateQuickLink(id, keyOrPatch, value)
                   }
                   removeQuickLink={() => {
                     const updatedQuickLinks = quickLinks.filter(
-                      (ql) => ql.id !== id
+                      (ql) => ql.id !== id,
                     );
                     dispatch(setQuickLinks(updatedQuickLinks));
-                    updateNewQuickLinkDisplayType(updatedQuickLinks);
+                    updateNewQuickLinkOutput(updatedQuickLinks);
                   }}
                   {...quickLinkInfo}
                 />
@@ -205,10 +179,10 @@ const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
               className="flex gap-2"
               selectClassName="bg-gray-900"
               textColor="text-white"
-              label="New Quick Link Display Type"
+              label="New Quick Link Display"
               options={newQuickLinkOptions}
-              value={newQuickLinkDisplayType}
-              onChange={(val) => setNewQuickLinkDisplayType(val as DisplayType)}
+              value={activeOutputId}
+              onChange={setNewQuickLinkOutputId}
             />
           )}
           <Button
@@ -216,7 +190,12 @@ const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
             padding="px-4 py-1"
             svg={Plus}
             onClick={() => {
-              const displayType = streamOnly ? "stream" : newQuickLinkDisplayType;
+              const targetOutput =
+                authorableOutputs.find(
+                  (output) => output.id === activeOutputId,
+                ) ?? authorableOutputs[0];
+              if (!targetOutput) return;
+              const displayType = targetOutput.type as DisplayType;
               let linkType: LinkType = "media";
               if (displayType === "monitor") {
                 linkType = "slide";
@@ -231,11 +210,12 @@ const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
                   label: "",
                   canDelete: true,
                   displayType,
+                  outputId: targetOutput.id,
                   linkType,
                 },
               ];
               dispatch(setQuickLinks(updatedQuickLinks));
-              updateNewQuickLinkDisplayType(updatedQuickLinks);
+              updateNewQuickLinkOutput(updatedQuickLinks);
             }}
           >
             Add Quick Link

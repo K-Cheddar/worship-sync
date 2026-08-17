@@ -30,10 +30,10 @@ const QuickLinkSelection = ({
   const dispatch = useDispatch();
   const { showToast, removeToast } = useToast();
   const { _id, type, selectedSlide, slides, name, timerInfo } = useSelector(
-    (state) => state.undoable.present.item
+    (state) => state.undoable.present.item,
   );
   const { selectedOverlay } = useSelector(
-    (state) => state.undoable.present.overlay
+    (state) => state.undoable.present.overlay,
   );
 
   // Get current slide for preview
@@ -69,46 +69,46 @@ const QuickLinkSelection = ({
         participantOverlayInfo:
           selectedOverlay.type === "participant"
             ? {
-              id: selectedOverlay.id,
-              type: selectedOverlay.type,
-              duration: selectedOverlay.duration,
-              formatting,
-              name: selectedOverlay.name,
-              event: selectedOverlay.event,
-              title: selectedOverlay.title,
-            }
+                id: selectedOverlay.id,
+                type: selectedOverlay.type,
+                duration: selectedOverlay.duration,
+                formatting,
+                name: selectedOverlay.name,
+                event: selectedOverlay.event,
+                title: selectedOverlay.title,
+              }
             : undefined,
         stbOverlayInfo:
           selectedOverlay.type === "stick-to-bottom"
             ? {
-              id: selectedOverlay.id,
-              type: selectedOverlay.type,
-              duration: selectedOverlay.duration,
-              formatting,
-              heading: selectedOverlay.heading,
-              subHeading: selectedOverlay.subHeading,
-            }
+                id: selectedOverlay.id,
+                type: selectedOverlay.type,
+                duration: selectedOverlay.duration,
+                formatting,
+                heading: selectedOverlay.heading,
+                subHeading: selectedOverlay.subHeading,
+              }
             : undefined,
         qrCodeOverlayInfo:
           selectedOverlay.type === "qr-code"
             ? {
-              id: selectedOverlay.id,
-              type: selectedOverlay.type,
-              duration: selectedOverlay.duration,
-              formatting,
-              url: selectedOverlay.url,
-              description: selectedOverlay.description,
-            }
+                id: selectedOverlay.id,
+                type: selectedOverlay.type,
+                duration: selectedOverlay.duration,
+                formatting,
+                url: selectedOverlay.url,
+                description: selectedOverlay.description,
+              }
             : undefined,
         imageOverlayInfo:
           selectedOverlay.type === "image"
             ? {
-              id: selectedOverlay.id,
-              type: selectedOverlay.type,
-              duration: selectedOverlay.duration,
-              formatting,
-              imageUrl: selectedOverlay.imageUrl,
-            }
+                id: selectedOverlay.id,
+                type: selectedOverlay.type,
+                duration: selectedOverlay.duration,
+                formatting,
+                imageUrl: selectedOverlay.imageUrl,
+              }
             : undefined,
       };
     }
@@ -147,7 +147,7 @@ const QuickLinkSelection = ({
           title,
           text,
         },
-      })
+      }),
     );
     removeToast(toastId);
     showToast("Slide linked.", "success");
@@ -158,8 +158,8 @@ const QuickLinkSelection = ({
 
     dispatch(
       setSelectedQuickLinkPresentation(
-        presentationFromOverlayInfo(selectedOverlay)
-      )
+        presentationFromOverlayInfo(selectedOverlay),
+      ),
     );
     removeToast(toastId);
     showToast("Overlay linked.", "success");

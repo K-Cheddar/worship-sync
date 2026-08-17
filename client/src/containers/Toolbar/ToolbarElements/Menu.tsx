@@ -10,11 +10,12 @@ import {
   Monitor,
   SquarePen,
   Presentation,
+  Radio,
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { interfaceZoomMenuItem } from "../../../components/InterfaceZoomMenuControl/InterfaceZoomMenuControl";
 import { MenuItemType } from "../../../types";
-import { useContext } from "react";
+import { useContext, useMemo } from "react";
 import { useAboutChangelogMenu } from "../../../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
 import { useIdentifyOnHover } from "../../../hooks/useIdentifyOnHover";
@@ -28,6 +29,12 @@ import {
 import { useResolvedBoardDisplayAlias } from "../../../boards/useResolvedBoardDisplayAlias";
 import type { WindowType } from "../../../types/electron";
 import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
+import { useSelector } from "../../../hooks";
+import { selectDisplayOutputs } from "../../../store/displayOutputsSlice";
+import {
+  DisplayOutput,
+  isPushOutputType,
+} from "../../../utils/displayOutputs";
 import { isViewOnlyAccess } from "../../../utils/accessTiers";
 
 const ToolbarMenu = ({
@@ -67,16 +74,17 @@ const ToolbarMenu = ({
     cancel: cancelIdentifyDisplay,
   });
 
-  const monitorMenuOpen = isElectronDisplayWindowOpen(
-    isElectron,
-    windowStates,
-    "monitor",
+  // Every display an operator configured, not just the original three. Window
+  // keys are output ids, so open state and open/close both address them directly.
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const openableOutputs = useMemo(
+    () =>
+      displayOutputs.filter(
+        (output) => output.enabled && isPushOutputType(output.type),
+      ),
+    [displayOutputs],
   );
-  const projectorMenuOpen = isElectronDisplayWindowOpen(
-    isElectron,
-    windowStates,
-    "projector",
-  );
+
   const boardMenuOpen = isElectronDisplayWindowOpen(
     isElectron,
     windowStates,
@@ -126,28 +134,37 @@ const ToolbarMenu = ({
     }
   };
 
-  const openWindowOnLastUsedDisplay = async (windowType: WindowType) => {
+  const openWindowOnLastUsedDisplay = async (
+    windowType: WindowType,
+    surface?: string,
+  ) => {
     seedBoardDisplayAlias(windowType);
     try {
       if (isElectron) {
-        await openWindow(windowType);
+        // The main process builds the route from key plus surface. Without the
+        // surface a custom display has no route and the window never opens.
+        await openWindow(windowType, surface);
       } else if (windowType === "board") {
         window.open(buildBoardDisplayUrl(), "_board", "width=1280,height=720");
       } else {
-        const webRoute = windowType === "monitor" ? "#/monitor" : "#/projector";
-        const webTarget = windowType === "monitor" ? "_monitor" : "_projector";
-        window.open(webRoute, webTarget, "width=500,height=360");
+        const base = surface === "monitor" ? "#/monitor" : surface === "stream" ? "#/stream" : "#/projector";
+        const webRoute = `${base}?output=${encodeURIComponent(windowType)}`;
+        window.open(webRoute, `_${windowType}`, "width=500,height=360");
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  const openWindowOnDisplay = async (windowType: WindowType, displayId: number) => {
+  const openWindowOnDisplay = async (
+    windowType: WindowType,
+    displayId: number,
+    surface?: string,
+  ) => {
     seedBoardDisplayAlias(windowType);
     try {
       if (!isElectron) {
-        await openWindowOnLastUsedDisplay(windowType);
+        await openWindowOnLastUsedDisplay(windowType, surface);
         return;
       }
 
@@ -159,23 +176,67 @@ const ToolbarMenu = ({
         return;
       }
       await setDisplayPreference(windowType, displayId);
-      await openWindow(windowType);
+      await openWindow(windowType, surface);
     } catch (err) {
       console.error(err);
     }
   };
 
-  const buildDisplaySubItems = (windowType: WindowType) => [
+  /**
+   * One open/close entry for a display.
+   *
+   * The window key is the output id, so a second projector gets its own entry
+   * and its own open state rather than sharing the built-in's.
+   */
+  const buildDisplayMenuItem = (output: DisplayOutput) => {
+    const isOpen = isElectronDisplayWindowOpen(
+      isElectron,
+      windowStates,
+      output.id,
+    );
+    const label = `${isOpen ? "Close" : "Open"} ${output.name}`;
+    const icon =
+      output.type === "monitor"
+        ? Monitor
+        : output.type === "stream"
+          ? Radio
+          : Presentation;
+
+    return {
+      text: label,
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={icon} color="#d1d5dc" />
+          {label}
+        </div>
+      ),
+      ...(isOpen
+        ? {
+          onClick: async () => {
+            await closeWindow(output.id);
+          },
+        }
+        : isElectron && displays.length > 0
+          ? { subItems: buildDisplaySubItems(output.id, output.type) }
+          : {
+            onClick: async () => {
+              await openWindowOnLastUsedDisplay(output.id, output.type);
+            },
+          }),
+    };
+  };
+
+  const buildDisplaySubItems = (windowType: WindowType, surface?: string) => [
     {
       text: "Last Used Display",
-      onClick: () => openWindowOnLastUsedDisplay(windowType),
+      onClick: () => openWindowOnLastUsedDisplay(windowType, surface),
       ...getIdentifyHoverHandlers((generation) => {
         void identifyDisplayForWindow?.(windowType, generation);
       }),
     },
     ...displays.map((display, index) => ({
       text: getDisplayLabel(display, index),
-      onClick: () => openWindowOnDisplay(windowType, display.id),
+      onClick: () => openWindowOnDisplay(windowType, display.id, surface),
       ...getIdentifyHoverHandlers((generation) => {
         void identifyDisplay?.(display.id, generation);
       }),
@@ -223,54 +284,7 @@ const ToolbarMenu = ({
     ...(variant === "overlay" || isViewOnlyAccess(access) || access === "music" || isGuest
       ? []
       : [
-        {
-          text: monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor",
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={Monitor} color="#d1d5dc" />
-              {monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor"}
-            </div>
-          ),
-          ...(monitorMenuOpen
-            ? {
-              onClick: async () => {
-                await closeWindow("monitor");
-              },
-            }
-            : isElectron && displays.length > 0
-              ? {
-                subItems: buildDisplaySubItems("monitor"),
-              }
-              : {
-                onClick: async () => {
-                  await openWindowOnLastUsedDisplay("monitor");
-                },
-              }),
-        },
-        {
-          text: projectorMenuOpen ? "Close Projector" : "Open Projector",
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={Presentation} color="#d1d5dc" />
-              {projectorMenuOpen ? "Close Projector" : "Open Projector"}
-            </div>
-          ),
-          ...(projectorMenuOpen
-            ? {
-              onClick: async () => {
-                await closeWindow("projector");
-              },
-            }
-            : isElectron && displays.length > 0
-              ? {
-                subItems: buildDisplaySubItems("projector"),
-              }
-              : {
-                onClick: async () => {
-                  await openWindowOnLastUsedDisplay("projector");
-                },
-              }),
-        },
+        ...openableOutputs.map((output) => buildDisplayMenuItem(output)),
         {
           text: boardMenuOpen ? "Close Discussion Board" : "Open Discussion Board",
           element: (

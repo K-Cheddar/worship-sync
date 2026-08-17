@@ -1,18 +1,71 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { presentationSlice } from "./presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  LegacyPresentationShape,
+  presentationSlice,
+  toLegacyPresentationShape,
+} from "./presentationSlice";
 import { createPresentation } from "../test/fixtures";
 import { setServerTimeOffset } from "../utils/serverTime";
+import type { ItemSlideType } from "../types";
 
-type PresentationState = ReturnType<typeof presentationSlice.reducer>;
-type PresentationSliceState = { presentation: PresentationState };
+/**
+ * These tests were written against the flat projector/monitor/stream shape.
+ * Rather than restate 293 expectations, they author and read state through the
+ * same legacy bridge production uses for Firebase and localStorage, so each
+ * assertion still checks the behavior it originally checked.
+ */
+const legacy = toLegacyPresentationShape;
+const legacyInitialState = () =>
+  toLegacyPresentationShape(presentationSlice.getInitialState());
 
-const createStore = (preloadedState?: Partial<PresentationSliceState>) =>
+const createLocalImageSlide = (): ItemSlideType => ({
+  id: "slide-local-image",
+  name: "Local image",
+  type: "Media",
+  boxes: [
+    {
+      id: "box-local-image",
+      width: 100,
+      height: 100,
+      mediaInfo: {
+        id: "asset-1",
+        publicId: "asset-1",
+        path: "",
+        name: "Welcome.png",
+        type: "image",
+        format: "png",
+        width: 1920,
+        height: 1080,
+        background: "local-image://asset-1",
+        thumbnail: "local-image://asset-1",
+        createdAt: "2026-08-12T00:00:00.000Z",
+        updatedAt: "2026-08-12T00:00:00.000Z",
+        source: "local",
+        localImage: {
+          id: "asset-1",
+          contentRevision: "revision-1",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+          fileName: "Welcome.png",
+          contentType: "image/png",
+          storagePolicy: "local-only",
+        },
+      },
+    },
+  ],
+});
+
+const createStore = (preloadedState?: {
+  presentation?: Partial<ReturnType<typeof toLegacyPresentationShape>>;
+}) =>
   configureStore({
     reducer: { presentation: presentationSlice.reducer },
-    ...(preloadedState != null &&
-      Object.keys(preloadedState).length > 0 && {
-        preloadedState: preloadedState as PresentationSliceState,
-      }),
+    ...(preloadedState?.presentation != null && {
+      preloadedState: {
+        presentation: fromLegacyPresentationShape(preloadedState.presentation),
+      },
+    }),
   });
 
 describe("presentationSlice", () => {
@@ -26,24 +79,378 @@ describe("presentationSlice", () => {
   });
 
   describe("reducer only", () => {
+    it("routes a local video input only while its projector output is live", () => {
+      const store = createStore();
+      const input = {
+        sourceId: "source-1",
+        deviceLabel: "USB Capture",
+        ownerDeviceId: "workstation-1",
+        ownerLabel: "Booth",
+      };
+
+      store.dispatch(
+        presentationSlice.actions.showLocalVideoInput({
+          outputId: "projector",
+          input,
+        }),
+      );
+      expect(
+        legacy(store.getState().presentation).projectorInfo.localVideoInput,
+      ).toBeUndefined();
+
+      store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+      store.dispatch(
+        presentationSlice.actions.showLocalVideoInput({
+          outputId: "projector",
+          input,
+        }),
+      );
+      expect(
+        legacy(store.getState().presentation).projectorInfo.localVideoInput,
+      ).toEqual(input);
+      expect(legacy(store.getState().presentation).projectorInfo.type).toBe(
+        "local-video-input",
+      );
+    });
+
+    it("returns from local video input to ordinary slides on the next send", () => {
+      const store = createStore();
+      store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+      store.dispatch(
+        presentationSlice.actions.showLocalVideoInput({
+          outputId: "projector",
+          input: {
+            sourceId: "source-1",
+            deviceLabel: "USB Capture",
+            ownerDeviceId: "workstation-1",
+            ownerLabel: "Booth",
+          },
+        }),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateProjector(
+          createPresentation({
+            type: "song",
+            name: "Next song",
+            slide: { id: "next", type: "Verse", name: "Next", boxes: [] },
+            displayType: "projector",
+          }),
+        ),
+      );
+
+      const projector = legacy(store.getState().presentation).projectorInfo;
+      expect(projector.localVideoInput).toBeUndefined();
+      expect(projector.name).toBe("Next song");
+    });
+
+    it.each([
+      [
+        "monitor",
+        presentationSlice.actions.toggleMonitorTransmitting,
+        presentationSlice.actions.updateMonitor,
+      ],
+      [
+        "stream",
+        presentationSlice.actions.toggleStreamTransmitting,
+        presentationSlice.actions.updateStream,
+      ],
+    ] as const)(
+      "routes a video-input media slide to a live %s output",
+      (surface, toggleLive, updateSurface) => {
+        const store = createStore();
+        const input = {
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "workstation-1",
+          ownerLabel: "Booth",
+          fit: "cover" as const,
+          audioEnabled: true,
+        };
+        const slide = {
+          id: "video-slide",
+          type: "Media" as const,
+          name: "Main camera",
+          boxes: [],
+        };
+
+        store.dispatch(toggleLive());
+        store.dispatch(
+          updateSurface({
+            outputIds: [surface],
+            slide,
+            type: "local-video-input",
+            name: "Camera deck",
+            localVideoInput: input,
+          }),
+        );
+
+        const slot = store.getState().presentation.outputs[surface];
+        expect(slot.info.slide).toEqual(slide);
+        expect(slot.info.localVideoInput).toEqual(input);
+      },
+    );
+
+    it("hands local video into previous state when monitor and stream are cleared", () => {
+      const store = createStore();
+      const input = {
+        sourceId: "source-clear",
+        deviceLabel: "USB Capture",
+        ownerDeviceId: "workstation-1",
+        ownerLabel: "Booth",
+      };
+      store.dispatch(presentationSlice.actions.toggleMonitorTransmitting());
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateMonitor({
+          outputIds: ["monitor"],
+          slide: null,
+          type: "local-video-input",
+          name: "Camera",
+          localVideoInput: input,
+        }),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          outputIds: ["stream"],
+          slide: null,
+          type: "local-video-input",
+          name: "Camera",
+          localVideoInput: input,
+        }),
+      );
+
+      store.dispatch(presentationSlice.actions.clearMonitor());
+      store.dispatch(presentationSlice.actions.clearStream({}));
+
+      expect(
+        store.getState().presentation.outputs.monitor.prevInfo.localVideoInput,
+      ).toEqual(input);
+      expect(
+        store.getState().presentation.outputs.stream.prevInfo.localVideoInput,
+      ).toEqual(input);
+      expect(
+        store.getState().presentation.outputs.monitor.info.localVideoInput,
+      ).toBeUndefined();
+      expect(
+        store.getState().presentation.outputs.stream.info.localVideoInput,
+      ).toBeUndefined();
+    });
+
+    it("preserves local-video exits for named stream clear and Clear All", () => {
+      const store = createStore();
+      const input = {
+        sourceId: "source-clear-all",
+        deviceLabel: "USB Capture",
+        ownerDeviceId: "workstation-1",
+        ownerLabel: "Booth",
+      };
+      store.dispatch(presentationSlice.actions.toggleMonitorTransmitting());
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      const sendCamera = () => {
+        store.dispatch(
+          presentationSlice.actions.updateMonitor({
+            outputIds: ["monitor"],
+            slide: null,
+            type: "local-video-input",
+            name: "Camera",
+            localVideoInput: input,
+          }),
+        );
+        store.dispatch(
+          presentationSlice.actions.updateStream({
+            outputIds: ["stream"],
+            slide: null,
+            type: "local-video-input",
+            name: "Camera",
+            localVideoInput: input,
+          }),
+        );
+      };
+      sendCamera();
+      store.dispatch(presentationSlice.actions.clearOutput("stream"));
+      expect(
+        store.getState().presentation.outputs.stream.prevInfo.localVideoInput,
+      ).toEqual(input);
+
+      sendCamera();
+      store.dispatch(presentationSlice.actions.clearAll());
+      expect(
+        store.getState().presentation.outputs.monitor.prevInfo.localVideoInput,
+      ).toEqual(input);
+      expect(
+        store.getState().presentation.outputs.stream.prevInfo.localVideoInput,
+      ).toEqual(input);
+    });
+
+    it("ordinary sends leave board takeover and clear the current camera", () => {
+      const store = createStore();
+      const input = {
+        sourceId: "source-board",
+        deviceLabel: "USB Capture",
+        ownerDeviceId: "workstation-1",
+        ownerLabel: "Booth",
+      };
+      store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateProjector({
+          outputIds: ["projector"],
+          slide: null,
+          type: "local-video-input",
+          name: "Camera",
+          localVideoInput: input,
+        }),
+      );
+      store.dispatch(
+        presentationSlice.actions.setDisplayBoardAliasId({
+          aliasId: "youth",
+          outputIds: ["projector"],
+        }),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updatePresentation({
+          outputIds: ["projector"],
+          type: "song",
+          name: "Next song",
+          slide: { id: "next", type: "Verse", name: "Next", boxes: [] },
+        }),
+      );
+
+      const projector = store.getState().presentation.outputs.projector;
+      expect(projector.boardAliasId).toBe("");
+      expect(projector.prevInfo.localVideoInput).toEqual(input);
+      expect(projector.info.localVideoInput).toBeUndefined();
+    });
+
+    it("patches a cloud copy into live and outgoing presentation snapshots", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(2_000);
+      const base = legacyInitialState();
+      const slide = createLocalImageSlide();
+      const store = createStore({
+        presentation: {
+          ...base,
+          projectorInfo: { ...base.projectorInfo, slide, time: 100 },
+          prevProjectorInfo: { ...base.prevProjectorInfo, slide, time: 90 },
+          monitorInfo: {
+            ...base.monitorInfo,
+            slide,
+            nextSlide: createLocalImageSlide(),
+            time: 100,
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.attachCloudCopyToLocalImageInPresentation({
+          itemId: "item-1",
+          assetId: "asset-1",
+          mediaId: "media-1",
+          url: "https://res.cloudinary.com/example/welcome.png",
+        }),
+      );
+
+      const state = legacy(store.getState().presentation);
+      expect(state.projectorInfo.slide?.boxes[0].mediaInfo?.localImage).toEqual(
+        expect.objectContaining({
+          storagePolicy: "local-and-cloud",
+          cloudMediaId: "media-1",
+          cloudUrl: "https://res.cloudinary.com/example/welcome.png",
+        }),
+      );
+      expect(
+        state.prevProjectorInfo.slide?.boxes[0].mediaInfo?.localImage?.cloudUrl,
+      ).toBe("https://res.cloudinary.com/example/welcome.png");
+      expect(
+        state.monitorInfo.nextSlide?.boxes[0].mediaInfo?.localImage?.cloudUrl,
+      ).toBe("https://res.cloudinary.com/example/welcome.png");
+      expect(state.projectorInfo.time).toBe(2_000);
+    });
+
+    it("patches a relink into the live snapshot and preserves the outgoing frame", () => {
+      const base = legacyInitialState();
+      const slide = createLocalImageSlide();
+      const localImage = slide.boxes[0].mediaInfo!.localImage!;
+      localImage.storagePolicy = "local-and-cloud";
+      localImage.cloudUrl = "https://res.cloudinary.com/example/old.png";
+      localImage.cloudMediaId = "old-media";
+      const store = createStore({
+        presentation: {
+          ...base,
+          projectorInfo: { ...base.projectorInfo, slide, time: 100 },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateLocalImageReferenceInPresentation({
+          itemId: "item-1",
+          assetId: "asset-1",
+          patch: {
+            reference: {
+              contentRevision: "revision-2",
+              fileName: "Updated.png",
+              cloudUrl: undefined,
+              cloudMediaId: undefined,
+            },
+            media: { name: "Updated.png", width: 1280, height: 720 },
+          },
+        }),
+      );
+
+      const state = legacy(store.getState().presentation);
+      const media = state.projectorInfo.slide?.boxes[0].mediaInfo;
+      expect(media).toEqual(
+        expect.objectContaining({
+          name: "Updated.png",
+          width: 1280,
+          height: 720,
+        }),
+      );
+      expect(media?.localImage).toEqual(
+        expect.objectContaining({
+          fileName: "Updated.png",
+          contentRevision: "revision-2",
+          cloudUrl: undefined,
+          cloudMediaId: undefined,
+        }),
+      );
+      expect(
+        state.prevProjectorInfo.slide?.boxes[0].mediaInfo?.localImage,
+      ).toEqual(
+        expect.objectContaining({
+          fileName: "Welcome.png",
+          contentRevision: "revision-1",
+          cloudUrl: "https://res.cloudinary.com/example/old.png",
+          cloudMediaId: "old-media",
+        }),
+      );
+      expect(state.projectorInfo.time).toBeGreaterThan(100);
+    });
+
     it("toggleProjectorTransmitting flips isProjectorTransmitting", () => {
       const store = createStore();
-      expect(store.getState().presentation.isProjectorTransmitting).toBe(false);
+      expect(
+        legacy(store.getState().presentation).isProjectorTransmitting,
+      ).toBe(false);
       store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
-      expect(store.getState().presentation.isProjectorTransmitting).toBe(true);
+      expect(
+        legacy(store.getState().presentation).isProjectorTransmitting,
+      ).toBe(true);
       store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
-      expect(store.getState().presentation.isProjectorTransmitting).toBe(false);
+      expect(
+        legacy(store.getState().presentation).isProjectorTransmitting,
+      ).toBe(false);
     });
 
     it("setTransmitToAll sets all transmitting flags", () => {
       const store = createStore();
       store.dispatch(presentationSlice.actions.setTransmitToAll(true));
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.isProjectorTransmitting).toBe(true);
       expect(state.isMonitorTransmitting).toBe(true);
       expect(state.isStreamTransmitting).toBe(true);
       store.dispatch(presentationSlice.actions.setTransmitToAll(false));
-      const next = store.getState().presentation;
+      const next = legacy(store.getState().presentation);
       expect(next.isProjectorTransmitting).toBe(false);
       expect(next.isMonitorTransmitting).toBe(false);
       expect(next.isStreamTransmitting).toBe(false);
@@ -52,7 +459,7 @@ describe("presentationSlice", () => {
     it("updatePresentation updates projectorInfo when transmitting", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isProjectorTransmitting: true,
         },
       });
@@ -69,23 +476,35 @@ describe("presentationSlice", () => {
         displayType: "projector",
       });
       store.dispatch(presentationSlice.actions.updatePresentation(payload));
-      expect(store.getState().presentation.projectorInfo.name).toBe(
+      expect(legacy(store.getState().presentation).projectorInfo.name).toBe(
         "Test Song",
       );
-      expect(store.getState().presentation.projectorInfo.type).toBe("song");
-      expect(store.getState().presentation.projectorInfo.slide).toEqual(slide);
+      expect(legacy(store.getState().presentation).projectorInfo.type).toBe(
+        "song",
+      );
+      expect(legacy(store.getState().presentation).projectorInfo.slide).toEqual(
+        slide,
+      );
     });
 
     it("toggles monitor and stream transmitting flags", () => {
       const store = createStore();
-      expect(store.getState().presentation.isMonitorTransmitting).toBe(false);
-      expect(store.getState().presentation.isStreamTransmitting).toBe(false);
+      expect(legacy(store.getState().presentation).isMonitorTransmitting).toBe(
+        false,
+      );
+      expect(legacy(store.getState().presentation).isStreamTransmitting).toBe(
+        false,
+      );
 
       store.dispatch(presentationSlice.actions.toggleMonitorTransmitting());
       store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
 
-      expect(store.getState().presentation.isMonitorTransmitting).toBe(true);
-      expect(store.getState().presentation.isStreamTransmitting).toBe(true);
+      expect(legacy(store.getState().presentation).isMonitorTransmitting).toBe(
+        true,
+      );
+      expect(legacy(store.getState().presentation).isStreamTransmitting).toBe(
+        true,
+      );
     });
 
     it("updateProjector respects skipTransmissionCheck when projector is not transmitting", () => {
@@ -109,7 +528,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.projectorInfo.name).toBe("Projected");
       expect(state.projectorInfo.slide).toEqual(slide);
       expect(state.prevProjectorInfo.name).toBe("");
@@ -118,7 +537,7 @@ describe("presentationSlice", () => {
     it("updateProjector and clearProjector persist then wipe slideIndex/slideCount", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isProjectorTransmitting: true,
         },
       });
@@ -134,22 +553,26 @@ describe("presentationSlice", () => {
           }),
         ),
       );
-      expect(store.getState().presentation.projectorInfo.slideIndex).toBe(2);
-      expect(store.getState().presentation.projectorInfo.slideCount).toBe(8);
+      expect(
+        legacy(store.getState().presentation).projectorInfo.slideIndex,
+      ).toBe(2);
+      expect(
+        legacy(store.getState().presentation).projectorInfo.slideCount,
+      ).toBe(8);
 
       store.dispatch(presentationSlice.actions.clearProjector());
       expect(
-        store.getState().presentation.projectorInfo.slideIndex,
+        legacy(store.getState().presentation).projectorInfo.slideIndex,
       ).toBeUndefined();
       expect(
-        store.getState().presentation.projectorInfo.slideCount,
+        legacy(store.getState().presentation).projectorInfo.slideCount,
       ).toBeUndefined();
     });
 
     it("updateMonitor and updateStream persist slideIndex/slideCount", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isMonitorTransmitting: true,
           isStreamTransmitting: true,
         },
@@ -178,7 +601,7 @@ describe("presentationSlice", () => {
           }),
         ),
       );
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.monitorInfo.slideIndex).toBe(0);
       expect(state.monitorInfo.slideCount).toBe(4);
       expect(state.streamInfo.slideIndex).toBe(1);
@@ -187,20 +610,20 @@ describe("presentationSlice", () => {
       store.dispatch(presentationSlice.actions.clearMonitor());
       store.dispatch(presentationSlice.actions.clearStream());
       expect(
-        store.getState().presentation.monitorInfo.slideIndex,
+        legacy(store.getState().presentation).monitorInfo.slideIndex,
       ).toBeUndefined();
       expect(
-        store.getState().presentation.streamInfo.slideIndex,
+        legacy(store.getState().presentation).streamInfo.slideIndex,
       ).toBeUndefined();
     });
 
     it("updateMonitor sets nextSlide fallback and stores transition metadata", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isMonitorTransmitting: true,
           monitorInfo: {
-            ...presentationSlice.getInitialState().monitorInfo,
+            ...legacyInitialState().monitorInfo,
             nextSlide: { id: "old-next", type: "Media", name: "", boxes: [] },
           },
         },
@@ -228,7 +651,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.monitorInfo.slide).toEqual(slide);
       expect(state.monitorInfo.nextSlide).toBeNull();
       expect(state.monitorInfo.transitionDirection).toBe("next");
@@ -250,10 +673,10 @@ describe("presentationSlice", () => {
       };
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             slide: initialSlide,
             participantOverlayInfo: { name: "Person", id: "p1", time: 1 },
             stbOverlayInfo: { heading: "Heading", id: "s1", time: 1 },
@@ -280,7 +703,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.streamInfo.slide).toBeNull();
       expect(state.streamInfo.name).toBe("Bible Stream");
     });
@@ -288,11 +711,11 @@ describe("presentationSlice", () => {
     it("updateStream slide behaves like other item-layer content when overlay-only is off", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: false,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             bibleDisplayInfo: {
               title: "Psalm 23",
               text: "The Lord is my shepherd",
@@ -320,7 +743,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation.streamInfo;
+      const state = legacy(store.getState().presentation).streamInfo;
       expect(state.slide?.id).toBe("slide-1");
       expect(state.bibleDisplayInfo?.title).toBe("");
       expect(state.formattedTextDisplayInfo?.text).toBe("");
@@ -330,11 +753,11 @@ describe("presentationSlice", () => {
     it("updateStream slide keeps overlays when overlay-only is on", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             bibleDisplayInfo: {
               title: "Psalm 23",
               text: "The Lord is my shepherd",
@@ -361,7 +784,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation.streamInfo;
+      const state = legacy(store.getState().presentation).streamInfo;
       expect(state.slide?.id).toBe("slide-2");
       expect(state.bibleDisplayInfo?.title).toBe("");
       expect(state.participantOverlayInfo?.name).toBe("Host");
@@ -370,11 +793,11 @@ describe("presentationSlice", () => {
     it("updateParticipantOverlayInfo does not clear stream item when overlay-only ON", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             slide: {
               id: "s1",
               type: "Media" as const,
@@ -400,7 +823,7 @@ describe("presentationSlice", () => {
           formatting: {},
         } as never),
       );
-      const { streamInfo } = store.getState().presentation;
+      const { streamInfo } = legacy(store.getState().presentation);
       expect(streamInfo.slide).toEqual({
         id: "s1",
         type: "Media",
@@ -414,11 +837,11 @@ describe("presentationSlice", () => {
     it("updateParticipantOverlayInfo preserves stream item when overlay-only OFF", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: false,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             slide: {
               id: "s1",
               type: "Media" as const,
@@ -442,7 +865,7 @@ describe("presentationSlice", () => {
           formatting: {},
         } as never),
       );
-      const { streamInfo } = store.getState().presentation;
+      const { streamInfo } = legacy(store.getState().presentation);
       expect(streamInfo.slide).toEqual({
         id: "s1",
         type: "Media",
@@ -458,7 +881,7 @@ describe("presentationSlice", () => {
       jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
       setServerTimeOffset(30_000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -488,7 +911,8 @@ describe("presentationSlice", () => {
       );
 
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.time,
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.time,
       ).toBe(new Date("2026-05-17T12:00:30.000Z").getTime());
     });
 
@@ -497,7 +921,7 @@ describe("presentationSlice", () => {
       jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
       setServerTimeOffset(30_000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -531,7 +955,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.streamInfo.boardPostStreamInfo?.text).toBe("Praying");
       expect(state.streamInfo.boardPostStreamInfo?.time).toBe(
         new Date("2026-05-17T12:00:30.000Z").getTime(),
@@ -541,28 +965,32 @@ describe("presentationSlice", () => {
       expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Host");
     });
 
-    it("setStreamItemContentBlocked sets and clearStream resets streamItemContentBlocked", () => {
+    it("setStreamItemContentBlocked survives a clearStream", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamItemContentBlocked: false,
         },
       });
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(
-        false,
-      );
+      expect(
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(false);
       store.dispatch(
         presentationSlice.actions.setStreamItemContentBlocked(true),
       );
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(true);
+      expect(
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(true);
       store.dispatch(presentationSlice.actions.clearStream());
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(
-        false,
-      );
+      // Overlay-only mode is a stated intent about overlays, not slide state:
+      // clearing the slides must not put item content back on a live stream.
+      expect(
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(true);
     });
 
     it("setStreamItemContentBlocked true preserves active overlays", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -587,14 +1015,17 @@ describe("presentationSlice", () => {
       store.dispatch(
         presentationSlice.actions.setStreamItemContentBlocked(true),
       );
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(true);
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(true);
+      expect(
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.name,
       ).toBe("Speaker");
     });
 
     it("setStreamItemContentBlocked true does not clear overlays without item data", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -615,12 +1046,13 @@ describe("presentationSlice", () => {
         presentationSlice.actions.setStreamItemContentBlocked(true),
       );
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.name,
       ).toBe("Speaker");
     });
 
     it("setStreamItemContentBlocked true does not clear when no active overlay", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -642,21 +1074,22 @@ describe("presentationSlice", () => {
         presentationSlice.actions.setStreamItemContentBlocked(true),
       );
       expect(
-        store.getState().presentation.streamInfo.slide?.boxes?.[0]?.words,
+        legacy(store.getState().presentation).streamInfo.slide?.boxes?.[0]
+          ?.words,
       ).toBe("Lyrics");
     });
 
-    it("clearAll resets streamItemContentBlocked", () => {
+    it("clearAll leaves Hide Content on, since it is operator intent", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamItemContentBlocked: true,
         },
       });
       store.dispatch(presentationSlice.actions.clearAll());
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(
-        false,
-      );
+      expect(
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(true);
     });
 
     it("remote overlay and formatted text actions keep payload times", () => {
@@ -670,7 +1103,7 @@ describe("presentationSlice", () => {
         } as never),
       );
       expect(
-        store.getState().presentation.streamInfo.imageOverlayInfo?.time,
+        legacy(store.getState().presentation).streamInfo.imageOverlayInfo?.time,
       ).toBe(555);
 
       store.dispatch(
@@ -680,7 +1113,7 @@ describe("presentationSlice", () => {
           align: "center",
         }),
       );
-      const afterFormatted = store.getState().presentation;
+      const afterFormatted = legacy(store.getState().presentation);
       expect(afterFormatted.streamInfo.formattedTextDisplayInfo?.time).toBe(
         777,
       );
@@ -695,7 +1128,7 @@ describe("presentationSlice", () => {
           time: 666,
         } as never),
       );
-      const afterParticipant = store.getState().presentation;
+      const afterParticipant = legacy(store.getState().presentation);
       expect(afterParticipant.streamInfo.participantOverlayInfo?.time).toBe(
         666,
       );
@@ -703,7 +1136,7 @@ describe("presentationSlice", () => {
     });
 
     it("updateParticipantOverlayInfoFromRemote preserves stream item when overlay-only off", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -723,12 +1156,13 @@ describe("presentationSlice", () => {
         } as never),
       );
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("John 3");
     });
 
     it("updateParticipantOverlayInfoFromRemote does not clear item when overlay-only on", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -748,12 +1182,13 @@ describe("presentationSlice", () => {
         } as never),
       );
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("John 3");
     });
 
     it("clearStreamOverlaysOnly empties overlays and keeps slide bible formatted", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -779,7 +1214,7 @@ describe("presentationSlice", () => {
         },
       });
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
-      const s = store.getState().presentation.streamInfo;
+      const s = legacy(store.getState().presentation).streamInfo;
       expect(s.participantOverlayInfo?.name).toBe("");
       expect(s.stbOverlayInfo?.heading).toBe("");
       expect(s.slide?.id).toBe("s1");
@@ -791,7 +1226,7 @@ describe("presentationSlice", () => {
       jest.useFakeTimers();
       jest.setSystemTime(1000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -808,13 +1243,13 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const shownAt =
-        store.getState().presentation.streamInfo.participantOverlayInfo?.time;
+      const shownAt = legacy(store.getState().presentation).streamInfo
+        .participantOverlayInfo?.time;
 
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
 
-      const clearedAt =
-        store.getState().presentation.streamInfo.participantOverlayInfo?.time;
+      const clearedAt = legacy(store.getState().presentation).streamInfo
+        .participantOverlayInfo?.time;
 
       expect(clearedAt).toBeGreaterThan(shownAt ?? -1);
     });
@@ -823,7 +1258,7 @@ describe("presentationSlice", () => {
       jest.useFakeTimers();
       jest.setSystemTime(8000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -850,8 +1285,8 @@ describe("presentationSlice", () => {
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
 
       expect(
-        store.getState().presentation.prevStreamInfo.participantOverlayInfo
-          ?.name,
+        legacy(store.getState().presentation).prevStreamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Alex");
 
       store.dispatch(
@@ -862,7 +1297,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const end = store.getState().presentation;
+      const end = legacy(store.getState().presentation);
       expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
       expect(end.streamInfo.imageOverlayInfo?.imageUrl).toBe(
         "https://img.example/b.jpg",
@@ -872,10 +1307,10 @@ describe("presentationSlice", () => {
     it("updateImageOverlayInfo preserves outgoing participant in prevStreamInfo for exit animation", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: {
               id: "p1",
               name: "Host",
@@ -893,7 +1328,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Host");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
       expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe(
@@ -905,7 +1340,7 @@ describe("presentationSlice", () => {
       jest.useFakeTimers();
       jest.setSystemTime(9000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -930,8 +1365,8 @@ describe("presentationSlice", () => {
 
       store.dispatch(presentationSlice.actions.clearStream());
       expect(
-        store.getState().presentation.prevStreamInfo.participantOverlayInfo
-          ?.name,
+        legacy(store.getState().presentation).prevStreamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Alex");
 
       store.dispatch(
@@ -942,7 +1377,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const end = store.getState().presentation;
+      const end = legacy(store.getState().presentation);
       expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
       expect(end.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(end.streamInfo.imageOverlayInfo?.imageUrl).toBe(
@@ -959,9 +1394,7 @@ describe("presentationSlice", () => {
             type: "participant",
             name: "Jordan",
           } as never),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.participantOverlayInfo?.name).toBe("Jordan");
         },
       },
@@ -973,9 +1406,7 @@ describe("presentationSlice", () => {
             type: "stick-to-bottom",
             heading: "Service starts soon",
           } as never),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.stbOverlayInfo?.heading).toBe(
             "Service starts soon",
           );
@@ -990,9 +1421,7 @@ describe("presentationSlice", () => {
             url: "https://example.com/connect",
             description: "Connect",
           } as never),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
             "https://example.com/connect",
           );
@@ -1006,9 +1435,7 @@ describe("presentationSlice", () => {
             authorHexColor: "#22c55e",
             text: "Praying for you",
           }),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.boardPostStreamInfo?.text).toBe(
             "Praying for you",
           );
@@ -1020,7 +1447,7 @@ describe("presentationSlice", () => {
         jest.useFakeTimers();
         jest.setSystemTime(9100);
 
-        const base = presentationSlice.getInitialState();
+        const base = legacyInitialState();
         const store = createStore({
           presentation: {
             ...base,
@@ -1045,13 +1472,13 @@ describe("presentationSlice", () => {
 
         store.dispatch(presentationSlice.actions.clearStream());
         expect(
-          store.getState().presentation.prevStreamInfo.participantOverlayInfo
-            ?.name,
+          legacy(store.getState().presentation).prevStreamInfo
+            .participantOverlayInfo?.name,
         ).toBe("Alex");
 
         store.dispatch(send());
 
-        const end = store.getState().presentation;
+        const end = legacy(store.getState().presentation);
         expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
         assert(end);
       },
@@ -1061,7 +1488,7 @@ describe("presentationSlice", () => {
       jest.useFakeTimers();
       jest.setSystemTime(5000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -1086,7 +1513,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const mid = store.getState().presentation;
+      const mid = legacy(store.getState().presentation);
       expect(mid.streamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(mid.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe(
         "https://img.example/photo.jpg",
@@ -1097,7 +1524,7 @@ describe("presentationSlice", () => {
 
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
 
-      const end = store.getState().presentation;
+      const end = legacy(store.getState().presentation);
       expect(end.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(end.prevStreamInfo.qrCodeOverlayInfo?.url).toBe(
         "https://example.com/qr",
@@ -1106,7 +1533,7 @@ describe("presentationSlice", () => {
     });
 
     it("clearStreamOverlaysOnly clears overlays even when stream is not transmitting", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -1118,13 +1545,13 @@ describe("presentationSlice", () => {
         },
       });
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
       expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Ann");
     });
 
     it("clearStreamOverlaysOnly no-op when no active overlay", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -1138,15 +1565,17 @@ describe("presentationSlice", () => {
       });
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("Keep");
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.name,
       ).toBe("");
     });
 
     it("setStreamItemContentBlocked false preserves active overlay", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -1166,20 +1595,21 @@ describe("presentationSlice", () => {
       store.dispatch(
         presentationSlice.actions.setStreamItemContentBlocked(false),
       );
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(
-        false,
-      );
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(false);
+      expect(
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.name,
       ).toBe("Ann");
     });
 
     const streamSlideAndBible = (blocked: boolean) => ({
-      ...presentationSlice.getInitialState(),
+      ...legacyInitialState(),
       isStreamTransmitting: true,
       streamItemContentBlocked: blocked,
       streamInfo: {
-        ...presentationSlice.getInitialState().streamInfo,
+        ...legacyInitialState().streamInfo,
         slide: {
           id: "s1",
           type: "Media" as const,
@@ -1209,7 +1639,7 @@ describe("presentationSlice", () => {
       blockedOn.dispatch(
         presentationSlice.actions.updateStbOverlayInfo(stbPayload as never),
       );
-      let s = blockedOn.getState().presentation.streamInfo;
+      let s = legacy(blockedOn.getState().presentation).streamInfo;
       expect(s.slide?.boxes?.[0]?.words).toBe("Lyrics");
       expect(s.bibleDisplayInfo?.title).toBe("Psalm 23");
       expect(s.stbOverlayInfo?.heading).toBe("Announcements");
@@ -1220,7 +1650,7 @@ describe("presentationSlice", () => {
       blockedOff.dispatch(
         presentationSlice.actions.updateStbOverlayInfo(stbPayload as never),
       );
-      s = blockedOff.getState().presentation.streamInfo;
+      s = legacy(blockedOff.getState().presentation).streamInfo;
       expect(s.slide?.boxes?.[0]?.words).toBe("Lyrics");
       expect(s.bibleDisplayInfo?.title).toBe("Psalm 23");
       expect(s.stbOverlayInfo?.heading).toBe("Announcements");
@@ -1241,7 +1671,7 @@ describe("presentationSlice", () => {
       blockedOn.dispatch(
         presentationSlice.actions.updateQrCodeOverlayInfo(qrPayload as never),
       );
-      let s = blockedOn.getState().presentation.streamInfo;
+      let s = legacy(blockedOn.getState().presentation).streamInfo;
       expect(s.bibleDisplayInfo?.title).toBe("Psalm 23");
       expect(s.qrCodeOverlayInfo?.url).toBe("https://example.com");
 
@@ -1251,7 +1681,7 @@ describe("presentationSlice", () => {
       blockedOff.dispatch(
         presentationSlice.actions.updateQrCodeOverlayInfo(qrPayload as never),
       );
-      s = blockedOff.getState().presentation.streamInfo;
+      s = legacy(blockedOff.getState().presentation).streamInfo;
       expect(s.slide?.boxes?.[0]?.words).toBe("Lyrics");
       expect(s.bibleDisplayInfo?.title).toBe("Psalm 23");
     });
@@ -1270,7 +1700,7 @@ describe("presentationSlice", () => {
       blockedOn.dispatch(
         presentationSlice.actions.updateImageOverlayInfo(imgPayload as never),
       );
-      let s = blockedOn.getState().presentation.streamInfo;
+      let s = legacy(blockedOn.getState().presentation).streamInfo;
       expect(s.bibleDisplayInfo?.title).toBe("Psalm 23");
       expect(s.imageOverlayInfo?.imageUrl).toBe(
         "https://cdn.example.com/a.png",
@@ -1282,7 +1712,7 @@ describe("presentationSlice", () => {
       blockedOff.dispatch(
         presentationSlice.actions.updateImageOverlayInfo(imgPayload as never),
       );
-      s = blockedOff.getState().presentation.streamInfo;
+      s = legacy(blockedOff.getState().presentation).streamInfo;
       expect(s.bibleDisplayInfo?.title).toBe("Psalm 23");
     });
 
@@ -1306,7 +1736,7 @@ describe("presentationSlice", () => {
         presentationSlice.actions.updateStbOverlayInfoFromRemote(payload),
       );
       expect(
-        off.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(off.getState().presentation).streamInfo.bibleDisplayInfo?.title,
       ).toBe("Psalm 23");
 
       const on = createStore({
@@ -1322,7 +1752,7 @@ describe("presentationSlice", () => {
         presentationSlice.actions.updateStbOverlayInfoFromRemote(payload),
       );
       expect(
-        on.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(on.getState().presentation).streamInfo.bibleDisplayInfo?.title,
       ).toBe("Psalm 23");
     });
 
@@ -1339,10 +1769,12 @@ describe("presentationSlice", () => {
         } as never),
       );
       expect(
-        store.getState().presentation.streamInfo.slide?.boxes?.[0]?.words,
+        legacy(store.getState().presentation).streamInfo.slide?.boxes?.[0]
+          ?.words,
       ).toBe("Lyrics");
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("Psalm 23");
     });
 
@@ -1358,12 +1790,13 @@ describe("presentationSlice", () => {
         } as never),
       );
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("Psalm 23");
     });
 
     it("setStreamItemContentBlockedFromRemote matches local toggle behavior", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const withOverlay = createStore({
         presentation: {
           ...base,
@@ -1383,12 +1816,12 @@ describe("presentationSlice", () => {
       withOverlay.dispatch(
         presentationSlice.actions.setStreamItemContentBlockedFromRemote(true),
       );
-      expect(withOverlay.getState().presentation.streamItemContentBlocked).toBe(
-        true,
-      );
       expect(
-        withOverlay.getState().presentation.streamInfo.participantOverlayInfo
-          ?.name,
+        legacy(withOverlay.getState().presentation).streamItemContentBlocked,
+      ).toBe(true);
+      expect(
+        legacy(withOverlay.getState().presentation).streamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Live");
 
       const overlayOnlyOff = createStore({
@@ -1411,16 +1844,16 @@ describe("presentationSlice", () => {
         presentationSlice.actions.setStreamItemContentBlockedFromRemote(false),
       );
       expect(
-        overlayOnlyOff.getState().presentation.streamItemContentBlocked,
+        legacy(overlayOnlyOff.getState().presentation).streamItemContentBlocked,
       ).toBe(false);
       expect(
-        overlayOnlyOff.getState().presentation.streamInfo.participantOverlayInfo
-          ?.name,
+        legacy(overlayOnlyOff.getState().presentation).streamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Y");
     });
 
     it("setStreamItemContentBlockedFromRemote false is a no-op when already false", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -1436,16 +1869,17 @@ describe("presentationSlice", () => {
         presentationSlice.actions.setStreamItemContentBlockedFromRemote(false),
       );
 
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(
-        false,
-      );
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(false);
+      expect(
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.name,
       ).toBe("Live");
     });
 
     it("setStreamItemContentBlocked true is a no-op when already true", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -1467,9 +1901,12 @@ describe("presentationSlice", () => {
         presentationSlice.actions.setStreamItemContentBlocked(true),
       );
 
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(true);
       expect(
-        store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+        legacy(store.getState().presentation).streamItemContentBlocked,
+      ).toBe(true);
+      expect(
+        legacy(store.getState().presentation).streamInfo.participantOverlayInfo
+          ?.name,
       ).toBe("Live");
     });
 
@@ -1479,11 +1916,11 @@ describe("presentationSlice", () => {
 
       const blockedOn = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: participant,
             stbOverlayInfo: {
               heading: "H",
@@ -1497,18 +1934,18 @@ describe("presentationSlice", () => {
       blockedOn.dispatch(
         presentationSlice.actions.updateBibleDisplayInfo(bible),
       );
-      let s = blockedOn.getState().presentation.streamInfo;
+      let s = legacy(blockedOn.getState().presentation).streamInfo;
       expect(s.bibleDisplayInfo?.title).toBe("Jn 3");
       expect(s.participantOverlayInfo?.name).toBe("Host");
       expect(s.stbOverlayInfo?.heading).toBe("H");
 
       const blockedOff = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: false,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: participant,
             stbOverlayInfo: {
               heading: "H",
@@ -1522,7 +1959,7 @@ describe("presentationSlice", () => {
       blockedOff.dispatch(
         presentationSlice.actions.updateBibleDisplayInfo(bible),
       );
-      s = blockedOff.getState().presentation.streamInfo;
+      s = legacy(blockedOff.getState().presentation).streamInfo;
       expect(s.bibleDisplayInfo?.title).toBe("Jn 3");
       expect(s.participantOverlayInfo?.name).toBe("Host");
       expect(s.stbOverlayInfo?.heading).toBe("H");
@@ -1535,11 +1972,11 @@ describe("presentationSlice", () => {
 
       const blockedOn = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: participant,
           },
         },
@@ -1548,17 +1985,17 @@ describe("presentationSlice", () => {
         presentationSlice.actions.updateFormattedTextDisplayInfo(formatted),
       );
       expect(
-        blockedOn.getState().presentation.streamInfo.participantOverlayInfo
-          ?.name,
+        legacy(blockedOn.getState().presentation).streamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Host");
 
       const blockedOff = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamItemContentBlocked: false,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: participant,
           },
         },
@@ -1567,19 +2004,21 @@ describe("presentationSlice", () => {
         presentationSlice.actions.updateFormattedTextDisplayInfo(formatted),
       );
       expect(
-        blockedOff.getState().presentation.streamInfo.participantOverlayInfo
-          ?.name,
+        legacy(blockedOff.getState().presentation).streamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Host");
-      expect(blockedOff.getState().presentation.streamInfo.type).toBe("free");
+      expect(legacy(blockedOff.getState().presentation).streamInfo.type).toBe(
+        "free",
+      );
     });
 
     it("updateFormattedTextDisplayInfo clears the stream slide and refreshes streamInfo time", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             time: 10,
             slide: {
               id: "slide-1",
@@ -1597,7 +2036,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation.streamInfo;
+      const state = legacy(store.getState().presentation).streamInfo;
       expect(state.slide).toBeNull();
       expect(state.formattedTextDisplayInfo?.text).toBe("Formatted text");
       expect(state.time).toBeGreaterThan(10);
@@ -1606,10 +2045,10 @@ describe("presentationSlice", () => {
     it("updateBibleDisplayInfo moves live formatted text to prev and clears stream slot for exit", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             formattedTextDisplayInfo: {
               text: "Welcome everyone",
               time: 5,
@@ -1626,7 +2065,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
       expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
         "Welcome everyone",
@@ -1638,10 +2077,10 @@ describe("presentationSlice", () => {
     it("updateFormattedTextDisplayInfo moves live bible to prev and clears stream bible for exit", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             bibleDisplayInfo: {
               title: "Ps 23",
@@ -1658,7 +2097,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.streamInfo.bibleDisplayInfo?.title).toBe("");
       expect(p.streamInfo.bibleDisplayInfo?.text).toBe("");
       expect(p.prevStreamInfo.bibleDisplayInfo?.title).toBe("Ps 23");
@@ -1669,10 +2108,10 @@ describe("presentationSlice", () => {
     it("updateFormattedTextDisplayInfo after empty updateBibleDisplayInfo keeps prev bible for exit (ItemSlides order)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             bibleDisplayInfo: {
               title: "Rom 8:1",
@@ -1695,7 +2134,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.prevStreamInfo.bibleDisplayInfo?.title).toBe("Rom 8:1");
       expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("Welcome");
       expect(p.streamInfo.type).toBe("free");
@@ -1710,10 +2149,10 @@ describe("presentationSlice", () => {
       };
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             bibleDisplayInfo: {
               title: "Ps 1",
@@ -1732,7 +2171,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.prevStreamInfo.bibleDisplayInfo?.title).toBe("Ps 1");
       expect(p.streamInfo.bibleDisplayInfo?.title).toBe("");
       expect(p.streamInfo.type).toBe("song");
@@ -1747,10 +2186,10 @@ describe("presentationSlice", () => {
       };
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "free",
             formattedTextDisplayInfo: {
               text: "Announcements here",
@@ -1768,7 +2207,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
         "Announcements here",
       );
@@ -1785,10 +2224,10 @@ describe("presentationSlice", () => {
       };
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           prevStreamInfo: {
-            ...presentationSlice.getInitialState().prevStreamInfo,
+            ...legacyInitialState().prevStreamInfo,
             bibleDisplayInfo: {
               title: "AlreadyInPrev",
               text: "saved",
@@ -1796,7 +2235,7 @@ describe("presentationSlice", () => {
             },
           },
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             bibleDisplayInfo: { title: "", text: "", time: 99 },
           },
@@ -1812,16 +2251,17 @@ describe("presentationSlice", () => {
       );
 
       expect(
-        store.getState().presentation.prevStreamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).prevStreamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("AlreadyInPrev");
     });
 
     it("updateStreamFromRemote snapshots live bible into prev when switching to a stream slide", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             bibleDisplayInfo: {
               title: "Gal 2:20",
@@ -1844,7 +2284,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.prevStreamInfo.bibleDisplayInfo?.title).toBe("Gal 2:20");
       expect(p.streamInfo.bibleDisplayInfo?.title).toBe("");
       expect(p.streamInfo.type).toBe("song");
@@ -1853,9 +2293,9 @@ describe("presentationSlice", () => {
     it("updateStreamFromRemote snapshots live formatted text into prev when switching to a stream slide", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "free",
             formattedTextDisplayInfo: {
               text: "Potluck signup",
@@ -1877,7 +2317,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
         "Potluck signup",
       );
@@ -1887,9 +2327,9 @@ describe("presentationSlice", () => {
     it("updateBibleDisplayInfoFromRemote moves live formatted text to prev and clears stream slot", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             formattedTextDisplayInfo: {
               text: "Hello church",
               time: 2,
@@ -1906,7 +2346,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
       expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
         "Hello church",
@@ -1918,9 +2358,9 @@ describe("presentationSlice", () => {
     it("updateFormattedTextDisplayInfoFromRemote after empty bible keeps prev bible (remote ItemSlides order)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             bibleDisplayInfo: {
               title: "Col 3:1",
@@ -1946,12 +2386,16 @@ describe("presentationSlice", () => {
       );
 
       expect(
-        store.getState().presentation.prevStreamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).prevStreamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("Col 3:1");
       expect(
-        store.getState().presentation.streamInfo.formattedTextDisplayInfo?.text,
+        legacy(store.getState().presentation).streamInfo
+          .formattedTextDisplayInfo?.text,
       ).toBe("Picnic Sunday");
-      expect(store.getState().presentation.streamInfo.type).toBe("free");
+      expect(legacy(store.getState().presentation).streamInfo.type).toBe(
+        "free",
+      );
     });
 
     it("remote clear keeps the outgoing verse in prev when stream snapshot arrives before the empty bible", () => {
@@ -1985,7 +2429,8 @@ describe("presentationSlice", () => {
 
       // The empty bible echo must not overwrite the verse already staged for the fade-out.
       expect(
-        store.getState().presentation.prevStreamInfo.bibleDisplayInfo?.text,
+        legacy(store.getState().presentation).prevStreamInfo.bibleDisplayInfo
+          ?.text,
       ).toBe("For God so loved");
     });
 
@@ -2015,17 +2460,17 @@ describe("presentationSlice", () => {
       );
 
       expect(
-        store.getState().presentation.prevStreamInfo.formattedTextDisplayInfo
-          ?.text,
+        legacy(store.getState().presentation).prevStreamInfo
+          .formattedTextDisplayInfo?.text,
       ).toBe("Welcome");
     });
 
     it("updateFormattedTextDisplayInfoFromRemote with empty text does not clear live bible (firebase echo order)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             type: "bible",
             formattedTextDisplayInfo: { text: "", time: 99 },
             bibleDisplayInfo: {
@@ -2044,7 +2489,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const p = store.getState().presentation;
+      const p = legacy(store.getState().presentation);
       expect(p.streamInfo.bibleDisplayInfo?.title).toBe("Jn 3:16");
       expect(p.streamInfo.type).toBe("bible");
     });
@@ -2065,22 +2510,22 @@ describe("presentationSlice", () => {
 
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           projectorInfo: {
-            ...presentationSlice.getInitialState().projectorInfo,
+            ...legacyInitialState().projectorInfo,
             name: "Projector Active",
             type: "song",
             slide: currentSlide,
           },
           monitorInfo: {
-            ...presentationSlice.getInitialState().monitorInfo,
+            ...legacyInitialState().monitorInfo,
             name: "Monitor Active",
             type: "song",
             slide: currentSlide,
             nextSlide,
           },
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             name: "Stream Active",
             type: "song",
             slide: currentSlide,
@@ -2090,7 +2535,7 @@ describe("presentationSlice", () => {
       });
 
       store.dispatch(presentationSlice.actions.clearAll());
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
 
       expect(state.prevProjectorInfo.name).toBe("Projector Active");
       expect(state.prevMonitorInfo.name).toBe("Monitor Active");
@@ -2100,6 +2545,44 @@ describe("presentationSlice", () => {
       expect(state.monitorInfo.slide).toBeNull();
       expect(state.streamInfo.slide).toBeNull();
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
+    });
+
+    it("clearAll leaves outputs it was not given alone, so a disabled display is untouched", () => {
+      const currentSlide = {
+        id: "current",
+        type: "Media" as const,
+        name: "Current",
+        boxes: [],
+      };
+
+      const store = createStore({
+        presentation: {
+          ...legacyInitialState(),
+          projectorInfo: {
+            ...legacyInitialState().projectorInfo,
+            name: "Projector Active",
+            type: "song",
+            slide: currentSlide,
+          },
+          monitorInfo: {
+            ...legacyInitialState().monitorInfo,
+            name: "Monitor Active",
+            type: "song",
+            slide: currentSlide,
+          },
+        },
+      });
+
+      // The controller passes only enabled outputs; a disabled monitor is absent
+      // from that list and must keep whatever it was showing.
+      store.dispatch(
+        presentationSlice.actions.clearAll({ outputIds: ["projector"] }),
+      );
+      const state = legacy(store.getState().presentation);
+
+      expect(state.projectorInfo.slide).toBeNull();
+      expect(state.monitorInfo.slide).toEqual(currentSlide);
+      expect(state.monitorInfo.name).toBe("Monitor Active");
     });
 
     it("updatePresentation updates monitor state and keeps stream slide for free payloads", () => {
@@ -2123,17 +2606,17 @@ describe("presentationSlice", () => {
       };
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isMonitorTransmitting: true,
           isStreamTransmitting: true,
           monitorInfo: {
-            ...presentationSlice.getInitialState().monitorInfo,
+            ...legacyInitialState().monitorInfo,
             slide: oldMonitorSlide,
             nextSlide: { id: "next-old", type: "Media", name: "", boxes: [] },
             itemId: "old-item",
           },
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             slide: oldStreamSlide,
             name: "Old stream name",
             type: "song",
@@ -2155,7 +2638,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.monitorInfo.slide).toEqual(newSlide);
       expect(state.monitorInfo.nextSlide).toBeNull();
       expect(state.monitorInfo.itemId).toBe("item-2");
@@ -2170,9 +2653,9 @@ describe("presentationSlice", () => {
     it("updateStreamFromRemote sets slide for media and clears it for bible/free", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             slide: { id: "old", type: "Media", name: "old", boxes: [] },
             name: "Old stream",
             type: "song",
@@ -2192,17 +2675,19 @@ describe("presentationSlice", () => {
           }),
         ),
       );
-      expect(store.getState().presentation.streamInfo.slide).toEqual({
+      expect(legacy(store.getState().presentation).streamInfo.slide).toEqual({
         id: "song-slide",
         type: "Media",
         name: "song",
         boxes: [],
       });
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("");
       expect(
-        store.getState().presentation.streamInfo.formattedTextDisplayInfo?.text,
+        legacy(store.getState().presentation).streamInfo
+          .formattedTextDisplayInfo?.text,
       ).toBe("");
 
       store.dispatch(
@@ -2221,7 +2706,7 @@ describe("presentationSlice", () => {
           }),
         ),
       );
-      expect(store.getState().presentation.streamInfo.slide).toBeNull();
+      expect(legacy(store.getState().presentation).streamInfo.slide).toBeNull();
 
       store.dispatch(
         presentationSlice.actions.updateStreamFromRemote(
@@ -2234,16 +2719,18 @@ describe("presentationSlice", () => {
           }),
         ),
       );
-      expect(store.getState().presentation.streamInfo.slide).toBeNull();
-      expect(store.getState().presentation.streamInfo.name).toBe("Free Remote");
+      expect(legacy(store.getState().presentation).streamInfo.slide).toBeNull();
+      expect(legacy(store.getState().presentation).streamInfo.name).toBe(
+        "Free Remote",
+      );
     });
 
     it("updateStreamFromRemote preserves bible text for bible snapshots", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             bibleDisplayInfo: { title: "Jn 3", text: "For God", time: 100 },
             type: "bible",
             time: 100,
@@ -2264,18 +2751,21 @@ describe("presentationSlice", () => {
       );
 
       expect(
-        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+        legacy(store.getState().presentation).streamInfo.bibleDisplayInfo
+          ?.title,
       ).toBe("Jn 3");
-      expect(store.getState().presentation.streamInfo.type).toBe("bible");
+      expect(legacy(store.getState().presentation).streamInfo.type).toBe(
+        "bible",
+      );
     });
 
     it("updateStreamFromRemote keeps overlays for stream slides when overlay-only is on", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamItemContentBlocked: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: { id: "p", name: "Host", time: 1 },
             bibleDisplayInfo: { title: "Jn 3", text: "For God", time: 1 },
           },
@@ -2294,7 +2784,7 @@ describe("presentationSlice", () => {
         ),
       );
 
-      const state = store.getState().presentation.streamInfo;
+      const state = legacy(store.getState().presentation).streamInfo;
       expect(state.slide?.id).toBe("song-2");
       expect(state.bibleDisplayInfo?.title).toBe("");
       expect(state.participantOverlayInfo?.name).toBe("Host");
@@ -2303,10 +2793,10 @@ describe("presentationSlice", () => {
     it("updateParticipantOverlayInfo preserves the outgoing overlay in prevStreamInfo for exit animation", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             qrCodeOverlayInfo: {
               id: "q1",
               description: "Scan me",
@@ -2324,7 +2814,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe(
         "Scan me",
       );
@@ -2335,10 +2825,10 @@ describe("presentationSlice", () => {
     it("updateImageOverlayInfoFromRemote is a no-op when stream already shows the same image overlay (sync echo)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             imageOverlayInfo: {
               id: "img-1",
               type: "image",
@@ -2349,7 +2839,7 @@ describe("presentationSlice", () => {
         },
       });
 
-      const before = store.getState().presentation;
+      const before = legacy(store.getState().presentation);
 
       store.dispatch(
         presentationSlice.actions.updateImageOverlayInfoFromRemote({
@@ -2360,7 +2850,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const after = store.getState().presentation;
+      const after = legacy(store.getState().presentation);
       expect(after.streamInfo.imageOverlayInfo?.time).toBe(100);
       expect(after.streamInfo.imageOverlayInfo?.imageUrl).toBe(
         "https://img.example/a.jpg",
@@ -2373,10 +2863,10 @@ describe("presentationSlice", () => {
     it("updateParticipantOverlayInfoFromRemote is a no-op when stream already shows the same participant overlay (sync echo)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: {
               id: "p-1",
               name: "Alex",
@@ -2388,7 +2878,7 @@ describe("presentationSlice", () => {
         },
       });
 
-      const before = store.getState().presentation;
+      const before = legacy(store.getState().presentation);
 
       store.dispatch(
         presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
@@ -2400,7 +2890,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const after = store.getState().presentation;
+      const after = legacy(store.getState().presentation);
       expect(after.streamInfo.participantOverlayInfo?.time).toBe(50);
       expect(after.prevStreamInfo.participantOverlayInfo).toEqual(
         before.prevStreamInfo.participantOverlayInfo,
@@ -2410,10 +2900,10 @@ describe("presentationSlice", () => {
     it("updateStbOverlayInfoFromRemote is a no-op when stream already shows the same STB overlay (sync echo)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             stbOverlayInfo: {
               id: "stb-1",
               heading: "Welcome",
@@ -2424,7 +2914,7 @@ describe("presentationSlice", () => {
         },
       });
 
-      const before = store.getState().presentation;
+      const before = legacy(store.getState().presentation);
 
       store.dispatch(
         presentationSlice.actions.updateStbOverlayInfoFromRemote({
@@ -2435,7 +2925,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const after = store.getState().presentation;
+      const after = legacy(store.getState().presentation);
       expect(after.streamInfo.stbOverlayInfo?.time).toBe(50);
       expect(after.prevStreamInfo.stbOverlayInfo).toEqual(
         before.prevStreamInfo.stbOverlayInfo,
@@ -2445,10 +2935,10 @@ describe("presentationSlice", () => {
     it("updateQrCodeOverlayInfoFromRemote is a no-op when stream already shows the same QR overlay (sync echo)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           isStreamTransmitting: true,
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             qrCodeOverlayInfo: {
               id: "qr-1",
               url: "https://example.com/x",
@@ -2459,7 +2949,7 @@ describe("presentationSlice", () => {
         },
       });
 
-      const before = store.getState().presentation;
+      const before = legacy(store.getState().presentation);
 
       store.dispatch(
         presentationSlice.actions.updateQrCodeOverlayInfoFromRemote({
@@ -2470,7 +2960,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const after = store.getState().presentation;
+      const after = legacy(store.getState().presentation);
       expect(after.streamInfo.qrCodeOverlayInfo?.time).toBe(50);
       expect(after.prevStreamInfo.qrCodeOverlayInfo).toEqual(
         before.prevStreamInfo.qrCodeOverlayInfo,
@@ -2480,9 +2970,9 @@ describe("presentationSlice", () => {
     it("updateImageOverlayInfoFromRemote preserves the outgoing overlay in prevStreamInfo for exit animation", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: {
               id: "p1",
               name: "Host",
@@ -2500,7 +2990,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Host");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
       expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe(
@@ -2511,9 +3001,9 @@ describe("presentationSlice", () => {
     it("does not clear prev participant when empty participant remote follows image remote (per-key Firebase order)", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             participantOverlayInfo: {
               id: "p1",
               name: "Host",
@@ -2531,8 +3021,8 @@ describe("presentationSlice", () => {
         }),
       );
       expect(
-        store.getState().presentation.prevStreamInfo.participantOverlayInfo
-          ?.name,
+        legacy(store.getState().presentation).prevStreamInfo
+          .participantOverlayInfo?.name,
       ).toBe("Host");
 
       store.dispatch(
@@ -2545,7 +3035,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const end = store.getState().presentation;
+      const end = legacy(store.getState().presentation);
       expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("Host");
       expect(end.streamInfo.participantOverlayInfo?.name).toBe("");
     });
@@ -2553,9 +3043,9 @@ describe("presentationSlice", () => {
     it("keeps a cross-type outgoing image overlay in prevStreamInfo when remote updates arrive clear-first", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             imageOverlayInfo: {
               id: "img-live",
               imageUrl: "https://img.example/current.jpg",
@@ -2583,7 +3073,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe(
         "https://img.example/current.jpg",
       );
@@ -2592,7 +3082,7 @@ describe("presentationSlice", () => {
     });
 
     it("clearStreamOverlaysOnly keeps existing prev overlay object when it matches live id", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const matchingImage = {
         id: "img-match",
         type: "image" as const,
@@ -2614,11 +3104,11 @@ describe("presentationSlice", () => {
         },
       });
 
-      const beforeRef =
-        store.getState().presentation.prevStreamInfo.imageOverlayInfo;
+      const beforeRef = legacy(store.getState().presentation).prevStreamInfo
+        .imageOverlayInfo;
       store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
-      const afterRef =
-        store.getState().presentation.prevStreamInfo.imageOverlayInfo;
+      const afterRef = legacy(store.getState().presentation).prevStreamInfo
+        .imageOverlayInfo;
 
       expect(afterRef).toBe(beforeRef);
       expect(afterRef?.imageUrl).toBe("https://img.example/same.jpg");
@@ -2628,7 +3118,7 @@ describe("presentationSlice", () => {
       jest.useFakeTimers();
       jest.setSystemTime(10000);
 
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -2664,7 +3154,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const end = store.getState().presentation;
+      const end = legacy(store.getState().presentation);
       expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
       expect(end.streamInfo.imageOverlayInfo?.imageUrl).toBe(
         "https://img.example/b.jpg",
@@ -2681,9 +3171,7 @@ describe("presentationSlice", () => {
             name: "Jordan",
             time: 12,
           } as never),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.participantOverlayInfo?.name).toBe("Jordan");
         },
       },
@@ -2696,9 +3184,7 @@ describe("presentationSlice", () => {
             heading: "Service starts soon",
             time: 12,
           } as never),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.stbOverlayInfo?.heading).toBe(
             "Service starts soon",
           );
@@ -2714,9 +3200,7 @@ describe("presentationSlice", () => {
             description: "Connect",
             time: 12,
           } as never),
-        assert: (
-          state: ReturnType<typeof presentationSlice.getInitialState>,
-        ) => {
+        assert: (state: LegacyPresentationShape) => {
           expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
             "https://example.com/connect",
           );
@@ -2728,7 +3212,7 @@ describe("presentationSlice", () => {
         jest.useFakeTimers();
         jest.setSystemTime(10000);
 
-        const base = presentationSlice.getInitialState();
+        const base = legacyInitialState();
         const store = createStore({
           presentation: {
             ...base,
@@ -2756,14 +3240,14 @@ describe("presentationSlice", () => {
         store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
         store.dispatch(send());
 
-        const end = store.getState().presentation;
+        const end = legacy(store.getState().presentation);
         expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
         assert(end);
       },
     );
 
     it("remote late clear after cross-type switch clears stale prev image", () => {
-      const base = presentationSlice.getInitialState();
+      const base = legacyInitialState();
       const store = createStore({
         presentation: {
           ...base,
@@ -2798,7 +3282,7 @@ describe("presentationSlice", () => {
         } as never),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
@@ -2807,9 +3291,9 @@ describe("presentationSlice", () => {
     it("preserves outgoing image overlay in prevStreamInfo for exit animation when remote updates arrive clear-last", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             imageOverlayInfo: {
               id: "img-live",
               imageUrl: "https://img.example/current.jpg",
@@ -2837,7 +3321,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe(
         "https://img.example/current.jpg",
       );
@@ -2848,9 +3332,9 @@ describe("presentationSlice", () => {
     it("preserves outgoing QR overlay in prevStreamInfo for exit animation when remote updates arrive clear-last", () => {
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             qrCodeOverlayInfo: {
               id: "qr-live",
               url: "https://example.com",
@@ -2878,7 +3362,7 @@ describe("presentationSlice", () => {
         }),
       );
 
-      const state = store.getState().presentation;
+      const state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe(
         "Scan here",
       );
@@ -2895,9 +3379,9 @@ describe("presentationSlice", () => {
       };
       const store = createStore({
         presentation: {
-          ...presentationSlice.getInitialState(),
+          ...legacyInitialState(),
           monitorInfo: {
-            ...presentationSlice.getInitialState().monitorInfo,
+            ...legacyInitialState().monitorInfo,
             slide: currentSlide,
             name: "Monitor live",
             type: "song",
@@ -2905,7 +3389,7 @@ describe("presentationSlice", () => {
             nextSlide: { id: "next-slide", type: "Media", name: "", boxes: [] },
           },
           streamInfo: {
-            ...presentationSlice.getInitialState().streamInfo,
+            ...legacyInitialState().streamInfo,
             slide: currentSlide,
             name: "Stream live",
             type: "song",
@@ -2916,13 +3400,13 @@ describe("presentationSlice", () => {
       });
 
       store.dispatch(presentationSlice.actions.clearMonitor());
-      let state = store.getState().presentation;
+      let state = legacy(store.getState().presentation);
       expect(state.prevMonitorInfo.name).toBe("Monitor live");
       expect(state.prevMonitorInfo.itemId).toBe("item-monitor");
       expect(state.monitorInfo.slide).toBeNull();
 
       store.dispatch(presentationSlice.actions.clearStream());
-      state = store.getState().presentation;
+      state = legacy(store.getState().presentation);
       expect(state.prevStreamInfo.name).toBe("Stream live");
       expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Name");
       expect(state.streamInfo.slide).toBeNull();
@@ -2934,7 +3418,7 @@ describe("presentationSlice", () => {
       it("updateBoardPostStreamInfo no-ops when stream is not transmitting", () => {
         const store = createStore({
           presentation: {
-            ...presentationSlice.getInitialState(),
+            ...legacyInitialState(),
             isStreamTransmitting: false,
           },
         });
@@ -2948,7 +3432,8 @@ describe("presentationSlice", () => {
         );
 
         expect(
-          store.getState().presentation.streamInfo.boardPostStreamInfo?.text,
+          legacy(store.getState().presentation).streamInfo.boardPostStreamInfo
+            ?.text,
         ).toBe("");
       });
 
@@ -2956,7 +3441,7 @@ describe("presentationSlice", () => {
         jest.useFakeTimers();
         jest.setSystemTime(20_000);
 
-        const base = presentationSlice.getInitialState();
+        const base = legacyInitialState();
         const store = createStore({
           presentation: {
             ...base,
@@ -2971,9 +3456,8 @@ describe("presentationSlice", () => {
             text: "First post",
           }),
         );
-        const firstSeq =
-          store.getState().presentation.streamInfo.boardPostStreamInfo
-            ?.transitionSequence;
+        const firstSeq = legacy(store.getState().presentation).streamInfo
+          .boardPostStreamInfo?.transitionSequence;
 
         store.dispatch(
           presentationSlice.actions.updateBoardPostStreamInfo({
@@ -2983,7 +3467,7 @@ describe("presentationSlice", () => {
           }),
         );
 
-        const state = store.getState().presentation;
+        const state = legacy(store.getState().presentation);
         expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe(
           "First post",
         );
@@ -2994,7 +3478,7 @@ describe("presentationSlice", () => {
       });
 
       it("updateBoardPostStreamInfoFromRemote handoffs current to prev", () => {
-        const base = presentationSlice.getInitialState();
+        const base = legacyInitialState();
         const store = createStore({
           presentation: {
             ...base,
@@ -3021,7 +3505,7 @@ describe("presentationSlice", () => {
           }),
         );
 
-        const state = store.getState().presentation;
+        const state = legacy(store.getState().presentation);
         expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe(
           "Local post",
         );
@@ -3035,7 +3519,7 @@ describe("presentationSlice", () => {
         jest.useFakeTimers();
         jest.setSystemTime(30_000);
 
-        const base = presentationSlice.getInitialState();
+        const base = legacyInitialState();
         const store = createStore({
           presentation: {
             ...base,
@@ -3052,12 +3536,12 @@ describe("presentationSlice", () => {
           }),
         );
         const liveTime =
-          store.getState().presentation.streamInfo.boardPostStreamInfo?.time ??
-          0;
+          legacy(store.getState().presentation).streamInfo.boardPostStreamInfo
+            ?.time ?? 0;
 
         store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
 
-        const state = store.getState().presentation;
+        const state = legacy(store.getState().presentation);
         expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe("Clear me");
         expect(state.streamInfo.boardPostStreamInfo?.text).toBe("");
         expect(state.streamInfo.boardPostStreamInfo?.time).toBeGreaterThan(
@@ -3074,7 +3558,7 @@ describe("presentationSlice", () => {
         jest.useFakeTimers();
         jest.setSystemTime(40_000);
 
-        const base = presentationSlice.getInitialState();
+        const base = legacyInitialState();
         const store = createStore({
           presentation: {
             ...base,
@@ -3097,7 +3581,7 @@ describe("presentationSlice", () => {
           } as never),
         );
 
-        const state = store.getState().presentation;
+        const state = legacy(store.getState().presentation);
         expect(state.streamInfo.boardPostStreamInfo?.text).toBe("");
         expect(state.prevStreamInfo.boardPostStreamInfo?.text).toBe(
           "Board first",

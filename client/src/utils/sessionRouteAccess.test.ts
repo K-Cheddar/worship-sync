@@ -11,7 +11,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "full",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -21,7 +21,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "view",
-      })
+      }),
     ).toBe(false);
   });
 
@@ -31,7 +31,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "music",
-      })
+      }),
     ).toBe(false);
   });
 
@@ -41,7 +41,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "full",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -52,7 +52,7 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         access: "view",
         permissions: { teams: "view" },
-      })
+      }),
     ).toBe(true);
   });
 
@@ -86,7 +86,7 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         access: "full",
         permissions: { teams: "none" },
-      })
+      }),
     ).toBe(false);
   });
 
@@ -94,7 +94,7 @@ describe("sessionRouteAccess", () => {
     expect(
       getAllowedRouteOrDefault("/account", {
         loginState: "guest",
-      })
+      }),
     ).toBe("/controller");
   });
 
@@ -105,7 +105,7 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         operatorName: "Alex",
         access: "full",
-      })
+      }),
     ).toBe("/projector");
   });
 
@@ -116,7 +116,24 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         operatorName: "",
         access: "full",
-      })
+      }),
+    ).toBe(true);
+  });
+
+  it("allows team chat for signed-in human and workstation sessions", () => {
+    expect(
+      isRouteAllowedForSession("/chat", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "view",
+      }),
+    ).toBe(true);
+    expect(
+      isRouteAllowedForSession("/chat", {
+        sessionKind: "workstation",
+        loginState: "success",
+        access: "full",
+      }),
     ).toBe(true);
   });
 
@@ -126,7 +143,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "display",
         loginState: "success",
         displaySurfaceType: "monitor",
-      })
+      }),
     ).toBe("/monitor");
   });
 
@@ -144,7 +161,9 @@ describe("sessionRouteAccess", () => {
 
   it("allows /controller prefix for guest sessions", () => {
     expect(
-      isRouteAllowedForSession("/controller/preferences", { loginState: "guest" }),
+      isRouteAllowedForSession("/controller/preferences", {
+        loginState: "guest",
+      }),
     ).toBe(true);
   });
 
@@ -203,7 +222,10 @@ describe("sessionRouteAccess", () => {
 
   it("getDefaultRouteForSession returns /workstation/operator when workstation has no operator name", () => {
     expect(
-      getDefaultRouteForSession({ sessionKind: "workstation", operatorName: "" }),
+      getDefaultRouteForSession({
+        sessionKind: "workstation",
+        operatorName: "",
+      }),
     ).toBe("/workstation/operator");
   });
 
@@ -246,11 +268,16 @@ describe("sessionRouteAccess", () => {
 });
 
 describe("schedule-only member routing", () => {
-  const member = { loginState: "success", sessionKind: "human", access: "member" } as const;
+  const member = {
+    loginState: "success",
+    sessionKind: "human",
+    access: "member",
+  } as const;
 
   it("allows only the member surfaces", () => {
     expect(isRouteAllowedForSession("/my-schedule", member)).toBe(true);
     expect(isRouteAllowedForSession("/home", member)).toBe(true);
+    expect(isRouteAllowedForSession("/chat", member)).toBe(true);
   });
 
   it("refuses operator surfaces a hidden link would otherwise leave reachable", () => {
@@ -271,7 +298,11 @@ describe("schedule-only member routing", () => {
   });
 
   it("leaves view access unchanged", () => {
-    const viewer = { loginState: "success", sessionKind: "human", access: "view" } as const;
+    const viewer = {
+      loginState: "success",
+      sessionKind: "human",
+      access: "view",
+    } as const;
     expect(isRouteAllowedForSession("/controller", viewer)).toBe(true);
   });
 });

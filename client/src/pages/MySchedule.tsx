@@ -369,11 +369,7 @@ const OccurrenceTile = ({
             {tile.weekday}
           </span>
           {hasPlan ? (
-            <Icon
-              svg={Check}
-              size="xs"
-              className="shrink-0 text-emerald-300"
-            />
+            <Icon svg={Check} size="xs" className="shrink-0 text-emerald-300" />
           ) : (
             <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
           )}
@@ -516,7 +512,11 @@ const OccurrenceDetail = ({
             {/* Opening a tile must not drop the warning the tile carried. */}
             {blockoutLabel ? (
               <p className="mt-1 flex items-start gap-1.5 text-sm text-amber-300">
-                <Icon svg={TriangleAlert} size="sm" className="mt-0.5 shrink-0" />
+                <Icon
+                  svg={TriangleAlert}
+                  size="sm"
+                  className="mt-0.5 shrink-0"
+                />
                 <span>
                   You are scheduled here but marked yourself away{" "}
                   {blockoutLabel}. Your team lead sees this on the schedule.
@@ -772,7 +772,10 @@ const MySchedule = () => {
     occurrences.forEach((occurrence) => {
       const range = findBlockoutRangeForDate(blockoutDates, occurrence.date);
       if (range) {
-        labels.set(occurrence.occurrenceId, formatBlockoutDateRangeLabel(range));
+        labels.set(
+          occurrence.occurrenceId,
+          formatBlockoutDateRangeLabel(range),
+        );
       }
     });
     return labels;
@@ -873,7 +876,7 @@ const MySchedule = () => {
     () =>
       selectedId
         ? datedOccurrences.find((item) => item.occurrenceId === selectedId) ||
-        null
+          null
         : null,
     [datedOccurrences, selectedId],
   );
@@ -914,10 +917,7 @@ const MySchedule = () => {
   };
 
   return (
-    <AppPageShell
-      title="My schedule"
-      icon={CalendarDays}
-    >
+    <AppPageShell title="My schedule" icon={CalendarDays}>
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
         {status === "loading" ? (
           <p className="text-sm text-gray-300">Loading your schedule…</p>
@@ -947,12 +947,14 @@ const MySchedule = () => {
             onJump={setSelectedId}
             onPrevious={
               selectedNavIndex > 0
-                ? () => setSelectedId(navigable[selectedNavIndex - 1].occurrenceId)
+                ? () =>
+                    setSelectedId(navigable[selectedNavIndex - 1].occurrenceId)
                 : undefined
             }
             onNext={
               selectedNavIndex >= 0 && selectedNavIndex < navigable.length - 1
-                ? () => setSelectedId(navigable[selectedNavIndex + 1].occurrenceId)
+                ? () =>
+                    setSelectedId(navigable[selectedNavIndex + 1].occurrenceId)
                 : undefined
             }
             onBack={() => setSelectedId(null)}
@@ -965,9 +967,7 @@ const MySchedule = () => {
             // Past services have nothing left to answer, and offering the
             // buttons there would invite pointless writes.
             onRespond={
-              past.some(
-                (item) => item.occurrenceId === selected.occurrenceId,
-              )
+              past.some((item) => item.occurrenceId === selected.occurrenceId)
                 ? undefined
                 : respondToAssignment
             }
@@ -1041,7 +1041,9 @@ const MySchedule = () => {
                     <OccurrenceTile
                       key={occurrence.occurrenceId}
                       occurrence={occurrence}
-                      isNextUpcoming={occurrence.occurrenceId === nextUpcomingId}
+                      isNextUpcoming={
+                        occurrence.occurrenceId === nextUpcomingId
+                      }
                       isPast={false}
                       isBlockedOut={blockoutLabelByOccurrence.has(
                         occurrence.occurrenceId,

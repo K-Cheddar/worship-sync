@@ -1,6 +1,11 @@
 // Re-export WindowType from windowState for use in React code
 // The actual type is defined in electron/windowState.ts
-export type WindowType = "projector" | "monitor" | "board";
+/**
+ * Key identifying a display window. The original surfaces keep "projector",
+ * "monitor", and "board"; a window opened for a display output uses that
+ * output id.
+ */
+export type WindowType = string;
 
 export interface Display {
   id: number;
@@ -26,18 +31,28 @@ export interface WindowState {
   displayId?: number;
   x?: number;
   y?: number;
-  width: number;
-  height: number;
-  isFullScreen: boolean;
+  width?: number;
+  height?: number;
+  isFullScreen?: boolean;
 }
 
 export interface WindowStatesInfo {
-  projector: WindowState;
-  monitor: WindowState;
-  board: WindowState;
-  projectorOpen: boolean;
-  monitorOpen: boolean;
-  boardOpen: boolean;
+  /** Per-window state keyed by window key, each carrying whether it is open. */
+  displays: Record<string, WindowState & { isOpen: boolean }>;
+}
+
+export interface ElectronLocalAsset {
+  assetId: string;
+  workspaceId?: string;
+  kind: "image" | "video" | "audio" | "pdf";
+  fileName: string;
+  contentType: string;
+  size: number;
+  width?: number;
+  height?: number;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
 }
 
 export interface ElectronAPI {
@@ -48,7 +63,11 @@ export interface ElectronAPI {
   openExternalUrl: (url: string) => Promise<boolean>;
 
   // Window management - all generic handlers
-  openWindow: (windowType: WindowType) => Promise<boolean>;
+  /** `surface` names the render profile when opening an output window. */
+  openWindow: (
+    windowType: WindowType,
+    surface?: "projector" | "monitor" | "stream",
+  ) => Promise<boolean>;
   closeWindow: (windowType: WindowType) => Promise<boolean>;
   focusWindow: (windowType: WindowType) => Promise<boolean>;
   toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;
@@ -78,7 +97,7 @@ export interface ElectronAPI {
    * generation floor so any in-flight {@link identifyDisplay} is rejected.
    */
   cancelIdentifyDisplay: (generation: number) => Promise<boolean>;
-  getWindowStates: () => Promise<WindowStatesInfo>;
+  getWindowStates: (windowKeys?: string[]) => Promise<WindowStatesInfo>;
   /** Reload open projector/monitor/board windows (e.g. after sign-in). */
   refreshDisplayWindows: () => Promise<number>;
   onDesktopAuthCallback: (
@@ -93,6 +112,22 @@ export interface ElectronAPI {
   syncMediaCache: (
     mediaUrls: string[],
   ) => Promise<{ downloaded: number; cleaned: number }>;
+
+  // App-managed local assets
+  importLocalAsset: (
+    file: File,
+    metadata: {
+      assetId: string;
+      workspaceId?: string;
+      kind: "image" | "video" | "audio" | "pdf";
+      fileName: string;
+      contentType: string;
+      width?: number;
+      height?: number;
+    },
+  ) => Promise<ElectronLocalAsset>;
+  getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
+  deleteLocalAsset: (assetId: string) => Promise<boolean>;
 
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;

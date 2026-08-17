@@ -2,6 +2,7 @@ import React from "react";
 import { Box, TimerInfo } from "../../types";
 import DisplayBox from "./DisplayBox";
 import MonitorDisplayBox from "./MonitorDisplayBox";
+import MonitorBandBackground from "./MonitorBandBackground";
 import DisplayClock from "./DisplayClock";
 import DisplayTimer from "./DisplayTimer";
 import HLSPlayer from "./HLSVideoPlayer";
@@ -18,16 +19,21 @@ function renderBand(
   bandHeightPx: number,
   content: React.ReactNode,
   alignBottom?: boolean,
-  contentOpacity?: number
+  contentOpacity?: number,
 ) {
   return (
     <div
-      className="flex justify-center overflow-hidden shrink-0"
-      style={{ height: bandHeightPx, ...(alignBottom && { alignItems: "flex-end" }) }}
+      className="relative z-10 flex justify-center overflow-hidden shrink-0"
+      style={{
+        height: bandHeightPx,
+        ...(alignBottom && { alignItems: "flex-end" }),
+      }}
     >
       <div
         className="w-full h-full relative"
-        style={contentOpacity !== undefined ? { opacity: contentOpacity } : undefined}
+        style={
+          contentOpacity !== undefined ? { opacity: contentOpacity } : undefined
+        }
       >
         {content}
       </div>
@@ -60,8 +66,12 @@ type MonitorViewProps = {
   timerFontSize: number;
   onVideoLoaded?: () => void;
   onVideoError?: () => void;
+  videoMuted?: boolean;
+  videoVolume?: number;
   /** 'next' = slide up, 'prev' = slide down, 'jump' = fade. Defaults to 'next' when undefined. */
   transitionDirection?: "next" | "prev" | "jump";
+  /** Current local/live media behind the monitor's text and chrome. */
+  currentMediaLayer?: React.ReactNode;
 };
 
 const MonitorView = ({
@@ -88,7 +98,10 @@ const MonitorView = ({
   timerFontSize,
   onVideoLoaded,
   onVideoError,
+  videoMuted = true,
+  videoVolume = 1,
   transitionDirection = "next",
+  currentMediaLayer,
 }: MonitorViewProps) => {
   const useNextSlideLayout = showNextSlide && nextBoxes.length > 0;
 
@@ -148,11 +161,7 @@ const MonitorView = ({
       }}
     >
       <div className="flex flex-1 justify-start items-center min-w-0 h-full">
-        {effectiveShowClock && (
-          <DisplayClock
-            fontSize={clockFontSize}
-          />
-        )}
+        {effectiveShowClock && <DisplayClock fontSize={clockFontSize} />}
       </div>
       <div className="flex flex-2 justify-center items-center min-w-0 overflow-hidden text-center h-full">
         {bibleInfoBox && (
@@ -168,7 +177,9 @@ const MonitorView = ({
           >
             {(bibleInfoBox.words ?? "").includes("\u200B") ? (
               <VerseDisplay
-                words={(bibleInfoBox.words ?? "").trim().replace(/\n{2,}/g, "\n")}
+                words={(bibleInfoBox.words ?? "")
+                  .trim()
+                  .replace(/\n{2,}/g, "\n")}
                 className="text-gray-400"
               />
             ) : (
@@ -179,10 +190,7 @@ const MonitorView = ({
       </div>
       <div className="flex flex-1 justify-end items-center min-w-0 h-full">
         {effectiveShowTimer && (
-          <DisplayTimer
-            currentTimerInfo={timerInfo}
-            fontSize={timerFontSize}
-          />
+          <DisplayTimer currentTimerInfo={timerInfo} fontSize={timerFontSize} />
         )}
       </div>
     </div>
@@ -192,28 +200,28 @@ const MonitorView = ({
     return (
       <div
         key="monitor-next-slide-layout"
-        className="bg-black w-full h-full flex flex-col px-4"
+        className="relative isolate bg-black w-full h-full flex flex-col px-4"
       >
-        {renderBand(
-          MONITOR_BAND_CURRENT_PX,
-          renderCurrentBand()
+        {showBackground && <MonitorBandBackground box={boxes[0]} />}
+
+        {currentMediaLayer && (
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            data-testid="monitor-full-frame-media-layer"
+          >
+            {currentMediaLayer}
+          </div>
         )}
 
-        <div
-          className="shrink-0 bg-gray-600 h-2 w-full"
-          aria-hidden
-        />
+        {renderBand(MONITOR_BAND_CURRENT_PX, renderCurrentBand())}
+
+        <div className="shrink-0 bg-gray-600 h-2 w-full" aria-hidden />
 
         <div
           className="relative shrink-0 w-full"
           style={{ height: MONITOR_BAND_NEXT_PX }}
         >
-          {renderBand(
-            MONITOR_BAND_NEXT_PX,
-            renderNextBand(),
-            false,
-            0.75
-          )}
+          {renderBand(MONITOR_BAND_NEXT_PX, renderNextBand(), false, 0.75)}
           <div
             className="absolute bottom-[-4px] left-0 right-0 pointer-events-none"
             style={{
@@ -250,8 +258,12 @@ const MonitorView = ({
       >
         <div
           className="relative w-full h-full"
-          style={{ transform: `scale(${singleSlideScale})`, transformOrigin: "top center" }}
+          style={{
+            transform: `scale(${singleSlideScale})`,
+            transformOrigin: "top center",
+          }}
         >
+          {currentMediaLayer}
           {showBackground && activeVideoUrl && resolvedVideoUrl && videoBox && (
             <HLSPlayer
               src={resolvedVideoUrl}
@@ -259,6 +271,8 @@ const MonitorView = ({
               onLoadedData={onVideoLoaded}
               onError={onVideoError}
               videoBox={videoBox}
+              muted={videoMuted}
+              volume={videoVolume}
             />
           )}
           {boxes.map((box, i) => (

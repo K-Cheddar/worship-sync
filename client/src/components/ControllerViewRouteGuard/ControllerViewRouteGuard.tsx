@@ -8,6 +8,7 @@ export const VIEW_BLOCKED_CONTROLLER_SEGMENTS = new Set([
   "create",
   "preferences",
   "quick-links",
+  "displays",
   "monitor-settings",
   "service-planning",
 ]);

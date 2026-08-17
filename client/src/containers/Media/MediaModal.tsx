@@ -22,9 +22,14 @@ import {
   Plus,
   ImageUp,
   Upload,
+  HardDrive,
+  Video,
   Folder,
   ZoomIn,
   ZoomOut,
+  ExternalLink,
+  Cable,
+  LayoutGrid,
 } from "lucide-react";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -39,7 +44,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
-import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
+import {
+  useCachedMediaUrl,
+  useCachedVideoUrl,
+} from "../../hooks/useCachedMediaUrl";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import LocalVideoInputView from "../../components/DisplayWindow/LocalVideoInputView";
+import { buildLocalVideoInputPresentation } from "../../utils/localVideoInput";
+import { getOrCreateDeviceId } from "../../utils/authStorage";
+import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
   MEDIA_LIBRARY_ROOT_VIEW,
   getChildFolders,
@@ -51,8 +65,13 @@ import {
   MEDIA_LIBRARY_MOVE_TO_NEW_FOLDER,
 } from "../../utils/mediaLibraryFolderOptions";
 import MediaLibraryToolbar from "./MediaLibraryToolbar";
+import MediaTypeFilter, { type MediaTypeFilterValue } from "./MediaTypeFilter";
+import MediaOriginFilter from "./MediaOriginFilter";
+import type { MediaOriginFilterValue } from "./mediaLibraryOrigin";
+import { calculateMediaLibraryGridColumns } from "./mediaLibraryGridColumns";
 import { Slider } from "../../components/ui/Slider";
 import { VirtualMediaGrid } from "./VirtualMediaGrid";
+import { getCanvaMediaSource } from "./canvaMediaSource";
 import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import {
   MediaLibraryFolderModals,
@@ -64,7 +83,10 @@ import {
   buildMediaActionRouteFlags,
   buildMediaLibraryBarActions,
 } from "./mediaLibraryActions";
-import { formatMediaDimensionsLine, summarizeMultiSelectMetadata } from "./mediaLibraryMeta";
+import {
+  formatMediaDimensionsLine,
+  summarizeMultiSelectMetadata,
+} from "./mediaLibraryMeta";
 import {
   MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
   MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
@@ -92,14 +114,14 @@ function MediaModalGridZoomSlider({
     <div className="flex shrink-0 items-center gap-1">
       <Button
         variant="tertiary"
-        className="min-h-0 h-7 w-7 justify-center p-0"
+        className="h-7 w-7 min-h-7 max-md:min-h-7 justify-center p-0"
         svg={ZoomOut}
         title="Zoom out"
         aria-label="Zoom out media grid"
         disabled={disabled || value <= 0}
         onClick={() => changeZoomBy(-1)}
       />
-      <div className="w-36 shrink-0">
+      <div className="w-24 shrink-0 sm:w-36">
         <Slider
           className="w-full"
           value={[value]}
@@ -113,7 +135,7 @@ function MediaModalGridZoomSlider({
       </div>
       <Button
         variant="tertiary"
-        className="min-h-0 h-7 w-7 justify-center p-0"
+        className="h-7 w-7 min-h-7 max-md:min-h-7 justify-center p-0"
         svg={ZoomIn}
         title="Zoom in"
         aria-label="Zoom in media grid"
@@ -146,12 +168,14 @@ type MediaModalProps = {
   previewMedia: MediaType | null;
   searchTerm: string;
   showName: boolean;
-  typeFilter: "all" | "image" | "video";
-  onTypeFilterChange: (v: "all" | "image" | "video") => void;
+  typeFilter: MediaTypeFilterValue;
+  onTypeFilterChange: (v: MediaTypeFilterValue) => void;
+  originFilter: MediaOriginFilterValue;
+  onOriginFilterChange: (v: MediaOriginFilterValue) => void;
   onMediaClick: (
     e: React.MouseEvent,
     mediaItem: MediaType,
-    index: number
+    index: number,
   ) => void;
   onSearchChange: (value: string) => void;
   onShowNameToggle: () => void;
@@ -162,7 +186,10 @@ type MediaModalProps = {
   uploadProgress?: { isUploading: boolean; progress: number };
   /** When set, Add Media uses this instead of opening the ref directly (e.g. guest guard + toast). */
   onAddMediaClick?: () => void;
-  onImportFromCanva?: () => void;
+  onImportLocalMedia?: () => void;
+  onAddVideoInput?: () => void;
+  onRelinkVideoInput?: (media: MediaType) => void;
+  onImportFromCanva?: (sourceMedia?: MediaType) => void;
   /** When true, Add Media shows the guest-mode tooltip (upload still routes through `onAddMediaClick`). */
   mediaUploadDisabled?: boolean;
 };
@@ -186,6 +213,8 @@ const MediaModal = ({
   showName,
   typeFilter,
   onTypeFilterChange,
+  originFilter,
+  onOriginFilterChange,
   onMediaClick,
   onSearchChange,
   onShowNameToggle,
@@ -194,6 +223,9 @@ const MediaModal = ({
   mediaUploadInputRef,
   uploadProgress,
   onAddMediaClick,
+  onImportLocalMedia,
+  onAddVideoInput,
+  onRelinkVideoInput,
   onImportFromCanva,
   mediaUploadDisabled = false,
 }: MediaModalProps) => {
@@ -209,8 +241,9 @@ const MediaModal = ({
     [showToast],
   );
 
-  const slideBackgroundFeedbackTimeoutRef =
-    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slideBackgroundFeedbackTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const [slideBackgroundFeedbackId, setSlideBackgroundFeedbackId] = useState<
     string | null
   >(null);
@@ -275,12 +308,30 @@ const MediaModal = ({
         >
           <Upload /> Upload files
         </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={mediaUploadDisabled || !onImportFromCanva}
-          onSelect={onImportFromCanva}
-        >
-          <ImageUp /> Import from Canva
-        </DropdownMenuItem>
+        {onImportLocalMedia ? (
+          <DropdownMenuItem
+            disabled={mediaUploadDisabled}
+            onSelect={onImportLocalMedia}
+          >
+            <HardDrive /> Import local files
+          </DropdownMenuItem>
+        ) : null}
+        {onAddVideoInput ? (
+          <DropdownMenuItem
+            disabled={mediaUploadDisabled}
+            onSelect={onAddVideoInput}
+          >
+            <Video /> Add video input
+          </DropdownMenuItem>
+        ) : null}
+        {onImportFromCanva ? (
+          <DropdownMenuItem
+            disabled={mediaUploadDisabled}
+            onSelect={() => onImportFromCanva()}
+          >
+            <ImageUp /> Import from Canva
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
@@ -291,8 +342,9 @@ const MediaModal = ({
   const itemSlideContext = useMemo(() => {
     if (!location.pathname.includes("item")) return undefined;
     const arrangement = item.arrangements[item.selectedArrangement];
-    const slides =
-      arrangement?.slides?.length ? arrangement.slides : item.slides;
+    const slides = arrangement?.slides?.length
+      ? arrangement.slides
+      : item.slides;
     return {
       itemType: item.type,
       slides,
@@ -309,14 +361,18 @@ const MediaModal = ({
     location.pathname,
   ]);
   const { selectedOverlay } = useSelector(
-    (state: RootState) => state.undoable.present.overlay
+    (state: RootState) => state.undoable.present.overlay,
   );
   const { selectedPreference, selectedQuickLink } = useSelector(
-    (state: RootState) => state.undoable.present.preferences
+    (state: RootState) => state.undoable.present.preferences,
   );
 
   const [modalZoomLevel, setModalZoomLevel] = useState(0);
-  const [modalLayoutBaseCols, setModalLayoutBaseCols] = useState(8);
+  const [modalLayoutBaseCols, setModalLayoutBaseCols] = useState(() =>
+    typeof window === "undefined"
+      ? 4
+      : calculateMediaLibraryGridColumns(window.innerWidth),
+  );
   const modalGridRef = useRef<HTMLElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -328,7 +384,10 @@ const MediaModal = ({
 
   const modalZoomSliderMax = Math.max(0, modalLayoutBaseCols - 2);
 
-  const filteredList = mediaList;
+  const filteredList = useMemo(() => {
+    if (typeFilter === "all") return mediaList;
+    return mediaList.filter((item) => item.type === typeFilter);
+  }, [mediaList, typeFilter]);
 
   // Use shared selection hook for modal - independent from Media component
   const {
@@ -444,13 +503,11 @@ const MediaModal = ({
     [parentForBrowseChildren, folders],
   );
   const selectedRealFolder =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? folders.find((f) => f.id === selectedLibraryFilter)
       : undefined;
   const canGoUp = Boolean(
-    selectedLibraryFilter &&
-    selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
   );
 
   const navigateToFolder = useCallback(
@@ -465,9 +522,7 @@ const MediaModal = ({
     if (!selectedRealFolder) return;
     if (isMediaLibraryFolderEmpty(selectedRealFolder.id, folders, fullList)) {
       onDeleteFolderKeepContents(selectedRealFolder.id);
-      navigateToFolder(
-        selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
-      );
+      navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
       return;
     }
     setFolderDeleteOpen(true);
@@ -503,9 +558,7 @@ const MediaModal = ({
 
   const handleGoUp = useCallback(() => {
     if (!selectedRealFolder) return;
-    navigateToFolder(
-      selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
-    );
+    navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
   }, [navigateToFolder, selectedRealFolder]);
 
   const handleMoveTo = useCallback(
@@ -560,44 +613,69 @@ const MediaModal = ({
     ],
   );
 
-  const mediaBarActions = useMemo(
-    () =>
-      buildMediaLibraryBarActions({
-        flags: routeFlags,
-        db,
-        isLoading: Boolean(isLoading),
-        selectedPreference,
-        selectedQuickLink,
-        selectedOverlay,
-        primaryMedia: modalSelectedMedia,
-        hasMultipleSelection: modalSelectedMediaIds.size > 1,
-        selectedCount: modalSelectedMediaIds.size,
-        dispatch,
-        onDeleteSingle: () => {
-          handleModalDeleteClick(modalSelectedMedia);
-        },
-        onDeleteMultiple: handleModalDeleteMultipleClick,
-        itemSlideContext,
-        notify: notifyMediaAction,
-        onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
-      }),
-    [
-      routeFlags,
+  const mediaBarActions = useMemo(() => {
+    const actions = buildMediaLibraryBarActions({
+      flags: routeFlags,
       db,
-      isLoading,
+      isLoading: Boolean(isLoading),
       selectedPreference,
       selectedQuickLink,
       selectedOverlay,
-      modalSelectedMedia,
-      modalSelectedMediaIds.size,
+      primaryMedia: modalSelectedMedia,
+      hasMultipleSelection: modalSelectedMediaIds.size > 1,
+      selectedCount: modalSelectedMediaIds.size,
       dispatch,
-      handleModalDeleteClick,
-      handleModalDeleteMultipleClick,
+      onDeleteSingle: () => {
+        handleModalDeleteClick(modalSelectedMedia);
+      },
+      onDeleteMultiple: handleModalDeleteMultipleClick,
       itemSlideContext,
-      notifyMediaAction,
-      triggerSlideBackgroundFeedback,
-    ],
-  );
+      notify: notifyMediaAction,
+      onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
+    });
+    if (
+      modalSelectedMediaIds.size === 1 &&
+      getCanvaMediaSource(modalSelectedMedia) &&
+      onImportFromCanva
+    ) {
+      actions.push({
+        id: "manage-canva-source",
+        label: "Manage Canva source",
+        icon: <ExternalLink className="size-4" />,
+        onClick: () => onImportFromCanva(modalSelectedMedia),
+      });
+    }
+    if (
+      modalSelectedMediaIds.size === 1 &&
+      modalSelectedMedia.localVideoInput &&
+      onRelinkVideoInput
+    ) {
+      actions.push({
+        id: "relink-video-input",
+        label: "Relink input",
+        icon: <Cable className="size-4" />,
+        onClick: () => onRelinkVideoInput(modalSelectedMedia),
+      });
+    }
+    return actions;
+  }, [
+    routeFlags,
+    db,
+    isLoading,
+    selectedPreference,
+    selectedQuickLink,
+    selectedOverlay,
+    modalSelectedMedia,
+    modalSelectedMediaIds.size,
+    dispatch,
+    handleModalDeleteClick,
+    handleModalDeleteMultipleClick,
+    itemSlideContext,
+    notifyMediaAction,
+    triggerSlideBackgroundFeedback,
+    onImportFromCanva,
+    onRelinkVideoInput,
+  ]);
 
   const actionBarDetails = useMemo(() => {
     const headerLine = (primary: string, title?: string) => (
@@ -687,32 +765,42 @@ const MediaModal = ({
   ]);
 
   const parentForNewFolder =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? selectedLibraryFilter
       : null;
 
   const resolvedPreviewImageUrl = useCachedMediaUrl(
-    modalPreviewMedia?.type === "image" ? modalPreviewMedia.background : undefined
+    modalPreviewMedia?.type === "image"
+      ? modalPreviewMedia.background
+      : undefined,
   );
   const resolvedPreviewVideoUrl = useCachedVideoUrl(
-    modalPreviewMedia?.type === "video" ? modalPreviewMedia.background : undefined
+    modalPreviewMedia?.type === "video"
+      ? modalPreviewMedia.background
+      : undefined,
   );
-
-  // Calculate grid columns based on available space
-  const calculateGridColumns = (containerWidth: number) => {
-    const minItemsPerRow = 8;
-    const maxItemWidth = 150;
-    const calculatedItems = Math.floor(containerWidth / maxItemWidth);
-    return Math.max(minItemsPerRow, calculatedItems);
-  };
+  const localPreviewImage = useLocalImageUrl(modalPreviewMedia?.localImage);
+  const localPreviewVideo = useLocalVideoFileUrl(
+    modalPreviewMedia?.localVideoFile,
+  );
+  const localVideoInputPreview = useMemo(
+    () =>
+      modalPreviewMedia?.localVideoInput
+        ? buildLocalVideoInputPresentation(
+          modalPreviewMedia.localVideoInput,
+          getOrCreateDeviceId(),
+          getTrustedDeviceLabel(),
+        )
+        : undefined,
+    [modalPreviewMedia?.localVideoInput],
+  );
 
   useEffect(() => {
     if (!isOpen || !modalGridRef.current) return;
     const el = modalGridRef.current;
     const updateLayoutBaseCols = () => {
       const width = el.offsetWidth;
-      setModalLayoutBaseCols(calculateGridColumns(width));
+      setModalLayoutBaseCols(calculateMediaLibraryGridColumns(width));
     };
     updateLayoutBaseCols();
     const resizeObserver = new ResizeObserver(updateLayoutBaseCols);
@@ -785,9 +873,11 @@ const MediaModal = ({
         <div
           className={cn(
             "absolute inset-0 bg-black/55 transition-all duration-300 ease-in-out",
-            isExpanded && modalPreviewMedia && modalPreviewMedia.type === "image"
+            isExpanded &&
+              modalPreviewMedia &&
+              modalPreviewMedia.type === "image"
               ? "opacity-100 z-10"
-              : "opacity-0 z-0 pointer-events-none"
+              : "opacity-0 z-0 pointer-events-none",
           )}
         >
           {modalPreviewMedia && modalPreviewMedia.type === "image" && (
@@ -825,9 +915,11 @@ const MediaModal = ({
         <div
           className={cn(
             "flex h-full min-h-0 flex-col transition-all duration-300 ease-in-out",
-            isExpanded && modalPreviewMedia && modalPreviewMedia.type === "image"
+            isExpanded &&
+              modalPreviewMedia &&
+              modalPreviewMedia.type === "image"
               ? "opacity-0 z-0 pointer-events-none"
-              : "opacity-100 z-10"
+              : "opacity-100 z-10",
           )}
         >
           <div
@@ -835,7 +927,7 @@ const MediaModal = ({
               "relative w-full flex flex-col items-center gap-2 overflow-hidden border-b border-gray-500 bg-homepage-canvas px-4 py-1 transition-all duration-300 ease-in-out",
               modalPreviewMedia
                 ? "h-[40vh] max-h-[40vh] shrink-0 opacity-100"
-                : "h-0 shrink-0 opacity-0"
+                : "h-0 shrink-0 opacity-0",
             )}
           >
             {modalPreviewMedia && (
@@ -858,16 +950,35 @@ const MediaModal = ({
                     />
                   </div>
                   <div className="flex h-full w-full items-center justify-center">
-                    {modalPreviewMedia.type === "video" ? (
+                    {localVideoInputPreview ? (
+                      <LocalVideoInputView
+                        input={localVideoInputPreview}
+                        playAudio={false}
+                        captureEnabled
+                        receiveHighQuality
+                        publishPreview
+                        showErrors
+                      />
+                    ) : modalPreviewMedia.type === "video" ? (
                       <video
-                        src={resolvedPreviewVideoUrl ?? modalPreviewMedia.background}
+                        src={
+                          localPreviewVideo.isLocalVideoFile
+                            ? localPreviewVideo.url
+                            : (resolvedPreviewVideoUrl ??
+                              modalPreviewMedia.background)
+                        }
                         className="max-h-full max-w-full w-full h-full object-contain"
                         controls
                         autoPlay
                       />
                     ) : (
                       <img
-                        src={resolvedPreviewImageUrl ?? modalPreviewMedia.background}
+                        src={
+                          localPreviewImage.isLocalImage
+                            ? localPreviewImage.url
+                            : (resolvedPreviewImageUrl ??
+                              modalPreviewMedia.background)
+                        }
                         alt={modalPreviewMedia.name}
                         className="max-h-full max-w-full h-full w-full object-contain"
                       />
@@ -880,45 +991,58 @@ const MediaModal = ({
 
           <div className="bg-black/60 px-4 py-2">
             <div className="flex flex-col gap-2 lg:hidden">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <MediaModalGridZoomSlider
-                  modalZoomLevel={modalZoomLevel}
-                  modalZoomSliderMax={modalZoomSliderMax}
-                  disabled={modalZoomSliderMax <= 0}
-                  onZoomChange={(next) => setModalZoomLevel(next)}
-                />
-                <MediaLibraryToolbar
-                  showAll={showAll}
-                  onShowAllChange={handleShowAllChange}
-                  typeFilter={typeFilter}
-                  onTypeFilterChange={onTypeFilterChange}
-                  className="mx-0 min-w-0 flex-1 border-0 bg-transparent px-0 py-0"
-                />
-                {mediaUploadInputRef && (
-                  <div className="shrink-0">
-                    {addMediaMenu}
-                  </div>
-                )}
-              </div>
               <div className="flex min-w-0 items-center gap-2">
                 <Input
                   type="text"
                   label="Search"
+                  hideLabel
                   value={searchTerm}
                   onChange={(value) => onSearchChange(value as string)}
-                  placeholder="Name"
-                  className="flex min-w-0 flex-1 gap-4 items-center"
+                  placeholder="Search by name"
+                  className="flex min-w-0 flex-1 items-center gap-2"
                   inputWidth="w-full"
                   inputTextSize="text-sm"
                   svg={searchTerm ? X : undefined}
                   svgAction={() => onSearchChange("")}
                   svgActionAriaLabel="Clear search"
+                  aria-label="Search media by name"
                 />
                 <Toggle
                   icon={Eye}
                   value={showName}
                   onChange={onShowNameToggle}
                 />
+                {mediaUploadInputRef ? (
+                  <div className="shrink-0">{addMediaMenu}</div>
+                ) : null}
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <Toggle
+                  label="Show all"
+                  icon={LayoutGrid}
+                  value={showAll}
+                  onChange={handleShowAllChange}
+                />
+                <MediaOriginFilter
+                  value={originFilter}
+                  onChange={onOriginFilterChange}
+                  className="min-w-0 flex-1"
+                />
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <MediaTypeFilter
+                  value={typeFilter}
+                  onChange={onTypeFilterChange}
+                  fullWidth
+                />
+                {modalZoomSliderMax > 0 ? (
+                  <MediaModalGridZoomSlider
+                    modalZoomLevel={modalZoomLevel}
+                    modalZoomSliderMax={modalZoomSliderMax}
+                    disabled={false}
+                    onZoomChange={(next) => setModalZoomLevel(next)}
+                  />
+                ) : null}
               </div>
             </div>
 
@@ -934,6 +1058,8 @@ const MediaModal = ({
                 onShowAllChange={handleShowAllChange}
                 typeFilter={typeFilter}
                 onTypeFilterChange={onTypeFilterChange}
+                originFilter={originFilter}
+                onOriginFilterChange={onOriginFilterChange}
                 className="mx-0 shrink-0 border-0 bg-transparent px-0 py-0"
               />
               <div className="flex min-h-10 min-w-0 flex-1 basis-0 items-center gap-2">
@@ -959,9 +1085,7 @@ const MediaModal = ({
                 />
               </div>
               {mediaUploadInputRef && (
-                <div className="shrink-0">
-                  {addMediaMenu}
-                </div>
+                <div className="shrink-0">{addMediaMenu}</div>
               )}
             </div>
           </div>
@@ -1048,7 +1172,9 @@ const MediaModal = ({
               onMoveTo={handleMoveTo}
               moveSelectResetKey={moveSelectKey}
               moveToNewFolderOpen={moveToNewFolderOpen}
-              onMoveToNewFolderOpenChange={handleActionBarMoveToNewFolderOpenChange}
+              onMoveToNewFolderOpenChange={
+                handleActionBarMoveToNewFolderOpenChange
+              }
               moveToNewFolderContent={
                 modalSelectedMediaIds.size > 0 ? (
                   <MediaLibraryNewFolderForm

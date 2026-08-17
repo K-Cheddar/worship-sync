@@ -34,7 +34,6 @@ import {
   createNewTimer,
 } from "../../utils/itemUtil";
 import { resolveLrclibImport } from "../../api/lrclib";
-import generateRandomId from "../../utils/generateRandomId";
 
 jest.mock("../../utils/itemUtil", () => {
   const actual = jest.requireActual("../../utils/itemUtil");
@@ -50,8 +49,6 @@ jest.mock("../../api/lrclib", () => ({
   resolveLrclibImport: jest.fn(),
 }));
 
-jest.mock("../../utils/generateRandomId");
-
 const mockedCreateNewSong = createNewSong as jest.MockedFunction<
   typeof createNewSong
 >;
@@ -64,7 +61,6 @@ const mockedCreateNewTimer = createNewTimer as jest.MockedFunction<
 const mockedResolveLrclibImport = resolveLrclibImport as jest.MockedFunction<
   typeof resolveLrclibImport
 >;
-const mockedGenerateRandomId = jest.mocked(generateRandomId);
 
 const createMockItem = (overrides: Partial<ItemState> = {}): ItemState => ({
   name: "Created Item",
@@ -173,19 +169,25 @@ const renderCreateItem = ({
             </MemoryRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     ),
   };
 };
 
 describe("CreateItem", () => {
   beforeEach(() => {
+    localStorage.clear();
     mockedCreateNewSong.mockReset();
     mockedCreateNewFreeForm.mockReset();
     mockedCreateNewTimer.mockReset();
     mockedResolveLrclibImport.mockReset();
-    let n = 0;
-    mockedGenerateRandomId.mockImplementation(() => `list-id-${++n}`);
+  });
+
+  it("keeps media out of the item-type chooser", () => {
+    renderCreateItem();
+
+    expect(screen.getByLabelText("Custom Item:")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Image:")).not.toBeInTheDocument();
   });
 
   it("persists the song draft when leaving and returning", () => {
@@ -278,7 +280,7 @@ describe("CreateItem", () => {
         name: "Created Song",
         _id: "song-1",
         type: "song",
-      })
+      }),
     );
 
     const store = createTestStore({
@@ -310,7 +312,7 @@ describe("CreateItem", () => {
         name: "Created Song",
         _id: "song-1",
         type: "song",
-      })
+      }),
     );
 
     const store = createTestStore({
@@ -371,9 +373,7 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Lyrics:")).toHaveValue(
-        "Amazing grace",
-      );
+      expect(screen.getByLabelText("Lyrics:")).toHaveValue("Amazing grace");
     });
 
     expect(store.getState().createItem.songMetadata).toEqual(
@@ -430,7 +430,9 @@ describe("CreateItem", () => {
       expect(screen.getByText("Choose song")).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole("button", { name: "Expand preview" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Expand preview" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "View lyrics" }));
 
@@ -524,7 +526,9 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Bible" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("bible-page")).toHaveTextContent("John Reading");
+      expect(screen.getByTestId("bible-page")).toHaveTextContent(
+        "John Reading",
+      );
     });
 
     expect(store.getState().createItem.name).toBe("John Reading");
@@ -562,7 +566,7 @@ describe("CreateItem", () => {
         name: "Created Song",
         _id: "song-1",
         type: "song",
-      })
+      }),
     );
 
     const store = createTestStore({
@@ -582,7 +586,8 @@ describe("CreateItem", () => {
       expect(mockedCreateNewSong).toHaveBeenCalled();
     });
 
-    const formattedLyrics = mockedCreateNewSong.mock.calls[0][0].formattedLyrics;
+    const formattedLyrics =
+      mockedCreateNewSong.mock.calls[0][0].formattedLyrics;
     expect(formattedLyrics.some((lyric) => lyric.words.includes("("))).toBe(
       false,
     );

@@ -107,6 +107,7 @@ export function getMediaRouteKey(
   if (
     pathname.includes("/controller/preferences") ||
     pathname.includes("/controller/quick-links") ||
+    pathname.includes("/controller/displays") ||
     pathname.includes("/controller/monitor-settings")
   ) {
     return "controller-settings";

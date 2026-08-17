@@ -111,6 +111,7 @@ type CreateNewSlideType = {
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   mediaInfo?: MediaType;
   textBoxHeight?: number;
+  shouldKeepAspectRatio?: boolean;
 };
 
 export const createNewSlide = ({
@@ -132,8 +133,9 @@ export const createNewSlide = ({
   formattedTextDisplayInfo,
   mediaInfo,
   textBoxHeight,
+  shouldKeepAspectRatio,
 }: CreateNewSlideType) => {
-  const defaultBox = createBox({});
+  const defaultBox = createBox({ shouldKeepAspectRatio });
 
   if (!box) {
     box = defaultBox;

@@ -1,5 +1,10 @@
 import "./App.css";
-import { HashRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import {
+  HashRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { ScrollToPlugin } from "gsap/ScrollToPlugin";
@@ -13,6 +18,7 @@ import GlobalInfoProvider from "./context/globalInfo";
 import { ToastProvider } from "./context/toastContext";
 import TimerManager from "./components/TimerManager/TimerManager";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
+import DisplayOutputsSync from "./components/DisplayOutputsSync/DisplayOutputsSync";
 import { Suspense, useContext, useEffect, useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
@@ -65,8 +71,12 @@ const BoardController = lazyRoute(() => import("./pages/BoardController"));
 const BoardDisplay = lazyRoute(() => import("./pages/BoardDisplay"));
 const BoardPage = lazyRoute(() => import("./pages/BoardPage"));
 const BoardPresent = lazyRoute(() => import("./pages/BoardPresent"));
+const LocalVideoCaptureHost = lazyRoute(
+  () => import("./pages/LocalVideoCaptureHost"),
+);
 
 // Planning / people
+const Chat = lazyRoute(() => import("./pages/Chat"));
 const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
 const Account = lazyRoute(() => import("./pages/Account"));
 const TeamsAndServices = lazyRoute(
@@ -84,7 +94,9 @@ const TeamSchedulePublic = lazyRoute(
 const ServicePublic = lazyRoute(() => import("./pages/ServicePublic"));
 
 // Auth / pairing side trips
-const DesktopSsoComplete = lazyRoute(() => import("./pages/DesktopSsoComplete"));
+const DesktopSsoComplete = lazyRoute(
+  () => import("./pages/DesktopSsoComplete"),
+);
 const RestreamConnectComplete = lazyRoute(
   () => import("./pages/RestreamConnectComplete"),
 );
@@ -101,6 +113,8 @@ const WorkstationOperator = lazyRoute(
 const InviteAccept = lazyRoute(() => import("./pages/InviteAccept"));
 const PasswordReset = lazyRoute(() => import("./pages/PasswordReset"));
 const RecoveryConfirm = lazyRoute(() => import("./pages/RecoveryConfirm"));
+const PrivacyPolicy = lazyRoute(() => import("./pages/Legal/PrivacyPolicy"));
+const TermsOfService = lazyRoute(() => import("./pages/Legal/TermsOfService"));
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -134,7 +148,10 @@ const isBootstrapSplashRoute = (pathname: string) => {
   if (pathname === "/boards/display") return true;
   if (pathname === "/credits-editor") return true;
   if (isTeamsAdminRoute(pathname)) return true;
-  if (pathname === "/workstation/pair" || pathname === "/workstation/operator") {
+  if (
+    pathname === "/workstation/pair" ||
+    pathname === "/workstation/operator"
+  ) {
     return true;
   }
   return false;
@@ -173,7 +190,7 @@ const BootstrapSplash = () => {
   const context = useContext(GlobalInfoContext);
   const description = getAuthBootstrapLoadingDescription(
     context?.authServerStatus ?? "checking",
-    { retryCount: context?.authServerRetryCount ?? 0 }
+    { retryCount: context?.authServerRetryCount ?? 0 },
   );
   return (
     <AuthScreenMain>
@@ -221,7 +238,9 @@ const AppRoutes = () => {
   const location = useLocation();
 
   useLayoutEffect(() => {
-    const routeNeedsTransparentCanvas = isTransparentDisplayRoute(location.pathname);
+    const routeNeedsTransparentCanvas = isTransparentDisplayRoute(
+      location.pathname,
+    );
     const canvasColor = routeNeedsTransparentCanvas
       ? "transparent"
       : HOMEPAGE_CANVAS_COLOR;
@@ -289,6 +308,8 @@ const AppRoutes = () => {
               }
             />
             <Route path="/login" element={<Login />} />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/terms" element={<TermsOfService />} />
             <Route
               path="/login/desktop-sso-complete"
               element={<DesktopSsoComplete />}
@@ -327,6 +348,14 @@ const AppRoutes = () => {
               }
             />
             <Route
+              path="/chat"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]}>
+                  <Chat />
+                </AuthGate>
+              }
+            />
+            <Route
               path="/account/*"
               element={
                 <AuthGate allowedKinds={["human"]}>
@@ -344,14 +373,8 @@ const AppRoutes = () => {
                 </AuthGate>
               }
             />
-            <Route
-              path="/teams/intake/:token"
-              element={<TeamIntakePublic />}
-            />
-            <Route
-              path="/teams/intake"
-              element={<TeamIntakePublic />}
-            />
+            <Route path="/teams/intake/:token" element={<TeamIntakePublic />} />
+            <Route path="/teams/intake" element={<TeamIntakePublic />} />
             <Route
               path="/schedule-response/:token"
               element={<ScheduleResponsePublic />}
@@ -458,6 +481,10 @@ const AppRoutes = () => {
               </AuthGate>
             }
           />
+          <Route
+            path="/local-video-capture-host"
+            element={<LocalVideoCaptureHost />}
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
@@ -478,20 +505,30 @@ const App: React.FC = () => {
       window.history.replaceState({}, document.title, url.toString());
     }
   }, []);
+  const isElectronCaptureHost =
+    Boolean(window.__ELECTRON__) &&
+    window.location.hash.startsWith("#/local-video-capture-host");
   return (
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
-          <FloatingWindowZIndexProvider>
-            <ToastProvider>
-              <ChatProvider>
-                <RoutePersistence />
-                <TimerManager />
-                <AppRoutes />
-                <ChatWindowHost />
-              </ChatProvider>
-            </ToastProvider>
-          </FloatingWindowZIndexProvider>
+          {isElectronCaptureHost ? (
+            <Suspense fallback={null}>
+              <LocalVideoCaptureHost />
+            </Suspense>
+          ) : (
+            <FloatingWindowZIndexProvider>
+              <ToastProvider>
+                <ChatProvider>
+                  <RoutePersistence />
+                  <DisplayOutputsSync />
+                  <TimerManager />
+                  <AppRoutes />
+                  <ChatWindowHost />
+                </ChatProvider>
+              </ToastProvider>
+            </FloatingWindowZIndexProvider>
+          )}
         </GlobalInfoProvider>
       </Router>
     </Provider>

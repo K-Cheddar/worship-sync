@@ -7,11 +7,20 @@ import { ItemState } from "../types";
 
 const mockFormatSong = jest.fn((item: ItemState) => ({
   ...item,
-  slides: [{ id: "formatted-song-slide", type: "Verse", name: "Verse 1", boxes: [] }],
+  slides: [
+    { id: "formatted-song-slide", type: "Verse", name: "Verse 1", boxes: [] },
+  ],
 }));
 const mockFormatFree = jest.fn((item: ItemState) => ({
   ...item,
-  slides: [{ id: "formatted-free-slide", type: "Section", name: "Section 1", boxes: [] }],
+  slides: [
+    {
+      id: "formatted-free-slide",
+      type: "Section",
+      name: "Section 1",
+      boxes: [],
+    },
+  ],
 }));
 
 jest.mock("./overflow", () => ({
@@ -44,7 +53,13 @@ describe("itemNewlineCleanup", () => {
           slides: [],
           songOrder: [],
           formattedLyrics: [
-            { id: "f1", name: "Verse 1", type: "Verse", words: "Line 1\n\nLine 2", slideSpan: 1 },
+            {
+              id: "f1",
+              name: "Verse 1",
+              type: "Verse",
+              words: "Line 1\n\nLine 2",
+              slideSpan: 1,
+            },
           ],
         },
       ],
@@ -108,7 +123,13 @@ describe("itemNewlineCleanup", () => {
           slides: [],
           songOrder: [],
           formattedLyrics: [
-            { id: "f1", name: "Verse 1", type: "Verse", words: "Line 1\n\nLine 2\n", slideSpan: 1 },
+            {
+              id: "f1",
+              name: "Verse 1",
+              type: "Verse",
+              words: "Line 1\n\nLine 2\n",
+              slideSpan: 1,
+            },
           ],
         },
       ],
@@ -128,7 +149,7 @@ describe("itemNewlineCleanup", () => {
             ],
           }),
         ],
-      })
+      }),
     );
     expect(result.slides[0].id).toBe("formatted-song-slide");
   });
@@ -158,8 +179,161 @@ describe("itemNewlineCleanup", () => {
             words: "Line 1\nLine 2",
           }),
         ],
-      })
+      }),
     );
     expect(result.slides[0].id).toBe("formatted-free-slide");
+  });
+
+  it("returns false and leaves non-lyric item types unchanged", () => {
+    const item = {
+      _id: "bible-1",
+      type: "bible",
+      name: "John 3",
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [],
+      arrangements: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as ItemState;
+
+    expect(itemHasCleanableNewlines(item)).toBe(false);
+    expect(cleanItemNewlines(item)).toBe(item);
+  });
+
+  it("returns early when song or free content is empty", () => {
+    const emptySong = {
+      _id: "song-empty",
+      type: "song",
+      name: "Song",
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [],
+      arrangements: [
+        {
+          id: "arr-1",
+          name: "Master",
+          slides: [],
+          songOrder: [],
+          formattedLyrics: [],
+        },
+      ],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as ItemState;
+    const emptyFree = {
+      _id: "free-empty",
+      type: "free",
+      name: "Free",
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [],
+      arrangements: [],
+      formattedSections: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as ItemState;
+
+    expect(itemHasCleanableNewlines(emptySong)).toBe(false);
+    expect(itemHasCleanableNewlines(emptyFree)).toBe(false);
+    expect(cleanItemNewlines(emptySong)).toBe(emptySong);
+    expect(cleanItemNewlines(emptyFree)).toBe(emptyFree);
+  });
+
+  it("leaves non-string lyric or section words untouched while cleaning others", () => {
+    const song = {
+      _id: "song-mixed",
+      type: "song",
+      name: "Song",
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [],
+      arrangements: [
+        {
+          id: "arr-1",
+          name: "Master",
+          slides: [],
+          songOrder: [],
+          formattedLyrics: [
+            {
+              id: "f1",
+              name: "Verse 1",
+              type: "Verse",
+              words: "A\n\nB",
+              slideSpan: 1,
+            },
+            {
+              id: "f2",
+              name: "Verse 2",
+              type: "Verse",
+              words: null,
+              slideSpan: 1,
+            },
+          ],
+        },
+        {
+          id: "arr-2",
+          name: "Other",
+          slides: [],
+          songOrder: [],
+          formattedLyrics: [
+            {
+              id: "f3",
+              name: "Chorus",
+              type: "Chorus",
+              words: "Keep\n\nMe",
+              slideSpan: 1,
+            },
+          ],
+        },
+      ],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as unknown as ItemState;
+
+    cleanItemNewlines(song);
+
+    expect(mockFormatSong).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arrangements: [
+          expect.objectContaining({
+            formattedLyrics: [
+              expect.objectContaining({ words: "A\nB" }),
+              expect.objectContaining({ words: null }),
+            ],
+          }),
+          expect.objectContaining({
+            formattedLyrics: [expect.objectContaining({ words: "Keep\n\nMe" })],
+          }),
+        ],
+      }),
+    );
+
+    const free = {
+      _id: "free-mixed",
+      type: "free",
+      name: "Free",
+      selectedArrangement: 0,
+      selectedSlide: 0,
+      selectedBox: 1,
+      slides: [],
+      arrangements: [],
+      formattedSections: [
+        { id: "s1", sectionNum: 1, words: "One\n\nTwo", slideSpan: 1 },
+        { id: "s2", sectionNum: 2, words: 42, slideSpan: 1 },
+      ],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as unknown as ItemState;
+
+    cleanItemNewlines(free);
+
+    expect(mockFormatFree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formattedSections: [
+          expect.objectContaining({ words: "One\nTwo" }),
+          expect.objectContaining({ words: 42 }),
+        ],
+      }),
+    );
   });
 });

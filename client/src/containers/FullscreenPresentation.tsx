@@ -8,6 +8,15 @@ type FullscreenPresentationProps = {
   prevDisplayInfo: PresentationType;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
+  /** Display output whose settings this surface renders with. */
+  outputId?: string;
+  /**
+   * Skip the fullscreen gate and render bare output.
+   *
+   * A screen bolted to a ceiling projector has nobody to click the button, so
+   * headless screens go straight to the slide.
+   */
+  isHeadless?: boolean;
 };
 
 /** Fullscreen output for /projector and /monitor. For toolbar previews see PresentationPreview. */
@@ -16,6 +25,8 @@ const FullscreenPresentation = ({
   prevDisplayInfo,
   timerInfo,
   prevTimerInfo,
+  outputId,
+  isHeadless = false,
 }: FullscreenPresentationProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
@@ -59,19 +70,24 @@ const FullscreenPresentation = ({
     prevNextBoxes: prevDisplayInfo.nextSlide?.boxes ?? [],
     bibleInfoBox: displayInfo.bibleInfoBox,
     displayType: displayInfo.displayType,
+    outputId,
+    // A live output surface, so it may open the capture device.
+    canCaptureLocalVideo: true,
     timerInfo,
     prevTimerInfo,
     shouldAnimate: true,
     shouldPlayVideo: true,
     width: 100,
-    showMonitorClockTimer: true,
+    showClockTimer: true,
     // The standalone monitor page is the other surface that should use full monitor chrome.
     monitorLayoutMode:
       displayInfo.displayType === "monitor" ? "full-monitor" : "content-only",
     transitionDirection: displayInfo.transitionDirection,
+    localVideoInput: displayInfo.localVideoInput,
+    prevLocalVideoInput: prevDisplayInfo.localVideoInput,
   } as const;
 
-  return isFullscreen ? (
+  return isFullscreen || isHeadless ? (
     <DisplayWindow {...displayWindowProps} />
   ) : (
     <div className="h-dvh w-dvw flex flex-col items-center justify-center bg-black gap-10">

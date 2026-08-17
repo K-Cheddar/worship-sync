@@ -1,7 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-} from "react";
+import { useEffect, useMemo } from "react";
 import StreamInfoComponent from "../components/StreamInfo/StreamInfo";
 import { useDispatch, useSelector } from "../hooks";
 import { RootState } from "../store/store";
@@ -42,7 +39,7 @@ const StreamInfo = () => {
               updateService({
                 id: service.id,
                 changes: { overrideDateTimeISO: undefined },
-              })
+              }),
             );
           }
         }

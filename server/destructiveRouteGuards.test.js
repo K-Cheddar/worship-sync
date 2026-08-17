@@ -28,6 +28,28 @@ test("song-audio API stays behind app session middleware", () => {
   assert.match(serverSource, /guardSongAudioUpload/);
 });
 
+test("Canva design and import APIs stay behind matching-church session guards", () => {
+  const guardPattern =
+    /app\.use\(\s*["']\/api\/churches\/:churchId\/canva["']\s*,\s*requireAppSession\s*,\s*requireFullAppAccess\s*,/;
+  const guardIndex = serverSource.search(guardPattern);
+  assert.ok(guardIndex >= 0, "Canva prefix session guard is required");
+  assert.match(
+    serverSource,
+    /req\.appSession\.churchId === req\.params\.churchId/,
+  );
+
+  for (const route of [
+    'app.get("/api/churches/:churchId/canva/designs"',
+    'app.get("/api/churches/:churchId/canva/designs/:designId"',
+    '"/api/churches/:churchId/canva/imports"',
+  ]) {
+    assert.ok(
+      serverSource.indexOf(route) > guardIndex,
+      `${route} must remain after the Canva prefix session guard`,
+    );
+  }
+});
+
 test("oauth callbacks stay registered for Restream and YouTube", () => {
   assert.match(serverSource, /\/api\/restream\/oauth\/callback/);
   assert.match(serverSource, /\/api\/youtube\/oauth\/callback/);

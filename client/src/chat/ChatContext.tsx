@@ -76,6 +76,8 @@ export const isChatDisplaySurface = (pathname: string) =>
     "/boards/display",
   ].includes(pathname) || pathname.startsWith("/boards/present/");
 
+export const isChatPageRoute = (pathname: string) => pathname === "/chat";
+
 const sortedMessages = (messages: ChatMessage[]) =>
   [...messages].sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
@@ -103,6 +105,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     !isChatDisplaySurface(location.pathname);
 
   const [isOpen, setIsOpen] = useState(false);
+  const isChatVisible = isOpen || isChatPageRoute(location.pathname);
   const [context, setContext] = useState<ChatContextInfo | null>(null);
   const [selectedDayKey, setSelectedDayKey] = useState("");
   const [messagesByDay, setMessagesByDay] = useState<
@@ -121,7 +124,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [retrySequence, setRetrySequence] = useState(0);
   const [typingUsers, setTypingUsers] = useState<ChatTyper[]>([]);
   const requestIdRef = useRef(0);
-  const isOpenRef = useRef(false);
+  const isChatVisibleRef = useRef(false);
   const liveStreamReadyRef = useRef(false);
   const initialMessagesReceivedRef = useRef(false);
   const todayFallbackRef = useRef<Promise<void> | null>(null);
@@ -143,8 +146,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    isOpenRef.current = isOpen;
-  }, [isOpen]);
+    isChatVisibleRef.current = isChatVisible;
+  }, [isChatVisible]);
 
   useEffect(() => {
     pendingSendRef.current = null;
@@ -179,7 +182,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     (hasText: boolean) => {
       if (
         !hasText ||
-        !isOpenRef.current ||
+        !isChatVisibleRef.current ||
         !context ||
         selectedDayKey !== context.todayKey
       ) {
@@ -510,7 +513,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
               if (
                 isNew &&
                 liveStreamReadyRef.current &&
-                !isOpenRef.current &&
+                !isChatVisibleRef.current &&
                 !message.deletedAt &&
                 message.dayKey === context.todayKey &&
                 message.authorId !== context.actorId
@@ -615,13 +618,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     : 0;
 
   useEffect(() => {
-    if (!isOpen || !context || selectedDayKey !== context.todayKey) return;
+    if (!isChatVisible || !context || selectedDayKey !== context.todayKey)
+      return;
     const latest = todayMessages.at(-1)?.createdAt || Date.now();
     if (latest <= lastReadAt) return;
     const readKey = `worshipsync-chat-read:${churchId}:${context.actorId}`;
     localStorage.setItem(readKey, String(latest));
     setLastReadAt(latest);
-  }, [churchId, context, isOpen, lastReadAt, selectedDayKey, todayMessages]);
+  }, [
+    churchId,
+    context,
+    isChatVisible,
+    lastReadAt,
+    selectedDayKey,
+    todayMessages,
+  ]);
 
   const markReadThrough = useCallback(
     (createdAt: number) => {
@@ -665,7 +676,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       const pending = pendingSendRef.current;
       const canReusePending = Boolean(
         pending?.text === normalizedText &&
-          pending.imageFingerprint === imageFingerprint,
+        pending.imageFingerprint === imageFingerprint,
       );
       const clientMessageId = canReusePending
         ? pending!.clientMessageId

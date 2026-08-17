@@ -16,6 +16,12 @@ type UseFirebaseValueWithRetryParams = {
   onData: (value: unknown, snapshot: DataSnapshot) => void;
   /** Human-readable label used in error logs. */
   label?: string;
+  /**
+   * Change this to tear down and re-attach the listener while `enabled` stays
+   * true. Needed after a store RESET: Firebase will not re-deliver a cached
+   * snapshot to a listener that never unsubscribed.
+   */
+  resyncKey?: string | number;
 };
 
 /**
@@ -33,6 +39,7 @@ export const useFirebaseValueWithRetry = ({
   enabled,
   onData,
   label,
+  resyncKey,
 }: UseFirebaseValueWithRetryParams) => {
   const onDataRef = useRef(onData);
   onDataRef.current = onData;
@@ -44,7 +51,7 @@ export const useFirebaseValueWithRetry = ({
       db,
       path,
       (snapshot) => onDataRef.current(snapshot.val(), snapshot),
-      { label }
+      { label },
     );
-  }, [db, path, enabled, label]);
+  }, [db, path, enabled, label, resyncKey]);
 };

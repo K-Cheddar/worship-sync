@@ -1,4 +1,6 @@
+import type { MediaType } from "../../types";
 import {
+  formatMediaDimensionsLine,
   mediaLibraryDisplayName,
   normalizeMediaLibraryStoredName,
   truncatedMediaToastLabel,
@@ -42,6 +44,56 @@ describe("mediaLibraryMeta", () => {
       expect(truncatedMediaToastLabel({ name })).toBe(
         mediaLibraryDisplayName({ name }),
       );
+    });
+  });
+
+  describe("formatMediaDimensionsLine", () => {
+    const media = (overrides: Partial<MediaType> = {}): MediaType => ({
+      path: "",
+      createdAt: "",
+      updatedAt: "",
+      format: "mp4",
+      height: 1080,
+      width: 1920,
+      name: "clip.mp4",
+      publicId: "clip",
+      type: "video",
+      id: "media-1",
+      background: "",
+      thumbnail: "",
+      duration: 311,
+      source: "local",
+      ...overrides,
+    });
+
+    it("labels the classified origin instead of the storage provider", () => {
+      expect(formatMediaDimensionsLine(media())).toBe(
+        "1920×1080 · mp4 · 311s · local",
+      );
+      expect(
+        formatMediaDimensionsLine(
+          media({
+            localVideoInput: {
+              kind: "local-video-input",
+              sourceId: "src-1",
+              label: "USB Capture",
+            },
+          }),
+        ),
+      ).toBe("1920×1080 · mp4 · 311s · video input");
+      expect(
+        formatMediaDimensionsLine(
+          media({
+            source: "cloudinary",
+            canvaImportKey: "canva:DAF_1:rev:1:mp4:1",
+          }),
+        ),
+      ).toBe("1920×1080 · mp4 · 311s · canva");
+      expect(
+        formatMediaDimensionsLine(
+          media({ source: "mux", format: "mp4" }),
+        ),
+      ).toBe("1920×1080 · mp4 · 311s · uploaded");
     });
   });
 });

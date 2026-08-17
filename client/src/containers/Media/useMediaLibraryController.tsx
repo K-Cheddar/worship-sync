@@ -1,5 +1,12 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Folder } from "lucide-react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Cable, ExternalLink, Folder } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import { DBMedia, MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -12,6 +19,8 @@ import {
 import { mediaInfoType } from "./cloudinaryTypes";
 import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
+import { deleteLocalImage } from "../../utils/localImageAssets";
+import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -52,12 +61,20 @@ import {
   truncatedMediaToastLabel,
 } from "./mediaLibraryMeta";
 import {
+  mediaMatchesOriginFilter,
+  type MediaOriginFilterValue,
+} from "./mediaLibraryOrigin";
+import type { MediaTypeFilterValue } from "./MediaTypeFilter";
+import {
   MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
   MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
 } from "./mediaLibraryOrangeFolderIcon";
 import { useLocation, useNavigate } from "react-router-dom";
 import { RootState } from "../../store/store";
-import { updateProjector } from "../../store/presentationSlice";
+import {
+  updateProjector,
+  selectIsTypeTransmitting,
+} from "../../store/presentationSlice";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
@@ -72,6 +89,7 @@ import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
+import { getCanvaMediaSource } from "./canvaMediaSource";
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -79,11 +97,15 @@ export type MediaLibraryVariant = "default" | "panel";
 export type UseMediaLibraryControllerArgs = {
   variant?: MediaLibraryVariant;
   pageMode?: MediaLibraryPageMode;
+  onManageCanvaSource?: (media: MediaType) => void;
+  onRelinkVideoInput?: (media: MediaType) => void;
 };
 
 export function useMediaLibraryController({
   variant = "default",
   pageMode = "default",
+  onManageCanvaSource,
+  onRelinkVideoInput,
 }: UseMediaLibraryControllerArgs = {}) {
   const dispatch = useDispatch();
   const location = useLocation();
@@ -98,8 +120,9 @@ export function useMediaLibraryController({
     [showToast],
   );
 
-  const slideBackgroundFeedbackTimeoutRef =
-    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slideBackgroundFeedbackTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const [slideBackgroundFeedbackId, setSlideBackgroundFeedbackId] = useState<
     string | null
   >(null);
@@ -124,8 +147,13 @@ export function useMediaLibraryController({
     [],
   );
 
-  const { db, cloud, isMobile, updater, isGuestSession = false } =
-    useContext(ControllerInfoContext) || {};
+  const {
+    db,
+    cloud,
+    isMobile,
+    updater,
+    isGuestSession = false,
+  } = useContext(ControllerInfoContext) || {};
 
   const {
     list,
@@ -139,8 +167,9 @@ export function useMediaLibraryController({
   const itemSlideContext = useMemo(() => {
     if (!location.pathname.includes("item")) return undefined;
     const arrangement = item.arrangements[item.selectedArrangement];
-    const slides =
-      arrangement?.slides?.length ? arrangement.slides : item.slides;
+    const slides = arrangement?.slides?.length
+      ? arrangement.slides
+      : item.slides;
     return {
       itemType: item.type,
       slides,
@@ -157,7 +186,7 @@ export function useMediaLibraryController({
     location.pathname,
   ]);
   const { selectedOverlay } = useSelector(
-    (state: RootState) => state.undoable.present.overlay
+    (state: RootState) => state.undoable.present.overlay,
   );
 
   const {
@@ -173,24 +202,22 @@ export function useMediaLibraryController({
     },
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
-  const isProjectorTransmitting = useSelector(
-    (state: RootState) => state.presentation.isProjectorTransmitting,
+  const isProjectorTransmitting = useSelector((state: RootState) =>
+    selectIsTypeTransmitting(state, "projector"),
   );
   const { list: allItemsList } = useSelector(
     (state: RootState) => state.allItems,
   );
 
-  const routeKey = getMediaRouteKey(
-    location.pathname,
-    pageMode,
-    item.type,
-  );
+  const routeKey = getMediaRouteKey(location.pathname, pageMode, item.type);
   const selectedLibraryFilter =
     mediaRouteFolders[routeKey] === undefined
       ? null
       : mediaRouteFolders[routeKey]!;
 
-  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">("all");
+  const [typeFilter, setTypeFilter] = useState<MediaTypeFilterValue>("all");
+  const [originFilter, setOriginFilter] =
+    useState<MediaOriginFilterValue>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
@@ -203,11 +230,16 @@ export function useMediaLibraryController({
   /** Fullscreen Media modal only; panel grid shows names only while searching. */
   const [showName, setShowName] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
+  const [uploadProgress, setUploadProgress] = useState<{
+    isUploading: boolean;
+    progress: number;
+  }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLElement>(null);
   const mediaGridRef = useRef<VirtualMediaGridHandle>(null);
-  const uploadPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const uploadPollingIntervalRef = useRef<ReturnType<
+    typeof setInterval
+  > | null>(null);
   const lastBrowseFolderIdRef = useRef<string>(MEDIA_LIBRARY_ROOT_VIEW);
   const [folderRenameOpen, setFolderRenameOpen] = useState(false);
   const [mediaRenameOpen, setMediaRenameOpen] = useState(false);
@@ -238,7 +270,8 @@ export function useMediaLibraryController({
   const showAll = selectedLibraryFilter === null;
   const showNamesInPanelGrid = searchTerm.trim().length > 0;
   const parentForBrowseChildren =
-    selectedLibraryFilter === null || selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter === null ||
+    selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
       ? null
       : selectedLibraryFilter;
   const childFolders = useMemo(
@@ -246,13 +279,11 @@ export function useMediaLibraryController({
     [parentForBrowseChildren, folders],
   );
   const selectedRealFolder =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? folders.find((f) => f.id === selectedLibraryFilter)
       : undefined;
   const canGoUp = Boolean(
-    selectedLibraryFilter &&
-    selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
   );
 
   const filteredList = useMemo(() => {
@@ -261,7 +292,7 @@ export function useMediaLibraryController({
         ?.toLowerCase()
         .includes(searchTerm.toLowerCase());
       if (!matchesSearch) return false;
-      if (typeFilter !== "all" && item.type !== typeFilter) return false;
+      if (!mediaMatchesOriginFilter(item, originFilter)) return false;
       if (selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW) {
         return !item.folderId;
       }
@@ -270,7 +301,7 @@ export function useMediaLibraryController({
       }
       return true;
     });
-  }, [list, searchTerm, typeFilter, selectedLibraryFilter]);
+  }, [list, searchTerm, originFilter, selectedLibraryFilter]);
 
   // Tracks a pending "show in media" focus request across the folder-navigation render cycle.
   const focusPendingIdRef = useRef<string | null>(null);
@@ -322,7 +353,7 @@ export function useMediaLibraryController({
     setSelectedMedia(mediaItem);
     setSelectedMediaIds(new Set([mediaItem.id]));
     setPreviewMedia(mediaItem);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusMediaId]);
 
   // After folder navigation re-filters the list, scroll the focused tile into view.
@@ -392,9 +423,7 @@ export function useMediaLibraryController({
 
   const handleGoUp = useCallback(() => {
     if (!selectedRealFolder) return;
-    navigateToFolder(
-      selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
-    );
+    navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
   }, [navigateToFolder, selectedRealFolder]);
 
   /** Fullscreen modal keeps selection in MediaModal; copy into parent before bulk delete. */
@@ -413,8 +442,7 @@ export function useMediaLibraryController({
   }, [isMobile, dispatch]);
 
   const uploadTargetFolderId =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? selectedLibraryFilter
       : null;
 
@@ -470,10 +498,7 @@ export function useMediaLibraryController({
         name: displayName,
       }),
     );
-    showToast(
-      `Sent "${truncatedMediaToastLabel(m)}" to projector.`,
-      "success",
-    );
+    showToast(`Sent "${truncatedMediaToastLabel(m)}" to projector.`, "success");
   }, [
     selectedMedia,
     isProjectorTransmitting,
@@ -550,57 +575,82 @@ export function useMediaLibraryController({
     ],
   );
 
-  const mediaBarActions = useMemo(
-    () =>
-      buildMediaLibraryBarActions({
-        flags: routeFlags,
-        db,
-        isLoading: Boolean(isLoading),
-        selectedPreference,
-        selectedQuickLink,
-        selectedOverlay,
-        primaryMedia: selectedMedia,
-        hasMultipleSelection: selectedMediaIds.size > 1,
-        selectedCount: selectedMediaIds.size,
-        dispatch,
-        onDeleteSingle: () => {
-          setMediaToDelete(selectedMedia);
-          setShowDeleteModal(true);
-        },
-        onDeleteMultiple: () => {
-          setIsDeletingMultiple(true);
-          setShowDeleteModal(true);
-        },
-        itemSlideContext,
-        controllerFromSelectedMedia:
-          selectedMediaIds.size === 1
-            ? {
+  const mediaBarActions = useMemo(() => {
+    const actions = buildMediaLibraryBarActions({
+      flags: routeFlags,
+      db,
+      isLoading: Boolean(isLoading),
+      selectedPreference,
+      selectedQuickLink,
+      selectedOverlay,
+      primaryMedia: selectedMedia,
+      hasMultipleSelection: selectedMediaIds.size > 1,
+      selectedCount: selectedMediaIds.size,
+      dispatch,
+      onDeleteSingle: () => {
+        setMediaToDelete(selectedMedia);
+        setShowDeleteModal(true);
+      },
+      onDeleteMultiple: () => {
+        setIsDeletingMultiple(true);
+        setShowDeleteModal(true);
+      },
+      itemSlideContext,
+      controllerFromSelectedMedia:
+        selectedMediaIds.size === 1
+          ? {
               isProjectorTransmitting,
               onSendToProjector: handleSendSelectedMediaToProjector,
               onCreateCustomItem: handleCreateCustomItemFromMedia,
             }
-            : undefined,
-        notify: notifyMediaAction,
-        onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
-      }),
-    [
-      routeFlags,
-      db,
-      isLoading,
-      selectedPreference,
-      selectedQuickLink,
-      selectedOverlay,
-      selectedMedia,
-      selectedMediaIds.size,
-      dispatch,
-      itemSlideContext,
-      isProjectorTransmitting,
-      handleSendSelectedMediaToProjector,
-      handleCreateCustomItemFromMedia,
-      notifyMediaAction,
-      triggerSlideBackgroundFeedback,
-    ],
-  );
+          : undefined,
+      notify: notifyMediaAction,
+      onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
+    });
+    if (
+      selectedMediaIds.size === 1 &&
+      getCanvaMediaSource(selectedMedia) &&
+      onManageCanvaSource
+    ) {
+      actions.push({
+        id: "manage-canva-source",
+        label: "Manage Canva source",
+        icon: <ExternalLink className="size-4" />,
+        onClick: () => onManageCanvaSource(selectedMedia),
+      });
+    }
+    if (
+      selectedMediaIds.size === 1 &&
+      selectedMedia.localVideoInput &&
+      onRelinkVideoInput
+    ) {
+      actions.push({
+        id: "relink-video-input",
+        label: "Relink input",
+        icon: <Cable className="size-4" />,
+        onClick: () => onRelinkVideoInput(selectedMedia),
+      });
+    }
+    return actions;
+  }, [
+    routeFlags,
+    db,
+    isLoading,
+    selectedPreference,
+    selectedQuickLink,
+    selectedOverlay,
+    selectedMedia,
+    selectedMediaIds.size,
+    dispatch,
+    itemSlideContext,
+    isProjectorTransmitting,
+    handleSendSelectedMediaToProjector,
+    handleCreateCustomItemFromMedia,
+    notifyMediaAction,
+    triggerSlideBackgroundFeedback,
+    onManageCanvaSource,
+    onRelinkVideoInput,
+  ]);
 
   const actionBarDetails = useMemo(() => {
     /** Matches single-item title so browse / folder / selection headers don’t shift layout. */
@@ -689,8 +739,7 @@ export function useMediaLibraryController({
   ]);
 
   const parentForNewFolder =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? selectedLibraryFilter
       : null;
 
@@ -719,6 +768,31 @@ export function useMediaLibraryController({
             if (!res.ok) failed.push(row);
           } catch (error) {
             console.warn("Error deleting from Mux:", error);
+            failed.push(row);
+          }
+        } else if (row.source === "local") {
+          try {
+            if (row.localImage?.cloudUrl && row.publicId) {
+              if (!cloud) {
+                failed.push(row);
+                continue;
+              }
+              const removedCloudCopy = await deleteFromCloudinary(
+                cloud,
+                row.publicId,
+                "image",
+              );
+              if (!removedCloudCopy) {
+                failed.push(row);
+                continue;
+              }
+            }
+            if (row.localImage) await deleteLocalImage(row.localImage.id);
+            if (row.localVideoFile) {
+              await deleteLocalVideoFile(row.localVideoFile.id);
+            }
+          } catch (error) {
+            console.warn("Error deleting local media:", error);
             failed.push(row);
           }
         }
@@ -760,9 +834,7 @@ export function useMediaLibraryController({
     (folderId: string) => {
       const target = folders.find((f) => f.id === folderId);
       const fallback =
-        target?.parentId == null
-          ? MEDIA_LIBRARY_ROOT_VIEW
-          : target.parentId;
+        target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
         mediaRouteFolders,
         new Set([folderId]),
@@ -776,11 +848,13 @@ export function useMediaLibraryController({
       }
       const next = deleteFolderKeepContents(folderId, folders, list);
       dispatch(setMediaListAndFolders(next));
-      void flushMediaLibraryDocToPouch(db, next.list, next.folders).then((r) => {
-        if (!r.ok) {
-          alertMediaLibraryFlushFailed(r.error, "folder");
-        }
-      });
+      void flushMediaLibraryDocToPouch(db, next.list, next.folders).then(
+        (r) => {
+          if (!r.ok) {
+            alertMediaLibraryFlushFailed(r.error, "folder");
+          }
+        },
+      );
     },
     [db, dispatch, folders, list, mediaRouteFolders],
   );
@@ -814,9 +888,7 @@ export function useMediaLibraryController({
       const target = folders.find((f) => f.id === folderId);
       const subtree = collectSubtreeFolderIds(folderId, folders);
       const fallback =
-        target?.parentId == null
-          ? MEDIA_LIBRARY_ROOT_VIEW
-          : target.parentId;
+        target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
         mediaRouteFolders,
         subtree,
@@ -903,12 +975,11 @@ export function useMediaLibraryController({
             dispatch(syncMediaFromRemote(normalized));
           }
         }
-
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   useEffect(() => {
@@ -972,7 +1043,6 @@ export function useMediaLibraryController({
     setIsDeletingMultiple(false);
   };
 
-
   const handleDeleteAll = async () => {
     if (!db || selectedMediaIds.size === 0) return;
 
@@ -981,9 +1051,7 @@ export function useMediaLibraryController({
     try {
       const result = await removeMediaRowsAfterSweep(itemsToDelete);
       if (result.phase !== "ok") return;
-      const updatedList = list.filter(
-        (item) => !selectedMediaIds.has(item.id),
-      );
+      const updatedList = list.filter((item) => !selectedMediaIds.has(item.id));
       dispatch(setMediaListAndFolders({ list: updatedList, folders }));
       const flushResult = await flushMediaLibraryDocToPouch(
         db,
@@ -1021,6 +1089,7 @@ export function useMediaLibraryController({
     duration,
     is_audio,
     canvaImportKey,
+    canvaSource,
   }: mediaInfoType) => {
     if (isGuestSession) {
       notifyMediaAction(
@@ -1071,6 +1140,7 @@ export function useMediaLibraryController({
       source: "cloudinary",
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
+      ...(canvaSource ? { canvaSource } : {}),
     };
 
     dispatch(addItemToMediaList(newMedia));
@@ -1083,6 +1153,7 @@ export function useMediaLibraryController({
     thumbnailUrl,
     name,
     canvaImportKey,
+    canvaSource,
   }: MuxUploadResult) => {
     if (isGuestSession) {
       notifyMediaAction(
@@ -1119,10 +1190,71 @@ export function useMediaLibraryController({
       muxAssetId: assetId,
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
+      ...(canvaSource ? { canvaSource } : {}),
     };
 
     dispatch(addItemToMediaList(newMedia));
   };
+
+  const refreshCanvaImage = useCallback(
+    (info: mediaInfoType, mediaId: string) => {
+      const current = list.find((mediaItem) => mediaItem.id === mediaId);
+      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      const thumbnail =
+        cloud?.image(info.public_id).resize(fill().width(250)).toURL() ||
+        info.thumbnail_url ||
+        info.secure_url;
+      dispatch(
+        updateMediaItemFields({
+          id: mediaId,
+          patch: {
+            updatedAt: new Date().toISOString(),
+            format: info.format,
+            height: info.height,
+            width: info.width,
+            publicId: info.public_id,
+            type: "image",
+            background: info.secure_url,
+            thumbnail,
+            placeholderImage: "",
+            source: "cloudinary",
+            canvaImportKey: info.canvaImportKey,
+            canvaSource: info.canvaSource,
+          },
+        }),
+      );
+    },
+    [cloud, dispatch, list],
+  );
+
+  const refreshCanvaVideo = useCallback(
+    (info: MuxUploadResult, mediaId: string) => {
+      const current = list.find((mediaItem) => mediaItem.id === mediaId);
+      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      dispatch(
+        updateMediaItemFields({
+          id: mediaId,
+          patch: {
+            updatedAt: new Date().toISOString(),
+            format: "m3u8",
+            height: current.height || 1920,
+            width: current.width || 1080,
+            publicId: info.playbackId,
+            type: "video",
+            background: info.playbackUrl,
+            thumbnail: info.thumbnailUrl,
+            placeholderImage: info.thumbnailUrl,
+            source: "mux",
+            muxPlaybackId: info.playbackId,
+            muxAssetId: info.assetId,
+            canvaImportKey: info.canvaImportKey,
+            canvaSource: info.canvaSource,
+          },
+        }),
+      );
+    },
+    [dispatch, list],
+  );
 
   const requestMediaUpload = useCallback(() => {
     if (isGuestSession) {
@@ -1218,6 +1350,8 @@ export function useMediaLibraryController({
     requestMediaUpload,
     addNewBackground,
     addMuxVideo,
+    refreshCanvaImage,
+    refreshCanvaVideo,
     handleUploadActiveChange,
     isMediaLoading,
     hasMediaLoadError,
@@ -1286,6 +1420,8 @@ export function useMediaLibraryController({
     setShowName,
     typeFilter,
     setTypeFilter,
+    originFilter,
+    setOriginFilter,
     setPreviewMedia,
     setMediaToDelete,
     setShowDeleteModal,

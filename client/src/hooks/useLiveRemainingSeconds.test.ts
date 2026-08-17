@@ -89,9 +89,9 @@ describe("useLiveRemainingSeconds", () => {
     expect(result.current).toBe(33);
   });
 
-  it("returns 0 for an undefined timer", () => {
+  it("returns no value for an undefined timer", () => {
     const { result } = renderHook(() => useLiveRemainingSeconds(undefined));
-    expect(result.current).toBe(0);
+    expect(result.current).toBeNull();
   });
 
   it("shares a single interval across timers and clears it when all unmount", () => {
@@ -100,10 +100,10 @@ describe("useLiveRemainingSeconds", () => {
     expect(jest.getTimerCount()).toBe(0);
 
     const { unmount: unmountA } = renderHook(() =>
-      useLiveRemainingSeconds(timerA)
+      useLiveRemainingSeconds(timerA),
     );
     const { unmount: unmountB } = renderHook(() =>
-      useLiveRemainingSeconds(timerB)
+      useLiveRemainingSeconds(timerB),
     );
     expect(jest.getTimerCount()).toBe(1); // one shared ticker
 
@@ -111,5 +111,76 @@ describe("useLiveRemainingSeconds", () => {
     expect(jest.getTimerCount()).toBe(1);
     unmountB();
     expect(jest.getTimerCount()).toBe(0);
+  });
+});
+
+describe("a non-running timer resolved after mount", () => {
+  it("never paints a stale value while waiting for the effect", () => {
+    const stopped = createTimerInfo({
+      id: "t1",
+      hostId: "h1",
+      status: "stopped",
+      isActive: false,
+      remainingTime: 300,
+    });
+
+    // Mount with nothing resolved, as a slide does when its item is selected.
+    const { result, rerender } = renderHook(
+      ({ timer }: { timer?: TimerInfo }) => useLiveRemainingSeconds(timer),
+      { initialProps: { timer: undefined as TimerInfo | undefined } },
+    );
+    expect(result.current).toBeNull();
+
+    // The timer arrives. Seeded state is only corrected after paint, so this
+    // used to render one frame of 0 before snapping to the real value.
+    rerender({ timer: stopped });
+    expect(result.current).toBe(300);
+  });
+
+  it("follows a stopped timer's stored value as it changes", () => {
+    const stoppedWith = (remainingTime: number) =>
+      createTimerInfo({
+        id: "t1",
+        hostId: "h1",
+        status: "stopped",
+        isActive: false,
+        remainingTime,
+      });
+
+    const { result, rerender } = renderHook(
+      ({ timer }: { timer?: TimerInfo }) => useLiveRemainingSeconds(timer),
+      { initialProps: { timer: stoppedWith(300) as TimerInfo | undefined } },
+    );
+    expect(result.current).toBe(300);
+
+    rerender({ timer: stoppedWith(120) });
+    expect(result.current).toBe(120);
+  });
+
+  it("reports no value, not 0, while the timer is still unresolved", () => {
+    // Timers sync in after first paint. Returning 0 here is indistinguishable
+    // from a timer that genuinely reads 0, and put a bare "0" on the band, the
+    // quick link and the slide the moment a timer item was selected.
+    const { result, rerender } = renderHook(
+      ({ timer }: { timer?: TimerInfo }) => useLiveRemainingSeconds(timer),
+      { initialProps: { timer: undefined as TimerInfo | undefined } },
+    );
+    expect(result.current).toBeNull();
+
+    rerender({ timer: runningTimer(90_000) });
+    expect(result.current).toBe(90);
+  });
+
+  it("reports no value for a timer that arrives without a stored remaining", () => {
+    const noRemaining = createTimerInfo({
+      id: "t1",
+      hostId: "h1",
+      status: "stopped",
+      isActive: false,
+    });
+    delete (noRemaining as { remainingTime?: number }).remainingTime;
+
+    const { result } = renderHook(() => useLiveRemainingSeconds(noRemaining));
+    expect(result.current).toBeNull();
   });
 });

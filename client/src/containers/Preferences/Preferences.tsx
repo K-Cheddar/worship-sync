@@ -21,7 +21,9 @@ import {
 import cn from "classnames";
 import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
-import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
+import RadioButton, {
+  RadioGroup,
+} from "../../components/RadioButton/RadioButton";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
@@ -194,18 +196,18 @@ const Preferences = () => {
                       "w-fit lg:min-w-[14vw] max-lg:min-w-[35vw] aspect-video self-center border-4 flex gap-2 items-center justify-center",
                       selectedPreference === preference
                         ? "border-cyan-400"
-                        : "border-gray-500 hover:border-gray-300"
+                        : "border-gray-500 hover:border-gray-300",
                     )}
                     onClick={() => {
                       const wasUnselected = selectedPreference !== preference;
                       dispatch(
                         setSelectedPreference(
-                          preference as SelectedPreferenceType
-                        )
+                          preference as SelectedPreferenceType,
+                        ),
                       );
                       if (wasUnselected) {
                         showToast(
-                          "Pick an item from Media, then click Set Background."
+                          "Pick an item from Media, then click Set Background.",
                         );
                       }
                     }}
@@ -265,7 +267,7 @@ const Preferences = () => {
                   />
                 </section>
               </li>
-            )
+            ),
           )}
         </ul>
       )}
@@ -276,7 +278,7 @@ const Preferences = () => {
         {perRowPreferences
           .filter(
             ({ access }) =>
-              access && access.includes(currentAccess as AccessType)
+              access && access.includes(currentAccess as AccessType),
           )
           .map(({ label, value, setValue, max, min }) => (
             <li
@@ -327,7 +329,7 @@ const Preferences = () => {
                     value={value ? "shown" : "hidden"}
                     onValueChange={(v) =>
                       dispatch(
-                        setDefaultPreferences({ [property]: v === "shown" })
+                        setDefaultPreferences({ [property]: v === "shown" }),
                       )
                     }
                     className="flex gap-2 items-center"
@@ -347,7 +349,7 @@ const Preferences = () => {
               <li
                 key={label}
                 className={cn(
-                  "grid grid-cols-2 gap-2 items-center p-2 justify-center"
+                  "grid grid-cols-2 gap-2 items-center p-2 justify-center",
                 )}
               >
                 <p className="font-semibold text-right">{label}:</p>
@@ -380,9 +382,7 @@ const Preferences = () => {
       <RadioGroup
         value={scrollbarWidth}
         onValueChange={(v) =>
-          dispatch(
-            setScrollbarWidth(v as "thin" | "auto" | "none")
-          )
+          dispatch(setScrollbarWidth(v as "thin" | "auto" | "none"))
         }
         className="flex gap-6 items-center justify-center"
       >

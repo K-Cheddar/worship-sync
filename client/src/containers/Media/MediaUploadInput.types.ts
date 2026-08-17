@@ -1,4 +1,5 @@
 import { mediaInfoType } from "./cloudinaryTypes";
+import type { CanvaMediaSource } from "../../types";
 
 export type UploadStatus =
   | "idle"
@@ -51,4 +52,5 @@ export type MuxUploadResult = {
   name: string;
   /** Stable identity for detecting an already-imported Canva page selection. */
   canvaImportKey?: string;
+  canvaSource?: CanvaMediaSource;
 };

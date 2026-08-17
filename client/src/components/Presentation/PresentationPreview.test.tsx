@@ -1,7 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import PresentationPreview from "./PresentationPreview";
 
-const mockDisplayWindow = jest.fn((_: any) => <div data-testid="display-window" />);
+const mockDisplayWindow = jest.fn((_: any) => (
+  <div data-testid="display-window" />
+));
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => jest.fn(),
@@ -102,13 +104,14 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     await waitFor(() => {
@@ -123,19 +126,22 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Live:" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides both labels when the header is too narrow", async () => {
@@ -144,32 +150,38 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Clear" }),
+      ).not.toBeInTheDocument();
     });
-    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Live:" }),
+    ).not.toBeInTheDocument();
   });
 
   it("uses full monitor layout only for monitor previews", () => {
     render(
       <PresentationPreview
         name="Monitor"
+        outputId="monitor"
         info={{ ...basePresentation, displayType: "monitor" }}
         prevInfo={{ ...basePresentation, displayType: "monitor" }}
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     expect(mockDisplayWindow).toHaveBeenCalledWith(
@@ -184,13 +196,14 @@ describe("PresentationPreview", () => {
     render(
       <PresentationPreview
         name="Projector"
+        outputId="projector"
         info={basePresentation}
         prevInfo={basePresentation}
         isTransmitting={false}
         toggleIsTransmitting={jest.fn()}
         quickLinks={[]}
         timers={[]}
-      />
+      />,
     );
 
     expect(mockDisplayWindow).toHaveBeenCalledWith(
@@ -199,5 +212,30 @@ describe("PresentationPreview", () => {
         monitorLayoutMode: "content-only",
       }),
     );
+  });
+
+  it("forwards local video metadata without enabling preview capture", () => {
+    const localVideoInput = {
+      sourceId: "source-1",
+      deviceLabel: "USB Capture",
+      ownerDeviceId: "device-1",
+      ownerLabel: "Booth",
+    };
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={{ ...basePresentation, localVideoInput }}
+        prevInfo={basePresentation}
+        isTransmitting
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+      />,
+    );
+
+    const props = mockDisplayWindow.mock.calls.at(-1)?.[0];
+    expect(props).toEqual(expect.objectContaining({ localVideoInput }));
+    expect(props.canCaptureLocalVideo).toBeUndefined();
   });
 });

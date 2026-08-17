@@ -1,5 +1,13 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { getCanvaStatus } from "../../../api/canva";
+import { fromLegacyPresentationShape } from "../../../store/presentationSlice";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Media from "../Media";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
@@ -110,12 +118,18 @@ jest.mock("../../../store/mediaSlice", () => ({
     type: "media/setMediaListAndFolders",
     payload,
   })),
-  updateMediaList: jest.fn((payload: any) => ({ type: "media/updateMediaList", payload })),
+  updateMediaList: jest.fn((payload: any) => ({
+    type: "media/updateMediaList",
+    payload,
+  })),
   updateMediaListFromRemote: jest.fn((payload: any) => ({
     type: "media/updateMediaListFromRemote",
     payload,
   })),
-  addItemToMediaList: jest.fn((payload: any) => ({ type: "media/addItemToMediaList", payload })),
+  addItemToMediaList: jest.fn((payload: any) => ({
+    type: "media/addItemToMediaList",
+    payload,
+  })),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -125,7 +139,8 @@ jest.mock("../../../store/preferencesSlice", () => ({
     payload,
   })),
   setMediaItems: (payload: number) => mockSetMediaItems(payload),
-  setSelectedQuickLinkImage: (payload: any) => mockSetSelectedQuickLinkImage(payload),
+  setSelectedQuickLinkImage: (payload: any) =>
+    mockSetSelectedQuickLinkImage(payload),
   setMediaRouteFolder: jest.fn((payload: any) => ({
     type: "preferences/setMediaRouteFolder",
     payload,
@@ -178,12 +193,31 @@ jest.mock("../MediaModal", () => ({
 }));
 
 jest.mock("../../../utils/mediaReferenceSweep", () => ({
-  sweepMediaReferencesBeforeDelete: jest.fn().mockResolvedValue({ ok: true, failedDocIds: [] }),
+  sweepMediaReferencesBeforeDelete: jest
+    .fn()
+    .mockResolvedValue({ ok: true, failedDocIds: [] }),
 }));
 
 jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
   flushMediaLibraryDocToPouch: jest.fn().mockResolvedValue({ ok: true }),
 }));
+
+jest.mock("../../../api/canva", () => ({
+  getCanvaStatus: jest.fn(),
+}));
+
+jest.mock("../../../context/globalInfo", () => {
+  const ReactLib = require("react") as typeof React;
+  return {
+    GlobalInfoContext: ReactLib.createContext({
+      churchId: "church-1",
+    }),
+  };
+});
+
+const mockGetCanvaStatus = getCanvaStatus as jest.MockedFunction<
+  typeof getCanvaStatus
+>;
 
 jest.mock("../MediaUploadInput", () => {
   const ReactLib = require("react") as typeof React;
@@ -191,31 +225,33 @@ jest.mock("../MediaUploadInput", () => {
     __esModule: true,
     default: ReactLib.forwardRef(
       (
-        { onUploadActiveChange }: { onUploadActiveChange?: (active: boolean) => void },
-        ref: React.Ref<{ openModal: () => void; getUploadStatus: () => { isUploading: boolean; progress: number } }>
+        {
+          onUploadActiveChange,
+        }: { onUploadActiveChange?: (active: boolean) => void },
+        ref: React.Ref<{
+          openModal: () => void;
+          getUploadStatus: () => { isUploading: boolean; progress: number };
+        }>,
       ) => {
         ReactLib.useImperativeHandle(ref, () => ({
           openModal: mockOpenModal,
           getUploadStatus: () => ({ isUploading: false, progress: 0 }),
         }));
         return (
-          <button
-            type="button"
-            onClick={() => onUploadActiveChange?.(true)}
-          >
+          <button type="button" onClick={() => onUploadActiveChange?.(true)}>
             trigger-upload-active
           </button>
         );
-      }
+      },
     ),
   };
 });
 
 const makeBaseState = (overrides: Partial<any> = {}) => {
   const base = {
-    presentation: {
+    presentation: fromLegacyPresentationShape({
       isProjectorTransmitting: false,
-    },
+    }),
     allItems: {
       list: [] as { name: string; _id: string; listId: string; type: string }[],
     },
@@ -356,8 +392,18 @@ const renderMedia = async ({
       }
     >
       <Media />
-    </ControllerInfoContext.Provider>
+    </ControllerInfoContext.Provider>,
   );
+
+  await waitFor(() => {
+    expect(mockGetCanvaStatus).toHaveBeenCalled();
+  });
+  const statusResult = mockGetCanvaStatus.mock.results.at(-1)?.value;
+  if (statusResult) {
+    await act(async () => {
+      await statusResult;
+    });
+  }
 
   return { db };
 };
@@ -371,6 +417,11 @@ describe("Media", () => {
     mockState = makeBaseState();
     mockSelectedMedia = { ...emptySelectedMedia };
     mockSelectedMediaIds = new Set();
+    mockGetCanvaStatus.mockResolvedValue({
+      oauthConfigured: true,
+      connected: true,
+      accountLabel: "Church Canva",
+    });
   });
 
   it("renders media from store and sets media items per row", async () => {
@@ -396,14 +447,22 @@ describe("Media", () => {
     });
   });
 
-  it("filters media by search and shows empty state message", async () => {
+  it("offers a source filter for every supported origin", async () => {
+    const user = userEvent.setup();
     await renderMedia();
 
-    fireEvent.change(screen.getByLabelText(/search/i), {
-      target: { value: "does-not-exist" },
-    });
+    const sourceFilter = screen.getByRole("combobox", { name: /source/i });
+    expect(sourceFilter).toHaveTextContent("All sources");
 
-    expect(screen.getByText('No media found matching "does-not-exist"')).toBeInTheDocument();
+    await user.click(sourceFilter);
+    expect(
+      await screen.findByRole("option", { name: "Local" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Video inputs" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Canva" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Uploaded" })).toBeInTheDocument();
   });
 
   it("opens the add-media menu and preserves file upload", async () => {
@@ -411,11 +470,40 @@ describe("Media", () => {
     await renderMedia();
 
     await user.click(screen.getByTitle("Add Media"));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("menuitem", { name: /import from canva/i }),
+      ).toBeInTheDocument();
+    });
     expect(
-      screen.getByRole("menuitem", { name: /import from canva/i }),
+      screen.getByRole("menuitem", { name: /import local files/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /add video input/i }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: /upload files/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Canva import when Canva OAuth is not configured", async () => {
+    mockGetCanvaStatus.mockResolvedValue({
+      oauthConfigured: false,
+      connected: false,
+      accountLabel: "",
+    });
+    const user = userEvent.setup();
+    await renderMedia();
+
+    await user.click(screen.getByTitle("Add Media"));
+    expect(
+      screen.getByRole("menuitem", { name: /upload files/i }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockGetCanvaStatus).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("menuitem", { name: /import from canva/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not allow guests to open Canva import from the panel menu", async () => {
@@ -423,7 +511,7 @@ describe("Media", () => {
     await renderMedia({ isGuestSession: true });
 
     await user.click(screen.getByTitle(/Guest mode/i));
-    const importItem = screen.getByRole("menuitem", {
+    const importItem = await screen.findByRole("menuitem", {
       name: /import from canva/i,
     });
     expect(importItem).toHaveAttribute("data-disabled");
@@ -509,7 +597,9 @@ describe("Media", () => {
     const more = screen.queryByRole("button", { name: /More actions/i });
     if (more) {
       await user.click(more);
-      await user.click(await screen.findByRole("menuitem", { name: /Rename/i }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: /Rename/i }),
+      );
     } else {
       await user.click(screen.getByRole("button", { name: /^Rename$/i }));
     }
@@ -542,7 +632,9 @@ describe("Media", () => {
 
     expect(mockSetSelectedQuickLinkImage).toHaveBeenCalled();
     expect(mockDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "preferences/setSelectedQuickLinkImage" }),
+      expect.objectContaining({
+        type: "preferences/setSelectedQuickLinkImage",
+      }),
     );
     expect(mockShowToast).toHaveBeenCalledWith(
       'Set quick link background to "Sunrise Image".',
@@ -588,7 +680,9 @@ describe("Media", () => {
 
   it("dispatches projector update when Send to projector is used and transmitting is on", async () => {
     mockState = makeBaseState({
-      presentation: { isProjectorTransmitting: true },
+      presentation: fromLegacyPresentationShape({
+        isProjectorTransmitting: true,
+      }),
     });
     const listItem = makeBaseState().media.list[0];
     mockSelectedMediaIds = new Set(["media-1"]);

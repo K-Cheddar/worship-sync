@@ -405,7 +405,11 @@ describe("authStorage pending link state", () => {
   });
 
   it("clears storage when called with null", () => {
-    setPendingLinkState({ email: "x@y.com", providerId: "google.com", requiredMethods: [] });
+    setPendingLinkState({
+      email: "x@y.com",
+      providerId: "google.com",
+      requiredMethods: [],
+    });
     setPendingLinkState(null);
     expect(getPendingLinkState()).toBeNull();
   });
@@ -418,7 +422,11 @@ describe("authStorage pending link state", () => {
   it("returns null when providerId is invalid", () => {
     sessionMock.setItem(
       "worshipsync_pending_link_state",
-      JSON.stringify({ email: "x@y.com", providerId: "unknown", requiredMethods: [] }),
+      JSON.stringify({
+        email: "x@y.com",
+        providerId: "unknown",
+        requiredMethods: [],
+      }),
     );
     expect(getPendingLinkState()).toBeNull();
   });
@@ -441,19 +449,28 @@ describe("authStorage pending link credential state", () => {
   });
 
   it("stores and retrieves with object credential", () => {
-    setPendingLinkCredentialState({ providerId: "google.com", credentialJson: { token: "t" } });
+    setPendingLinkCredentialState({
+      providerId: "google.com",
+      credentialJson: { token: "t" },
+    });
     const state = getPendingLinkCredentialState();
     expect(state?.providerId).toBe("google.com");
     expect(state?.credentialJson).toEqual({ token: "t" });
   });
 
   it("stores and retrieves with string credential", () => {
-    setPendingLinkCredentialState({ providerId: "microsoft.com", credentialJson: "raw-cred" });
+    setPendingLinkCredentialState({
+      providerId: "microsoft.com",
+      credentialJson: "raw-cred",
+    });
     expect(getPendingLinkCredentialState()?.credentialJson).toBe("raw-cred");
   });
 
   it("clears storage when called with null", () => {
-    setPendingLinkCredentialState({ providerId: "google.com", credentialJson: {} });
+    setPendingLinkCredentialState({
+      providerId: "google.com",
+      credentialJson: {},
+    });
     setPendingLinkCredentialState(null);
     expect(getPendingLinkCredentialState()).toBeNull();
   });
@@ -524,5 +541,106 @@ describe("authStorage pending desktop auth state", () => {
       JSON.stringify({ ...validState, desktopAuthId: 42 }),
     );
     expect(getPendingDesktopAuthState()).toBeNull();
+  });
+
+  it("returns null for malformed desktop auth JSON and incomplete fields", () => {
+    sessionMock.setItem("worshipsync_pending_desktop_auth", "{bad");
+    expect(getPendingDesktopAuthState()).toBeNull();
+
+    sessionMock.setItem(
+      "worshipsync_pending_desktop_auth",
+      JSON.stringify({ ...validState, browserUrl: 12 }),
+    );
+    expect(getPendingDesktopAuthState()).toBeNull();
+  });
+});
+
+describe("authStorage pending link and email resend rejection paths", () => {
+  let sessionMock: ReturnType<typeof memoryStorage>;
+  let localMock: ReturnType<typeof memoryStorage>;
+
+  beforeEach(() => {
+    sessionMock = memoryStorage();
+    localMock = memoryStorage();
+    Object.defineProperty(window, "sessionStorage", {
+      value: sessionMock,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(window, "localStorage", {
+      value: localMock,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("rejects invalid pending link and credential payloads", () => {
+    sessionMock.setItem(
+      "worshipsync_pending_link_state",
+      JSON.stringify({
+        email: "a@example.com",
+        providerId: "twitter.com",
+        requiredMethods: ["password"],
+      }),
+    );
+    expect(getPendingLinkState()).toBeNull();
+
+    sessionMock.setItem("worshipsync_pending_link_state", "{bad");
+    expect(getPendingLinkState()).toBeNull();
+
+    sessionMock.setItem(
+      "worshipsync_pending_link_credential",
+      JSON.stringify({
+        providerId: "google.com",
+        credentialJson: "   ",
+      }),
+    );
+    expect(getPendingLinkCredentialState()).toBeNull();
+
+    sessionMock.setItem(
+      "worshipsync_pending_link_credential",
+      JSON.stringify({
+        providerId: "google.com",
+        credentialJson: { token: "ok" },
+      }),
+    );
+    expect(getPendingLinkCredentialState()?.credentialJson).toEqual({
+      token: "ok",
+    });
+  });
+
+  it("rejects invalid desktop email resend payloads and corrupt operator bindings", () => {
+    sessionMock.setItem(
+      "worshipsync_desktop_email_resend",
+      JSON.stringify({ desktopAuthId: 1, desktopAuthSecret: "secret" }),
+    );
+    expect(getPendingDesktopEmailResendState()).toBeNull();
+
+    sessionMock.setItem("worshipsync_desktop_email_resend", "{bad");
+    expect(getPendingDesktopEmailResendState()).toBeNull();
+
+    localMock.setItem(
+      "worshipsync_workstation_operator_binding",
+      JSON.stringify({ runtimeId: 1, name: "Op" }),
+    );
+    expect(getWorkstationSessionOperatorName()).toBe("");
+
+    localMock.setItem("worshipsync_workstation_operator_binding", "{bad");
+    expect(getWorkstationSessionOperatorName()).toBe("");
+  });
+
+  it("falls back when crypto.randomUUID is unavailable", () => {
+    const originalCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", {
+      value: {},
+      configurable: true,
+    });
+    sessionMock.clear();
+    setWorkstationSessionOperatorName("Fallback Op");
+    expect(getWorkstationSessionOperatorName()).toBe("Fallback Op");
+    Object.defineProperty(globalThis, "crypto", {
+      value: originalCrypto,
+      configurable: true,
+    });
   });
 });

@@ -1,4 +1,6 @@
 import { configureStore } from "@reduxjs/toolkit";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
+import { toLegacyPresentationShape as legacy } from "../../store/presentationSlice";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
@@ -27,11 +29,11 @@ const createStore = (presentationOverrides = {}) =>
       overlays: overlaysSlice.reducer,
     },
     preloadedState: {
-      presentation: {
+      presentation: fromLegacyPresentationShape({
         ...presentationSlice.getInitialState(),
         isStreamTransmitting: true,
         ...presentationOverrides,
-      },
+      }),
       overlays: overlaysSlice.getInitialState(),
     },
   });
@@ -75,10 +77,10 @@ describe("Overlay send", () => {
     await user.click(screen.getByRole("button", { name: /Send/i }));
 
     expect(
-      store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+      legacy(store.getState().presentation).streamInfo.participantOverlayInfo?.name,
     ).toBe("Alex");
     expect(
-      store.getState().presentation.streamInfo.participantOverlayInfo?.title,
+      legacy(store.getState().presentation).streamInfo.participantOverlayInfo?.title,
     ).toBe("Host");
   });
 
@@ -111,7 +113,7 @@ describe("Overlay send", () => {
     expect(screen.getByRole("button", { name: /Send/i })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: /Send/i }));
     expect(
-      store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+      legacy(store.getState().presentation).streamInfo.participantOverlayInfo?.name,
     ).toBe("");
   });
 
@@ -143,7 +145,7 @@ describe("Overlay send", () => {
 
     await user.click(screen.getByRole("button", { name: /Send/i }));
     expect(
-      store.getState().presentation.streamInfo.stbOverlayInfo?.heading,
+      legacy(store.getState().presentation).streamInfo.stbOverlayInfo?.heading,
     ).toBe("Welcome");
   });
 });

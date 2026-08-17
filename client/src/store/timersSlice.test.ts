@@ -413,12 +413,14 @@ describe("timersSlice", () => {
       store.dispatch(timersSlice.actions.tickTimers());
 
       // Expiry is a real state change that must propagate.
+      // remainingTime restores to duration (same as explicit stop) so UIs are
+      // not stuck at 0 until the timer item is opened.
       expect(store.getState().timers.shouldUpdateTimers).toBe(true);
       expect(store.getState().timers.timers[0]).toEqual(
         expect.objectContaining({
           status: "stopped",
           isActive: false,
-          remainingTime: 0,
+          remainingTime: 300,
         }),
       );
     });
@@ -1009,7 +1011,10 @@ describe("timersSlice", () => {
       });
 
       const store = createStore({
-        timers: { timers: [local], shouldUpdateTimers: false },
+        timers: {
+          timers: [local],
+          shouldUpdateTimers: false,
+        },
       });
 
       store.dispatch(

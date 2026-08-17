@@ -8,6 +8,8 @@ const DEV_RENDERER_ORIGIN = "https://local.worshipsync.net:3000";
 /**
  * CSP applied only to WorshipSync's top-level Electron renderer document.
  * Keep third-party sources scoped to the resource type that needs them.
+ * Custom schemes here must also stay listed in the index.html meta CSP;
+ * browsers AND-combine header and meta policies.
  */
 export const buildAppCspHeader = (isPackaged: boolean): string => {
   const devConnectSrc = isPackaged
@@ -19,9 +21,9 @@ export const buildAppCspHeader = (isPackaged: boolean): string => {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://*.msftauth.net https://*.msauth.net; " +
     "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
     "font-src 'self' data:; " +
-    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.r2.cloudflarestorage.com https://*.canva.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +
-    "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
-    "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com https://*.r2.cloudflarestorage.com " +
+    "img-src 'self' data: blob: media-cache: worshipsync-media: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.r2.cloudflarestorage.com https://*.canva.com https://*.google.com https://accounts.youtube.com https://i.ytimg.com https://img.youtube.com https://i.scdn.co https://*.msftauth.net https://*.msauth.net; " +
+    "media-src 'self' blob: media-cache: worshipsync-media: https://*.mux.com https://*.edgemv.mux.com https://*.r2.cloudflarestorage.com; " +
+    "connect-src 'self' blob: media-cache: worshipsync-media: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com https://*.r2.cloudflarestorage.com " +
     devConnectSrc +
     "https://*.worshipsync.net " +
     "https://*.firebaseio.com wss://*.firebaseio.com " +

@@ -145,7 +145,18 @@ describe("buildOccurrenceSummaryGroups", () => {
 });
 
 describe("formatOccurrenceMessage", () => {
-  it("renders a WhatsApp-friendly message with one blank line after the title", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("renders a WhatsApp-friendly message with date, time, and one blank line after the title", () => {
+    jest
+      .spyOn(Date.prototype, "toLocaleDateString")
+      .mockReturnValue("May 30, 2026");
+    jest
+      .spyOn(Date.prototype, "toLocaleTimeString")
+      .mockReturnValue("10:00 AM");
+
     const assignmentsRow = {
       [makeSlotKey("director", 0)]: cell("m-dir"),
       [makeSlotKey("crew", 0)]: cell("m-a"),
@@ -166,7 +177,7 @@ describe("formatOccurrenceMessage", () => {
 
     expect(message).toBe(
       [
-        "Schedule for May 30, 2026",
+        "Schedule for May 30, 2026 at 10:00 AM",
         "",
         "Director: Jahlani",
         "Camera Crew: Kevin, David",

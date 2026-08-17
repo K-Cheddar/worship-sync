@@ -3,6 +3,14 @@ import DisplayClock from "./DisplayClock";
 import DisplayTimer from "./DisplayTimer";
 import { useSelector } from "../../hooks";
 import { MONITOR_BAND_CLOCK_TIMER_PX } from "../../constants";
+import { useContext, useMemo } from "react";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import {
+  resolveDisplaySettings,
+  resolveOutputDefaults,
+} from "../../utils/displaySettings";
+import { useScreenOverrides } from "../../hooks/useScreenOverrides";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 type MonitorBoardViewProps = {
   aliasId: string;
@@ -15,6 +23,8 @@ type MonitorBoardViewProps = {
   scale: number;
   missingAliasTitle?: string;
   missingAliasDescription?: string;
+  /** Display whose band settings apply; defaults to the built-in monitor. */
+  outputId?: string;
 };
 
 /**
@@ -27,10 +37,35 @@ const MonitorBoardView = ({
   scale,
   missingAliasTitle,
   missingAliasDescription,
+  outputId = "monitor",
 }: MonitorBoardViewProps) => {
-  const { showClock, showTimer, clockFontSize, timerFontSize } = useSelector(
-    (state) => state.undoable.present.preferences.monitorSettings
+  const registryOutputs = useSelector(selectDisplayOutputs);
+  // Same override source as the normal layout, so one physical screen cannot
+  // disagree with itself between presentation and board mode.
+  const pairedDeviceSettings = useContext(GlobalInfoContext)?.device?.settings;
+  // Same fallback as every other surface: the built-in monitor keeps honouring
+  // the church-wide settings until it is configured as a display.
+  const legacyMonitorSettings = useSelector((state) =>
+    outputId === "monitor"
+      ? state.undoable?.present?.preferences?.monitorSettings
+      : undefined,
   );
+  // Subscribed like every other live surface, so a setting changed on the
+  // controller reaches this board without a reload.
+  const screenOverrides = useScreenOverrides(outputId, pairedDeviceSettings);
+  const { showClock, showTimer, clockFontSize, timerFontSize } =
+    useMemo(
+      () =>
+        resolveDisplaySettings(
+          resolveOutputDefaults(
+            registryOutputs.find((output) => output.id === outputId)?.settings,
+            legacyMonitorSettings,
+          ),
+          screenOverrides,
+          registryOutputs.find((output) => output.id === outputId)?.type,
+        ),
+      [legacyMonitorSettings, outputId, screenOverrides, registryOutputs],
+    );
   const showBand = showClock || showTimer;
 
   return (
@@ -52,7 +87,11 @@ const MonitorBoardView = ({
             {showClock && <DisplayClock fontSize={clockFontSize * scale} />}
           </div>
           <div className="flex h-full min-w-0 flex-1 items-center justify-end">
-            {showTimer && <DisplayTimer fontSize={timerFontSize * scale} />}
+            {showTimer && (
+              <DisplayTimer
+                fontSize={timerFontSize * scale}
+              />
+            )}
           </div>
         </div>
       )}

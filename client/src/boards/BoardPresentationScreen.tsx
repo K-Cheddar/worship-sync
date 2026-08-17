@@ -127,21 +127,18 @@ const BoardPresentationScreen = ({
       ref={mainRef}
       className={`${fillParent ? "h-full" : "h-dvh"} overflow-hidden bg-[linear-gradient(160deg,#111827_0%,#0f172a_45%,#020617_100%)] text-white`}
     >
-      <div className="flex h-full flex-col px-8 py-8">
+      <div className="flex h-full flex-col px-4 py-4 md:px-5 md:py-5">
         <header className="shrink-0">
-          <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-200/80">
-            Discussion Board
-          </p>
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-4 md:gap-5">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             {churchLogoUrl ? (
               <ChurchLogoImg src={churchLogoUrl} variant="board-presentation" />
             ) : null}
-            <h1 className="min-w-0 flex-1 text-4xl font-semibold md:text-5xl">
+            <h1 className="min-w-0 flex-1 text-2xl font-semibold md:text-3xl">
               {alias?.title || "Presentation"}
             </h1>
             {hasLoadedOnce && aliasId ? (
               <div
-                className="flex min-w-16 items-center justify-center rounded-full border border-amber-300/30 bg-amber-400/15 px-5 py-3 text-3xl font-semibold tabular-nums text-amber-100 md:min-w-20 md:px-6 md:py-4 md:text-4xl"
+                className="flex min-w-10 items-center justify-center rounded-full border border-amber-300/30 bg-amber-400/15 px-3 py-1.5 text-xl font-semibold tabular-nums text-amber-100 md:min-w-12 md:px-4 md:py-2 md:text-2xl"
                 aria-live="polite"
                 aria-label={`${highlightedItems.length} highlighted`}
               >
@@ -203,12 +200,12 @@ const BoardPresentationScreen = ({
             </div>
           </div>
         ) : (
-          <div className="mt-8 flex-1 overflow-y-auto pr-2">
-            <div className="space-y-6 pb-12">
+          <div className="mt-4 flex-1 overflow-y-auto pr-1">
+            <div className="space-y-4 pb-6">
               {highlightedItems.map((item, index) => (
                 <article
                   key={item.id}
-                  className={`rounded-4xl border border-cyan-300/20 bg-white/8 px-8 py-7 shadow-2xl backdrop-blur-sm ${index === highlightedItems.length - 1 ? "ring-2 ring-cyan-300/40" : ""}`}
+                  className={`rounded-3xl border border-cyan-300/20 bg-white/8 px-5 py-4 shadow-2xl backdrop-blur-sm md:px-6 md:py-5 ${index === highlightedItems.length - 1 ? "ring-2 ring-cyan-300/40" : ""}`}
                 >
                   <div
                     className="flex flex-wrap items-center gap-3 text-cyan-100/80"
@@ -228,7 +225,7 @@ const BoardPresentationScreen = ({
                     </span>
                   </div>
                   <p
-                    className="mt-5 whitespace-pre-wrap font-medium leading-tight text-white"
+                    className="mt-3 whitespace-pre-wrap font-medium leading-tight text-white"
                     style={{ fontSize: postBodyFontSize }}
                   >
                     {item.text}

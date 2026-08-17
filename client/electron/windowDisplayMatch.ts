@@ -35,9 +35,16 @@ export const findDisplayByBounds = <T extends DisplayLike>(
   });
 };
 
+/**
+ * Best guess of which screen a window belongs on when nothing is saved yet.
+ *
+ * The original surfaces keep their historical guesses. A window opened for a
+ * display output has no history to go on, so it lands on the first secondary
+ * screen rather than covering the operator's main screen.
+ */
 export const pickFallbackDisplay = <T extends DisplayLike>(
   displays: T[],
-  windowType: "projector" | "monitor" | "board",
+  windowType: string,
   primary: T,
 ): T => {
   if (displays.length > 1) {
@@ -45,6 +52,7 @@ export const pickFallbackDisplay = <T extends DisplayLike>(
     if (windowType === "monitor" || windowType === "board") {
       return displays.length > 2 ? displays[2] : displays[1];
     }
+    return displays[1];
   }
   return primary;
 };

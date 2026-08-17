@@ -66,13 +66,15 @@ describe("QuickLinkSelection", () => {
         quickLinkId="ql-1"
         toastId="toast-1"
         displayType="stream"
-      />
+      />,
     );
 
     const previewProps = displayWindowMock.mock.calls[0]?.[0] as any;
     expect(previewProps.stbOverlayInfo.heading).toBe("Welcome");
     expect(previewProps.stbOverlayInfo.subHeading).toBe("Glad you're here");
-    expect(previewProps.stbOverlayInfo.formatting.backgroundColor).toBe("#123456");
+    expect(previewProps.stbOverlayInfo.formatting.backgroundColor).toBe(
+      "#123456",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Select Overlay" }));
 
@@ -87,7 +89,7 @@ describe("QuickLinkSelection", () => {
             }),
           }),
         }),
-      })
+      }),
     );
   });
 
@@ -114,7 +116,7 @@ describe("QuickLinkSelection", () => {
         quickLinkId="ql-1"
         toastId="toast-1"
         displayType="monitor"
-      />
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Select Slide" }));

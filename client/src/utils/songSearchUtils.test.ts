@@ -1,4 +1,7 @@
-import { filterAndSortSongsForSearch, computeSongSearchEnrichment } from "./songSearchUtils";
+import {
+  filterAndSortSongsForSearch,
+  computeSongSearchEnrichment,
+} from "./songSearchUtils";
 import { DBItem } from "../types";
 
 const baseSong = (overrides: Partial<DBItem> = {}): DBItem =>
@@ -79,5 +82,76 @@ describe("songSearchUtils", () => {
     const enriched = computeSongSearchEnrichment(song, clean);
     expect(enriched.matchRank).toBeGreaterThan(0);
     expect(enriched.showWords).toBe(true);
+  });
+
+  it("keeps showWords false when the title already matches", () => {
+    const song = baseSong({
+      name: "Hallelujah Chorus",
+      arrangements: [
+        {
+          id: "arr",
+          name: "Default",
+          formattedLyrics: [
+            {
+              id: "s1",
+              type: "Chorus",
+              name: "C",
+              words: "Hallelujah forever",
+              slideSpan: 1,
+            },
+          ],
+          songOrder: [],
+          slides: [],
+        },
+      ],
+    });
+    const enriched = computeSongSearchEnrichment(song, "hallelujah");
+    expect(enriched.showWords).toBe(false);
+  });
+
+  it("breaks alphabetical ties using artist name and ignores missing arrangements", () => {
+    const a = baseSong({
+      _id: "a",
+      name: "Same Title",
+      songMetadata: { artistName: "Zebra" },
+      arrangements: undefined as never,
+    });
+    const b = baseSong({
+      _id: "b",
+      name: "Same Title",
+      songMetadata: { artistName: " Alpha " },
+    });
+    const sorted = filterAndSortSongsForSearch([a, b], "  ");
+    expect(sorted.map((s) => s._id)).toEqual(["b", "a"]);
+  });
+
+  it("includes both title and lyric matches when ranking search results", () => {
+    const titleMatch = baseSong({ _id: "title", name: "Shepherd Song" });
+    const lyricMatch = baseSong({
+      _id: "lyric",
+      name: "Obscure",
+      arrangements: [
+        {
+          id: "arr",
+          name: "Default",
+          formattedLyrics: [
+            {
+              id: "s1",
+              type: "Verse",
+              name: "V1",
+              words: "The Lord is my shepherd",
+              slideSpan: 1,
+            },
+          ],
+          songOrder: [],
+          slides: [],
+        },
+      ],
+    });
+    const result = filterAndSortSongsForSearch(
+      [lyricMatch, titleMatch],
+      "shepherd",
+    );
+    expect(result.map((song) => song._id).sort()).toEqual(["lyric", "title"]);
   });
 });

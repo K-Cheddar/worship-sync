@@ -1,4 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 import Monitor from "../Monitor";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -35,21 +37,33 @@ const onValueMock = jest.fn(
 );
 
 const mockState = {
-  presentation: {
+  presentation: fromLegacyPresentationShape({
     monitorInfo: {
+      type: "",
       displayType: "monitor",
       name: "Current Monitor",
-      slide: { boxes: [{ words: "Current" }] },
+      slide: {
+        id: "Current",
+        name: "Current",
+        type: "Verse",
+        boxes: [{ words: "Current", width: 100, height: 100 }],
+      },
       timerId: "timer-1",
     },
     prevMonitorInfo: {
+      type: "",
       displayType: "monitor",
       name: "Previous Monitor",
-      slide: { boxes: [{ words: "Previous" }] },
+      slide: {
+        id: "Previous",
+        name: "Previous",
+        type: "Verse",
+        boxes: [{ words: "Previous", width: 100, height: 100 }],
+      },
       timerId: "timer-2",
     },
     monitorBoardAliasId: "",
-  },
+  }),
   timers: {
     timers: [
       { id: "timer-1", name: "Current Timer" },
@@ -127,7 +141,7 @@ describe("Monitor page", () => {
     onValueMock.mockClear();
     fullscreenPresentationProps = null;
     monitorBoardViewProps = null;
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
     Object.defineProperty(window.navigator, "wakeLock", {
       configurable: true,
       value: { request: jest.fn().mockResolvedValue(undefined) },
@@ -136,17 +150,20 @@ describe("Monitor page", () => {
 
   it("subscribes to monitor settings and dispatches the current monitor settings actions", async () => {
     render(
-      <GlobalInfoContext.Provider
-        value={
-          {
-            firebaseDb: "firebase-db",
-            churchId: "church-main",
-            sharedDataReady: true,
-          } as any
-        }
-      >
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            {
+              firebaseDb: "firebase-db",
+              churchId: "church-main",
+              sharedDataReady: true,
+            } as any
+          }
+        >
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     await waitFor(() =>
@@ -185,17 +202,20 @@ describe("Monitor page", () => {
 
   it("keeps support for legacy monitor settings payloads without showNextSlide", async () => {
     render(
-      <GlobalInfoContext.Provider
-        value={
-          {
-            firebaseDb: "firebase-db",
-            churchId: "church-main",
-            sharedDataReady: true,
-          } as any
-        }
-      >
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            {
+              firebaseDb: "firebase-db",
+              churchId: "church-main",
+              sharedDataReady: true,
+            } as any
+          }
+        >
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     await waitFor(() =>
@@ -236,17 +256,20 @@ describe("Monitor page", () => {
 
   it("does not subscribe to monitor settings until shared data is ready", () => {
     render(
-      <GlobalInfoContext.Provider
-        value={
-          {
-            firebaseDb: "firebase-db",
-            churchId: "church-main",
-            sharedDataReady: false,
-          } as any
-        }
-      >
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            {
+              firebaseDb: "firebase-db",
+              churchId: "church-main",
+              sharedDataReady: false,
+            } as any
+          }
+        >
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     expect(
@@ -256,17 +279,20 @@ describe("Monitor page", () => {
 
   it("re-attaches the monitor settings listener after a permission_denied error", async () => {
     render(
-      <GlobalInfoContext.Provider
-        value={
-          {
-            firebaseDb: "firebase-db",
-            churchId: "church-main",
-            sharedDataReady: true,
-          } as any
-        }
-      >
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            {
+              firebaseDb: "firebase-db",
+              churchId: "church-main",
+              sharedDataReady: true,
+            } as any
+          }
+        >
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     const path = "churches/church-main/data/monitorSettings";
@@ -286,16 +312,19 @@ describe("Monitor page", () => {
 
   it("passes current and previous monitor presentation info into FullscreenPresentation", () => {
     render(
-      <GlobalInfoContext.Provider value={{} as any}>
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider value={{} as any}>
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     expect(fullscreenPresentationProps.displayInfo).toEqual(
-      mockState.presentation.monitorInfo
+      mockState.presentation.outputs.monitor.info
     );
     expect(fullscreenPresentationProps.prevDisplayInfo).toEqual(
-      mockState.presentation.prevMonitorInfo
+      mockState.presentation.outputs.monitor.prevInfo
     );
     expect(fullscreenPresentationProps.timerInfo).toEqual(
       mockState.timers.timers[0]
@@ -306,12 +335,15 @@ describe("Monitor page", () => {
   });
 
   it("renders the discussion board view (not the presentation) when board mode is on", () => {
-    mockState.presentation.monitorBoardAliasId = "board-alias-1";
+    mockState.presentation.outputs.monitor.boardAliasId = "board-alias-1";
 
     render(
-      <GlobalInfoContext.Provider value={{} as any}>
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider value={{} as any}>
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     expect(screen.getByTestId("monitor-board-view-mock")).toBeInTheDocument();
@@ -321,9 +353,12 @@ describe("Monitor page", () => {
 
   it("renders the presentation (not the board) when board mode is off", () => {
     render(
-      <GlobalInfoContext.Provider value={{} as any}>
-        <Monitor />
-      </GlobalInfoContext.Provider>
+      <MemoryRouter>
+        <GlobalInfoContext.Provider value={{} as any}>
+          <Monitor />
+        </GlobalInfoContext.Provider>
+    
+      </MemoryRouter>,
     );
 
     expect(screen.getByTestId("fullscreen-presentation-mock")).toBeInTheDocument();

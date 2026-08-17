@@ -413,7 +413,7 @@ const CurrentServiceRestreamPanel = ({
         </div>
       </div>
 
-      {youtubeConnected ? (
+      {youtubeConnected && Boolean(restream.session?.connected) ? (
         <div className="shrink-0 border-t border-gray-700 p-2.5">
           <BoardYouTubeChatComposer
             churchId={churchId}

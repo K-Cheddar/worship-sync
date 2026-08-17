@@ -6,6 +6,7 @@ import type { RootState } from "../../store/store";
 import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
 import useAvailableServiceTimes from "../../hooks/useAvailableServiceTimes";
+import { isTimerLive } from "../../utils/timerUtils";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 
 interface TimerDisplayProps {
@@ -76,7 +77,7 @@ export function formatTime(
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>
-    state.timers.timers.find((t) => t.id === timerInfo?.id)
+    state.timers.timers.find((t) => t.id === timerInfo?.id),
   );
   const liveRemaining = useLiveRemainingSeconds(timer ?? timerInfo);
   const { services: availableServices } = useAvailableServiceTimes();
@@ -123,12 +124,19 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   };
 
   const getDisplayTime = () => {
+    // A countdown that isn't actively counting shows its target time, not a
+    // duration. Keyed on `isTimerLive` rather than status, so a timer still
+    // marked running with a long-past endTime resolves to the clock time
+    // immediately instead of clamping to 0 until tickTimers stops it.
     if (
       resolvedTimer.timerType === "countdown" &&
-      resolvedTimer.status === "stopped"
+      !isTimerLive(resolvedTimer)
     ) {
       return formatTime12Hour(resolvedTimer.countdownTime || "00:00");
     }
+    // No number yet — timers may still be syncing. Render nothing rather than
+    // the 0 that an absent value used to collapse into.
+    if (liveRemaining === null) return "";
     return formatTime(liveRemaining, resolvedTimer.showMinutesOnly);
   };
 

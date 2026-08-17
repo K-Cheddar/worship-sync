@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Expand,
   ImagePlus,
   MoreVertical,
   Pencil,
@@ -257,7 +258,11 @@ const ChatMessageRow = ({
   );
 };
 
-const ChatWindow = () => {
+const ChatWindow = ({
+  onOpenFullPage,
+}: {
+  onOpenFullPage?: () => void;
+}) => {
   const chat = useChat();
   const [draft, setDraft] = useState("");
   const [showComposerEmojis, setShowComposerEmojis] = useState(false);
@@ -400,6 +405,7 @@ const ChatWindow = () => {
           open={menuOpen}
           onOpenChange={setMenuOpen}
           align="end"
+          portal={false}
           contentClassName="w-64"
           bodyClassName="px-3 pb-3 pt-0"
           headerRowClassName="pr-1 pt-1"
@@ -415,6 +421,17 @@ const ChatWindow = () => {
           }
         >
           <div className="flex flex-col gap-3">
+            {onOpenFullPage ? (
+              <Button
+                variant="secondary"
+                svg={Expand}
+                iconSize="sm"
+                className="w-full justify-center text-sm"
+                onClick={onOpenFullPage}
+              >
+                Open full chat
+              </Button>
+            ) : null}
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
                 Day

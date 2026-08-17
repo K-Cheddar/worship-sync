@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { CalendarOff, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
+import {
+  CalendarOff,
+  ChevronDown,
+  ChevronUp,
+  TriangleAlert,
+} from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import BlockoutDatesField from "./Teams/components/BlockoutDatesField";
@@ -126,9 +131,7 @@ const MyScheduleBlockouts = ({
     const today = todayPlainDate();
     return occurrences
       .filter((occurrence) => occurrence.date >= today)
-      .filter((occurrence) =>
-        occurrence.serving.some((person) => person.isMe),
-      )
+      .filter((occurrence) => occurrence.serving.some((person) => person.isMe))
       .filter((occurrence) =>
         Boolean(findBlockoutRangeForDate(draft, occurrence.date)),
       )
@@ -203,7 +206,11 @@ const MyScheduleBlockouts = ({
         onClick={() => setOpen((current) => !current)}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <Icon svg={CalendarOff} size="sm" className="shrink-0 text-orange-300" />
+          <Icon
+            svg={CalendarOff}
+            size="sm"
+            className="shrink-0 text-orange-300"
+          />
           <span className="text-sm font-semibold text-gray-100">Time off</span>
           <span className="truncate text-xs text-gray-400">
             {summarizeEntries(current.length)}
@@ -227,8 +234,8 @@ const MyScheduleBlockouts = ({
       {open ? (
         <div className="space-y-3 border-t border-gray-800 px-3 py-3">
           <p className="text-xs text-gray-400">
-            Add the dates you are away. Your team leads see these when they build
-            the schedule.
+            Add the dates you are away. Your team leads see these when they
+            build the schedule.
             {ended.length > 0
               ? ` Dates that have passed are not shown; ${ended.length === 1 ? "1 is" : `${ended.length} are`} kept on your record for a year.`
               : ""}

@@ -138,7 +138,7 @@ describe("formatLiveSlideProgress", () => {
 describe("resolveLiveSlideProgress", () => {
   it("prefers projector over monitor", () => {
     expect(
-      resolveLiveSlideProgress(
+      resolveLiveSlideProgress([
         {
           name: "Projector Song",
           slide: null,
@@ -151,7 +151,7 @@ describe("resolveLiveSlideProgress", () => {
           slideIndex: 1,
           slideCount: 4,
         },
-      ),
+      ]),
     ).toEqual({
       name: "Projector Song",
       slideLabel: "1 of 2",
@@ -160,7 +160,7 @@ describe("resolveLiveSlideProgress", () => {
 
   it("falls back to monitor when projector has no progress", () => {
     expect(
-      resolveLiveSlideProgress(
+      resolveLiveSlideProgress([
         { name: "", slide: null },
         {
           name: "Monitor Song",
@@ -168,10 +168,34 @@ describe("resolveLiveSlideProgress", () => {
           slideIndex: 1,
           slideCount: 4,
         },
-      ),
+      ]),
     ).toEqual({
       name: "Monitor Song",
       slideLabel: "2 of 4",
     });
+  });
+});
+
+describe("resolveLiveSlideProgress with named displays", () => {
+  it("reads a named projector when no built-in is running", () => {
+    expect(
+      resolveLiveSlideProgress([
+        { name: "Lobby Song", slide: null, slideIndex: 2, slideCount: 5 },
+      ]),
+    ).toEqual({ name: "Lobby Song", slideLabel: "3 of 5" });
+  });
+
+  it("skips displays with nothing live and takes the next one", () => {
+    expect(
+      resolveLiveSlideProgress([
+        { name: "", slide: null },
+        { name: "", slide: null },
+        { name: "Third Display", slide: null, slideIndex: 0, slideCount: 3 },
+      ]),
+    ).toEqual({ name: "Third Display", slideLabel: "1 of 3" });
+  });
+
+  it("reports nothing when no display is running an item", () => {
+    expect(resolveLiveSlideProgress([])).toBeNull();
   });
 });

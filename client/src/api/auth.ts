@@ -1011,9 +1011,7 @@ export const getAssignmentResponseContext = async (token: string) =>
     churchName: string;
     firstName: string;
     assignments: AssignmentResponseSlot[];
-  }>(
-    `api/team-schedule-response?${new URLSearchParams({ token }).toString()}`,
-  );
+  }>(`api/team-schedule-response?${new URLSearchParams({ token }).toString()}`);
 
 /**
  * Answer from an emailed link. Omit `occurrenceId`/`cellKey` to answer every
@@ -1899,6 +1897,20 @@ export const redeemDisplayPairing = async (body: JsonBody) =>
 export const listDisplayDevices = async (churchId: string) =>
   apiFetch<{ success: boolean; displayDevices: DisplayDeviceClient[] }>(
     `api/churches/${churchId}/display-devices`,
+  );
+
+/** Per-screen setting overrides for one paired display, edited from a controller. */
+export const updateDisplayDeviceSettings = async (
+  churchId: string,
+  deviceId: string,
+  settings: Record<string, unknown> | null,
+) =>
+  apiFetch<{ success: boolean; settings: Record<string, unknown> | null }>(
+    `api/churches/${churchId}/display-devices/${deviceId}/settings`,
+    {
+      method: "POST",
+      body: JSON.stringify({ settings }),
+    },
   );
 
 export const revokeDisplayDevice = async (churchId: string, deviceId: string) =>

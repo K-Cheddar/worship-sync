@@ -28,6 +28,7 @@ type RouteSessionContext = {
   } | null;
   operatorName?: string | null;
   displaySurfaceType?: string | null;
+  displayOutputId?: string | null;
 };
 
 const GUEST_ALLOWED_PREFIXES = ["/controller"];
@@ -45,7 +46,7 @@ const GUEST_ALLOWED_EXACT = new Set([
  * routes minus some" would silently admit every route added later. Anything not
  * named here is refused, so a new operator page is closed to members by default.
  */
-const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule"]);
+const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule", "/chat"]);
 
 /** Whether a schedule-only member may open this path. Deny by default. */
 export const isMemberAllowedPath = (pathname: string): boolean =>
@@ -58,6 +59,7 @@ const HUMAN_ALLOWED_EXACT = new Set([
   // on a roster uses it, and omitting it made Electron route restore fall back
   // to /home.
   "/my-schedule",
+  "/chat",
   "/overlay-controller",
   "/workstation/pair",
   "/display/pair",
@@ -95,6 +97,7 @@ export const isWorkstationDisplaySurfacePath = (pathname: string): boolean =>
 
 const WORKSTATION_ALLOWED_EXACT = new Set([
   "/home",
+  "/chat",
   "/overlay-controller",
   "/credits-editor",
   "/boards/controller",
@@ -242,7 +245,10 @@ export const getDefaultRouteForSession = (
       : "/workstation/operator";
   }
   if (context.sessionKind === "display") {
-    return getDisplayHomePath(context.displaySurfaceType || undefined);
+    return getDisplayHomePath(
+      context.displaySurfaceType || undefined,
+      context.displayOutputId || undefined,
+    );
   }
   return "/";
 };

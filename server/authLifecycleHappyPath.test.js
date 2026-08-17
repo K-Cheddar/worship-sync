@@ -279,3 +279,58 @@ test("display create then redeem issues a credential", async (t) => {
   assert.ok(redeemRes.payload?.credential);
   assert.ok(redeemRes.payload?.device);
 });
+
+test("display pairing carries the display output onto the device", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const context = await createAdminContext("display_output");
+  const created = await callHandler(authHandlers.createDisplayPairing, {
+    context,
+    body: {
+      label: "Lobby Projector",
+      surfaceType: "projector",
+      outputId: "out_lobby",
+    },
+  });
+  assert.equal(created.statusCode, 200);
+
+  const redeemRes = createRes();
+  await authHandlers.redeemDisplayPairing(
+    createReq({ body: { token: created.payload?.pairing?.token } }),
+    redeemRes,
+  );
+  assert.equal(redeemRes.statusCode, 200);
+  assert.equal(redeemRes.payload?.device?.outputId, "out_lobby");
+});
+
+test("display pairing without an output leaves the screen unbound", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const context = await createAdminContext("display_no_output");
+  const created = await callHandler(authHandlers.createDisplayPairing, {
+    context,
+    body: { label: "Main Projector", surfaceType: "projector" },
+  });
+  const redeemRes = createRes();
+  await authHandlers.redeemDisplayPairing(
+    createReq({ body: { token: created.payload?.pairing?.token } }),
+    redeemRes,
+  );
+  assert.equal(redeemRes.statusCode, 200);
+  assert.equal(redeemRes.payload?.device?.outputId ?? null, null);
+});
+
+test("display pairing rejects a malformed output id", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const context = await createAdminContext("display_bad_output");
+  const created = await callHandler(authHandlers.createDisplayPairing, {
+    context,
+    body: {
+      label: "Bad Projector",
+      surfaceType: "projector",
+      outputId: "../../etc/passwd",
+    },
+  });
+  assert.equal(created.statusCode, 400);
+});

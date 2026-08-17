@@ -36,7 +36,9 @@ describe("DisplayWindow timer and text helpers", () => {
       timers: { timers: [] },
     };
     hooksState = {
-      undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+      undoable: {
+        present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+      },
       timers: { timers: [] },
     };
     jest.useRealTimers();
@@ -56,28 +58,36 @@ describe("DisplayWindow timer and text helpers", () => {
     });
 
     it("renders a single span for under-one-minute split formatting", () => {
-      render(<div data-testid="format-root">{formatTime(45, false, true)}</div>);
+      render(
+        <div data-testid="format-root">{formatTime(45, false, true)}</div>,
+      );
       const root = screen.getByTestId("format-root");
       expect(root).toHaveTextContent("45");
       expect(within(root).getByText("45")).toBeInTheDocument();
     });
 
     it("renders split spans when formatting mm:ss sections", () => {
-      render(<div data-testid="format-root">{formatTime(65, false, true)}</div>);
+      render(
+        <div data-testid="format-root">{formatTime(65, false, true)}</div>,
+      );
       const root = screen.getByTestId("format-root");
       expect(root).toHaveTextContent("1:05");
       expect(within(root).getAllByText(/^(1|:05)$/)).toHaveLength(2);
     });
 
     it("renders split spans when formatting hh:mm:ss sections", () => {
-      render(<div data-testid="format-root">{formatTime(3661, false, true)}</div>);
+      render(
+        <div data-testid="format-root">{formatTime(3661, false, true)}</div>,
+      );
       const root = screen.getByTestId("format-root");
       expect(root).toHaveTextContent("1:01:01");
       expect(within(root).getAllByText(/^(1|:01)$/)).toHaveLength(3);
     });
 
     it("removes timer token when timerInfo is not provided", () => {
-      const { container } = render(<TimerDisplay words={"Starts {{timer}} now"} />);
+      const { container } = render(
+        <TimerDisplay words={"Starts {{timer}} now"} />,
+      );
       expect(container.textContent).toBe("Starts  now");
     });
 
@@ -87,7 +97,9 @@ describe("DisplayWindow timer and text helpers", () => {
         ...hooksState,
         timers: { timers: [timer] },
       };
-      reactReduxState = { timers: { timers: [timer] } };
+      reactReduxState = {
+        timers: { timers: [timer] },
+      };
 
       render(<TimerDisplay timerInfo={timer} words={"Time: {{timer}}"} />);
 
@@ -105,11 +117,120 @@ describe("DisplayWindow timer and text helpers", () => {
         ...hooksState,
         timers: { timers: [timerInfo] },
       };
-      reactReduxState = { timers: { timers: [timerInfo] } };
+      reactReduxState = {
+        timers: { timers: [timerInfo] },
+      };
 
-      render(<TimerDisplay timerInfo={timerInfo} words={"Service starts {{timer}}"} />);
+      render(
+        <TimerDisplay
+          timerInfo={timerInfo}
+          words={"Service starts {{timer}}"}
+        />,
+      );
 
       expect(screen.getByText("1:05 PM")).toBeInTheDocument();
+    });
+
+    it("shows a paused countdown as its target time, not a duration", () => {
+      const timerInfo = createTimer({
+        status: "paused",
+        isActive: false,
+        countdownTime: "11:00",
+        remainingTime: 0,
+      });
+      hooksState = {
+        ...hooksState,
+        timers: { timers: [timerInfo] },
+      };
+      reactReduxState = {
+        timers: { timers: [timerInfo] },
+      };
+
+      render(<TimerDisplay timerInfo={timerInfo} words={"Starts {{timer}}"} />);
+
+      expect(screen.getByText("11:00 AM")).toBeInTheDocument();
+      expect(screen.queryByText("0")).not.toBeInTheDocument();
+    });
+
+    it("shows the target time for a countdown left marked running from days ago", () => {
+      // Captured from a real session: the timer sat in the store as `running`
+      // with an endTime ~13 days past. Deriving remaining from that endTime
+      // clamped to 0, so selecting the item painted "0" until tickTimers
+      // auto-stopped it and the clock time took over.
+      const stale = createTimer({
+        id: "11 AM Timer",
+        status: "running",
+        isActive: true,
+        countdownTime: "11:00",
+        endTime: new Date(Date.now() - 13 * 24 * 60 * 60 * 1000).toISOString(),
+        remainingTime: 55101,
+      });
+      hooksState = {
+        ...hooksState,
+        timers: { timers: [stale] },
+      };
+      reactReduxState = {
+        timers: { timers: [stale] },
+      };
+
+      render(<TimerDisplay timerInfo={stale} words={"Starts {{timer}}"} />);
+
+      expect(screen.getByText("11:00 AM")).toBeInTheDocument();
+      expect(screen.queryByText("0")).not.toBeInTheDocument();
+    });
+
+    it("still counts down a countdown that is genuinely running", () => {
+      const live = createTimer({
+        status: "running",
+        isActive: true,
+        countdownTime: "11:00",
+        endTime: new Date(Date.now() + 65_900).toISOString(),
+        remainingTime: 65,
+      });
+      hooksState = {
+        ...hooksState,
+        timers: { timers: [live] },
+      };
+      reactReduxState = {
+        timers: { timers: [live] },
+      };
+
+      render(<TimerDisplay timerInfo={live} words={"Starts {{timer}}"} />);
+
+      expect(
+        screen.getByText("1:05", { selector: "span" }),
+      ).toBeInTheDocument();
+    });
+
+    it("never renders 0 for a countdown whose slide snapshot is a stale run", () => {
+      // The copy baked into a slide can say `running` with an endTime that has
+      // long since passed. Selecting that item used to paint a bare "0" for a
+      // frame before the synced timer landed and it settled to the clock time.
+      const stale = createTimer({
+        status: "running",
+        isActive: true,
+        countdownTime: "11:00",
+        endTime: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        remainingTime: 0,
+      });
+      const synced = createTimer({
+        status: "stopped",
+        isActive: false,
+        countdownTime: "11:00",
+        remainingTime: 0,
+      });
+      hooksState = {
+        ...hooksState,
+        timers: { timers: [synced] },
+      };
+      reactReduxState = {
+        timers: { timers: [synced] },
+      };
+
+      render(<TimerDisplay timerInfo={stale} words={"Starts {{timer}}"} />);
+
+      expect(screen.getByText("11:00 AM")).toBeInTheDocument();
+      expect(screen.queryByText("0")).not.toBeInTheDocument();
     });
 
     it("uses redux service times for service-time placeholders when available", async () => {
@@ -150,7 +271,9 @@ describe("DisplayWindow timer and text helpers", () => {
 
       render(<TimerDisplay words={"Starts in {{service-time}}"} />);
 
-      expect(await screen.findByText("1:00", { selector: "span" })).toBeInTheDocument();
+      expect(
+        await screen.findByText("1:00", { selector: "span" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -158,7 +281,9 @@ describe("DisplayWindow timer and text helpers", () => {
     it("renders active monitor timer when running", () => {
       const timer = createTimer({ remainingTime: 3661, color: "#445566" });
       hooksState = {
-        undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+        undoable: {
+          present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+        },
         timers: { timers: [timer] },
       };
 
@@ -169,28 +294,88 @@ describe("DisplayWindow timer and text helpers", () => {
       expect(timerEl).toHaveStyle({ fontSize: "20px", color: "#445566" });
     });
 
-    it("returns null when selected monitor timer is stopped", () => {
-      const stopped = createTimer({ status: "stopped", countdownTime: "14:30" });
+    it("inherits the church timer when a display passes null", () => {
+      const timer = createTimer({ remainingTime: 3661 });
       hooksState = {
-        undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+        undoable: {
+          present: {
+            preferences: { monitorSettings: { timerId: "timer-1" } },
+          },
+        },
+        timers: { timers: [timer] },
+      };
+
+      render(<DisplayTimer fontSize={20} timerId={null} />);
+
+      expect(screen.getByText("1:01:01")).toBeInTheDocument();
+    });
+
+    it("returns null when selected monitor timer is stopped", () => {
+      const stopped = createTimer({
+        status: "stopped",
+        countdownTime: "14:30",
+      });
+      hooksState = {
+        undoable: {
+          present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+        },
         timers: { timers: [stopped] },
       };
 
-      const { container } = render(
-        <DisplayTimer fontSize={18} />,
-      );
+      const { container } = render(<DisplayTimer fontSize={18} />);
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("returns null when the selected monitor timer is paused", () => {
+      const paused = createTimer({
+        status: "paused",
+        isActive: false,
+        remainingTime: 90,
+      });
+      hooksState = {
+        undoable: {
+          present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+        },
+        timers: { timers: [paused] },
+      };
+
+      const { container } = render(<DisplayTimer fontSize={18} />);
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("returns null for a timer still flagged running with a long-past end", () => {
+      const stale = createTimer({
+        status: "running",
+        isActive: true,
+        countdownTime: "11:00",
+        endTime: new Date(Date.now() - 13 * 24 * 60 * 60 * 1000).toISOString(),
+        remainingTime: 55101,
+      });
+      hooksState = {
+        undoable: {
+          present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+        },
+        timers: { timers: [stale] },
+      };
+
+      const { container } = render(<DisplayTimer fontSize={18} />);
       expect(container).toBeEmptyDOMElement();
     });
 
     it("returns null when the current timer is already displayed elsewhere", () => {
       const timer = createTimer({ remainingTime: 90 });
       hooksState = {
-        undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+        undoable: {
+          present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+        },
         timers: { timers: [timer] },
       };
 
       const { container } = render(
-        <DisplayTimer fontSize={18} currentTimerInfo={{ ...timer, id: "timer-1" }} />,
+        <DisplayTimer
+          fontSize={18}
+          currentTimerInfo={{ ...timer, id: "timer-1" }}
+        />,
       );
 
       expect(container).toBeEmptyDOMElement();
@@ -199,7 +384,9 @@ describe("DisplayWindow timer and text helpers", () => {
     it("renders minute-only timer text when monitor timer is configured that way", () => {
       const timer = createTimer({ remainingTime: 125, showMinutesOnly: true });
       hooksState = {
-        undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+        undoable: {
+          present: { preferences: { monitorSettings: { timerId: "timer-1" } } },
+        },
         timers: { timers: [timer] },
       };
 
@@ -241,7 +428,12 @@ describe("DisplayWindow timer and text helpers", () => {
     });
 
     it("styles verse markers with provided class name", () => {
-      render(<VerseDisplay words={`\u200B1\u200B In the beginning`} className="text-blue-300" />);
+      render(
+        <VerseDisplay
+          words={`\u200B1\u200B In the beginning`}
+          className="text-blue-300"
+        />,
+      );
       const verse = screen.getByText("1");
       expect(verse).toHaveClass("text-blue-300");
       expect(screen.getByText(/In the beginning/)).toBeInTheDocument();

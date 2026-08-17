@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import BoardPage from "./BoardPage";
@@ -89,7 +96,7 @@ describe("BoardPage", () => {
     expect(screen.queryByLabelText(/^Display name/i)).not.toBeInTheDocument();
 
     await user.type(
-      await screen.findByLabelText(/Question/i),
+      await screen.findByLabelText(/Message/i),
       "Please pray for our team.",
     );
     await user.click(screen.getByRole("button", { name: /^Send$/i }));
@@ -202,7 +209,9 @@ describe("BoardPage", () => {
     await user.click(
       screen.getByRole("button", { name: /Edit display name/i }),
     );
-    const dialog = await screen.findByRole("dialog", { name: /Change display name/i });
+    const dialog = await screen.findByRole("dialog", {
+      name: /Change display name/i,
+    });
     const editInput = within(dialog).getByLabelText(/Display name/i);
     await user.clear(editInput);
     await user.type(editInput, "Riley");
@@ -278,15 +287,15 @@ describe("BoardPage", () => {
 
     renderPage();
 
-    const questionInput = await screen.findByLabelText(/Question/i);
+    const messageInput = await screen.findByLabelText(/Message/i);
 
     expect(screen.queryByText("0/800")).not.toBeInTheDocument();
 
-    fireEvent.change(questionInput, { target: { value: "a".repeat(401) } });
+    fireEvent.change(messageInput, { target: { value: "a".repeat(401) } });
     expect(screen.getByText("401/800")).toBeInTheDocument();
 
-    fireEvent.change(questionInput, { target: { value: "b".repeat(800) } });
-    expect((questionInput as HTMLTextAreaElement).value).toHaveLength(800);
+    fireEvent.change(messageInput, { target: { value: "b".repeat(800) } });
+    expect((messageInput as HTMLTextAreaElement).value).toHaveLength(800);
     expect(screen.getByText("800/800")).toBeInTheDocument();
   });
 
@@ -334,7 +343,9 @@ describe("BoardPage", () => {
       refreshCallback?.({ type: "post-created" });
     });
 
-    expect(await screen.findByText(/New post from stream/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/New post from stream/i),
+    ).toBeInTheDocument();
     expect(mockGetBoardAlias).toHaveBeenCalledTimes(initialAliasCalls);
     expect(mockGetBoardPosts).toHaveBeenCalledTimes(2);
   });
@@ -397,11 +408,15 @@ describe("BoardPage", () => {
     ).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: /Edit this post/i }));
-    const editDialog = await screen.findByRole("dialog", { name: /Edit your post/i });
+    const editDialog = await screen.findByRole("dialog", {
+      name: /Edit your post/i,
+    });
     const messageField = within(editDialog).getByLabelText(/Message/i);
     await user.clear(messageField);
     await user.type(messageField, "Updated question");
-    await user.click(within(editDialog).getByRole("button", { name: /^Save$/i }));
+    await user.click(
+      within(editDialog).getByRole("button", { name: /^Save$/i }),
+    );
 
     await waitFor(() => {
       expect(mockUpdateOwnBoardPost).toHaveBeenCalledWith(
@@ -418,7 +433,9 @@ describe("BoardPage", () => {
     const deleteDialog = await screen.findByRole("dialog", {
       name: /Delete this post/i,
     });
-    await user.click(within(deleteDialog).getByRole("button", { name: /^Delete$/i }));
+    await user.click(
+      within(deleteDialog).getByRole("button", { name: /^Delete$/i }),
+    );
 
     await waitFor(() => {
       expect(mockDeleteOwnBoardPost).toHaveBeenCalledWith(

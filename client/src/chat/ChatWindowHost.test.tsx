@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import ChatWindowHost from "./ChatWindowHost";
 import { useChat } from "./ChatContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
 jest.mock("./ChatContext", () => ({
+  isChatPageRoute: (pathname: string) => pathname === "/chat",
   useChat: jest.fn(),
 }));
 
@@ -13,7 +15,16 @@ jest.mock("../hooks/useMediaQuery", () => ({
 
 jest.mock("./ChatWindow", () => ({
   __esModule: true,
-  default: () => <div>Chat content</div>,
+  default: ({ onOpenFullPage }: { onOpenFullPage?: () => void }) => (
+    <div>
+      Chat content
+      {onOpenFullPage ? (
+        <button type="button" onClick={onOpenFullPage}>
+          Open full chat
+        </button>
+      ) : null}
+    </div>
+  ),
 }));
 
 jest.mock("../components/FloatingWindow/FloatingWindow", () => ({
@@ -34,6 +45,19 @@ jest.mock("../components/FloatingWindow/FloatingWindow", () => ({
 const mockedUseChat = jest.mocked(useChat);
 const mockedUseMediaQuery = jest.mocked(useMediaQuery);
 
+const LocationHarness = () => {
+  const location = useLocation();
+  return <div>{location.pathname}</div>;
+};
+
+const renderHost = (route = "/home") =>
+  render(
+    <MemoryRouter initialEntries={[route]}>
+      <ChatWindowHost />
+      <LocationHarness />
+    </MemoryRouter>,
+  );
+
 describe("ChatWindowHost", () => {
   beforeEach(() => {
     mockedUseChat.mockReset();
@@ -48,11 +72,11 @@ describe("ChatWindowHost", () => {
     } as unknown as ReturnType<typeof useChat>);
     mockedUseMediaQuery.mockReturnValue(true);
 
-    const { container } = render(<ChatWindowHost />);
-    expect(container).toBeEmptyDOMElement();
+    renderHost();
+    expect(screen.queryByTestId("floating-window")).not.toBeInTheDocument();
   });
 
-  it("uses a floating window on desktop and mobile", () => {
+  it("uses a floating window outside the full chat page", () => {
     mockedUseChat.mockReturnValue({
       available: true,
       isOpen: true,
@@ -60,12 +84,37 @@ describe("ChatWindowHost", () => {
     } as unknown as ReturnType<typeof useChat>);
 
     mockedUseMediaQuery.mockReturnValue(false);
-    const { rerender } = render(<ChatWindowHost />);
+    renderHost();
     expect(screen.getByTestId("floating-window")).toBeInTheDocument();
     expect(screen.getByText("Chat content")).toBeInTheDocument();
+  });
 
+  it("opens the full chat page and closes the floating window", () => {
+    const closeChat = jest.fn();
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: true,
+      closeChat,
+    } as unknown as ReturnType<typeof useChat>);
     mockedUseMediaQuery.mockReturnValue(true);
-    rerender(<ChatWindowHost />);
-    expect(screen.getByTestId("floating-window")).toBeInTheDocument();
+
+    renderHost();
+    fireEvent.click(screen.getByRole("button", { name: "Open full chat" }));
+
+    expect(closeChat).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("/chat")).toBeInTheDocument();
+  });
+
+  it("does not render a floating window on the full chat page", () => {
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: true,
+      closeChat: jest.fn(),
+    } as unknown as ReturnType<typeof useChat>);
+    mockedUseMediaQuery.mockReturnValue(true);
+
+    renderHost("/chat");
+
+    expect(screen.queryByTestId("floating-window")).not.toBeInTheDocument();
   });
 });

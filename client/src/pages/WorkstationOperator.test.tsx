@@ -21,7 +21,10 @@ describe("WorkstationOperator", () => {
       >
         <MemoryRouter initialEntries={["/workstation/operator"]}>
           <Routes>
-            <Route path="/workstation/operator" element={<WorkstationOperator />} />
+            <Route
+              path="/workstation/operator"
+              element={<WorkstationOperator />}
+            />
           </Routes>
         </MemoryRouter>
       </GlobalInfoContext.Provider>,

@@ -62,6 +62,10 @@ import {
   getLibraryItemVirtualKey,
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import {
+  cleanupLocalImagesForDeletedItem,
+} from "../../utils/localImageAssets";
+import { cancelLocalImageUpload } from "../../utils/localImageUploadQueue";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -428,7 +432,7 @@ const FilteredItems = ({
     if (db) {
       try {
         deletedDoc = (await db.get(item._id)) as DBItem;
-        await db.remove(deletedDoc);
+        await db.remove(deletedDoc as DBItem & { _rev: string });
       } catch (error) {
         console.error("Error deleting library item:", error);
         return;
@@ -438,6 +442,20 @@ const FilteredItems = ({
     dispatch(removeItemFromAllItemsList(item._id));
     dispatch(removeItemFromListById(item._id));
     dispatch(ActionCreators.clearHistory());
+
+    if (db && deletedDoc) {
+      try {
+        await cleanupLocalImagesForDeletedItem({
+          db,
+          item: deletedDoc,
+          beforeDelete: cancelLocalImageUpload,
+        });
+      } catch (error) {
+        // The library item is already deleted. A later orphan sweep can safely
+        // remove any bytes that could not be cleaned up in this pass.
+        console.error("Local image cleanup failed:", error);
+      }
+    }
 
     // If deleting a timer, also delete from Firebase and localStorage
     if (item.type === "timer") {

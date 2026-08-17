@@ -69,6 +69,8 @@ const {
   setFocusMediaId,
   setRequestOpenMediaPanel,
   setMediaRouteFolder,
+  setSelectedQuickLinkImage,
+  setSelectedQuickLinkPresentation,
 } = preferencesSlice.actions;
 
 type PreferencesState = ReturnType<typeof preferencesSlice.reducer>;
@@ -237,6 +239,10 @@ describe("preferencesSlice", () => {
       expect(
         store.getState().preferences.preferences.defaultSlidesPerRowMobile,
       ).toBe(1);
+      store.dispatch(setDefaultSlidesPerRowMobile(9));
+      expect(
+        store.getState().preferences.preferences.defaultSlidesPerRowMobile,
+      ).toBe(7);
     });
 
     it("setDefaultSlidesPerRowMusic clamps to 1–7", () => {
@@ -245,6 +251,10 @@ describe("preferencesSlice", () => {
       expect(
         store.getState().preferences.preferences.defaultSlidesPerRowMusic,
       ).toBe(7);
+      store.dispatch(setDefaultSlidesPerRowMusic(0));
+      expect(
+        store.getState().preferences.preferences.defaultSlidesPerRowMusic,
+      ).toBe(1);
     });
 
     it("setDefaultSlidesPerRowMusicMobile clamps to 1–7", () => {
@@ -253,6 +263,10 @@ describe("preferencesSlice", () => {
       expect(
         store.getState().preferences.preferences.defaultSlidesPerRowMusicMobile,
       ).toBe(1);
+      store.dispatch(setDefaultSlidesPerRowMusicMobile(9));
+      expect(
+        store.getState().preferences.preferences.defaultSlidesPerRowMusicMobile,
+      ).toBe(7);
     });
 
     it("setDefaultFormattedLyricsPerRow clamps to 1–4", () => {
@@ -566,6 +580,40 @@ describe("preferencesSlice", () => {
       );
       expect(store.getState().preferences.bibleFontMode).toBe("combined");
     });
+
+    it("falls back to initial defaults when preference fields are missing", () => {
+      const store = createStore();
+      const before = store.getState().preferences.preferences;
+      store.dispatch(
+        initiatePreferences({
+          preferences: {
+            defaultSongBackground: undefined,
+            defaultTimerBackground: undefined,
+            defaultBibleBackground: undefined,
+            defaultFreeFormBackground: undefined,
+          } as any,
+          isMusic: false,
+        }),
+      );
+      const after = store.getState().preferences.preferences;
+      expect(after.defaultSongBackground).toEqual(before.defaultSongBackground);
+      expect(after.defaultTimerBackground).toEqual(
+        before.defaultTimerBackground,
+      );
+      expect(after.defaultBibleBackground).toEqual(
+        before.defaultBibleBackground,
+      );
+      expect(after.defaultFreeFormBackground).toEqual(
+        before.defaultFreeFormBackground,
+      );
+      expect(after.defaultSongBackgroundBrightness).toBe(
+        before.defaultSongBackgroundBrightness,
+      );
+      expect(after.defaultSlidesPerRow).toBe(before.defaultSlidesPerRow);
+      expect(after.defaultMediaItemsPerRow).toBe(
+        before.defaultMediaItemsPerRow,
+      );
+    });
   });
 
   describe("monitor settings", () => {
@@ -726,6 +774,64 @@ describe("preferencesSlice", () => {
       expect(store.getState().preferences.preferences.defaultSlidesPerRow).toBe(
         before,
       );
+    });
+  });
+
+  describe("quick link presentation helpers", () => {
+    it("applies media and presentation to the selected quick link only", () => {
+      const store = createStore();
+      store.dispatch(
+        setQuickLinks([
+          makeQuickLink("ql-1", "Welcome"),
+          makeQuickLink("ql-2", "Other"),
+        ]),
+      );
+      store.dispatch(setSelectedQuickLink("ql-1"));
+      store.dispatch(
+        setSelectedQuickLinkImage({
+          background: "folder/bg",
+          type: "image",
+        } as any),
+      );
+      expect(
+        store.getState().preferences.quickLinks[0].presentationInfo?.type,
+      ).toBe("media");
+      expect(
+        store.getState().preferences.quickLinks[1].presentationInfo,
+      ).toBeNull();
+
+      store.dispatch(setSelectedQuickLink("ql-1"));
+      store.dispatch(
+        setSelectedQuickLinkPresentation({
+          type: "participant",
+          name: "Guest",
+        } as any),
+      );
+      expect(
+        store.getState().preferences.quickLinks[0].presentationInfo?.type,
+      ).toBe("participant");
+      expect(store.getState().preferences.selectedQuickLink).toBeNull();
+    });
+
+    it("ignores quick link media updates when nothing is selected", () => {
+      const store = createStore();
+      store.dispatch(setQuickLinks([makeQuickLink("ql-1", "Welcome")]));
+      store.dispatch(
+        setSelectedQuickLinkImage({
+          background: "folder/bg",
+          type: "image",
+        } as any),
+      );
+      expect(
+        store.getState().preferences.quickLinks[0].presentationInfo,
+      ).toBeNull();
+    });
+
+    it("treats missing initiateQuickLinks payloads as an empty list", () => {
+      const store = createStore();
+      store.dispatch(setQuickLinks([makeQuickLink("ql-1", "Welcome")]));
+      store.dispatch(initiateQuickLinks(undefined as any));
+      expect(store.getState().preferences.quickLinks).toEqual([]);
     });
   });
 });

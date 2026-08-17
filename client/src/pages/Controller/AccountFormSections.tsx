@@ -66,6 +66,8 @@ import {
   serializeChurchBranding,
 } from "../../utils/churchBranding";
 import { cn } from "@/utils/cnHelper";
+import { useSelector } from "../../hooks";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 
 const CLOUDINARY_CLOUD_NAME = "portable-media";
 const CLOUDINARY_UNSIGNED_UPLOAD_PRESET = "bpqu4ma5";
@@ -239,28 +241,29 @@ const workstationAccessOptions: {
   value: WorkstationAccessOption;
   label: string;
 }[] = [
-    { value: "full", label: "Full access" },
-    { value: "music", label: "Music access" },
-    { value: "view", label: "View access" },
-  ];
+  { value: "full", label: "Full access" },
+  { value: "music", label: "Music access" },
+  { value: "view", label: "View access" },
+];
 
 const displaySurfaceOptions: {
   value: DisplaySurfaceOption;
   label: string;
 }[] = [
-    { value: "projector", label: "Projector (full frame)" },
-    { value: "projector-display", label: "Projector (display output)" },
-    { value: "monitor", label: "Monitor" },
-    { value: "stream", label: "Stream" },
-    { value: "stream-info", label: "Stream info" },
-    { value: "credits", label: "Credits" },
-  ];
+  { value: "projector", label: "Projector (full frame)" },
+  { value: "projector-display", label: "Projector (display output)" },
+  { value: "monitor", label: "Monitor" },
+  { value: "stream", label: "Stream" },
+  { value: "stream-info", label: "Stream info" },
+  { value: "credits", label: "Credits" },
+];
 
 export const ACCOUNT_CONTROL_INPUT_CLASSNAME = "h-9 max-md:min-h-14";
 export const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-9 max-md:min-h-14";
 
 const formatAccountError = (error: unknown, fallback: string): string => {
-  const raw = error instanceof Error ? error.message.trim() : String(error).trim();
+  const raw =
+    error instanceof Error ? error.message.trim() : String(error).trim();
   if (!raw) return fallback;
   if (raw === "Request failed") {
     return "Could not reach the server. Check your connection and try again.";
@@ -371,11 +374,12 @@ const PairingCodeBanner = ({
         <span className="font-mono font-semibold tracking-wide">{token}</span>
       </p>
       <p className="mt-2 text-sm text-gray-200">
-        On the {instructionTarget}, open WorshipSync and choose the option to link this device,
-        or go to <span className="font-mono">/#/{route.replace(/^\//, "")}</span>. Use{" "}
-        <span className="font-medium text-gray-100">Link in this window</span> or{" "}
-        <span className="font-medium text-gray-100">Copy device link</span> to open or share the
-        full URL with this code filled in.
+        On the {instructionTarget}, open WorshipSync and choose the option to
+        link this device, or go to{" "}
+        <span className="font-mono">/#/{route.replace(/^\//, "")}</span>. Use{" "}
+        <span className="font-medium text-gray-100">Link in this window</span>{" "}
+        or <span className="font-medium text-gray-100">Copy device link</span>{" "}
+        to open or share the full URL with this code filled in.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
@@ -456,7 +460,8 @@ const PairingCodeBanner = ({
               </Button>
             </div>
             <p className="mt-2 text-xs text-gray-400">
-              Sends the link code and device link. Email must be enabled on the server.
+              Sends the link code and device link. Email must be enabled on the
+              server.
             </p>
           </>
         )}
@@ -624,10 +629,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
       });
       const token = response.pairing.token;
       if (!token) {
-        showToast(
-          "Link code was not returned. Try again.",
-          "error",
-        );
+        showToast("Link code was not returned. Try again.", "error");
         return;
       }
       setPairLabel("");
@@ -644,7 +646,14 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, onGenerated, pairLabel, showApiError, showToast, workstationAccess]);
+  }, [
+    churchId,
+    onGenerated,
+    pairLabel,
+    showApiError,
+    showToast,
+    workstationAccess,
+  ]);
 
   return (
     <>
@@ -710,6 +719,17 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
   const { showToast } = useToast();
   const { showApiError } = useApiErrorToast();
   const [displayLabel, setDisplayLabel] = useState("");
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const displayOutputOptions = useMemo(
+    () => [
+      { value: "", label: "Default for surface" },
+      ...displayOutputs
+        .filter((output) => output.enabled)
+        .map((output) => ({ value: output.id, label: output.name })),
+    ],
+    [displayOutputs],
+  );
+  const [displayOutputId, setDisplayOutputId] = useState("");
   const [displaySurface, setDisplaySurface] =
     useState<DisplaySurfaceOption>("projector");
   const [labelError, setLabelError] = useState("");
@@ -735,13 +755,11 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
       const response = await createDisplayPairing(churchId, {
         label,
         surfaceType: displaySurface,
+        outputId: displayOutputId || undefined,
       });
       const token = response.pairing.token;
       if (!token) {
-        showToast(
-          "Link code was not returned. Try again.",
-          "error",
-        );
+        showToast("Link code was not returned. Try again.", "error");
         return;
       }
       setDisplayLabel("");
@@ -758,7 +776,15 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, displayLabel, displaySurface, onGenerated, showApiError, showToast]);
+  }, [
+    churchId,
+    displayLabel,
+    displayOutputId,
+    displaySurface,
+    onGenerated,
+    showApiError,
+    showToast,
+  ]);
 
   return (
     <>
@@ -785,6 +811,15 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
           onChange={(value) => {
             setDisplaySurface(value as DisplaySurfaceOption);
           }}
+        />
+        <Select
+          className="min-w-48"
+          id="display-output"
+          label="Display"
+          value={displayOutputId}
+          options={displayOutputOptions}
+          selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+          onChange={setDisplayOutputId}
         />
         <Button
           className="w-full shrink-0 justify-center sm:w-auto"
@@ -961,7 +996,9 @@ const BrandingLogoSlotsSection = memo(function BrandingLogoSlotsSection({
             key={slot}
             className="rounded-lg border border-gray-600/70 bg-gray-950/35 p-4"
           >
-            <h4 className="text-sm font-semibold text-gray-100">{config.title}</h4>
+            <h4 className="text-sm font-semibold text-gray-100">
+              {config.title}
+            </h4>
             <p className="mt-1 text-xs leading-relaxed text-gray-400">
               {config.helperText}
             </p>
@@ -1021,12 +1058,14 @@ const BrandingLogoSlotsSection = memo(function BrandingLogoSlotsSection({
                 </Button>
                 {pendingFile ? (
                   <p className="text-xs text-gray-400">
-                    {getReadableFileType(pendingFile)} selected. Save branding to
-                    make it live.
+                    {getReadableFileType(pendingFile)} selected. Save branding
+                    to make it live.
                   </p>
                 ) : null}
                 {!pendingFile && currentLogo ? (
-                  <p className="text-xs text-gray-400">This logo is live now.</p>
+                  <p className="text-xs text-gray-400">
+                    This logo is live now.
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -1157,8 +1196,8 @@ export const BrandingForm = memo(function BrandingForm({
   const [draftBranding, setDraftBranding] = useState<ChurchBranding>(() =>
     normalizeChurchBranding(branding),
   );
-  const [brandColorSlots, setBrandColorSlots] = useState<BrandColorSlot[]>(
-    () => padBrandColorsToSlots(normalizeChurchBranding(branding).colors),
+  const [brandColorSlots, setBrandColorSlots] = useState<BrandColorSlot[]>(() =>
+    padBrandColorsToSlots(normalizeChurchBranding(branding).colors),
   );
   const [pendingLogoFiles, setPendingLogoFiles] = useState<PendingLogoFiles>(
     createEmptyPendingLogoFiles,
@@ -1293,9 +1332,13 @@ export const BrandingForm = memo(function BrandingForm({
       }
 
       const extension = file.name.split(".").pop()?.trim().toLowerCase() || "";
-      const isAllowedByExtension = ["png", "jpg", "jpeg", "webp", "svg"].includes(
-        extension,
-      );
+      const isAllowedByExtension = [
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+        "svg",
+      ].includes(extension);
       if (
         !BRANDING_ALLOWED_LOGO_TYPES.has(file.type) &&
         !isAllowedByExtension
@@ -1400,19 +1443,19 @@ export const BrandingForm = memo(function BrandingForm({
       resetPendingLogos();
       showToast("Branding saved.", "success");
 
-      const replacedAssets = (
-        ["square", "wide"] as BrandingLogoSlot[]
-      ).flatMap((slot) => {
-        const previousLogo = previousBranding.logos[slot] || null;
-        const nextLogo = nextBranding.logos[slot] || null;
-        if (
-          previousLogo?.publicId &&
-          previousLogo.publicId !== nextLogo?.publicId
-        ) {
-          return [previousLogo];
-        }
-        return [];
-      });
+      const replacedAssets = (["square", "wide"] as BrandingLogoSlot[]).flatMap(
+        (slot) => {
+          const previousLogo = previousBranding.logos[slot] || null;
+          const nextLogo = nextBranding.logos[slot] || null;
+          if (
+            previousLogo?.publicId &&
+            previousLogo.publicId !== nextLogo?.publicId
+          ) {
+            return [previousLogo];
+          }
+          return [];
+        },
+      );
 
       void cleanupLogoAssets(replacedAssets);
     } catch (error) {
@@ -1469,7 +1512,10 @@ export const BrandingForm = memo(function BrandingForm({
   if (brandingStatus === "loading") {
     return (
       <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
-        <div className="flex items-center gap-2 text-sm text-gray-200" role="status">
+        <div
+          className="flex items-center gap-2 text-sm text-gray-200"
+          role="status"
+        >
           <Spinner
             width="16px"
             borderWidth="2px"
@@ -1487,7 +1533,8 @@ export const BrandingForm = memo(function BrandingForm({
         <div>
           <h3 className="text-lg font-semibold">Branding</h3>
           <p className="mt-1 max-w-2xl text-sm text-gray-400">
-            Save your church logo, mission, vision, and brand colors for use across controllers.
+            Save your church logo, mission, vision, and brand colors for use
+            across controllers.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

@@ -25,9 +25,10 @@ export const useElectronWindows = () => {
     }
   }, []);
 
-  const refreshWindowStates = useCallback(async () => {
+  /** `windowKeys` asks about display outputs this machine may never have opened. */
+  const refreshWindowStates = useCallback(async (windowKeys?: string[]) => {
     if (window.electronAPI) {
-      const states = await window.electronAPI.getWindowStates();
+      const states = await window.electronAPI.getWindowStates(windowKeys);
       setWindowStates(states);
     }
   }, []);
@@ -54,9 +55,12 @@ export const useElectronWindows = () => {
 
   // Generic window management functions
   const openWindow = useCallback(
-    async (windowType: WindowType) => {
+    async (windowType: WindowType, surface?: string) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.openWindow(windowType);
+        const result = await window.electronAPI.openWindow(
+          windowType,
+          surface as "projector" | "monitor" | "stream" | undefined,
+        );
         await refreshWindowStates();
         return result;
       }

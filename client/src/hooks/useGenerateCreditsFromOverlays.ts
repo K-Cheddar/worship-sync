@@ -23,6 +23,13 @@ import {
   type TeamScheduleCreditEntry,
 } from "../utils/teamScheduleCredits";
 
+/**
+ * Stable empty list. Returning a fresh `[]` from a selector hands `useSelector`
+ * a new reference every call, so the toolbar re-renders on every dispatched
+ * action instead of only when the assignments change.
+ */
+const EMPTY_TEAM_ASSIGNMENTS: ServicePlanningTeamAssignment[] = [];
+
 const PRAISE_TEAM_ROLE_ORDER = ["worship leader", "soprano", "alto", "tenor"];
 const CREDIT_GENERATION_STEP_DELAY_MS = 350;
 
@@ -103,7 +110,7 @@ export function useGenerateCreditsFromOverlays() {
   const teamAssignments = useSelector(
     (state) =>
       state.servicePlanningImport?.serviceOutline?.preview.teamAssignments ??
-      [],
+      EMPTY_TEAM_ASSIGNMENTS,
   );
 
   const [isGenerating, setIsGenerating] = useState(false);

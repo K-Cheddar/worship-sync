@@ -10,6 +10,8 @@ type HLSPlayerProps = {
   onLoadedData?: () => void;
   onError?: () => void;
   videoBox?: Box;
+  muted?: boolean;
+  volume?: number;
 };
 
 const HLSPlayer = ({
@@ -19,6 +21,8 @@ const HLSPlayer = ({
   onLoadedData,
   onError,
   videoBox,
+  muted = true,
+  volume = 1,
 }: HLSPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -62,7 +66,7 @@ const HLSPlayer = ({
               break;
             case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
               console.error(
-                `[HLSPlayer] Video source not supported: ${videoSrc}`
+                `[HLSPlayer] Video source not supported: ${videoSrc}`,
               );
               break;
           }
@@ -99,78 +103,75 @@ const HLSPlayer = ({
         video.removeEventListener("ended", handleEnded);
       };
     },
-    []
+    [],
   );
 
-  const playHLS = useCallback(
-    (video: HTMLVideoElement, videoSrc: string) => {
-      if (Hls.isSupported()) {
-        hlsRef.current = null;
-        const hls = new Hls();
-        hlsRef.current = hls;
+  const playHLS = useCallback((video: HTMLVideoElement, videoSrc: string) => {
+    if (Hls.isSupported()) {
+      hlsRef.current = null;
+      const hls = new Hls();
+      hlsRef.current = hls;
 
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            console.error(`[HLSPlayer] HLS fatal error: ${data.type}`, data);
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              hls.startLoad();
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
-            } else {
-              console.error(
-                `[HLSPlayer] Unrecoverable HLS error for: ${videoSrc}`
-              );
-              hls.destroy();
-            }
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          console.error(`[HLSPlayer] HLS fatal error: ${data.type}`, data);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
+            console.error(
+              `[HLSPlayer] Unrecoverable HLS error for: ${videoSrc}`,
+            );
+            hls.destroy();
           }
-        });
+        }
+      });
 
-        hls.loadSource(videoSrc);
-        hls.attachMedia(video);
+      hls.loadSource(videoSrc);
+      hls.attachMedia(video);
 
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch((e) => console.warn("Error playing video", e));
-        });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch((e) => console.warn("Error playing video", e));
+      });
 
-        const handleEnded = () => {
-          video.currentTime = 0;
-          if (hlsRef.current) hlsRef.current.startLoad(0);
-          video.play().catch((e) => console.warn("Error playing video", e));
-        };
+      const handleEnded = () => {
+        video.currentTime = 0;
+        if (hlsRef.current) hlsRef.current.startLoad(0);
+        video.play().catch((e) => console.warn("Error playing video", e));
+      };
 
-        video.addEventListener("ended", handleEnded);
+      video.addEventListener("ended", handleEnded);
 
-        return () => {
-          video.removeEventListener("ended", handleEnded);
-          hlsRef.current = null;
-          hls.destroy();
-        };
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = videoSrc;
-        video.load();
+      return () => {
+        video.removeEventListener("ended", handleEnded);
+        hlsRef.current = null;
+        hls.destroy();
+      };
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = videoSrc;
+      video.load();
 
-        const handleLoadedMetadata = () => {
-          video.play().catch((e) => console.warn("Error playing video", e));
-        };
+      const handleLoadedMetadata = () => {
+        video.play().catch((e) => console.warn("Error playing video", e));
+      };
 
-        const handleEnded = () => {
-          video.currentTime = 0;
-          video.play().catch((e) => console.warn("Error playing video", e));
-        };
+      const handleEnded = () => {
+        video.currentTime = 0;
+        video.play().catch((e) => console.warn("Error playing video", e));
+      };
 
-        video.addEventListener("loadedmetadata", handleLoadedMetadata);
-        video.addEventListener("ended", handleEnded);
+      video.addEventListener("loadedmetadata", handleLoadedMetadata);
+      video.addEventListener("ended", handleEnded);
 
-        return () => {
-          video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-          video.removeEventListener("ended", handleEnded);
-        };
-      }
+      return () => {
+        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        video.removeEventListener("ended", handleEnded);
+      };
+    }
 
-      return () => { };
-    },
-    []
-  );
+    return () => {};
+  }, []);
 
   useEffect(() => {
     if (!videoRef.current || !src) return;
@@ -181,7 +182,18 @@ const HLSPlayer = ({
     return playNative(videoRef.current, src);
   }, [src, playNative, playHLS]);
 
-  const preloadValue = src.startsWith("media-cache://") ? "auto" : "metadata";
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.muted = muted;
+    videoRef.current.volume = Math.min(1, Math.max(0, volume));
+  }, [muted, volume]);
+
+  const preloadValue =
+    src.startsWith("media-cache://") ||
+    src.startsWith("worshipsync-media://") ||
+    src.startsWith("blob:")
+      ? "auto"
+      : "metadata";
 
   return (
     <video
@@ -189,7 +201,10 @@ const HLSPlayer = ({
       data-testid="hls-video-player"
       preload={preloadValue}
       className={
-        className || "absolute inset-0 w-full h-full object-cover z-0"
+        className ||
+        `absolute inset-0 h-full w-full z-0 ${
+          videoBox?.shouldKeepAspectRatio ? "object-contain" : "object-cover"
+        }`
       }
       style={{
         filter: videoBox?.brightness
@@ -197,7 +212,7 @@ const HLSPlayer = ({
           : "",
       }}
       autoPlay
-      muted
+      muted={muted}
       loop
       onLoadedData={onLoadedData}
       onError={onError}

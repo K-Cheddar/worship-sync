@@ -1,7 +1,10 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
-import { FileQuestion, Import, LayoutList, Plus, Check, X } from "lucide-react";
+import RadioButton, {
+  RadioGroup,
+} from "../../components/RadioButton/RadioButton";
+import { Check, FileQuestion, Import, LayoutList, Plus, X } from "lucide-react";
 import Button from "../../components/Button/Button";
+import SendTargets from "../../components/SendTargets/SendTargets";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Icon from "../../components/Icon/Icon";
@@ -30,7 +33,6 @@ import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
-import Toggle from "../../components/Toggle/Toggle";
 import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -87,7 +89,7 @@ const types: ItemTypesType[] = [
 
 const buildCreateItemOverrideState = (
   name: string,
-  type: ItemType
+  type: ItemType,
 ): CreateItemState => ({
   ...initialCreateItemState,
   name,
@@ -140,8 +142,7 @@ const CreateItem = ({
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
-  const [mobileSongTab, setMobileSongTab] =
-    useState<MobileSongTab>("create");
+  const [mobileSongTab, setMobileSongTab] = useState<MobileSongTab>("create");
   const [shouldSendTo, setShouldSendTo] = useState<ShouldSendTo>({
     projector: true,
     monitor: true,
@@ -151,7 +152,6 @@ const CreateItem = ({
   const [removeParentheticals, setRemoveParentheticals] = useState(false);
   const [viewLyricsCandidate, setViewLyricsCandidate] =
     useState<NormalizedLrclibTrack | null>(null);
-
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const navigate = useNavigate();
@@ -176,13 +176,13 @@ const CreateItem = ({
   const itemTypes = useMemo(
     () =>
       types.filter((itemType) => access && itemType.access?.includes(access)),
-    [access]
+    [access],
   );
 
   const selectedTypeLabel = isEmbedded
     ? "Song"
     : itemTypes.find((itemType) => itemType.type === selectedType)?.label ||
-    "Item";
+      "Item";
 
   const heading =
     title !== undefined ? title : isEmbedded ? "Create song" : "Create Item";
@@ -192,7 +192,7 @@ const CreateItem = ({
       setCreateItem({
         ...createItemDraft,
         ...updates,
-      })
+      }),
     );
   };
 
@@ -239,13 +239,15 @@ const CreateItem = ({
 
     if (!overrideType || !overrideName) return;
 
-    const isValidType = types.some((itemType) => itemType.type === overrideType);
+    const isValidType = types.some(
+      (itemType) => itemType.type === overrideType,
+    );
     if (!isValidType) return;
 
     dispatch(
       setCreateItem(
-        buildCreateItemOverrideState(overrideName, overrideType as ItemType)
-      )
+        buildCreateItemOverrideState(overrideName, overrideType as ItemType),
+      ),
     );
     setSearchParams({}, { replace: true });
   }, [dispatch, isEmbedded, searchParams, setSearchParams]);
@@ -321,7 +323,7 @@ const CreateItem = ({
       return (list as ServiceItem[]).find(
         (item) =>
           item.name.toLowerCase().trim() === itemName.toLowerCase().trim() &&
-          item.type === selectedType
+          item.type === selectedType,
       );
     }
     return undefined;
@@ -330,16 +332,20 @@ const CreateItem = ({
   const goToItem = (itemId: string, listId: string) => {
     navigate(
       `/controller/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
-        encodeURI(listId)
-      )}`
+        encodeURI(listId),
+      )}`,
     );
   };
 
   const dispatchNewItem = (item: ItemState) => {
+    const localImage = item.slides[0]?.boxes[0]?.mediaInfo?.localImage;
+    const localVideoFile = item.slides[0]?.boxes[0]?.mediaInfo?.localVideoFile;
     const listItem = {
       name: item.name,
       type: item.type,
       background: item.background,
+      ...(localImage ? { localImage } : {}),
+      ...(localVideoFile ? { localVideoFile } : {}),
       _id: item._id,
       listId: "",
     };
@@ -357,7 +363,9 @@ const CreateItem = ({
   };
 
   const createItem = async () => {
-    const draftText = removeParentheticals ? removeParentheticalPhrases(text) : text;
+    const draftText = removeParentheticals
+      ? removeParentheticalPhrases(text)
+      : text;
 
     if (selectedType === "song") {
       const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
@@ -485,8 +493,9 @@ const CreateItem = ({
 
           return (
             <li
-              key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
-                }-${candidate.artistName}`}
+              key={`${
+                candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
+              }-${candidate.artistName}`}
               className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
             >
               <div className="flex flex-col gap-1">
@@ -572,7 +581,7 @@ const CreateItem = ({
           className={cn(
             "flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3 overflow-x-hidden px-4 pb-2 pt-2",
             showLyricsImportPanel &&
-            "lg:flex-row lg:items-stretch lg:justify-start lg:gap-4 lg:overflow-y-hidden",
+              "lg:flex-row lg:items-stretch lg:justify-start lg:gap-4 lg:overflow-y-hidden",
           )}
         >
           {showLyricsImportPanel && (
@@ -602,23 +611,27 @@ const CreateItem = ({
               "flex min-h-0 w-full flex-col overflow-x-hidden overflow-y-auto rounded-md border border-white/10 bg-neutral-900/35 p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl [scrollbar-gutter:stable] lg:min-w-0 lg:max-w-2xl",
               showLyricsImportPanel ? "lg:flex-1 lg:basis-0" : "lg:w-1/2",
               (selectedType === "song" || selectedType === "free") &&
-              "flex min-h-0 flex-1 flex-col",
+                "flex min-h-0 flex-1 flex-col",
               showLyricsImportPanel &&
-              mobileSongTab === "import" &&
-              "max-lg:hidden",
+                mobileSongTab === "import" &&
+                "max-lg:hidden",
             )}
           >
             <div className="flex shrink-0 flex-col gap-2">
               <Input
                 value={itemName}
-                onChange={(val) => updateCreateItemDraft({ name: val as string })}
+                onChange={(val) =>
+                  updateCreateItemDraft({ name: val as string })
+                }
                 label={selectedType === "song" ? "Song name" : "Item Name"}
                 className="text-base"
                 data-ignore-undo="true"
               />
               {existingItem && !isEmbedded && (
                 <p className="flex w-full items-center rounded-md bg-neutral-700/90 p-1 text-sm text-cyan-400">
-                  <span className="italic font-semibold mr-2">"{existingItem.name}"</span>
+                  <span className="italic font-semibold mr-2">
+                    "{existingItem.name}"
+                  </span>
                   <span> already exists.</span>
                   <Button
                     variant="tertiary"
@@ -634,8 +647,8 @@ const CreateItem = ({
               {existingItem && isEmbedded && (
                 <p className="rounded-md bg-neutral-700/90 p-2 text-sm text-cyan-300">
                   A song named &ldquo;{existingItem.name}&rdquo; already exists.
-                  You can still create another, or go back and attach the existing
-                  one.
+                  You can still create another, or go back and attach the
+                  existing one.
                 </p>
               )}
               {!isEmbedded && (
@@ -705,7 +718,8 @@ const CreateItem = ({
                     {isImportingLyrics ? "Importing..." : "Import Lyrics"}
                   </Button>
                   <p className="text-xs text-gray-400">
-                    Lookup uses your song name, artist, and album. Or paste lyrics below.
+                    Lookup uses your song name, artist, and album. Or paste
+                    lyrics below.
                   </p>
                   {songMetadata && (
                     <p className="text-sm text-cyan-300">
@@ -734,7 +748,9 @@ const CreateItem = ({
                     : "Paste text here."
                 }
                 value={text}
-                onChange={(val) => updateCreateItemDraft({ text: val as string })}
+                onChange={(val) =>
+                  updateCreateItemDraft({ text: val as string })
+                }
                 data-ignore-undo="true"
               />
             )}
@@ -833,30 +849,16 @@ const CreateItem = ({
                 />
                 {isAdvancedExpanded && (
                   <div className="mt-1 flex flex-col items-center gap-2 border-t border-white/10 pt-2">
-                    <p className="text-sm font-medium text-gray-200">Sends to:</p>
-                    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-                      <Toggle
-                        label="Projector"
-                        value={shouldSendTo.projector}
-                        onChange={(val) =>
-                          setShouldSendTo((prev) => ({ ...prev, projector: val }))
-                        }
-                      />
-                      <Toggle
-                        label="Monitor"
-                        value={shouldSendTo.monitor}
-                        onChange={(val) =>
-                          setShouldSendTo((prev) => ({ ...prev, monitor: val }))
-                        }
-                      />
-                      <Toggle
-                        label="Stream"
-                        value={shouldSendTo.stream}
-                        onChange={(val) =>
-                          setShouldSendTo((prev) => ({ ...prev, stream: val }))
-                        }
-                      />
-                    </div>
+                    <p className="text-sm font-medium text-gray-200">
+                      Sends to:
+                    </p>
+                    <SendTargets
+                      shouldSendTo={shouldSendTo}
+                      layout="wrap"
+                      onChange={(patch) =>
+                        setShouldSendTo((prev) => ({ ...prev, ...patch }))
+                      }
+                    />
                   </div>
                 )}
               </div>

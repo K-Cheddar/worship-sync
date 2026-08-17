@@ -23,7 +23,11 @@ import {
 import { Readable } from "node:stream";
 import updaterPkg from "electron-updater";
 
-import { WindowStateManager, type WindowType } from "./windowState";
+import {
+  BUILT_IN_WINDOW_KEYS,
+  WindowStateManager,
+  type WindowType,
+} from "./windowState";
 import {
   createDisplayWindow,
   setupWindowEventListeners,
@@ -37,8 +41,14 @@ import {
   getDisplayWindow,
   setDisplayWindow,
   hasDisplayWindow,
+  listDisplayWindowKeys,
 } from "./displayWindowStore";
 import { MediaCacheManager } from "./mediaCache";
+import {
+  buildLocalAssetProtocolUrl,
+  LocalAssetStore,
+  type LocalAssetImport,
+} from "./localAssetStore";
 import {
   DESKTOP_AUTH_CALLBACK_CHANNEL,
   WORSHIPSYNC_PROTOCOL_SCHEME,
@@ -48,10 +58,12 @@ import {
   type DesktopAuthCallbackPayload,
 } from "./desktopAuth";
 import { assertAllowedOpenExternalUrl } from "./openExternalUrlAllowlist";
+import { shouldRebuildWindowForSurface } from "./windowSurfaceChange";
 import {
   isNewerVersion,
   shouldForwardUpdaterErrorToRenderer,
 } from "./updaterHelpers";
+import { isTrustedControllerIpcSender } from "./ipcSenderAuthorization";
 
 const { autoUpdater } = updaterPkg;
 
@@ -142,6 +154,16 @@ protocol.registerSchemesAsPrivileged([
       bypassCSP: true, // Bypass CSP for custom protocol
     },
   },
+  {
+    scheme: "worshipsync-media",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
 ]);
 
 // Set different userData path in development to separate dev and production data
@@ -171,6 +193,8 @@ app.on("open-url", (event, targetUrl) => {
 let mainWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
+let localAssetStore: LocalAssetStore;
+let localVideoCaptureHost: BrowserWindow | null = null;
 let isUploadInProgress = false;
 let isAppClosing = false;
 let pendingDesktopAuthCallback: DesktopAuthCallbackPayload | null = null;
@@ -178,6 +202,14 @@ let desktopAuthListenerReady = false;
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("window-state-changed");
+  }
+};
+
+const assertControllerIpcSender = (sender: WebContents): void => {
+  if (!isTrustedControllerIpcSender(sender, mainWindow)) {
+    throw new Error(
+      "This action is only available from the controller window.",
+    );
   }
 };
 
@@ -257,105 +289,154 @@ const registerWorshipSyncProtocolClient = (): void => {
   app.setAsDefaultProtocolClient(WORSHIPSYNC_PROTOCOL_SCHEME);
 };
 
-const createProjectorWindow = () => {
-  const existing = getDisplayWindow("projector") as BrowserWindow | null;
-  if (existing && !existing.isDestroyed()) {
-    existing.focus();
-    return;
-  }
-
-  const display = windowStateManager.getDisplayForWindow("projector");
-  const bounds = windowStateManager.getWindowBounds(display);
-
-  const newWindow = createDisplayWindow({
-    bounds,
-    route: "/projector-full",
-    isDev,
-    dirname: __dirname,
-  });
-
-  setDisplayWindow("projector", newWindow);
-  setupContextMenu(newWindow.webContents);
-  notifyWindowStateChanged();
-
-  setupReadyToShow(newWindow, "projector", windowStateManager);
-
-  setupWindowEventListeners(newWindow, "projector", windowStateManager, () => {
-    // Only mark as closed if app is not closing (user manually closed the window)
-    if (!isAppClosing) {
-      windowStateManager.markWindowClosed("projector");
-    }
-    setDisplayWindow("projector", null);
-    notifyWindowStateChanged();
-  });
+/**
+ * Route a window key opens. Built-ins keep their original routes; a display
+ * output opens its surface route with the output named in the query string.
+ *
+ * The renderer supplies only a key and a surface, never a URL: this stays the
+ * single place that decides what a display window is allowed to load.
+ */
+const getRouteForWindow = (
+  windowKey: string,
+  surface?: string,
+): string | null => {
+  // Built-ins name their display too. Without the query, resolveOutputForScreen
+  // takes the first enabled display of the type in registry order, so reordering
+  // Lobby above Projector would silently repoint this window.
+  if (windowKey === "projector") return "/projector-full?output=projector";
+  if (windowKey === "monitor") return "/monitor?output=monitor";
+  if (windowKey === "board") return "/boards/display";
+  if (!/^[A-Za-z0-9_-]+$/.test(windowKey)) return null;
+  const base =
+    surface === "monitor"
+      ? "/monitor"
+      : surface === "stream"
+        ? "/stream"
+        : surface === "projector"
+          ? "/projector-full"
+          : null;
+  if (!base) return null;
+  return `${base}?output=${encodeURIComponent(windowKey)}`;
 };
 
-const createMonitorWindow = () => {
-  const existing = getDisplayWindow("monitor") as BrowserWindow | null;
+/**
+ * Open (or focus) a display window for a key.
+ *
+ * Replaces the per-surface creators: window state, context menu, and teardown
+ * are identical for every display window, and only the route differs.
+ */
+const createWindowForKey = (windowKey: string, surface?: string): boolean => {
+  const existing = getDisplayWindow(windowKey) as BrowserWindow | null;
   if (existing && !existing.isDestroyed()) {
-    existing.focus();
-    return;
+    const previousSurface = windowStateManager.getState(windowKey).surface;
+    if (!shouldRebuildWindowForSurface(previousSurface, surface)) {
+      existing.focus();
+      return true;
+    }
+    // The display changed render profile, so this window is on the wrong route.
+    // Focusing here left the old deck on that screen until someone closed it by
+    // hand, and the stale surface was persisted, so a restart put it back.
+    existing.destroy();
   }
 
-  const display = windowStateManager.getDisplayForWindow("monitor");
+  // No route means the key or surface was not something we can open; report
+  // failure so the caller can tell the operator instead of silently no-opping.
+  const route = getRouteForWindow(windowKey, surface);
+  if (!route) return false;
+
+  const display = windowStateManager.getDisplayForWindow(windowKey);
   const bounds = windowStateManager.getWindowBounds(display);
 
   const newWindow = createDisplayWindow({
     bounds,
-    route: "/monitor",
+    route,
     isDev,
     dirname: __dirname,
   });
 
-  setDisplayWindow("monitor", newWindow);
+  windowStateManager.rememberSurface(windowKey, surface);
+  setDisplayWindow(windowKey, newWindow);
   setupContextMenu(newWindow.webContents);
   notifyWindowStateChanged();
 
-  setupReadyToShow(newWindow, "monitor", windowStateManager);
+  setupReadyToShow(newWindow, windowKey, windowStateManager);
 
-  setupWindowEventListeners(newWindow, "monitor", windowStateManager, () => {
+  setupWindowEventListeners(newWindow, windowKey, windowStateManager, () => {
     // Only mark as closed if app is not closing (user manually closed the window)
     if (!isAppClosing) {
-      windowStateManager.markWindowClosed("monitor");
+      windowStateManager.markWindowClosed(windowKey);
     }
-    setDisplayWindow("monitor", null);
+    setDisplayWindow(windowKey, null);
     notifyWindowStateChanged();
   });
+
+  return true;
 };
 
-const createBoardWindow = () => {
-  const existing = getDisplayWindow("board") as BrowserWindow | null;
-  if (existing && !existing.isDestroyed()) {
-    existing.focus();
+const destroyLocalVideoCaptureHost = (): void => {
+  const host = localVideoCaptureHost;
+  localVideoCaptureHost = null;
+  if (host && !host.isDestroyed()) host.destroy();
+};
+
+/**
+ * Own USB capture outside the controller window so reloads and route changes do
+ * not tear down the physical device or freeze live output windows.
+ */
+const createLocalVideoCaptureHost = (): void => {
+  if (
+    isAppClosing ||
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    (localVideoCaptureHost && !localVideoCaptureHost.isDestroyed())
+  ) {
     return;
   }
 
-  const display = windowStateManager.getDisplayForWindow("board");
-  const bounds = windowStateManager.getWindowBounds(display);
-
-  const newWindow = createDisplayWindow({
-    bounds,
-    route: "/boards/display",
-    isDev,
-    dirname: __dirname,
+  const host = new BrowserWindow({
+    width: 1,
+    height: 1,
+    x: -10_000,
+    y: -10_000,
+    show: false,
+    skipTaskbar: true,
+    focusable: false,
+    webPreferences: {
+      preload: join(__dirname, "../preload/preload.mjs"),
+      partition: WORSHIPSYNC_SESSION_PARTITION,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      backgroundThrottling: false,
+      autoplayPolicy: "no-user-gesture-required",
+    },
   });
+  localVideoCaptureHost = host;
 
-  setDisplayWindow("board", newWindow);
-  setupContextMenu(newWindow.webContents);
-  notifyWindowStateChanged();
+  if (isDev) {
+    void host.loadURL(
+      "https://local.worshipsync.net:3000#/local-video-capture-host",
+    );
+  } else {
+    void host.loadFile(join(__dirname, "../renderer/index.html"), {
+      hash: "/local-video-capture-host",
+    });
+  }
 
-  setupReadyToShow(newWindow, "board", windowStateManager);
-
-  setupWindowEventListeners(newWindow, "board", windowStateManager, () => {
-    if (!isAppClosing) {
-      windowStateManager.markWindowClosed("board");
+  const recoverHost = () => {
+    if (localVideoCaptureHost === host) localVideoCaptureHost = null;
+    if (!isAppClosing && mainWindow && !mainWindow.isDestroyed()) {
+      setTimeout(createLocalVideoCaptureHost, 1_000);
     }
-    setDisplayWindow("board", null);
-    notifyWindowStateChanged();
+  };
+  host.once("closed", recoverHost);
+  host.webContents.once("render-process-gone", () => {
+    if (!host.isDestroyed()) host.destroy();
   });
 };
 
 const createWindow = () => {
+  isAppClosing = false;
   desktopAuthListenerReady = false;
   const iconPath = getIconPath();
   const savedBounds = windowStateManager.getMainWindowBounds();
@@ -425,17 +506,18 @@ const createWindow = () => {
 
   // When main window is ready, open projector and monitor windows only if they were previously open
   mainWindow.webContents.once("did-finish-load", () => {
+    createLocalVideoCaptureHost();
     // Delay slightly to ensure main window is fully loaded
     setTimeout(() => {
       // Only open windows if they were open when app last closed
-      if (windowStateManager.wasWindowOpen("projector")) {
-        createProjectorWindow();
-      }
-      if (windowStateManager.wasWindowOpen("monitor")) {
-        createMonitorWindow();
-      }
-      if (windowStateManager.wasWindowOpen("board")) {
-        createBoardWindow();
+      // Reopen every window that was open at shutdown, including windows for
+      // display outputs. Their saved surface rebuilds the route.
+      for (const windowKey of windowStateManager.listKeys()) {
+        if (!windowStateManager.wasWindowOpen(windowKey)) continue;
+        createWindowForKey(
+          windowKey,
+          windowStateManager.getState(windowKey).surface,
+        );
       }
     }, 500);
   });
@@ -463,30 +545,16 @@ const createWindow = () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           windowStateManager.saveMainWindowState(mainWindow);
         }
-        const projWin = getDisplayWindow("projector") as BrowserWindow | null;
-        const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
-        const boardWin = getDisplayWindow("board") as BrowserWindow | null;
-        if (projWin && !projWin.isDestroyed()) {
-          windowStateManager.saveWindowState("projector", projWin);
-        }
-        if (monWin && !monWin.isDestroyed()) {
-          windowStateManager.saveWindowState("monitor", monWin);
-        }
-        if (boardWin && !boardWin.isDestroyed()) {
-          windowStateManager.saveWindowState("board", boardWin);
-        }
-        // Close display windows
-        if (projWin) {
-          projWin.close();
-          setDisplayWindow("projector", null);
-        }
-        if (monWin) {
-          monWin.close();
-          setDisplayWindow("monitor", null);
-        }
-        if (boardWin) {
-          boardWin.close();
-          setDisplayWindow("board", null);
+        // Every display window, including windows opened for display outputs.
+        // Leaving one open can block quit and strand a locked single instance.
+        for (const windowKey of listDisplayWindowKeys()) {
+          const win = getDisplayWindow(windowKey) as BrowserWindow | null;
+          if (!win) continue;
+          if (!win.isDestroyed()) {
+            windowStateManager.saveWindowState(windowKey, win);
+            win.close();
+          }
+          setDisplayWindow(windowKey, null);
         }
         // Actually close the window
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -501,30 +569,17 @@ const createWindow = () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         windowStateManager.saveMainWindowState(mainWindow);
       }
-      const projWin = getDisplayWindow("projector") as BrowserWindow | null;
-      const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
-      const boardWin = getDisplayWindow("board") as BrowserWindow | null;
-      if (projWin && !projWin.isDestroyed()) {
-        windowStateManager.saveWindowState("projector", projWin);
-      }
-      if (monWin && !monWin.isDestroyed()) {
-        windowStateManager.saveWindowState("monitor", monWin);
-      }
-      if (boardWin && !boardWin.isDestroyed()) {
-        windowStateManager.saveWindowState("board", boardWin);
-      }
-      // Close display windows
-      if (projWin) {
-        projWin.close();
-        setDisplayWindow("projector", null);
-      }
-      if (monWin) {
-        monWin.close();
-        setDisplayWindow("monitor", null);
-      }
-      if (boardWin) {
-        boardWin.close();
-        setDisplayWindow("board", null);
+      // Every display window, including windows opened for display outputs.
+      // Leaving one open can keep the process alive and strand the
+      // single-instance lock with no controller.
+      for (const windowKey of listDisplayWindowKeys()) {
+        const win = getDisplayWindow(windowKey) as BrowserWindow | null;
+        if (!win) continue;
+        if (!win.isDestroyed()) {
+          windowStateManager.saveWindowState(windowKey, win);
+          win.close();
+        }
+        setDisplayWindow(windowKey, null);
       }
       mainWindow = null;
     }
@@ -543,6 +598,7 @@ const createWindow = () => {
       identifyOverlay.destroy();
     }
     identifyOverlay = null;
+    destroyLocalVideoCaptureHost();
   });
 };
 
@@ -565,6 +621,9 @@ app.whenReady().then(() => {
   const cspHeaderValue = buildAppCspHeader(app.isPackaged);
   const appBrowserSession = session.fromPartition(
     WORSHIPSYNC_SESSION_PARTITION,
+  );
+  localAssetStore = new LocalAssetStore(
+    join(app.getPath("userData"), "local-assets"),
   );
   const attachCspHeaders = (targetSession: Electron.Session) => {
     targetSession.webRequest.onHeadersReceived((details, callback) => {
@@ -754,6 +813,71 @@ app.whenReady().then(() => {
 
   void registerMediaCacheProtocol(session.defaultSession);
   void registerMediaCacheProtocol(appBrowserSession);
+
+  const handleLocalAssetRequest = async (request: GlobalRequest) => {
+    try {
+      const requestUrl = new URL(request.url);
+      if (requestUrl.hostname !== "asset") return notFound();
+      const encodedAssetId = requestUrl.pathname.replace(/^\//, "");
+      if (!encodedAssetId || encodedAssetId.includes("/")) return notFound();
+      const assetId = decodeURIComponent(encodedAssetId);
+      const resolved = await localAssetStore.resolvePath(assetId);
+      if (!resolved) return notFound();
+
+      const fileSize = resolved.descriptor.size;
+      const rangeHeader = getRangeHeader(
+        request.headers as Headers | Record<string, string>,
+      );
+      const range = rangeHeader ? parseRange(rangeHeader, fileSize) : null;
+      const responseHeaders = new Headers({
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+        "Content-Type": resolved.descriptor.contentType,
+      });
+
+      if (rangeHeader && !range) {
+        responseHeaders.set("Content-Range", `bytes */${fileSize}`);
+        return new Response(null, { status: 416, headers: responseHeaders });
+      }
+
+      const start = range?.start ?? 0;
+      const end = range?.end ?? fileSize - 1;
+      responseHeaders.set("Content-Length", String(end - start + 1));
+      if (range) {
+        responseHeaders.set(
+          "Content-Range",
+          `bytes ${start}-${end}/${fileSize}`,
+        );
+      }
+      const nodeStream = createReadStream(resolved.path, { start, end });
+      const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+      return new Response(webStream, {
+        status: range ? 206 : 200,
+        statusText: range ? "Partial Content" : "OK",
+        headers: responseHeaders,
+      });
+    } catch (error) {
+      console.error("Local asset protocol error:", error);
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  };
+
+  const registerLocalAssetProtocol = async (
+    targetSession: Electron.Session,
+  ) => {
+    const protocolHandler = targetSession.protocol;
+    try {
+      if (protocolHandler.isProtocolHandled("worshipsync-media")) {
+        protocolHandler.unhandle("worshipsync-media");
+      }
+    } catch (error) {
+      console.warn("Could not reset local asset protocol handler:", error);
+    }
+    protocolHandler.handle("worshipsync-media", handleLocalAssetRequest);
+  };
+
+  void registerLocalAssetProtocol(session.defaultSession);
+  void registerLocalAssetProtocol(appBrowserSession);
 
   windowStateManager = new WindowStateManager();
   mediaCacheManager = new MediaCacheManager();
@@ -1054,19 +1178,10 @@ ipcMain.handle(
 );
 
 // Generic window creation helper
-const createWindowByType = (windowType: WindowType): void => {
-  if (windowType === "projector") {
-    createProjectorWindow();
-    return;
-  }
-
-  if (windowType === "monitor") {
-    createMonitorWindow();
-    return;
-  }
-
-  createBoardWindow();
-};
+const createWindowByType = (
+  windowType: WindowType,
+  surface?: string,
+): boolean => createWindowForKey(windowType, surface);
 
 // Generic window management functions
 const closeWindowByType = (windowType: WindowType): boolean => {
@@ -1089,10 +1204,12 @@ const toggleFullscreen = (window: BrowserWindow | null): boolean => {
 };
 
 // Generic IPC handlers
-ipcMain.handle("open-window", (_event, windowType: WindowType) => {
-  createWindowByType(windowType);
-  return true;
-});
+ipcMain.handle(
+  "open-window",
+  (_event, windowType: WindowType, surface?: string) => {
+    return createWindowByType(windowType, surface);
+  },
+);
 
 ipcMain.handle("close-window", (_event, windowType: WindowType) => {
   return closeWindowByType(windowType);
@@ -1255,11 +1372,12 @@ const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
   return getDisplayWindow(windowType) as BrowserWindow | null;
 };
 
-const DISPLAY_WINDOW_TYPES: WindowType[] = ["projector", "monitor", "board"];
+/** Keys of every display window currently open, including output windows. */
+const getOpenDisplayWindowKeys = (): string[] => listDisplayWindowKeys();
 
 ipcMain.handle("refresh-display-windows", () => {
   let reloaded = 0;
-  for (const windowType of DISPLAY_WINDOW_TYPES) {
+  for (const windowType of getOpenDisplayWindowKeys()) {
     const win = getWindowByType(windowType);
     if (win && !win.isDestroyed()) {
       win.webContents.reload();
@@ -1317,19 +1435,51 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("get-window-states", () => {
-  const projectorState = windowStateManager.getState("projector");
-  const monitorState = windowStateManager.getState("monitor");
-  const boardState = windowStateManager.getState("board");
+/**
+ * State for every display window the renderer might show a control for.
+ *
+ * Keyed by window key rather than the original three, so a control exists for
+ * each display output. Windows that have never been opened report defaults
+ * instead of being absent, which keeps the renderer free of null checks.
+ */
+ipcMain.handle("get-window-states", (_event, windowKeys?: string[]) => {
+  const keys = new Set<string>([
+    ...BUILT_IN_WINDOW_KEYS,
+    ...listDisplayWindowKeys(),
+    ...(Array.isArray(windowKeys) ? windowKeys : []),
+  ]);
+  const displays: Record<string, unknown> = {};
+  for (const key of keys) {
+    displays[key] = {
+      ...windowStateManager.getState(key),
+      isOpen: hasDisplayWindow(key),
+    };
+  }
+  return { displays };
+});
 
+ipcMain.handle("import-local-asset", async (event, input: LocalAssetImport) => {
+  assertControllerIpcSender(event.sender);
+  if (!localAssetStore) throw new Error("Local asset storage is not ready.");
+  const descriptor = await localAssetStore.importFile(input);
   return {
-    projector: projectorState,
-    monitor: monitorState,
-    board: boardState,
-    projectorOpen: hasDisplayWindow("projector"),
-    monitorOpen: hasDisplayWindow("monitor"),
-    boardOpen: hasDisplayWindow("board"),
+    ...descriptor,
+    url: buildLocalAssetProtocolUrl(descriptor),
   };
+});
+
+ipcMain.handle("get-local-asset", async (_event, assetId: string) => {
+  if (!localAssetStore) return undefined;
+  const descriptor = await localAssetStore.get(assetId);
+  return descriptor
+    ? { ...descriptor, url: buildLocalAssetProtocolUrl(descriptor) }
+    : undefined;
+});
+
+ipcMain.handle("delete-local-asset", async (event, assetId: string) => {
+  assertControllerIpcSender(event.sender);
+  if (!localAssetStore) return false;
+  return localAssetStore.delete(assetId);
 });
 
 // Media cache IPC handlers

@@ -1,10 +1,12 @@
 import { MessageCircle } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import Button from "../components/Button/Button";
-import { useChat } from "./ChatContext";
+import { isChatPageRoute, useChat } from "./ChatContext";
 
 const ChatLauncher = ({ onOpen }: { onOpen?: () => void }) => {
   const chat = useChat();
-  if (!chat?.available) return null;
+  const location = useLocation();
+  if (!chat?.available || isChatPageRoute(location.pathname)) return null;
 
   const unreadLabel = chat.unreadCount > 99 ? "99+" : String(chat.unreadCount);
   const ariaLabel = chat.unreadCount

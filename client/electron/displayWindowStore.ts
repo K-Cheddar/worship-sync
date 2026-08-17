@@ -23,6 +23,11 @@ export function hasDisplayWindow(displayType: string): boolean {
   return displayWindows.has(displayType);
 }
 
+/** Keys of every stored window, so callers can act on all of them. */
+export function listDisplayWindowKeys(): string[] {
+  return Array.from(displayWindows.keys());
+}
+
 /** Clear all stored windows (for testing or teardown). */
 export function clearDisplayWindows(): void {
   displayWindows.clear();

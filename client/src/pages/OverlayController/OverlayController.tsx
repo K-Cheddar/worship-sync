@@ -15,6 +15,7 @@ import { ArrowRightFromLine, ArrowLeftFromLine } from "lucide-react";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
 import CreditsEditor from "../CreditsEditor/CreditsEditor";
 import ServiceTimes from "../../containers/ServiceTimes/ServiceTimes";
+import OverlayDisplaysPanel from "./OverlayDisplaysPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 import OverlaysAndPostsWorkspace from "./OverlaysAndPostsWorkspace";
@@ -144,6 +145,22 @@ const OverlayController = () => {
             aria-hidden={overlayControllerPanel !== "serviceTimes"}
           >
             <ServiceTimes />
+          </div>
+        )}
+        {!isViewOnlyAccess(access) && (
+          <div
+            className={cn(
+              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+              overlayControllerPanel === "displays"
+                ? "z-10 opacity-100"
+                : "pointer-events-none z-0 opacity-0",
+            )}
+            aria-hidden={overlayControllerPanel !== "displays"}
+          >
+            {/* Mounted only while selected, unlike the other panels: this one
+                fetches the church's paired screens, and a hidden tab should not
+                make that request on every overlay controller load. */}
+            {overlayControllerPanel === "displays" && <OverlayDisplaysPanel />}
           </div>
         )}
       </div>

@@ -8,6 +8,7 @@ import itemListReducer, {
   initiateItemList,
   setItemListIsLoading,
   setHasPendingUpdate,
+  attachCloudCopyToLocalImageInItemList,
 } from "./itemListSlice";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
@@ -68,6 +69,51 @@ describe("itemListSlice", () => {
       expect(state.list).toHaveLength(1);
       expect(state.list[0].name).toBe("X");
       expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("adds a cloud fallback to every matching outline row", () => {
+      const localImage = {
+        id: "asset-1",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "Welcome.png",
+        contentType: "image/png",
+        storagePolicy: "local-only" as const,
+      };
+      const store = createStore();
+      store.dispatch(
+        updateItemList([
+          createServiceItem({
+            name: "Welcome",
+            _id: "image-1",
+            listId: "row-1",
+            localImage,
+          }),
+          createServiceItem({
+            name: "Welcome",
+            _id: "image-1",
+            listId: "row-2",
+            localImage,
+          }),
+        ]),
+      );
+
+      store.dispatch(
+        attachCloudCopyToLocalImageInItemList({
+          itemId: "image-1",
+          assetId: "asset-1",
+          mediaId: "media-1",
+          url: "https://res.cloudinary.com/example/welcome.png",
+        }),
+      );
+
+      expect(
+        store
+          .getState()
+          .itemList.list.every(
+            (item) => item.localImage?.cloudMediaId === "media-1",
+          ),
+      ).toBe(true);
     });
 
     it("setActiveItemInList updates selectedItemListId and insertPointIndex", () => {

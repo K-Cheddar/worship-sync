@@ -174,6 +174,64 @@ describe("ChatProvider incoming notifications", () => {
     );
   });
 
+  it("does not notify for messages already visible on the full chat page", async () => {
+    let onStreamEvent: ((event: ChatStreamEvent) => void) | null = null;
+    mockedGetChatContext.mockResolvedValue({ context: chatContext });
+    mockedGetChatMessages.mockResolvedValue({
+      context: chatContext,
+      dayKey: chatContext.todayKey,
+      messages: [],
+      hasMore: false,
+    });
+    mockedStreamChatEvents.mockImplementation(
+      ({ signal, onEvent }) =>
+        new Promise<void>((resolve) => {
+          onStreamEvent = onEvent;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+    const showToast = jest.fn(() => "toast-chat");
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalInfo() as never}>
+          <ToastContext.Provider
+            value={{
+              showToast,
+              updateToast: jest.fn(),
+              removeToast: jest.fn(),
+            }}
+          >
+            <ChatProvider>
+              <div>Full chat</div>
+            </ChatProvider>
+          </ToastContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(onStreamEvent).not.toBeNull());
+    act(() => {
+      onStreamEvent?.({
+        type: "initial-messages",
+        dayKey: chatContext.todayKey,
+        messages: [],
+        hasMore: false,
+      });
+      onStreamEvent?.({ type: "stream-ready" });
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_visible",
+          clientMessageId: "client_visible",
+          createdAt: 2,
+        }),
+      });
+    });
+
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it("starts and clears typing presence without blocking chat", async () => {
     mockedGetChatContext.mockResolvedValue({ context: chatContext });
     mockedGetChatMessages.mockResolvedValue({

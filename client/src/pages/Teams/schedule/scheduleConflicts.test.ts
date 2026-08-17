@@ -2,6 +2,7 @@ import type { TeamRecord, TeamSchedule } from "../../../api/authTypes";
 import {
   findCrossTeamScheduleOccurrenceConflicts,
   formatCrossTeamScheduleConflictWarning,
+  scheduleDateRangesOverlap,
   scheduleOccurrencesConflict,
 } from "./scheduleConflicts";
 
@@ -41,7 +42,49 @@ const schedule = (overrides: Partial<TeamSchedule> = {}): TeamSchedule => ({
   ...overrides,
 });
 
+describe("scheduleDateRangesOverlap", () => {
+  it("treats missing bounds as overlapping and compares inclusive ranges", () => {
+    expect(scheduleDateRangesOverlap(null, { startDate: "2026-07-01" })).toBe(
+      true,
+    );
+    expect(
+      scheduleDateRangesOverlap(
+        { startDate: "2026-07-01", endDate: "2026-07-31" },
+        { startDate: "2026-07-15", endDate: "2026-07-20" },
+      ),
+    ).toBe(true);
+    expect(
+      scheduleDateRangesOverlap(
+        { startDate: "2026-07-01", endDate: "2026-07-10" },
+        { startDate: "2026-08-01", endDate: "2026-08-31" },
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("scheduleOccurrencesConflict", () => {
+  it("returns false when either occurrence is missing", () => {
+    expect(scheduleOccurrencesConflict(undefined, undefined)).toBe(false);
+  });
+
+  it("matches identical occurrence ids when both have startsAt", () => {
+    expect(
+      scheduleOccurrencesConflict(
+        {
+          occurrenceId: "same",
+          serviceId: "svc-a",
+          name: "",
+          startsAt: "2026-07-05T10:00:00.000Z",
+        },
+        {
+          occurrenceId: "same",
+          serviceId: "svc-b",
+          name: "",
+          startsAt: "2026-07-05T10:00:00.000Z",
+        },
+      ),
+    ).toBe(true);
+  });
   it("matches combined service occurrences by shared service id and start time", () => {
     expect(
       scheduleOccurrencesConflict(
@@ -206,5 +249,81 @@ describe("findCrossTeamScheduleOccurrenceConflicts", () => {
         teams,
       }),
     ).toEqual([]);
+  });
+
+  it("returns empty for missing schedule/member and formats multi-team warnings", () => {
+    expect(
+      findCrossTeamScheduleOccurrenceConflicts({
+        schedule: null,
+        occurrenceId: "x",
+        memberId: "member-a",
+        schedules: [],
+        teams,
+      }),
+    ).toEqual([]);
+    expect(
+      findCrossTeamScheduleOccurrenceConflicts({
+        schedule: schedule(),
+        occurrenceId: "missing",
+        memberId: "member-a",
+        schedules: [],
+        teams,
+      }),
+    ).toEqual([]);
+    expect(formatCrossTeamScheduleConflictWarning([])).toBe("");
+    expect(
+      formatCrossTeamScheduleConflictWarning([
+        {
+          memberId: "m1",
+          scheduleId: "s1",
+          scheduleName: "A",
+          teamId: "t1",
+          teamName: "Worship",
+          occurrenceId: "o1",
+        },
+        {
+          memberId: "m1",
+          scheduleId: "s2",
+          scheduleName: "B",
+          teamId: "t2",
+          teamName: "Production",
+          occurrenceId: "o2",
+        },
+        {
+          memberId: "m1",
+          scheduleId: "s3",
+          scheduleName: "C",
+          teamId: "t3",
+          teamName: "Kids",
+          occurrenceId: "o3",
+        },
+      ]),
+    ).toBe("Also scheduled on Worship, Production +1 more");
+  });
+
+  it("uses serviceIds fallbacks when a schedule has no occurrences list", () => {
+    const current = schedule({
+      occurrences: undefined as never,
+      serviceIds: ["svc-a"],
+    });
+    const other = schedule({
+      scheduleId: "schedule-b",
+      teamId: "production",
+      name: "",
+      occurrences: undefined as never,
+      serviceIds: ["svc-a"],
+      assignments: {
+        "svc-a": { "camera::0": { primaryMemberId: "member-a" } },
+      },
+    });
+    const conflicts = findCrossTeamScheduleOccurrenceConflicts({
+      schedule: current,
+      occurrenceId: "svc-a",
+      memberId: "member-a",
+      schedules: [other],
+      teams: [{ ...teams[1], name: "" }],
+    });
+    expect(conflicts[0]?.teamName).toBe("another team");
+    expect(conflicts[0]?.scheduleName).toBe("Schedule");
   });
 });

@@ -3,47 +3,45 @@ import { TimerInfo } from "../../types";
 import { useSelector } from "../../hooks";
 import { useLiveRemainingSeconds } from "../../hooks/useLiveRemainingSeconds";
 import { formatTime } from "./TimerDisplay";
+import { isTimerLive } from "../../utils/timerUtils";
 
 type DisplayTimerProps = {
   currentTimerInfo?: TimerInfo;
   fontSize: number;
+  /** Timer this display counts down; null/omitted inherits the church default. */
+  timerId?: string | null;
 };
 
 const DisplayTimer = ({
   currentTimerInfo,
   fontSize,
+  timerId: timerIdOverride,
 }: DisplayTimerProps) => {
-  const {
-    monitorSettings: { timerId },
-  } = useSelector((state) => state.undoable.present.preferences);
+  const churchTimerId = useSelector(
+    (state) => state.undoable.present.preferences.monitorSettings.timerId,
+  );
+  // Per-display timer when the surface knows its display; otherwise the
+  // church-wide setting, which previews and editors still use.
+  const timerId = timerIdOverride ?? churchTimerId;
 
   const timer = useSelector((state) =>
-    state.timers.timers.find((t) => t.id === timerId)
+    state.timers.timers.find((t) => t.id === timerId),
   );
   const liveRemaining = useLiveRemainingSeconds(timer);
 
   const displayTime = useMemo(() => {
-    if (!timer) return null;
-
-    const formatTime12Hour = (timeString: string) => {
-      const [hours, minutes] = timeString.split(":");
-      const hour = parseInt(hours);
-      const ampm = hour >= 12 ? "PM" : "AM";
-      const hour12 = hour % 12 || 12;
-      return `${hour12}:${minutes} ${ampm}`;
-    };
-
-    if (timer.timerType === "countdown" && timer.status === "stopped") {
-      return formatTime12Hour(timer.countdownTime || "00:00");
-    }
+    if (!timer || liveRemaining === null) return null;
     return formatTime(liveRemaining, timer.showMinutesOnly).toString();
   }, [timer, liveRemaining]);
 
+  // The band is for a timer that is actually counting. A stopped or paused one —
+  // or one still flagged running with a long-past endTime — has no live number
+  // to contribute, so it stays off rather than resting on a value.
   if (
     !timer ||
     !displayTime ||
     currentTimerInfo?.id === timerId ||
-    timer?.status === "stopped"
+    !isTimerLive(timer)
   )
     return null;
   return (

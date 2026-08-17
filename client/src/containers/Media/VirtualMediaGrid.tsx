@@ -11,11 +11,11 @@ import type { MediaFolder, MediaType } from "../../types";
 import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
 import Button from "../../components/Button/Button";
 import { ArrowUp, Folder } from "lucide-react";
-import { MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE } from "./mediaLibraryOrangeFolderIcon";
-
-const folderChipButtonClass =
-  "inline-flex max-w-full min-w-0 shrink-0 flex-row items-center gap-1.5 rounded-md border border-white/20 bg-white/[0.08] px-1.5 py-0.5 text-left text-xs font-medium text-zinc-100 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] backdrop-blur-md transition-[background-color,border-color] hover:border-white/30 hover:bg-white/[0.14]";
-const labelClass = "min-w-0 max-w-[14rem] truncate text-left text-zinc-100";
+import {
+  MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS,
+  MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS,
+  MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
+} from "./mediaLibraryOrangeFolderIcon";
 
 const COL_GAP = 8;  // gap-x-2
 const ROW_GAP = 4;  // gap-y-1
@@ -192,12 +192,12 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                   <Button
                     variant="none"
                     padding="p-0"
-                    className={folderChipButtonClass}
+                    className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
                     onClick={onGoUp}
                     title="Up one level"
                   >
                     <ArrowUp className="h-3.5 w-3.5 shrink-0 text-zinc-200" aria-hidden />
-                    <span className={labelClass}>Up</span>
+                    <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>Up</span>
                   </Button>
                   {row.label && <p className="text-xs text-zinc-200">{row.label}</p>}
                 </div>
@@ -207,7 +207,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                   <Button
                     variant="none"
                     padding="p-0"
-                    className={folderChipButtonClass}
+                    className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
                     onClick={() => onOpenFolder(row.folder.id)}
                     title={row.folder.name}
                   >
@@ -216,7 +216,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                       className="h-3.5 w-3.5 shrink-0 text-orange-400"
                       aria-hidden
                     />
-                    <span className={labelClass}>{row.folder.name}</span>
+                    <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>{row.folder.name}</span>
                   </Button>
                 </div>
               )}

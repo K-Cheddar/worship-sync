@@ -7,7 +7,16 @@ export const isElectronDisplayWindowOpen = (
   windowType: WindowType,
 ): boolean => {
   if (!isElectron || !windowStates) return false;
-  if (windowType === "board") return windowStates.boardOpen;
-  if (windowType === "monitor") return windowStates.monitorOpen;
-  return windowStates.projectorOpen;
+  return windowStates.displays?.[windowType]?.isOpen ?? false;
 };
+
+/**
+ * Saved state for one window, or an empty state when it has never been opened.
+ *
+ * A window key now comes from the display registry, so the renderer asks about
+ * displays the main process may never have shown.
+ */
+export const getElectronWindowState = (
+  windowStates: WindowStatesInfo | null | undefined,
+  windowType: WindowType,
+) => windowStates?.displays?.[windowType];

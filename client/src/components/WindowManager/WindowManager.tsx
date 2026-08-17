@@ -18,16 +18,22 @@ const WindowManager = () => {
     moveWindowToDisplay,
   } = useElectronWindows();
 
-  const [selectedProjectorDisplay, setSelectedProjectorDisplay] = useState<string>("");
-  const [selectedMonitorDisplay, setSelectedMonitorDisplay] = useState<string>("");
+  const [selectedProjectorDisplay, setSelectedProjectorDisplay] =
+    useState<string>("");
+  const [selectedMonitorDisplay, setSelectedMonitorDisplay] =
+    useState<string>("");
 
   useEffect(() => {
     if (windowStates && displays.length > 0) {
-      if (windowStates.projector.displayId) {
-        setSelectedProjectorDisplay(windowStates.projector.displayId.toString());
+      if (windowStates.displays?.projector?.displayId) {
+        setSelectedProjectorDisplay(
+          windowStates.displays?.projector?.displayId.toString(),
+        );
       }
-      if (windowStates.monitor.displayId) {
-        setSelectedMonitorDisplay(windowStates.monitor.displayId.toString());
+      if (windowStates.displays?.monitor?.displayId) {
+        setSelectedMonitorDisplay(
+          windowStates.displays?.monitor?.displayId.toString(),
+        );
       }
     }
   }, [windowStates, displays]);
@@ -75,12 +81,13 @@ const WindowManager = () => {
               Status:
             </span>
             <span
-              className={`text-sm font-medium ${windowStates?.projectorOpen
+              className={`text-sm font-medium ${
+                windowStates?.displays?.projector?.isOpen
                   ? "text-green-600 dark:text-green-400"
                   : "text-red-600 dark:text-red-400"
-                }`}
+              }`}
             >
-              {windowStates?.projectorOpen ? "Open" : "Closed"}
+              {windowStates?.displays?.projector?.isOpen ? "Open" : "Closed"}
             </span>
           </div>
 
@@ -98,14 +105,14 @@ const WindowManager = () => {
                   key={display.id}
                   optionValue={display.id.toString()}
                   label={getDisplayLabel(display, index)}
-                  disabled={!windowStates?.projectorOpen}
+                  disabled={!windowStates?.displays?.projector?.isOpen}
                 />
               ))}
             </RadioGroup>
           </div>
 
           <div className="flex flex-col gap-2">
-            {windowStates?.projectorOpen ? (
+            {windowStates?.displays?.projector?.isOpen ? (
               <>
                 <Button
                   variant="secondary"
@@ -124,7 +131,11 @@ const WindowManager = () => {
                 </Button>
               </>
             ) : (
-              <Button variant="primary" onClick={() => openWindow("projector")} className="w-full">
+              <Button
+                variant="primary"
+                onClick={() => openWindow("projector")}
+                className="w-full"
+              >
                 Open
               </Button>
             )}
@@ -142,12 +153,13 @@ const WindowManager = () => {
               Status:
             </span>
             <span
-              className={`text-sm font-medium ${windowStates?.monitorOpen
+              className={`text-sm font-medium ${
+                windowStates?.displays?.monitor?.isOpen
                   ? "text-green-600 dark:text-green-400"
                   : "text-red-600 dark:text-red-400"
-                }`}
+              }`}
             >
-              {windowStates?.monitorOpen ? "Open" : "Closed"}
+              {windowStates?.displays?.monitor?.isOpen ? "Open" : "Closed"}
             </span>
           </div>
 
@@ -165,14 +177,14 @@ const WindowManager = () => {
                   key={display.id}
                   optionValue={display.id.toString()}
                   label={getDisplayLabel(display, index)}
-                  disabled={!windowStates?.monitorOpen}
+                  disabled={!windowStates?.displays?.monitor?.isOpen}
                 />
               ))}
             </RadioGroup>
           </div>
 
           <div className="flex flex-col gap-2">
-            {windowStates?.monitorOpen ? (
+            {windowStates?.displays?.monitor?.isOpen ? (
               <>
                 <Button
                   variant="secondary"
@@ -191,7 +203,11 @@ const WindowManager = () => {
                 </Button>
               </>
             ) : (
-              <Button variant="primary" onClick={() => openWindow("monitor")} className="w-full">
+              <Button
+                variant="primary"
+                onClick={() => openWindow("monitor")}
+                className="w-full"
+              >
                 Open
               </Button>
             )}

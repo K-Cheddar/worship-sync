@@ -13,7 +13,9 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Input from "../../components/Input/Input";
 import ColorField from "../../components/ColorField/ColorField";
 import { useDispatch, useSelector } from "../../hooks";
+import { shallowEqual } from "react-redux";
 import { updateBoardPostStreamInfo } from "../../store/presentationSlice";
+import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { useBoardData } from "../../boards/useBoardData";
 import { useBoardEventStream } from "../../boards/useBoardEventStream";
 import { useRestreamSession } from "../../boards/useRestreamSession";
@@ -181,9 +183,10 @@ const BoardStreamPanel = ({
   onDetailRequested,
 }: BoardStreamPanelProps) => {
   const dispatch = useDispatch();
-  const isStreamTransmitting = useSelector(
-    (state) => state.presentation.isStreamTransmitting,
-  );
+  // Enablement and targeting from the same list, so the button cannot offer a
+  // send that reaches nothing.
+  const liveStreamIds = useSelector(selectOverlayTargetIds, shallowEqual);
+  const isStreamTransmitting = liveStreamIds.length > 0;
 
   const { churchId } = useContext(GlobalInfoContext) ?? {};
   const aliasId = getStoredBoardDisplayAliasId();
@@ -259,6 +262,7 @@ const BoardStreamPanel = ({
     onDetailRequested?.();
     dispatch(
       updateBoardPostStreamInfo({
+        outputIds: liveStreamIds,
         author: item.author,
         authorHexColor: getBoardAuthorNameHexColor(item),
         text: item.text,

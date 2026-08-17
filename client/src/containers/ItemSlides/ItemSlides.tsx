@@ -24,7 +24,17 @@ import {
   updateMonitor,
   updateProjector,
   updateStream,
+  selectOutputSlots,
 } from "../../store/presentationSlice";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import {
+  resolveOutputDefaults,
+  shouldSendNextSlideForOutput,
+} from "../../utils/displaySettings";
+import {
+  getSendTargetIdsForType,
+  shouldSendToType,
+} from "../../utils/sendTargets";
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
 import ItemSlide from "./ItemSlide";
@@ -46,6 +56,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { keepElementInView } from "../../utils/generalUtils";
@@ -54,17 +65,112 @@ import generateRandomId from "../../utils/generateRandomId";
 import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
-import { updateTimer } from "../../store/timersSlice";
+import ActionBar, {
+  type ActionBarItem as ActionBarItemDef,
+} from "../../components/ActionBar/ActionBar";
+import {
+  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+} from "../Media/mediaLibraryMediaActionUi";
 import { DEFAULT_FONT_PX } from "../../constants";
+import { didTimerJustExpire } from "../../utils/timerUtils";
 import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
 import { inclusiveRangeIndicesFromAnchor } from "../../utils/backgroundTargetResolution";
 import { Slider } from "../../components/ui/Slider";
+import type { Presentation as PresentationType } from "../../types";
+import {
+  buildLocalVideoInputPresentation,
+  getVideoInputErrorMessage,
+  resolveLocalVideoInputBinding,
+} from "../../utils/localVideoInput";
+import {
+  acquireWarmLocalVideoCapture,
+  LocalVideoCaptureOwnedError,
+  releaseWarmLocalVideoCapture,
+} from "../../utils/localVideoCapturePool";
+import { getOrCreateDeviceId } from "../../utils/authStorage";
+import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
+import { ToastContext } from "../../context/toastContext";
 
 type SizeConfig = {
   borderWidth: string;
   hSize: string;
   cols: string;
 };
+
+const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
+
+function slideToolbarButton({
+  id,
+  label,
+  onClick,
+  icon,
+  disabled,
+  destructive,
+  title,
+}: {
+  id: string;
+  label: string;
+  onClick: () => void;
+  icon?: ReactNode;
+  disabled?: boolean;
+  destructive?: boolean;
+  title?: string;
+}): ActionBarItemDef {
+  return {
+    id,
+    label,
+    disabled,
+    overflowMenuItemClassName: destructive
+      ? "[&_svg]:text-red-400!"
+      : undefined,
+    renderButton: (isMeasure) => (
+      <Button
+        variant="tertiary"
+        className={cn(
+          "shrink-0",
+          MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+          destructive && "text-white [&_svg]:text-red-400!",
+        )}
+        onClick={isMeasure ? undefined : onClick}
+        disabled={disabled}
+        title={title ?? label}
+        tabIndex={isMeasure ? -1 : undefined}
+      >
+        <span className="flex items-center gap-1">
+          {icon}
+          {label}
+        </span>
+      </Button>
+    ),
+    onOverflowSelect: disabled ? undefined : onClick,
+    renderOverflowItem: () => (
+      <span className="flex items-center gap-1.5">
+        {icon}
+        {label}
+      </span>
+    ),
+  };
+}
+
+function slideToolbarIcon(Icon: typeof Plus, className = "text-cyan-400") {
+  return (
+    <Icon
+      className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, className)}
+      aria-hidden
+    />
+  );
+}
+
+function resolveSlideActionTargetIds(
+  subsetIds: string[] | undefined,
+  slides: { id?: string }[],
+  selectedSlide: number,
+): string[] {
+  if (subsetIds && subsetIds.length > 0) return subsetIds;
+  const focusedId = slides[selectedSlide]?.id;
+  return focusedId ? [focusedId] : [];
+}
 
 const ItemSlides = () => {
   const {
@@ -85,12 +191,14 @@ const ItemSlides = () => {
 
   const backgroundTargetSlideIds = backgroundTargetSlideIdsRaw ?? [];
   const mobileBackgroundTargetSelectMode = mobileBgSelectModeRaw ?? false;
-  /** Subset selection, clear backgrounds, multi-delete (all item types). */
+  /** Subset selection chrome (count and Done). */
   const showBackgroundTargetActionBar =
     mobileBackgroundTargetSelectMode || backgroundTargetSlideIds.length > 0;
 
-  const { projectorInfo, monitorInfo, streamInfo } = useSelector(
-    (state: RootState) => state.presentation
+  // Every slot, so live-slide highlighting can follow whichever displays this
+  // item targets rather than only the built-in three.
+  const outputSlots = useSelector((state: RootState) =>
+    selectOutputSlots(state),
   );
 
   const timers = useSelector((state: RootState) => state.timers.timers);
@@ -107,18 +215,60 @@ const ItemSlides = () => {
     slidesPerRow,
     slidesPerRowMobile,
     shouldShowStreamFormat,
-    monitorSettings: { showNextSlide: monitorShowNextSlide },
+    monitorSettings: churchMonitorSettings,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
+  const showToast = useContext(ToastContext)?.showToast;
 
   const canEdit =
     access === "full" ||
     (access === "music" && (type === "song" || type === "free"));
   const isMusic = useMemo(() => access === "music", [access]);
+  // Send-time setting: it shapes the payload before it goes out, so prepare the
+  // band when any monitor display wants it and let each screen decide whether to
+  // render it.
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const monitorShowNextSlide = useMemo(() => {
+    return displayOutputs
+      .filter((output) => output.enabled && output.type === "monitor")
+      .some((output) =>
+        shouldSendNextSlideForOutput(
+          resolveOutputDefaults(output.settings, churchMonitorSettings),
+        ),
+      );
+  }, [churchMonitorSettings, displayOutputs]);
+  const sendTargets = useMemo(
+    () => ({
+      projector: getSendTargetIdsForType(
+        shouldSendTo,
+        displayOutputs,
+        "projector",
+      ),
+      monitor: getSendTargetIdsForType(shouldSendTo, displayOutputs, "monitor"),
+      stream: getSendTargetIdsForType(shouldSendTo, displayOutputs, "stream"),
+    }),
+    [displayOutputs, shouldSendTo],
+  );
+  const sendsToProjector = shouldSendToType(
+    shouldSendTo,
+    displayOutputs,
+    "projector",
+  );
+  const sendsToMonitor = shouldSendToType(
+    shouldSendTo,
+    displayOutputs,
+    "monitor",
+  );
+  const sendsToStream = shouldSendToType(
+    shouldSendTo,
+    displayOutputs,
+    "stream",
+  );
+
   const shouldPrepareFreeMonitorSlides =
-    type === "free" && shouldSendTo.monitor && monitorShowNextSlide;
+    type === "free" && sendsToMonitor && monitorShowNextSlide;
 
   const monitorReadySlides = useMemo(() => {
     return shouldPrepareFreeMonitorSlides
@@ -126,38 +276,48 @@ const ItemSlides = () => {
       : slides;
   }, [slides, shouldPrepareFreeMonitorSlides]);
 
-  /** Slide ids currently on outputs for this item (last pushed payload per surface). */
+  /**
+   * Slide ids currently on outputs for this item (last pushed payload per
+   * surface).
+   *
+   * Reads the displays this item actually targets rather than the three
+   * built-ins, so an operator driving only a second projector still sees which
+   * slide is live.
+   */
   const liveSlideIds = useMemo(() => {
     const ids = new Set<string>();
-    if (shouldSendTo.projector && projectorInfo.slide?.id) {
-      ids.add(projectorInfo.slide.id);
-    }
-    if (shouldSendTo.monitor) {
-      const mid = monitorInfo.slide?.id;
-      const monitorItemId = monitorInfo.itemId;
-      if (mid && (!monitorItemId || monitorItemId === _id)) {
-        ids.add(mid);
+    const addLiveSlides = (
+      outputIds: string[],
+      accept?: (info: PresentationType) => boolean,
+    ) => {
+      for (const outputId of outputIds) {
+        const info = outputSlots[outputId]?.info;
+        if (!info?.slide?.id) continue;
+        if (accept && !accept(info)) continue;
+        ids.add(info.slide.id);
       }
+    };
+
+    if (sendsToProjector) addLiveSlides(sendTargets.projector);
+    if (sendsToMonitor) {
+      // A monitor showing a different item must not light up this item's slide.
+      addLiveSlides(
+        sendTargets.monitor,
+        (info) => !info.itemId || info.itemId === _id,
+      );
     }
-    if (
-      shouldSendTo.stream &&
-      type !== "bible" &&
-      type !== "free" &&
-      streamInfo.slide?.id
-    ) {
-      ids.add(streamInfo.slide.id);
+    if (sendsToStream && type !== "bible" && type !== "free") {
+      addLiveSlides(sendTargets.stream);
     }
     return ids;
   }, [
     _id,
-    shouldSendTo.projector,
-    shouldSendTo.monitor,
-    shouldSendTo.stream,
+    outputSlots,
+    sendTargets,
+    sendsToProjector,
+    sendsToMonitor,
+    sendsToStream,
     type,
-    projectorInfo.slide?.id,
-    monitorInfo.slide?.id,
-    monitorInfo.itemId,
-    streamInfo.slide?.id,
   ]);
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
@@ -167,8 +327,7 @@ const ItemSlides = () => {
   const slidesGridColsMin = 1;
   const slidesGridColsMax = isTimerLike ? 3 : 7;
   /** Slider is inverted so moving right = zoom in (fewer columns, larger thumbnails). */
-  const slideZoomSliderValue =
-    slidesGridColsMax + slidesGridColsMin - size;
+  const slideZoomSliderValue = slidesGridColsMax + slidesGridColsMin - size;
 
   const sizeConfig: SizeConfig = useMemo(() => {
     const configs: Record<number, SizeConfig> = {
@@ -279,7 +438,7 @@ const ItemSlides = () => {
       const text = index > 0 ? slideText || "" : "";
       return { title, text };
     },
-    [slides]
+    [slides],
   );
 
   const selectSlide = useCallback(
@@ -294,22 +453,118 @@ const ItemSlides = () => {
       dispatch(setSelectedSlide(index));
       const slide = slides[index];
 
-      if (shouldSendTo.stream) {
+      if (slide?.mediaSource?.kind === "local-video-input") {
+        const localVideoInput = buildLocalVideoInputPresentation(
+          slide.mediaSource,
+          getOrCreateDeviceId(),
+          getTrustedDeviceLabel(),
+        );
+        if (!localVideoInput) {
+          showToast?.(
+            `Relink ${slide.mediaSource.label} on this computer, then try again.`,
+            "warning",
+          );
+          return;
+        }
+        const presentation = {
+          slide,
+          type: "local-video-input",
+          name,
+          slideIndex: index,
+          slideCount: slides.length,
+          localVideoInput,
+        };
+        const sendPresentation = () => {
+          if (sendsToProjector) {
+            dispatch(
+              updateProjector({
+                ...presentation,
+                outputIds: sendTargets.projector,
+              }),
+            );
+          }
+          if (sendsToMonitor) {
+            dispatch(
+              updateMonitor({
+                ...presentation,
+                outputIds: sendTargets.monitor,
+                itemId: _id,
+                transitionDirection: "jump",
+              }),
+            );
+          }
+          if (sendsToStream) {
+            dispatch(
+              updateStream({
+                ...presentation,
+                outputIds: sendTargets.stream,
+              }),
+            );
+          }
+        };
+        const localVideoSourceId = slide.mediaSource.sourceId;
+        const binding = resolveLocalVideoInputBinding(localVideoSourceId);
+        if (!binding) return;
+        const transmitConsumerId = `slide-transmit:${localVideoSourceId}:${generateRandomId()}`;
+        const releaseTransmitCapture = () => {
+          window.setTimeout(() => {
+            void releaseWarmLocalVideoCapture(
+              localVideoSourceId,
+              transmitConsumerId,
+            );
+          }, LOCAL_VIDEO_TRANSMIT_HANDOFF_MS);
+        };
+        void acquireWarmLocalVideoCapture(
+          localVideoSourceId,
+          binding,
+          true,
+          transmitConsumerId,
+        )
+          .then(() => {
+            try {
+              sendPresentation();
+            } finally {
+              releaseTransmitCapture();
+            }
+          })
+          .catch(async (error: unknown) => {
+            await releaseWarmLocalVideoCapture(
+              localVideoSourceId,
+              transmitConsumerId,
+            );
+            if (error instanceof LocalVideoCaptureOwnedError) {
+              sendPresentation();
+              return;
+            }
+            showToast?.(getVideoInputErrorMessage(error), "warning");
+          });
+        return;
+      }
+
+      if (sendsToStream) {
         if (type === "bible") {
           const { title, text } = getBibleInfo(index);
           dispatch(
             updateBibleDisplayInfo({
+              outputIds: sendTargets.stream,
               title,
               text,
-            })
+            }),
           );
         } else {
-          dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
+          dispatch(
+            updateBibleDisplayInfo({
+              title: "",
+              text: "",
+              outputIds: sendTargets.stream,
+            }),
+          );
         }
 
         if (type === "free") {
           dispatch(
             updateFormattedTextDisplayInfo({
+              outputIds: sendTargets.stream,
               text: slide.boxes[1]?.words || "",
               backgroundColor:
                 slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
@@ -320,40 +575,43 @@ const ItemSlides = () => {
               isBold: slide.formattedTextDisplayInfo?.isBold || false,
               isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
               align: slide.formattedTextDisplayInfo?.align || "left",
-            })
+            }),
           );
         } else {
           dispatch(
             updateFormattedTextDisplayInfo({
+              outputIds: sendTargets.stream,
               text: "",
-            })
+            }),
           );
         }
 
         if (type !== "free" && type !== "bible") {
           dispatch(
             updateStream({
+              outputIds: sendTargets.stream,
               slide,
               type,
               name,
               timerId: timerInfo?.id,
               slideIndex: index,
               slideCount: slides.length,
-            })
+            }),
           );
         }
       }
 
-      if (shouldSendTo.projector) {
+      if (sendsToProjector) {
         dispatch(
           updateProjector({
+            outputIds: sendTargets.projector,
             slide,
             type,
             name,
             timerId: timerInfo?.id,
             slideIndex: index,
             slideCount: slides.length,
-          })
+          }),
         );
       }
 
@@ -363,7 +621,7 @@ const ItemSlides = () => {
         dispatch(setMonitorTimerId(null));
       }
 
-      if (shouldSendTo.monitor) {
+      if (sendsToMonitor) {
         let transitionDirection: "next" | "prev" | "jump";
         if (index === prevSelected + 1) transitionDirection = "next";
         else if (index === prevSelected - 1) transitionDirection = "prev";
@@ -373,16 +631,15 @@ const ItemSlides = () => {
           (type === "song" || type === "bible" || type === "free") &&
           monitorShowNextSlide &&
           index + 1 < slides.length &&
-          (slide?.boxes ?? []).every(
-            (box, i) => i === 0 || box.height <= 55
-          );
+          (slide?.boxes ?? []).every((box, i) => i === 0 || box.height <= 55);
         const nextSlideSlide = canShowNextSlide
-          ? monitorReadySlides[index + 1] ?? slides[index + 1]
+          ? (monitorReadySlides[index + 1] ?? slides[index + 1])
           : null;
         const nextSlideForMonitor = nextSlideSlide
           ? {
             ...nextSlideSlide,
-            boxes: nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
+            boxes:
+              nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
           }
           : undefined;
         // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
@@ -390,11 +647,12 @@ const ItemSlides = () => {
           ...monitorSlide,
           boxes:
             nextSlideForMonitor != null
-              ? monitorSlide.monitorCurrentBandBoxes ?? monitorSlide.boxes
+              ? (monitorSlide.monitorCurrentBandBoxes ?? monitorSlide.boxes)
               : monitorSlide.boxes,
         };
         dispatch(
           updateMonitor({
+            outputIds: sendTargets.monitor,
             slide: slideForMonitor,
             type,
             name,
@@ -406,17 +664,20 @@ const ItemSlides = () => {
             transitionDirection,
             bibleInfoBox:
               type === "bible" && nextSlideForMonitor
-                ? slide.boxes?.[2] ?? null
+                ? (slide.boxes?.[2] ?? null)
                 : undefined,
-          })
+          }),
         );
       }
     },
     [
       dispatch,
-      shouldSendTo.stream,
-      shouldSendTo.projector,
-      shouldSendTo.monitor,
+      sendsToStream,
+      sendsToProjector,
+      sendsToMonitor,
+      sendTargets.projector,
+      sendTargets.monitor,
+      sendTargets.stream,
       monitorShowNextSlide,
       type,
       name,
@@ -425,7 +686,8 @@ const ItemSlides = () => {
       slides,
       _id,
       monitorReadySlides,
-    ]
+      showToast,
+    ],
   );
 
   const enterBackgroundTargetSelectModeFromSlide = useCallback(
@@ -457,14 +719,22 @@ const ItemSlides = () => {
     [slides, canEdit, dispatch, selectSlide],
   );
 
-  const cannotDeleteSelectedSlides = useMemo(() => {
+  const slideActionTargetIds = useMemo(
+    () =>
+      resolveSlideActionTargetIds(
+        backgroundTargetSlideIdsRaw,
+        slides,
+        selectedSlide,
+      ),
+    [backgroundTargetSlideIdsRaw, selectedSlide, slides],
+  );
+
+  const cannotDeleteTargetSlides = useMemo(() => {
     if (type !== "free") return true;
-    const ids = backgroundTargetSlideIdsRaw ?? [];
-    if (ids.length === 0) return true;
-    const idSet = new Set(ids);
-    const remaining = slides.filter((s) => !idSet.has(s.id)).length;
-    return remaining < 1;
-  }, [type, backgroundTargetSlideIdsRaw, slides]);
+    if (slideActionTargetIds.length === 0) return true;
+    const idSet = new Set(slideActionTargetIds);
+    return slides.filter((s) => !idSet.has(s.id)).length < 1;
+  }, [slideActionTargetIds, slides, type]);
 
   const onSlideGridClick = useCallback(
     (e: React.MouseEvent, index: number) => {
@@ -542,25 +812,23 @@ const ItemSlides = () => {
     selectSlide(nextSlide);
   }, [selectedSlide, selectSlide]);
 
-  // Automatically switch to slide 1 (wrap up slide) when timer reaches 0
+  // Advance to wrap-up when this timer auto-expires (running → stopped with
+  // endTime in the past). Remaining time is already restored to duration by
+  // tickTimers; do not key off remainingTime === 0 or manual Stop would also
+  // jump here after an early stop resets duration.
+  const prevTimerForExpireRef = useRef(timerInfo);
   useEffect(() => {
+    const previous = prevTimerForExpireRef.current;
+    prevTimerForExpireRef.current = timerInfo;
     if (
       type === "timer" &&
-      timerInfo &&
-      timerInfo.remainingTime === 0 &&
-      timerInfo.status === "stopped" &&
+      didTimerJustExpire(previous, timerInfo) &&
       slides.length > 1 &&
       selectedSlide === 0
     ) {
-      dispatch(
-        updateTimer({
-          id: timerInfo.id,
-          timerInfo: { ...timerInfo, status: "stopped" },
-        })
-      );
       selectSlide(1);
     }
-  }, [type, timerInfo, slides.length, selectedSlide, selectSlide, dispatch]);
+  }, [type, timerInfo, slides.length, selectedSlide, selectSlide]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -627,7 +895,9 @@ const ItemSlides = () => {
     const parentElement = document.getElementById("item-slides-container");
     if (!parentElement) return;
     const runScroll = () => {
-      const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
+      const slideElement = document.getElementById(
+        `item-slide-${selectedSlide}`,
+      );
       if (slideElement && parentElement) {
         keepElementInView({
           child: slideElement,
@@ -641,7 +911,7 @@ const ItemSlides = () => {
     });
   }, [selectedSlide, isMobile, slidesToRender.length]);
 
-  const addSlide = () => {
+  const addSlide = useCallback(() => {
     // Find the highest section number among existing slides
     const sectionNumbers = slides
       .map((slide) => {
@@ -660,10 +930,25 @@ const ItemSlides = () => {
       overflow: "separate",
     });
     dispatch(addSlideAction({ slide }));
-  };
+  }, [dispatch, slides]);
 
-  const copySlide = () => {
+  const copySlide = useCallback(() => {
     if (selectedSlide === -1 || !slides[selectedSlide]) return;
+
+    if (
+      slides[selectedSlide].type === "Media" ||
+      slides[selectedSlide].mediaSource?.kind === "local-video-input"
+    ) {
+      dispatch(
+        addSlideAction({
+          slide: {
+            ...slides[selectedSlide],
+            id: generateRandomId(),
+          },
+        }),
+      );
+      return;
+    }
 
     // Find the highest section number among existing slides
     const sectionNumbers = slides
@@ -684,7 +969,111 @@ const ItemSlides = () => {
     };
 
     dispatch(addSlideAction({ slide: newSlide }));
-  };
+  }, [dispatch, selectedSlide, slides]);
+
+  const handleClearTargetBackgrounds = useCallback(() => {
+    if (slideActionTargetIds.length === 0) return;
+    dispatch(
+      clearSlideBackgroundsOnSubset({
+        slideIds: [...slideActionTargetIds],
+      }),
+    );
+  }, [dispatch, slideActionTargetIds]);
+
+  const handleDeleteTargetSlides = useCallback(() => {
+    if (slideActionTargetIds.length === 0) return;
+    dispatch(
+      removeSlidesByIds({
+        slideIds: [...slideActionTargetIds],
+      }),
+    );
+  }, [dispatch, slideActionTargetIds]);
+
+  const handleSelectionDone = useCallback(() => {
+    dispatch(clearBackgroundTargetSelection());
+  }, [dispatch]);
+
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => {
+    if (!canEdit) return [];
+
+    const items: ActionBarItemDef[] = [];
+    const isFree = type === "free";
+    const targetCount = slideActionTargetIds.length;
+
+    if (!showBackgroundTargetActionBar && isFree) {
+      items.push(
+        slideToolbarButton({
+          id: "add",
+          label: "Add",
+          icon: slideToolbarIcon(Plus),
+          onClick: addSlide,
+        }),
+        slideToolbarButton({
+          id: "copy",
+          label: "Copy",
+          icon: slideToolbarIcon(Copy),
+          onClick: copySlide,
+        }),
+      );
+    }
+
+    if (hasSlides) {
+      items.push(
+        slideToolbarButton({
+          id: "clear-background",
+          label: "Clear background",
+          icon: slideToolbarIcon(ImageOff),
+          onClick: handleClearTargetBackgrounds,
+          disabled: targetCount === 0,
+        }),
+      );
+      if (isFree) {
+        const deleteLabel =
+          targetCount > 1 ? `Delete (${targetCount})` : "Delete";
+        let deleteTitle = "Delete this slide";
+        if (cannotDeleteTargetSlides) {
+          deleteTitle = "Keep at least one slide in the item";
+        } else if (targetCount > 1) {
+          deleteTitle = "Delete selected slides";
+        }
+        items.push(
+          slideToolbarButton({
+            id: "delete",
+            label: deleteLabel,
+            icon: slideToolbarIcon(Trash2, "text-red-400"),
+            onClick: handleDeleteTargetSlides,
+            disabled: cannotDeleteTargetSlides,
+            destructive: true,
+            title: deleteTitle,
+          }),
+        );
+      }
+    }
+
+    if (showBackgroundTargetActionBar) {
+      items.push(
+        slideToolbarButton({
+          id: "done",
+          label: "Done",
+          onClick: handleSelectionDone,
+        }),
+      );
+    }
+
+    return items;
+  }, [
+    addSlide,
+    canEdit,
+    cannotDeleteTargetSlides,
+    copySlide,
+    handleClearTargetBackgrounds,
+    handleDeleteTargetSlides,
+    handleSelectionDone,
+    hasSlides,
+    showBackgroundTargetActionBar,
+    slideActionTargetIds.length,
+    type,
+  ]);
 
   const onDragStart = (event: DragStartEvent) => {
     const { active } = event;
@@ -717,7 +1106,7 @@ const ItemSlides = () => {
 
     // Find all slides in the same section
     const sectionSlides = slides.filter((slide) =>
-      slide.name.includes(`Section ${sectionNum}`)
+      slide.name.includes(`Section ${sectionNum}`),
     );
 
     // Find the target position
@@ -734,12 +1123,12 @@ const ItemSlides = () => {
       if (targetSectionNum !== sectionNum) {
         // Find the boundaries of the target section
         const targetSectionStart = slides.findIndex((slide) =>
-          slide.name.includes(`Section ${targetSectionNum}`)
+          slide.name.includes(`Section ${targetSectionNum}`),
         );
         const targetSectionEnd = slides.findIndex(
           (slide, index) =>
             index > targetSectionStart &&
-            !slide.name.includes(`Section ${targetSectionNum}`)
+            !slide.name.includes(`Section ${targetSectionNum}`),
         );
 
         // If target is within another section, adjust the target index to be before or after that section
@@ -762,7 +1151,7 @@ const ItemSlides = () => {
 
     // Get the indices of the first and last slides in the section
     const firstSectionIndex = slides.findIndex((slide) =>
-      slide.name.includes(`Section ${sectionNum}`)
+      slide.name.includes(`Section ${sectionNum}`),
     );
 
     // Remove all slides in the section
@@ -784,7 +1173,7 @@ const ItemSlides = () => {
       >
         <div className="flex h-full min-h-0 flex-col overflow-hidden bg-homepage-canvas">
           <div className="mb-2 flex w-full shrink-0 flex-col border-b border-white/20 bg-black/60">
-            <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1">
               <div className="flex shrink-0 items-center gap-1">
                 <Button
                   variant="tertiary"
@@ -822,112 +1211,34 @@ const ItemSlides = () => {
                   onClick={() => setSlideGridSize(size - 1)}
                 />
               </div>
-              {type === "free" && canEdit && (
-                <>
-                  <Button
-                    variant="tertiary"
-                    className="ml-auto min-h-7 gap-1.5 px-2"
-                    svg={Plus}
-                    gap="gap-1.5"
-                    disabled={showBackgroundTargetActionBar}
-                    onClick={() => addSlide()}
-                  >
-                    Add
-                  </Button>
-                  <Button
-                    variant="tertiary"
-                    className="min-h-7 gap-1.5 px-2"
-                    svg={Copy}
-                    gap="gap-1.5"
-                    disabled={showBackgroundTargetActionBar}
-                    onClick={copySlide}
-                  >
-                    Copy
-                  </Button>
-                </>
+              {canEdit && showBackgroundTargetActionBar && (
+                <div
+                  className="flex shrink-0 items-baseline gap-1 whitespace-nowrap text-xs"
+                  aria-live="polite"
+                  aria-label={
+                    backgroundTargetSlideIds.length === 1
+                      ? "1 slide selected"
+                      : `${backgroundTargetSlideIds.length} slides selected`
+                  }
+                >
+                  <span className="font-semibold tabular-nums text-cyan-400">
+                    {backgroundTargetSlideIds.length}
+                  </span>
+                  <span className="text-gray-400">
+                    {backgroundTargetSlideIds.length === 1
+                      ? "slide selected"
+                      : "slides selected"}
+                  </span>
+                </div>
+              )}
+              {actionBarItemDefs.length > 0 && (
+                <ActionBar
+                  items={actionBarItemDefs}
+                  className="min-w-0 flex-1 justify-end"
+                  overflowMenuClassName="min-w-48"
+                />
               )}
             </div>
-            {canEdit && hasSlides && (
-              <div
-                className={cn(
-                  "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-                  showBackgroundTargetActionBar
-                    ? "grid-rows-[1fr]"
-                    : "grid-rows-[0fr]",
-                )}
-              >
-                <div
-                  className="min-h-0 overflow-hidden"
-                  inert={showBackgroundTargetActionBar ? undefined : true}
-                >
-                  <div className="flex items-center justify-between gap-2 border-t border-white/10 px-2 py-1.5">
-                    <div
-                      className="flex min-w-0 flex-1 items-baseline gap-1 text-xs"
-                      aria-live="polite"
-                    >
-                      <span className="shrink-0 font-semibold tabular-nums text-cyan-400">
-                        {backgroundTargetSlideIds.length}
-                      </span>
-                      <span className="truncate text-gray-400">
-                        {backgroundTargetSlideIds.length === 1
-                          ? "slide selected"
-                          : "slides selected"}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                      <Button
-                        variant="tertiary"
-                        className="min-h-7 gap-1.5 px-2 text-xs"
-                        svg={ImageOff}
-                        gap="gap-1.5"
-                        disabled={backgroundTargetSlideIds.length === 0}
-                        onClick={() =>
-                          dispatch(
-                            clearSlideBackgroundsOnSubset({
-                              slideIds: [...backgroundTargetSlideIds],
-                            }),
-                          )
-                        }
-                      >
-                        Clear background
-                      </Button>
-                      {type === "free" ? (
-                        <Button
-                          variant="tertiary"
-                          className="min-h-7 gap-1.5 px-2 text-xs text-red-300 [&_svg]:text-red-400"
-                          svg={Trash2}
-                          gap="gap-1.5"
-                          disabled={cannotDeleteSelectedSlides}
-                          title={
-                            cannotDeleteSelectedSlides
-                              ? "Select at least one slide and keep one slide in the item"
-                              : "Delete selected slides"
-                          }
-                          onClick={() =>
-                            dispatch(
-                              removeSlidesByIds({
-                                slideIds: [...backgroundTargetSlideIds],
-                              }),
-                            )
-                          }
-                        >
-                          Delete
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="tertiary"
-                        className="min-h-7 px-2 text-xs"
-                        onClick={() =>
-                          dispatch(clearBackgroundTargetSelection())
-                        }
-                      >
-                        Done
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
           {isLoading ? (
             <ItemSlidesSkeleton

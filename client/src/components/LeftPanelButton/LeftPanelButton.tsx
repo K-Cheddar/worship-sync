@@ -1,11 +1,24 @@
 import Button from "../Button/Button";
 import { FileQuestion } from "lucide-react";
-import { forwardRef, FunctionComponent } from "react";
+import {
+  forwardRef,
+  FunctionComponent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import cn from "classnames";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import MultiSelectSubsetTick from "../MultiSelectSubsetTick/MultiSelectSubsetTick";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import type {
+  LocalImageAssetReference,
+  LocalVideoFileReference,
+} from "../../types";
 
 type LeftPanelButtonProps = {
   isSelected: boolean;
@@ -23,6 +36,8 @@ type LeftPanelButtonProps = {
     id: string;
   }[];
   image?: string;
+  localImage?: LocalImageAssetReference;
+  localVideoFile?: LocalVideoFileReference;
   className?: string;
   displayId?: string;
   timerValue?: number;
@@ -32,6 +47,39 @@ type LeftPanelButtonProps = {
   multiSelectMode?: boolean;
   /** Whether this row is in the active multi-select subset. */
   isMultiSelected?: boolean;
+};
+
+const thumbnailVisibilityCallbacks = new WeakMap<Element, () => void>();
+let thumbnailVisibilityObserver: IntersectionObserver | undefined;
+
+const observeThumbnailVisibility = (
+  element: Element,
+  onVisible: () => void,
+) => {
+  if (typeof IntersectionObserver === "undefined") {
+    onVisible();
+    return () => undefined;
+  }
+  if (!thumbnailVisibilityObserver) {
+    thumbnailVisibilityObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const callback = thumbnailVisibilityCallbacks.get(entry.target);
+          thumbnailVisibilityCallbacks.delete(entry.target);
+          thumbnailVisibilityObserver?.unobserve(entry.target);
+          callback?.();
+        });
+      },
+      { rootMargin: "320px 0px" },
+    );
+  }
+  thumbnailVisibilityCallbacks.set(element, onVisible);
+  thumbnailVisibilityObserver.observe(element);
+  return () => {
+    thumbnailVisibilityCallbacks.delete(element);
+    thumbnailVisibilityObserver?.unobserve(element);
+  };
 };
 
 const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
@@ -46,6 +94,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       id,
       style,
       image,
+      localImage,
+      localVideoFile,
       className,
       displayId,
       timerValue,
@@ -58,12 +108,61 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
     },
     ref
   ) => {
-    const resolvedImage = useCachedMediaUrl(image);
+    const rowRef = useRef<HTMLLIElement | null>(null);
+    const [shouldLoadImagePreview, setShouldLoadImagePreview] = useState(
+      () => typeof IntersectionObserver === "undefined",
+    );
+    const setRefs = useCallback(
+      (node: HTMLLIElement | null) => {
+        rowRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref],
+    );
+    useEffect(() => {
+      if (
+        shouldLoadImagePreview ||
+        (!image && !localImage && !localVideoFile) ||
+        typeof IntersectionObserver === "undefined"
+      ) {
+        return;
+      }
+      const rowNode = rowRef.current;
+      if (!rowNode) return;
+      return observeThumbnailVisibility(
+        rowNode,
+        () => setShouldLoadImagePreview(true),
+      );
+    }, [image, localImage, localVideoFile, shouldLoadImagePreview]);
+
+    const localImageResolution = useLocalImageUrl(
+      shouldLoadImagePreview ? localImage : undefined,
+      "thumbnail",
+    );
+    const localVideoResolution = useLocalVideoFileUrl(
+      shouldLoadImagePreview ? localVideoFile : undefined,
+      "thumbnail",
+    );
+    const cachedImage = useCachedMediaUrl(
+      shouldLoadImagePreview ? image : undefined,
+    );
+    let resolvedImage = cachedImage;
+    let hasImagePreview = Boolean(image);
+    if (localImageResolution.isLocalImage) {
+      resolvedImage = localImageResolution.url;
+      hasImagePreview =
+        localImageResolution.status === "ready" && Boolean(resolvedImage);
+    } else if (localVideoResolution.isLocalVideoFile) {
+      resolvedImage = localVideoResolution.url;
+      hasImagePreview =
+        localVideoResolution.status === "ready" && Boolean(resolvedImage);
+    }
 
     return (
       <li
         id={displayId}
-        ref={ref}
+        ref={setRefs}
         style={style}
         className={cn(
           "group relative flex min-h-8 min-w-0",
@@ -91,9 +190,9 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         <Button
           variant="none"
           className="relative z-10 flex min-h-8 min-w-0 flex-1 shrink items-center self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none"
-          iconSize="md"
+          iconSize="xs"
           wrap
-          svg={image || isActive ? undefined : svgMap.get(type) || FileQuestion}
+          svg={svgMap.get(type) || FileQuestion}
           gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
@@ -102,11 +201,13 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           to={`/controller/${to}`}
           onClick={onClick}
         >
-          {image && !isActive && (
+          {hasImagePreview && !isActive && (
             <img
-              src={resolvedImage ?? image}
+              src={resolvedImage}
               className="w-14 max-w-[30%] shrink-0"
               alt={title}
+              loading="lazy"
+              decoding="async"
             />
           )}
           {isActive && (

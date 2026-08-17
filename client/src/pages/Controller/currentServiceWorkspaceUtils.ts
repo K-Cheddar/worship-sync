@@ -40,13 +40,23 @@ export const formatLiveSlideProgress = (
   };
 };
 
-/** Prefer projector as “what the room sees”; fall back to monitor. */
+/**
+ * First display with real progress wins.
+ *
+ * Callers pass their displays already ordered — projectors before monitors,
+ * since a projector is "what the room sees". Taking a list rather than the two
+ * built-ins is what lets a church running only a named projector still get a
+ * readout.
+ */
 export const resolveLiveSlideProgress = (
-  projectorInfo: LiveSlideProgressSource,
-  monitorInfo: LiveSlideProgressSource,
-): LiveSlideProgress | null =>
-  formatLiveSlideProgress(projectorInfo) ??
-  formatLiveSlideProgress(monitorInfo);
+  sources: LiveSlideProgressSource[],
+): LiveSlideProgress | null => {
+  for (const source of sources) {
+    const progress = formatLiveSlideProgress(source);
+    if (progress) return progress;
+  }
+  return null;
+};
 
 /**
  * How long a service is presumed to be running once it starts. The schedule

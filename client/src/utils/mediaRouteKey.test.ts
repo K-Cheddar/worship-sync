@@ -53,6 +53,9 @@ describe("getMediaRouteKey", () => {
     expect(getMediaRouteKey("/controller/quick-links")).toBe(
       "controller-settings",
     );
+    expect(getMediaRouteKey("/controller/displays")).toBe(
+      "controller-settings",
+    );
     expect(getMediaRouteKey("/controller/monitor-settings")).toBe(
       "controller-settings",
     );

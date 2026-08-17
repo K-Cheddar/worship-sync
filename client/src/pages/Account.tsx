@@ -1,13 +1,14 @@
 import type { CSSProperties } from "react";
-import { lazy, Suspense, useContext, useMemo, useState, type ReactNode } from "react";
-import { Building2, ListChecks, LogIn, PanelLeft } from "lucide-react";
 import {
-  Navigate,
-  Outlet,
-  Route,
-  Routes,
-  useLocation,
-} from "react-router-dom";
+  lazy,
+  Suspense,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { Building2, ListChecks, LogIn, PanelLeft } from "lucide-react";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import Button from "../components/Button/Button";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
@@ -29,14 +30,19 @@ import {
   getActiveAccountSection,
   parseLegacyAccountTab,
 } from "./Account/accountConstants";
-import { AccountPageProvider, useAccountPage } from "./Account/AccountPageContext";
+import {
+  AccountPageProvider,
+  useAccountPage,
+} from "./Account/AccountPageContext";
 import AccountAccessDenied from "./Account/components/AccountAccessDenied";
 import AccountDeleteModalHost from "./Account/components/AccountDeleteModalHost";
 import AccountSectionHeader from "./Account/components/AccountSectionHeader";
 import AccountSidebarNav from "./Account/components/AccountSidebarNav";
 import { AccountSectionRouteSkeleton } from "./Account/accountPageSkeletons";
 
-const AccountPeoplePage = lazy(() => import("./Account/pages/AccountPeoplePage"));
+const AccountPeoplePage = lazy(
+  () => import("./Account/pages/AccountPeoplePage"),
+);
 const AccountSetupPage = lazy(() => import("./Account/pages/AccountSetupPage"));
 const AccountBrandingPage = lazy(
   () => import("./Account/pages/AccountBrandingPage"),
@@ -141,7 +147,9 @@ const AccountShell = () => {
               <ChurchLogoImg
                 src={toolbarLogoUrl}
                 alt={
-                  churchNameTrimmed ? `${churchNameTrimmed} logo` : "Church logo"
+                  churchNameTrimmed
+                    ? `${churchNameTrimmed} logo`
+                    : "Church logo"
                 }
                 variant="account-header"
               />

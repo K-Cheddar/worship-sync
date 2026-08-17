@@ -1,10 +1,12 @@
 import { act, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import DisplayWindow from "../DisplayWindow";
 import type { Box } from "../../../types";
 import { setServerTimeOffset } from "../../../utils/serverTime";
 
 const mockUseSelector = jest.fn();
 const mockUseCachedVideoUrl = jest.fn((url?: string) => url);
+let mockLocalVideoViewInstanceCounter = 0;
 type KeepAliveMode = "max" | "replace";
 type KeepAliveStart = (
   overlayKey: string | null,
@@ -60,10 +62,12 @@ type MonitorViewMockProps = {
   showNextSlide?: boolean;
   effectiveShowClock?: boolean;
   effectiveShowTimer?: boolean;
+  currentMediaLayer?: ReactNode;
 };
 
 jest.mock("../../../hooks", () => ({
-  useSelector: (selector: (state: unknown) => unknown) => mockUseSelector(selector),
+  useSelector: (selector: (state: unknown) => unknown) =>
+    mockUseSelector(selector),
 }));
 
 jest.mock("../../../hooks/useCachedMediaUrl", () => ({
@@ -83,16 +87,68 @@ jest.mock("../DisplayBox", () => ({
 jest.mock("../DisplayStreamText", () => ({
   __esModule: true,
   default: ({ isPrev }: { isPrev?: boolean }) => (
-    <div data-testid={isPrev ? "display-stream-text-prev" : "display-stream-text"} />
+    <div
+      data-testid={isPrev ? "display-stream-text-prev" : "display-stream-text"}
+    />
   ),
 }));
 jest.mock("../DisplayEditor", () => ({
   __esModule: true,
   default: () => <div data-testid="display-editor-mock" />,
 }));
+jest.mock("../LocalVideoInputView", () => ({
+  __esModule: true,
+  default: function MockLocalVideoInputView({
+    input,
+    playAudio,
+    captureEnabled,
+    receiveHighQuality,
+    showErrors,
+    transparentBackground,
+    volume,
+  }: {
+    input: { deviceLabel: string };
+    playAudio?: boolean;
+    captureEnabled?: boolean;
+    receiveHighQuality?: boolean;
+    showErrors?: boolean;
+    transparentBackground?: boolean;
+    volume?: number;
+  }) {
+    const { useRef } = jest.requireActual<typeof import("react")>("react");
+    const instanceId = useRef<number | undefined>(undefined);
+    instanceId.current ??= ++mockLocalVideoViewInstanceCounter;
+    return (
+      <div
+        data-testid="local-video-input-view"
+        data-instance-id={instanceId.current}
+        data-play-audio={playAudio ? "true" : "false"}
+        data-capture-enabled={captureEnabled ? "true" : "false"}
+        data-high-quality={receiveHighQuality ? "true" : "false"}
+        data-show-errors={showErrors ? "true" : "false"}
+        data-transparent-background={transparentBackground ? "true" : "false"}
+        data-volume={String(volume ?? "")}
+      >
+        {input.deviceLabel}
+      </div>
+    );
+  },
+}));
 jest.mock("../DisplayStreamBible", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-stream-bible-mock" />,
+  default: ({
+    bibleDisplayInfo,
+    prevBibleDisplayInfo,
+  }: {
+    bibleDisplayInfo?: { title?: string };
+    prevBibleDisplayInfo?: { title?: string };
+  }) => (
+    <div
+      data-testid="display-stream-bible-mock"
+      data-current-title={bibleDisplayInfo?.title || ""}
+      data-prev-title={prevBibleDisplayInfo?.title || ""}
+    />
+  ),
 }));
 jest.mock("../DisplayParticipantOverlay", () => ({
   __esModule: true,
@@ -338,12 +394,28 @@ jest.mock("../DisplayBoardPostOverlay", () => ({
 }));
 jest.mock("../DisplayStreamFormattedText", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-formatted-text-mock" />,
+  default: ({
+    formattedTextDisplayInfo,
+    prevFormattedTextDisplayInfo,
+  }: {
+    formattedTextDisplayInfo?: { text?: string };
+    prevFormattedTextDisplayInfo?: { text?: string };
+  }) => (
+    <div
+      data-testid="display-formatted-text-mock"
+      data-current-text={formattedTextDisplayInfo?.text || ""}
+      data-prev-text={prevFormattedTextDisplayInfo?.text || ""}
+    />
+  ),
 }));
 jest.mock("../HLSVideoPlayer", () => ({
   __esModule: true,
   default: ({ src, originalSrc }: { src: string; originalSrc: string }) => (
-    <div data-testid="window-hls-player" data-src={src} data-original-src={originalSrc} />
+    <div
+      data-testid="window-hls-player"
+      data-src={src}
+      data-original-src={originalSrc}
+    />
   ),
 }));
 jest.mock("../MonitorView", () => ({
@@ -352,17 +424,23 @@ jest.mock("../MonitorView", () => ({
     showNextSlide,
     effectiveShowClock,
     effectiveShowTimer,
+    currentMediaLayer,
   }: MonitorViewMockProps) => (
     <div
       data-testid="monitor-view-mock"
       data-show-next-slide={showNextSlide ? "true" : "false"}
       data-show-clock={effectiveShowClock ? "true" : "false"}
       data-show-timer={effectiveShowTimer ? "true" : "false"}
-    />
+    >
+      {currentMediaLayer}
+    </div>
   ),
 }));
 
 const baseState = {
+  // The projector clock/timer overlay mounts the real DisplayTimer, which reads
+  // the timer list to resolve what it counts down.
+  timers: { timers: [] },
   undoable: {
     present: {
       preferences: {
@@ -377,6 +455,29 @@ const baseState = {
       },
     },
   },
+};
+
+const streamStateWithLocalVideoAudio = {
+  ...baseState,
+  displayOutputs: {
+    list: [
+      {
+        id: "stream",
+        type: "stream",
+        name: "Stream",
+        order: 0,
+        enabled: true,
+        settings: { localVideoAudioEnabled: true },
+      },
+    ],
+  },
+};
+
+const localVideoInputFixture = {
+  sourceId: "source-1",
+  deviceLabel: "USB Capture",
+  ownerDeviceId: "device-1",
+  ownerLabel: "Booth",
 };
 
 const baseBox: Box = {
@@ -405,6 +506,7 @@ const baseBox: Box = {
 describe("DisplayWindow core paths", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockLocalVideoViewInstanceCounter = 0;
     setServerTimeOffset(0);
     mockUseSelector.mockImplementation((selector) => selector(baseState));
   });
@@ -420,7 +522,7 @@ describe("DisplayWindow core paths", () => {
         displayType="monitor"
         boxes={[baseBox]}
         nextBoxes={[{ ...baseBox, id: "next-1" }]}
-        showMonitorClockTimer
+        showClockTimer
         monitorLayoutMode="full-monitor"
       />,
     );
@@ -446,16 +548,94 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
   });
 
+  describe("projector clock and timer", () => {
+    it("renders the clock/timer overlay on a live projector", () => {
+      render(
+        <DisplayWindow
+          displayType="projector"
+          outputId="projector"
+          boxes={[baseBox]}
+          showClockTimer
+        />,
+      );
+
+      expect(screen.getByTestId("projector-clock-timer")).toBeInTheDocument();
+    });
+
+    it("leaves the overlay off surfaces that do not render display chrome", () => {
+      render(
+        <DisplayWindow
+          displayType="projector"
+          outputId="projector"
+          boxes={[baseBox]}
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("projector-clock-timer"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("honors a projector that has both switched off", () => {
+      mockUseSelector.mockImplementation((selector) =>
+        selector({
+          ...baseState,
+          displayOutputs: {
+            list: [
+              {
+                id: "projector",
+                type: "projector",
+                name: "Main",
+                order: 0,
+                enabled: true,
+                settings: { showClock: false, showTimer: false },
+              },
+            ],
+          },
+        }),
+      );
+
+      render(
+        <DisplayWindow
+          displayType="projector"
+          outputId="projector"
+          boxes={[baseBox]}
+          showClockTimer
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("projector-clock-timer"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("renders stream mode with stream text plus stream overlays", () => {
     render(
       <DisplayWindow
         displayType="stream"
         boxes={[baseBox]}
         prevBoxes={[{ ...baseBox, id: "prev-1" }]}
-        participantOverlayInfo={{ id: "p1", type: "participant", name: "Alice" }}
-        stbOverlayInfo={{ id: "s1", type: "stick-to-bottom", heading: "Welcome" }}
-        qrCodeOverlayInfo={{ id: "q1", type: "qr-code", url: "https://example.com" }}
-        imageOverlayInfo={{ id: "i1", type: "image", imageUrl: "https://img.jpg" }}
+        participantOverlayInfo={{
+          id: "p1",
+          type: "participant",
+          name: "Alice",
+        }}
+        stbOverlayInfo={{
+          id: "s1",
+          type: "stick-to-bottom",
+          heading: "Welcome",
+        }}
+        qrCodeOverlayInfo={{
+          id: "q1",
+          type: "qr-code",
+          url: "https://example.com",
+        }}
+        imageOverlayInfo={{
+          id: "i1",
+          type: "image",
+          imageUrl: "https://img.jpg",
+        }}
         formattedTextDisplayInfo={{ text: "formatted" }}
       />,
     );
@@ -464,10 +644,16 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-stream-text-prev")).toBeInTheDocument();
     expect(screen.getByTestId("display-stream-bible-mock")).toBeInTheDocument();
     expect(screen.getByTestId("display-stb-overlay-mock")).toBeInTheDocument();
-    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("display-qr-overlay-mock")).toBeInTheDocument();
-    expect(screen.getByTestId("display-image-overlay-mock")).toBeInTheDocument();
-    expect(screen.getByTestId("display-formatted-text-mock")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-image-overlay-mock"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-formatted-text-mock"),
+    ).toBeInTheDocument();
   });
 
   it("wraps width=100 projector/monitor output in a centered black viewport stage (letterbox/pillarbox)", () => {
@@ -494,14 +680,20 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.queryByTestId("display-full-viewport-stage")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-full-viewport-stage"),
+    ).not.toBeInTheDocument();
   });
 
   it("unmounts the previous display layer after the display transition window", () => {
     jest.useFakeTimers();
 
     const { rerender } = render(
-      <DisplayWindow displayType="projector" boxes={[baseBox]} prevBoxes={[]} />,
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        prevBoxes={[]}
+      />,
     );
 
     expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
@@ -561,8 +753,14 @@ describe("DisplayWindow core paths", () => {
     );
 
     expect(screen.getByTestId("display-box")).not.toBe(firstCurrentBox);
-    expect(screen.getByTestId("display-box")).toHaveAttribute("data-words", "After");
-    expect(screen.getByTestId("display-box-prev")).toHaveAttribute("data-words", "Before");
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-words",
+      "After",
+    );
+    expect(screen.getByTestId("display-box-prev")).toHaveAttribute(
+      "data-words",
+      "Before",
+    );
   });
 
   it("unmounts the previous stream text layer after the stream transition window", () => {
@@ -572,7 +770,9 @@ describe("DisplayWindow core paths", () => {
       <DisplayWindow displayType="stream" boxes={[baseBox]} prevBoxes={[]} />,
     );
 
-    expect(screen.queryByTestId("display-stream-text-prev")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-stream-text-prev"),
+    ).not.toBeInTheDocument();
 
     rerender(
       <DisplayWindow
@@ -594,7 +794,9 @@ describe("DisplayWindow core paths", () => {
       jest.advanceTimersByTime(1);
     });
 
-    expect(screen.queryByTestId("display-stream-text-prev")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-stream-text-prev"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the stream item layer hidden until a participant overlay has fully animated off screen", () => {
@@ -651,28 +853,36 @@ describe("DisplayWindow core paths", () => {
     );
 
     const streamItemLayer = screen.getByTestId("stream-item-layer");
-    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(5_000);
     });
 
-    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(249);
     });
 
-    expect(screen.getByTestId("display-participant-overlay-mock")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(21);
     });
 
-    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-participant-overlay-mock"),
+    ).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
@@ -694,8 +904,12 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.queryByTestId("display-image-overlay-mock")).not.toBeInTheDocument();
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(
+      screen.queryByTestId("display-image-overlay-mock"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
   });
 
   it("uses the shared Firebase-offset clock when deciding whether a stream overlay has already expired", () => {
@@ -718,8 +932,12 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(
+      screen.queryByTestId("display-participant-overlay-mock"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
   });
 
   it("keeps the stream item layer hidden while a cleared overlay is still exiting through prev overlay state", () => {
@@ -784,37 +1002,36 @@ describe("DisplayWindow core paths", () => {
     );
 
     const streamItemLayer = screen.getByTestId("stream-item-layer");
-    expect(screen.getByTestId("display-participant-overlay-mock")).toHaveAttribute(
-      "data-prev-name",
-      "Alice",
-    );
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toHaveAttribute("data-prev-name", "Alice");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(1_250);
     });
 
-    expect(screen.getByTestId("display-participant-overlay-mock")).toHaveAttribute(
-      "data-prev-name",
-      "Alice",
-    );
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toHaveAttribute("data-prev-name", "Alice");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(249);
     });
 
-    expect(screen.getByTestId("display-participant-overlay-mock")).toHaveAttribute(
-      "data-prev-name",
-      "Alice",
-    );
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toHaveAttribute("data-prev-name", "Alice");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(21);
     });
 
-    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-participant-overlay-mock"),
+    ).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
@@ -873,7 +1090,9 @@ describe("DisplayWindow core paths", () => {
       jest.advanceTimersByTime(21);
     });
 
-    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-participant-overlay-mock"),
+    ).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
@@ -924,10 +1143,9 @@ describe("DisplayWindow core paths", () => {
     );
 
     const streamItemLayer = screen.getByTestId("stream-item-layer");
-    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
-      "data-prev-text",
-      "Praying for you",
-    );
+    expect(
+      screen.getByTestId("display-board-post-overlay-mock"),
+    ).toHaveAttribute("data-prev-text", "Praying for you");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
@@ -974,30 +1192,27 @@ describe("DisplayWindow core paths", () => {
     );
 
     const streamItemLayer = screen.getByTestId("stream-item-layer");
-    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
-      "data-prev-text",
-      "Late clear",
-    );
+    expect(
+      screen.getByTestId("display-board-post-overlay-mock"),
+    ).toHaveAttribute("data-prev-text", "Late clear");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(1_250);
     });
 
-    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
-      "data-prev-text",
-      "Late clear",
-    );
+    expect(
+      screen.getByTestId("display-board-post-overlay-mock"),
+    ).toHaveAttribute("data-prev-text", "Late clear");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
       jest.advanceTimersByTime(249);
     });
 
-    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
-      "data-prev-text",
-      "Late clear",
-    );
+    expect(
+      screen.getByTestId("display-board-post-overlay-mock"),
+    ).toHaveAttribute("data-prev-text", "Late clear");
     expect(streamItemLayer).toHaveStyle({ opacity: "0" });
 
     act(() => {
@@ -1068,7 +1283,9 @@ describe("DisplayWindow core paths", () => {
       jest.advanceTimersByTime(21);
     });
 
-    expect(screen.queryByTestId("display-stb-overlay-mock")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-stb-overlay-mock"),
+    ).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
@@ -1132,7 +1349,9 @@ describe("DisplayWindow core paths", () => {
       jest.advanceTimersByTime(21);
     });
 
-    expect(screen.queryByTestId("display-qr-overlay-mock")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-qr-overlay-mock"),
+    ).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
@@ -1195,7 +1414,9 @@ describe("DisplayWindow core paths", () => {
       jest.advanceTimersByTime(21);
     });
 
-    expect(screen.queryByTestId("display-image-overlay-mock")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-image-overlay-mock"),
+    ).not.toBeInTheDocument();
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
@@ -1219,11 +1440,12 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.getByTestId("display-board-post-overlay-mock")).toHaveAttribute(
-      "data-current-text",
-      "Live post",
-    );
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "0" });
+    expect(
+      screen.getByTestId("display-board-post-overlay-mock"),
+    ).toHaveAttribute("data-current-text", "Live post");
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "0",
+    });
   });
 
   it("does not keep the stream item layer hidden when clearing an overlay that had already expired", () => {
@@ -1249,7 +1471,9 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
   });
 
   it("keeps the stream item layer visible while a cleared bible fades out through prev state", () => {
@@ -1257,11 +1481,17 @@ describe("DisplayWindow core paths", () => {
       <DisplayWindow
         displayType="stream"
         shouldAnimate
-        bibleDisplayInfo={{ title: "Jn 3:16", text: "For God so loved", time: 1 }}
+        bibleDisplayInfo={{
+          title: "Jn 3:16",
+          text: "For God so loved",
+          time: 1,
+        }}
       />,
     );
 
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
 
     // Clear empties current content but leaves the outgoing verse in prev for the fade-out.
     rerender(
@@ -1269,11 +1499,17 @@ describe("DisplayWindow core paths", () => {
         displayType="stream"
         shouldAnimate
         bibleDisplayInfo={{ title: "", text: "", time: 2 }}
-        prevBibleDisplayInfo={{ title: "Jn 3:16", text: "For God so loved", time: 1 }}
+        prevBibleDisplayInfo={{
+          title: "Jn 3:16",
+          text: "For God so loved",
+          time: 1,
+        }}
       />,
     );
 
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
   });
 
   it("keeps the stream item layer visible while cleared formatted text fades out through prev state", () => {
@@ -1285,7 +1521,9 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
 
     rerender(
       <DisplayWindow
@@ -1296,7 +1534,9 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "1",
+    });
   });
 
   it("does not remount an already-expired previous participant overlay when a new image overlay rerenders before the scheduled clock update fires", () => {
@@ -1347,8 +1587,12 @@ describe("DisplayWindow core paths", () => {
       />,
     );
 
-    expect(screen.queryByTestId("display-participant-overlay-mock")).not.toBeInTheDocument();
-    expect(screen.getByTestId("display-image-overlay-mock")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-participant-overlay-mock"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("display-image-overlay-mock"),
+    ).toBeInTheDocument();
   });
 
   it("keeps the previous participant overlay mounted during a same-type replacement so it can exit", () => {
@@ -1416,8 +1660,365 @@ describe("DisplayWindow core paths", () => {
   });
 
   it("renders editor mode with DisplayEditor boxes", () => {
-    render(<DisplayWindow displayType="editor" boxes={[baseBox, { ...baseBox, id: "b2" }]} />);
+    render(
+      <DisplayWindow
+        displayType="editor"
+        boxes={[baseBox, { ...baseBox, id: "b2" }]}
+      />,
+    );
     expect(screen.getAllByTestId("display-editor-mock")).toHaveLength(2);
+  });
+
+  it("shows a non-capturing local video status unless the surface opts in", () => {
+    render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+      />,
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-capture-enabled",
+      "false",
+    );
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+  });
+
+  it("keeps projector chrome mounted over a local video input", () => {
+    mockUseSelector.mockImplementation((selector) =>
+      selector({
+        ...baseState,
+        displayOutputs: {
+          list: [
+            {
+              id: "projector",
+              type: "projector",
+              name: "Main",
+              order: 0,
+              enabled: true,
+              settings: {
+                localVideoAudioEnabled: true,
+                localVideoVolume: 40,
+              },
+            },
+          ],
+        },
+      }),
+    );
+    render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+        canCaptureLocalVideo
+        showClockTimer
+      />,
+    );
+
+    expect(screen.getByTestId("local-video-input-view")).toHaveTextContent(
+      "USB Capture",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-play-audio",
+      "true",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-volume",
+      "0.4",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-capture-enabled",
+      "false",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-high-quality",
+      "true",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-show-errors",
+      "false",
+    );
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+    expect(screen.getByTestId("projector-clock-timer")).toBeInTheDocument();
+  });
+
+  it("keeps monitor chrome and next-slide content around local video", () => {
+    render(
+      <DisplayWindow
+        displayType="monitor"
+        boxes={[baseBox]}
+        nextBoxes={[{ ...baseBox, id: "next-local-video" }]}
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+        canCaptureLocalVideo
+        showClockTimer
+        monitorLayoutMode="full-monitor"
+      />,
+    );
+
+    expect(screen.getByTestId("local-video-input-view")).toBeInTheDocument();
+    expect(screen.getByTestId("monitor-view-mock")).toHaveAttribute(
+      "data-show-next-slide",
+      "true",
+    );
+    expect(screen.getByTestId("monitor-view-mock")).toHaveAttribute(
+      "data-show-clock",
+      "true",
+    );
+  });
+
+  it("keeps stream local video visible and audible under an active overlay", () => {
+    mockUseSelector.mockImplementation((selector) =>
+      selector(streamStateWithLocalVideoAudio),
+    );
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        localVideoInput={localVideoInputFixture}
+        canCaptureLocalVideo
+        participantOverlayInfo={{
+          id: "participant-over-video",
+          type: "participant",
+          name: "Alice",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("current-local-video-layer")).toHaveStyle({
+      opacity: "1",
+    });
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-play-audio",
+      "true",
+    );
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({
+      opacity: "0",
+    });
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-transparent-background",
+      "true",
+    );
+  });
+
+  it("keeps current stream text lanes above local video", () => {
+    render(
+      <DisplayWindow
+        displayType="stream"
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+        bibleDisplayInfo={{
+          title: "Stale current verse",
+          text: "Current verse",
+        }}
+        prevBibleDisplayInfo={{
+          title: "Outgoing verse",
+          text: "Previous verse",
+        }}
+        formattedTextDisplayInfo={{ text: "Stale current announcement" }}
+        prevFormattedTextDisplayInfo={{ text: "Outgoing announcement" }}
+      />,
+    );
+
+    expect(screen.getByTestId("display-stream-bible-mock")).toHaveAttribute(
+      "data-current-title",
+      "Stale current verse",
+    );
+    expect(screen.getByTestId("display-stream-bible-mock")).toHaveAttribute(
+      "data-prev-title",
+      "Outgoing verse",
+    );
+    expect(screen.getByTestId("display-formatted-text-mock")).toHaveAttribute(
+      "data-current-text",
+      "Stale current announcement",
+    );
+    expect(screen.getByTestId("display-formatted-text-mock")).toHaveAttribute(
+      "data-prev-text",
+      "Outgoing announcement",
+    );
+  });
+
+  it("hides and mutes local video when stream content is hidden", () => {
+    mockUseSelector.mockImplementation((selector) =>
+      selector(streamStateWithLocalVideoAudio),
+    );
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        streamItemContentBlocked
+        canCaptureLocalVideo
+        localVideoInput={localVideoInputFixture}
+      />,
+    );
+
+    expect(screen.getByTestId("current-local-video-layer")).toHaveStyle({
+      opacity: "0",
+    });
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-play-audio",
+      "false",
+    );
+  });
+
+  it("still hides and mutes local video when Hide Content is on during an overlay", () => {
+    mockUseSelector.mockImplementation((selector) =>
+      selector(streamStateWithLocalVideoAudio),
+    );
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        streamItemContentBlocked
+        canCaptureLocalVideo
+        localVideoInput={localVideoInputFixture}
+        participantOverlayInfo={{
+          id: "participant-over-hidden-video",
+          type: "participant",
+          name: "Alice",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("current-local-video-layer")).toHaveStyle({
+      opacity: "0",
+    });
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-play-audio",
+      "false",
+    );
+    expect(
+      screen.getByTestId("display-participant-overlay-mock"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the outgoing local video lane for the slide crossfade", () => {
+    jest.useFakeTimers();
+    render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        boxes={[baseBox]}
+        prevLocalVideoInput={{
+          sourceId: "source-previous",
+          deviceLabel: "Previous USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("previous-local-video-layer"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-capture-enabled",
+      "false",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-play-audio",
+      "false",
+    );
+    act(() => jest.advanceTimersByTime(500));
+    expect(
+      screen.queryByTestId("previous-local-video-layer"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("moves the playing video view into the outgoing lane without remounting", () => {
+    jest.useFakeTimers();
+    const localVideoInput = {
+      sourceId: "source-playing",
+      deviceLabel: "Playing USB Capture",
+      ownerDeviceId: "device-1",
+      ownerLabel: "Booth",
+    };
+    const view = render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        canCaptureLocalVideo
+        localVideoInput={localVideoInput}
+      />,
+    );
+
+    act(() => jest.advanceTimersByTime(20));
+    const playingView = screen.getByTestId("local-video-input-view");
+    const instanceId = playingView.getAttribute("data-instance-id");
+    expect(screen.getByTestId("current-local-video-layer")).toHaveStyle({
+      opacity: "1",
+    });
+
+    view.rerender(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        canCaptureLocalVideo
+        boxes={[baseBox]}
+        prevLocalVideoInput={localVideoInput}
+      />,
+    );
+
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-instance-id",
+      instanceId,
+    );
+    expect(screen.getByTestId("previous-local-video-layer")).toHaveStyle({
+      opacity: "1",
+    });
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-play-audio",
+      "false",
+    );
+
+    act(() => jest.advanceTimersByTime(20));
+    expect(screen.getByTestId("previous-local-video-layer")).toHaveStyle({
+      opacity: "0",
+    });
+  });
+
+  it("keeps outgoing slide boxes while local video fades in", () => {
+    render(
+      <DisplayWindow
+        displayType="projector"
+        shouldAnimate
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+        prevBoxes={[{ ...baseBox, id: "outgoing-slide" }]}
+      />,
+    );
+
+    expect(screen.getByTestId("current-local-video-layer")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-prev")).toHaveAttribute(
+      "data-box-id",
+      "outgoing-slide",
+    );
   });
 
   it("renders display boxes and mounts background HLS player when video background is active", async () => {

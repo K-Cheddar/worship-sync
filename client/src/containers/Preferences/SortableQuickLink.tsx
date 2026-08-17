@@ -7,7 +7,10 @@ import QuickLink from "./QuickLink";
 
 type SortableQuickLinkProps = QuickLinkType & {
   removeQuickLink: () => void;
-  updateQuickLink: (key: keyof QuickLinkType, value: any) => void;
+  updateQuickLink: (
+    keyOrPatch: keyof QuickLinkType | Partial<QuickLinkType>,
+    value?: any,
+  ) => void;
   isMobile?: boolean;
   isSelected: boolean;
   setSelectedQuickLink: () => void;

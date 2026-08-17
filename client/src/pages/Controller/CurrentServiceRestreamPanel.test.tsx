@@ -115,6 +115,32 @@ describe("CurrentServiceRestreamPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides the YouTube composer when the live stream is not connected", () => {
+    mockUseRestreamSession.mockReturnValue(
+      buildRestreamState({
+        session: {
+          ...session,
+          connected: false,
+          connectionState: "disconnected",
+          connectionIssues: ["YouTube: Main Channel (event not started)"],
+        },
+      }),
+    );
+
+    render(
+      <CurrentServiceRestreamPanel
+        churchId="church-1"
+        youtubeConnected
+        youtubeAccountLabel="Church Live"
+        showToast={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Post to YouTube Church Live" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers a retry when Restream cannot load", async () => {
     const user = userEvent.setup();
     const reload = jest.fn().mockResolvedValue(undefined);

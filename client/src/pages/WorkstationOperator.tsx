@@ -27,7 +27,9 @@ const WorkstationOperator = () => {
   // Refocus the input whenever this window regains focus so the user doesn't have to click.
   useEffect(() => {
     const refocusInput = () => {
-      const input = document.getElementById("operator-name") as HTMLInputElement | null;
+      const input = document.getElementById(
+        "operator-name",
+      ) as HTMLInputElement | null;
       input?.focus();
     };
     window.addEventListener("focus", refocusInput);
@@ -41,15 +43,13 @@ const WorkstationOperator = () => {
   const loginState = context?.loginState;
   const unlinkCurrentWorkstation = context?.unlinkCurrentWorkstation;
 
-  if (
-    !context ||
-    bootstrapStatus === "loading" ||
-    loginState === "loading"
-  ) {
+  if (!context || bootstrapStatus === "loading" || loginState === "loading") {
     return (
       <AuthScreenMain>
         <div className="max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-8 text-center">
-          <h1 className="text-2xl font-semibold">Preparing this workstation...</h1>
+          <h1 className="text-2xl font-semibold">
+            Preparing this workstation...
+          </h1>
           <p className="mt-3 text-sm text-gray-200">
             Please wait while WorshipSync validates this session.
           </p>
@@ -78,11 +78,7 @@ const WorkstationOperator = () => {
     setIsSaving(true);
     try {
       const token = getWorkstationToken();
-      await updateWorkstationOperator(
-        deviceId,
-        operatorName.trim(),
-        token
-      );
+      await updateWorkstationOperator(deviceId, operatorName.trim(), token);
       context?.setOperatorName(operatorName.trim());
       const routeContext = {
         loginState: context.loginState,
@@ -90,15 +86,14 @@ const WorkstationOperator = () => {
         access: context.access,
         operatorName: operatorName.trim(),
         displaySurfaceType: context.device?.surfaceType,
+        displayOutputId: context.device?.outputId,
       };
       const requestedTo = getAuthRedirectToFromState(location.state);
       const requestedPathOnly = requestedTo?.includes("?")
         ? requestedTo.slice(0, requestedTo.indexOf("?"))
         : requestedTo;
       const redirectAfterOperator =
-        requestedPathOnly === "/workstation/operator"
-          ? undefined
-          : requestedTo;
+        requestedPathOnly === "/workstation/operator" ? undefined : requestedTo;
       const nextPath = getAllowedRouteOrDefault(
         redirectAfterOperator,
         routeContext,
@@ -106,7 +101,9 @@ const WorkstationOperator = () => {
       navigate(nextPath, { replace: true });
     } catch (error) {
       setBannerError(
-        error instanceof Error ? error.message : "Could not save the operator name"
+        error instanceof Error
+          ? error.message
+          : "Could not save the operator name",
       );
     } finally {
       setIsSaving(false);
@@ -130,7 +127,8 @@ const WorkstationOperator = () => {
             {deviceLabel ? (
               <>
                 {" "}
-                · Device: <span className="font-medium text-white">{deviceLabel}</span>
+                · Device:{" "}
+                <span className="font-medium text-white">{deviceLabel}</span>
               </>
             ) : null}
           </p>
@@ -168,8 +166,8 @@ const WorkstationOperator = () => {
         {unlinkCurrentWorkstation ? (
           <div className="mt-6 border-t border-gray-600 pt-4">
             <p className="text-xs text-gray-400">
-              Only unlink if this computer should no longer be a shared workstation for your
-              church.
+              Only unlink if this computer should no longer be a shared
+              workstation for your church.
             </p>
             <Button
               type="button"

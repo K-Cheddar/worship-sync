@@ -15,7 +15,7 @@ jest.mock("firebase/database", () => ({
   onValue: (
     _ref: { path: string },
     success: Listener["success"],
-    error: Listener["error"]
+    error: Listener["error"],
   ) => {
     listeners.push({ success, error });
     return unsubscribe;
@@ -48,7 +48,7 @@ describe("useFirebaseValueWithRetry", () => {
   it("does not subscribe while disabled (auth not ready)", () => {
     const onData = jest.fn();
     renderHook(() =>
-      useFirebaseValueWithRetry({ ...baseArgs, enabled: false, onData })
+      useFirebaseValueWithRetry({ ...baseArgs, enabled: false, onData }),
     );
     expect(listeners).toHaveLength(0);
     expect(onData).not.toHaveBeenCalled();
@@ -79,6 +79,20 @@ describe("useFirebaseValueWithRetry", () => {
     // The retried listener now succeeds and data flows.
     act(() => flushSnapshot([{ id: "t1" }]));
     expect(onData).toHaveBeenCalledWith([{ id: "t1" }], expect.anything());
+  });
+
+  it("re-attaches when resyncKey changes while still enabled", () => {
+    const onData = jest.fn();
+    const { rerender } = renderHook(
+      ({ resyncKey }) =>
+        useFirebaseValueWithRetry({ ...baseArgs, onData, resyncKey }),
+      { initialProps: { resyncKey: 0 } },
+    );
+
+    expect(listeners).toHaveLength(1);
+    rerender({ resyncKey: 1 });
+    expect(listeners).toHaveLength(2);
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
   it("does not retry on non-permission errors", () => {

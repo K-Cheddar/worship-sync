@@ -10,6 +10,7 @@ import allItemsReducer, {
   setSongSearchValue,
   setFreeFormSearchValue,
   setTimerSearchValue,
+  attachCloudCopyToLocalImageInAllItems,
 } from "./allItemsSlice";
 import { createServiceItem } from "../test/fixtures";
 
@@ -117,6 +118,43 @@ describe("allItemsSlice", () => {
         expect.objectContaining({ _id: "i2", name: "Keep" }),
       ]);
     });
+  });
+
+  it("adds a cloud fallback to a saved local image row", () => {
+    const store = createStore();
+    store.dispatch(
+      addItemToAllItemsList(
+        createServiceItem({
+          name: "Welcome",
+          _id: "image-1",
+          localImage: {
+            id: "asset-1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "Booth PC",
+            fileName: "Welcome.png",
+            contentType: "image/png",
+            storagePolicy: "local-only",
+          },
+        }),
+      ),
+    );
+
+    store.dispatch(
+      attachCloudCopyToLocalImageInAllItems({
+        itemId: "image-1",
+        assetId: "asset-1",
+        mediaId: "media-1",
+        url: "https://res.cloudinary.com/example/welcome.png",
+      }),
+    );
+
+    expect(store.getState().allItems.list[0].localImage).toEqual(
+      expect.objectContaining({
+        storagePolicy: "local-and-cloud",
+        cloudMediaId: "media-1",
+        cloudUrl: "https://res.cloudinary.com/example/welcome.png",
+      }),
+    );
   });
 
   describe("setIsInitialized", () => {

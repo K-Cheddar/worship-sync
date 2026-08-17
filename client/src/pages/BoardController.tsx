@@ -1,5 +1,12 @@
 import type { CSSProperties } from "react";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import cn from "classnames";
 import {
   Eye,
@@ -66,12 +73,7 @@ import {
   updateBoardPostHidden,
   updateBoardPostHighlighted,
 } from "../boards/api";
-import {
-  DBBoard,
-  DBBoardAlias,
-  DBBoardPost,
-  RestreamMessage,
-} from "../types";
+import { DBBoard, DBBoardAlias, DBBoardPost, RestreamMessage } from "../types";
 import { BoardControllerMenu } from "../boards/BoardControllerMenu";
 import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
 import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
@@ -82,9 +84,7 @@ import {
   filterRestreamMessagesForDisplay,
   RestreamActivityCard,
 } from "../boards/BoardRestreamTabContent";
-import {
-  useRestreamSession,
-} from "../boards/useRestreamSession";
+import { useRestreamSession } from "../boards/useRestreamSession";
 
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
@@ -191,7 +191,9 @@ const getSelectedAliasViewData = async (
   alias: DBBoardAlias,
   selectedBoardId: string,
 ) => {
-  const boardIds = Array.from(new Set([alias.currentBoardId, ...alias.history]));
+  const boardIds = Array.from(
+    new Set([alias.currentBoardId, ...alias.history]),
+  );
   const boardIdToView =
     selectedBoardId && boardIds.includes(selectedBoardId)
       ? selectedBoardId
@@ -293,7 +295,10 @@ export const BoardControllerContent = () => {
     const nextAliases = await getSafeAliasDocs(db, database);
     setAliases(nextAliases);
     setSelectedAliasId((currentAliasId) => {
-      if (currentAliasId && nextAliases.some((alias) => alias.aliasId === currentAliasId)) {
+      if (
+        currentAliasId &&
+        nextAliases.some((alias) => alias.aliasId === currentAliasId)
+      ) {
         return currentAliasId;
       }
       return nextAliases[0]?.aliasId || "";
@@ -314,7 +319,9 @@ export const BoardControllerContent = () => {
     const requestId = ++loadRequestIdRef.current;
     setIsLoading(true);
     try {
-      const alias = (await db.get(getAliasDocId(selectedAliasId))) as DBBoardAlias;
+      const alias = (await db.get(
+        getAliasDocId(selectedAliasId),
+      )) as DBBoardAlias;
       const nextViewData = await getSelectedAliasViewData(
         db,
         alias,
@@ -380,16 +387,24 @@ export const BoardControllerContent = () => {
               return sortBoardPostsAscending([...prev, updated]);
             });
           }
-        } else if (!change.deleted && change.doc && change.id.startsWith("alias:")) {
+        } else if (
+          !change.deleted &&
+          change.doc &&
+          change.id.startsWith("alias:")
+        ) {
           const updatedAlias = change.doc as unknown as DBBoardAlias;
           setAliases((prev) => {
-            const idx = prev.findIndex((a) => a.aliasId === updatedAlias.aliasId);
+            const idx = prev.findIndex(
+              (a) => a.aliasId === updatedAlias.aliasId,
+            );
             if (idx !== -1) {
               const next = [...prev];
               next[idx] = updatedAlias;
               return next;
             }
-            return [...prev, updatedAlias].sort((a, b) => a.title.localeCompare(b.title));
+            return [...prev, updatedAlias].sort((a, b) =>
+              a.title.localeCompare(b.title),
+            );
           });
           if (selectedAliasIdRef.current === updatedAlias.aliasId) {
             const selectedBoardId = selectedBoardIdRef.current;
@@ -415,7 +430,10 @@ export const BoardControllerContent = () => {
                   nextViewData.currentBoardHighlightedCount,
                 );
               } catch (error) {
-                console.warn("Board link is not ready in local sync yet:", error);
+                console.warn(
+                  "Board link is not ready in local sync yet:",
+                  error,
+                );
               }
             })();
           }
@@ -450,7 +468,8 @@ export const BoardControllerContent = () => {
     : undefined;
   const boardIdToView = selectedBoardId || selectedAlias?.currentBoardId || "";
   boardIdToViewRef.current = boardIdToView;
-  const isViewingCurrent = !selectedBoardId || isCurrentBoardView(selectedAlias, selectedBoardId);
+  const isViewingCurrent =
+    !selectedBoardId || isCurrentBoardView(selectedAlias, selectedBoardId);
   const publicBoardUrl = selectedAlias
     ? buildBoardPublicUrl(selectedAlias.aliasId, "board")
     : "";
@@ -496,7 +515,9 @@ export const BoardControllerContent = () => {
         pullFromRemote?.();
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Could not complete that action.";
+          error instanceof Error
+            ? error.message
+            : "Could not complete that action.";
         showToast(message, "error");
       } finally {
         setIsActing(false);
@@ -535,7 +556,10 @@ export const BoardControllerContent = () => {
       await reloadRestreamSession();
       setSelectedBoardId("");
       setCombinedResetConfirmOpen(false);
-      showToast("Started a fresh session and cleared Restream chat.", "success");
+      showToast(
+        "Started a fresh session and cleared Restream chat.",
+        "success",
+      );
       pullFromRemote?.();
     } catch (error) {
       showToast(
@@ -545,7 +569,13 @@ export const BoardControllerContent = () => {
         "error",
       );
     }
-  }, [selectedAlias, churchId, reloadRestreamSession, showToast, pullFromRemote]);
+  }, [
+    selectedAlias,
+    churchId,
+    reloadRestreamSession,
+    showToast,
+    pullFromRemote,
+  ]);
 
   // Prompt (never force) a fresh start when either the current board or
   // Restream chat only holds content from an earlier day. Wait for both sources
@@ -556,16 +586,14 @@ export const BoardControllerContent = () => {
     if (isLoading || isRestreamSessionLoading) return;
 
     const boardIsStale =
-      isViewingCurrent &&
-      !!currentBoard &&
-      boardHasOnlyPreviousDayPosts(posts);
+      isViewingCurrent && !!currentBoard && boardHasOnlyPreviousDayPosts(posts);
     const staleBoardId = boardIsStale ? currentBoard!.id : "";
     const promptBoard =
       !!staleBoardId &&
       !promptedFreshSessionBoardIdsRef.current.has(staleBoardId);
 
     const staleSessionId = isRestreamChatFromPreviousDay(restreamSessionData)
-      ? restreamSessionData?.sessionId ?? ""
+      ? (restreamSessionData?.sessionId ?? "")
       : "";
     const promptRestream =
       !!staleSessionId &&
@@ -619,12 +647,17 @@ export const BoardControllerContent = () => {
       optimisticFn: (post: DBBoardPost) => DBBoardPost,
     ) => {
       setActingPostIds((prev) => new Set([...prev, postId]));
-      setPosts((prev) => prev.map((p) => (p._id === postId ? optimisticFn(p) : p)));
+      setPosts((prev) =>
+        prev.map((p) => (p._id === postId ? optimisticFn(p) : p)),
+      );
       try {
         await action();
       } catch (error) {
         void loadSelectedAlias();
-        const message = error instanceof Error ? error.message : "Could not complete that action.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Could not complete that action.";
         showToast(message, "error");
       } finally {
         setActingPostIds((prev) => {
@@ -641,11 +674,17 @@ export const BoardControllerContent = () => {
     (newScale: number) => {
       if (!selectedAlias) return;
       const prevScale = selectedAlias.presentationFontScale;
-      setSelectedAlias((prev) => prev ? { ...prev, presentationFontScale: newScale } : prev);
-      void updateBoardPresentationFontScale(selectedAlias.aliasId, newScale)
-        .catch(() => {
-          setSelectedAlias((prev) => prev ? { ...prev, presentationFontScale: prevScale } : prev);
-        });
+      setSelectedAlias((prev) =>
+        prev ? { ...prev, presentationFontScale: newScale } : prev,
+      );
+      void updateBoardPresentationFontScale(
+        selectedAlias.aliasId,
+        newScale,
+      ).catch(() => {
+        setSelectedAlias((prev) =>
+          prev ? { ...prev, presentationFontScale: prevScale } : prev,
+        );
+      });
     },
     [selectedAlias],
   );
@@ -679,7 +718,9 @@ export const BoardControllerContent = () => {
   const handleBoardRenamed = useCallback((updated: DBBoardAlias) => {
     setAliases((current) =>
       current.map((alias) =>
-        alias.aliasId === updated.aliasId ? { ...alias, title: updated.title } : alias,
+        alias.aliasId === updated.aliasId
+          ? { ...alias, title: updated.title }
+          : alias,
       ),
     );
     setSelectedAlias((current) =>
@@ -738,16 +779,11 @@ export const BoardControllerContent = () => {
     [liveActivityItems],
   );
   const stickToBottomResetKey = `${selectedAliasId}:${boardIdToView}:${restreamSession.session?.sessionId ?? ""}`;
-  const {
-    scrollRef,
-    endRef,
-    onScroll,
-    isPinnedToBottom,
-    scrollToBottom,
-  } = useStickToBottomScroll({
-    scrollTrigger: liveActivityScrollTrigger,
-    resetKey: stickToBottomResetKey,
-  });
+  const { scrollRef, endRef, onScroll, isPinnedToBottom, scrollToBottom } =
+    useStickToBottomScroll({
+      scrollTrigger: liveActivityScrollTrigger,
+      resetKey: stickToBottomResetKey,
+    });
   const previousLiveActivityScrollTriggerRef = useRef<string | null>(null);
   const [hasNewActivity, setHasNewActivity] = useState(false);
 
@@ -766,7 +802,8 @@ export const BoardControllerContent = () => {
   useEffect(() => {
     if (isPinnedToBottom) setHasNewActivity(false);
   }, [isPinnedToBottom]);
-  const renameAlias = aliases.find((alias) => alias.aliasId === renameAliasId) ?? null;
+  const renameAlias =
+    aliases.find((alias) => alias.aliasId === renameAliasId) ?? null;
   const showBoardDiscussionComposer =
     Boolean(selectedAliasId) &&
     isViewingCurrent &&
@@ -775,7 +812,8 @@ export const BoardControllerContent = () => {
   const showYouTubeChatComposer =
     showBoardDiscussionComposer &&
     Boolean(churchId) &&
-    Boolean(churchIntegrations?.youtube?.connected);
+    Boolean(churchIntegrations?.youtube?.connected) &&
+    Boolean(restreamSession.session?.connected);
 
   let boardSyncEmptyTitle = "Connecting discussion board data…";
   let boardSyncEmptyDescription = "Loading the latest posts from the server.";
@@ -790,11 +828,28 @@ export const BoardControllerContent = () => {
     boardSyncEmptyDescription = "This page will keep trying automatically.";
   }
 
+  const restreamConnectionIssues = Array.from(
+    new Set(
+      (restreamSession.session?.connectionIssues || [])
+        .map((issue) => String(issue || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const restreamLastError = String(
+    restreamSession.session?.lastError || "",
+  ).trim();
+  // Server mirrors the first connection issue into lastError — show one line only.
+  const restreamStatusError =
+    restreamConnectionIssues.length > 0
+      ? `Connection issues: ${restreamConnectionIssues.join(" · ")}`
+      : restreamLastError;
+
   const restreamStatusItems = (
     <>
       {restreamSession.isOffline ? (
         <p className="text-xs text-amber-100/90">
-          You appear to be offline. Live messages may not update until you reconnect.
+          You appear to be offline. Live messages may not update until you
+          reconnect.
         </p>
       ) : null}
       {restreamSession.session?.streamTitle ? (
@@ -810,22 +865,8 @@ export const BoardControllerContent = () => {
           Restream is not configured yet.
         </p>
       ) : null}
-      {restreamSession.session?.connectionIssues?.length ? (
-        <div className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-100/90">
-            Connection issues
-          </p>
-          <div className="mt-2 space-y-1 text-xs text-amber-100/90">
-            {restreamSession.session.connectionIssues.map((issue) => (
-              <p key={issue}>{issue}</p>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {restreamSession.session?.lastError ? (
-        <p className="text-xs text-amber-100/90">
-          {restreamSession.session.lastError}
-        </p>
+      {restreamStatusError ? (
+        <p className="text-xs text-gray-400">{restreamStatusError}</p>
       ) : null}
       {restreamSession.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-gray-300">
@@ -844,7 +885,8 @@ export const BoardControllerContent = () => {
         <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-3 text-sm">
           <p className="font-semibold">Restream is not connected.</p>
           <p className="mt-1 text-gray-300">
-            Ask a church admin to connect Restream in Church administration under Integrations.
+            Ask a church admin to connect Restream in Church administration
+            under Integrations.
           </p>
         </div>
       ) : null}
@@ -854,8 +896,7 @@ export const BoardControllerContent = () => {
     restreamSession.isOffline ||
     Boolean(restreamSession.session?.streamTitle) ||
     !restreamSession.oauthConfigured ||
-    Boolean(restreamSession.session?.connectionIssues?.length) ||
-    Boolean(restreamSession.session?.lastError) ||
+    Boolean(restreamStatusError) ||
     restreamSession.isLoading ||
     Boolean(restreamSession.error) ||
     (!restreamSession.isLoading &&
@@ -979,7 +1020,8 @@ export const BoardControllerContent = () => {
                           onClick={() => {
                             void runPostAction(
                               post._id,
-                              () => updateBoardPostHidden(post._id, !post.hidden),
+                              () =>
+                                updateBoardPostHidden(post._id, !post.hidden),
                               (p) => ({ ...p, hidden: !p.hidden }),
                             );
                           }}
@@ -1012,12 +1054,7 @@ export const BoardControllerContent = () => {
                       </div>
                     )}
                   </div>
-                  <div
-                    className={cn(
-                      "min-w-0",
-                      post.deleted && "opacity-80",
-                    )}
-                  >
+                  <div className={cn("min-w-0", post.deleted && "opacity-80")}>
                     <BoardPostMessage
                       text={post.text}
                       isMine={false}
@@ -1031,7 +1068,7 @@ export const BoardControllerContent = () => {
         )}
         <div ref={endRef} className="h-px shrink-0" aria-hidden />
       </div>
-      {(showYouTubeChatComposer || showBoardDiscussionComposer) ? (
+      {showYouTubeChatComposer || showBoardDiscussionComposer ? (
         <div className="sticky bottom-0 z-10 shrink-0 space-y-2">
           {showYouTubeChatComposer ? (
             <BoardYouTubeChatComposer
@@ -1095,7 +1132,9 @@ export const BoardControllerContent = () => {
             void runAction(async () => {
               await deleteBoardAlias(deleteAlias.aliasId);
               setAliases((current) =>
-                current.filter((alias) => alias.aliasId !== deleteAlias.aliasId),
+                current.filter(
+                  (alias) => alias.aliasId !== deleteAlias.aliasId,
+                ),
               );
               if (selectedAliasId === deleteAlias.aliasId) {
                 setSelectedAliasId("");
@@ -1377,7 +1416,9 @@ export const BoardControllerContent = () => {
 
           {db && !selectedAlias && !isLoading && (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-              <p className="text-lg font-semibold">Create a board to get started.</p>
+              <p className="text-lg font-semibold">
+                Create a board to get started.
+              </p>
               <p className="max-w-sm text-sm text-gray-300">
                 Use the create form to add your first discussion board.
               </p>
@@ -1409,7 +1450,9 @@ export const BoardControllerContent = () => {
             className="flex w-88 min-h-0 shrink-0 flex-col border-l-2 border-gray-500 bg-gray-800 p-4"
             aria-label="Board tools"
           >
-            <div className={cn("flex min-h-0 flex-1 flex-col", BOARD_PANEL_CARD)}>
+            <div
+              className={cn("flex min-h-0 flex-1 flex-col", BOARD_PANEL_CARD)}
+            >
               <div className={BOARD_PANEL_HEADER}>
                 <h2 className="text-base font-semibold">Board tools</h2>
               </div>

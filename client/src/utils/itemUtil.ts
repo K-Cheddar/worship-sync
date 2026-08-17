@@ -506,6 +506,7 @@ type CreateNewFreeFormType = {
   /** When true, first slide body stays empty (no `text || name` fallback). */
   emptyBodyText?: boolean;
   shouldSendTo?: ShouldSendTo;
+  shouldKeepAspectRatio?: boolean;
 };
 
 export const createNewFreeForm = async ({
@@ -519,6 +520,7 @@ export const createNewFreeForm = async ({
   overflow = "fit",
   emptyBodyText = false,
   shouldSendTo,
+  shouldKeepAspectRatio,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
   const bodyWords: [string, string] = emptyBodyText
@@ -543,6 +545,7 @@ export const createNewFreeForm = async ({
         mediaInfo,
         brightness,
         overflow,
+        shouldKeepAspectRatio,
       }),
     ],
     arrangements: [],
@@ -702,7 +705,7 @@ export const createNewItemInDb = async ({
       { ...item, createdAt: now, updatedAt: now },
       { isNew: true },
     );
-    db.put(doc);
+    await db.put(doc);
     return item;
   }
 };

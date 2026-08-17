@@ -3,6 +3,7 @@ import type { Location } from "react-router-dom";
 const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/",
   "/home",
+  "/chat",
   "/account",
   "/login",
   "/invite",

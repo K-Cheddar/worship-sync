@@ -880,6 +880,8 @@ const ServiceItems = () => {
                 type={item.type}
                 id={item.listId}
                 image={item.background}
+                localImage={item.localImage}
+                localVideoFile={item.localVideoFile}
                 className="border-b-2 border-transparent overflow-hidden cursor-grabbing"
               />
             );

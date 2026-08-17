@@ -22,7 +22,7 @@ jest.mock("electron", () => ({
 }));
 
 describe("createDisplayWindow", () => {
-  it("disables background throttling so videos keep playing when unfocused", () => {
+  it("keeps media playing with sound when the display is unfocused", () => {
     createDisplayWindow({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       route: "/projector-full",
@@ -33,6 +33,7 @@ describe("createDisplayWindow", () => {
     expect(BrowserWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         webPreferences: expect.objectContaining({
+          autoplayPolicy: "no-user-gesture-required",
           backgroundThrottling: false,
         }),
       }),

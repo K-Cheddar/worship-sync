@@ -27,5 +27,5 @@
     },
     "types": ["vite/client", "dom-screen-wake-lock", "node"]
   },
-  "include": ["src", "custom.d.ts"]
+  "include": ["src", "electron", "custom.d.ts"]
 }

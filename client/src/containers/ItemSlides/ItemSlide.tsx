@@ -7,8 +7,12 @@ import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
 import { memo, useEffect, useRef } from "react";
+import { Video } from "lucide-react";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
+
+/** Stable empty list: a fresh [] re-renders every slide on any action. */
+const EMPTY_SLIDE_IDS: string[] = [];
 
 type ItemSlideProps = {
   slide: ItemSlideType;
@@ -61,7 +65,7 @@ const ItemSlide = ({
 }: ItemSlideProps) => {
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
-      state.undoable.present.item.backgroundTargetSlideIds ?? [],
+      state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
   );
   const mobileBackgroundTargetSelectMode = useSelector(
     (state: RootState) =>
@@ -99,10 +103,10 @@ const ItemSlide = ({
   const sectionStyle =
     isInDraggedSection && !isDragging
       ? {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: 0.5,
-      }
+          transform: CSS.Transform.toString(transform),
+          transition,
+          opacity: 0.5,
+        }
       : undefined;
 
   const LONG_PRESS_MS = 500;
@@ -159,10 +163,10 @@ const ItemSlide = ({
       className={cn(
         "cursor-pointer select-none w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
         !isDragging &&
-        "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
+          "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
         (isSelected || isBackgroundTargetSelected) && "border-cyan-500",
         !(isSelected || isBackgroundTargetSelected) && "border-transparent",
-        isInDraggedSection && "z-10"
+        isInDraggedSection && "z-10",
       )}
       id={`item-slide-${index}`}
     >
@@ -234,7 +238,7 @@ const ItemSlide = ({
           className={cn(
             "rounded-t-md truncate px-2 text-center flex w-full",
             hSize,
-            itemSectionBgColorMap.get(slide.type)
+            itemSectionBgColorMap.get(slide.type),
           )}
         >
           {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
@@ -271,21 +275,30 @@ const ItemSlide = ({
           formattedTextDisplayInfo={
             itemType === "free"
               ? {
-                text: slide.boxes[1]?.words?.trim() || "",
-                backgroundColor:
-                  slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-                textColor:
-                  slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-                isBold: slide.formattedTextDisplayInfo?.isBold || false,
-                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-                align: slide.formattedTextDisplayInfo?.align || "left",
-              }
+                  text: slide.boxes[1]?.words?.trim() || "",
+                  backgroundColor:
+                    slide.formattedTextDisplayInfo?.backgroundColor ||
+                    "#eb8934",
+                  textColor:
+                    slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+                  fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                  paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                  paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                  isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                  isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                  align: slide.formattedTextDisplayInfo?.align || "left",
+                }
               : undefined
           }
         />
+        {slide.mediaSource?.kind === "local-video-input" ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-6 flex flex-col items-center justify-center gap-1 bg-black/55 text-white">
+            <Video className="size-6" aria-hidden />
+            <span className="max-w-[90%] truncate text-[10px] font-medium">
+              {slide.mediaSource.label}
+            </span>
+          </div>
+        ) : null}
       </div>
     </li>
   );

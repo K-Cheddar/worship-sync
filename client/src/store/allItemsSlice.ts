@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
+import type { LocalImageReferencePatch } from "../utils/localImageAssets";
 
 type AllItems = {
   list: ServiceItem[];
@@ -53,6 +54,47 @@ export const allItemsSlice = createSlice({
       }
       state.list.push(action.payload);
     },
+    attachCloudCopyToLocalImageInAllItems: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        mediaId: string;
+        url: string;
+      }>,
+    ) => {
+      const item = state.list.find(
+        (candidate) => candidate._id === action.payload.itemId,
+      );
+      if (!item || item.localImage?.id !== action.payload.assetId) return;
+      item.localImage.storagePolicy = "local-and-cloud";
+      item.localImage.cloudMediaId = action.payload.mediaId;
+      item.localImage.cloudUrl = action.payload.url;
+    },
+    updateLocalImageReferenceInAllItems: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        patch: LocalImageReferencePatch;
+      }>,
+    ) => {
+      const item = state.list.find(
+        (candidate) => candidate._id === action.payload.itemId,
+      );
+      if (
+        !item ||
+        item.localImage?.id !== action.payload.assetId ||
+        !action.payload.patch.reference
+      ) {
+        return;
+      }
+      item.localImage = {
+        ...item.localImage,
+        ...action.payload.patch.reference,
+        id: action.payload.assetId,
+      };
+    },
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
@@ -79,6 +121,8 @@ export const {
   setSongSearchValue,
   setFreeFormSearchValue,
   setTimerSearchValue,
+  attachCloudCopyToLocalImageInAllItems,
+  updateLocalImageReferenceInAllItems,
 } = allItemsSlice.actions;
 
 export default allItemsSlice.reducer;

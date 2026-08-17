@@ -1,14 +1,18 @@
 import Toggle from "../../components/Toggle/Toggle";
 import { LayoutGrid } from "lucide-react";
 import cn from "classnames";
-import MediaTypeFilter from "./MediaTypeFilter";
+import MediaOriginFilter from "./MediaOriginFilter";
+import MediaTypeFilter, { type MediaTypeFilterValue } from "./MediaTypeFilter";
+import type { MediaOriginFilterValue } from "./mediaLibraryOrigin";
 
 type MediaLibraryToolbarProps = {
   className?: string;
   showAll: boolean;
   onShowAllChange: (next: boolean) => void;
-  typeFilter: "all" | "image" | "video";
-  onTypeFilterChange: (v: "all" | "image" | "video") => void;
+  typeFilter: MediaTypeFilterValue;
+  onTypeFilterChange: (v: MediaTypeFilterValue) => void;
+  originFilter: MediaOriginFilterValue;
+  onOriginFilterChange: (v: MediaOriginFilterValue) => void;
 };
 
 const MediaLibraryToolbar = ({
@@ -17,6 +21,8 @@ const MediaLibraryToolbar = ({
   onShowAllChange,
   typeFilter,
   onTypeFilterChange,
+  originFilter,
+  onOriginFilterChange,
 }: MediaLibraryToolbarProps) => (
   <div
     className={cn(
@@ -31,6 +37,11 @@ const MediaLibraryToolbar = ({
       onChange={onShowAllChange}
     />
     <MediaTypeFilter value={typeFilter} onChange={onTypeFilterChange} />
+    <MediaOriginFilter
+      value={originFilter}
+      onChange={onOriginFilterChange}
+      className="w-40 shrink-0"
+    />
   </div>
 );
 

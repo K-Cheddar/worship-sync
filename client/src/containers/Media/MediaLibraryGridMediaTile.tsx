@@ -1,10 +1,14 @@
 import { useEffect, useRef, type MouseEvent } from "react";
+import { Film, Video } from "lucide-react";
 import Button from "../../components/Button/Button";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
 import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
 import MediaTypeBadge from "./MediaTypeBadge";
 import cn from "classnames";
 import type { MediaType } from "../../types";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import { getMediaLibraryOriginBadgeLabel } from "./mediaLibraryOrigin";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -16,7 +20,11 @@ export type MediaLibraryGridMediaTileProps = {
   isMultiSelected: boolean;
   /** When true, show a top-left selection ring / cyan check on the thumbnail. */
   mediaMultiSelectMode: boolean;
-  onMediaTileClick: (e: MouseEvent, mediaItem: MediaType, index: number) => void;
+  onMediaTileClick: (
+    e: MouseEvent,
+    mediaItem: MediaType,
+    index: number,
+  ) => void;
   onEnterMediaMultiSelectMode: (
     mediaItem: MediaType,
     index: number,
@@ -41,9 +49,18 @@ export default function MediaLibraryGridMediaTile({
   imageContainerClassName,
 }: MediaLibraryGridMediaTileProps) {
   const { id, thumbnail, name, type } = mediaItem;
+  const localImage = useLocalImageUrl(mediaItem.localImage, "thumbnail");
+  const localVideo = useLocalVideoFileUrl(mediaItem.localVideoFile, "thumbnail");
+  let resolvedThumbnail = thumbnail;
+  if (localImage.isLocalImage) {
+    resolvedThumbnail = localImage.url;
+  } else if (localVideo.isLocalVideoFile) {
+    resolvedThumbnail = localVideo.url;
+  }
   const shownName = name.includes("/")
     ? name.split("/").slice(1).join("/")
     : name;
+  const originBadgeLabel = getMediaLibraryOriginBadgeLabel(mediaItem);
 
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -129,13 +146,24 @@ export default function MediaLibraryGridMediaTile({
             isSelected={isMultiSelected}
             frameClassName="absolute left-1.5 top-1.5 z-10 size-5"
           />
-          <CachedMediaImage
-            className="max-w-full max-h-full"
-            alt={id}
-            src={thumbnail}
-            loading="lazy"
-          />
+          {resolvedThumbnail ? (
+            <CachedMediaImage
+              className="max-w-full max-h-full"
+              alt={id}
+              src={resolvedThumbnail}
+              loading="lazy"
+            />
+          ) : mediaItem.localVideoInput ? (
+            <Video className="size-8 text-neutral-400" aria-hidden />
+          ) : mediaItem.localVideoFile ? (
+            <Film className="size-8 text-neutral-400" aria-hidden />
+          ) : null}
           <MediaTypeBadge type={type} />
+          {originBadgeLabel ? (
+            <span className="absolute right-1.5 top-1.5 rounded bg-cyan-950/90 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100 ring-1 ring-cyan-500/60">
+              {originBadgeLabel}
+            </span>
+          ) : null}
         </div>
 
         {showBottomName && name ? (

@@ -95,6 +95,62 @@ type CalculateRemainingTimeParams = {
   previousStatus?: "running" | "paused" | "stopped";
 };
 
+/**
+ * How recently a timer must have ended for it to count as live.
+ *
+ * Generous enough to survive a slow render or a sync round trip, short enough
+ * that a stale timer from an earlier service is never treated as current.
+ */
+export const TIMER_EXPIRY_RECENCY_MS = 10_000;
+
+/**
+ * True when a timer is actually still counting.
+ *
+ * `status === "running"` is not enough on its own: a timer can sit in the store
+ * marked running with an endTime long past — left that way when the app closed
+ * mid-run, or before `tickTimers` gets a chance to auto-stop it. Deriving a
+ * remaining time from that endTime yields a large negative number that clamps to
+ * 0, which is how a stale timer painted a bare "0" the moment its item was
+ * selected. The recency window keeps a genuinely just-expired timer live so it
+ * can still show 0 and trigger wrap-up.
+ */
+export const isTimerLive = (
+  timer: TimerInfo | undefined,
+  now: number = serverNow(),
+): boolean => {
+  if (!timer || timer.status !== "running") return false;
+  // Running with no endTime can't be shown to be stale — take it at its word
+  // and let the stored remainingTime speak. Only a real endTime proves age.
+  if (!timer.endTime) return true;
+  return now - new Date(timer.endTime).getTime() <= TIMER_EXPIRY_RECENCY_MS;
+};
+
+/**
+ * True when a timer transitioned running → stopped because its endTime has
+ * passed. Used for wrap-up handoff; distinct from an early manual stop (endTime
+ * still in the future).
+ */
+export const didTimerJustExpire = (
+  previous: TimerInfo | undefined,
+  current: TimerInfo | undefined,
+  now: number = serverNow(),
+): boolean => {
+  if (!previous || !current) return false;
+  if (previous.id !== current.id) return false;
+  if (previous.status !== "running" || current.status !== "stopped") {
+    return false;
+  }
+  if (!current.endTime) return false;
+  const endedAt = new Date(current.endTime).getTime();
+  if (endedAt > now) return false;
+  // "Just" expired, not "expired at some point". A timer can be stored as
+  // running with an endTime already in the past — left that way from an earlier
+  // service, or rehydrated before it settles — and selecting its item makes it
+  // resolve to stopped. Without this window that replays as a live expiry and
+  // auto-advances the slide.
+  return now - endedAt <= TIMER_EXPIRY_RECENCY_MS;
+};
+
 export const calculateRemainingTime = ({
   timerInfo,
   previousStatus,

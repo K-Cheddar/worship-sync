@@ -1,14 +1,15 @@
 import { isElectronDisplayWindowOpen } from "./isElectronDisplayWindowOpen";
-import { getElectronDisplayWindowTypeFromPathname } from "./electronDisplayWindowFromPath";
+import { getElectronDisplayWindowKeyFromLocation } from "./electronDisplayWindowFromPath";
 
 describe("isElectronDisplayWindowOpen", () => {
+  // Window state is keyed by window key so any display output can have one.
   const states = {
-    projector: {},
-    monitor: {},
-    board: {},
-    projectorOpen: true,
-    monitorOpen: false,
-    boardOpen: true,
+    displays: {
+      projector: { isOpen: true },
+      monitor: { isOpen: false },
+      board: { isOpen: true },
+      out_lobby: { isOpen: true },
+    },
   };
 
   it("returns false outside Electron or without window state", () => {
@@ -21,22 +22,63 @@ describe("isElectronDisplayWindowOpen", () => {
     expect(isElectronDisplayWindowOpen(true, states, "monitor")).toBe(false);
     expect(isElectronDisplayWindowOpen(true, states, "board")).toBe(true);
   });
+
+  it("reports state for a window opened for a display output", () => {
+    expect(isElectronDisplayWindowOpen(true, states, "out_lobby")).toBe(true);
+  });
+
+  it("reports closed for a display this machine has never opened", () => {
+    expect(isElectronDisplayWindowOpen(true, states, "out_new")).toBe(false);
+  });
 });
 
-describe("getElectronDisplayWindowTypeFromPathname", () => {
+describe("getElectronDisplayWindowKeyFromLocation", () => {
   it("maps projector, monitor, and boards routes", () => {
-    expect(getElectronDisplayWindowTypeFromPathname("/projector")).toBe(
+    expect(getElectronDisplayWindowKeyFromLocation("/projector")).toBe(
       "projector",
     );
-    expect(getElectronDisplayWindowTypeFromPathname("/projector/full")).toBe(
+    expect(getElectronDisplayWindowKeyFromLocation("/projector/full")).toBe(
       "projector",
     );
-    expect(getElectronDisplayWindowTypeFromPathname("/monitor")).toBe(
+    expect(getElectronDisplayWindowKeyFromLocation("/monitor")).toBe(
       "monitor",
     );
-    expect(getElectronDisplayWindowTypeFromPathname("/boards/abc")).toBe(
+    expect(getElectronDisplayWindowKeyFromLocation("/boards/abc")).toBe(
       "board",
     );
-    expect(getElectronDisplayWindowTypeFromPathname("/controller")).toBeNull();
+    expect(getElectronDisplayWindowKeyFromLocation("/controller")).toBeNull();
+  });
+});
+
+describe("closing the window a display route belongs to", () => {
+  it("uses the display named in the route, not just the surface", () => {
+    expect(
+      getElectronDisplayWindowKeyFromLocation(
+        "/projector-full",
+        "?output=out_lobby",
+      ),
+    ).toBe("out_lobby");
+  });
+
+  it("falls back to the surface when the route names no display", () => {
+    expect(getElectronDisplayWindowKeyFromLocation("/projector-full")).toBe(
+      "projector",
+    );
+  });
+
+  it("covers stream windows, which had no mapping at all", () => {
+    expect(
+      getElectronDisplayWindowKeyFromLocation("/stream", "?output=stream_b"),
+    ).toBe("stream_b");
+  });
+
+  it("ignores an output id that could not be a window key", () => {
+    expect(
+      getElectronDisplayWindowKeyFromLocation("/monitor", "?output=../../etc"),
+    ).toBe("monitor");
+  });
+
+  it("still reports nothing for a non-display route", () => {
+    expect(getElectronDisplayWindowKeyFromLocation("/controller")).toBeNull();
   });
 });

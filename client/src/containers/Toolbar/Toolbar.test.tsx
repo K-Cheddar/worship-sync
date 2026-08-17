@@ -177,11 +177,11 @@ const renderToolbarOverlay = ({
 }: {
   access: "full" | "music" | "view";
   overlayPanel?:
-    | "overlays"
-    | "boardPosts"
-    | "overlaysAndPosts"
-    | "credits"
-    | "serviceTimes";
+  | "overlays"
+  | "boardPosts"
+  | "overlaysAndPosts"
+  | "credits"
+  | "serviceTimes";
 }) => {
   mockState = {
     undoable: {
@@ -246,14 +246,14 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides quick links and monitor settings for music access", () => {
+  it("hides quick links and displays for music access", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
     expect(
       screen.queryByRole("button", { name: "Quick Links" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Monitor Settings" }),
+      screen.queryByRole("button", { name: "Displays" }),
     ).not.toBeInTheDocument();
   });
 

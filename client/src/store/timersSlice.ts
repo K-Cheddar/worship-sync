@@ -345,13 +345,18 @@ export const timersSlice = createSlice({
           const endTime = new Date(timer.endTime).getTime();
           const now = serverNow();
           const remainingSeconds = Math.floor((endTime - now) / 1000);
-          timer.remainingTime = Math.max(0, remainingSeconds);
 
-          // Auto-stop timer when it completes (remainingTime reaches 0)
-          if (timer.remainingTime === 0) {
+          // Auto-stop when endTime has passed. Restore duration (same as an
+          // explicit stop) so persisted / Quick Link state is not stuck at 0;
+          // wrap-up is keyed off the running → stopped transition, not 0.
+          if (remainingSeconds <= 0) {
             timer.status = "stopped";
             timer.isActive = false;
+            timer.remainingTime =
+              timer.timerType === "timer" ? timer.duration || 0 : 0;
             didAutoStop = true;
+          } else {
+            timer.remainingTime = remainingSeconds;
           }
         }
       });

@@ -1,4 +1,4 @@
-import { isChatDisplaySurface } from "./ChatContext";
+import { isChatDisplaySurface, isChatPageRoute } from "./ChatContext";
 
 describe("isChatDisplaySurface", () => {
   it.each([
@@ -20,4 +20,11 @@ describe("isChatDisplaySurface", () => {
       expect(isChatDisplaySurface(pathname)).toBe(false);
     },
   );
+});
+
+describe("isChatPageRoute", () => {
+  it("matches only the dedicated chat page", () => {
+    expect(isChatPageRoute("/chat")).toBe(true);
+    expect(isChatPageRoute("/home")).toBe(false);
+  });
 });

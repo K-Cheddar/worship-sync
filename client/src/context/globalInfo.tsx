@@ -119,6 +119,7 @@ import {
 } from "../firebase/apps";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
+import { withBootstrapTimeout } from "../utils/bootstrapTimeout";
 import { backoff } from "../utils/generalUtils";
 import {
   isElectron,
@@ -671,6 +672,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     projectorInfo: Unsubscribe | undefined;
     monitorInfo: Unsubscribe | undefined;
     streamInfo: Unsubscribe | undefined;
+    outputs: Unsubscribe | undefined;
     stream_bibleInfo: Unsubscribe | undefined;
     stream_participantOverlayInfo: Unsubscribe | undefined;
     stream_stbOverlayInfo: Unsubscribe | undefined;
@@ -686,6 +688,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     projectorInfo: undefined,
     monitorInfo: undefined,
     streamInfo: undefined,
+    outputs: undefined,
     stream_bibleInfo: undefined,
     stream_participantOverlayInfo: undefined,
     stream_stbOverlayInfo: undefined,
@@ -1164,6 +1167,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.streamInfo,
           updateAction: "debouncedUpdateStream",
         },
+        // Outputs created after the display registry. Built-ins keep travelling
+        // in the flat keys above so older clients stay live during rollout.
+        outputs: {
+          info: data.outputs,
+          updateAction: "debouncedUpdateOutputs",
+        },
         stream_bibleInfo: {
           info: data.stream_bibleInfo,
           updateAction: "debouncedUpdateBibleDisplayInfo",
@@ -1200,6 +1209,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.monitorBoardAliasId,
           updateAction: "debouncedUpdateMonitorBoardAliasId",
         },
+        projectorBoardAliasId: {
+          info: data.projectorBoardAliasId,
+          updateAction: "debouncedUpdateProjectorBoardAliasId",
+        },
         timerInfo: {
           info: data.timerInfo,
           updateAction: "debouncedUpdateTimerInfo",
@@ -1220,10 +1233,22 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         // mode off) — for those, skip only when the value is truly absent.
         const propagateWhenFalsy =
           _key === "stream_itemContentBlocked" ||
-          _key === "monitorBoardAliasId";
+          _key === "monitorBoardAliasId" ||
+          _key === "projectorBoardAliasId";
         if (propagateWhenFalsy ? info === undefined : !info) continue;
+        // The blocked flag travels with its stamp so the reducer can reject a
+        // stale republish rather than switching Hide Content off underneath the
+        // operator who set it.
         const payload =
-          _key === "stream_itemContentBlocked" ? Boolean(info) : info;
+          _key === "stream_itemContentBlocked"
+            ? {
+                value: Boolean(info),
+                time:
+                  typeof data.stream_itemContentBlockedTime === "number"
+                    ? data.stream_itemContentBlockedTime
+                    : undefined,
+              }
+            : info;
         dispatch({ type: updateAction, payload });
       }
     },
@@ -1335,10 +1360,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         for (let attempt = 0; attempt <= MAX_INITIAL_SESSION_RETRIES; attempt++) {
           try {
-            bootstrap = await getAuthBootstrap({
-              workstationToken: getWorkstationToken(),
-              displayToken: getDisplayToken(),
-            });
+            // Bounded: a request that hangs rather than fails would otherwise
+            // leave this promise unsettled, and everything below — including
+            // the `finally` that ends the loading state — never runs. A display
+            // then sits on its blank placeholder indefinitely.
+            bootstrap = await withBootstrapTimeout(
+              getAuthBootstrap({
+                workstationToken: getWorkstationToken(),
+                displayToken: getDisplayToken(),
+              }),
+            );
             setAuthServerStatus("online");
             setAuthServerRetryCount(0);
             bootstrapError = null;
@@ -1445,6 +1476,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     })();
 
     refreshAuthBootstrapPromiseRef.current = promise;
+    // Cleared from the promise itself, not from whoever happens to await it. A
+    // caller that goes away — a hot reload swapping this module, an unmount —
+    // used to leave the guard set forever, and every later attempt then awaited
+    // a promise that could never settle.
+    void promise.finally(() => {
+      if (refreshAuthBootstrapPromiseRef.current === promise) {
+        refreshAuthBootstrapPromiseRef.current = null;
+      }
+    });
     try {
       await promise;
     } finally {

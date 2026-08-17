@@ -61,12 +61,12 @@ describe("WorkstationPair", () => {
             />
           </Routes>
         </MemoryRouter>
-      </GlobalInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
     );
 
     await userEvent.type(
       screen.getByRole("textbox", { name: /link code/i }),
-      "ABC123"
+      "ABC123",
     );
     await userEvent.click(screen.getByRole("button", { name: "Link device" }));
 
@@ -74,13 +74,13 @@ describe("WorkstationPair", () => {
     expect(refreshAuthBootstrap).toHaveBeenCalled();
     expect(localStorage.getItem("worshipsync_display_token")).toBeNull();
     expect(localStorage.getItem("worshipsync_workstation_token")).toBe(
-      "workstation-token-1"
+      "workstation-token-1",
     );
     await waitFor(() =>
       expect(authApi.redeemWorkstationPairing).toHaveBeenCalledWith({
         token: "ABC123",
         platformType: "web",
-      })
+      }),
     );
   });
 });

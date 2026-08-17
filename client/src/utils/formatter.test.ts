@@ -1,9 +1,29 @@
 import {
   updateBoxProperties,
+  updateBibleFontMode,
   updateItemTimerColor,
   updateFormattedTextDisplayInfo,
 } from "./formatter";
 import { ItemState, Box } from "../types";
+
+const mockFormatBible = jest.fn(({ item }: { item: ItemState }) => ({
+  ...item,
+  name: "formatted-bible",
+}));
+const mockFormatFree = jest.fn((item: ItemState) => ({
+  ...item,
+  name: "formatted-free",
+}));
+const mockFormatSong = jest.fn((item: ItemState) => ({
+  ...item,
+  name: "formatted-song",
+}));
+
+jest.mock("./overflow", () => ({
+  formatBible: (args: { item: ItemState }) => mockFormatBible(args),
+  formatFree: (item: ItemState) => mockFormatFree(item),
+  formatSong: (item: ItemState) => mockFormatSong(item),
+}));
 
 const minimalBox: Box = {
   id: "b1",
@@ -51,6 +71,10 @@ const itemWithSlides: ItemState = {
 };
 
 describe("formatter", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   describe("updateBoxProperties", () => {
     it("returns item unchanged when slide is missing", () => {
       const noSlides = { ...itemWithSlides, slides: [] };
@@ -79,6 +103,120 @@ describe("formatter", () => {
       });
       expect(result.slides[0].boxes[0].fontColor).toBe("#ff0000");
       expect(result.slides[0].boxes[1].fontColor).toBe("rgba(255,255,255,1)");
+    });
+
+    it("updates only the background box when shouldUpdateBgOnly is true", () => {
+      const result = updateBoxProperties({
+        updatedProperties: { background: "#111" },
+        item: { ...itemWithSlides, selectedBox: 1 },
+        shouldUpdateBgOnly: true,
+      });
+      expect(result.slides[0].boxes[0].background).toBe("#111");
+      expect(result.slides[0].boxes[1].background).toBe("");
+    });
+
+    it("formats free items when requested", () => {
+      const freeItem: ItemState = {
+        ...itemWithSlides,
+        type: "free",
+      };
+      const result = updateBoxProperties({
+        updatedProperties: { words: "edited" },
+        item: freeItem,
+        shouldFormatItem: true,
+      });
+      expect(mockFormatFree).toHaveBeenCalled();
+      expect(result.name).toBe("formatted-free");
+    });
+
+    it("skips title slides for songs and formats when requested", () => {
+      const songItem: ItemState = {
+        ...itemWithSlides,
+        type: "song",
+        selectedSlide: 1,
+        selectedBox: 1,
+        arrangements: [
+          {
+            id: "arr-1",
+            name: "Master",
+            songOrder: [],
+            formattedLyrics: [],
+            slides: [
+              {
+                type: "Title",
+                name: "Title",
+                id: "title",
+                boxes: [
+                  { ...minimalBox, id: "tb0" },
+                  { ...minimalBox, id: "tb1", words: "Title" },
+                ],
+              },
+              {
+                type: "Verse",
+                name: "Verse 1",
+                id: "v1",
+                boxes: [
+                  { ...minimalBox, id: "vb0" },
+                  { ...minimalBox, id: "vb1", words: "Line" },
+                ],
+              },
+            ],
+          },
+        ],
+        slides: [],
+      };
+
+      const result = updateBoxProperties({
+        updatedProperties: { words: "Updated lyric" },
+        item: songItem,
+        shouldFormatItem: true,
+        shouldApplyToAll: true,
+      });
+
+      expect(result.arrangements[0].slides[0].boxes[1].words).toBe("Title");
+      expect(result.arrangements[0].slides[1].boxes[1].words).toBe(
+        "Updated lyric",
+      );
+      expect(mockFormatSong).toHaveBeenCalled();
+      expect(result.name).toBe("formatted-song");
+    });
+
+    it("formats bible items on non-title slides when requested", () => {
+      const bibleItem: ItemState = {
+        ...itemWithSlides,
+        type: "bible",
+        selectedSlide: 1,
+        bibleInfo: {
+          book: "John",
+          chapter: "3",
+          version: "NIV",
+          verseRange: "16",
+          fontMode: "merged",
+        } as ItemState["bibleInfo"],
+        slides: [
+          itemWithSlides.slides[0],
+          {
+            type: "Verse",
+            name: "16",
+            id: "v16",
+            boxes: [
+              { ...minimalBox, id: "b0" },
+              { ...minimalBox, id: "b1" },
+            ],
+          },
+        ],
+      };
+
+      const result = updateBoxProperties({
+        updatedProperties: { fontSize: 50 },
+        item: bibleItem,
+        shouldFormatItem: true,
+      });
+
+      expect(mockFormatBible).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: "merged" }),
+      );
+      expect(result.name).toBe("formatted-bible");
     });
   });
 
@@ -111,6 +249,19 @@ describe("formatter", () => {
         item,
       });
       expect(result.timerInfo!.color).toBe("#00ff00");
+    });
+  });
+
+  describe("updateBibleFontMode", () => {
+    it("delegates to formatBible with the requested mode", () => {
+      const result = updateBibleFontMode({
+        fontMode: "merged",
+        item: { ...itemWithSlides, type: "bible" },
+      });
+      expect(mockFormatBible).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: "merged" }),
+      );
+      expect(result.name).toBe("formatted-bible");
     });
   });
 

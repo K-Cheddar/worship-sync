@@ -29,24 +29,35 @@ interface Display {
   label?: string;
 }
 
-type WindowType = "projector" | "monitor" | "board";
+/** Window key: the original surfaces, or a display output id. */
+type WindowType = string;
 
 interface WindowState {
   displayId?: number;
   x?: number;
   y?: number;
-  width: number;
-  height: number;
-  isFullScreen: boolean;
+  width?: number;
+  height?: number;
+  isFullScreen?: boolean;
 }
 
 interface WindowStatesInfo {
-  projector: WindowState;
-  monitor: WindowState;
-  board: WindowState;
-  projectorOpen: boolean;
-  monitorOpen: boolean;
-  boardOpen: boolean;
+  /** Per-window state keyed by window key, each carrying whether it is open. */
+  displays: Record<string, WindowState & { isOpen: boolean }>;
+}
+
+interface ElectronLocalAsset {
+  assetId: string;
+  workspaceId?: string;
+  kind: "image" | "video" | "audio" | "pdf";
+  fileName: string;
+  contentType: string;
+  size: number;
+  width?: number;
+  height?: number;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
 }
 
 interface ElectronAPI {
@@ -57,7 +68,10 @@ interface ElectronAPI {
   openExternalUrl: (url: string) => Promise<boolean>;
 
   // Window management - all generic handlers
-  openWindow: (windowType: WindowType) => Promise<boolean>;
+  openWindow: (
+    windowType: WindowType,
+    surface?: "projector" | "monitor" | "stream",
+  ) => Promise<boolean>;
   closeWindow: (windowType: WindowType) => Promise<boolean>;
   focusWindow: (windowType: WindowType) => Promise<boolean>;
   toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;
@@ -87,7 +101,7 @@ interface ElectronAPI {
    * generation floor so any in-flight identifyDisplay is rejected.
    */
   cancelIdentifyDisplay: (generation: number) => Promise<boolean>;
-  getWindowStates: () => Promise<WindowStatesInfo>;
+  getWindowStates: (windowKeys?: string[]) => Promise<WindowStatesInfo>;
   /** Reload open projector/monitor/board windows (e.g. after sign-in). */
   refreshDisplayWindows: () => Promise<number>;
   onDesktopAuthCallback: (
@@ -140,6 +154,22 @@ interface ElectronAPI {
   syncMediaCache: (
     mediaUrls: string[],
   ) => Promise<{ downloaded: number; cleaned: number }>;
+
+  // App-managed local assets
+  importLocalAsset: (
+    file: File,
+    metadata: {
+      assetId: string;
+      workspaceId?: string;
+      kind: "image" | "video" | "audio" | "pdf";
+      fileName: string;
+      contentType: string;
+      width?: number;
+      height?: number;
+    },
+  ) => Promise<ElectronLocalAsset>;
+  getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
+  deleteLocalAsset: (assetId: string) => Promise<boolean>;
 
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;

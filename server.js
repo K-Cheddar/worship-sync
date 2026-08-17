@@ -1318,6 +1318,10 @@ app.get(
   authHandlers.listDisplayDevices,
 );
 app.post(
+  "/api/churches/:churchId/display-devices/:deviceId/settings",
+  authHandlers.updateDisplayDeviceSettings,
+);
+app.post(
   "/api/churches/:churchId/display-devices/:deviceId/revoke",
   authHandlers.revokeDisplayDevice,
 );
@@ -1891,6 +1895,19 @@ app.get("/api/churches/:churchId/canva/designs", async (req, res) => {
     );
   } catch (error) {
     respondCanvaError(res, "Error listing Canva designs:", error);
+  }
+});
+
+app.get("/api/churches/:churchId/canva/designs/:designId", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.getDesign({
+        churchId: req.params.churchId,
+        designId: req.params.designId,
+      }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error loading Canva design:", error);
   }
 });
 

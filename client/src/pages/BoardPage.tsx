@@ -1,19 +1,17 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/utils/cnHelper";
-import {
-  ArrowRightCircle,
-  Pencil,
-  Send,
-  Shuffle,
-  Trash2,
-} from "lucide-react";
+import { ArrowRightCircle, Pencil, Send, Shuffle, Trash2 } from "lucide-react";
 import { useParams } from "react-router-dom";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import Modal from "../components/Modal/Modal";
 import Input from "../components/Input/Input";
 import TextArea from "../components/TextArea/TextArea";
-import { createBoardPost, deleteOwnBoardPost, updateOwnBoardPost } from "../boards/api";
+import {
+  createBoardPost,
+  deleteOwnBoardPost,
+  updateOwnBoardPost,
+} from "../boards/api";
 import { useBoardData } from "../boards/useBoardData";
 import { useBoardEventStream } from "../boards/useBoardEventStream";
 import { BoardModeratorReplyBadge } from "../boards/BoardModeratorReplyBadge";
@@ -39,8 +37,7 @@ const boardDarkFieldClassName =
 
 const boardFieldLabelClassName = "text-stone-200";
 
-const boardModalBackdropClassName =
-  "bg-stone-950/75 backdrop-blur-[1px]";
+const boardModalBackdropClassName = "bg-stone-950/75 backdrop-blur-[1px]";
 const boardModalSurfaceClassName =
   "max-h-[90vh] rounded-xl border border-stone-700 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.14),transparent_48%),linear-gradient(135deg,rgba(41,37,36,0.98),rgba(12,10,9,0.96))] ring-1 ring-amber-500/20 max-md:max-h-[95vh]";
 const boardModalHeaderClassName =
@@ -162,7 +159,9 @@ const BoardPage = () => {
       setDisplayNameError("");
       return;
     }
-    if (!isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })) {
+    if (
+      !isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })
+    ) {
       setDisplayNameError("");
     }
   }, [author, displayNameError, nameLocked, participantId, posts]);
@@ -175,7 +174,9 @@ const BoardPage = () => {
       setDisplayNameError("");
       return;
     }
-    if (!isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })) {
+    if (
+      !isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })
+    ) {
       setDisplayNameError("");
     }
   }, [
@@ -189,8 +190,12 @@ const BoardPage = () => {
   const handleSaveInitialDisplayName = () => {
     const trimmed = author.trim();
     if (!trimmed) return;
-    if (isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })) {
-      setDisplayNameError("That display name is already in use. Pick another name.");
+    if (
+      isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })
+    ) {
+      setDisplayNameError(
+        "That display name is already in use. Pick another name.",
+      );
       return;
     }
     setAuthor(trimmed);
@@ -229,8 +234,12 @@ const BoardPage = () => {
   const handleSaveDisplayNameFromModal = () => {
     const trimmed = displayNameDraft.trim();
     if (!trimmed) return;
-    if (isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })) {
-      setDisplayNameError("That display name is already in use. Pick another name.");
+    if (
+      isBoardAuthorInUse(posts, { author: trimmed, authorId: participantId })
+    ) {
+      setDisplayNameError(
+        "That display name is already in use. Pick another name.",
+      );
       return;
     }
     setAuthor(trimmed);
@@ -330,7 +339,9 @@ const BoardPage = () => {
       void loadPosts();
     } catch (nextError) {
       setEditPostError(
-        nextError instanceof Error ? nextError.message : "Could not save changes.",
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not save changes.",
       );
     } finally {
       setIsSavingEdit(false);
@@ -355,7 +366,9 @@ const BoardPage = () => {
       void loadPosts();
     } catch (nextError) {
       setDeletePostError(
-        nextError instanceof Error ? nextError.message : "Could not delete post.",
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not delete post.",
       );
     } finally {
       setIsDeletingPost(false);
@@ -402,9 +415,7 @@ const BoardPage = () => {
               handleSaveDisplayNameFromModal();
             }}
           >
-            <p className="text-base text-stone-300">
-              What should we call you?
-            </p>
+            <p className="text-base text-stone-300">What should we call you?</p>
             <Input
               label="Display name"
               value={displayNameDraft}
@@ -413,10 +424,14 @@ const BoardPage = () => {
               labelClassName={boardFieldLabelClassName}
               labelFontSize="text-sm max-md:text-base"
               inputClassName={boardDisplayNameInputClassName}
-              endAdornment={randomDisplayNameEndAdornment(handlePickAnonymousNameInModal)}
+              endAdornment={randomDisplayNameEndAdornment(
+                handlePickAnonymousNameInModal,
+              )}
             />
             {displayNameError && (
-              <p className="text-sm font-medium text-red-300">{displayNameError}</p>
+              <p className="text-sm font-medium text-red-300">
+                {displayNameError}
+              </p>
             )}
             <div className="flex flex-row gap-2">
               <Button
@@ -480,7 +495,9 @@ const BoardPage = () => {
               textareaClassName={`${boardDarkFieldClassName} h-auto max-h-40`}
             />
             {editPostError && (
-              <p className="text-sm font-medium text-red-300">{editPostError}</p>
+              <p className="text-sm font-medium text-red-300">
+                {editPostError}
+              </p>
             )}
             <div className="flex flex-row gap-2">
               <Button
@@ -523,7 +540,9 @@ const BoardPage = () => {
               This removes your message from the discussion board for everyone.
             </p>
             {deletePostError && (
-              <p className="text-sm font-medium text-red-300">{deletePostError}</p>
+              <p className="text-sm font-medium text-red-300">
+                {deletePostError}
+              </p>
             )}
             <div className="flex flex-row gap-2">
               <Button
@@ -549,34 +568,28 @@ const BoardPage = () => {
         </Modal>
       )}
 
-      <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-4 pt-4 pb-0">
-        <header className="shrink-0 rounded-xl border border-stone-700 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_45%),linear-gradient(135deg,rgba(41,37,36,0.98),rgba(12,10,9,0.95))] p-6 shadow-2xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-300">
-            Discussion Board
-          </p>
-          <div className="mt-3 flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+      <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-4 pt-3 pb-0">
+        <header className="shrink-0 rounded-xl border border-stone-700 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_45%),linear-gradient(135deg,rgba(41,37,36,0.98),rgba(12,10,9,0.95))] px-4 py-3 shadow-2xl">
+          <div className="flex min-w-0 items-center gap-3">
             {churchLogoUrl ? (
-              <ChurchLogoImg src={churchLogoUrl} variant="board-attendee" />
+              <ChurchLogoImg
+                src={churchLogoUrl}
+                variant="board-attendee"
+                className="size-12 md:size-14"
+              />
             ) : null}
-            <h1 className="min-w-0 flex-1 text-3xl font-semibold sm:text-4xl">
+            <h1 className="min-w-0 flex-1 text-xl font-semibold sm:text-2xl">
               {alias?.title || "Board"}
             </h1>
           </div>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-300 sm:text-base">
-            Share a question or comment for others to see.
-          </p>
         </header>
 
-        <section className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="mb-3 flex shrink-0 items-center justify-between">
-            <h2 className="text-xl font-semibold">Visible posts</h2>
-            <span className="text-sm text-stone-400">{attendeePosts.length} shown</span>
-          </div>
-
+        <section className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div
             ref={scrollRef}
             onScroll={onScroll}
             className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5"
+            aria-label="Posts"
           >
             {!hasLoadedOnce && connectionStatus.status !== "failed" ? (
               <div className="rounded-xl border border-stone-700 bg-stone-900/80 p-6">
@@ -614,14 +627,15 @@ const BoardPage = () => {
               <div className="space-y-4 pb-2">
                 {attendeePosts.map((post) => {
                   const isMine = isMyPost(post);
-                  const isModeratorToolPost = isWorshipSyncModeratorBoardPost(post);
+                  const isModeratorToolPost =
+                    isWorshipSyncModeratorBoardPost(post);
                   const isHiddenFromOthers =
-                    post.hidden && isBoardPostOwnedByParticipant(post, {
+                    post.hidden &&
+                    isBoardPostOwnedByParticipant(post, {
                       authorId: participantId,
                     });
                   const showAsMine = isMine && !isHiddenFromOthers;
-                  const showPostActions =
-                    nameLocked && canMutatePost(post);
+                  const showPostActions = nameLocked && canMutatePost(post);
                   return (
                     <article
                       key={post._id}
@@ -677,9 +691,15 @@ const BoardPage = () => {
                             </span>
                           )}
                           {typeof post.editedAt === "number" && (
-                            <span className="text-xs text-stone-500">Edited</span>
+                            <span className="text-xs text-stone-500">
+                              Edited
+                            </span>
                           )}
-                          <span className={showAsMine ? "text-stone-400" : undefined}>
+                          <span
+                            className={
+                              showAsMine ? "text-stone-400" : undefined
+                            }
+                          >
                             {formatBoardTimestamp(post.timestamp)}
                           </span>
                         </div>
@@ -713,10 +733,7 @@ const BoardPage = () => {
                           </div>
                         )}
                       </div>
-                      <BoardPostMessage
-                        text={post.text}
-                        isMine={showAsMine}
-                      />
+                      <BoardPostMessage text={post.text} isMine={showAsMine} />
                     </article>
                   );
                 })}
@@ -743,16 +760,16 @@ const BoardPage = () => {
           </div>
         </section>
 
-        <section className="mt-4 shrink-0 rounded-xl border border-stone-700 bg-stone-900/95 p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+        <section className="mt-3 shrink-0 rounded-xl border border-stone-700 bg-stone-900/95 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {!nameLocked ? (
             <form
-              className="space-y-3"
+              className="space-y-2.5"
               onSubmit={(event) => {
                 event.preventDefault();
                 handleSaveInitialDisplayName();
               }}
             >
-              <p className="text-base text-stone-200">
+              <p className="text-sm text-stone-200">
                 What should we call you?
               </p>
               <Input
@@ -763,10 +780,14 @@ const BoardPage = () => {
                 labelClassName={boardFieldLabelClassName}
                 labelFontSize="text-sm max-md:text-base"
                 inputClassName={boardDisplayNameInputClassName}
-                endAdornment={randomDisplayNameEndAdornment(handlePickAnonymousNameInitial)}
+                endAdornment={randomDisplayNameEndAdornment(
+                  handlePickAnonymousNameInitial,
+                )}
               />
               {displayNameError && (
-                <p className="text-sm font-medium text-red-300">{displayNameError}</p>
+                <p className="text-sm font-medium text-red-300">
+                  {displayNameError}
+                </p>
               )}
               <Button
                 type="submit"
@@ -781,59 +802,60 @@ const BoardPage = () => {
               </Button>
             </form>
           ) : (
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-stone-600 bg-stone-950/50 px-3 py-2">
-                <p className="min-w-0 flex-1 text-sm text-stone-300">
+            <form className="space-y-2.5" onSubmit={handleSubmit}>
+              <div className="flex items-center justify-between gap-2">
+                <p className="min-w-0 flex-1 truncate text-sm text-stone-300">
                   Posting as{" "}
                   <span className="font-semibold text-white">{author}</span>
                 </p>
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  className="shrink-0 rounded-md border border-stone-600/80 bg-stone-900/60 p-2 text-stone-200 hover:bg-stone-800/80"
-                  padding="p-0"
-                  svg={Pencil}
-                  iconSize="md"
-                  aria-label="Edit display name"
-                  title="Edit display name"
-                  onClick={openDisplayNameModal}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-stone-200">Question:</p>
-                {text.length > BOARD_POST_WARNING_THRESHOLD && (
-                  <p
-                    className={cn(
-                      "text-sm",
-                      text.length >= BOARD_POST_MAX_LENGTH
-                        ? "font-medium text-amber-300"
-                        : "text-stone-400",
-                    )}
-                  >
-                    {text.length}/{BOARD_POST_MAX_LENGTH}
-                  </p>
-                )}
+                <div className="flex shrink-0 items-center gap-2">
+                  {text.length > BOARD_POST_WARNING_THRESHOLD && (
+                    <p
+                      className={cn(
+                        "text-xs tabular-nums",
+                        text.length >= BOARD_POST_MAX_LENGTH
+                          ? "font-medium text-amber-300"
+                          : "text-stone-400",
+                      )}
+                    >
+                      {text.length}/{BOARD_POST_MAX_LENGTH}
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    className="rounded-md border border-stone-600/80 bg-stone-900/60 p-1.5 text-stone-200 hover:bg-stone-800/80"
+                    padding="p-0"
+                    svg={Pencil}
+                    iconSize="md"
+                    aria-label="Edit display name"
+                    title="Edit display name"
+                    onClick={openDisplayNameModal}
+                  />
+                </div>
               </div>
               <TextArea
                 value={text}
                 onChange={(value) => setText(value)}
-                rows={3}
+                rows={2}
                 maxLength={BOARD_POST_MAX_LENGTH}
                 placeholder="Type your question or comment here."
                 hideLabel
-                label="Question"
+                label="Message"
                 labelClassName={boardFieldLabelClassName}
-                textareaClassName={`${boardDarkFieldClassName} h-auto max-h-28`}
+                textareaClassName={`${boardDarkFieldClassName} h-auto max-h-24`}
               />
               {postSubmitError && (
-                <p className="text-sm font-medium text-red-300">{postSubmitError}</p>
+                <p className="text-sm font-medium text-red-300">
+                  {postSubmitError}
+                </p>
               )}
               <Button
                 type="submit"
                 variant="cta"
                 svg={Send}
                 iconSize="md"
-                className="w-full justify-center gap-2 py-2 text-sm max-md:py-3 max-md:text-base"
+                className="w-full justify-center gap-2 py-2 text-sm max-md:py-2.5 max-md:text-base"
                 disabled={isSubmitting || !author.trim() || !text.trim()}
               >
                 {isSubmitting ? "Sending..." : "Send"}

@@ -1,6 +1,7 @@
 import FloatingWindow from "../components/FloatingWindow/FloatingWindow";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { useChat } from "./ChatContext";
+import { useLocation, useNavigate } from "react-router-dom";
+import { isChatPageRoute, useChat } from "./ChatContext";
 import ChatWindow from "./ChatWindow";
 
 const MARGIN = 12;
@@ -32,9 +33,21 @@ const chatWindowLayout = (isCompact: boolean) => {
 const ChatWindowHost = () => {
   const chat = useChat();
   const isDesktop = useMediaQuery("(min-width: 768px)");
-  if (!chat?.available || !chat.isOpen) return null;
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (
+    !chat?.available ||
+    !chat.isOpen ||
+    isChatPageRoute(location.pathname)
+  ) {
+    return null;
+  }
 
   const layout = chatWindowLayout(!isDesktop);
+  const openFullChat = () => {
+    chat.closeChat();
+    navigate("/chat");
+  };
 
   return (
     <FloatingWindow
@@ -46,7 +59,7 @@ const ChatWindowHost = () => {
       defaultHeight={layout.defaultHeight}
       contentClassName="overflow-hidden p-0"
     >
-      <ChatWindow />
+      <ChatWindow onOpenFullPage={openFullChat} />
     </FloatingWindow>
   );
 };

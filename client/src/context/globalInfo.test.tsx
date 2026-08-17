@@ -521,7 +521,8 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
           [
             {
               type: "debouncedUpdateStreamItemContentBlocked",
-              payload: false,
+              // Carries its ordering stamp so a stale republish can be rejected.
+              payload: { value: false, time: undefined },
             },
           ],
         ])
@@ -601,7 +602,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
           [
             {
               type: "debouncedUpdateStreamItemContentBlocked",
-              payload: true,
+              payload: { value: true, time: undefined },
             },
           ],
           [

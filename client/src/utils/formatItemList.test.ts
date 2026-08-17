@@ -36,6 +36,19 @@ describe("formatItemList", () => {
     expect(result[0].background).toBe("https://cloudinary.com/image.jpg");
   });
 
+  it("preserves local image markers for device-side resolution", () => {
+    const item = createServiceItem({
+      name: "Welcome",
+      _id: "local-1",
+      background: "local-image://asset-1",
+    });
+
+    const result = formatItemList([item], mockCloud);
+
+    expect(result[0].background).toBe("local-image://asset-1");
+    expect(mockImage).not.toHaveBeenCalled();
+  });
+
   it("preserves other item fields", () => {
     const item = createServiceItem({
       name: "Song",

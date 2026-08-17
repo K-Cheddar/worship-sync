@@ -1,3 +1,4 @@
+import { toLegacyPresentationShape } from "./presentationSlice";
 const flushListenerEffects = async () => {
   await Promise.resolve();
   await Promise.resolve();
@@ -36,6 +37,7 @@ const loadStoreWithPresentationSync = () => {
   let presentationSliceModule: any;
   let serviceTimesSliceModule: any;
   const setMock = jest.fn();
+  const updateMock = jest.fn();
   const refMock = jest.fn((_db: unknown, path: string) => path);
 
   jest.isolateModules(() => {
@@ -54,6 +56,7 @@ const loadStoreWithPresentationSync = () => {
     jest.doMock("firebase/database", () => ({
       ref: refMock,
       set: setMock,
+      update: updateMock,
       get: jest.fn(),
     }));
 
@@ -72,6 +75,7 @@ const loadStoreWithPresentationSync = () => {
     presentationSlice: presentationSliceModule.presentationSlice,
     serviceTimesSlice: serviceTimesSliceModule.serviceTimesSlice,
     setMock,
+    updateMock,
     refMock,
   };
 };
@@ -341,9 +345,11 @@ describe("store module", () => {
 
   it("does not write empty published credits to RTDB when store RESET runs", () => {
     let setMock: jest.Mock;
+    let updateMock: jest.Mock;
 
     jest.isolateModules(() => {
       setMock = jest.fn();
+      updateMock = jest.fn();
       jest.doMock("../context/controllerInfo", () => ({
         globalDb: undefined,
         globalBroadcastRef: undefined,
@@ -372,6 +378,7 @@ describe("store module", () => {
         initiateItemLists([{ _id: "outline-a", name: "Service A" }]),
       );
       setMock.mockClear();
+      updateMock.mockClear();
 
       store.dispatch({ type: "RESET" });
     });
@@ -1612,10 +1619,12 @@ describe("store module", () => {
     const timerState = store
       .getState()
       .timers.timers.find((timer: any) => timer.id === "timer-1");
-    const monitorInfo = store.getState().presentation.monitorInfo;
+    const monitorInfo = toLegacyPresentationShape(
+      store.getState().presentation,
+    ).monitorInfo;
     expect(timerState).toEqual(
       expect.objectContaining({
-        remainingTime: 0,
+        remainingTime: 5,
         status: "stopped",
       }),
     );
@@ -1830,17 +1839,14 @@ describe("store module", () => {
       "firebase-db",
       "churches/church-main/data/timers",
     );
-    expect(setMock).toHaveBeenCalledWith(
-      "churches/church-main/data/timers",
-      [
-        expect.objectContaining({
-          id: "timer-1",
-          hostId: "host-123",
-          status: "running",
-          time: 100,
-        }),
-      ],
-    );
+    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+      expect.objectContaining({
+        id: "timer-1",
+        hostId: "host-123",
+        status: "running",
+        time: 100,
+      }),
+    ]);
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
   });
 
@@ -2053,7 +2059,7 @@ describe("store module", () => {
       store,
       writePresentationSnapshotToFirebase,
       presentationSlice,
-      setMock,
+      updateMock,
       refMock,
     } = loadStoreWithPresentationSync();
 
@@ -2078,6 +2084,12 @@ describe("store module", () => {
       presentationSlice.actions.updateStream(
         createScreenPresentation("stream", 303, {
           name: "Stream Lyrics",
+          localVideoInput: {
+            sourceId: "capture-1",
+            deviceLabel: "USB Capture",
+            ownerDeviceId: "booth-1",
+            ownerLabel: "Booth",
+          },
         }),
       ),
     );
@@ -2088,7 +2100,7 @@ describe("store module", () => {
       "firebase-db",
       "churches/church-main/data/presentation",
     );
-    expect(setMock).toHaveBeenCalledWith(
+    expect(updateMock).toHaveBeenCalledWith(
       "churches/church-main/data/presentation",
       expect.objectContaining({
         projectorInfo: expect.objectContaining({
@@ -2102,6 +2114,9 @@ describe("store module", () => {
         streamInfo: expect.objectContaining({
           name: "Stream Lyrics",
           displayType: "stream",
+          localVideoInput: expect.objectContaining({
+            sourceId: "capture-1",
+          }),
         }),
       }),
     );
@@ -2120,11 +2135,12 @@ describe("store module", () => {
   });
 
   it("pushes a presentation snapshot after a local projector update", async () => {
-    const { store, presentationSlice, setMock } =
+    const { store, presentationSlice, setMock, updateMock } =
       loadStoreWithPresentationSync();
 
     store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
     setMock.mockClear();
+    updateMock.mockClear();
 
     store.dispatch(
       presentationSlice.actions.updateProjector(
@@ -2136,8 +2152,8 @@ describe("store module", () => {
 
     await waitForListenerDelay();
 
-    expect(setMock).toHaveBeenCalledTimes(1);
-    expect(setMock.mock.calls[0][1]).toEqual(
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateMock.mock.calls[0][1]).toEqual(
       expect.objectContaining({
         projectorInfo: expect.objectContaining({ name: "Live Projector" }),
       }),
@@ -2145,7 +2161,7 @@ describe("store module", () => {
   });
 
   it("pushes the current stream snapshot when stream transmission turns on", async () => {
-    const { store, presentationSlice, setMock } =
+    const { store, presentationSlice, setMock, updateMock } =
       loadStoreWithPresentationSync();
 
     store.dispatch(
@@ -2161,12 +2177,134 @@ describe("store module", () => {
 
     await waitForListenerDelay();
 
-    expect(setMock).toHaveBeenCalledTimes(1);
-    expect(setMock.mock.calls[0][1]).toEqual(
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateMock.mock.calls[0][1]).toEqual(
       expect.objectContaining({
         streamInfo: expect.objectContaining({ name: "Remote Stream Snapshot" }),
       }),
     );
+  });
+
+  it("pushes a snapshot when a named stream goes live", async () => {
+    const { store, presentationSlice, updateMock } =
+      loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.syncOutputSlots([
+        { id: "stream", type: "stream" },
+        { id: "out_foyer_stream", type: "stream" },
+      ]),
+    );
+    await waitForListenerDelay();
+    updateMock.mockClear();
+
+    // The go-live check used to read the built-in slot only, so taking a named
+    // stream live wrote nothing and its remotes kept the last synced payload.
+    store.dispatch(
+      presentationSlice.actions.toggleOutputTransmitting("out_foyer_stream"),
+    );
+    await waitForListenerDelay();
+
+    expect(updateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pushes again when a second stream joins one already live", async () => {
+    const { store, presentationSlice, updateMock } =
+      loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.syncOutputSlots([
+        { id: "stream", type: "stream" },
+        { id: "out_foyer_stream", type: "stream" },
+      ]),
+    );
+    store.dispatch(presentationSlice.actions.toggleOutputTransmitting("stream"));
+    await waitForListenerDelay();
+    updateMock.mockClear();
+
+    // "None live -> some live" would miss this: the second stream still needs
+    // its own snapshot.
+    store.dispatch(
+      presentationSlice.actions.toggleOutputTransmitting("out_foyer_stream"),
+    );
+    await waitForListenerDelay();
+
+    expect(updateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not push when a stream is taken off air", async () => {
+    const { store, presentationSlice, updateMock } =
+      loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.syncOutputSlots([
+        { id: "stream", type: "stream" },
+      ]),
+    );
+    store.dispatch(presentationSlice.actions.toggleOutputTransmitting("stream"));
+    await waitForListenerDelay();
+    updateMock.mockClear();
+
+    store.dispatch(presentationSlice.actions.toggleOutputTransmitting("stream"));
+    await waitForListenerDelay();
+
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not republish fields this client did not change", async () => {
+    const { store, presentationSlice, updateMock } =
+      loadStoreWithPresentationSync();
+
+    // Sends only reach a live output.
+    store.dispatch(presentationSlice.actions.setTransmitToAll(true));
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 100, { name: "First" }),
+      ),
+    );
+    await waitForListenerDelay();
+    updateMock.mockClear();
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 200, { name: "Second" }),
+      ),
+    );
+    await waitForListenerDelay();
+
+    // A slide send used to rebroadcast this machine's copy of Hide Content and
+    // every overlay lane, letting a lagging controller undo another operator.
+    const published = Object.assign(
+      {},
+      ...updateMock.mock.calls.map((call) => call[1] ?? {}),
+    );
+    console.log("PUBLISHED_KEYS", JSON.stringify(Object.keys(published)), "CALLS", updateMock.mock.calls.length);
+    expect(published).toHaveProperty("projectorInfo");
+    expect(published).not.toHaveProperty("stream_itemContentBlocked");
+    expect(published).not.toHaveProperty("stream_participantOverlayInfo");
+    expect(published).not.toHaveProperty("monitorInfo");
+  });
+
+  it("publishes a field again once it genuinely changes", async () => {
+    const { store, presentationSlice, updateMock } =
+      loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 100, { name: "First" }),
+      ),
+    );
+    await waitForListenerDelay();
+    updateMock.mockClear();
+
+    store.dispatch(presentationSlice.actions.setStreamItemContentBlocked(true));
+    await waitForListenerDelay();
+
+    const published = Object.assign(
+      {},
+      ...updateMock.mock.calls.map((call) => call[1] ?? {}),
+    );
+    expect(published).toHaveProperty("stream_itemContentBlocked", true);
   });
 
   it("applies only newer remote projector updates", async () => {
@@ -2187,9 +2325,10 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.projectorInfo.name).toBe(
-      "Existing Projector",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .name,
+    ).toBe("Existing Projector");
 
     store.dispatch({
       type: "debouncedUpdateProjector",
@@ -2198,9 +2337,10 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.projectorInfo.name).toBe(
-      "New Projector",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .name,
+    ).toBe("New Projector");
   });
 
   it("applies only newer remote monitor updates", async () => {
@@ -2223,9 +2363,9 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.monitorInfo.name).toBe(
-      "Existing Monitor",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).monitorInfo.name,
+    ).toBe("Existing Monitor");
 
     store.dispatch({
       type: "debouncedUpdateMonitor",
@@ -2235,10 +2375,13 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.monitorInfo.name).toBe("New Monitor");
-    expect(store.getState().presentation.monitorInfo.nextSlide).toEqual(
-      createScreenSlide("monitor-next-new", "next-new"),
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).monitorInfo.name,
+    ).toBe("New Monitor");
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).monitorInfo
+        .nextSlide,
+    ).toEqual(createScreenSlide("monitor-next-new", "next-new"));
   });
 
   it("applies only newer remote stream updates", async () => {
@@ -2259,9 +2402,9 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.streamInfo.name).toBe(
-      "Existing Stream",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.name,
+    ).toBe("Existing Stream");
 
     store.dispatch({
       type: "debouncedUpdateStream",
@@ -2270,7 +2413,9 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.streamInfo.name).toBe("New Stream");
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.name,
+    ).toBe("New Stream");
   });
 
   it("applies remote service-time updates to shared redux state", async () => {
@@ -2308,7 +2453,9 @@ describe("store module", () => {
         name: "Remote Service",
       }),
     ]);
-    expect(store.getState().undoable.present.serviceTimes.isInitialized).toBe(true);
+    expect(store.getState().undoable.present.serviceTimes.isInitialized).toBe(
+      true,
+    );
     expect(localStorage.getItem("serviceTimes")).toContain("Remote Service");
   });
 
@@ -2328,10 +2475,13 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const bible = store.getState().presentation.streamInfo.bibleDisplayInfo;
+    const bible = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.bibleDisplayInfo;
     expect(bible?.title).toBe("John 3:16");
     expect(bible?.text).toBe("For God so loved");
-    expect(store.getState().presentation.streamInfo.type).toBe("bible");
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.type,
+    ).toBe("bible");
   });
 
   it("ignores a live remote participant overlay when the local slot only has a newer empty placeholder", async () => {
@@ -2351,11 +2501,18 @@ describe("store module", () => {
 
     store.dispatch({
       type: "debouncedUpdateParticipantOverlayInfo",
-      payload: { id: "p1", name: "Alex", title: "Host", time: 1000, transitionSequence: 10 },
+      payload: {
+        id: "p1",
+        name: "Alex",
+        title: "Host",
+        time: 1000,
+        transitionSequence: 10,
+      },
     });
     await waitForListenerDelay();
 
-    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    const participant = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.participantOverlayInfo;
     expect(participant?.name ?? "").toBe("");
     expect(participant?.title ?? "").toBe("");
     expect(participant?.time).toBe(1001);
@@ -2367,11 +2524,18 @@ describe("store module", () => {
 
     store.dispatch({
       type: "debouncedUpdateParticipantOverlayInfo",
-      payload: { id: "p1", name: "Alex", title: "Host", time: 1000, transitionSequence: 10 },
+      payload: {
+        id: "p1",
+        name: "Alex",
+        title: "Host",
+        time: 1000,
+        transitionSequence: 10,
+      },
     });
     await waitForListenerDelay();
 
-    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    const participant = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p1");
     expect(participant?.name).toBe("Alex");
     expect(participant?.title).toBe("Host");
@@ -2402,7 +2566,8 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    const participant = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p-new");
     expect(participant?.name).toBe("New Host");
     expect(participant?.time).toBe(999);

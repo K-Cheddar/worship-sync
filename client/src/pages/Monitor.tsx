@@ -1,16 +1,28 @@
 import { useSelector, useSyncMonitorSettings } from "../hooks";
+import {
+  useOutputForSurface,
+  useWindowKeyForSurface,
+} from "../hooks/useOutputForSurface";
+import { selectOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
-import { useContext, useEffect, useCallback, useState } from "react";
+import { useContext, useCallback } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
-import MonitorBoardView from "../components/DisplayWindow/MonitorBoardView";
-import { REFERENCE_HEIGHT } from "../constants";
+import DisplayBoardTakeover from "../components/DisplayWindow/DisplayBoardTakeover";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { useWakeLock } from "../hooks/useWakeLock";
+import { useResolvedDisplaySettings } from "../hooks/useResolvedDisplaySettings";
 
 const Monitor = () => {
-  const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
+  const output = useOutputForSurface("monitor");
+  const windowKey = useWindowKeyForSurface("monitor");
+  // A monitor bolted above the stage has nobody to click "go fullscreen", so a
+  // screen marked headless renders bare output instead of the gate.
+  const { isHeadless } = useResolvedDisplaySettings(output.id);
+  const monitorInfo = useSelector(
+    (state) => selectOutputSlot(state, output.id, "monitor").info,
+  );
   const prevMonitorInfo = useSelector(
-    (state) => state.presentation.prevMonitorInfo
+    (state) => selectOutputSlot(state, output.id, "monitor").prevInfo,
   );
 
   const { firebaseDb, churchId, sharedDataReady } =
@@ -19,10 +31,10 @@ const Monitor = () => {
   useSyncMonitorSettings(firebaseDb, churchId, !!sharedDataReady);
 
   const monitorTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === monitorInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === monitorInfo.timerId),
   );
   const prevMonitorTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === prevMonitorInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === prevMonitorInfo.timerId),
   );
 
   useWakeLock();
@@ -30,41 +42,31 @@ const Monitor = () => {
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {
     if (window.electronAPI) {
-      await window.electronAPI.closeWindow("monitor");
+      await window.electronAPI.closeWindow(windowKey);
     }
-  }, []);
+  }, [windowKey]);
 
   useCloseOnEscape(closeWindow);
 
   // When the controller swaps the monitor to a discussion board, show the board
   // here with the clock/timer band composited on top so a countdown stays visible.
   const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
+    (state) => selectOutputSlot(state, output.id, "monitor").boardAliasId,
   );
-  const [viewportHeight, setViewportHeight] = useState(() =>
-    typeof window !== "undefined" ? window.innerHeight : REFERENCE_HEIGHT
-  );
-  useEffect(() => {
-    const onResize = () => setViewportHeight(window.innerHeight);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   if (monitorBoardAliasId) {
     return (
-      <div className="h-dvh w-dvw bg-black">
-        <MonitorBoardView
-          aliasId={monitorBoardAliasId}
-          scale={viewportHeight / REFERENCE_HEIGHT}
-          missingAliasTitle="No discussion board selected."
-          missingAliasDescription="Choose a board in moderation, then turn on Show on Monitor."
-        />
-      </div>
+      <DisplayBoardTakeover
+        aliasId={monitorBoardAliasId}
+        outputId={output.id}
+      />
     );
   }
 
   return (
     <FullscreenPresentation
+      outputId={output.id}
+      isHeadless={isHeadless}
       displayInfo={monitorInfo}
       prevDisplayInfo={prevMonitorInfo}
       timerInfo={monitorTimer}

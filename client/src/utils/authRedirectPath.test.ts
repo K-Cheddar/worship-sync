@@ -74,6 +74,14 @@ describe("authRedirectPath", () => {
     ).toBe("/account");
   });
 
+  it("getHumanPostAuthPath preserves a team chat deep link", () => {
+    expect(
+      getHumanPostAuthPath(
+        loc({ from: { pathname: "/chat", search: "", hash: "", key: "x" } }),
+      ),
+    ).toBe("/chat");
+  });
+
   it("getHumanPostAuthPath keeps search for deep links", () => {
     expect(
       getHumanPostAuthPath(

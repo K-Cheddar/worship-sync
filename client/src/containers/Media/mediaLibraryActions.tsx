@@ -92,6 +92,7 @@ export function buildMediaActionRouteFlags(
       pathname.includes("preferences") &&
       !pathname.includes("quick-links") &&
       !pathname.includes("monitor-settings") &&
+      !pathname.includes("displays") &&
       Boolean(selectedPreference),
     quickLinkMedia:
       pathname.includes("quick-links") &&

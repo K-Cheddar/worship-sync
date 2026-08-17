@@ -2,7 +2,7 @@ import { useLocation } from "react-router-dom";
 import {
   Settings,
   SquarePen,
-  Monitor,
+  MonitorCog,
   RectangleEllipsis,
   Pencil,
   MonitorPlay,
@@ -65,8 +65,8 @@ const getControllerConfigurationRoute = (
   if (pathname.includes("quick-links")) {
     return "/controller/quick-links";
   }
-  if (pathname.includes("monitor-settings")) {
-    return "/controller/monitor-settings";
+  if (pathname.includes("displays") || pathname.includes("monitor-settings")) {
+    return "/controller/displays";
   }
   if (pathname.includes("preferences")) {
     return "/controller/preferences";
@@ -103,12 +103,12 @@ const Toolbar = ({
   const configurationsSubTabRefs = useRef<{
     preferences: HTMLButtonElement | HTMLAnchorElement | null;
     quickLinks: HTMLButtonElement | HTMLAnchorElement | null;
-    monitor: HTMLButtonElement | HTMLAnchorElement | null;
+    displays: HTMLButtonElement | HTMLAnchorElement | null;
     servicePlanning: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     preferences: null,
     quickLinks: null,
-    monitor: null,
+    displays: null,
     servicePlanning: null,
   });
 
@@ -205,8 +205,8 @@ const Toolbar = ({
       ? "servicePlanning"
       : path.includes("quick-links")
         ? "quickLinks"
-        : path.includes("monitor-settings")
-          ? "monitor"
+        : path.includes("displays") || path.includes("monitor-settings")
+          ? "displays"
           : "preferences";
     scrollToolbarTabIntoViewIfNeeded(configurationsSubTabRefs.current[subKey]);
   }, [section, location.pathname]);
@@ -344,14 +344,17 @@ const Toolbar = ({
                 {access === "full" && (
                   <ToolbarButton
                     ref={(el) => {
-                      configurationsSubTabRefs.current.monitor = el;
+                      configurationsSubTabRefs.current.displays = el;
                     }}
-                    svg={Monitor}
-                    to="/controller/monitor-settings"
+                    svg={MonitorCog}
+                    to="/controller/displays"
                     hidden={section !== "configurations"}
-                    isActive={location.pathname.includes("monitor-settings")}
+                    isActive={
+                      location.pathname.includes("displays") ||
+                      location.pathname.includes("monitor-settings")
+                    }
                   >
-                    Monitor Settings
+                    Displays
                   </ToolbarButton>
                 )}
                 {access === "full" && (

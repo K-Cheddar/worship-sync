@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { WindowType } from "./windowState";
 
 // Expose protected methods that allow the renderer process to use
@@ -12,8 +12,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("open-external-url", url),
 
   // Window management - all generic handlers
-  openWindow: (windowType: WindowType) =>
-    ipcRenderer.invoke("open-window", windowType),
+  openWindow: (windowType: WindowType, surface?: string) =>
+    ipcRenderer.invoke("open-window", windowType, surface),
   closeWindow: (windowType: WindowType) =>
     ipcRenderer.invoke("close-window", windowType),
   focusWindow: (windowType: WindowType) =>
@@ -32,7 +32,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   hideIdentifyDisplay: () => ipcRenderer.invoke("hide-identify-display"),
   cancelIdentifyDisplay: (generation: number) =>
     ipcRenderer.invoke("cancel-identify-display", generation),
-  getWindowStates: () => ipcRenderer.invoke("get-window-states"),
+  getWindowStates: (windowKeys?: string[]) =>
+    ipcRenderer.invoke("get-window-states", windowKeys),
   refreshDisplayWindows: () =>
     ipcRenderer.invoke("refresh-display-windows") as Promise<number>,
 
@@ -135,6 +136,29 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("cleanup-unused-media", usedUrls),
   syncMediaCache: (mediaUrls: string[]) =>
     ipcRenderer.invoke("sync-media-cache", mediaUrls),
+
+  // App-managed local assets. Native paths stay inside the preload/main
+  // boundary; renderers receive only metadata and a streamable protocol URL.
+  importLocalAsset: (
+    file: File,
+    metadata: {
+      assetId: string;
+      workspaceId?: string;
+      kind: "image" | "video" | "audio" | "pdf";
+      fileName: string;
+      contentType: string;
+      width?: number;
+      height?: number;
+    },
+  ) =>
+    ipcRenderer.invoke("import-local-asset", {
+      ...metadata,
+      sourcePath: webUtils.getPathForFile(file),
+    }),
+  getLocalAsset: (assetId: string) =>
+    ipcRenderer.invoke("get-local-asset", assetId),
+  deleteLocalAsset: (assetId: string) =>
+    ipcRenderer.invoke("delete-local-asset", assetId),
 
   // Route persistence
   saveLastRoute: (route: string) =>

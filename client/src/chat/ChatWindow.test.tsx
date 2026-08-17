@@ -83,6 +83,38 @@ describe("ChatWindow", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the options menu inside its floating window stacking context", async () => {
+    mockedUseChat.mockReturnValue(baseChat);
+
+    render(
+      <div role="group" aria-label="Floating chat content">
+        <ChatWindow />
+      </div>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat options" }));
+
+    const floatingChat = screen.getByRole("group", {
+      name: "Floating chat content",
+    });
+    expect(
+      await within(floatingChat).findByDisplayValue("2026-03-11"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the full chat page from the floating window menu", async () => {
+    const onOpenFullPage = jest.fn();
+    mockedUseChat.mockReturnValue(baseChat);
+
+    render(<ChatWindow onOpenFullPage={onOpenFullPage} />);
+    fireEvent.click(screen.getByRole("button", { name: "Chat options" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open full chat" }),
+    );
+
+    expect(onOpenFullPage).toHaveBeenCalledTimes(1);
+  });
+
   it("softens unavailable copy when chat is still usable", () => {
     mockedUseChat.mockReturnValue({
       ...baseChat,

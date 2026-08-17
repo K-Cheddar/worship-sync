@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 import type { ReactNode } from "react";
 import BoardStreamPanel from "./BoardStreamPanel";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -13,9 +14,9 @@ const mockDisplayWindow = jest.fn(() => (
 ));
 
 let mockState = {
-  presentation: {
+  presentation: fromLegacyPresentationShape({
     isStreamTransmitting: true,
-  },
+  }),
 };
 
 jest.mock("../../hooks", () => ({
@@ -133,9 +134,9 @@ describe("BoardStreamPanel", () => {
     mockDispatch.mockClear();
     mockDisplayWindow.mockClear();
     mockState = {
-      presentation: {
+      presentation: fromLegacyPresentationShape({
         isStreamTransmitting: true,
-      },
+      }),
     };
 
     mockUseBoardData.mockReturnValue({
@@ -242,6 +243,9 @@ describe("BoardStreamPanel", () => {
         backgroundColor: "#32353beb",
         fontSize: 1.5,
         duration: 15,
+        // The post names the stream it goes to; untargeted it reached only the
+        // built-in slot, which may not be the live one.
+        outputIds: ["stream"],
       }),
     );
   });

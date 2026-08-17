@@ -3,6 +3,7 @@ import {
   getTimeDifference,
   calculateEndTime,
   calculateRemainingTime,
+  didTimerJustExpire,
 } from "./timerUtils";
 import { TimerInfo } from "../types";
 import { setServerTimeOffset } from "./serverTime";
@@ -234,6 +235,93 @@ describe("timerUtils", () => {
     });
   });
 
+  describe("didTimerJustExpire", () => {
+    it("is true for running → stopped when endTime has passed", () => {
+      const endTime = new Date("2026-04-05T12:00:00.000Z").toISOString();
+      const previous = {
+        id: "t1",
+        hostId: "h",
+        name: "T",
+        timerType: "timer" as const,
+        status: "running" as const,
+        isActive: true,
+        remainingTime: 1,
+        duration: 60,
+        endTime,
+      };
+      const current = {
+        ...previous,
+        status: "stopped" as const,
+        isActive: false,
+        remainingTime: 60,
+      };
+      expect(
+        didTimerJustExpire(
+          previous,
+          current,
+          new Date("2026-04-05T12:00:01.000Z").getTime(),
+        ),
+      ).toBe(true);
+    });
+
+    it("is false when comparing different timer ids", () => {
+      const endTime = new Date("2026-04-05T12:00:00.000Z").toISOString();
+      const previous = {
+        id: "t1",
+        hostId: "h",
+        name: "T",
+        timerType: "timer" as const,
+        status: "running" as const,
+        isActive: true,
+        remainingTime: 1,
+        duration: 60,
+        endTime,
+      };
+      const current = {
+        ...previous,
+        id: "t2",
+        status: "stopped" as const,
+        isActive: false,
+        remainingTime: 60,
+      };
+      expect(
+        didTimerJustExpire(
+          previous,
+          current,
+          new Date("2026-04-05T12:00:01.000Z").getTime(),
+        ),
+      ).toBe(false);
+    });
+
+    it("is false for an early manual stop while endTime is still ahead", () => {
+      const endTime = new Date("2026-04-05T12:05:00.000Z").toISOString();
+      const previous = {
+        id: "t1",
+        hostId: "h",
+        name: "T",
+        timerType: "timer" as const,
+        status: "running" as const,
+        isActive: true,
+        remainingTime: 300,
+        duration: 300,
+        endTime,
+      };
+      const current = {
+        ...previous,
+        status: "stopped" as const,
+        isActive: false,
+        remainingTime: 300,
+      };
+      expect(
+        didTimerJustExpire(
+          previous,
+          current,
+          new Date("2026-04-05T12:00:00.000Z").getTime(),
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe("calculateRemainingTime", () => {
     it("returns full duration when stopping timer", () => {
       const result = calculateRemainingTime({
@@ -284,5 +372,41 @@ describe("timerUtils", () => {
       });
       expect(result).toBe(30);
     });
+  });
+});
+
+describe("a timer stored as running with a long-past endTime", () => {
+  const staleTimer = (status: "running" | "stopped") => ({
+    id: "t1",
+    hostId: "h",
+    name: "T",
+    timerType: "timer" as const,
+    status,
+    isActive: status === "running",
+    remainingTime: 0,
+    duration: 60,
+    // Ended well before "now" — left over from an earlier service.
+    endTime: new Date("2026-04-05T11:00:00.000Z").toISOString(),
+  });
+
+  const now = new Date("2026-04-05T12:00:00.000Z").getTime();
+
+  it("does not replay an old expiry when it settles to stopped", () => {
+    // Selecting the item resolves the stale running state to stopped. Treating
+    // that as an expiry auto-advanced the slide to the wrap-up frame.
+    expect(
+      didTimerJustExpire(staleTimer("running"), staleTimer("stopped"), now),
+    ).toBe(false);
+  });
+
+  it("still reports a genuine expiry that just happened", () => {
+    const endTime = new Date("2026-04-05T11:59:59.000Z").toISOString();
+    expect(
+      didTimerJustExpire(
+        { ...staleTimer("running"), endTime },
+        { ...staleTimer("stopped"), endTime },
+        now,
+      ),
+    ).toBe(true);
   });
 });

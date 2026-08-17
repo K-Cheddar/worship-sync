@@ -89,10 +89,7 @@ export const PreferencesPageSkeleton = () => {
       <div className={cn(sectionTitleBarClass, "mt-8")} />
       <div className="flex flex-wrap items-center justify-center gap-6">
         {Array.from({ length: 3 }, (_, i) => (
-          <div
-            key={i}
-            className="h-8 w-14 animate-pulse rounded bg-white/10"
-          />
+          <div key={i} className="h-8 w-14 animate-pulse rounded bg-white/10" />
         ))}
       </div>
     </div>

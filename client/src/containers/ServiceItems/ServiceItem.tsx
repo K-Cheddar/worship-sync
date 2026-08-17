@@ -257,7 +257,9 @@ const ServiceItem = ({
       )}`}
       type={item.type}
       image={item.background}
-      timerValue={timer ? liveTimerValue : undefined}
+      localImage={item.localImage}
+      localVideoFile={item.localVideoFile}
+      timerValue={liveTimerValue ?? undefined}
       timerText={timerText}
       actions={actions}
       displayId={`service-item-${item.listId}`}

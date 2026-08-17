@@ -36,7 +36,9 @@ type Props = {
   isMobile: boolean;
   selectedOverlay: OverlayInfo;
   onApplyFormatting: (overlay: OverlayInfo) => void;
-  onApplyFormattingToAll: (formatting: OverlayFormatting) => void | Promise<void>;
+  onApplyFormattingToAll: (
+    formatting: OverlayFormatting,
+  ) => void | Promise<void>;
   isApplyingFormattingToAll: boolean;
 };
 
@@ -46,6 +48,9 @@ const typeToName = {
   "qr-code": "QR Code",
   image: "Image",
 };
+
+/** Stable empty list: a fresh [] re-renders the drawer on any action. */
+const EMPTY_TEMPLATES: SavedTemplate[] = [];
 
 const OverlayTemplatesDrawer = ({
   isOpen,
@@ -58,7 +63,7 @@ const OverlayTemplatesDrawer = ({
 }: Props) => {
   const dispatch = useDispatch();
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
-    null
+    null,
   );
   const [editingTemplateName, setEditingTemplateName] = useState("");
 
@@ -67,7 +72,8 @@ const OverlayTemplatesDrawer = ({
 
   const currentTypeTemplates: SavedTemplate[] = useSelector(
     (state: RootState) =>
-      state.undoable.present.overlayTemplates.templatesByType[currentType] || []
+      state.undoable.present.overlayTemplates.templatesByType[currentType] ||
+      EMPTY_TEMPLATES,
   );
 
   const handleCreateTemplateWithDefaultName = () => {
@@ -105,7 +111,7 @@ const OverlayTemplatesDrawer = ({
         type: currentType,
         templateId: editingTemplateId,
         updates: { name: editingTemplateName.trim() },
-      })
+      }),
     );
 
     setEditingTemplateId(null);
@@ -126,7 +132,7 @@ const OverlayTemplatesDrawer = ({
           formatting: selectedOverlay.formatting || {},
           updatedAt: new Date().toISOString(),
         },
-      })
+      }),
     );
   };
 
@@ -283,9 +289,7 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultStbOverlayStyles,
             });
           }}
-          onApplyToAll={() =>
-            onApplyFormattingToAll(defaultStbOverlayStyles)
-          }
+          onApplyToAll={() => onApplyFormattingToAll(defaultStbOverlayStyles)}
           isApplyToAllLoading={isApplyingFormattingToAll}
         />
       )}
@@ -315,9 +319,7 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultImageOverlayStyles,
             });
           }}
-          onApplyToAll={() =>
-            onApplyFormattingToAll(defaultImageOverlayStyles)
-          }
+          onApplyToAll={() => onApplyFormattingToAll(defaultImageOverlayStyles)}
           isApplyToAllLoading={isApplyingFormattingToAll}
         />
       )}

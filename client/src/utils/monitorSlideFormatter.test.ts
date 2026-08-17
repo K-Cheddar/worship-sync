@@ -10,7 +10,9 @@ jest.mock("./textMeasurement", () => ({
     maxLines: Math.floor(100 / fontSizePx),
     lineHeight: 1,
   })),
-  getNumLines: jest.fn(({ text }: { text: string }) => (text.length > 10 ? 3 : 1)),
+  getNumLines: jest.fn(({ text }: { text: string }) =>
+    text.length > 10 ? 3 : 1,
+  ),
 }));
 
 const createBox = (overrides: Partial<Box> = {}): Box => ({
@@ -41,7 +43,10 @@ const createSlide = (id: string, bandWords: string): ItemSlideType => ({
   id,
   type: "Media",
   name: id,
-  boxes: [createBox({ id: `${id}-bg` }), createBox({ id: `${id}-band`, words: bandWords })],
+  boxes: [
+    createBox({ id: `${id}-bg` }),
+    createBox({ id: `${id}-band`, words: bandWords }),
+  ],
 });
 
 describe("monitorSlideFormatter", () => {
@@ -51,7 +56,7 @@ describe("monitorSlideFormatter", () => {
         createBox({ id: "a", words: "short" }),
         createBox({ id: "b", words: "this is long text" }),
       ],
-      540
+      540,
     );
 
     expect(result[0].monitorFontSizePx).toBe(33);
@@ -83,5 +88,35 @@ describe("monitorSlideFormatter", () => {
     expect(result[1].monitorCurrentBandBoxes?.[0].monitorFontSizePx).toBe(33);
     expect(result[0].monitorNextBandBoxes?.[0].monitorFontSizePx).toBe(33);
     expect(result[1].monitorNextBandBoxes?.[0].monitorFontSizePx).toBe(33);
+  });
+
+  it("handles empty box lists and slides without band content", () => {
+    expect(formatBoxesForMonitorBand([], 540)).toEqual([]);
+
+    const noBoxes: ItemSlideType = {
+      id: "empty",
+      type: "Media",
+      name: "Empty",
+      boxes: [],
+    };
+    expect(addMonitorFormattedToSlide(noBoxes).monitorCurrentBandBoxes).toEqual(
+      [],
+    );
+
+    const onlyMissingBands = addMonitorFormattedToSlides([
+      {
+        id: "s-no-band",
+        type: "Media",
+        name: "No Band",
+        boxes: [createBox({ id: "only-box" })],
+      },
+    ]);
+    expect(onlyMissingBands[0].monitorCurrentBandBoxes).toEqual([]);
+
+    const withFixed = addMonitorFormattedToSlide(
+      createSlide("fixed", "Hello"),
+      42,
+    );
+    expect(withFixed.monitorCurrentBandBoxes?.[0].monitorFontSizePx).toBe(42);
   });
 });

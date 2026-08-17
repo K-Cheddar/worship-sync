@@ -1,4 +1,11 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { BoardControllerContent } from "./BoardController";
@@ -93,7 +100,8 @@ const mockUpdateBoardAliasTitle = mockedBoardApi.updateBoardAliasTitle;
 const mockUpdateBoardPresentationFontScale =
   mockedBoardApi.updateBoardPresentationFontScale;
 const mockUpdateBoardPostHidden = mockedBoardApi.updateBoardPostHidden;
-const mockUpdateBoardPostHighlighted = mockedBoardApi.updateBoardPostHighlighted;
+const mockUpdateBoardPostHighlighted =
+  mockedBoardApi.updateBoardPostHighlighted;
 const mockUseBoardSync = jest.mocked(useBoardSync);
 const mockUseRestreamSession = jest.mocked(useRestreamSession);
 const mockUseAboutChangelogMenu = jest.mocked(useAboutChangelogMenu);
@@ -238,7 +246,10 @@ const createMockBoardDb = () => {
       }
 
       const rangeKey = String(options.startkey);
-      const boardId = rangeKey.replace(/^post:/, "").replace(/:$/, "").split(":")[0];
+      const boardId = rangeKey
+        .replace(/^post:/, "")
+        .replace(/:$/, "")
+        .split(":")[0];
       return {
         rows: (postDocsByBoardId[boardId] || []).map((doc) => ({ doc })),
       };
@@ -278,9 +289,13 @@ const createMockBoardDb = () => {
     __setPosts: (boardId: string, posts: any[]) => {
       postDocsByBoardId[boardId] = posts;
     },
-    __updatePost: (boardId: string, postId: string, patch: Record<string, unknown>) => {
-      postDocsByBoardId[boardId] = (postDocsByBoardId[boardId] || []).map((post) =>
-        post.id === postId ? { ...post, ...patch } : post,
+    __updatePost: (
+      boardId: string,
+      postId: string,
+      patch: Record<string, unknown>,
+    ) => {
+      postDocsByBoardId[boardId] = (postDocsByBoardId[boardId] || []).map(
+        (post) => (post.id === postId ? { ...post, ...patch } : post),
       );
     },
     __emitChange: () => {
@@ -393,7 +408,9 @@ describe("BoardControllerContent", () => {
   const openBoardToolsSheetIfMobile = async (
     user: ReturnType<typeof userEvent.setup>,
   ) => {
-    const mobileMore = screen.queryByRole("button", { name: /More board tools/i });
+    const mobileMore = screen.queryByRole("button", {
+      name: /More board tools/i,
+    });
     if (mobileMore) {
       await user.click(mobileMore);
     } else {
@@ -401,78 +418,78 @@ describe("BoardControllerContent", () => {
     }
   };
 
-  it(
-    "creates boards and sends moderation actions to the board api",
-    async () => {
-      const user = userEvent.setup();
-      renderPage();
+  it("creates boards and sends moderation actions to the board api", async () => {
+    const user = userEvent.setup();
+    renderPage();
 
-      await findBoardToolsPanel();
+    await findBoardToolsPanel();
 
-      const earlierQuestionArticle = screen
-        .getAllByRole("article")
-        .find((el) => within(el).queryByText(/Earlier question/i));
-      expect(earlierQuestionArticle).toBeDefined();
+    const earlierQuestionArticle = screen
+      .getAllByRole("article")
+      .find((el) => within(el).queryByText(/Earlier question/i));
+    expect(earlierQuestionArticle).toBeDefined();
 
-      await user.click(
+    await user.click(
+      within(earlierQuestionArticle as HTMLElement).getByRole("button", {
+        name: /^Highlight$/i,
+      }),
+    );
+    await waitFor(() => {
+      expect(
         within(earlierQuestionArticle as HTMLElement).getByRole("button", {
-          name: /^Highlight$/i,
+          name: /^Unhighlight$/i,
         }),
-      );
-      await waitFor(() => {
-        expect(
-          within(earlierQuestionArticle as HTMLElement).getByRole("button", {
-            name: /^Unhighlight$/i,
-          }),
-        ).toBeInTheDocument();
-      });
+      ).toBeInTheDocument();
+    });
 
-      await user.click(
+    await user.click(
+      within(earlierQuestionArticle as HTMLElement).getByRole("button", {
+        name: /^Hide$/i,
+      }),
+    );
+    await waitFor(() => {
+      expect(
         within(earlierQuestionArticle as HTMLElement).getByRole("button", {
-          name: /^Hide$/i,
+          name: /^Unhide$/i,
         }),
-      );
-      await waitFor(() => {
-        expect(
-          within(earlierQuestionArticle as HTMLElement).getByRole("button", {
-            name: /^Unhide$/i,
-          }),
-        ).toBeInTheDocument();
+      ).toBeInTheDocument();
+    });
+
+    await openBoardToolsSheetIfMobile(user);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Reset presentation text size/i,
+      }),
+    );
+    // The font-size control debounces the persist into a single write.
+    await waitFor(() =>
+      expect(mockUpdateBoardPresentationFontScale).toHaveBeenCalledWith(
+        "sunday",
+        1,
+      ),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /Clear all posts/i }),
+    );
+    expect(mockSoftResetBoardAlias).toHaveBeenCalledWith("sunday");
+
+    await user.keyboard("{Escape}");
+
+    await user.type(screen.getByLabelText(/^Title/i), "New Board");
+    expect(screen.getByText(/^new-board$/i)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /Create Discussion Board/i }),
+    );
+
+    await waitFor(() => {
+      expect(mockCreateBoardAlias).toHaveBeenCalledWith({
+        aliasId: "new-board",
+        title: "New Board",
+        database: "test",
       });
-
-      await openBoardToolsSheetIfMobile(user);
-      await user.click(
-        await screen.findByRole("button", { name: /Reset presentation text size/i }),
-      );
-      // The font-size control debounces the persist into a single write.
-      await waitFor(() =>
-        expect(mockUpdateBoardPresentationFontScale).toHaveBeenCalledWith(
-          "sunday",
-          1,
-        ),
-      );
-
-      await user.click(
-        await screen.findByRole("button", { name: /Clear all posts/i }),
-      );
-      expect(mockSoftResetBoardAlias).toHaveBeenCalledWith("sunday");
-
-      await user.keyboard("{Escape}");
-
-      await user.type(screen.getByLabelText(/^Title/i), "New Board");
-      expect(screen.getByText(/^new-board$/i)).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: /Create Discussion Board/i }));
-
-      await waitFor(() => {
-        expect(mockCreateBoardAlias).toHaveBeenCalledWith({
-          aliasId: "new-board",
-          title: "New Board",
-          database: "test",
-        });
-      });
-    },
-    20000,
-  );
+    });
+  }, 20000);
 
   it("sorts moderator posts by timestamp ascending", async () => {
     renderPage();
@@ -515,7 +532,9 @@ describe("BoardControllerContent", () => {
     await screen.findByRole("heading", { name: "Sunday Board" });
 
     await user.click(screen.getByRole("button", { name: /Open menu/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Open Board/i }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Open Board/i }),
+    );
 
     expect(openSpy).toHaveBeenCalledWith(
       expect.stringContaining("#/boards/display"),
@@ -532,8 +551,12 @@ describe("BoardControllerContent", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Sunday Board" });
-    await user.click(screen.getByRole("button", { name: /Board tools and management/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Manage boards/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Board tools and management/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Manage boards/i }),
+    );
     await screen.findAllByText("Manage boards");
 
     const boardButtons = screen.getAllByTitle("Sunday Board (sunday)");
@@ -542,7 +565,9 @@ describe("BoardControllerContent", () => {
     await waitFor(() => {
       expect(screen.getAllByTitle("Sunday Board (sunday)")).toHaveLength(1);
     });
-    expect(screen.getByRole("heading", { name: "Sunday Board" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sunday Board" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Current session:/i)).toBeInTheDocument();
   });
 
@@ -550,7 +575,9 @@ describe("BoardControllerContent", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /Rename Sunday Board/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Rename Sunday Board/i }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: /Rename discussion board/i,
     });
@@ -572,11 +599,15 @@ describe("BoardControllerContent", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /Delete Sunday Board/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Delete Sunday Board/i }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: /Delete discussion board/i,
     });
-    await user.click(within(dialog).getByRole("button", { name: /Delete board/i }));
+    await user.click(
+      within(dialog).getByRole("button", { name: /Delete board/i }),
+    );
 
     expect(mockDeleteBoardAlias).toHaveBeenCalledWith("sunday");
     await screen.findByText(/No discussion boards yet/i);
@@ -589,7 +620,9 @@ describe("BoardControllerContent", () => {
     await screen.findByText(/Earlier question/i);
 
     await openBoardToolsSheetIfMobile(user);
-    await user.click(screen.getByRole("button", { name: /Start new session/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Start new session/i }),
+    );
 
     mockBoardDb.__setBoardDoc("board-new", {
       _id: "board:board-new",
@@ -638,7 +671,9 @@ describe("BoardControllerContent", () => {
       mockBoardDb.__emitChange();
     });
 
-    expect(await screen.findByText(/Brand new session post/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Brand new session post/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Earlier question/i)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Return to current session/i }),
@@ -697,13 +732,15 @@ describe("BoardControllerContent", () => {
     const dialog = await screen.findByRole("dialog", {
       name: /Start fresh for today/i,
     });
-    await user.click(within(dialog).getByRole("button", { name: /^Start fresh$/i }));
+    await user.click(
+      within(dialog).getByRole("button", { name: /^Start fresh$/i }),
+    );
 
     await waitFor(() =>
       expect([
         mockHardResetBoardAlias.mock.calls,
         mockResetRestreamSession.mock.calls,
-      ]).toEqual([[['sunday']], [['church-1']]]),
+      ]).toEqual([[["sunday"]], [["church-1"]]]),
     );
   });
 
@@ -712,17 +749,23 @@ describe("BoardControllerContent", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Sunday Board" });
-    expect(await screen.findAllByRole("button", { name: /^Hide$/i })).toHaveLength(3);
+    expect(
+      await screen.findAllByRole("button", { name: /^Hide$/i }),
+    ).toHaveLength(3);
 
     await openBoardToolsSheetIfMobile(user);
     await user.click(screen.getByLabelText(/Show posts from/i));
-    await user.click(
-      screen.getByRole("option", { name: /Earlier session:/i }),
-    );
+    await user.click(screen.getByRole("option", { name: /Earlier session:/i }));
 
-    expect(await screen.findByText(/Archived session question/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Hide$/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Highlight$/i })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/Archived session question/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Hide$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Highlight$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the presentation highlight count tied to the current board while viewing an earlier session", async () => {
@@ -734,10 +777,10 @@ describe("BoardControllerContent", () => {
 
     await openBoardToolsSheetIfMobile(user);
     await user.click(screen.getByLabelText(/Show posts from/i));
-    await user.click(
-      screen.getByRole("option", { name: /Earlier session:/i }),
-    );
-    expect(await screen.findByText(/Archived session question/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /Earlier session:/i }));
+    expect(
+      await screen.findByText(/Archived session question/i),
+    ).toBeInTheDocument();
 
     await act(async () => {
       mockBoardDb.__updatePost("board-current", "2", { highlighted: true });
@@ -758,6 +801,50 @@ describe("BoardControllerContent", () => {
     expect(
       screen.getByText(/Ask a church admin to connect Restream/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows Restream connection issues as one quiet line without duplicating lastError", async () => {
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-1",
+        startedAt: 100,
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "connected",
+        accountLabel: "Main channel",
+        streamTitle: "",
+        lastError: "YouTube: Main Channel (event not started)",
+        connectionIssues: [
+          "YouTube: Main Channel (event not started)",
+          "YouTube: Main Channel (event not started)",
+        ],
+        platformSummary: ["YouTube: Main channel"],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+
+    expect(
+      screen.getByText(
+        "Connection issues: YouTube: Main Channel (event not started)",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryAllByText(/YouTube: Main Channel \(event not started\)/i),
+    ).toHaveLength(1);
   });
 
   it("orders labeled Restream and board activity by timestamp", async () => {
@@ -859,6 +946,100 @@ describe("BoardControllerContent", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows Post to YouTube only while Restream live chat is connected", async () => {
+    const youtubeIntegrations = {
+      ...createMockGlobalContext().churchIntegrations,
+      youtube: {
+        enabled: true,
+        connected: true,
+        accountLabel: "Church Live",
+        lastError: "",
+      },
+    };
+
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-1",
+        startedAt: 100,
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        streamTitle: "",
+        lastError: "YouTube: Main Channel (event not started)",
+        connectionIssues: ["YouTube: Main Channel (event not started)"],
+        platformSummary: ["YouTube: Main channel"],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    const { rerender } = renderPage({
+      globalOverrides: { churchIntegrations: youtubeIntegrations },
+    });
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(
+      screen.queryByRole("button", { name: /Post to YouTube live chat/i }),
+    ).not.toBeInTheDocument();
+
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-1",
+        startedAt: 100,
+        messageCount: 0,
+        enabled: true,
+        connected: true,
+        connectionState: "connected",
+        accountLabel: "Main channel",
+        streamTitle: "Sunday Live",
+        lastError: "",
+        connectionIssues: [],
+        platformSummary: ["YouTube: Main channel"],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    rerender(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              database: "test",
+              churchIntegrations: youtubeIntegrations,
+            }) as any
+          }
+        >
+          <ToastProvider>
+            <BoardControllerContent />
+          </ToastProvider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /Post to YouTube live chat/i }),
+    ).toBeInTheDocument();
+  });
+
   it("posts to the discussion board from the live activity feed", async () => {
     const user = userEvent.setup();
     const api = jest.requireMock("../boards/api") as {
@@ -909,7 +1090,9 @@ describe("BoardControllerContent", () => {
 
     await screen.findByRole("heading", { name: "Discussion Board" });
     await screen.findByRole("heading", { name: "Sunday Board" });
-    expect(screen.queryByRole("heading", { name: "Discussion boards" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Discussion boards" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/\d+ total · \d+ visible · \d+ highlighted/i),
     ).toBeInTheDocument();
