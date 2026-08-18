@@ -115,13 +115,21 @@ const DisplayBox = ({
   const boxTimeline = useRef<GSAPTimeline | null>(null);
   const isVideoBg = box.mediaInfo?.type === "video";
   const videoUrl = box.mediaInfo?.background;
+  // A local video file stores `background` as a local-video-file:// reference,
+  // but the player is handed the resolved worshipsync-media:// URL. Comparing
+  // the raw form never matches, so the placeholder stayed painted at full
+  // opacity over a video that was playing fine underneath it.
+  const localVideoDisplay = useLocalVideoFileUrl(box.mediaInfo?.localVideoFile);
+  const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
+    ? localVideoDisplay.url
+    : videoUrl;
   const shouldImageBeHidden = useMemo(
     () =>
       isVideoBg &&
-      videoUrl &&
-      videoUrl === activeVideoUrl &&
+      resolvedVideoUrl &&
+      resolvedVideoUrl === activeVideoUrl &&
       isWindowVideoLoaded,
-    [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded],
+    [isVideoBg, resolvedVideoUrl, activeVideoUrl, isWindowVideoLoaded],
   );
 
   const background = box.background;
@@ -313,6 +321,9 @@ const DisplayBox = ({
 
       for (const layer of layers) {
         if (!layer.enabled) continue;
+        // Background can be "enabled" before its image node mounts; skip rather
+        // than warn when the scoped selector does not match yet.
+        if (!boxRef.current?.querySelector(layer.selector)) continue;
 
         const startOpacity = isPrev ? 1 : 0;
         const settledOpacity = isPrev ? 0 : layer.targetOpacity;

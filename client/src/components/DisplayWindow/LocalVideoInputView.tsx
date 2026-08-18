@@ -4,7 +4,8 @@ import type { LocalVideoInputPresentation } from "../../types";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import {
   getAudioInputErrorMessage,
-  getVideoInputErrorMessage,
+  getLocalVideoSourceErrorMessage,
+  isDesktopCaptureKind,
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
 import {
@@ -20,6 +21,7 @@ import {
   supportsLocalVideoRealtimeRelay,
 } from "../../utils/localVideoRealtimeRelay";
 import { subscribeLocalVideoCaptureQuality } from "../../utils/localVideoCaptureQualityRelay";
+import { subscribeBrowserDesktopShares } from "../../utils/desktopCapture";
 
 type LocalVideoInputViewProps = {
   input: LocalVideoInputPresentation;
@@ -113,11 +115,21 @@ const LocalVideoInputView = ({
   const previewFramePendingRef = useRef(false);
   const [previewFrameUrl, setPreviewFrameUrl] = useState<string>();
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  /**
+   * A browser share only restarts from a click on its own workstation. Another
+   * app window may still be relaying it, so this is shown only while nothing
+   * is on screen.
+   */
+  const [restartDetail, setRestartDetail] = useState<string | null>(null);
   const [audioWarning, setAudioWarning] = useState<string | null>(null);
   const [isDirectReady, setIsDirectReady] = useState(false);
   const [isRealtimeActive, setIsRealtimeActive] = useState(false);
   const [captureOwnedElsewhere, setCaptureOwnedElsewhere] = useState(false);
   const [captureAttempt, setCaptureAttempt] = useState(0);
+  const isDesktopShare = isDesktopCaptureKind(input.captureKind);
+  const unavailableHeading = isDesktopShare
+    ? `${input.captureKind === "window" ? "Window" : "Screen"} share unavailable`
+    : "Video input unavailable";
   const isLocal = input.ownerDeviceId === getOrCreateDeviceId();
   const binding = isLocal
     ? resolveLocalVideoInputBinding(input.sourceId)
@@ -284,7 +296,9 @@ const LocalVideoInputView = ({
     if (!isLocal || !captureEnabled) return;
     if (!deviceId) {
       setErrorDetail(
-        "Choose this input again on the source device, then try again.",
+        isDesktopCaptureKind(input.captureKind)
+          ? "Choose this share again on the source device, then try again."
+          : "Choose this input again on the source device, then try again.",
       );
       return;
     }
@@ -329,6 +343,7 @@ const LocalVideoInputView = ({
         );
         if (!active) return;
         setCaptureOwnedElsewhere(false);
+        setRestartDetail(null);
         stream
           .getVideoTracks()
           .forEach((track) =>
@@ -382,7 +397,21 @@ const LocalVideoInputView = ({
           setCaptureOwnedElsewhere(true);
           return;
         }
-        setErrorDetail(getVideoInputErrorMessage(error));
+        // A stopped browser share cannot be reopened without an operator click.
+        // Fall back to whichever window still relays it instead of retrying.
+        if (
+          error instanceof Error &&
+          error.name === "DesktopCaptureShareEndedError"
+        ) {
+          setRestartDetail(
+            getLocalVideoSourceErrorMessage(error, input.captureKind),
+          );
+          setCaptureOwnedElsewhere(true);
+          return;
+        }
+        setErrorDetail(
+          getLocalVideoSourceErrorMessage(error, input.captureKind),
+        );
         retryCapture(Math.min(1_000 * 2 ** Math.min(captureAttempt, 3), 8_000));
       }
     };
@@ -407,11 +436,26 @@ const LocalVideoInputView = ({
     captureAttempt,
     captureEnabled,
     deviceId,
+    input.captureKind,
     input.sourceId,
     isLocal,
     playAudio,
     publishPreview,
   ]);
+
+  // Re-sharing in this window does not change any saved binding, so watch for
+  // the replacement stream directly instead of waiting for a capture retry.
+  useEffect(() => {
+    if (!restartDetail) return;
+    const unsubscribe = subscribeBrowserDesktopShares((sourceId) => {
+      if (sourceId === input.sourceId) {
+        setCaptureAttempt((attempt) => attempt + 1);
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [input.sourceId, restartDetail]);
 
   if (!isLocal) {
     if (!showErrors) {
@@ -424,11 +468,16 @@ const LocalVideoInputView = ({
     }
     return (
       <LocalVideoInputStatus
-        detail={`This input is available only on ${input.ownerLabel}. Open a selected display on that device.`}
+        heading={unavailableHeading}
+        detail={`This ${isDesktopShare ? "share" : "input"} is available only on ${input.ownerLabel}. Open a selected display on that device.`}
         transparentBackground={transparentBackground}
       />
     );
   }
+
+  // A relayed picture from another app window outranks a local restart notice.
+  const isShowingPicture = isDirectReady || Boolean(previewFrameUrl);
+  const statusDetail = errorDetail ?? (isShowingPicture ? null : restartDetail);
 
   return (
     <div
@@ -488,19 +537,22 @@ const LocalVideoInputView = ({
             }}
             onError={() =>
               setErrorDetail(
-                "Check the input connection and camera permission, then try again.",
+                isDesktopShare
+                  ? `Choose the ${input.captureKind === "window" ? "window" : "screen"} again on this computer, then try again.`
+                  : "Check the input connection and camera permission, then try again.",
               )
             }
           />
         </>
       ) : null}
-      {showErrors && errorDetail ? (
+      {showErrors && statusDetail ? (
         <LocalVideoInputStatus
-          detail={errorDetail}
+          heading={unavailableHeading}
+          detail={statusDetail}
           transparentBackground={transparentBackground}
         />
       ) : null}
-      {showErrors && audioWarning && !errorDetail ? (
+      {showErrors && audioWarning && !statusDetail ? (
         <div
           className="absolute inset-x-6 bottom-6 flex items-center justify-center gap-3 rounded bg-black/80 px-5 py-3 text-center text-xl text-white"
           role="status"

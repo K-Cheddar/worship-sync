@@ -61,6 +61,12 @@ export type MediaLibraryBarMenuEntry = {
 
 export type ControllerFromSelectedMediaActions = {
   isProjectorTransmitting: boolean;
+  /**
+   * What the send action is aimed at, named by the operator. The label used to
+   * read "projector" everywhere, which is wrong on a controller whose only
+   * screen is called something else.
+   */
+  sendTargetLabel: string;
   onSendToProjector: () => void;
   onCreateCustomItem: () => void | Promise<void>;
 };
@@ -489,6 +495,7 @@ export function buildMediaLibraryBarActions(args: {
   if (controllerFromSelectedMedia) {
     const {
       isProjectorTransmitting,
+      sendTargetLabel,
       onSendToProjector,
       onCreateCustomItem,
     } = controllerFromSelectedMedia;
@@ -497,7 +504,7 @@ export function buildMediaLibraryBarActions(args: {
     out.push(
       {
         id: "send-media-to-projector",
-        label: "Send to projector",
+        label: `Send to ${sendTargetLabel}`,
         icon: (
           <MonitorPlay
             className={cn(

@@ -1,4 +1,5 @@
 import type {
+  LocalVideoCaptureKind,
   LocalVideoInputMediaSource,
   LocalVideoInputPresentation,
 } from "../types";
@@ -8,12 +9,42 @@ const MAX_DEVICE_ID_LENGTH = 512;
 const MAX_LABEL_LENGTH = 120;
 const LOCAL_VIDEO_INPUTS_KEY = "worshipsync_local_video_inputs";
 
+const DEFAULT_LABELS: Record<LocalVideoCaptureKind, string> = {
+  device: "Video input",
+  screen: "Screen",
+  window: "Window",
+};
+
+const normalizeCaptureKind = (value: unknown): LocalVideoCaptureKind =>
+  value === "screen" || value === "window" ? value : "device";
+
+/** Desktop shares are named for what they show; hardware keeps the input wording. */
+export const getDefaultLocalVideoInputLabel = (
+  captureKind: LocalVideoCaptureKind = "device",
+) => DEFAULT_LABELS[captureKind];
+
+export const isDesktopCaptureKind = (
+  captureKind: LocalVideoCaptureKind | undefined,
+): captureKind is "screen" | "window" =>
+  captureKind === "screen" || captureKind === "window";
+
+/**
+ * Hardware inputs keep the payload they have always synced: an absent kind
+ * already means `device`, so only desktop shares add the field.
+ */
+const captureKindFields = (captureKind: LocalVideoCaptureKind) =>
+  isDesktopCaptureKind(captureKind) ? { captureKind } : {};
+
 export const createLocalVideoInputMediaSource = (
   label = "Video input",
+  captureKind: LocalVideoCaptureKind = "device",
 ): LocalVideoInputMediaSource => ({
   kind: "local-video-input",
   sourceId: `local_video_${generateRandomId()}`,
-  label: cleanString(label, MAX_LABEL_LENGTH) || "Video input",
+  label:
+    cleanString(label, MAX_LABEL_LENGTH) ||
+    getDefaultLocalVideoInputLabel(captureKind),
+  ...captureKindFields(captureKind),
   fit: "contain",
   audioEnabled: true,
 });
@@ -26,25 +57,66 @@ export const normalizeLocalVideoInputMediaSource = (
   if (candidate.kind !== "local-video-input") return undefined;
   const sourceId = cleanString(candidate.sourceId, MAX_DEVICE_ID_LENGTH);
   if (!sourceId) return undefined;
+  const captureKind = normalizeCaptureKind(candidate.captureKind);
   return {
     kind: "local-video-input",
     sourceId,
-    label: cleanString(candidate.label, MAX_LABEL_LENGTH) || "Video input",
+    label:
+      cleanString(candidate.label, MAX_LABEL_LENGTH) ||
+      getDefaultLocalVideoInputLabel(captureKind),
+    ...captureKindFields(captureKind),
     ...(candidate.fit === "cover" || candidate.fit === "contain"
       ? { fit: candidate.fit }
       : {}),
     ...(typeof candidate.audioEnabled === "boolean"
       ? { audioEnabled: candidate.audioEnabled }
       : {}),
+    ...(candidate.ownerDeviceId
+      ? {
+          ownerDeviceId: cleanString(
+            candidate.ownerDeviceId,
+            MAX_DEVICE_ID_LENGTH,
+          ),
+        }
+      : {}),
+    ...(candidate.ownerLabel
+      ? { ownerLabel: cleanString(candidate.ownerLabel, MAX_LABEL_LENGTH) }
+      : {}),
   };
 };
 
 export type LocalVideoInputBinding = {
   sourceId: string;
+  /** Hardware device id, or the desktop capture source id for screens/windows. */
   deviceId: string;
   deviceLabel: string;
   audioDeviceId?: string;
   audioDeviceLabel?: string;
+  captureKind?: LocalVideoCaptureKind;
+  /** Window/screen title, used to find a share again after it is reopened. */
+  displaySourceName?: string;
+  /** Desktop capture may carry this computer's own sound instead of an input. */
+  systemAudio?: boolean;
+};
+
+export type LocalVideoInputBindingOptions = {
+  captureKind?: LocalVideoCaptureKind;
+  displaySourceName?: string;
+  systemAudio?: boolean;
+};
+
+const buildBindingExtras = (options?: LocalVideoInputBindingOptions) => {
+  const captureKind = normalizeCaptureKind(options?.captureKind);
+  if (captureKind === "device") return {};
+  const displaySourceName = cleanString(
+    options?.displaySourceName,
+    MAX_LABEL_LENGTH,
+  );
+  return {
+    captureKind,
+    ...(displaySourceName ? { displaySourceName } : {}),
+    ...(options?.systemAudio ? { systemAudio: true } : {}),
+  };
 };
 
 const cleanString = (value: unknown, maxLength: number) =>
@@ -65,14 +137,17 @@ export const normalizeLocalVideoInput = (
     MAX_DEVICE_ID_LENGTH,
   );
   if (!sourceId || !ownerDeviceId) return undefined;
+  const captureKind = normalizeCaptureKind(candidate.captureKind);
 
   return {
     sourceId,
     ownerDeviceId,
     deviceLabel:
-      cleanString(candidate.deviceLabel, MAX_LABEL_LENGTH) || "Video input",
+      cleanString(candidate.deviceLabel, MAX_LABEL_LENGTH) ||
+      getDefaultLocalVideoInputLabel(captureKind),
     ownerLabel:
       cleanString(candidate.ownerLabel, MAX_LABEL_LENGTH) || "source device",
+    ...captureKindFields(captureKind),
     ...(candidate.fit === "cover" || candidate.fit === "contain"
       ? { fit: candidate.fit }
       : {}),
@@ -99,11 +174,18 @@ const readLocalBindings = (): LocalVideoInputBinding[] => {
         candidate.audioDeviceId,
         MAX_DEVICE_ID_LENGTH,
       );
+      const captureKind = normalizeCaptureKind(candidate.captureKind);
       return [{
         sourceId,
         deviceId,
         deviceLabel:
-          cleanString(candidate.deviceLabel, MAX_LABEL_LENGTH) || "Video input",
+          cleanString(candidate.deviceLabel, MAX_LABEL_LENGTH) ||
+          getDefaultLocalVideoInputLabel(captureKind),
+        ...buildBindingExtras({
+          captureKind,
+          displaySourceName: candidate.displaySourceName as string | undefined,
+          systemAudio: candidate.systemAudio === true,
+        }),
         ...(audioDeviceId
           ? {
               audioDeviceId,
@@ -125,6 +207,7 @@ export const registerLocalVideoInput = (
   deviceLabel: string,
   audioDeviceId?: string,
   audioDeviceLabel?: string,
+  options?: LocalVideoInputBindingOptions,
 ) => {
   const cleanDeviceId = cleanString(deviceId, MAX_DEVICE_ID_LENGTH);
   if (!cleanDeviceId) return undefined;
@@ -137,7 +220,10 @@ export const registerLocalVideoInput = (
   const binding: LocalVideoInputBinding = {
     sourceId: existing?.sourceId ?? `local_video_${generateRandomId()}`,
     deviceId: cleanDeviceId,
-    deviceLabel: cleanString(deviceLabel, MAX_LABEL_LENGTH) || "Video input",
+    deviceLabel:
+      cleanString(deviceLabel, MAX_LABEL_LENGTH) ||
+      getDefaultLocalVideoInputLabel(options?.captureKind),
+    ...buildBindingExtras(options),
     ...(cleanAudioDeviceId
       ? {
           audioDeviceId: cleanAudioDeviceId,
@@ -169,6 +255,7 @@ export const bindLocalVideoInput = (
   deviceLabel: string,
   audioDeviceId?: string,
   audioDeviceLabel?: string,
+  options?: LocalVideoInputBindingOptions,
 ) => {
   const cleanSourceId = cleanString(sourceId, MAX_DEVICE_ID_LENGTH);
   const cleanDeviceId = cleanString(deviceId, MAX_DEVICE_ID_LENGTH);
@@ -178,7 +265,10 @@ export const bindLocalVideoInput = (
   const binding: LocalVideoInputBinding = {
     sourceId: cleanSourceId,
     deviceId: cleanDeviceId,
-    deviceLabel: cleanString(deviceLabel, MAX_LABEL_LENGTH) || "Video input",
+    deviceLabel:
+      cleanString(deviceLabel, MAX_LABEL_LENGTH) ||
+      getDefaultLocalVideoInputLabel(options?.captureKind),
+    ...buildBindingExtras(options),
     ...(cleanAudioDeviceId
       ? {
           audioDeviceId: cleanAudioDeviceId,
@@ -213,9 +303,13 @@ export const buildLocalVideoInputPresentation = (
   if (!binding) return undefined;
   return {
     sourceId: normalized.sourceId,
-    deviceLabel: binding.deviceLabel || normalized.label,
+    // A share keeps its saved name; hardware keeps the bound device name.
+    deviceLabel: isDesktopCaptureKind(normalized.captureKind)
+      ? normalized.label || binding.deviceLabel
+      : binding.deviceLabel || normalized.label,
     ownerDeviceId,
     ownerLabel,
+    ...captureKindFields(normalized.captureKind ?? "device"),
     fit: normalized.fit,
     audioEnabled: normalized.audioEnabled,
   };
@@ -245,6 +339,43 @@ export const getVideoInputErrorMessage = (
   }
   return "Check the input connection and camera permission, then try again.";
 };
+
+/** Desktop shares fail for different reasons than a cable, so guide differently. */
+export const getDesktopCaptureErrorMessage = (
+  error: unknown,
+  captureKind: LocalVideoCaptureKind = "screen",
+) => {
+  const target = captureKind === "window" ? "window" : "screen";
+  // Matched by name so this copy helper stays free of capture-runtime imports.
+  const errorName = error instanceof Error ? error.name : "";
+  if (errorName === "DesktopCaptureShareEndedError") {
+    return `Sharing stopped. Open Media on this computer and share the ${target} again.`;
+  }
+  if (errorName === "DesktopCaptureSourceMissingError") {
+    return `This ${target} is no longer open. Choose it again on this computer.`;
+  }
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return `Allow screen recording for WorshipSync on this computer, then share the ${target} again.`;
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return `This ${target} is no longer open. Choose it again on this computer.`;
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return `This ${target} could not be captured. Choose it again on this computer.`;
+  }
+  return `Choose the ${target} again on this computer, then try again.`;
+};
+
+/** One entry point for status copy across hardware inputs and desktop shares. */
+export const getLocalVideoSourceErrorMessage = (
+  error: unknown,
+  captureKind: LocalVideoCaptureKind | undefined,
+  includesAudio = false,
+) =>
+  isDesktopCaptureKind(captureKind)
+    ? getDesktopCaptureErrorMessage(error, captureKind)
+    : getVideoInputErrorMessage(error, includesAudio);
 
 export const getAudioInputErrorMessage = (error: unknown) => {
   const name = error instanceof DOMException ? error.name : "";

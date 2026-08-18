@@ -1,5 +1,5 @@
 import Toggle from "../../components/Toggle/Toggle";
-import { LayoutGrid } from "lucide-react";
+import { LayoutGrid, MonitorSmartphone } from "lucide-react";
 import cn from "classnames";
 import MediaOriginFilter from "./MediaOriginFilter";
 import MediaTypeFilter, { type MediaTypeFilterValue } from "./MediaTypeFilter";
@@ -13,6 +13,9 @@ type MediaLibraryToolbarProps = {
   onTypeFilterChange: (v: MediaTypeFilterValue) => void;
   originFilter: MediaOriginFilterValue;
   onOriginFilterChange: (v: MediaOriginFilterValue) => void;
+  showOtherDeviceLocalMedia?: boolean;
+  onShowOtherDeviceLocalMediaChange?: (next: boolean) => void;
+  showOtherDeviceLocalMediaToggle?: boolean;
 };
 
 const MediaLibraryToolbar = ({
@@ -23,6 +26,9 @@ const MediaLibraryToolbar = ({
   onTypeFilterChange,
   originFilter,
   onOriginFilterChange,
+  showOtherDeviceLocalMedia = false,
+  onShowOtherDeviceLocalMediaChange,
+  showOtherDeviceLocalMediaToggle = false,
 }: MediaLibraryToolbarProps) => (
   <div
     className={cn(
@@ -36,6 +42,14 @@ const MediaLibraryToolbar = ({
       value={showAll}
       onChange={onShowAllChange}
     />
+    {showOtherDeviceLocalMediaToggle && onShowOtherDeviceLocalMediaChange ? (
+      <Toggle
+        label="Other devices"
+        icon={MonitorSmartphone}
+        value={showOtherDeviceLocalMedia}
+        onChange={onShowOtherDeviceLocalMediaChange}
+      />
+    ) : null}
     <MediaTypeFilter value={typeFilter} onChange={onTypeFilterChange} />
     <MediaOriginFilter
       value={originFilter}

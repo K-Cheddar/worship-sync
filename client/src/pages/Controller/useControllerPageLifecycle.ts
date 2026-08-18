@@ -431,7 +431,15 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     const getItemList = async () => {
-      if (!selectedList || !db || !cloud) return;
+      if (!db || !cloud) return;
+      if (!selectedList) {
+        // No outline in this controller's scope yet. Settle the list rather
+        // than returning early: `isLoading` starts true, so leaving it set left
+        // the outline panel on its skeleton forever with nothing to act on.
+        dispatch(initiateItemList([]));
+        dispatch(setItemListIsLoading(false));
+        return;
+      }
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db.get(

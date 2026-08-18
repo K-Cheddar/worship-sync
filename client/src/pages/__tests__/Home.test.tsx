@@ -1,4 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render as rtlRender,
+  screen,
+  type RenderOptions,
+} from "@testing-library/react";
+import { configureStore } from "@reduxjs/toolkit";
+import { Provider } from "react-redux";
+import controllerProfilesReducer, {
+  setControllerProfilesFromRemote,
+} from "../../store/controllerProfilesSlice";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Home from "../Home";
@@ -60,8 +70,28 @@ const setUserAgent = (userAgent: string) => {
   });
 };
 
+/**
+ * Home lists the church's auxiliary controllers, so it reads the controller
+ * registry from the store. Every render here goes through a Provider rather
+ * than each call site wiring one up.
+ */
+let testStore = configureStore({
+  reducer: { controllerProfiles: controllerProfilesReducer },
+});
+
+const render = (ui: React.ReactElement, options?: RenderOptions) =>
+  rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <Provider store={testStore}>{children}</Provider>
+    ),
+    ...options,
+  });
+
 describe("Home", () => {
   beforeEach(() => {
+    testStore = configureStore({
+      reducer: { controllerProfiles: controllerProfilesReducer },
+    });
     setUserAgent(originalUserAgent);
     // Reset alongside the user agent; the iPad case sets it and it would
     // otherwise leak into later tests as a false iPadOS signal.
@@ -267,6 +297,87 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /^Credits Editor / }),
     ).toHaveAttribute("href", "/credits-editor");
+  });
+
+  describe("auxiliary controllers", () => {
+    const seedLobbyController = () =>
+      testStore.dispatch(
+        setControllerProfilesFromRemote([
+          {
+            id: "ctrl_lobby",
+            type: "aux-presentation",
+            name: "Lobby Screen",
+            order: 2,
+            enabled: true,
+            outputIds: ["out_lobby"],
+            outlineScope: "ctrl_lobby",
+          },
+        ]),
+      );
+
+    const renderHome = (access = "full") =>
+      render(
+        <MemoryRouter initialEntries={["/home"]}>
+          <GlobalInfoContext.Provider
+            value={
+              createMockGlobalContext({
+                loginState: "success",
+                access,
+              }) as any
+            }
+          >
+            <ControllerInfoContext.Provider
+              value={createMockControllerContext() as any}
+            >
+              <Home />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </MemoryRouter>,
+      );
+
+    it("links to each controller the church has configured", () => {
+      // A controller with no way in from Home may as well not exist.
+      seedLobbyController();
+      renderHome();
+      expect(
+        screen.getByRole("link", { name: /Lobby Screen/i }),
+      ).toHaveAttribute("href", "/aux-controller/ctrl_lobby");
+    });
+
+    it("shows nothing extra for a church that has none", () => {
+      renderHome();
+      expect(
+        screen.queryByRole("link", { name: /Lobby Screen/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("omits a retired controller", () => {
+      testStore.dispatch(
+        setControllerProfilesFromRemote([
+          {
+            id: "ctrl_lobby",
+            type: "aux-presentation",
+            name: "Lobby Screen",
+            order: 2,
+            enabled: false,
+            outputIds: ["out_lobby"],
+            outlineScope: "ctrl_lobby",
+          },
+        ]),
+      );
+      renderHome();
+      expect(
+        screen.queryByRole("link", { name: /Lobby Screen/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps them away from the music tier, like the overlay controller", () => {
+      seedLobbyController();
+      renderHome("music");
+      expect(
+        screen.queryByRole("link", { name: /Lobby Screen/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("shows only presentation controller for music access", () => {

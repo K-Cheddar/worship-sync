@@ -44,6 +44,9 @@ const AccountPeoplePage = lazy(
   () => import("./Account/pages/AccountPeoplePage"),
 );
 const AccountSetupPage = lazy(() => import("./Account/pages/AccountSetupPage"));
+const AccountControllersPage = lazy(
+  () => import("./Account/pages/AccountControllersPage"),
+);
 const AccountBrandingPage = lazy(
   () => import("./Account/pages/AccountBrandingPage"),
 );
@@ -252,12 +255,20 @@ const AccountRoutes = () => (
           path={ACCOUNT_SECTIONS[2].routePath}
           element={
             <AccountSectionRoute>
-              <AccountBrandingPage />
+              <AccountControllersPage />
             </AccountSectionRoute>
           }
         />
         <Route
           path={ACCOUNT_SECTIONS[3].routePath}
+          element={
+            <AccountSectionRoute>
+              <AccountBrandingPage />
+            </AccountSectionRoute>
+          }
+        />
+        <Route
+          path={ACCOUNT_SECTIONS[4].routePath}
           element={
             <AccountSectionRoute>
               <AccountIntegrationsPage />

@@ -1,5 +1,8 @@
 import { ComponentProps, memo } from "react";
-import { selectOutputSlot } from "../../store/presentationSlice";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import ScaledBoardPreview from "../../boards/ScaledBoardPreview";
 import { useSelector } from "../../hooks";
@@ -33,10 +36,10 @@ const MonitorPresentationPreview = memo(
     name = "Monitor",
   }: MonitorPresentationPreviewProps) => {
     const info = useSelector(
-      (state) => selectOutputSlot(state, outputId, "monitor").info,
+      (state) => selectResolvedOutputSlot(state, outputId, "monitor").info,
     );
     const prevInfo = useSelector(
-      (state) => selectOutputSlot(state, outputId, "monitor").prevInfo,
+      (state) => selectResolvedOutputSlot(state, outputId, "monitor").prevInfo,
     );
     const isTransmitting = useSelector(
       (state) => selectOutputSlot(state, outputId, "monitor").isTransmitting,
@@ -51,7 +54,7 @@ const MonitorPresentationPreview = memo(
     // When the monitor is swapped to a discussion board, the preview should show
     // the board too so it matches what's actually on the monitor.
     const monitorBoardAliasId = useSelector(
-      (state) => selectOutputSlot(state, outputId, "monitor").boardAliasId,
+      (state) => selectResolvedOutputSlot(state, outputId, "monitor").boardAliasId,
     );
 
     return (

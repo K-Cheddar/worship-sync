@@ -5,6 +5,10 @@ import {
   resetAllWarmLocalVideoCaptures,
   resetWarmLocalVideoCapture,
 } from "./localVideoCapturePool";
+import {
+  keepBrowserDesktopShare,
+  stopAllBrowserDesktopShares,
+} from "./desktopCapture";
 
 const videoStop = jest.fn();
 const audioStop = jest.fn();
@@ -55,6 +59,7 @@ describe("localVideoCapturePool", () => {
 
   afterEach(async () => {
     await resetAllWarmLocalVideoCaptures();
+    stopAllBrowserDesktopShares();
   });
 
   it("reuses one persistent capture for repeated consumers", async () => {
@@ -136,6 +141,39 @@ describe("localVideoCapturePool", () => {
     await expect(
       acquireWarmLocalVideoCapture("source-1", binding),
     ).resolves.toEqual({ stream: videoStream, audioError: error });
+  });
+
+  it("captures a screen share instead of opening a video device", async () => {
+    const screenStop = jest.fn();
+    const screenTrack = {
+      stop: screenStop,
+      readyState: "live",
+      addEventListener: jest.fn(),
+    };
+    const screenStream = {
+      getTracks: () => [screenTrack],
+      getVideoTracks: () => [screenTrack],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream;
+    keepBrowserDesktopShare("screen-source", screenStream);
+    const screenBinding = {
+      sourceId: "screen-source",
+      deviceId: "display:screen-source",
+      deviceLabel: "Lyrics screen",
+      captureKind: "screen" as const,
+    };
+
+    await expect(
+      acquireWarmLocalVideoCapture("screen-source", screenBinding),
+    ).resolves.toEqual({ stream: screenStream, audioError: undefined });
+    expect(getUserMedia).not.toHaveBeenCalled();
+
+    // Releasing a browser share parks it; a click would be needed to restart it.
+    await releaseWarmLocalVideoCapture("screen-source", "legacy");
+    expect(screenStop).not.toHaveBeenCalled();
+    await expect(
+      acquireWarmLocalVideoCapture("screen-source", screenBinding),
+    ).resolves.toEqual({ stream: screenStream, audioError: undefined });
   });
 
   it("does not reopen hardware owned by another app window", async () => {

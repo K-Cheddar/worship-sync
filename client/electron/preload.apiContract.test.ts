@@ -23,6 +23,7 @@ describe("electron preload API contract", () => {
       "importLocalAsset",
       "getLocalAsset",
       "deleteLocalAsset",
+      "getDesktopCaptureSources",
       "openExternalUrl",
       "saveLastRoute",
       "getLastRoute",

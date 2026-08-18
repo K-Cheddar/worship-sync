@@ -21,8 +21,8 @@ import {
   Minimize,
   Plus,
   ImageUp,
-  Upload,
   HardDrive,
+  MonitorUp,
   Video,
   Folder,
   ZoomIn,
@@ -30,6 +30,7 @@ import {
   ExternalLink,
   Cable,
   LayoutGrid,
+  MonitorSmartphone,
 } from "lucide-react";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -51,7 +52,10 @@ import {
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import LocalVideoInputView from "../../components/DisplayWindow/LocalVideoInputView";
-import { buildLocalVideoInputPresentation } from "../../utils/localVideoInput";
+import {
+  buildLocalVideoInputPresentation,
+  isDesktopCaptureKind,
+} from "../../utils/localVideoInput";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
@@ -72,6 +76,7 @@ import { calculateMediaLibraryGridColumns } from "./mediaLibraryGridColumns";
 import { Slider } from "../../components/ui/Slider";
 import { VirtualMediaGrid } from "./VirtualMediaGrid";
 import { getCanvaMediaSource } from "./canvaMediaSource";
+import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import {
   MediaLibraryFolderModals,
@@ -172,6 +177,9 @@ type MediaModalProps = {
   onTypeFilterChange: (v: MediaTypeFilterValue) => void;
   originFilter: MediaOriginFilterValue;
   onOriginFilterChange: (v: MediaOriginFilterValue) => void;
+  showOtherDeviceLocalMedia?: boolean;
+  onShowOtherDeviceLocalMediaChange?: (next: boolean) => void;
+  showOtherDeviceLocalMediaToggle?: boolean;
   onMediaClick: (
     e: React.MouseEvent,
     mediaItem: MediaType,
@@ -184,14 +192,15 @@ type MediaModalProps = {
   onPreviewChange: (media: MediaType | null) => void;
   mediaUploadInputRef?: React.MutableRefObject<MediaUploadInputRef | null>;
   uploadProgress?: { isUploading: boolean; progress: number };
-  /** When set, Add Media uses this instead of opening the ref directly (e.g. guest guard + toast). */
   onAddMediaClick?: () => void;
-  onImportLocalMedia?: () => void;
   onAddVideoInput?: () => void;
+  /** Screens and windows on this computer, offered next to hardware inputs. */
+  onAddScreenShare?: () => void;
   onRelinkVideoInput?: (media: MediaType) => void;
   onImportFromCanva?: (sourceMedia?: MediaType) => void;
-  /** When true, Add Media shows the guest-mode tooltip (upload still routes through `onAddMediaClick`). */
+  /** When true, adding media is blocked (library still loading or failed). */
   mediaUploadDisabled?: boolean;
+  isGuestSession?: boolean;
 };
 
 const MediaModal = ({
@@ -215,6 +224,9 @@ const MediaModal = ({
   onTypeFilterChange,
   originFilter,
   onOriginFilterChange,
+  showOtherDeviceLocalMedia = false,
+  onShowOtherDeviceLocalMediaChange,
+  showOtherDeviceLocalMediaToggle = false,
   onMediaClick,
   onSearchChange,
   onShowNameToggle,
@@ -223,16 +235,19 @@ const MediaModal = ({
   mediaUploadInputRef,
   uploadProgress,
   onAddMediaClick,
-  onImportLocalMedia,
   onAddVideoInput,
+  onAddScreenShare,
   onRelinkVideoInput,
   onImportFromCanva,
   mediaUploadDisabled = false,
+  isGuestSession = false,
 }: MediaModalProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
   const { showToast } = useToast();
   const { db } = useContext(ControllerInfoContext) || {};
+  const { getBarAction: getLocalMediaCloudShareBarAction } =
+    useLocalMediaCloudShare();
 
   const notifyMediaAction = useCallback(
     (message: string, variant: ToastVariant = "success") => {
@@ -272,15 +287,8 @@ const MediaModal = ({
     if (uploadProgress?.isUploading) {
       return `Uploading... ${Math.round(uploadProgress.progress)}%`;
     }
-    if (mediaUploadDisabled) {
-      return "Guest mode: sample media only. Sign in to upload.";
-    }
     return "Add Media";
-  }, [
-    uploadProgress?.isUploading,
-    uploadProgress?.progress,
-    mediaUploadDisabled,
-  ]);
+  }, [uploadProgress?.isUploading, uploadProgress?.progress]);
 
   const addMediaMenu = mediaUploadInputRef ? (
     <DropdownMenu>
@@ -298,22 +306,12 @@ const MediaModal = ({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          disabled={mediaUploadDisabled}
-          onSelect={() =>
-            onAddMediaClick
-              ? onAddMediaClick()
-              : mediaUploadInputRef.current?.openModal()
-          }
-        >
-          <Upload /> Upload files
-        </DropdownMenuItem>
-        {onImportLocalMedia ? (
+        {onAddMediaClick ? (
           <DropdownMenuItem
             disabled={mediaUploadDisabled}
-            onSelect={onImportLocalMedia}
+            onSelect={() => onAddMediaClick()}
           >
-            <HardDrive /> Import local files
+            <HardDrive /> Add files
           </DropdownMenuItem>
         ) : null}
         {onAddVideoInput ? (
@@ -324,9 +322,17 @@ const MediaModal = ({
             <Video /> Add video input
           </DropdownMenuItem>
         ) : null}
-        {onImportFromCanva ? (
+        {onAddScreenShare ? (
           <DropdownMenuItem
             disabled={mediaUploadDisabled}
+            onSelect={onAddScreenShare}
+          >
+            <MonitorUp /> Add screen or window
+          </DropdownMenuItem>
+        ) : null}
+        {onImportFromCanva ? (
+          <DropdownMenuItem
+            disabled={mediaUploadDisabled || isGuestSession}
             onSelect={() => onImportFromCanva()}
           >
             <ImageUp /> Import from Canva
@@ -650,13 +656,25 @@ const MediaModal = ({
       modalSelectedMedia.localVideoInput &&
       onRelinkVideoInput
     ) {
+      const isShare = isDesktopCaptureKind(
+        modalSelectedMedia.localVideoInput.captureKind,
+      );
       actions.push({
         id: "relink-video-input",
-        label: "Relink input",
-        icon: <Cable className="size-4" />,
+        label: isShare ? "Choose share again" : "Relink input",
+        icon: isShare ? (
+          <MonitorUp className="size-4" />
+        ) : (
+          <Cable className="size-4" />
+        ),
         onClick: () => onRelinkVideoInput(modalSelectedMedia),
       });
     }
+    const cloudShareAction = getLocalMediaCloudShareBarAction(
+      modalSelectedMedia,
+      modalSelectedMediaIds.size,
+    );
+    if (cloudShareAction) actions.push(cloudShareAction);
     return actions;
   }, [
     routeFlags,
@@ -675,6 +693,7 @@ const MediaModal = ({
     triggerSlideBackgroundFeedback,
     onImportFromCanva,
     onRelinkVideoInput,
+    getLocalMediaCloudShareBarAction,
   ]);
 
   const actionBarDetails = useMemo(() => {
@@ -1028,6 +1047,15 @@ const MediaModal = ({
                   onChange={onOriginFilterChange}
                   className="min-w-0 flex-1"
                 />
+                {showOtherDeviceLocalMediaToggle &&
+                  onShowOtherDeviceLocalMediaChange ? (
+                  <Toggle
+                    label="Other devices"
+                    icon={MonitorSmartphone}
+                    value={showOtherDeviceLocalMedia}
+                    onChange={onShowOtherDeviceLocalMediaChange}
+                  />
+                ) : null}
               </div>
               <div className="flex min-w-0 items-center gap-2">
                 <MediaTypeFilter
@@ -1060,6 +1088,13 @@ const MediaModal = ({
                 onTypeFilterChange={onTypeFilterChange}
                 originFilter={originFilter}
                 onOriginFilterChange={onOriginFilterChange}
+                showOtherDeviceLocalMedia={showOtherDeviceLocalMedia}
+                onShowOtherDeviceLocalMediaChange={
+                  onShowOtherDeviceLocalMediaChange
+                }
+                showOtherDeviceLocalMediaToggle={
+                  showOtherDeviceLocalMediaToggle
+                }
                 className="mx-0 shrink-0 border-0 bg-transparent px-0 py-0"
               />
               <div className="flex min-h-10 min-w-0 flex-1 basis-0 items-center gap-2">

@@ -4,6 +4,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
 import { LocalVideoCaptureOwnedError } from "../../utils/localVideoCapturePool";
+import { keepElementInView } from "../../utils/generalUtils";
 
 const mockDispatch = jest.fn();
 const mockBuildLocalVideoInputPresentation = jest.fn();
@@ -121,6 +122,12 @@ jest.mock("@dnd-kit/sortable", () => ({
 
 jest.mock("react-router-dom", () => ({
   useLocation: () => ({ pathname: "/controller/item/free-1/list-1" }),
+  useNavigate: () => jest.fn(),
+}));
+
+jest.mock("./OutlineItemSlidesScroller", () => ({
+  __esModule: true,
+  default: () => <div data-testid="outline-item-slides-scroller" />,
 }));
 
 jest.mock("../../store/itemSlice", () => {
@@ -152,7 +159,11 @@ jest.mock("./ItemSlide", () => ({
     slide: { name: string };
     selectSlide: (index: number) => void;
   }) => (
-    <button type="button" onClick={() => selectSlide(index)}>
+    <button
+      type="button"
+      id={`item-slide-${index}`}
+      onClick={() => selectSlide(index)}
+    >
       {slide.name}
     </button>
   ),
@@ -698,5 +709,58 @@ describe("ItemSlides", () => {
         payload: { slideIds: ["slide-1", "slide-2"] },
       }),
     );
+  });
+
+  it("keeps the single-item grid when the editor is expanded", () => {
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Section 1" })).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("outline-item-slides-scroller"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the continuous outline scroller when the editor is collapsed", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByTestId("outline-item-slides-scroller")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Section 1" })).not.toBeInTheDocument();
+    expect(keepElementInView).not.toHaveBeenCalled();
+  });
+
+  it("scrolls the selected slide into view after expanding the editor", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+    const { rerender } = render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    mockState.undoable.present.preferences.shouldShowItemEditor = true;
+    rerender(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(keepElementInView).toHaveBeenCalled();
   });
 });

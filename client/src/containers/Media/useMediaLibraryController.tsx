@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Cable, ExternalLink, Folder } from "lucide-react";
+import { Cable, ExternalLink, Folder, MonitorUp } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import { DBMedia, MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -21,6 +21,7 @@ import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { deleteLocalImage } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
+import { isDesktopCaptureKind } from "../../utils/localVideoInput";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -70,10 +71,17 @@ import {
   MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
 } from "./mediaLibraryOrangeFolderIcon";
 import { useLocation, useNavigate } from "react-router-dom";
+import {
+  useActiveControllerProfile,
+  useControllerBasePath,
+} from "../../context/activeController";
+import { getControllerOutputs } from "../../utils/controllerProfiles";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { getControllerItemPath } from "../../utils/outlineSlideSections";
 import { RootState } from "../../store/store";
 import {
   updateProjector,
-  selectIsTypeTransmitting,
+  selectOutputSlot,
 } from "../../store/presentationSlice";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
@@ -90,6 +98,9 @@ import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import { getCanvaMediaSource } from "./canvaMediaSource";
+import { useLocalMediaCloudShare } from "./localMediaCloudShare";
+import { isLocalMediaVisibleByDefault } from "./mediaLibraryLocalAvailability";
+import { buildVideoPlaybackCueForSend } from "../../utils/videoBackgroundPlayback";
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -110,6 +121,7 @@ export function useMediaLibraryController({
   const dispatch = useDispatch();
   const location = useLocation();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const { showToast } = useToast();
   const isPanelVariant = variant === "panel";
 
@@ -202,8 +214,34 @@ export function useMediaLibraryController({
     },
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
+  /**
+   * Projector displays *this* controller drives.
+   *
+   * Sending without naming them fell back to the built-in projector, so "Send
+   * to projector" from an auxiliary controller put media on the sanctuary
+   * screen.
+   */
+  const controllerProfile = useActiveControllerProfile();
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const projectorTargets = useMemo(
+    () =>
+      getControllerOutputs(controllerProfile, displayOutputs).filter(
+        (output) => output.type === "projector",
+      ),
+    [controllerProfile, displayOutputs],
+  );
+  const projectorTargetIds = useMemo(
+    () => projectorTargets.map((output) => output.id),
+    [projectorTargets],
+  );
+  /** Operator-facing name for the send action, so it never says "projector"
+   * when the controller drives a display called something else. */
+  const projectorTargetLabel =
+    projectorTargets.length === 1 ? projectorTargets[0].name : "projectors";
   const isProjectorTransmitting = useSelector((state: RootState) =>
-    selectIsTypeTransmitting(state, "projector"),
+    projectorTargetIds.some(
+      (id) => selectOutputSlot(state, id, "projector").isTransmitting,
+    ),
   );
   const { list: allItemsList } = useSelector(
     (state: RootState) => state.allItems,
@@ -218,6 +256,10 @@ export function useMediaLibraryController({
   const [typeFilter, setTypeFilter] = useState<MediaTypeFilterValue>("all");
   const [originFilter, setOriginFilter] =
     useState<MediaOriginFilterValue>("all");
+  const [showOtherDeviceLocalMedia, setShowOtherDeviceLocalMedia] =
+    useState(false);
+  const { deviceId, getBarAction: getLocalMediaCloudShareBarAction } =
+    useLocalMediaCloudShare();
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
@@ -271,7 +313,7 @@ export function useMediaLibraryController({
   const showNamesInPanelGrid = searchTerm.trim().length > 0;
   const parentForBrowseChildren =
     selectedLibraryFilter === null ||
-    selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
+      selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
       ? null
       : selectedLibraryFilter;
   const childFolders = useMemo(
@@ -286,6 +328,15 @@ export function useMediaLibraryController({
     selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
   );
 
+  const hiddenOtherDeviceLocalCount = useMemo(
+    () =>
+      list.filter((item) => !isLocalMediaVisibleByDefault(item, deviceId))
+        .length,
+    [deviceId, list],
+  );
+  const showOtherDeviceLocalMediaToggle =
+    hiddenOtherDeviceLocalCount > 0 || showOtherDeviceLocalMedia;
+
   const filteredList = useMemo(() => {
     return list.filter((item) => {
       const matchesSearch = item.name
@@ -293,6 +344,12 @@ export function useMediaLibraryController({
         .includes(searchTerm.toLowerCase());
       if (!matchesSearch) return false;
       if (!mediaMatchesOriginFilter(item, originFilter)) return false;
+      if (
+        !showOtherDeviceLocalMedia &&
+        !isLocalMediaVisibleByDefault(item, deviceId)
+      ) {
+        return false;
+      }
       if (selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW) {
         return !item.folderId;
       }
@@ -301,7 +358,14 @@ export function useMediaLibraryController({
       }
       return true;
     });
-  }, [list, searchTerm, originFilter, selectedLibraryFilter]);
+  }, [
+    deviceId,
+    list,
+    originFilter,
+    searchTerm,
+    selectedLibraryFilter,
+    showOtherDeviceLocalMedia,
+  ]);
 
   // Tracks a pending "show in media" focus request across the folder-navigation render cycle.
   const focusPendingIdRef = useRef<string | null>(null);
@@ -350,6 +414,9 @@ export function useMediaLibraryController({
     focusPendingIdRef.current = focusMediaId;
     const targetFolder = mediaItem.folderId ?? MEDIA_LIBRARY_ROOT_VIEW;
     dispatch(setMediaRouteFolder({ key: routeKey, folderId: targetFolder }));
+    if (!isLocalMediaVisibleByDefault(mediaItem, deviceId)) {
+      setShowOtherDeviceLocalMedia(true);
+    }
     setSelectedMedia(mediaItem);
     setSelectedMediaIds(new Set([mediaItem.id]));
     setPreviewMedia(mediaItem);
@@ -496,12 +563,19 @@ export function useMediaLibraryController({
         slide,
         type: "free",
         name: displayName,
+        outputIds: projectorTargetIds,
+        videoPlayback: buildVideoPlaybackCueForSend(slide),
       }),
     );
-    showToast(`Sent "${truncatedMediaToastLabel(m)}" to projector.`, "success");
+    showToast(
+      `Sent "${truncatedMediaToastLabel(m)}" to ${projectorTargetLabel}.`,
+      "success",
+    );
   }, [
     selectedMedia,
     isProjectorTransmitting,
+    projectorTargetIds,
+    projectorTargetLabel,
     defaultFreeFormBackgroundBrightness,
     defaultFreeFormFontMode,
     dispatch,
@@ -535,9 +609,10 @@ export function useMediaLibraryController({
       const addedAction = dispatch(addItemToItemList(listItem));
       dispatch(addItemToAllItemsList(listItem));
       navigate(
-        `/controller/item/${window.btoa(encodeURI(newItem._id))}/${window.btoa(
-          encodeURI(addedAction.payload.listId),
-        )}`,
+        getControllerItemPath(
+          { _id: newItem._id, listId: addedAction.payload.listId },
+          controllerBasePath,
+        ),
       );
       showToast(
         `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created and added to the outline.`,
@@ -547,6 +622,7 @@ export function useMediaLibraryController({
       showToast("Could not create the item. Try again.", "error");
     }
   }, [
+    controllerBasePath,
     selectedMedia,
     db,
     allItemsList,
@@ -599,10 +675,11 @@ export function useMediaLibraryController({
       controllerFromSelectedMedia:
         selectedMediaIds.size === 1
           ? {
-              isProjectorTransmitting,
-              onSendToProjector: handleSendSelectedMediaToProjector,
-              onCreateCustomItem: handleCreateCustomItemFromMedia,
-            }
+            isProjectorTransmitting,
+            sendTargetLabel: projectorTargetLabel,
+            onSendToProjector: handleSendSelectedMediaToProjector,
+            onCreateCustomItem: handleCreateCustomItemFromMedia,
+          }
           : undefined,
       notify: notifyMediaAction,
       onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
@@ -624,18 +701,31 @@ export function useMediaLibraryController({
       selectedMedia.localVideoInput &&
       onRelinkVideoInput
     ) {
+      const isShare = isDesktopCaptureKind(
+        selectedMedia.localVideoInput.captureKind,
+      );
       actions.push({
         id: "relink-video-input",
-        label: "Relink input",
-        icon: <Cable className="size-4" />,
+        label: isShare ? "Choose share again" : "Relink input",
+        icon: isShare ? (
+          <MonitorUp className="size-4" />
+        ) : (
+          <Cable className="size-4" />
+        ),
         onClick: () => onRelinkVideoInput(selectedMedia),
       });
     }
+    const cloudShareAction = getLocalMediaCloudShareBarAction(
+      selectedMedia,
+      selectedMediaIds.size,
+    );
+    if (cloudShareAction) actions.push(cloudShareAction);
     return actions;
   }, [
     routeFlags,
     db,
     isLoading,
+    projectorTargetLabel,
     selectedPreference,
     selectedQuickLink,
     selectedOverlay,
@@ -650,6 +740,7 @@ export function useMediaLibraryController({
     triggerSlideBackgroundFeedback,
     onManageCanvaSource,
     onRelinkVideoInput,
+    getLocalMediaCloudShareBarAction,
   ]);
 
   const actionBarDetails = useMemo(() => {
@@ -1257,15 +1348,8 @@ export function useMediaLibraryController({
   );
 
   const requestMediaUpload = useCallback(() => {
-    if (isGuestSession) {
-      notifyMediaAction(
-        "Guest mode uses sample media only. Sign in to upload your own files.",
-        "error",
-      );
-      return;
-    }
     mediaUploadInputRef.current?.openModal();
-  }, [isGuestSession, notifyMediaAction]);
+  }, []);
 
   const handleProviderRetry = async () => {
     setProviderRetryBusy(true);
@@ -1422,6 +1506,9 @@ export function useMediaLibraryController({
     setTypeFilter,
     originFilter,
     setOriginFilter,
+    showOtherDeviceLocalMedia,
+    setShowOtherDeviceLocalMedia,
+    showOtherDeviceLocalMediaToggle,
     setPreviewMedia,
     setMediaToDelete,
     setShowDeleteModal,

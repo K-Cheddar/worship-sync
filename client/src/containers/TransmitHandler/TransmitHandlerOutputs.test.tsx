@@ -12,6 +12,10 @@ import {
   setDisplayOutputsFromRemote,
 } from "../../store/displayOutputsSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
+import {
+  controllerProfilesSlice,
+  setControllerProfilesFromRemote,
+} from "../../store/controllerProfilesSlice";
 import { timersSlice } from "../../store/timersSlice";
 
 jest.mock("../../components/Presentation/PresentationPreview", () => ({
@@ -58,6 +62,7 @@ const createStore = () => {
     reducer: {
       presentation: presentationSlice.reducer,
       displayOutputs: displayOutputsSlice.reducer,
+      controllerProfiles: controllerProfilesSlice.reducer,
       timers: timersSlice.reducer,
       undoable: (
         state = {
@@ -69,6 +74,23 @@ const createStore = () => {
     },
   });
   store.dispatch(setDisplayOutputsFromRemote(REGISTRY));
+  // A display belongs to no controller until it is assigned one, so the second
+  // projector has to be given to the presentation controller before it appears
+  // here. That assignment is what keeps it off other operators' screens.
+  store.dispatch(
+    setControllerProfilesFromRemote([
+      {
+        id: "presentation",
+        type: "presentation",
+        name: "Presentation",
+        order: 0,
+        enabled: true,
+        outputIds: ["projector", "out_lobby", "monitor", "stream"],
+        outputsConfigured: true,
+        outlineScope: "presentation",
+      },
+    ]),
+  );
   store.dispatch(
     syncOutputSlots([
       { id: "projector", type: "projector" },

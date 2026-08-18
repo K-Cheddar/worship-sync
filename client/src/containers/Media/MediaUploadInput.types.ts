@@ -1,5 +1,4 @@
-import { mediaInfoType } from "./cloudinaryTypes";
-import type { CanvaMediaSource } from "../../types";
+import type { CanvaMediaSource, MediaType } from "../../types";
 
 export type UploadStatus =
   | "idle"
@@ -18,20 +17,13 @@ export type FileUploadProgress = {
 };
 
 export type MediaUploadInputProps = {
-  onImageComplete: (info: mediaInfoType) => void;
-  onVideoComplete: (muxData: {
-    playbackId: string;
-    assetId: string;
-    playbackUrl: string;
-    thumbnailUrl: string;
-    name: string;
-  }) => void;
+  onLocalMediaAdded: (media: MediaType) => void;
+  onLocalMediaPatched?: (id: string, patch: Partial<MediaType>) => void;
   showButton?: boolean;
   uploadPreset?: string;
-  cloudName?: string;
   /** Called when upload starts (true) or ends (false). Use to start/stop external progress polling. */
   onUploadActiveChange?: (active: boolean) => void;
-  /** When true, the upload modal cannot be opened and file upload is disabled (e.g. guest mode). */
+  /** When true, the upload modal cannot be opened and file upload is disabled. */
   uploadDisabled?: boolean;
 };
 

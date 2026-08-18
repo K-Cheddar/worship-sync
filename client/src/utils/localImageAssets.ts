@@ -7,6 +7,7 @@ import type {
   DBMedia,
   MediaType,
 } from "../types";
+import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 
@@ -17,7 +18,7 @@ export const LOCAL_VIDEO_STORE_NAME = "videos";
 export const THUMBNAIL_STORE_NAME = "imageThumbnails";
 const UPLOAD_JOB_STORE_NAME = "uploadJobs";
 const WORKSPACE_INDEX_NAME = "workspaceId";
-const POLICY_KEY_PREFIX = "worshipsync_local_image_policy_v1";
+const POLICY_KEY_PREFIX = "worshipsync_local_media_upload_policy_v2";
 const LOCAL_IMAGE_URL_PREFIX = "local-image://";
 const MAX_LOCAL_IMAGE_BYTES = 25 * 1024 * 1024;
 const THUMBNAIL_MAX_WIDTH = 160;
@@ -899,28 +900,37 @@ export const deleteLocalImageUploadJob = async (assetId: string) => {
   notifyLocalImageChange(assetId, "upload-job");
 };
 
-const getPolicyStorageKey = (workspaceId: string) =>
-  `${POLICY_KEY_PREFIX}:${encodeURIComponent(workspaceId.trim() || "default")}`;
+const getPolicyStorageKey = (deviceId: string) =>
+  `${POLICY_KEY_PREFIX}:${encodeURIComponent(deviceId.trim() || "default")}`;
 
+const resolvePolicyDeviceId = (deviceId?: string) =>
+  deviceId?.trim() || getOrCreateDeviceId();
+
+/** Default is cloud upload; per-device preference is saved when the operator changes it. */
 export const getRememberedLocalImagePolicy = (
-  workspaceId: string,
+  deviceId?: string,
 ): LocalAssetStoragePolicy => {
-  if (typeof window === "undefined") return "local-only";
+  if (typeof window === "undefined") return "local-and-cloud";
   try {
-    const value = localStorage.getItem(getPolicyStorageKey(workspaceId));
-    return value === "local-and-cloud" ? value : "local-only";
+    const value = localStorage.getItem(
+      getPolicyStorageKey(resolvePolicyDeviceId(deviceId)),
+    );
+    return value === "local-only" ? value : "local-and-cloud";
   } catch {
-    return "local-only";
+    return "local-and-cloud";
   }
 };
 
 export const rememberLocalImagePolicy = (
-  workspaceId: string,
   policy: LocalAssetStoragePolicy,
+  deviceId?: string,
 ) => {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(getPolicyStorageKey(workspaceId), policy);
+    localStorage.setItem(
+      getPolicyStorageKey(resolvePolicyDeviceId(deviceId)),
+      policy,
+    );
   } catch {
     // Private mode or quota errors should not block creating the item.
   }

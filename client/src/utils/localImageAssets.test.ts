@@ -52,32 +52,40 @@ describe("localImageAssets", () => {
     });
   });
 
-  it("remembers a validated policy per workspace", () => {
-    expect(getRememberedLocalImagePolicy("church-1")).toBe("local-only");
+  it("remembers a validated policy per device, defaulting to cloud upload", () => {
+    localStorage.setItem("worshipsync_device_id", "device-a");
 
-    rememberLocalImagePolicy("church-1", "local-and-cloud");
+    expect(getRememberedLocalImagePolicy()).toBe("local-and-cloud");
 
-    expect(getRememberedLocalImagePolicy("church-1")).toBe(
-      "local-and-cloud",
-    );
-    expect(getRememberedLocalImagePolicy("church-2")).toBe("local-only");
+    rememberLocalImagePolicy("local-only");
+
+    expect(getRememberedLocalImagePolicy()).toBe("local-only");
+    expect(getRememberedLocalImagePolicy("device-b")).toBe("local-and-cloud");
     localStorage.setItem(
-      "worshipsync_local_image_policy_v1:church-2",
+      "worshipsync_local_media_upload_policy_v2:device-b",
       "unexpected",
     );
-    expect(getRememberedLocalImagePolicy("church-2")).toBe("local-only");
+    expect(getRememberedLocalImagePolicy("device-b")).toBe("local-and-cloud");
   });
 
   it("accepts supported raster images and rejects unsupported or large files", () => {
     expect(
-      validateLocalImageFile(new File(["image"], "welcome.png", { type: "image/png" })),
+      validateLocalImageFile(
+        new File(["image"], "welcome.png", { type: "image/png" }),
+      ),
     ).toBeNull();
     expect(
-      validateLocalImageFile(new File(["<svg />"], "logo.svg", { type: "image/svg+xml" })),
+      validateLocalImageFile(
+        new File(["<svg />"], "logo.svg", { type: "image/svg+xml" }),
+      ),
     ).toBe("Choose a PNG, JPEG, WebP, or GIF image.");
-    const large = new File([new Uint8Array(25 * 1024 * 1024 + 1)], "large.jpg", {
-      type: "image/jpeg",
-    });
+    const large = new File(
+      [new Uint8Array(25 * 1024 * 1024 + 1)],
+      "large.jpg",
+      {
+        type: "image/jpeg",
+      },
+    );
     expect(validateLocalImageFile(large)).toBe(
       "Choose an image smaller than 25 MB.",
     );
@@ -186,9 +194,7 @@ describe("localImageAssets", () => {
     });
 
     expect(collectLocalImageAssetIds(result)).toEqual(new Set(["asset-1"]));
-    expect(result.slides[0].boxes[0].background).toBe(
-      "local-image://asset-1",
-    );
+    expect(result.slides[0].boxes[0].background).toBe("local-image://asset-1");
     expect(
       result.arrangements[0].slides[0].boxes[0].mediaInfo?.localImage,
     ).toEqual(

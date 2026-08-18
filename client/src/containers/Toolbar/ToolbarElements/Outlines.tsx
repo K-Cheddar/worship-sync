@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Plus, Check, List } from "lucide-react";
 import { useDispatch, useSelector } from "../../../hooks";
 import {
@@ -31,6 +31,11 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { cn } from "../../../utils/cnHelper";
 import { toolbarTabClassName } from "./ToolbarButton";
 import OutlinesPickerSkeleton from "./OutlinesPickerSkeleton";
+import { useActiveControllerProfile } from "../../../context/activeController";
+import {
+  filterOutlinesByScope,
+  isOutlineInScope,
+} from "../../../utils/outlineScope";
 
 /** Shared popover chrome (matches service outlines left column). */
 const OUTLINE_POPOVER_CONTENT =
@@ -51,8 +56,19 @@ const Services = ({
   servicePanel = false,
   matchToolbarTabs = false,
 }: OutlinesProps) => {
-  const { currentLists, activeList, selectedList, isInitialized: itemListsReady } =
+  const { currentLists: allLists, activeList, selectedList, isInitialized: itemListsReady } =
     useSelector((state) => state.undoable.present.itemLists);
+
+  const controllerProfile = useActiveControllerProfile();
+  const outlineScope = controllerProfile.outlineScope;
+
+  // Only this controller's outlines. An auxiliary controller feeding a lobby
+  // screen has no business showing — or accidentally opening — Sunday's
+  // sanctuary outline.
+  const currentLists = useMemo(
+    () => filterOutlinesByScope(allLists, outlineScope),
+    [allLists, outlineScope],
+  );
 
   const heading = `Current Outlines (${currentLists.length})`;
 
@@ -75,14 +91,22 @@ const Services = ({
 
     const { id } = over;
     const { id: activeId } = active;
-    const updatedItemLists = [...currentLists];
-    const newIndex = updatedItemLists.findIndex((list) => list._id === id);
-    const oldIndex = updatedItemLists.findIndex(
-      (list) => list._id === activeId
+    const reordered = [...currentLists];
+    const newIndex = reordered.findIndex((list) => list._id === id);
+    const oldIndex = reordered.findIndex((list) => list._id === activeId);
+    if (newIndex < 0 || oldIndex < 0) return;
+    const element = reordered[oldIndex];
+    reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, element);
+
+    // The drag acts on the rows this controller can see, but the stored list
+    // holds every controller's outlines. Rebuild by walking the full list and
+    // spending the reordered rows in their new order, so outlines belonging to
+    // other controllers keep their positions.
+    let next = 0;
+    const updatedItemLists = allLists.map((list) =>
+      isOutlineInScope(list, outlineScope) ? reordered[next++] : list,
     );
-    const element = currentLists[oldIndex];
-    updatedItemLists.splice(oldIndex, 1);
-    updatedItemLists.splice(newIndex, 0, element);
     dispatch(updateItemLists(updatedItemLists));
   };
 
@@ -140,7 +164,7 @@ const Services = ({
   const _updateItemLists = (list: ItemList) => {
     dispatch(
       updateItemLists(
-        currentLists.map((item) => (item._id === list._id ? list : item))
+        allLists.map((item) => (item._id === list._id ? list : item))
       )
     );
     if (list._id === selectedList?._id) {
@@ -249,33 +273,32 @@ const Services = ({
                         copyList={async (list) => {
                           const newList = await createItemListFromExisting({
                             db,
-                            currentLists,
+                            currentLists: allLists,
                             list,
                           });
                           if (newList) {
-                            dispatch(
-                              updateItemLists([...currentLists, newList])
-                            );
+                            dispatch(updateItemLists([...allLists, newList]));
                           }
                         }}
                         deleteList={
                           index === 0
                             ? undefined
                             : async (id) => {
+                              // removeFromItemLists reselects within this
+                              // controller's scope, so no explicit selection
+                              // fallback here — one would risk crossing scopes.
                               dispatch(removeFromItemLists(id));
                               if (db) {
                                 const existingList: DBItemListDetails =
                                   await db.get(id);
                                 db.remove(existingList);
-                                if (selectedList?._id === id) {
-                                  dispatch(
-                                    selectItemList(currentLists[0]._id)
-                                  );
-                                }
                                 if (activeList?._id === id) {
-                                  dispatch(
-                                    setActiveItemList(currentLists[0]._id)
+                                  const nextActive = allLists.find(
+                                    (list) => list._id !== id,
                                   );
+                                  if (nextActive) {
+                                    dispatch(setActiveItemList(nextActive._id));
+                                  }
                                 }
                               }
                               dispatch(ActionCreators.clearHistory());
@@ -301,11 +324,12 @@ const Services = ({
                   const newList = await createNewItemList({
                     db,
                     name: "New Outline",
-                    currentLists,
+                    currentLists: allLists,
+                    controllerScope: outlineScope,
                   });
                   setJustAdded(true);
 
-                  dispatch(updateItemLists([...currentLists, newList]));
+                  dispatch(updateItemLists([...allLists, newList]));
                   setTimeout(() => setJustAdded(false), 2000);
                 }}
               >

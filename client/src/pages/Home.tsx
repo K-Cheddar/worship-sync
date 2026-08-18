@@ -33,6 +33,9 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
+import { useSelector } from "../hooks";
+import { selectControllerProfiles } from "../store/controllerProfilesSlice";
+import { getAuxControllerProfiles } from "../utils/controllerProfiles";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
@@ -338,16 +341,42 @@ const Welcome = () => {
    * `isViewOnlyAccess`.
    */
   const isMemberAccess = isMemberOnlyAccess(access);
+
+  /**
+   * A card per auxiliary controller the church has configured.
+   *
+   * Built from the registry rather than hardcoded: adding the next
+   * audience-facing screen is meant to be configuration, and a controller with
+   * no way in from Home may as well not exist.
+   */
+  const controllerProfiles = useSelector(selectControllerProfiles);
+  const auxControllerLinks = useMemo(
+    (): CardLink[] =>
+      getAuxControllerProfiles(controllerProfiles).map((profile) => ({
+        title: profile.name,
+        description:
+          "Drive this screen with its own outline and content, or mirror another display.",
+        to: `/aux-controller/${profile.id}`,
+        icon: Projector,
+      })),
+    [controllerProfiles],
+  );
+
   const visiblePrimaryControllers = isMemberAccess
     ? []
     : isMusicAccess
       ? primaryControllers.filter((link) => link.to === "/controller")
       : primaryControllers;
+  // Auxiliary controllers follow the same rule as the overlay controller: an
+  // operator surface, so members get none and the music tier stays on the main
+  // controller it is scoped to.
+  const visibleAuxControllers =
+    isMemberAccess || isMusicAccess ? [] : auxControllerLinks;
   const visibleControllerLinks = isMemberAccess
     ? []
     : canViewTeams
-      ? [...visiblePrimaryControllers, currentPlanLink]
-      : visiblePrimaryControllers;
+      ? [...visiblePrimaryControllers, ...visibleAuxControllers, currentPlanLink]
+      : [...visiblePrimaryControllers, ...visibleAuxControllers];
   const visibleSecondaryControllers = isMemberAccess
     ? []
     : isMusicAccess

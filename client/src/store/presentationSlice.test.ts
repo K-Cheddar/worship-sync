@@ -2355,6 +2355,133 @@ describe("presentationSlice", () => {
       expect(p.streamInfo.type).toBe("bible");
     });
 
+    it("a wordless custom-item slide blanks live formatted text on the sending controller", () => {
+      const store = createStore();
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfo({
+          text: "Welcome to church",
+        } as never),
+      );
+
+      // ItemSlides send order for a slide in a "free" item with no words.
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "",
+          text: "",
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfo({
+          text: "",
+        } as never),
+      );
+
+      const p = legacy(store.getState().presentation);
+      expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
+      expect(p.streamInfo.type).toBe("free");
+      // The outgoing text is still staged for its fade-out.
+      expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
+        "Welcome to church",
+      );
+    });
+
+    it("a wordless custom-item slide blanks live formatted text on a receiving stream", () => {
+      const store = createStore();
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "Welcome to church",
+          time: 100,
+        } as never),
+      );
+
+      // Per-key remote order for the same send (see globalInfo's updateFromRemote).
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote({
+          type: "free",
+          name: "Announcements",
+          slide: null,
+          displayType: "stream",
+          time: 200,
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "",
+          time: 200,
+        } as never),
+      );
+
+      const p = legacy(store.getState().presentation);
+      expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
+      expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
+        "Welcome to church",
+      );
+    });
+
+    it("a wordless custom-item slide from an older controller still blanks the stream", () => {
+      const store = createStore();
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "Welcome to church",
+          time: 100,
+        } as never),
+      );
+
+      // Builds before the empty-bible guard stamp the type "bible" on this send.
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote({
+          type: "bible",
+          name: "Announcements",
+          slide: null,
+          displayType: "stream",
+          time: 200,
+        } as never),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfoFromRemote({
+          title: "",
+          text: "",
+          time: 200,
+        }),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "",
+          time: 200,
+        } as never),
+      );
+
+      expect(
+        legacy(store.getState().presentation).streamInfo
+          .formattedTextDisplayInfo?.text,
+      ).toBe("");
+    });
+
+    it("clearing a live verse still runs when the bible payload is empty", () => {
+      const store = createStore();
+      store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "Jn 3:16",
+          text: "For God so loved the world",
+        } as never),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfo({
+          title: "",
+          text: "",
+        } as never),
+      );
+
+      const p = legacy(store.getState().presentation);
+      expect(p.streamInfo.bibleDisplayInfo?.text).toBe("");
+      expect(p.prevStreamInfo.bibleDisplayInfo?.text).toBe(
+        "For God so loved the world",
+      );
+    });
+
     it("updateFormattedTextDisplayInfoFromRemote after empty bible keeps prev bible (remote ItemSlides order)", () => {
       const store = createStore({
         presentation: {

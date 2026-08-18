@@ -30,6 +30,7 @@ import {
   STREAM_OVERLAY_LANES,
 } from "./presentationSlice";
 import { displayOutputsSlice } from "./displayOutputsSlice";
+import { controllerProfilesSlice } from "./controllerProfilesSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
@@ -418,6 +419,10 @@ const buildRemoteOutputs = (state: RootState) => {
     if (supportsBoardTakeover(slot.type)) {
       outputs[`${slot.id}/boardAliasId`] = slot.boardAliasId;
     }
+    // Unlike transmit state, following is a church-wide fact about what a
+    // screen is showing. It has to survive a reload and be visible to the
+    // controller whose display is being mirrored, so it syncs.
+    outputs[`${slot.id}/followingOutputId`] = slot.followingOutputId ?? "";
   }
   return outputs;
 };
@@ -489,6 +494,7 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
       slideIndex: streamInfo.slideIndex,
       slideCount: streamInfo.slideCount,
       localVideoInput: streamInfo.localVideoInput,
+      videoPlayback: streamInfo.videoPlayback,
     },
     stream_itemContentBlocked: streamItemContentBlocked,
     // Ordering stamp: a machine republishing a stale flag is rejected on receipt
@@ -657,6 +663,10 @@ const excludedActions: string[] = [
   itemListsSlice.actions.initiateItemLists.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
+  // Navigating to another controller is not an edit. Undoing back into the
+  // previous controller's scope would move the operator's outline out from
+  // under them.
+  itemListsSlice.actions.setOutlineScope.toString(),
   itemListsSlice.actions.selectItemList.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
@@ -1106,6 +1116,9 @@ listenerMiddleware.startListening({
       itemListsSlice.actions.updateItemListsFromRemote,
       itemListsSlice.actions.selectItemList,
       itemListsSlice.actions.setIsInitialized,
+      // Switching controllers changes only this client's view of the outlines,
+      // so it must not schedule a write of the shared ItemLists doc.
+      itemListsSlice.actions.setOutlineScope,
     );
     return (
       (currentState as RootState).undoable.present.itemLists !==
@@ -2325,7 +2338,9 @@ listenerMiddleware.startListening({
         (info.time &&
           state.projectorInfo.time &&
           info.time > state.projectorInfo.time) ||
-        (info.time && !state.projectorInfo.time)
+        (info.time && !state.projectorInfo.time) ||
+        (info.videoPlayback?.generation ?? 0) >
+          (state.projectorInfo.videoPlayback?.generation ?? 0)
       )
     );
   },
@@ -2353,7 +2368,9 @@ listenerMiddleware.startListening({
         (info.time &&
           state.monitorInfo.time &&
           info.time > state.monitorInfo.time) ||
-        (info.time && !state.monitorInfo.time)
+        (info.time && !state.monitorInfo.time) ||
+        (info.videoPlayback?.generation ?? 0) >
+          (state.monitorInfo.videoPlayback?.generation ?? 0)
       )
     );
   },
@@ -2381,7 +2398,9 @@ listenerMiddleware.startListening({
         (info.time &&
           state.streamInfo.time &&
           info.time > state.streamInfo.time) ||
-        (info.time && !state.streamInfo.time)
+        (info.time && !state.streamInfo.time) ||
+        (info.videoPlayback?.generation ?? 0) >
+          (state.streamInfo.videoPlayback?.generation ?? 0)
       )
     );
   },
@@ -2920,6 +2939,7 @@ const combinedReducers = combineReducers({
   undoable: undoableReducers,
   presentation: presentationSlice.reducer,
   displayOutputs: displayOutputsSlice.reducer,
+  controllerProfiles: controllerProfilesSlice.reducer,
   bible: bibleSlice.reducer,
   allItems: allItemsSlice.reducer,
   createItem: createItemSlice.reducer,

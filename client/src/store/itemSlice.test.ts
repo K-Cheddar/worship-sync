@@ -1,6 +1,10 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { itemSlice } from "./itemSlice";
-import type { ItemState } from "../types";
+import { itemSlice, updateSlideVideoBackgroundSendMode } from "./itemSlice";
+import type {
+  ItemSlideType,
+  ItemState,
+  VideoBackgroundSendMode,
+} from "../types";
 
 type ItemSliceState = { item: ItemState };
 
@@ -393,6 +397,98 @@ describe("itemSlice", () => {
           background: "saved-background.jpg",
         }),
       );
+    });
+  });
+
+  describe("updateSlideVideoBackgroundSendMode", () => {
+    const slide = (id: string): ItemSlideType => ({
+      id,
+      type: "Section",
+      name: id,
+      boxes: [],
+    });
+
+    const runThunk = async (
+      item: ItemState,
+      mode: VideoBackgroundSendMode,
+    ): Promise<ItemSlideType[][]> => {
+      const dispatch = jest.fn();
+      const getState = () => ({ undoable: { present: { item } } });
+      await updateSlideVideoBackgroundSendMode({ mode })(
+        dispatch,
+        getState as never,
+        undefined,
+      );
+      return dispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action?.type === "item/_updateSlides")
+        .map((action) => action.payload as ItemSlideType[]);
+    };
+
+    it("writes the mode onto the selected slide only", async () => {
+      const [slides] = await runThunk(
+        {
+          ...itemSlice.getInitialState(),
+          slides: [slide("a"), slide("b"), slide("c")],
+          selectedSlide: 1,
+        },
+        "restart",
+      );
+
+      expect(slides.map((s) => s.videoBackgroundSendMode)).toEqual([
+        undefined,
+        "restart",
+        undefined,
+      ]);
+    });
+
+    it("mirrors the change onto the selected arrangement's slides", async () => {
+      const dispatch = jest.fn();
+      const item: ItemState = {
+        ...itemSlice.getInitialState(),
+        slides: [slide("a"), slide("b")],
+        selectedSlide: 1,
+        selectedArrangement: 0,
+        arrangements: [
+          {
+            id: "arr-1",
+            name: "Default",
+            formattedLyrics: [],
+            songOrder: [],
+            slides: [slide("a"), slide("b")],
+          },
+        ],
+      };
+      await updateSlideVideoBackgroundSendMode({ mode: "restart" })(
+        dispatch,
+        (() => ({ undoable: { present: { item } } })) as never,
+        undefined,
+      );
+
+      const arrangements = dispatch.mock.calls
+        .map(([action]) => action)
+        .find((action) => action?.type === "item/_updateArrangements")?.payload;
+
+      expect(arrangements[0].slides[1].videoBackgroundSendMode).toBe("restart");
+      expect(arrangements[0].slides[0].videoBackgroundSendMode).toBeUndefined();
+    });
+
+    it("leaves the slide object untouched when the mode already matches", async () => {
+      const existing = {
+        ...slide("a"),
+        videoBackgroundSendMode: "restart" as const,
+      };
+      const [slides] = await runThunk(
+        {
+          ...itemSlice.getInitialState(),
+          slides: [existing],
+          selectedSlide: 0,
+        },
+        "restart",
+      );
+
+      // Same reference: no needless autosave or undo entry for a no-op click.
+      expect(slides[0]).toBe(existing);
     });
   });
 });

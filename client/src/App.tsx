@@ -19,6 +19,7 @@ import { ToastProvider } from "./context/toastContext";
 import TimerManager from "./components/TimerManager/TimerManager";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
 import DisplayOutputsSync from "./components/DisplayOutputsSync/DisplayOutputsSync";
+import ControllerProfilesSync from "./components/ControllerProfilesSync/ControllerProfilesSync";
 import { Suspense, useContext, useEffect, useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
@@ -57,6 +58,9 @@ const CurrentServiceWorkspace = lazyRoute(
 );
 const OverlayController = lazyRoute(
   () => import("./pages/OverlayController/OverlayController"),
+);
+const AuxController = lazyRoute(
+  () => import("./pages/AuxController/AuxController"),
 );
 const Projector = lazyRoute(() => import("./pages/Projector"));
 const ProjectorFull = lazyRoute(() => import("./pages/ProjectorFull"));
@@ -144,6 +148,7 @@ const isBootstrapSplashRoute = (pathname: string) => {
   if (pathname === "/current-service") return true;
   if (pathname.startsWith("/controller")) return true;
   if (pathname === "/overlay-controller") return true;
+  if (pathname.startsWith("/aux-controller/")) return true;
   if (pathname === "/boards/controller") return true;
   if (pathname === "/boards/display") return true;
   if (pathname === "/credits-editor") return true;
@@ -304,6 +309,16 @@ const AppRoutes = () => {
               element={
                 <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
                   <OverlayController />
+                </AuthGate>
+              }
+            />
+            {/* One route for every auxiliary controller a church configures, so
+                adding the next screen never needs another route. */}
+            <Route
+              path="/aux-controller/:profileId/*"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
+                  <AuxController />
                 </AuthGate>
               }
             />
@@ -522,6 +537,7 @@ const App: React.FC = () => {
                 <ChatProvider>
                   <RoutePersistence />
                   <DisplayOutputsSync />
+                  <ControllerProfilesSync />
                   <TimerManager />
                   <AppRoutes />
                   <ChatWindowHost />

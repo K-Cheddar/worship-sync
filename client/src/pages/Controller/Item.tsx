@@ -1,7 +1,7 @@
 import { useParams } from "react-router-dom";
 import SlideEditor from "../../containers/ItemEditor/SlideEditor";
 import ItemSlides from "../../containers/ItemSlides/ItemSlides";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DBItem } from "../../types";
 import { useDispatch, useSelector } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
@@ -14,7 +14,10 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../../utils/itemUtil";
 import { applyPouchAudit } from "../../utils/pouchAudit";
-import { getFormattedSections } from "../../utils/overflow";
+import {
+  buildDocsById,
+  prepareItemForEditor,
+} from "../../utils/outlineSlideSections";
 
 const Item = () => {
   const { itemId, listId } = useParams();
@@ -41,24 +44,36 @@ const Item = () => {
     "loading"
   );
   const dispatch = useDispatch();
-  const { isLoading, isSectionLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
-  );
+  const { isLoading, isSectionLoading, _id: activeItemId, listId: activeListId } =
+    useSelector((state: RootState) => state.undoable.present.item);
+  const allDocs = useSelector((state: RootState) => state.allDocs);
+  const allDocsRef = useRef(allDocs);
+  allDocsRef.current = allDocs;
   const showSlidesLoadingOverlay = isSectionLoading && !isLoading;
 
   useEffect(() => {
     const selectItem = async () => {
       if (!db || !cloud) return;
+      if (activeItemId === decodedItemId && activeListId === decodedListId) {
+        setStatus("success");
+        dispatch(setItemIsLoading(false));
+        return;
+      }
+
+      const cached = buildDocsById(allDocsRef.current).get(decodedItemId);
+      if (cached) {
+        dispatch(setActiveItem(prepareItemForEditor(cached, decodedListId)));
+        dispatch(setActiveItemInList(decodedListId));
+        setStatus("success");
+        dispatch(setItemIsLoading(false));
+        return;
+      }
+
       try {
         dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await db?.get(decodedItemId);
         if (!response) return setStatus("error");
-        const itemWithSections: DBItem =
-          response.type === "free" &&
-          (!response.formattedSections || response.formattedSections.length === 0)
-            ? { ...response, formattedSections: getFormattedSections(response.slides ?? [], 1) }
-            : response;
-        dispatch(setActiveItem({ ...itemWithSections, listId: decodedListId }));
+        dispatch(setActiveItem(prepareItemForEditor(response, decodedListId)));
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
       } catch (e: unknown) {
@@ -94,7 +109,7 @@ const Item = () => {
       }
     };
     selectItem();
-  }, [decodedItemId, dispatch, db, decodedListId, cloud]);
+  }, [decodedItemId, dispatch, db, decodedListId, cloud, activeItemId, activeListId]);
 
   if (status === "error")
     return (

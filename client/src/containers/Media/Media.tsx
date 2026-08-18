@@ -8,13 +8,14 @@ import {
   Maximize,
   ImageUp,
   HardDrive,
+  MonitorSmartphone,
+  MonitorUp,
   Plus,
-  Upload,
   Video,
   X,
 } from "lucide-react";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { useDispatch, useSelector } from "../../hooks";
+import { useDispatch } from "../../hooks";
 import MediaUploadInput from "./MediaUploadInput";
 import { setIsMediaExpanded } from "../../store/preferencesSlice";
 import {
@@ -49,14 +50,17 @@ import {
 import CanvaImportSheet from "./CanvaImportSheet";
 import { getCanvaStatus } from "../../api/canva";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import LocalMediaImportSheet from "./LocalMediaImportSheet";
-import LocalVideoInputPicker from "../../components/LocalVideoInputPicker/LocalVideoInputPicker";
+import LocalVideoInputPicker, {
+  type LocalVideoCaptureMode,
+} from "../../components/LocalVideoInputPicker/LocalVideoInputPicker";
 import {
   addItemToMediaList,
   updateMediaItemFields,
 } from "../../store/mediaSlice";
 import type { LocalVideoInputMediaSource } from "../../types";
-import type { RootState } from "../../store/store";
+import { getOrCreateDeviceId } from "../../utils/authStorage";
+import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
+import { supportsDesktopCapture } from "../../utils/desktopCapture";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -75,19 +79,28 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     null,
   );
   const [canvaOauthConfigured, setCanvaOauthConfigured] = useState(false);
-  const [isLocalImportOpen, setIsLocalImportOpen] = useState(false);
   const [isVideoInputOpen, setIsVideoInputOpen] = useState(false);
   const [videoInputToEdit, setVideoInputToEdit] =
     useState<LocalVideoInputMediaSource>();
-  const activeItemId = useSelector(
-    (state: RootState) => state.undoable.present.item._id,
-  );
+  const [videoInputMode, setVideoInputMode] =
+    useState<LocalVideoCaptureMode>("device");
   const openCanva = useCallback((sourceMedia?: MediaType) => {
     setCanvaSourceMedia(sourceMedia || null);
     setIsCanvaImportOpen(true);
   }, []);
   const relinkVideoInput = useCallback((media: MediaType) => {
+    const captureKind = media.localVideoInput?.captureKind;
+    setVideoInputMode(
+      captureKind === "screen" || captureKind === "window"
+        ? "desktop"
+        : "device",
+    );
     setVideoInputToEdit(media.localVideoInput);
+    setIsVideoInputOpen(true);
+  }, []);
+  const openVideoInputPicker = useCallback((mode: LocalVideoCaptureMode) => {
+    setVideoInputMode(mode);
+    setVideoInputToEdit(undefined);
     setIsVideoInputOpen(true);
   }, []);
   const c = useMediaLibraryController({
@@ -158,8 +171,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   let toolbarAddMediaTitle = "Add Media";
   if (c.uploadProgress.isUploading) {
     toolbarAddMediaTitle = `Uploading... ${Math.round(c.uploadProgress.progress)}%`;
-  } else if (c.isGuestSession) {
-    toolbarAddMediaTitle = "Guest mode: sample media only. Sign in to upload.";
   }
 
   const addLocalMedia = useCallback(
@@ -176,8 +187,13 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
 
   const addVideoInput = useCallback(
     (source: LocalVideoInputMediaSource) => {
+      const ownedSource: LocalVideoInputMediaSource = {
+        ...source,
+        ownerDeviceId: getOrCreateDeviceId(),
+        ownerLabel: getTrustedDeviceLabel(),
+      };
       const now = new Date().toISOString();
-      const id = `local_input_${source.sourceId}`;
+      const id = `local_input_${ownedSource.sourceId}`;
       addLocalMedia({
         path: "",
         createdAt: now,
@@ -185,15 +201,15 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         format: "live",
         height: 1080,
         width: 1920,
-        name: source.label,
+        name: ownedSource.label,
         publicId: id,
         type: "video",
         id,
-        background: `local-video-input://${encodeURIComponent(source.sourceId)}`,
+        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
         thumbnail: "",
         placeholderImage: "",
         source: "local",
-        localVideoInput: source,
+        localVideoInput: ownedSource,
       });
     },
     [addLocalMedia],
@@ -246,19 +262,20 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
-                  <Upload /> Upload files
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setIsLocalImportOpen(true)}>
-                  <HardDrive /> Import local files
+                  <HardDrive /> Add files
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onSelect={() => {
-                    setVideoInputToEdit(undefined);
-                    setIsVideoInputOpen(true);
-                  }}
+                  onSelect={() => openVideoInputPicker("device")}
                 >
                   <Video /> Add video input
                 </DropdownMenuItem>
+                {supportsDesktopCapture() ? (
+                  <DropdownMenuItem
+                    onSelect={() => openVideoInputPicker("desktop")}
+                  >
+                    <MonitorUp /> Add screen or window
+                  </DropdownMenuItem>
+                ) : null}
                 {canvaOauthConfigured ? (
                   <DropdownMenuItem
                     disabled={c.isGuestSession || c.isMediaReadOnly}
@@ -280,26 +297,20 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         </div>
         <MediaUploadInput
           ref={c.mediaUploadInputRef}
-          onImageComplete={c.addNewBackground}
-          onVideoComplete={c.addMuxVideo}
+          onLocalMediaAdded={addLocalMedia}
+          onLocalMediaPatched={(id, patch) =>
+            dispatch(updateMediaItemFields({ id, patch }))
+          }
           showButton={false}
           uploadPreset="bpqu4ma5"
-          cloudName="portable-media"
           onUploadActiveChange={c.handleUploadActiveChange}
-          uploadDisabled={c.isGuestSession || c.isMediaReadOnly}
+          uploadDisabled={c.isMediaReadOnly}
         />
-        {isLocalImportOpen ? (
-          <LocalMediaImportSheet
-            open
-            onOpenChange={setIsLocalImportOpen}
-            activeItemId={activeItemId}
-            onImported={addLocalMedia}
-          />
-        ) : null}
         {isVideoInputOpen ? (
           <LocalVideoInputPicker
             hideTrigger
             open
+            captureMode={videoInputMode}
             source={videoInputToEdit}
             onOpenChange={(open) => {
               setIsVideoInputOpen(open);
@@ -338,6 +349,14 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   onChange={c.setOriginFilter}
                   className="w-40 shrink-0"
                 />
+                {c.showOtherDeviceLocalMediaToggle ? (
+                  <Toggle
+                    label="Other devices"
+                    icon={MonitorSmartphone}
+                    value={c.showOtherDeviceLocalMedia}
+                    onChange={c.setShowOtherDeviceLocalMedia}
+                  />
+                ) : null}
               </div>
               <div className="w-full">
                 <MediaLibraryActionBar
@@ -505,6 +524,9 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onTypeFilterChange={c.setTypeFilter}
           originFilter={c.originFilter}
           onOriginFilterChange={c.setOriginFilter}
+          showOtherDeviceLocalMedia={c.showOtherDeviceLocalMedia}
+          onShowOtherDeviceLocalMediaChange={c.setShowOtherDeviceLocalMedia}
+          showOtherDeviceLocalMediaToggle={c.showOtherDeviceLocalMediaToggle}
           onMediaClick={c.handleMediaClick}
           onSearchChange={(value) => c.setSearchTerm(value)}
           onShowNameToggle={() => c.setShowName(!c.showName)}
@@ -517,14 +539,16 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaUploadInputRef={c.mediaUploadInputRef}
           uploadProgress={c.uploadProgress}
           onAddMediaClick={c.requestMediaUpload}
-          onImportLocalMedia={() => setIsLocalImportOpen(true)}
-          onAddVideoInput={() => {
-            setVideoInputToEdit(undefined);
-            setIsVideoInputOpen(true);
-          }}
+          onAddVideoInput={() => openVideoInputPicker("device")}
+          onAddScreenShare={
+            supportsDesktopCapture()
+              ? () => openVideoInputPicker("desktop")
+              : undefined
+          }
           onRelinkVideoInput={relinkVideoInput}
           onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
-          mediaUploadDisabled={c.isGuestSession || c.isMediaReadOnly}
+          mediaUploadDisabled={c.isMediaReadOnly}
+          isGuestSession={c.isGuestSession}
         />
         {canvaOauthConfigured ? (
           <CanvaImportSheet

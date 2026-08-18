@@ -152,7 +152,8 @@ const captureVideoThumbnailFromSource = async ({
   if (typeof document === "undefined" || width <= 0 || height <= 0) {
     return undefined;
   }
-  const objectUrl = typeof source === "string" ? "" : URL.createObjectURL(source);
+  const objectUrl =
+    typeof source === "string" ? "" : URL.createObjectURL(source);
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
@@ -314,6 +315,38 @@ export const getLocalVideoFile = async (
   } finally {
     db.close();
   }
+};
+
+export type LocalVideoFileBlob = {
+  blob: Blob;
+  fileName: string;
+  contentType: string;
+};
+
+/** Bytes for an owner-side cloud upload: IndexedDB in the browser, disk in Electron. */
+export const getLocalVideoFileBlob = async (
+  assetId: string,
+): Promise<LocalVideoFileBlob | undefined> => {
+  const stored = await getLocalVideoFile(assetId);
+  if (stored?.blob && stored.blob.size > 0) {
+    return {
+      blob: stored.blob,
+      fileName: stored.fileName,
+      contentType: stored.contentType || stored.blob.type,
+    };
+  }
+  if (!window.electronAPI?.getLocalAsset) return undefined;
+  const asset = await window.electronAPI.getLocalAsset(assetId);
+  if (!asset?.url) return undefined;
+  const response = await fetch(asset.url);
+  if (!response.ok) return undefined;
+  const blob = await response.blob();
+  if (blob.size <= 0) return undefined;
+  return {
+    blob,
+    fileName: asset.fileName || stored?.fileName || "video",
+    contentType: asset.contentType || blob.type,
+  };
 };
 
 export const deleteLocalVideoFile = async (assetId: string) => {

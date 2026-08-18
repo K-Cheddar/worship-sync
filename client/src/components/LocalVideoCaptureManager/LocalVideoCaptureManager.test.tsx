@@ -61,7 +61,9 @@ jest.mock("../../utils/localVideoCapturePool", () => ({
   LocalVideoCaptureOwnedError: class extends Error {},
 }));
 jest.mock("../../utils/localVideoInput", () => ({
-  getVideoInputErrorMessage: jest.fn(() => "Check the video input."),
+  getLocalVideoSourceErrorMessage: jest.fn(() => "Check the video input."),
+  isDesktopCaptureKind: jest.requireActual("../../utils/localVideoInput")
+    .isDesktopCaptureKind,
   resolveLocalVideoInputBinding: jest.fn(),
 }));
 jest.mock("../../utils/localVideoIssues", () => ({

@@ -21,6 +21,8 @@ import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSync
 import OverlaysAndPostsWorkspace from "./OverlaysAndPostsWorkspace";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { ActiveControllerProvider } from "../../context/activeController";
+import { OVERLAY_CONTROLLER_ID } from "../../utils/controllerProfiles";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -73,6 +75,7 @@ const OverlayController = () => {
   };
 
   return (
+    <ActiveControllerProvider profileId={OVERLAY_CONTROLLER_ID}>
     <ControllerPageShell
       user={user}
       churchName={churchName}
@@ -226,6 +229,7 @@ const OverlayController = () => {
       )}
       <ServicePlanningSyncFloatingWindow hideOutlineActions />
     </ControllerPageShell>
+    </ActiveControllerProvider>
   );
 };
 

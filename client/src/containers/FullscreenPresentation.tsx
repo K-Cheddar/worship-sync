@@ -85,6 +85,7 @@ const FullscreenPresentation = ({
     transitionDirection: displayInfo.transitionDirection,
     localVideoInput: displayInfo.localVideoInput,
     prevLocalVideoInput: prevDisplayInfo.localVideoInput,
+    videoPlayback: displayInfo.videoPlayback,
   } as const;
 
   return isFullscreen || isHeadless ? (

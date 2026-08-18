@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, TimerInfo } from "../../types";
+import { Box, TimerInfo, VideoBackgroundPlaybackCue } from "../../types";
 import DisplayBox from "./DisplayBox";
 import MonitorDisplayBox from "./MonitorDisplayBox";
 import MonitorBandBackground from "./MonitorBandBackground";
@@ -68,6 +68,7 @@ type MonitorViewProps = {
   onVideoError?: () => void;
   videoMuted?: boolean;
   videoVolume?: number;
+  videoPlayback?: VideoBackgroundPlaybackCue;
   /** 'next' = slide up, 'prev' = slide down, 'jump' = fade. Defaults to 'next' when undefined. */
   transitionDirection?: "next" | "prev" | "jump";
   /** Current local/live media behind the monitor's text and chrome. */
@@ -100,6 +101,7 @@ const MonitorView = ({
   onVideoError,
   videoMuted = true,
   videoVolume = 1,
+  videoPlayback,
   transitionDirection = "next",
   currentMediaLayer,
 }: MonitorViewProps) => {
@@ -273,6 +275,8 @@ const MonitorView = ({
               videoBox={videoBox}
               muted={videoMuted}
               volume={videoVolume}
+              playbackRole="output"
+              playback={videoPlayback}
             />
           )}
           {boxes.map((box, i) => (

@@ -46,6 +46,13 @@ interface WindowStatesInfo {
   displays: Record<string, WindowState & { isOpen: boolean }>;
 }
 
+/** A screen or window this computer can capture. Ids are per-session. */
+interface ElectronDesktopCaptureSource {
+  id: string;
+  name: string;
+  thumbnailDataUrl?: string;
+}
+
 interface ElectronLocalAsset {
   assetId: string;
   workspaceId?: string;
@@ -170,6 +177,11 @@ interface ElectronAPI {
   ) => Promise<ElectronLocalAsset>;
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
+
+  // Screen and window capture sources on this computer
+  getDesktopCaptureSources: (options?: {
+    withThumbnails?: boolean;
+  }) => Promise<ElectronDesktopCaptureSource[]>;
 
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;

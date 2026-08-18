@@ -1,5 +1,8 @@
 import { ComponentProps, memo } from "react";
-import { selectOutputSlot } from "../../store/presentationSlice";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
 
@@ -31,10 +34,15 @@ const ProjectorPresentationPreview = memo(
     outputId = "projector",
     name = "Projector",
   }: ProjectorPresentationPreviewProps) => {
-    const slot = useSelector((state) =>
-      selectOutputSlot(state, outputId, "projector"),
+    // Content follows the mirror so the preview shows what is on the screen,
+    // not what this display would show if it stopped mirroring. Live state stays
+    // this display's own.
+    const { info, prevInfo } = useSelector((state) =>
+      selectResolvedOutputSlot(state, outputId, "projector"),
     );
-    const { info, prevInfo, isTransmitting } = slot;
+    const isTransmitting = useSelector(
+      (state) => selectOutputSlot(state, outputId, "projector").isTransmitting,
+    );
     const timers = useSelector((state) => state.timers.timers);
     const timerInfo = useSelector((state) =>
       state.timers.timers.find((timer) => timer.id === info.timerId),

@@ -157,6 +157,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }),
   getLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("get-local-asset", assetId),
+
+  // Screens and windows available to capture as live media on this computer.
+  getDesktopCaptureSources: (options?: { withThumbnails?: boolean }) =>
+    ipcRenderer.invoke("get-desktop-capture-sources", options),
   deleteLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("delete-local-asset", assetId),
 

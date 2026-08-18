@@ -38,6 +38,9 @@ import {
 import { getQuickLinksForOutput } from "../../utils/quickLinksForOutput";
 import { QuickLinkType } from "../../types";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { useActiveControllerProfile } from "../../context/activeController";
+import { getControllerOutputs } from "../../utils/controllerProfiles";
+import MirroredByBadge from "../../components/MirrorDisplay/MirroredByBadge";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
 const OVERLAY_STREAM_QUICK_LINKS_VISIBLE = 10;
@@ -81,19 +84,24 @@ const TransmitHandler = ({
   showClearStreamOverlaysButton = false,
   maxQuickLinks,
 }: TransmitHandlerProps) => {
-  // Outputs this surface shows: every enabled push output whose render profile
-  // the caller asked for. `visibleScreens` stays a type filter, so the overlay
-  // controller keeps showing "the stream ones" without naming them.
+  // Outputs this surface shows: the displays the active controller owns, then
+  // narrowed to the render profiles the caller asked for. `visibleScreens` stays
+  // a type filter, so the overlay controller keeps showing "the stream ones"
+  // without naming them.
+  //
+  // The ownership narrowing is a no-op for the unscoped built-ins, and it is
+  // what keeps an auxiliary controller from showing — or arming — a display
+  // that belongs to someone else.
   const displayOutputs = useSelector(selectDisplayOutputs);
+  const controllerProfile = useActiveControllerProfile();
   const visibleOutputs = useMemo(
     () =>
-      displayOutputs.filter(
+      getControllerOutputs(controllerProfile, displayOutputs).filter(
         (output) =>
-          output.enabled &&
           isPushOutputType(output.type) &&
           visibleScreens.includes(output.type as TransmitScreen),
       ),
-    [displayOutputs, visibleScreens],
+    [controllerProfile, displayOutputs, visibleScreens],
   );
 
   // The overlay controller's focused header acts on the first stream output it
@@ -160,9 +168,15 @@ const TransmitHandler = ({
     return map;
   }, [visibleOutputs, dispatch]);
 
-  const showProjector = visibleScreens.includes("projector");
-  const showMonitor = visibleScreens.includes("monitor");
-  const showStream = visibleScreens.includes("stream");
+  // Derived from the displays actually on screen, not from the caller's type
+  // filter. A controller that drives no monitor was still being offered the
+  // discussion board and the bulk controls, because it "asked for" all three
+  // types by default while owning only a projector.
+  const hasOutputOfType = (type: TransmitScreen) =>
+    visibleOutputs.some((output) => output.type === type);
+  const showProjector = hasOutputOfType("projector");
+  const showMonitor = hasOutputOfType("monitor");
+  const showStream = hasOutputOfType("stream");
 
   // Discussion board → monitor: only relevant on the main controller. Resolve the
   // church's board from the server (not just this device's stored alias) so the
@@ -483,6 +497,7 @@ const TransmitHandler = ({
                       fillWidth={fillWidth}
                       readOnly={readOnly}
                     />
+                    <MirroredByBadge outputId={output.id} />
                     {board}
                   </Fragment>
                 );

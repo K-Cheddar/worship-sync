@@ -196,6 +196,7 @@ const PresentationPreview = ({
       info.displayType === "stream" ? streamItemContentBlocked : undefined,
     localVideoInput: info.localVideoInput,
     prevLocalVideoInput: prevInfo.localVideoInput,
+    videoPlayback: info.videoPlayback,
   } as const;
 
   return (

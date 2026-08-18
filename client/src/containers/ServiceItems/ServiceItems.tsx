@@ -31,6 +31,8 @@ import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
+import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { useControllerBasePath } from "../../context/activeController";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
@@ -46,15 +48,10 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
-/** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
-const getControllerItemPath = (item: Pick<ServiceItemType, "_id" | "listId">) =>
-  `/controller/item/${window.btoa(encodeURI(item._id))}/${window.btoa(
-    encodeURI(item.listId)
-  )}`;
-
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const {
     list: serviceItems,
     isLoading,
@@ -344,7 +341,7 @@ const ServiceItems = () => {
         setSelectedListIds(new Set([nextItem.listId]));
         setAnchorListId(nextItem.listId);
         dispatch(setActiveItemInList(nextItem.listId));
-        navigate(getControllerItemPath(nextItem));
+        navigate(getControllerItemPath(nextItem, controllerBasePath));
         return;
       }
       const nextHeadingIdx = findNextHeadingIndex(currentIndex);
@@ -367,7 +364,7 @@ const ServiceItems = () => {
         setSelectedListIds(new Set([prevItem.listId]));
         setAnchorListId(prevItem.listId);
         dispatch(setActiveItemInList(prevItem.listId));
-        navigate(getControllerItemPath(prevItem));
+        navigate(getControllerItemPath(prevItem, controllerBasePath));
         return;
       }
       const prevHeadingIdx = findPrevHeadingIndex(currentIndex);
@@ -786,7 +783,14 @@ const ServiceItems = () => {
             </form>
           </FloatingWindow>
         ) : null}
-        {!isLoading && serviceItems.length === 0 && (
+        {!isLoading && !selectedList && (
+          <p className="p-2 text-sm">
+            {!isViewOnlyAccess(access)
+              ? "No outline yet. Use the outline picker above to add one."
+              : "No outline yet."}
+          </p>
+        )}
+        {!isLoading && selectedList && serviceItems.length === 0 && (
           <p className="text-sm p-2">
             {!isViewOnlyAccess(access)
               ? "This outline is empty. Create a new item or add an existing one using the buttons above."
@@ -874,7 +878,7 @@ const ServiceItems = () => {
             ) : (
               <LeftPanelButton
                 isSelected={false}
-                to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(encodeURI(item.listId))}`}
+                to={getControllerItemPath(item, controllerBasePath)}
                 title={item.name}
                 subtitle={arrangementSubtitlesByItemId.get(item._id)}
                 type={item.type}

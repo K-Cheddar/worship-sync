@@ -40,6 +40,7 @@ import { getVerses as getVersesApi } from "../../api/getVerses";
 import BibleVersesList from "./BibleVersesList";
 import { hasRenderableVersesInRange } from "./bibleVerseRange";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useControllerBasePath } from "../../context/activeController";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
@@ -84,6 +85,7 @@ const Bible = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const [searchParams] = useSearchParams();
 
   const {
@@ -215,7 +217,7 @@ const Bible = () => {
       );
       if (activeId) {
         navigate(
-          `/controller/bible?bulkImport=review&id=${encodeURIComponent(activeId)}`,
+          `${controllerBasePath}/bible?bulkImport=review&id=${encodeURIComponent(activeId)}`,
           { replace: true },
         );
       } else {
@@ -224,7 +226,7 @@ const Bible = () => {
     } else {
       setBulkReview(null);
     }
-  }, [
+  }, [controllerBasePath, 
     bulkImportId,
     bulkImportMode,
     loadBulkReviewFromStorage,
@@ -480,7 +482,7 @@ const Bible = () => {
       setBulkRowMessages({});
       setBulkImportOpen(false);
       navigate(
-        `/controller/bible?bulkImport=review&id=${encodeURIComponent(id)}`,
+        `${controllerBasePath}/bible?bulkImport=review&id=${encodeURIComponent(id)}`,
       );
     } finally {
       setIsBulkImporting(false);
@@ -489,7 +491,7 @@ const Bible = () => {
 
   const handleBackFromBulkReview = () => {
     clearActiveBulkBibleImport();
-    navigate("/controller/bible");
+    navigate(`${controllerBasePath}/bible`);
   };
 
   const toggleBulkRowSelection = (rowId: string) => {
@@ -567,7 +569,7 @@ const Bible = () => {
       dispatch(resetCreateItem());
       setIsAddingBulkRows(false);
       clearActiveBulkBibleImport();
-      navigate("/controller/bible");
+      navigate(`${controllerBasePath}/bible`);
     }
   };
 

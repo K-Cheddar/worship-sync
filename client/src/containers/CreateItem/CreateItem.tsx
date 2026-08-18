@@ -7,6 +7,12 @@ import Button from "../../components/Button/Button";
 import SendTargets from "../../components/SendTargets/SendTargets";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  useActiveControllerProfile,
+  useControllerBasePath,
+} from "../../context/activeController";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { buildShouldSendToForController } from "../../utils/sendTargets";
 import Icon from "../../components/Icon/Icon";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import TextArea from "../../components/TextArea/TextArea";
@@ -143,11 +149,16 @@ const CreateItem = ({
   const [justCreated, setJustCreated] = useState(false);
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
   const [mobileSongTab, setMobileSongTab] = useState<MobileSongTab>("create");
-  const [shouldSendTo, setShouldSendTo] = useState<ShouldSendTo>({
-    projector: true,
-    monitor: true,
-    stream: true,
-  });
+  // Seeded from the controller in front of the operator, so a new item lands on
+  // that controller's screens rather than the presentation controller's.
+  const displayOutputsForCreate = useSelector(selectDisplayOutputs);
+  const createControllerProfile = useActiveControllerProfile();
+  const [shouldSendTo, setShouldSendTo] = useState<ShouldSendTo>(() =>
+    buildShouldSendToForController(
+      displayOutputsForCreate,
+      createControllerProfile,
+    ),
+  );
   const [isAdvancedExpanded, setIsAdvancedExpanded] = useState(false);
   const [removeParentheticals, setRemoveParentheticals] = useState(false);
   const [viewLyricsCandidate, setViewLyricsCandidate] =
@@ -155,6 +166,7 @@ const CreateItem = ({
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const dispatch = useDispatch();
 
   const {
@@ -331,7 +343,7 @@ const CreateItem = ({
 
   const goToItem = (itemId: string, listId: string) => {
     navigate(
-      `/controller/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
+      `${controllerBasePath}/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
         encodeURI(listId),
       )}`,
     );
@@ -418,7 +430,7 @@ const CreateItem = ({
 
     if (selectedType === "bible") {
       dispatch(setCreateItem(createItemDraft));
-      navigate(`/controller/bible?name=${encodeURI(itemName)}`);
+      navigate(`${controllerBasePath}/bible?name=${encodeURI(itemName)}`);
       return;
     }
 

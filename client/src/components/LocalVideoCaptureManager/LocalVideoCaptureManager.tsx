@@ -8,7 +8,8 @@ import {
   releaseWarmLocalVideoCapture,
 } from "../../utils/localVideoCapturePool";
 import {
-  getVideoInputErrorMessage,
+  getLocalVideoSourceErrorMessage,
+  isDesktopCaptureKind,
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
 import { reportLocalVideoIssue } from "../../utils/localVideoIssues";
@@ -91,7 +92,9 @@ const LocalVideoCaptureManager = () => {
             if (!binding) {
               reportIssue(
                 input.sourceId,
-                `Relink ${input.deviceLabel} on this computer, then try again.`,
+                isDesktopCaptureKind(input.captureKind)
+                  ? `Share ${input.deviceLabel} again on this computer, then try again.`
+                  : `Relink ${input.deviceLabel} on this computer, then try again.`,
               );
               return;
             }
@@ -108,7 +111,10 @@ const LocalVideoCaptureManager = () => {
                 CAPTURE_MANAGER_CONSUMER_ID,
               );
               if (error instanceof LocalVideoCaptureOwnedError) return;
-              reportIssue(input.sourceId, getVideoInputErrorMessage(error));
+              reportIssue(
+                input.sourceId,
+                getLocalVideoSourceErrorMessage(error, input.captureKind),
+              );
             }
           }),
         );

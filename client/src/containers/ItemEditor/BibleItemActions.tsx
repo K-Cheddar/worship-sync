@@ -3,6 +3,7 @@ import { BookOpen } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import { useNavigate } from "react-router-dom";
+import { useControllerBasePath } from "../../context/activeController";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
@@ -24,6 +25,7 @@ type BibleItemActionsProps = {
 const BibleItemActions = ({ item }: BibleItemActionsProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const isSectionLoading = useSelector(
     (state: RootState) => state.undoable.present.item.isSectionLoading
   );
@@ -38,8 +40,8 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
         version: info.version,
       }),
     );
-    navigate("/controller/bible");
-  }, [item.bibleInfo, dispatch, navigate]);
+    navigate(`${controllerBasePath}/bible`);
+  }, [controllerBasePath, item.bibleInfo, dispatch, navigate]);
 
   const handleVersionChange = useCallback(
     async (newVersion: string) => {

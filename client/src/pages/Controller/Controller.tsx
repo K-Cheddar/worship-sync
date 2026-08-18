@@ -34,6 +34,8 @@ import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
+import { ActiveControllerProvider } from "../../context/activeController";
+import { PRESENTATION_CONTROLLER_ID } from "../../utils/controllerProfiles";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -107,6 +109,7 @@ const Controller = () => {
   };
 
   return (
+    <ActiveControllerProvider profileId={PRESENTATION_CONTROLLER_ID}>
     <ControllerPageShell
       user={user}
       churchName={churchName}
@@ -199,6 +202,7 @@ const Controller = () => {
         </>
       )}
     </ControllerPageShell>
+    </ActiveControllerProvider>
   );
 };
 

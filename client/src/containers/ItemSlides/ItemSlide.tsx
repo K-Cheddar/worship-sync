@@ -41,6 +41,8 @@ type ItemSlideProps = {
     index: number,
     options?: { skipNextClick?: boolean },
   ) => void;
+  /** Override the default `item-slide-${index}` DOM id for multi-item rails. */
+  slideDomId?: string;
 };
 
 const ItemSlide = ({
@@ -62,6 +64,7 @@ const ItemSlide = ({
   isBackgroundTargetSelected = false,
   onSlideGridClick,
   onEnterBackgroundTargetSelectMode,
+  slideDomId,
 }: ItemSlideProps) => {
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
@@ -168,7 +171,7 @@ const ItemSlide = ({
         !(isSelected || isBackgroundTargetSelected) && "border-transparent",
         isInDraggedSection && "z-10",
       )}
-      id={`item-slide-${index}`}
+      id={slideDomId ?? `item-slide-${index}`}
     >
       <div
         className="relative"

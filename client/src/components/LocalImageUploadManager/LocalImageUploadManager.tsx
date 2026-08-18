@@ -202,7 +202,11 @@ const LocalImageUploadManager = () => {
           return;
         }
         if (await stopIfCancelled()) return;
-        const localMedia = mediaByIdRef.current.get(job.assetId);
+        const localMedia =
+          mediaByIdRef.current.get(job.assetId) ??
+          Array.from(mediaByIdRef.current.values()).find(
+            (item) => item.localImage?.id === job.assetId,
+          );
         if (localMedia?.localImage) {
           dispatch(
             updateMediaItemFields({
@@ -210,6 +214,7 @@ const LocalImageUploadManager = () => {
               patch: {
                 updatedAt: new Date().toISOString(),
                 publicId: cloudMedia.publicId,
+                cloudUploadRequest: null,
                 localImage: {
                   ...localMedia.localImage,
                   storagePolicy: "local-and-cloud",

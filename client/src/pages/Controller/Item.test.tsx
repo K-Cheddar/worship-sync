@@ -4,6 +4,7 @@ import { Provider } from "react-redux";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Item from "./Item";
 import { itemSlice } from "../../store/itemSlice";
+import allDocsReducer from "../../store/allDocsSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -21,7 +22,14 @@ jest.mock("../../containers/ItemSlides/ItemSlides", () => () => (
   <div data-testid="item-slides" />
 ));
 
-const createTestStore = () => {
+const createTestStore = (
+  allDocs?: Partial<{
+    allSongDocs: DBItem[];
+    allFreeFormDocs: DBItem[];
+    allTimerDocs: DBItem[];
+    allBibleDocs: DBItem[];
+  }>,
+) => {
   const initialUndoableState = {
     past: [],
     present: {
@@ -41,9 +49,16 @@ const createTestStore = () => {
   return configureStore({
     reducer: {
       undoable: undoableReducer,
+      allDocs: allDocsReducer,
     },
     preloadedState: {
       undoable: initialUndoableState,
+      allDocs: {
+        allSongDocs: allDocs?.allSongDocs ?? [],
+        allFreeFormDocs: allDocs?.allFreeFormDocs ?? [],
+        allTimerDocs: allDocs?.allTimerDocs ?? [],
+        allBibleDocs: allDocs?.allBibleDocs ?? [],
+      },
     },
   });
 };
@@ -149,5 +164,50 @@ describe("Controller Item page", () => {
         slideSpan: 2,
       }),
     );
+  });
+
+  it("activates a cached allDocs item without a loading fetch", async () => {
+    const dbGet = jest.fn();
+    const controllerContext = createMockControllerContext({
+      db: createMockPouchDB({ get: dbGet }),
+    });
+    const globalContext = createMockGlobalContext();
+    const cachedItem = {
+      _id: "item-123",
+      name: "Cached song",
+      type: "song",
+      selectedArrangement: 0,
+      arrangements: [],
+      slides: [{ id: "s1", name: "Verse 1", type: "Verse", boxes: [] }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as unknown as DBItem;
+    const store = createTestStore({ allSongDocs: [cachedItem] });
+    const itemId = window.btoa(encodeURI("item-123"));
+    const listId = window.btoa(encodeURI("list-456"));
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={controllerContext as any}>
+          <GlobalInfoContext.Provider value={globalContext as any}>
+            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
+              <Routes>
+                <Route
+                  path="/controller/item/:itemId/:listId"
+                  element={<Item />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(store.getState().undoable.present.item._id).toBe("item-123");
+    });
+
+    expect(dbGet).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.isLoading).toBe(false);
+    expect(screen.getByTestId("item-slides")).toBeInTheDocument();
   });
 });

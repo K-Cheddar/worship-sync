@@ -3,7 +3,7 @@ import {
   useOutputForSurface,
   useWindowKeyForSurface,
 } from "../hooks/useOutputForSurface";
-import { selectOutputSlot } from "../store/presentationSlice";
+import { selectResolvedOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
 import { useContext, useCallback } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -19,10 +19,10 @@ const Monitor = () => {
   // screen marked headless renders bare output instead of the gate.
   const { isHeadless } = useResolvedDisplaySettings(output.id);
   const monitorInfo = useSelector(
-    (state) => selectOutputSlot(state, output.id, "monitor").info,
+    (state) => selectResolvedOutputSlot(state, output.id, "monitor").info,
   );
   const prevMonitorInfo = useSelector(
-    (state) => selectOutputSlot(state, output.id, "monitor").prevInfo,
+    (state) => selectResolvedOutputSlot(state, output.id, "monitor").prevInfo,
   );
 
   const { firebaseDb, churchId, sharedDataReady } =
@@ -51,7 +51,7 @@ const Monitor = () => {
   // When the controller swaps the monitor to a discussion board, show the board
   // here with the clock/timer band composited on top so a countdown stays visible.
   const monitorBoardAliasId = useSelector(
-    (state) => selectOutputSlot(state, output.id, "monitor").boardAliasId,
+    (state) => selectResolvedOutputSlot(state, output.id, "monitor").boardAliasId,
   );
 
   if (monitorBoardAliasId) {

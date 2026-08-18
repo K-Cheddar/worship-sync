@@ -181,6 +181,119 @@ describe("LocalVideoInputPicker", () => {
     ).not.toBeInTheDocument();
   });
 
+  describe("screen and window shares", () => {
+    const getDesktopCaptureSources = jest.fn();
+    const getDisplayMedia = jest.fn();
+
+    const openDesktopPicker = (onLinked = jest.fn()) => {
+      render(
+        <LocalVideoInputPicker captureMode="desktop" onLinked={onLinked} />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Add screen or window" }),
+      );
+      return onLinked;
+    };
+
+    beforeEach(() => {
+      localStorage.clear();
+      enumerateDevices.mockResolvedValue([]);
+      getDesktopCaptureSources.mockReset();
+      getDisplayMedia.mockReset();
+      delete (window as { electronAPI?: unknown }).electronAPI;
+    });
+
+    it("saves the chosen screen against its capture source on this computer", async () => {
+      mockIsElectron.mockReturnValue(true);
+      (
+        window as unknown as {
+          electronAPI: { getDesktopCaptureSources: unknown };
+        }
+      ).electronAPI = { getDesktopCaptureSources };
+      getDesktopCaptureSources.mockResolvedValue([
+        { id: "screen:0:0", name: "Screen 1" },
+      ]);
+      getUserMedia.mockResolvedValue({
+        getTracks: () => [],
+        getVideoTracks: () => [{ addEventListener: jest.fn(), stop: jest.fn() }],
+        getAudioTracks: () => [],
+      } as unknown as MediaStream);
+      const onLinked = openDesktopPicker();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Add to Media" })).toBeEnabled(),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Add to Media" }));
+
+      await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1));
+      expect(onLinked).toHaveBeenCalledWith(
+        expect.objectContaining({ captureKind: "screen", label: "Screen 1" }),
+      );
+      expect(
+        JSON.parse(
+          localStorage.getItem("worshipsync_local_video_inputs") ?? "[]",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          deviceId: "screen:0:0",
+          captureKind: "screen",
+          displaySourceName: "Screen 1",
+        }),
+      ]);
+    });
+
+    it("cannot save before the browser share window returns a choice", async () => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { enumerateDevices, getUserMedia, getDisplayMedia },
+      });
+      openDesktopPicker();
+
+      expect(
+        await screen.findByRole("button", { name: "Choose what to share" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add to Media" })).toBeDisabled();
+    });
+
+    it("keeps a browser share running for the outputs after saving", async () => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { enumerateDevices, getUserMedia, getDisplayMedia },
+      });
+      const stop = jest.fn();
+      getDisplayMedia.mockResolvedValue({
+        getTracks: () => [{ stop }],
+        getVideoTracks: () => [
+          {
+            stop,
+            readyState: "live",
+            addEventListener: jest.fn(),
+            label: "Lyrics - Notepad",
+            getSettings: () => ({ displaySurface: "window" }),
+          },
+        ],
+        getAudioTracks: () => [],
+      } as unknown as MediaStream);
+      const onLinked = openDesktopPicker();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Choose what to share" }),
+      );
+      await screen.findByRole("button", { name: "Choose a different share" });
+      fireEvent.click(screen.getByRole("button", { name: "Add to Media" }));
+
+      await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1));
+      expect(onLinked).toHaveBeenCalledWith(
+        expect.objectContaining({
+          captureKind: "window",
+          label: "Lyrics - Notepad",
+          audioEnabled: false,
+        }),
+      );
+      expect(stop).not.toHaveBeenCalled();
+    });
+  });
+
   it("offers a retry when Electron cannot find a video input", async () => {
     mockIsElectron.mockReturnValue(true);
     enumerateDevices.mockResolvedValue([]);

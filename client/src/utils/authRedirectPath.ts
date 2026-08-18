@@ -24,7 +24,13 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/boards/display",
 ]);
 
-const AUTH_REDIRECT_PREFIXES = ["/controller", "/boards/"];
+const AUTH_REDIRECT_PREFIXES = [
+  "/controller",
+  "/boards/",
+  // Auxiliary controllers carry their profile id in the path, so a deep link to
+  // one only survives sign-in if it is matched by prefix.
+  "/aux-controller/",
+];
 
 /** Limit redirect query strings (deep links, filters) without allowing unbounded payloads. */
 const AUTH_REDIRECT_MAX_SEARCH_LENGTH = 8192;

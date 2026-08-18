@@ -56,20 +56,42 @@ const buttons: ButtonType[] = [
   },
 ];
 
-const EditorButtons = ({ access }: { access?: AccessType }) => {
+type EditorButtonsProps = {
+  access?: AccessType;
+  /**
+   * Controller these buttons belong to. Auxiliary controllers live under their
+   * own route, so a hardcoded "/controller" would send the operator to the main
+   * controller instead of adding an item to the list in front of them.
+   */
+  basePath?: string;
+  /** Restrict to a subset of sections, in the order given here. */
+  sections?: string[];
+};
+
+const EditorButtons = ({
+  access,
+  basePath = "/controller",
+  sections,
+}: EditorButtonsProps) => {
   const location = useLocation();
 
   const canShow = (b: ButtonType) =>
-    Boolean(access && b.access?.includes(access));
+    Boolean(access && b.access?.includes(access)) &&
+    (!sections || sections.includes(b.section));
+
+  const visibleButtons = sections
+    ? sections
+        .map((section) => buttons.find((b) => b.section === section))
+        .filter((b): b is ButtonType => Boolean(b) && canShow(b!))
+    : buttons.filter(canShow);
 
   const isSelected = (section: string) =>
-    location.pathname.replace("/controller/", "") === section;
+    location.pathname.replace(`${basePath}/`, "") === section;
 
   return (
     <ErrorBoundary>
       <div className="grid grid-rows-3 grid-flow-col auto-cols-fr gap-px p-px">
-        {buttons.map((b) => {
-          if (!canShow(b)) return null;
+        {visibleButtons.map((b) => {
           const id = `editor-button-${b.title}`;
           const selected = isSelected(b.section);
           return (
@@ -77,7 +99,7 @@ const EditorButtons = ({ access }: { access?: AccessType }) => {
               key={id}
               id={id}
               component="link"
-              to={`/controller/${b.section}`}
+              to={`${basePath}/${b.section}`}
               variant="none"
               svg={svgMap.get(b.type) || FileQuestion}
               color={iconColorMap.get(b.type)}

@@ -1,7 +1,9 @@
 import {
   getAudioInputErrorMessage,
+  isDesktopCaptureKind,
   type LocalVideoInputBinding,
 } from "./localVideoInput";
+import { openDesktopCapture, releaseDesktopCapture } from "./desktopCapture";
 import { reportLocalVideoIssue } from "./localVideoIssues";
 import { publishLocalVideoMedia } from "./localVideoMediaRelay";
 import { publishLocalVideoPreview } from "./localVideoPreviewRelay";
@@ -24,6 +26,7 @@ type SourcePublisher = {
 
 type CaptureEntry = {
   bindingKey: string;
+  binding: LocalVideoInputBinding;
   promise: Promise<CaptureResult>;
   sourceIds: Set<string>;
   pendingPublishers: Set<string>;
@@ -51,9 +54,25 @@ const capturesBySource = new Map<string, CaptureEntry>();
 const consumersBySource = new Map<string, Set<string>>();
 
 const bindingKeyFor = (binding: LocalVideoInputBinding) =>
-  `${binding.deviceId}\u0000${binding.audioDeviceId ?? ""}`;
+  [
+    binding.captureKind ?? "device",
+    binding.deviceId,
+    binding.audioDeviceId ?? "",
+    binding.systemAudio ? "system-audio" : "",
+  ].join("\u0000");
 
-const stopStream = (stream: MediaStream) => {
+/**
+ * Hardware captures close on release. A browser screen share is parked by the
+ * desktop capture module instead, so the next slide does not need a new click.
+ */
+const releaseCaptureStream = (
+  binding: LocalVideoInputBinding,
+  stream: MediaStream,
+) => {
+  if (isDesktopCaptureKind(binding.captureKind)) {
+    releaseDesktopCapture(binding, stream);
+    return;
+  }
   stream.getTracks().forEach((track) => track.stop());
 };
 
@@ -116,17 +135,23 @@ const openCapture = async (
     throw new Error("Video inputs are not supported in this browser.");
   }
 
-  const stream = await mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      deviceId: { exact: binding.deviceId },
-      width: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.width },
-      height: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.height },
-      frameRate: { ideal: 60 },
-    },
-  });
+  const isDesktopCapture = isDesktopCaptureKind(binding.captureKind);
+  const desktopCapture = isDesktopCapture
+    ? await openDesktopCapture(binding)
+    : undefined;
+  const stream =
+    desktopCapture?.stream ??
+    (await mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        deviceId: { exact: binding.deviceId },
+        width: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.width },
+        height: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.height },
+        frameRate: { ideal: 60 },
+      },
+    }));
 
-  let audioError: unknown;
+  let audioError: unknown = desktopCapture?.systemAudioError;
   if (binding.audioDeviceId) {
     try {
       const audioStream = await mediaDevices.getUserMedia({
@@ -160,7 +185,7 @@ const stopEntry = async (entry: CaptureEntry) => {
   removeEntry(entry);
   try {
     const { stream } = await entry.promise;
-    stopStream(stream);
+    releaseCaptureStream(entry.binding, stream);
   } catch {
     // A failed pending capture has no tracks to release.
   } finally {
@@ -210,6 +235,7 @@ const createEntry = (
   let entry: CaptureEntry;
   entry = {
     bindingKey,
+    binding,
     promise: Promise.resolve(undefined as never),
     sourceIds: new Set([sourceId]),
     pendingPublishers: new Set(),

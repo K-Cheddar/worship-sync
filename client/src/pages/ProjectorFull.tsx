@@ -3,7 +3,7 @@ import {
   useOutputForSurface,
   useWindowKeyForSurface,
 } from "../hooks/useOutputForSurface";
-import { selectOutputSlot } from "../store/presentationSlice";
+import { selectResolvedOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
 import DisplayBoardTakeover from "../components/DisplayWindow/DisplayBoardTakeover";
 import { useCallback } from "react";
@@ -14,13 +14,13 @@ const ProjectorFull = () => {
   const output = useOutputForSurface("projector");
   const windowKey = useWindowKeyForSurface("projector");
   const projectorInfo = useSelector(
-    (state) => selectOutputSlot(state, output.id, "projector").info,
+    (state) => selectResolvedOutputSlot(state, output.id, "projector").info,
   );
   const prevProjectorInfo = useSelector(
-    (state) => selectOutputSlot(state, output.id, "projector").prevInfo,
+    (state) => selectResolvedOutputSlot(state, output.id, "projector").prevInfo,
   );
   const boardAliasId = useSelector(
-    (state) => selectOutputSlot(state, output.id, "projector").boardAliasId,
+    (state) => selectResolvedOutputSlot(state, output.id, "projector").boardAliasId,
   );
   const projectorTimer = useSelector((state) =>
     state.timers.timers.find((timer) => timer.id === projectorInfo.timerId),

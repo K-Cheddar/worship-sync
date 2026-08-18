@@ -3,7 +3,10 @@ import {
   useOutputForSurface,
   useWindowKeyForSurface,
 } from "../hooks/useOutputForSurface";
-import { selectOutputSlot } from "../store/presentationSlice";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../store/presentationSlice";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
@@ -13,10 +16,10 @@ const Stream = () => {
   const output = useOutputForSurface("stream");
   const windowKey = useWindowKeyForSurface("stream");
   const streamInfo = useSelector(
-    (state) => selectOutputSlot(state, output.id, "stream").info,
+    (state) => selectResolvedOutputSlot(state, output.id, "stream").info,
   );
   const prevStreamInfo = useSelector(
-    (state) => selectOutputSlot(state, output.id, "stream").prevInfo,
+    (state) => selectResolvedOutputSlot(state, output.id, "stream").prevInfo,
   );
   const streamItemContentBlocked = useSelector(
     (state) => selectOutputSlot(state, output.id, "stream").itemContentBlocked,
@@ -67,6 +70,8 @@ const Stream = () => {
       streamItemContentBlocked={streamItemContentBlocked}
       localVideoInput={streamInfo.localVideoInput}
       prevLocalVideoInput={prevStreamInfo.localVideoInput}
+      videoPlayback={streamInfo.videoPlayback}
+      shouldPlayVideo
       canCaptureLocalVideo
     />
   );

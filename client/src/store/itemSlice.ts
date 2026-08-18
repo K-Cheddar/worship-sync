@@ -14,6 +14,7 @@ import {
   SongMetadata,
   ShouldSendTo,
   TimerInfo,
+  VideoBackgroundSendMode,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import {
@@ -731,6 +732,45 @@ export const updateSlideBackground = createAsyncThunk(
       });
     }
     dispatch(itemSlice.actions.clearBackgroundTargetSelection());
+  },
+);
+
+/**
+ * Per-slide choice of whether sending this slide restarts its file video
+ * background or lets it keep playing, so a song can restart on its opener and
+ * continue across the lyric advances after it.
+ */
+export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
+  "item/updateSlideVideoBackgroundSendMode",
+  async (args: { mode: VideoBackgroundSendMode }, { dispatch, getState }) => {
+    const state = getState();
+    const item = state.undoable.present.item;
+
+    const applyMode = (slide: ItemSlideType): ItemSlideType =>
+      slide.videoBackgroundSendMode === args.mode
+        ? slide
+        : { ...slide, videoBackgroundSendMode: args.mode };
+
+    const mapSelected = (slides: ItemSlideType[]) =>
+      slides.map((slide, index) =>
+        index === item.selectedSlide ? applyMode(slide) : slide,
+      );
+
+    const arrangementSlides =
+      item.arrangements[item.selectedArrangement]?.slides;
+    if (arrangementSlides) {
+      dispatch(
+        _updateArrangements(
+          item.arrangements.map((arrangement, index) =>
+            index === item.selectedArrangement
+              ? { ...arrangement, slides: mapSelected(arrangement.slides) }
+              : arrangement,
+          ),
+        ),
+      );
+    }
+
+    dispatch(_updateSlides(mapSelected(item.slides)));
   },
 );
 

@@ -1,4 +1,4 @@
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, PayloadAction, createSelector } from "@reduxjs/toolkit";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
@@ -8,6 +8,7 @@ import {
   MediaType,
   OverlayInfo,
   Presentation,
+  VideoBackgroundPlaybackCue,
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 import { serverNow } from "../utils/serverTime";
@@ -47,6 +48,8 @@ export type RemoteOutputState = {
   itemContentBlocked?: boolean;
   /** Monitor outputs only. */
   boardAliasId?: string;
+  /** Display this one is mirroring; empty when it shows its own content. */
+  followingOutputId?: string;
 };
 
 const copySlideBox = (box: ItemSlideType["boxes"][number]) => ({
@@ -113,6 +116,20 @@ export type OutputSlot = {
    * durable `source` binding in the display output registry.
    */
   boardAliasId: string;
+  /**
+   * Display this one is mirroring live, or "" when it shows its own content.
+   *
+   * Follow is resolved when a surface **reads** its slot, never when a
+   * controller writes one — see {@link selectResolvedOutputSlot}. That is what
+   * makes "held and restored" fall out for free: the following display's own
+   * content keeps arriving in `info` the whole time, simply unseen, so
+   * unfollowing puts it back on screen already current rather than stale.
+   *
+   * It also means two controllers never write one slot. The lobby operator
+   * mirroring the sanctuary is not sending to the sanctuary's display; they are
+   * pointing their own display at it.
+   */
+  followingOutputId: string;
 };
 
 export type PresentationState = {
@@ -191,7 +208,26 @@ export const createOutputSlot = (
   itemContentBlocked: false,
   itemContentBlockedTime: 0,
   boardAliasId: "",
+  followingOutputId: "",
 });
+
+/**
+ * Stage `shown` as this slot's outgoing frame, so the next render crossfades
+ * out of what the room was actually looking at.
+ */
+const captureAsPrev = (slot: OutputSlot, shown: Presentation) => {
+  slot.prevInfo.slide =
+    slot.type === "stream" ? copyStreamSlide(shown.slide) : shown.slide;
+  slot.prevInfo.name = shown.name;
+  slot.prevInfo.type = shown.type;
+  slot.prevInfo.time = shown.time;
+  slot.prevInfo.timerId = shown.timerId;
+  slot.prevInfo.localVideoInput = shown.localVideoInput;
+  if (slot.type === "monitor") {
+    slot.prevInfo.itemId = shown.itemId;
+    slot.prevInfo.nextSlide = shown.nextSlide ?? null;
+  }
+};
 
 /**
  * Slots for every output of a surface type, in registry order.
@@ -912,6 +948,7 @@ export const presentationSlice = createSlice({
         projector.info.localVideoInput = normalizeLocalVideoInput(
           action.payload.localVideoInput,
         );
+        projector.info.videoPlayback = action.payload.videoPlayback;
       }
       for (const monitor of targetSlots(
         state,
@@ -945,6 +982,7 @@ export const presentationSlice = createSlice({
         monitor.info.localVideoInput = normalizeLocalVideoInput(
           action.payload.localVideoInput,
         );
+        monitor.info.videoPlayback = action.payload.videoPlayback;
       }
       for (const stream of targetSlots(state, "stream", outputIdsOf(action))) {
         if (!stream.isTransmitting) continue;
@@ -968,6 +1006,7 @@ export const presentationSlice = createSlice({
         stream.info.localVideoInput = normalizeLocalVideoInput(
           action.payload.localVideoInput,
         );
+        stream.info.videoPlayback = action.payload.videoPlayback;
       }
     },
     toggleProjectorTransmitting: (state) => {
@@ -1010,6 +1049,59 @@ export const presentationSlice = createSlice({
       for (const slot of slots) {
         slot.isTransmitting = value;
       }
+    },
+    /**
+     * Mirror another display live, or stop mirroring when `followingOutputId`
+     * is empty.
+     *
+     * Four rules keep resolution to at most one hop, so a read can never chase
+     * a chain or spin on a cycle:
+     *
+     * - a display cannot follow itself;
+     * - it can only follow a display of the same render profile, since a
+     *   projector payload has nothing sensible to put on a stream;
+     * - it cannot follow a display that is itself following;
+     * - a display that others are following cannot start following.
+     *
+     * Stopping copies what the room is *actually* seeing into `prevInfo` before
+     * handing control back. Fading out of this slot's own last slide would
+     * animate away content that was never on screen.
+     */
+    setOutputFollowing: (
+      state,
+      action: PayloadAction<{ outputId: string; followingOutputId: string }>,
+    ) => {
+      const slot = state.outputs[action.payload.outputId];
+      if (!slot) return;
+      const sourceId = action.payload.followingOutputId;
+
+      if (!sourceId) {
+        if (!slot.followingOutputId) return;
+        const shown = state.outputs[slot.followingOutputId];
+        if (shown) captureAsPrev(slot, shown.info);
+        slot.followingOutputId = "";
+        // A jump, not a slide: the outgoing frame is unrelated to the incoming
+        // one, so directional motion would read as navigation that did not
+        // happen.
+        slot.info.transitionDirection = "jump";
+        slot.info.time = serverNow();
+        return;
+      }
+
+      if (sourceId === slot.id) return;
+      const source = state.outputs[sourceId];
+      if (!source) return;
+      if (source.type !== slot.type) return;
+      if (source.followingOutputId) return;
+      if (
+        Object.values(state.outputs).some(
+          (other) => other.followingOutputId === slot.id,
+        )
+      ) {
+        return;
+      }
+      if (slot.followingOutputId === sourceId) return;
+      slot.followingOutputId = sourceId;
     },
     /** Take one named output live or off air, independent of its siblings. */
     toggleOutputTransmitting: (state, action: PayloadAction<string>) => {
@@ -1517,8 +1609,21 @@ export const presentationSlice = createSlice({
       state,
       action: PayloadAction<Targeted<BibleDisplayInfo>>,
     ) => {
+      const nextHasData = Boolean(
+        action.payload.title?.trim() || action.payload.text?.trim(),
+      );
       for (const stream of targetSlots(state, "stream", outputIdsOf(action))) {
         if (!stream.isTransmitting) continue;
+        const cur = stream.info.bibleDisplayInfo;
+        const curHasData = Boolean(cur?.title?.trim() || cur?.text?.trim());
+        // ItemSlides clears the bible ahead of every non-bible send. With no verse
+        // live there is nothing to clear, and running the clear anyway declares the
+        // stream type "bible" — which makes the empty formatted-text update that
+        // follows look like the post-bible echo whose guard drops it, so clicking a
+        // wordless custom-item slide never blanked the live formatted text. Skipping
+        // also keeps the outgoing text staged for its fade-out instead of letting
+        // this pass and the formatted pass hand off twice. Mirrors the FromRemote guard.
+        if (!curHasData && !nextHasData) continue;
         const t = serverNow();
         stream.prevInfo.bibleDisplayInfo = stream.info.bibleDisplayInfo;
         const ft = stream.info.formattedTextDisplayInfo;
@@ -1628,8 +1733,18 @@ export const presentationSlice = createSlice({
     ) => {
       for (const stream of builtInSlots(state, "stream")) {
         // Per-key Firebase: cleared formatted arrives after bible; do not treat as
-        // "switch to formatted" or we wipe scripture from streamInfo.
-        if (!action.payload.text?.trim() && stream.info.type === "bible") {
+        // "switch to formatted" or we wipe scripture from streamInfo. Only a verse
+        // that is actually live needs that protection — a controller on an older
+        // build still stamps the type "bible" when it clears an empty bible ahead of
+        // a wordless custom-item slide, and dropping that update would strand the
+        // previous formatted text on the stream. An already-cleared slot is caught
+        // by the guard below.
+        const liveBible = stream.info.bibleDisplayInfo;
+        if (
+          !action.payload.text?.trim() &&
+          stream.info.type === "bible" &&
+          Boolean(liveBible?.title?.trim() || liveBible?.text?.trim())
+        ) {
           continue;
         }
         // Same race as bible: a cleared formatted update can land after a sibling stream
@@ -1985,18 +2100,22 @@ export const presentationSlice = createSlice({
           // timestamp is bookkeeping (e.g. a freshly reconciled blank slot) and
           // must never clear what is live.
           if (incoming > 0 && (current === 0 || incoming > current)) {
-            slot.prevInfo.slide =
-              slot.type === "stream"
-                ? copyStreamSlide(slot.info.slide)
-                : slot.info.slide;
-            slot.prevInfo.name = slot.info.name;
-            slot.prevInfo.type = slot.info.type;
-            slot.prevInfo.time = slot.info.time;
-            slot.prevInfo.timerId = slot.info.timerId;
-            slot.prevInfo.localVideoInput = slot.info.localVideoInput;
-            if (slot.type === "monitor") {
-              slot.prevInfo.itemId = slot.info.itemId;
-              slot.prevInfo.nextSlide = slot.info.nextSlide ?? null;
+            const sameSlide =
+              info.slide?.id != null && slot.info.slide?.id === info.slide.id;
+            if (!sameSlide) {
+              slot.prevInfo.slide =
+                slot.type === "stream"
+                  ? copyStreamSlide(slot.info.slide)
+                  : slot.info.slide;
+              slot.prevInfo.name = slot.info.name;
+              slot.prevInfo.type = slot.info.type;
+              slot.prevInfo.time = slot.info.time;
+              slot.prevInfo.timerId = slot.info.timerId;
+              slot.prevInfo.localVideoInput = slot.info.localVideoInput;
+              if (slot.type === "monitor") {
+                slot.prevInfo.itemId = slot.info.itemId;
+                slot.prevInfo.nextSlide = slot.info.nextSlide ?? null;
+              }
             }
             // Merge the slide half over what is here, keeping the overlay lanes
             // this slot already holds — they arrive on their own keys below.
@@ -2005,6 +2124,12 @@ export const presentationSlice = createSlice({
               ...omitOverlayLanes(info),
               localVideoInput: normalizeLocalVideoInput(info.localVideoInput),
             };
+          } else if (info.videoPlayback) {
+            const incomingGen = info.videoPlayback.generation ?? 0;
+            const currentGen = slot.info.videoPlayback?.generation ?? 0;
+            if (incomingGen > currentGen) {
+              slot.info.videoPlayback = info.videoPlayback;
+            }
           }
         }
 
@@ -2037,6 +2162,43 @@ export const presentationSlice = createSlice({
         ) {
           slot.boardAliasId = data.boardAliasId;
         }
+        if (typeof data.followingOutputId === "string") {
+          const next = data.followingOutputId;
+          // Re-check the one-hop rules on receipt. A payload from a client that
+          // saw a different registry could otherwise install a chain or a cycle
+          // here, and the read path would have no way to recover.
+          if (!next) {
+            if (slot.followingOutputId) {
+              const shown = state.outputs[slot.followingOutputId];
+              if (shown) captureAsPrev(slot, shown.info);
+              slot.followingOutputId = "";
+            }
+          } else if (next !== slot.id) {
+            const source = state.outputs[next];
+            if (
+              source &&
+              source.type === slot.type &&
+              !source.followingOutputId
+            ) {
+              slot.followingOutputId = next;
+            }
+          }
+        }
+      }
+    },
+    updateVideoPlayback: (
+      state,
+      action: PayloadAction<
+        Targeted<{ videoPlayback?: VideoBackgroundPlaybackCue }>
+      >,
+    ) => {
+      const ids = outputIdsOf(action);
+      const slots = ids?.length
+        ? ids.map((id) => state.outputs[id]).filter(Boolean)
+        : Object.values(state.outputs);
+      for (const slot of slots) {
+        if (!slot.isTransmitting) continue;
+        slot.info.videoPlayback = action.payload.videoPlayback;
       }
     },
     updateProjector: (
@@ -2070,19 +2232,24 @@ export const presentationSlice = createSlice({
           projector.info.localVideoInput = normalizeLocalVideoInput(
             action.payload.localVideoInput,
           );
+          projector.info.videoPlayback = action.payload.videoPlayback;
         }
       }
     },
     updateProjectorFromRemote: (state, action: PayloadAction<Presentation>) => {
       for (const projector of builtInSlots(state, "projector")) {
         projector.boardAliasId = "";
-        // set previous info for cross animation
-        projector.prevInfo.slide = projector.info.slide;
-        projector.prevInfo.name = projector.info.name;
-        projector.prevInfo.type = projector.info.type;
-        projector.prevInfo.time = projector.info.time;
-        projector.prevInfo.timerId = projector.info.timerId;
-        projector.prevInfo.localVideoInput = projector.info.localVideoInput;
+        const sameSlide =
+          action.payload.slide?.id != null &&
+          projector.info.slide?.id === action.payload.slide.id;
+        if (!sameSlide) {
+          projector.prevInfo.slide = projector.info.slide;
+          projector.prevInfo.name = projector.info.name;
+          projector.prevInfo.type = projector.info.type;
+          projector.prevInfo.time = projector.info.time;
+          projector.prevInfo.timerId = projector.info.timerId;
+          projector.prevInfo.localVideoInput = projector.info.localVideoInput;
+        }
 
         projector.info.slide = action.payload.slide;
         projector.info.name = action.payload.name;
@@ -2094,6 +2261,7 @@ export const presentationSlice = createSlice({
         projector.info.localVideoInput = normalizeLocalVideoInput(
           action.payload.localVideoInput,
         );
+        projector.info.videoPlayback = action.payload.videoPlayback;
       }
     },
     updateMonitor: (
@@ -2137,22 +2305,27 @@ export const presentationSlice = createSlice({
           monitor.info.localVideoInput = normalizeLocalVideoInput(
             action.payload.localVideoInput,
           );
+          monitor.info.videoPlayback = action.payload.videoPlayback;
         }
       }
     },
     updateMonitorFromRemote: (state, action: PayloadAction<Presentation>) => {
       for (const monitor of builtInSlots(state, "monitor")) {
         monitor.boardAliasId = "";
-        // set previous info for cross animation
-        monitor.prevInfo.slide = monitor.info.slide;
-        monitor.prevInfo.name = monitor.info.name;
-        monitor.prevInfo.type = monitor.info.type;
-        monitor.prevInfo.time = monitor.info.time;
-        monitor.prevInfo.timerId = monitor.info.timerId;
-        monitor.prevInfo.itemId = monitor.info.itemId;
-        monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
-        monitor.prevInfo.bibleInfoBox = monitor.info.bibleInfoBox;
-        monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
+        const sameSlide =
+          action.payload.slide?.id != null &&
+          monitor.info.slide?.id === action.payload.slide.id;
+        if (!sameSlide) {
+          monitor.prevInfo.slide = monitor.info.slide;
+          monitor.prevInfo.name = monitor.info.name;
+          monitor.prevInfo.type = monitor.info.type;
+          monitor.prevInfo.time = monitor.info.time;
+          monitor.prevInfo.timerId = monitor.info.timerId;
+          monitor.prevInfo.itemId = monitor.info.itemId;
+          monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
+          monitor.prevInfo.bibleInfoBox = monitor.info.bibleInfoBox;
+          monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
+        }
 
         monitor.info.slide = action.payload.slide;
         monitor.info.name = action.payload.name;
@@ -2171,6 +2344,7 @@ export const presentationSlice = createSlice({
         monitor.info.localVideoInput = normalizeLocalVideoInput(
           action.payload.localVideoInput,
         );
+        monitor.info.videoPlayback = action.payload.videoPlayback;
       }
     },
     updateStream: (
@@ -2215,6 +2389,7 @@ export const presentationSlice = createSlice({
           stream.info.localVideoInput = normalizeLocalVideoInput(
             action.payload.localVideoInput,
           );
+          stream.info.videoPlayback = action.payload.videoPlayback;
         }
       }
     },
@@ -2224,21 +2399,29 @@ export const presentationSlice = createSlice({
         const isStreamSlideType =
           Boolean(action.payload.localVideoInput) ||
           (action.payload.type !== "bible" && action.payload.type !== "free");
-        stream.prevInfo.slide = copyStreamSlide(stream.info.slide);
-        stream.prevInfo.name = stream.info.name;
-        stream.prevInfo.type = stream.info.type;
-        stream.prevInfo.time = stream.info.time;
-        stream.prevInfo.timerId = stream.info.timerId;
-        stream.prevInfo.localVideoInput = stream.info.localVideoInput;
+        const sameSlide =
+          isStreamSlideType &&
+          action.payload.slide?.id != null &&
+          stream.info.slide?.id === action.payload.slide.id;
+        if (!sameSlide) {
+          stream.prevInfo.slide = copyStreamSlide(stream.info.slide);
+          stream.prevInfo.name = stream.info.name;
+          stream.prevInfo.type = stream.info.type;
+          stream.prevInfo.time = stream.info.time;
+          stream.prevInfo.timerId = stream.info.timerId;
+          stream.prevInfo.localVideoInput = stream.info.localVideoInput;
+        }
 
         if (isStreamSlideType) {
-          const bible = stream.info.bibleDisplayInfo;
-          if (bible?.title?.trim() || bible?.text?.trim()) {
-            stream.prevInfo.bibleDisplayInfo = bible;
-          }
-          const ft = stream.info.formattedTextDisplayInfo;
-          if (ft?.text?.trim()) {
-            stream.prevInfo.formattedTextDisplayInfo = ft;
+          if (!sameSlide) {
+            const bible = stream.info.bibleDisplayInfo;
+            if (bible?.title?.trim() || bible?.text?.trim()) {
+              stream.prevInfo.bibleDisplayInfo = bible;
+            }
+            const ft = stream.info.formattedTextDisplayInfo;
+            if (ft?.text?.trim()) {
+              stream.prevInfo.formattedTextDisplayInfo = ft;
+            }
           }
           stream.info.slide = action.payload.slide;
           clearStreamNonSlideItemData(stream.info, t);
@@ -2257,6 +2440,7 @@ export const presentationSlice = createSlice({
         stream.info.localVideoInput = normalizeLocalVideoInput(
           action.payload.localVideoInput,
         );
+        stream.info.videoPlayback = action.payload.videoPlayback;
       }
     },
   },
@@ -2288,6 +2472,7 @@ export const {
   updateProjector,
   updateMonitor,
   updateStream,
+  updateVideoPlayback,
   updateProjectorFromRemote,
   updateMonitorFromRemote,
   updateStreamFromRemote,
@@ -2301,6 +2486,7 @@ export const {
   updateBoardPostStreamInfo,
   updateBoardPostStreamInfoFromRemote,
   toggleOutputTransmitting,
+  setOutputFollowing,
   setOutputTransmitting,
   syncOutputSlots,
   clearOutput,
@@ -2420,6 +2606,59 @@ export const selectOutputSlot = (
   fallbackType: PushOutputType = "projector",
 ): OutputSlot =>
   state?.presentation?.outputs?.[outputId] ?? EMPTY_SLOTS[fallbackType];
+
+/**
+ * The slot whose **content** a display should render, following one hop when
+ * this display is mirroring another.
+ *
+ * Deliberately returns an existing slot object rather than a composed one, so
+ * it is referentially stable and needs no memoizing — it is read on every
+ * render of every display window, and a fresh object here would re-render every
+ * screen in the building on any slot change.
+ *
+ * Live state is *not* resolved through this. `isTransmitting` belongs to the
+ * display itself: mirroring another display must not put a deliberately dark
+ * screen on air. Read that from {@link selectOutputSlot}.
+ */
+export const selectResolvedOutputSlot = (
+  state: WithPresentation,
+  outputId: string,
+  fallbackType: PushOutputType = "projector",
+): OutputSlot => {
+  const slot = state?.presentation?.outputs?.[outputId];
+  if (!slot) return EMPTY_SLOTS[fallbackType];
+  if (!slot.followingOutputId) return slot;
+  const source = state.presentation.outputs[slot.followingOutputId];
+  // A source that vanished or changed profile falls back to this display's own
+  // content, which is still current — see the OutputSlot docs.
+  if (!source || source.id === slot.id || source.type !== slot.type) {
+    return slot;
+  }
+  return source;
+};
+
+/** Display this one is mirroring, or "" — for operator chrome on both ends. */
+export const selectOutputFollowing = (
+  state: WithPresentation,
+  outputId: string,
+): string => state?.presentation?.outputs?.[outputId]?.followingOutputId ?? "";
+
+const EMPTY_FOLLOWER_OUTPUT_IDS: readonly string[] = [];
+
+/** Ids of displays currently mirroring this one, so its controller can say so. */
+export const selectFollowerOutputIds = createSelector(
+  [
+    (state: WithPresentation) => state?.presentation?.outputs,
+    (_state: WithPresentation, outputId: string) => outputId,
+  ],
+  (outputs, outputId): readonly string[] => {
+    if (!outputs) return EMPTY_FOLLOWER_OUTPUT_IDS;
+    const ids = Object.values(outputs)
+      .filter((slot) => slot.followingOutputId === outputId)
+      .map((slot) => slot.id);
+    return ids.length === 0 ? EMPTY_FOLLOWER_OUTPUT_IDS : ids;
+  },
+);
 
 export const selectOutputSlots = (state: WithPresentation) =>
   state?.presentation?.outputs ?? {};

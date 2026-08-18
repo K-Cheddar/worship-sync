@@ -130,6 +130,10 @@ jest.mock("../../../store/mediaSlice", () => ({
     type: "media/addItemToMediaList",
     payload,
   })),
+  updateMediaItemFields: jest.fn((payload: any) => ({
+    type: "media/updateMediaItemFields",
+    payload,
+  })),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -463,9 +467,70 @@ describe("Media", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Canva" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Uploaded" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: /Other devices/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("opens the add-media menu and preserves file upload", async () => {
+  it("hides other-device local files until Other devices is turned on", async () => {
+    mockState = makeBaseState({
+      media: {
+        list: [
+          {
+            id: "media-1",
+            name: "Sunrise Image",
+            type: "image",
+            thumbnail: "https://example.com/thumb.jpg",
+            background: "https://example.com/bg.jpg",
+            source: "cloudinary",
+            format: "",
+            path: "",
+            createdAt: "",
+            updatedAt: "",
+            height: 0,
+            width: 0,
+            publicId: "",
+          },
+          {
+            id: "remote-local",
+            name: "Booth slide",
+            type: "image",
+            thumbnail: "",
+            background: "local-image://remote-local",
+            source: "local",
+            format: "png",
+            path: "",
+            createdAt: "",
+            updatedAt: "",
+            height: 1080,
+            width: 1920,
+            publicId: "remote-local",
+            localImage: {
+              id: "remote-local",
+              ownerDeviceId: "other-device",
+              ownerLabel: "Booth PC",
+              fileName: "Booth slide.png",
+              contentType: "image/png",
+              storagePolicy: "local-only",
+            },
+          },
+        ],
+        folders: [],
+        isInitialized: true,
+        loadStatus: "ready",
+      },
+    });
+    const user = userEvent.setup();
+    await renderMedia();
+
+    const toggle = screen.getByRole("switch", { name: /Other devices/i });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+  });
+
+  it("opens the add-media menu and adds files from this device", async () => {
     const user = userEvent.setup();
     await renderMedia();
 
@@ -476,12 +541,12 @@ describe("Media", () => {
       ).toBeInTheDocument();
     });
     expect(
-      screen.getByRole("menuitem", { name: /import local files/i }),
+      screen.getByRole("menuitem", { name: /add files/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /add video input/i }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: /upload files/i }));
+    await user.click(screen.getByRole("menuitem", { name: /add files/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
   });
 
@@ -496,7 +561,7 @@ describe("Media", () => {
 
     await user.click(screen.getByTitle("Add Media"));
     expect(
-      screen.getByRole("menuitem", { name: /upload files/i }),
+      screen.getByRole("menuitem", { name: /add files/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(mockGetCanvaStatus).toHaveBeenCalled();
@@ -510,7 +575,7 @@ describe("Media", () => {
     const user = userEvent.setup();
     await renderMedia({ isGuestSession: true });
 
-    await user.click(screen.getByTitle(/Guest mode/i));
+    await user.click(screen.getByTitle("Add Media"));
     const importItem = await screen.findByRole("menuitem", {
       name: /import from canva/i,
     });
@@ -697,6 +762,10 @@ describe("Media", () => {
         payload: expect.objectContaining({
           type: "free",
           name: "Sunrise Image",
+          // Named explicitly: an unnamed send falls back to the built-in
+          // projector, which put auxiliary-controller media on the sanctuary
+          // screen.
+          outputIds: ["projector"],
           slide: expect.objectContaining({
             type: "Section",
             name: "Section 1",
@@ -704,8 +773,10 @@ describe("Media", () => {
         }),
       }),
     );
+    // The display's own name, not the word "projector" — a controller whose
+    // screen is called "TVs" should say so.
     expect(mockShowToast).toHaveBeenCalledWith(
-      'Sent "Sunrise Image" to projector.',
+      'Sent "Sunrise Image" to Projector.',
       "success",
     );
   });

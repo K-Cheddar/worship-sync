@@ -159,6 +159,7 @@ function getPresenceSurface(pathname: string): "controller" | "display" | null {
   if (
     pathname.startsWith("/controller") ||
     pathname.startsWith("/overlay-controller") ||
+    pathname.startsWith("/aux-controller") ||
     pathname.startsWith("/board-controller") ||
     pathname.startsWith("/credits-editor") ||
     pathname.startsWith("/teams") ||

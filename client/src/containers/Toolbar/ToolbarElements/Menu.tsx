@@ -31,6 +31,8 @@ import type { WindowType } from "../../../types/electron";
 import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
 import { useSelector } from "../../../hooks";
 import { selectDisplayOutputs } from "../../../store/displayOutputsSlice";
+import { useActiveControllerProfile } from "../../../context/activeController";
+import { getControllerOutputs } from "../../../utils/controllerProfiles";
 import {
   DisplayOutput,
   isPushOutputType,
@@ -77,12 +79,16 @@ const ToolbarMenu = ({
   // Every display an operator configured, not just the original three. Window
   // keys are output ids, so open state and open/close both address them directly.
   const displayOutputs = useSelector(selectDisplayOutputs);
+  // Only the displays this controller drives. Offering to open a screen it can
+  // send nothing to is noise at best, and on an auxiliary controller it invites
+  // an operator to open — and close — another operator's output.
+  const controllerProfile = useActiveControllerProfile();
   const openableOutputs = useMemo(
     () =>
-      displayOutputs.filter(
-        (output) => output.enabled && isPushOutputType(output.type),
+      getControllerOutputs(controllerProfile, displayOutputs).filter((output) =>
+        isPushOutputType(output.type),
       ),
-    [displayOutputs],
+    [controllerProfile, displayOutputs],
   );
 
   const boardMenuOpen = isElectronDisplayWindowOpen(

@@ -173,6 +173,7 @@ jest.mock("../../../components/TimerControls/TimerControls", () => ({
 
 const makeBaseState = (overrides: Partial<any> = {}) => {
   const base = {
+    presentation: { outputs: {} },
     undoable: {
       present: {
         item: {
@@ -876,37 +877,32 @@ describe("SlideEditor", () => {
       expect(updateSlidesPayload.slides).toHaveLength(1);
     });
 
-    it("dispatches updateSlides when type is free and Backspace with empty value (delete slide)", () => {
-      const slides = [
-        {
-          id: "s1",
-          type: "Media",
-          name: "Section 1A",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
-          ],
-        },
-        {
-          id: "s2",
-          type: "Media",
-          name: "Section 1B",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "There", x: 0, y: 0 },
-          ],
-        },
-      ];
+    it("keeps the slide when type is free and Backspace empties the box", () => {
+      jest.useFakeTimers();
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections,
+      }));
+
       mockState = makeBaseState({
         undoable: {
           present: {
             item: {
               type: "free",
               selectedSlide: 0,
-              slides,
-              formattedSections: [
-                { sectionNum: 1, words: "Hi\nThere", slideSpan: 2 },
+              slides: [
+                {
+                  id: "s1",
+                  type: "Media",
+                  name: "Section 1",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
+                  ],
+                },
               ],
+              formattedSections: [{ sectionNum: 1, words: "Hi", slideSpan: 1 }],
             },
           },
         },
@@ -922,12 +918,24 @@ describe("SlideEditor", () => {
         })
       );
 
-      expect(mockUpdateSlides).toHaveBeenCalledWith(
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
+      // The emptied slide survives as a blank an operator can send, and the
+      // section's stored words are emptied with it rather than left behind.
+      expect(mockFormatFree).toHaveBeenCalledWith(
         expect.objectContaining({
-          slides: expect.any(Array),
+          formattedSections: [
+            expect.objectContaining({ sectionNum: 1, words: "" }),
+          ],
         })
       );
-      expect(mockUpdateSlides.mock.calls[0][0].slides).toHaveLength(1);
+      const payload = mockUpdateSlides.mock.calls[0][0];
+      expect(payload.slides).toHaveLength(1);
+      expect(payload.slides[0].boxes[1].words).toBe("");
+
+      jest.useRealTimers();
     });
 
     it("dispatches formatFree and updateSlides when type is free and value changes", () => {
@@ -1727,37 +1735,32 @@ describe("SlideEditor", () => {
       jest.useRealTimers();
     });
 
-    it("dispatches updateSlides when type is free and Delete with empty value (delete slide)", () => {
-      const slides = [
-        {
-          id: "s1",
-          type: "Media",
-          name: "Section 1A",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
-          ],
-        },
-        {
-          id: "s2",
-          type: "Media",
-          name: "Section 1B",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "There", x: 0, y: 0 },
-          ],
-        },
-      ];
+    it("keeps the slide when type is free and Delete empties the box", () => {
+      jest.useFakeTimers();
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections,
+      }));
+
       mockState = makeBaseState({
         undoable: {
           present: {
             item: {
               type: "free",
               selectedSlide: 0,
-              slides,
-              formattedSections: [
-                { sectionNum: 1, words: "Hi\nThere", slideSpan: 2 },
+              slides: [
+                {
+                  id: "s1",
+                  type: "Media",
+                  name: "Section 1",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
+                  ],
+                },
               ],
+              formattedSections: [{ sectionNum: 1, words: "Hi", slideSpan: 1 }],
             },
           },
         },
@@ -1773,12 +1776,24 @@ describe("SlideEditor", () => {
         })
       );
 
-      expect(mockUpdateSlides).toHaveBeenCalledWith(
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
+      // The emptied slide survives as a blank an operator can send, and the
+      // section's stored words are emptied with it rather than left behind.
+      expect(mockFormatFree).toHaveBeenCalledWith(
         expect.objectContaining({
-          slides: expect.any(Array),
+          formattedSections: [
+            expect.objectContaining({ sectionNum: 1, words: "" }),
+          ],
         })
       );
-      expect(mockUpdateSlides.mock.calls[0][0].slides).toHaveLength(1);
+      const payload = mockUpdateSlides.mock.calls[0][0];
+      expect(payload.slides).toHaveLength(1);
+      expect(payload.slides[0].boxes[1].words).toBe("");
+
+      jest.useRealTimers();
     });
 
     it("does not dispatch when canEdit is false (access read)", () => {

@@ -2,6 +2,7 @@ import {
   app,
   net,
   BrowserWindow,
+  desktopCapturer,
   ipcMain,
   screen,
   protocol,
@@ -1237,6 +1238,34 @@ ipcMain.handle("get-displays", () => {
     label: display.label,
   }));
 });
+
+const DESKTOP_CAPTURE_THUMBNAIL_SIZE = { width: 320, height: 180 };
+
+/**
+ * Lists screens and windows the operator can send to an output. Thumbnails are
+ * only rendered for the picker, so background re-resolution of a saved share
+ * stays cheap during live use.
+ */
+ipcMain.handle(
+  "get-desktop-capture-sources",
+  async (_event, options?: { withThumbnails?: boolean }) => {
+    const withThumbnails = options?.withThumbnails === true;
+    const sources = await desktopCapturer.getSources({
+      types: ["screen", "window"],
+      fetchWindowIcons: false,
+      thumbnailSize: withThumbnails
+        ? DESKTOP_CAPTURE_THUMBNAIL_SIZE
+        : { width: 0, height: 0 },
+    });
+    return sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      ...(withThumbnails && !source.thumbnail.isEmpty()
+        ? { thumbnailDataUrl: source.thumbnail.toDataURL() }
+        : {}),
+    }));
+  },
+);
 
 // --- Display "identify" glow ---------------------------------------------
 // A single reusable click-through overlay that we reposition to whichever

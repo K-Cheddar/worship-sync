@@ -6,6 +6,7 @@ import itemListsReducer, {
   selectItemList,
   setActiveItemList,
   setInitialItemList,
+  setOutlineScope,
   updateItemListsFromRemote,
 } from "./itemListsSlice";
 import type { ItemList } from "../types";
@@ -16,6 +17,10 @@ type ItemListsSliceState = {
     activeList: ItemList | undefined;
     selectedList: ItemList | undefined;
     isInitialized: boolean;
+    // Scope fields are omitted by most preloaded states here on purpose: the
+    // reducers must tolerate slices written before scoping existed.
+    scope?: string;
+    selectedIdByScope?: Record<string, string>;
   };
 };
 
@@ -24,7 +29,7 @@ const createStore = (preloadedState?: Partial<ItemListsSliceState>) =>
     reducer: { itemLists: itemListsReducer },
     ...(preloadedState != null &&
       Object.keys(preloadedState).length > 0 && {
-        preloadedState: preloadedState as ItemListsSliceState,
+        preloadedState: preloadedState as never,
       }),
   });
 
@@ -179,6 +184,85 @@ describe("itemListsSlice", () => {
       expect(state.selectedList?.name).toBe("B");
       expect(state.activeList?._id).toBe("id-a");
       expect(state.activeList?.name).toBe("A renamed");
+    });
+  });
+
+  describe("controller scoping", () => {
+    const scoped = (name: string, _id: string, controllerScope?: string): ItemList => ({
+      name,
+      _id,
+      ...(controllerScope ? { controllerScope } : {}),
+    });
+
+    const mixed = [
+      scoped("Sunday AM", "sun-am"),
+      scoped("Lobby Loop", "lobby-1", "ctrl_lobby"),
+      scoped("Sunday PM", "sun-pm"),
+    ];
+
+    it("opens an unscoped outline for the presentation controller", () => {
+      const store = createStore();
+      store.dispatch(initiateItemLists(mixed));
+      expect(store.getState().itemLists.selectedList?._id).toBe("sun-am");
+    });
+
+    it("opens the auxiliary controller in its own outline, never the sanctuary's", () => {
+      const store = createStore();
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(initiateItemLists(mixed));
+      expect(store.getState().itemLists.selectedList?._id).toBe("lobby-1");
+    });
+
+    it("leaves the active list church-wide even in an auxiliary scope", () => {
+      const store = createStore();
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(initiateItemLists(mixed));
+      expect(store.getState().itemLists.activeList?._id).toBe("sun-am");
+    });
+
+    it("remembers each controller's place when switching between them", () => {
+      const store = createStore();
+      store.dispatch(initiateItemLists(mixed));
+      store.dispatch(selectItemList("sun-pm"));
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      expect(store.getState().itemLists.selectedList?._id).toBe("lobby-1");
+      store.dispatch(setOutlineScope("presentation"));
+      expect(store.getState().itemLists.selectedList?._id).toBe("sun-pm");
+    });
+
+    it("keeps a remote update from dropping an auxiliary controller into a presentation outline", () => {
+      // The named risk: the old fallback was lists[0], which crosses scopes.
+      const store = createStore();
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(initiateItemLists(mixed));
+      store.dispatch(
+        updateItemListsFromRemote([scoped("Sunday AM", "sun-am"), scoped("Sunday PM", "sun-pm")]),
+      );
+      expect(store.getState().itemLists.selectedList).toBeUndefined();
+    });
+
+    it("reselects within scope when the open outline is deleted", () => {
+      const store = createStore();
+      const twoLobby = [
+        scoped("Sunday AM", "sun-am"),
+        scoped("Lobby A", "lobby-1", "ctrl_lobby"),
+        scoped("Lobby B", "lobby-2", "ctrl_lobby"),
+      ];
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(initiateItemLists(twoLobby));
+      store.dispatch(selectItemList("lobby-2"));
+      store.dispatch(removeFromItemLists("lobby-2"));
+      expect(store.getState().itemLists.selectedList?._id).toBe("lobby-1");
+    });
+
+    it("does not follow the stored active list across scopes on startup", () => {
+      const store = createStore();
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(initiateItemLists(mixed));
+      store.dispatch(setInitialItemList("sun-am"));
+      const state = store.getState().itemLists;
+      expect(state.activeList?._id).toBe("sun-am");
+      expect(state.selectedList?._id).toBe("lobby-1");
     });
   });
 });

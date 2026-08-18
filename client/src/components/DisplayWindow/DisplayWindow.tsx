@@ -18,6 +18,7 @@ import {
   MonitorLayoutMode,
   OverlayInfo,
   TimerInfo,
+  VideoBackgroundPlaybackCue,
 } from "../../types";
 import cn from "classnames";
 import DisplayBox from "./DisplayBox";
@@ -44,6 +45,10 @@ import {
 import { useScreenOverrides } from "../../hooks/useScreenOverrides";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { serverNow } from "../../utils/serverTime";
+import {
+  getVideoBackgroundMediaKey,
+  logVideoCue,
+} from "../../utils/videoBackgroundPlayback";
 import LocalVideoInputLayer from "./LocalVideoInputLayer";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
@@ -296,6 +301,8 @@ type DisplayWindowProps = {
   localVideoInput?: LocalVideoInputPresentation;
   /** Outgoing capture source retained briefly for the media crossfade. */
   prevLocalVideoInput?: LocalVideoInputPresentation;
+  /** Live file/HLS background playhead synced from the controller preview. */
+  videoPlayback?: VideoBackgroundPlaybackCue;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -347,6 +354,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       monitorLayoutMode = "content-only",
       localVideoInput,
       prevLocalVideoInput,
+      videoPlayback,
     }: DisplayWindowProps,
     ref,
   ) => {
@@ -479,8 +487,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // back to the built-in surface for their render profile.
     const fallbackOutputType =
       displayType === "monitor" ||
-      displayType === "stream" ||
-      displayType === "projector"
+        displayType === "stream" ||
+        displayType === "projector"
         ? displayType
         : "projector";
     const settingsOutputId = outputId ?? fallbackOutputType;
@@ -832,7 +840,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isLocallyKeptAlive = (overlayKey: string | null) =>
       overlayKey != null &&
       (streamOverlayKeepAliveByKey[overlayKey] ?? 0) >
-        streamOverlayEvaluationNowMs;
+      streamOverlayEvaluationNowMs;
 
     const participantOverlayLocalVisibleMs = getLocalOverlayVisibleMs(
       participantOverlayInfo?.duration,
@@ -1088,6 +1096,27 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         rawDesiredVideoUrl: videoBox?.mediaInfo?.background,
       };
     }, [boxes, showBackground, shouldPlayVideo]);
+    const videoMediaKey = useMemo(
+      () => getVideoBackgroundMediaKey(videoBox?.mediaInfo),
+      [videoBox?.mediaInfo],
+    );
+    const activeVideoPlayback = useMemo(() => {
+      const matched =
+        videoPlayback?.mediaKey && videoMediaKey
+          ? videoPlayback.mediaKey === videoMediaKey
+          : false;
+      logVideoCue("display.resolve", {
+        outputId,
+        displayType,
+        cueMediaKey: videoPlayback?.mediaKey,
+        cueGeneration: videoPlayback?.generation,
+        cuePaused: videoPlayback?.paused,
+        videoMediaKey,
+        matched,
+      });
+      if (!matched) return undefined;
+      return videoPlayback;
+    }, [displayType, outputId, videoMediaKey, videoPlayback]);
     const localVideoFile = useLocalVideoFileUrl(
       videoBox?.mediaInfo?.localVideoFile,
     );
@@ -1149,9 +1178,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
     const immediatePrevLocalVideoInput =
       shouldAnimate &&
-      prevLocalVideoInput &&
-      prevLocalVideoInput.sourceId !== localVideoInput?.sourceId &&
-      prevLocalVideoInput.sourceId !== hiddenPrevLocalVideoSourceId
+        prevLocalVideoInput &&
+        prevLocalVideoInput.sourceId !== localVideoInput?.sourceId &&
+        prevLocalVideoInput.sourceId !== hiddenPrevLocalVideoSourceId
         ? prevLocalVideoInput
         : undefined;
     const renderedPrevLocalVideoInput =
@@ -1241,6 +1270,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               onVideoError={() => setIsWindowVideoLoaded(false)}
               videoMuted={!localVideoFileAudioEnabled}
               videoVolume={localVideoVolume}
+              videoPlayback={activeVideoPlayback}
               transitionDirection={transitionDirection}
               currentMediaLayer={localVideoMediaLayers}
             />
@@ -1278,8 +1308,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       const prevDisplayLayer =
         isDisplay &&
-        !shouldUseFullMonitorLayout &&
-        activeDisplayPrevLayerBoxes.length > 0 ? (
+          !shouldUseFullMonitorLayout &&
+          activeDisplayPrevLayerBoxes.length > 0 ? (
           <div className="absolute inset-0" data-testid="prev-display-layer">
             {activeDisplayPrevLayerBoxes.map((box, index) => (
               <DisplayBox
@@ -1327,8 +1357,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       const prevStreamTextLayer =
         isStream &&
-        !overlayPreviewMode &&
-        streamPrevTextLayerBoxes.length > 0 ? (
+          !overlayPreviewMode &&
+          streamPrevTextLayerBoxes.length > 0 ? (
           <div
             className="absolute inset-0"
             data-testid="prev-stream-text-layer"
@@ -1389,6 +1419,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 videoBox={videoBox}
                 muted={!localVideoFileAudioEnabled}
                 volume={localVideoVolume}
+                playbackRole={isEditor ? "preview" : "output"}
+                mediaKey={isEditor ? videoMediaKey : undefined}
+                playback={activeVideoPlayback}
               />
             )}
 
@@ -1442,82 +1475,82 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               {/* Stream overlays remain the top layer so lower-thirds/QR/board posts composite over the camera. */}
               {(visibleStbOverlayInfo != null ||
                 visiblePrevStbOverlayInfo != null) && (
-                <DisplayStbOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  stbOverlayInfo={visibleStbOverlayInfo}
-                  prevStbOverlayInfo={visiblePrevStbOverlayInfo}
-                  currentKeepAliveKey={stbOverlayKey}
-                  prevKeepAliveKey={prevStbOverlayKey}
-                  currentKeepAliveMs={stbOverlayLocalVisibleMs}
-                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayStbOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    stbOverlayInfo={visibleStbOverlayInfo}
+                    prevStbOverlayInfo={visiblePrevStbOverlayInfo}
+                    currentKeepAliveKey={stbOverlayKey}
+                    prevKeepAliveKey={prevStbOverlayKey}
+                    currentKeepAliveMs={stbOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleParticipantOverlayInfo != null ||
                 visiblePrevParticipantOverlayInfo != null) && (
-                <DisplayParticipantOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  participantOverlayInfo={visibleParticipantOverlayInfo}
-                  prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
-                  currentKeepAliveKey={participantOverlayKey}
-                  prevKeepAliveKey={prevParticipantOverlayKey}
-                  currentKeepAliveMs={participantOverlayLocalVisibleMs}
-                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayParticipantOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    participantOverlayInfo={visibleParticipantOverlayInfo}
+                    prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
+                    currentKeepAliveKey={participantOverlayKey}
+                    prevKeepAliveKey={prevParticipantOverlayKey}
+                    currentKeepAliveMs={participantOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleQrCodeOverlayInfo != null ||
                 visiblePrevQrCodeOverlayInfo != null) && (
-                <DisplayQrCodeOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
-                  prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
-                  currentKeepAliveKey={qrOverlayKey}
-                  prevKeepAliveKey={prevQrOverlayKey}
-                  currentKeepAliveMs={qrOverlayLocalVisibleMs}
-                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayQrCodeOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
+                    prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
+                    currentKeepAliveKey={qrOverlayKey}
+                    prevKeepAliveKey={prevQrOverlayKey}
+                    currentKeepAliveMs={qrOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleImageOverlayInfo != null ||
                 visiblePrevImageOverlayInfo != null) && (
-                <DisplayImageOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  imageOverlayInfo={visibleImageOverlayInfo}
-                  prevImageOverlayInfo={visiblePrevImageOverlayInfo}
-                  currentKeepAliveKey={imageOverlayKey}
-                  prevKeepAliveKey={prevImageOverlayKey}
-                  currentKeepAliveMs={imageOverlayLocalVisibleMs}
-                  prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
-                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayImageOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    imageOverlayInfo={visibleImageOverlayInfo}
+                    prevImageOverlayInfo={visiblePrevImageOverlayInfo}
+                    currentKeepAliveKey={imageOverlayKey}
+                    prevKeepAliveKey={prevImageOverlayKey}
+                    currentKeepAliveMs={imageOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_OVERLAY_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleBoardPostStreamInfo != null ||
                 visiblePrevBoardPostStreamInfo != null) && (
-                <DisplayBoardPostOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  boardPostStreamInfo={visibleBoardPostStreamInfo}
-                  prevBoardPostStreamInfo={visiblePrevBoardPostStreamInfo}
-                  currentKeepAliveKey={boardPostOverlayKey}
-                  prevKeepAliveKey={prevBoardPostOverlayKey}
-                  currentKeepAliveMs={boardPostOverlayLocalVisibleMs}
-                  prevKeepAliveMs={STREAM_PREV_BOARD_POST_EXIT_MS}
-                  onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
-                />
-              )}
+                  <DisplayBoardPostOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    boardPostStreamInfo={visibleBoardPostStreamInfo}
+                    prevBoardPostStreamInfo={visiblePrevBoardPostStreamInfo}
+                    currentKeepAliveKey={boardPostOverlayKey}
+                    prevKeepAliveKey={prevBoardPostOverlayKey}
+                    currentKeepAliveMs={boardPostOverlayLocalVisibleMs}
+                    prevKeepAliveMs={STREAM_PREV_BOARD_POST_EXIT_MS}
+                    onLocalKeepAliveStart={registerLocalStreamOverlayWindow}
+                  />
+                )}
             </>
           )}
 

@@ -15,6 +15,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import { useGSAP } from "@gsap/react";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
+import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { useControllerBasePath } from "../../context/activeController";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -62,6 +64,7 @@ const ServiceItem = ({
   onEnterMultiSelectMode,
   dragActiveId,
 }: ServiceItemsProps) => {
+  const controllerBasePath = useControllerBasePath();
   const dispatch = useDispatch();
   // Live countdown computed locally so only this row re-renders each second.
   const liveTimerValue = useLiveRemainingSeconds(timer);
@@ -252,9 +255,7 @@ const ServiceItem = ({
         !isSelected && !isInsertPoint && "border-b-transparent"
       )}
       isSelected={isSelected}
-      to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
-        encodeURI(item.listId)
-      )}`}
+      to={getControllerItemPath(item, controllerBasePath)}
       type={item.type}
       image={item.background}
       localImage={item.localImage}

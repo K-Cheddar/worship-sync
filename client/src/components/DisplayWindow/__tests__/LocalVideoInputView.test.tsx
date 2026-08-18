@@ -27,9 +27,11 @@ jest.mock("../../../utils/localVideoInput", () => ({
   getAudioInputErrorMessage: jest.requireActual(
     "../../../utils/localVideoInput",
   ).getAudioInputErrorMessage,
-  getVideoInputErrorMessage: jest.requireActual(
+  getLocalVideoSourceErrorMessage: jest.requireActual(
     "../../../utils/localVideoInput",
-  ).getVideoInputErrorMessage,
+  ).getLocalVideoSourceErrorMessage,
+  isDesktopCaptureKind: jest.requireActual("../../../utils/localVideoInput")
+    .isDesktopCaptureKind,
   resolveLocalVideoInputBinding: jest.fn(),
 }));
 jest.mock("../../../utils/localVideoCapturePool", () => ({
@@ -424,6 +426,49 @@ describe("LocalVideoInputView", () => {
       screen.getByText(/available only on Electron on Windows/i),
     ).toBeInTheDocument();
     expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
+  });
+
+  it("names a screen share in its remote-unavailable status", () => {
+    mockGetOrCreateDeviceId.mockReturnValue("remote-device");
+    render(
+      <LocalVideoInputView
+        input={{ ...input, captureKind: "screen", deviceLabel: "Lyrics screen" }}
+      />,
+    );
+
+    expect(screen.getByText("Screen share unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText(/This share is available only on Electron on Windows/i),
+    ).toBeInTheDocument();
+  });
+
+  it("asks for a stopped browser share to be restarted while nothing is on screen", async () => {
+    mockResolveBinding.mockReturnValue({
+      sourceId: "source-1",
+      deviceId: "display:source-1",
+      deviceLabel: "Lyrics screen",
+      captureKind: "screen",
+    });
+    mockAcquireWarmCapture.mockRejectedValue(
+      Object.assign(new Error("stopped"), {
+        name: "DesktopCaptureShareEndedError",
+      }),
+    );
+
+    render(
+      <LocalVideoInputView
+        input={{ ...input, captureKind: "screen", deviceLabel: "Lyrics screen" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Sharing stopped. Open Media on this computer and share the screen again.",
+      ),
+    ).toBeInTheDocument();
+    // The share may still arrive from another app window, so keep relays open.
+    await waitFor(() => expect(mockSubscribeMedia).toHaveBeenCalled());
+    expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(1);
   });
 
   it("reattaches automatically when the persistent capture track ends", async () => {

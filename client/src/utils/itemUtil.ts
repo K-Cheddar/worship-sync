@@ -28,6 +28,7 @@ import {
   tryParseSectionLabel,
 } from "./lyricsSectionInference";
 import { applyPouchAudit } from "./pouchAudit";
+import { DEFAULT_OUTLINE_SCOPE } from "./outlineScope";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
@@ -799,11 +800,18 @@ type CreateNewItemList = {
   db: PouchDB.Database | undefined;
   name: string;
   currentLists: ItemList[];
+  /**
+   * Controller profile the outline belongs to. Omitted (or the presentation
+   * scope) leaves it unstamped, so outlines created on the main controller stay
+   * readable by clients that predate scoping.
+   */
+  controllerScope?: string;
 };
 export const createNewItemList = async ({
   db,
   name,
   currentLists,
+  controllerScope,
 }: CreateNewItemList): Promise<ItemList> => {
   const newName = makeUnique({
     value: name,
@@ -815,11 +823,13 @@ export const createNewItemList = async ({
     property: "_id",
     list: currentLists,
   });
+  const scope = scopeStampFor(controllerScope);
   const list: ItemListDetails = {
     name: newName,
     _id,
     items: [],
     overlays: [],
+    ...scope,
   };
   if (!db) return list;
   try {
@@ -827,6 +837,7 @@ export const createNewItemList = async ({
     return {
       _id: response._id,
       name: response.name,
+      ...scopeStampFor(response.controllerScope),
     };
   } catch (error) {
     db.put({
@@ -834,7 +845,7 @@ export const createNewItemList = async ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: list._id, name: list.name };
+    return { _id: list._id, name: list.name, ...scope };
   }
 };
 
@@ -843,6 +854,19 @@ type CreateItemListFromExisting = {
   currentLists: ItemList[];
   list: ItemList;
 };
+
+/**
+ * Scope fields to spread onto a new outline.
+ *
+ * The presentation scope writes nothing: it is the default every reader already
+ * assumes, and an absent field is what clients on older builds understand.
+ */
+const scopeStampFor = (
+  controllerScope?: string,
+): { controllerScope?: string } =>
+  controllerScope && controllerScope !== DEFAULT_OUTLINE_SCOPE
+    ? { controllerScope }
+    : {};
 
 export const createItemListFromExisting = async ({
   db,
@@ -881,18 +905,22 @@ export const createItemListFromExisting = async ({
 
       newOverlays.push(newId);
     }
+    // A copy stays with the controller it was copied from: duplicating a lobby
+    // outline must not drop the copy into the sanctuary's picker.
+    const scope = scopeStampFor(response.controllerScope ?? list.controllerScope);
     const newList: ItemListDetails = {
       _id,
       name,
       items: response.items,
       overlays: newOverlays,
+      ...scope,
     };
     db.put({
       ...newList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: newList._id, name: newList.name };
+    return { _id: newList._id, name: newList.name, ...scope };
   } catch (error) {
     console.error(error);
     return null;

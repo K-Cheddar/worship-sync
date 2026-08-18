@@ -9,6 +9,7 @@ import { useDispatch } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FilePlus, Search, WholeWord } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useControllerBasePath } from "../../context/activeController";
 
 import Button from "../Button/Button";
 import Spinner from "../Spinner/Spinner";
@@ -149,6 +150,7 @@ const FilteredItems = ({
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   const listOfType = useMemo(() => {
@@ -560,7 +562,7 @@ const FilteredItems = ({
       onCreateFromExternal(candidate);
       return;
     }
-    navigate("/controller/create");
+    navigate(`${controllerBasePath}/create`);
   };
 
   const renderDisplayRow = (row: FilteredItemsVirtualRow, rowIndex: number) => {
@@ -801,7 +803,7 @@ const FilteredItems = ({
                 svg={FilePlus}
                 color="#84cc16"
                 component="link"
-                to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+                to={`${controllerBasePath}/create?type=${type}&name=${encodeURI(searchValue)}`}
               >
                 Create a new {label}
               </Button>

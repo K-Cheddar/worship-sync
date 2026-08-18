@@ -114,16 +114,33 @@ export type ItemSlideType = {
   monitorNextBandBoxes?: Box[];
   overflow?: OverflowMode;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  /**
+   * Whether sending this slide restarts its file video background or lets it
+   * keep playing. Per slide so a song can restart on its opener and continue
+   * across the lyric advances that follow. Unset means "continue".
+   */
+  videoBackgroundSendMode?: VideoBackgroundSendMode;
 };
+
+/**
+ * How a live local source is captured. `device` is USB / capture-card hardware;
+ * `screen` and `window` are desktop capture. Sources saved before desktop
+ * capture existed have no value and are treated as `device`.
+ */
+export type LocalVideoCaptureKind = "device" | "screen" | "window";
 
 export type LocalVideoInputMediaSource = {
   kind: "local-video-input";
   /** Stable logical source id saved with the item; never a browser deviceId. */
   sourceId: string;
   label: string;
+  captureKind?: LocalVideoCaptureKind;
   fit?: "contain" | "cover";
   /** Outputs that normally carry programme audio may play the locally bound input. */
   audioEnabled?: boolean;
+  /** Workstation that holds the hardware binding. */
+  ownerDeviceId?: string;
+  ownerLabel?: string;
 };
 
 export type SlideMediaSource = LocalVideoInputMediaSource;
@@ -396,6 +413,30 @@ export type Presentation = {
    * attempting to open a similarly named camera.
    */
   localVideoInput?: LocalVideoInputPresentation;
+  /**
+   * File/HLS background video playhead sent with a slide. Live surfaces apply
+   * this when the video is pushed; the editor preview is the source of truth.
+   */
+  videoPlayback?: VideoBackgroundPlaybackCue;
+};
+
+export type VideoBackgroundSendMode = "restart" | "continue";
+
+export type VideoBackgroundPlaybackCue = {
+  /** Stable identity of the file/HLS video this cue belongs to. */
+  mediaKey: string;
+  /** Playhead at `atServerMs`. */
+  positionSeconds: number;
+  paused: boolean;
+  atServerMs: number;
+  /** Bumped on every send so live players can re-apply the same position. */
+  generation: number;
+  /**
+   * When false and the same video is already playing, keep the live playhead
+   * (lyric advances). When true, seek to the cue — restart, first send, or
+   * the operator changed preview playback since the last send.
+   */
+  applySeek: boolean;
 };
 
 export type LocalVideoInputPresentation = {
@@ -404,6 +445,8 @@ export type LocalVideoInputPresentation = {
   deviceLabel: string;
   ownerDeviceId: string;
   ownerLabel: string;
+  /** Lets every surface word status copy for hardware inputs vs. desktop shares. */
+  captureKind?: LocalVideoCaptureKind;
   fit?: "contain" | "cover";
   audioEnabled?: boolean;
 };
@@ -795,6 +838,12 @@ export type ScrollbarWidth = "thin" | "auto" | "none";
 export type ItemList = {
   name: string;
   _id: string;
+  /**
+   * Controller profile this outline belongs to. Absent means the presentation
+   * controller, which is every outline that predates auxiliary controllers.
+   * See `utils/outlineScope.ts`.
+   */
+  controllerScope?: string;
 };
 
 /**
@@ -813,6 +862,7 @@ export type ServicePlanOutlineBinding = {
 export type DBItemList = {
   name: string;
   _id: string;
+  controllerScope?: string;
   _rev: string;
   createdAt?: string;
   updatedAt?: string;
@@ -822,6 +872,8 @@ export type DBItemList = {
 export type ItemListDetails = {
   _id: string;
   name: string;
+  /** See {@link ItemList.controllerScope}. */
+  controllerScope?: string;
   items: ServiceItem[];
   overlays: string[];
   serviceOutline?: ServiceOutline;
@@ -1032,6 +1084,14 @@ export type MediaType = {
   canvaSource?: CanvaMediaSource;
   /** App media library folder; root / unset = null */
   folderId?: string | null;
+  /** Other-device request to upload this local file to the Media cloud. */
+  cloudUploadRequest?: MediaCloudUploadRequest | null;
+};
+
+export type MediaCloudUploadRequest = {
+  requestedAt: string;
+  requestedByDeviceId: string;
+  requestedByLabel: string;
 };
 
 export type MediaFolder = {

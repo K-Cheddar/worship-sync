@@ -3,6 +3,7 @@ import {
   buildLocalVideoInputPresentation,
   createLocalVideoInputMediaSource,
   getAudioInputErrorMessage,
+  getLocalVideoSourceErrorMessage,
   getVideoInputErrorMessage,
   normalizeLocalVideoInput,
   normalizeLocalVideoInputMediaSource,
@@ -117,6 +118,103 @@ describe("localVideoInput", () => {
       audioEnabled: true,
     });
     expect(normalizeLocalVideoInputMediaSource(source)).toEqual(source);
+  });
+
+  it("saves a screen share with the capture kind every surface reads", () => {
+    const source = createLocalVideoInputMediaSource("Lyrics screen", "screen");
+    expect(source).toEqual(
+      expect.objectContaining({ label: "Lyrics screen", captureKind: "screen" }),
+    );
+
+    bindLocalVideoInput(
+      source.sourceId,
+      "screen:0:0",
+      "Screen 1",
+      undefined,
+      undefined,
+      {
+        captureKind: "screen",
+        displaySourceName: "Screen 1",
+        systemAudio: true,
+      },
+    );
+
+    expect(resolveLocalVideoInputBinding(source.sourceId)).toEqual(
+      expect.objectContaining({
+        deviceId: "screen:0:0",
+        captureKind: "screen",
+        displaySourceName: "Screen 1",
+        systemAudio: true,
+      }),
+    );
+    expect(
+      buildLocalVideoInputPresentation(source, "workstation-1", "Booth"),
+    ).toEqual({
+      sourceId: source.sourceId,
+      // A share keeps its operator-given name rather than the raw window title.
+      deviceLabel: "Lyrics screen",
+      ownerDeviceId: "workstation-1",
+      ownerLabel: "Booth",
+      captureKind: "screen",
+      fit: "contain",
+      audioEnabled: true,
+    });
+  });
+
+  it("treats sources saved before screen capture as hardware inputs", () => {
+    expect(
+      normalizeLocalVideoInputMediaSource({
+        kind: "local-video-input",
+        sourceId: "source-1",
+        label: "USB Capture",
+      }),
+    ).toEqual({
+      kind: "local-video-input",
+      sourceId: "source-1",
+      label: "USB Capture",
+    });
+    expect(
+      normalizeLocalVideoInputMediaSource({
+        kind: "local-video-input",
+        sourceId: "source-1",
+        label: "Stage window",
+        captureKind: "window",
+      })?.captureKind,
+    ).toBe("window");
+    expect(
+      normalizeLocalVideoInput({
+        sourceId: "source-1",
+        ownerDeviceId: "workstation-1",
+        captureKind: "nonsense",
+      })?.captureKind,
+    ).toBeUndefined();
+  });
+
+  it("guides an operator differently for shares and cables", () => {
+    expect(
+      getLocalVideoSourceErrorMessage(
+        new DOMException("denied", "NotAllowedError"),
+        "screen",
+      ),
+    ).toBe(
+      "Allow screen recording for WorshipSync on this computer, then share the screen again.",
+    );
+    expect(
+      getLocalVideoSourceErrorMessage(
+        Object.assign(new Error("stopped"), {
+          name: "DesktopCaptureShareEndedError",
+        }),
+        "window",
+      ),
+    ).toBe(
+      "Sharing stopped. Open Media on this computer and share the window again.",
+    );
+    expect(
+      getLocalVideoSourceErrorMessage(
+        new DOMException("busy", "NotReadableError"),
+        "device",
+      ),
+    ).toBe("Close other apps using this input, then try again.");
   });
 
   it("relinks a logical input without changing its saved source id", () => {

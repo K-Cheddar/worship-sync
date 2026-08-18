@@ -529,6 +529,56 @@ describe("DisplayBox", () => {
     );
   });
 
+  /**
+   * The box stores `local-video-file://` while the player is handed the
+   * resolved `worshipsync-media://` URL. Comparing the raw form left the still
+   * painted at full opacity over a video that was playing underneath, which
+   * looked exactly like a frozen output on the projector and monitor.
+   */
+  it("lifts the still once a local video file is playing under it", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "worshipsync-media://asset/video-1?v=rev-1",
+    });
+
+    render(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        activeVideoUrl="worshipsync-media://asset/video-1?v=rev-1"
+        isWindowVideoLoaded
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveClass("opacity-0");
+  });
+
+  it("keeps the still up while a different video is the active source", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "worshipsync-media://asset/video-1?v=rev-1",
+    });
+
+    render(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        activeVideoUrl="worshipsync-media://asset/other-video?v=rev-1"
+        isWindowVideoLoaded
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveClass("opacity-100");
+  });
+
   it("keeps a cloud video still when no local thumbnail is available", () => {
     render(
       <DisplayBox

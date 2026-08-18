@@ -23,6 +23,11 @@ import type {
 type LeftPanelButtonProps = {
   isSelected: boolean;
   style?: React.CSSProperties | undefined;
+  /**
+   * Absolute route for this row. Callers build it from the controller they are
+   * on — this used to prefix "/controller" itself, which threw operators on an
+   * auxiliary controller onto the presentation controller.
+   */
   to: string;
   title: string;
   subtitle?: string;
@@ -198,7 +203,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           isSelected={isSelected}
           padding="py-1 px-2"
           component="link"
-          to={`/controller/${to}`}
+          to={to}
           onClick={onClick}
         >
           {hasImagePreview && !isActive && (

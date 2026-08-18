@@ -1,5 +1,8 @@
 import { ComponentProps, memo } from "react";
-import { selectOutputSlot } from "../../store/presentationSlice";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
 
@@ -36,10 +39,10 @@ const StreamPresentationPreview = memo(
     name = "Stream",
   }: StreamPresentationPreviewProps) => {
     const info = useSelector(
-      (state) => selectOutputSlot(state, outputId, "stream").info,
+      (state) => selectResolvedOutputSlot(state, outputId, "stream").info,
     );
     const prevInfo = useSelector(
-      (state) => selectOutputSlot(state, outputId, "stream").prevInfo,
+      (state) => selectResolvedOutputSlot(state, outputId, "stream").prevInfo,
     );
     const isTransmitting = useSelector(
       (state) => selectOutputSlot(state, outputId, "stream").isTransmitting,
