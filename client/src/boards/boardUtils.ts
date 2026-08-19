@@ -385,33 +385,6 @@ export const boardHasOnlyPreviousDayPosts = (
   posts.length > 0 &&
   posts.every((post) => isTimestampFromPreviousLocalDay(post.timestamp, now));
 
-/**
- * True when a Restream session still has chat whose most recent activity was on
- * an earlier local day. Keyed on the last message/event time, never the session
- * start time, so a session that started earlier but is receiving today's chat is
- * treated as active. Drives the (permanent) "clear Restream chat" prompt.
- */
-export const isRestreamChatFromPreviousDay = (
-  session:
-    | {
-        enabled?: boolean;
-        messageCount?: number;
-        lastMessageAt?: number;
-        lastEventAt?: number;
-      }
-    | null
-    | undefined,
-  now: number = Date.now(),
-): boolean => {
-  if (!session?.enabled) return false;
-  if ((session.messageCount ?? 0) <= 0) return false;
-  const lastActivityAt = session.lastMessageAt ?? session.lastEventAt;
-  return (
-    typeof lastActivityAt === "number" &&
-    isTimestampFromPreviousLocalDay(lastActivityAt, now)
-  );
-};
-
 const CHURCH_ADJECTIVES = [
   "Joyful",
   "Faithful",

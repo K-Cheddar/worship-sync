@@ -645,8 +645,7 @@ describe("BoardControllerContent", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("starts fresh across the board and Restream when only Restream is stale", async () => {
-    const user = userEvent.setup();
+  it("does not prompt to start fresh when only Restream chat is stale (server auto-resets it)", async () => {
     mockBoardDb.__setPosts("board-current", [
       {
         _id: "post:board-current:today",
@@ -691,20 +690,12 @@ describe("BoardControllerContent", () => {
 
     renderPage();
 
-    await user.click(
-      await screen.findByRole("button", { name: /Start fresh for today/i }),
-    );
-    const dialog = await screen.findByRole("dialog", {
-      name: /Start fresh for today/i,
-    });
-    await user.click(within(dialog).getByRole("button", { name: /^Start fresh$/i }));
-
-    await waitFor(() =>
-      expect([
-        mockHardResetBoardAlias.mock.calls,
-        mockResetRestreamSession.mock.calls,
-      ]).toEqual([[['sunday']], [['church-1']]]),
-    );
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(
+      screen.queryByRole("button", { name: /Start fresh for today/i }),
+    ).not.toBeInTheDocument();
+    expect(mockHardResetBoardAlias).not.toHaveBeenCalled();
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
   });
 
   it("hides Hide and Highlight on posts when viewing an earlier session", async () => {
