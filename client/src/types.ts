@@ -336,6 +336,8 @@ export type Presentation = {
   timerId?: string;
   /** Item _id so we can look up slides (e.g. wrap-up slide when timer expires) */
   itemId?: string;
+  /** Outline row (listId) the live item came from — disambiguates the same item scheduled more than once. Monitor only. */
+  listId?: string;
   /** 0-based index of the live slide within the item deck (producer progress chrome). */
   slideIndex?: number;
   /** Total slides in the item deck when this presentation was sent. */

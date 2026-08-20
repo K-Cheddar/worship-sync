@@ -47,7 +47,11 @@ export type ChurchBranding = {
 
 export type TeamsPermission = "none" | "view" | "edit";
 export type TeamScopedPermission = Exclude<TeamsPermission, "none">;
-export type ServicesPermission = "none" | "edit";
+/**
+ * "view" is workstation-only for now (see authService.js buildWorkstationBootstrap) —
+ * a human member's services permission is never normalized to "view".
+ */
+export type ServicesPermission = "none" | "view" | "edit";
 
 export type MemberPermissions = {
   teams: TeamsPermission;

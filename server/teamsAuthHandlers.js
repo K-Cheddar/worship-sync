@@ -119,6 +119,7 @@ export const createTeamsAuthHandlers = ({
   // Church membership without any teams grant — the guard a volunteer passes.
   requireHumanSession,
   requireServicesEditSession,
+  requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,
@@ -139,6 +140,10 @@ export const createTeamsAuthHandlers = ({
     requireTeamsEditForTeamSession ||
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
+  // Narrower than requireTeamsView: also admits a view-only paired
+  // workstation, but only for reading saved Service Plans (no roster PII).
+  const requireServicePlansView =
+    requireServicePlansViewSession || requireTeamsView;
 
   const withTeamsErrorNextStep = (message) => {
     if (/\btry again\b/i.test(message)) {
@@ -7478,7 +7483,7 @@ export const createTeamsAuthHandlers = ({
     async listServicePlans(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicePlansView(req, churchId);
         const docs = await queryDocs(
           COLLECTIONS.servicePlans,
           [{ field: "churchId", value: churchId }],
@@ -7506,7 +7511,7 @@ export const createTeamsAuthHandlers = ({
     async getServicePlan(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicePlansView(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);

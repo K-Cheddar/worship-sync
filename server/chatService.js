@@ -71,7 +71,7 @@ export const isValidChatTimeZone = (value) => {
   }
 };
 
-export const chatDayKey = (date, timeZone) => {
+const chatCalendarDayKey = (date, timeZone) => {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -82,6 +82,16 @@ export const chatDayKey = (date, timeZone) => {
     parts.map((part) => [part.type, part.value]),
   );
   return `${value.year}-${value.month}-${value.day}`;
+};
+
+// A chat "dayKey" is actually the Sunday that starts the church-local week
+// containing `date` — chat is segmented by week, not by calendar day. The
+// field/param name stayed `dayKey` to avoid a schema and API rename.
+export const chatDayKey = (date, timeZone) => {
+  const localDayKey = chatCalendarDayKey(date, timeZone);
+  const localMidnight = new Date(`${localDayKey}T00:00:00.000Z`);
+  localMidnight.setUTCDate(localMidnight.getUTCDate() - localMidnight.getUTCDay());
+  return localMidnight.toISOString().slice(0, 10);
 };
 
 const normalizeMessageText = (value, { allowEmpty = false } = {}) => {
@@ -338,12 +348,12 @@ export const createChatService = ({
   const assertDayInRetention = (dayKey, todayKey) => {
     const normalized = normalizeDayKey(dayKey);
     if (normalized > todayKey) {
-      throw createChatError("That chat day has not started yet.");
+      throw createChatError("That chat week has not started yet.");
     }
     const earliest = new Date(`${todayKey}T00:00:00.000Z`);
     earliest.setUTCDate(earliest.getUTCDate() - CHAT_RETENTION_DAYS);
     if (normalized < earliest.toISOString().slice(0, 10)) {
-      throw createChatError("That chat day is no longer available.", 404);
+      throw createChatError("That chat week is no longer available.", 404);
     }
     return normalized;
   };

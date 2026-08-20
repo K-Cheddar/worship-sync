@@ -7,6 +7,7 @@ import servicePlanningImportReducer, {
   setServicePlanningServiceOutline,
 } from "../../store/servicePlanningImportSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 
 const mockOccurrence = {
@@ -26,12 +27,18 @@ const mockGetServicePlan = jest.fn();
 const mockGetTeamsBootstrap = jest.fn();
 const mockListServicePlans = jest.fn();
 const mockLoadPlanPreview = jest.fn();
+const mockPersistItemListServicePlanBinding = jest.fn();
 let mockLiveHandler: ((event: unknown) => void) | null = null;
 
 jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
   getTeamsBootstrap: (...args: unknown[]) => mockGetTeamsBootstrap(...args),
   listServicePlans: (...args: unknown[]) => mockListServicePlans(...args),
+}));
+
+jest.mock("../../utils/itemListImports", () => ({
+  persistItemListServicePlanBinding: (...args: unknown[]) =>
+    mockPersistItemListServicePlanBinding(...args),
 }));
 
 jest.mock("../../hooks/useServicePlanningImport", () => ({
@@ -143,15 +150,18 @@ let latestResult: Result | null = null;
 const renderHookWith = (
   store: ReturnType<typeof makeStore>,
   globalInfo: Record<string, unknown>,
+  controllerInfo: Record<string, unknown> = {},
 ) => {
   render(
     <Provider store={store}>
       <GlobalInfoContext.Provider value={globalInfo as never}>
-        <Harness
-          onResult={(result) => {
-            latestResult = result;
-          }}
-        />
+        <ControllerInfoContext.Provider value={controllerInfo as never}>
+          <Harness
+            onResult={(result) => {
+              latestResult = result;
+            }}
+          />
+        </ControllerInfoContext.Provider>
       </GlobalInfoContext.Provider>
     </Provider>,
   );
@@ -159,7 +169,7 @@ const renderHookWith = (
 
 const enabledGlobalInfo = {
   churchId: "church-1",
-  canViewTeams: true,
+  canViewServices: true,
   loginState: "success",
 };
 
@@ -363,9 +373,9 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
   });
 
-  it("does nothing without Teams access", async () => {
+  it("does nothing without Services view access", async () => {
     const store = makeStore();
-    renderHookWith(store, { ...enabledGlobalInfo, canViewTeams: false });
+    renderHookWith(store, { ...enabledGlobalInfo, canViewServices: false });
 
     await waitFor(() => expect(mockLiveHandler).toBeNull());
     expect(mockGetServicePlan).not.toHaveBeenCalled();
@@ -439,6 +449,60 @@ describe("useCurrentServicePlanSource", () => {
       expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull(),
     );
     expect(store.getState().servicePlanningImport.preview).toBeNull();
+  });
+
+  it("persists the outline binding immediately when the operator picks a plan, without a Sync", async () => {
+    const store = makeStore();
+    const db = {};
+    renderHookWith(store, enabledGlobalInfo, { db });
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        "service-1@2026-08-01",
+      ),
+    );
+    mockPersistItemListServicePlanBinding.mockResolvedValue(undefined);
+    mockGetServicePlan.mockResolvedValue({
+      servicePlan: {
+        ...planFixture,
+        planKey: "service-2@2026-08-01",
+        serviceId: "service-2",
+        name: "Evening Service",
+      },
+    });
+
+    await act(async () => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        db,
+        "outline-1",
+        expect.objectContaining({
+          planKey: "service-2@2026-08-01",
+          planName: "Evening Service",
+        }),
+      ),
+    );
+    expect(store.getState().servicePlanningImport.outlinePlanBinding).toEqual(
+      expect.objectContaining({ planKey: "service-2@2026-08-01" }),
+    );
+  });
+
+  it("does not persist a binding for the automatic default selection on load", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo, { db: {} });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        "service-1@2026-08-01",
+      ),
+    );
+
+    expect(mockPersistItemListServicePlanBinding).not.toHaveBeenCalled();
+    expect(
+      store.getState().servicePlanningImport.outlinePlanBinding,
+    ).toBeNull();
   });
 
   it("clears a selected plan and preview when Refresh finds it was deleted", async () => {

@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   getServicePlan,
@@ -23,8 +24,10 @@ import {
 } from "../../api/auth";
 import {
   clearServicePlanningPlanOutline,
+  setServicePlanningOutlinePlanBinding,
   setServicePlanningPlanOutline,
 } from "../../store/servicePlanningImportSlice";
+import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
 import {
   isServicePlanUpdatedEvent,
@@ -48,8 +51,9 @@ import {
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
-  const { canViewTeams, churchId, loginState } =
+  const { canViewServices, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
   const { loadPlanPreview, isServicePlanningEnabled } =
     useServicePlanningImport();
   const serviceTimes = useSelector(
@@ -104,7 +108,7 @@ export const useCurrentServicePlanSource = () => {
 
   const isEnabled = Boolean(
     churchId &&
-      canViewTeams &&
+      canViewServices &&
       loginState !== "guest" &&
       isServicePlanningEnabled,
   );
@@ -278,6 +282,47 @@ export const useCurrentServicePlanSource = () => {
     [churchId, dispatch],
   );
 
+  /**
+   * Remembers a deliberate operator pick (dropdown selection or
+   * `pinSelectedPlan`) against this outline immediately, rather than only
+   * once the operator syncs — so reopening the outline restores the same
+   * plan without re-prompting even if it was never synced. An automatic
+   * fallback selection (see the effect below) never sets
+   * `manualSelectionRef`, so it never overwrites an existing binding.
+   */
+  const persistManualPlanBinding = useCallback(
+    async (plan: ServicePlan) => {
+      if (
+        !manualSelectionRef.current ||
+        !db ||
+        !selectedOutlineId ||
+        outlinePlanBinding?.planKey === plan.planKey
+      ) {
+        return;
+      }
+      const binding = {
+        planKey: plan.planKey,
+        planName: plan.name?.trim() || "Service plan",
+        linkedAt: new Date().toISOString(),
+      };
+      try {
+        await persistItemListServicePlanBinding(db, selectedOutlineId, binding);
+        dispatch(setServicePlanningOutlinePlanBinding(binding));
+      } catch (error) {
+        console.error("Could not link this outline to its service plan:", error);
+      }
+    },
+    [db, dispatch, outlinePlanBinding?.planKey, selectedOutlineId],
+  );
+  // Read via ref (not a "load" effect dependency): persisting a binding
+  // dispatches a Redux update that changes this callback's identity on every
+  // call, which would otherwise re-trigger — and needlessly refetch — the
+  // "load" effect below.
+  const persistManualPlanBindingRef = useRef(persistManualPlanBinding);
+  useEffect(() => {
+    persistManualPlanBindingRef.current = persistManualPlanBinding;
+  }, [persistManualPlanBinding]);
+
   useEffect(() => {
     if (
       !isEnabled ||
@@ -312,6 +357,7 @@ export const useCurrentServicePlanSource = () => {
           clearUnavailablePlan(selectedPlanKey);
           return;
         }
+        void persistManualPlanBindingRef.current(plan);
         await applyPlan(
           plan,
           () =>

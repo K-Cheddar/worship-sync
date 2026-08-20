@@ -157,6 +157,8 @@ interface WindowConfig {
   route: string;
   isDev: boolean;
   dirname: string;
+  /** Hide the mouse pointer in this window; skip for windows a user still needs to scroll/click, like the board display. */
+  hideCursor?: boolean;
 }
 
 export const setupWindowEventListeners = (
@@ -180,6 +182,15 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
     frame: false,
     show: false,
   });
+
+  // Most display windows are output-only, and a stray pointer is distracting
+  // when the window is projected or streamed. The board display stays scrollable
+  // and clickable at the machine, so it keeps its cursor.
+  if (config.hideCursor !== false) {
+    window.webContents.on("dom-ready", () => {
+      void window.webContents.insertCSS("*, *::before, *::after { cursor: none !important; }");
+    });
+  }
 
   if (config.isDev) {
     // Ensure route starts with # for hash routing

@@ -92,7 +92,8 @@ describe("ServicePublic", () => {
     expect(screen.getByText("Red mic")).toHaveStyle({ color: "rgb(221, 0, 0)" });
     expect(screen.getByText("Media Team notes")).toBeInTheDocument();
     expect(screen.getByText("Capture the greetings.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Go to current/i })).toBeInTheDocument();
+    // Still following live, so the return-to-live button stays hidden.
+    expect(screen.queryByRole("button", { name: /Go to current/i })).not.toBeInTheDocument();
   });
 
   it("shows item times from the plan's own timeline, including pre-service items", () => {
@@ -936,6 +937,111 @@ describe("ServicePublic", () => {
       Element.prototype.scrollIntoView = previousScrollIntoView;
     }
   });
+
+  it("keeps following through a long auto-scroll animation instead of pausing on its own tail-end scroll events", async () => {
+    const scrollIntoView = jest.fn();
+    const previousScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    const now = Date.now();
+    const baseSnapshot = {
+      success: true as const,
+      churchName: "Northside",
+      serverNowMs: now,
+      service: {
+        shareId: "share-token",
+        title: "Sunday Service",
+        startsAt: new Date(now - 30_000).toISOString(),
+        timezone: "UTC",
+        revision: now,
+        live: { mode: "manual" as const, currentItemId: "welcome" },
+        sections: [{
+          id: "main",
+          title: "Main service",
+          items: [
+            {
+              id: "welcome",
+              title: "Welcome",
+              durationSeconds: 120,
+              notes: { blocks: [] },
+              teamNotes: [],
+            },
+            {
+              id: "song",
+              title: "Opening song",
+              durationSeconds: 240,
+              notes: { blocks: [] },
+              teamNotes: [],
+            },
+          ],
+        }],
+      },
+    };
+
+    mockUsePublicServiceFlow.mockReturnValue({
+      snapshot: baseSnapshot,
+      error: "",
+      loading: false,
+      connection: "connected",
+      revoked: false,
+      refresh: jest.fn(),
+    });
+
+    try {
+      const { rerender } = render(<ServicePublic />);
+
+      await act(async () => {
+        await flushDoubleRaf();
+      });
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalled();
+      });
+
+      // Simulate a real smooth-scroll animation that runs long because the
+      // live item is far down the list: it keeps producing scroll events
+      // past the old fixed 1s suppression window, spaced closely enough
+      // that it should never be mistaken for a manual scroll.
+      const main = screen.getByRole("main");
+      await act(async () => {
+        for (let elapsed = 0; elapsed <= 1200; elapsed += 150) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          fireEvent.scroll(main);
+        }
+        // Let the animation's scroll events actually settle before continuing.
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      });
+
+      scrollIntoView.mockClear();
+      mockUsePublicServiceFlow.mockReturnValue({
+        snapshot: {
+          ...baseSnapshot,
+          service: {
+            ...baseSnapshot.service,
+            live: { mode: "manual", currentItemId: "song" },
+          },
+        },
+        error: "",
+        loading: false,
+        connection: "connected",
+        revoked: false,
+        refresh: jest.fn(),
+      });
+      rerender(<ServicePublic />);
+
+      await act(async () => {
+        await flushDoubleRaf();
+      });
+
+      // Follow never paused, so the next live-item change auto-scrolls again.
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "start",
+      });
+    } finally {
+      Element.prototype.scrollIntoView = previousScrollIntoView;
+    }
+  }, 10000);
 
   it("shows notes expanded by default and lets operators collapse them", async () => {
     const user = userEvent.setup();

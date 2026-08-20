@@ -10,6 +10,8 @@ type CreditHistoryTextAreaProps = {
   disabled?: boolean;
   /** Fires when the text field loses focus (e.g. to merge lines into credits history). */
   onFieldBlur?: () => void;
+  /** Fires when the text field gains focus (used to hold off remote overwrites while editing). */
+  onFieldFocus?: () => void;
 };
 
 const CreditHistoryTextArea = ({
@@ -19,6 +21,7 @@ const CreditHistoryTextArea = ({
   onRemoveHistoryLine,
   disabled = false,
   onFieldBlur,
+  onFieldFocus,
 }: CreditHistoryTextAreaProps) => (
   <HistorySuggestField
     value={value}
@@ -33,6 +36,7 @@ const CreditHistoryTextArea = ({
     data-ignore-undo="true"
     disabled={disabled}
     onFieldBlur={onFieldBlur}
+    onFieldFocus={onFieldFocus}
   />
 );
 

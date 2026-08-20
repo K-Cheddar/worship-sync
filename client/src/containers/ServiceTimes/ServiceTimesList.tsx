@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ServiceTime } from "../../types";
 import ServiceItem from "./ServiceItem";
 import TimeAdjuster from "./TimeAdjuster";
@@ -23,6 +23,11 @@ const ServiceTimesList = ({
   upcomingServiceTimeText,
   canEdit = true,
 }: Props) => {
+  const [manualAdjustId, setManualAdjustId] = useState<string | null>(null);
+
+  const toggleManualAdjust = (id: string) =>
+    setManualAdjustId((cur) => (cur === id ? null : id));
+
   const otherServices = useMemo(() => {
     const now = serverDate();
     return services
@@ -67,7 +72,10 @@ const ServiceTimesList = ({
                 <ServiceItem
                   key={s.id}
                   service={s}
-                  {...(canEdit ? { onEdit, onDelete } : {})}
+                  {...(canEdit
+                    ? { onEdit, onDelete, onToggleAdjust: toggleManualAdjust }
+                    : {})}
+                  isAdjusting={manualAdjustId === s.id}
                 />
               ))}
             </ul>

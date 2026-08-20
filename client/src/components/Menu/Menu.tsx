@@ -1,6 +1,7 @@
-import type {
-  ComponentPropsWithoutRef,
-  ReactElement,
+import {
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactElement,
 } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -32,8 +33,19 @@ const Menu = ({
   onOpenChange,
   ...rest
 }: MenuProps) => {
+  // Which item's subItems flyout (if any) is expanded. Radix's own Sub state
+  // can survive a close/reopen of the root menu, leaving a submenu expanded
+  // on next open; tracking it here and clearing on root close guarantees the
+  // menu always reopens at the top level.
+  const [openSubIndex, setOpenSubIndex] = useState<number | null>(null);
+
   return (
-    <DropdownMenu onOpenChange={onOpenChange}>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (!open) setOpenSubIndex(null);
+        onOpenChange?.(open);
+      }}
+    >
       <DropdownMenuTrigger asChild>{TriggeringButton}</DropdownMenuTrigger>
       <DropdownMenuContent
         className={contentClassName ?? rest.className}
@@ -71,7 +83,13 @@ const Menu = ({
 
             if (subItems?.length) {
               return (
-                <DropdownMenuSub key={index}>
+                <DropdownMenuSub
+                  key={index}
+                  open={openSubIndex === index}
+                  onOpenChange={(open) => {
+                    setOpenSubIndex(open ? index : null);
+                  }}
+                >
                   <DropdownMenuSubTrigger
                     className={className}
                     {...itemRest}

@@ -1,19 +1,28 @@
 import Button from "../../components/Button/Button";
+import TimeAdjuster from "./TimeAdjuster";
 import { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
 import { formatOneTime, formatMonthly, formatMultiWeekly, formatWeekly } from "./utils";
-import { SquarePen, Trash2 } from "lucide-react";
+import { SquarePen, Timer, Trash2 } from "lucide-react";
 
 type Props = {
   service?: ServiceTime;
   onEdit?: (id: string) => void;
   onDelete?: (id: string) => void;
+  onToggleAdjust?: (id: string) => void;
+  isAdjusting?: boolean;
 };
 
-const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
+const ServiceItem = ({
+  service,
+  onEdit,
+  onDelete,
+  onToggleAdjust,
+  isAdjusting = false,
+}: Props) => {
   if (!service) return null;
   return (
     <li
-      className="flex min-w-0 overflow-hidden rounded-md border-y border-r border-l-4 border-white/10 bg-black/25"
+      className="flex min-w-0 flex-col overflow-hidden rounded-md border-y border-r border-l-4 border-white/10 bg-black/25"
       style={{ borderLeftColor: service.color }}
     >
       <div className="flex min-w-0 flex-1 items-center justify-between gap-4 px-4 py-3.5">
@@ -47,6 +56,17 @@ const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
         </div>
         {onEdit && onDelete ? (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {onToggleAdjust ? (
+              <Button
+                variant={isAdjusting ? "primary" : "secondary"}
+                svg={Timer}
+                iconSize="sm"
+                onClick={() => onToggleAdjust(service.id)}
+                title="Adjust this service's countdown, regardless of whether it's detected as upcoming"
+              >
+                {isAdjusting ? "Hide adjust" : "Adjust"}
+              </Button>
+            ) : null}
             <Button
               variant="secondary"
               svg={SquarePen}
@@ -66,6 +86,11 @@ const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
           </div>
         ) : null}
       </div>
+      {isAdjusting ? (
+        <div className="border-t border-white/10 p-3">
+          <TimeAdjuster serviceId={service.id} />
+        </div>
+      ) : null}
     </li>
   );
 };

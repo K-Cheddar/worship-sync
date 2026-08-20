@@ -16,7 +16,7 @@ const humanSession = {
 };
 
 const createService = () => {
-  let current = new Date("2026-08-10T16:00:00.000Z");
+  let current = new Date("2026-08-09T16:00:00.000Z");
   return {
     service: createChatService({ now: () => new Date(current) }),
     setNow(value) {
@@ -25,17 +25,19 @@ const createService = () => {
   };
 };
 
-test("chat day keys respect the church timezone", () => {
-  const instant = new Date("2026-08-10T02:30:00.000Z");
-  assert.equal(chatDayKey(instant, "UTC"), "2026-08-10");
-  assert.equal(chatDayKey(instant, "America/New_York"), "2026-08-09");
+test("chat day keys are the Sunday starting the church-local week", () => {
+  // 2026-08-09T02:30Z is Sunday in UTC but still Saturday the 8th in
+  // America/New_York, which falls in the prior week.
+  const instant = new Date("2026-08-09T02:30:00.000Z");
+  assert.equal(chatDayKey(instant, "UTC"), "2026-08-09");
+  assert.equal(chatDayKey(instant, "America/New_York"), "2026-08-02");
 });
 
 test("caches the church timezone before typing heartbeats", async () => {
   let reads = 0;
   let writes = 0;
   const service = createChatService({
-    now: () => new Date("2026-08-10T16:00:00.000Z"),
+    now: () => new Date("2026-08-09T16:00:00.000Z"),
     getFirestore: () => ({
       collection: () => ({
         doc: () => ({
@@ -88,7 +90,7 @@ test("creates, lists, and idempotently retries a daily message", async () => {
   const result = await service.listMessages({
     churchId: "church_1",
     session: humanSession,
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     timeZoneHint: "UTC",
   });
 
@@ -254,7 +256,7 @@ test("publishes memory-store changes to daily subscribers", async () => {
   const events = [];
   const unsubscribe = service.subscribe({
     churchId: "church_1",
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     onEvent: (event) => events.push(event),
   });
   await service.createMessage({
@@ -285,7 +287,7 @@ test("batches existing messages when a daily subscriber connects", async () => {
   const events = [];
   const unsubscribe = service.subscribe({
     churchId: "church_1",
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     onEvent: (event) => events.push(event),
   });
   await Promise.resolve();
@@ -327,7 +329,7 @@ test("shares one Firestore live snapshot and replays its cached batch", () => {
   const secondEvents = [];
   const unsubscribeFirst = service.subscribe({
     churchId: "church_1",
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     onEvent: (event) => firstEvents.push(event),
   });
   const older = {
@@ -335,11 +337,11 @@ test("shares one Firestore live snapshot and replays its cached batch", () => {
     data: () => ({
       messageId: "chat_older",
       churchId: "church_1",
-      dayKey: "2026-08-10",
+      dayKey: "2026-08-09",
       text: "Older",
       authorId: "user_1",
       authorName: "Ada",
-      createdAt: new Date("2026-08-10T15:00:00.000Z"),
+      createdAt: new Date("2026-08-09T15:00:00.000Z"),
       reactions: [],
     }),
   };
@@ -349,7 +351,7 @@ test("shares one Firestore live snapshot and replays its cached batch", () => {
       ...older.data(),
       messageId: "chat_newer",
       text: "Newer",
-      createdAt: new Date("2026-08-10T16:00:00.000Z"),
+      createdAt: new Date("2026-08-09T16:00:00.000Z"),
     }),
   };
 
@@ -363,7 +365,7 @@ test("shares one Firestore live snapshot and replays its cached batch", () => {
   });
   const unsubscribeSecond = service.subscribe({
     churchId: "church_1",
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     onEvent: (event) => secondEvents.push(event),
   });
 
@@ -408,14 +410,14 @@ test("filters and removes expired Realtime Database typing entries", async () =>
     },
   };
   const service = createChatService({
-    now: () => new Date("2026-08-10T16:00:00.000Z"),
+    now: () => new Date("2026-08-09T16:00:00.000Z"),
     getFirestore: () => ({ collection: () => query }),
     getRealtimeDatabase: () => ({ ref: () => typingRef }),
   });
   const events = [];
   const unsubscribe = service.subscribe({
     churchId: "church_1",
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     onEvent: (event) => events.push(event),
   });
 
@@ -424,12 +426,12 @@ test("filters and removes expired Realtime Database typing entries", async () =>
       expired: {
         actorId: "user_old",
         name: "Old",
-        expiresAt: Date.parse("2026-08-10T15:59:59.000Z"),
+        expiresAt: Date.parse("2026-08-09T15:59:59.000Z"),
       },
       active: {
         actorId: "user_2",
         name: "Morgan",
-        expiresAt: Date.parse("2026-08-10T16:00:05.000Z"),
+        expiresAt: Date.parse("2026-08-09T16:00:05.000Z"),
       },
     }),
   });
@@ -468,7 +470,7 @@ test("publishes short-lived typing state without storing a message", async () =>
   const events = [];
   const unsubscribe = service.subscribe({
     churchId: "church_1",
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     onEvent: (event) => events.push(event),
   });
 
@@ -495,7 +497,7 @@ test("publishes short-lived typing state without storing a message", async () =>
   const result = await service.listMessages({
     churchId: "church_1",
     session: humanSession,
-    dayKey: "2026-08-10",
+    dayKey: "2026-08-09",
     timeZoneHint: "UTC",
   });
   assert.deepEqual(result.messages, []);
@@ -504,7 +506,7 @@ test("publishes short-lived typing state without storing a message", async () =>
 test("stores private image keys while serializing only safe attachment metadata", async () => {
   let removed;
   const service = createChatService({
-    now: () => new Date("2026-08-10T16:00:00.000Z"),
+    now: () => new Date("2026-08-09T16:00:00.000Z"),
     onAttachmentRemoved: async (value) => {
       removed = value;
     },

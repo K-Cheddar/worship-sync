@@ -338,6 +338,7 @@ const createBoardWindow = () => {
     route: "/boards/display",
     isDev,
     dirname: __dirname,
+    hideCursor: false,
   });
 
   setDisplayWindow("board", newWindow);

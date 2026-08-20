@@ -2150,6 +2150,11 @@ const buildWorkstationBootstrap = ({ req, church, workstation }) => ({
   uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
   role: null,
   appAccess: workstation.appAccess,
+  // View-only for every appAccess tier for now: a paired workstation can see
+  // saved Service Plans, never edit them, regardless of "full"/"music"/"view"
+  // appAccess — see requireServicePlansViewSession. `teams` stays "none" so
+  // this does not also open the Teams roster (member PII) to a workstation.
+  permissions: { teams: "none", services: "view", teamScopes: {} },
   user: null,
   device: {
     deviceId: workstation.deviceId,
@@ -3475,6 +3480,36 @@ export const requireTeamsViewSession = async (req, churchId) => {
   return bootstrap;
 };
 
+// Deliberately narrower than requireTeamsViewSession: also admits a paired
+// workstation (see buildWorkstationBootstrap's view-only `services`
+// permission), but only for reading saved Service Plans. Never use this for
+// roster/schedule endpoints — those carry member PII (email, DOB, minor
+// flag) that a shared workstation must not receive.
+export const requireServicePlansViewSession = async (req, churchId) => {
+  const bootstrap = await resolveRequestBootstrap(req);
+  if (
+    !bootstrap ||
+    (bootstrap.sessionKind !== SESSION_KIND_HUMAN &&
+      bootstrap.sessionKind !== SESSION_KIND_WORKSTATION)
+  ) {
+    throw httpError(401, "Authentication required");
+  }
+  const teamsPermission = bootstrap.permissions?.teams || "none";
+  const servicesPermission = bootstrap.permissions?.services || "none";
+  if (
+    bootstrap.churchId !== churchId ||
+    (bootstrap.role !== "admin" &&
+      teamsPermission !== "view" &&
+      teamsPermission !== "edit" &&
+      servicesPermission !== "view" &&
+      servicesPermission !== "edit" &&
+      !hasAnyTeamScope(bootstrap.permissions))
+  ) {
+    throw httpError(403, "Service plans access required");
+  }
+  return bootstrap;
+};
+
 const requireTeamsEditSession = async (req, churchId) => {
   const bootstrap = await requireHumanSession(req);
   if (
@@ -4215,6 +4250,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   readChurchPublicBrandingChrome,
   requireAdminSession,
   requireServicesEditSession,
+  requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,

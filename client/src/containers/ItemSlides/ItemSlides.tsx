@@ -76,6 +76,7 @@ const ItemSlides = () => {
     slides: __slides,
     isLoading,
     _id,
+    listId,
     shouldSendTo,
     isEditMode,
     backgroundTargetSlideIds: backgroundTargetSlideIdsRaw,
@@ -400,6 +401,7 @@ const ItemSlides = () => {
             name,
             timerId: timerInfo?.id,
             itemId: _id,
+            listId,
             slideIndex: index,
             slideCount: slides.length,
             nextSlide: nextSlideForMonitor,
@@ -424,6 +426,7 @@ const ItemSlides = () => {
       getBibleInfo,
       slides,
       _id,
+      listId,
       monitorReadySlides,
     ]
   );

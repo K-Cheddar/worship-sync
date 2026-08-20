@@ -18,7 +18,7 @@ const mockedUseChat = jest.mocked(useChat);
 const context: ChatContextInfo = {
   actorId: "actor-1",
   actorName: "You",
-  todayKey: "2026-03-11",
+  todayKey: "2026-03-08",
   timeZone: "UTC",
   retentionDays: 365,
   imageUploadsEnabled: true,
@@ -31,7 +31,7 @@ const baseChat = {
   openChat: jest.fn(),
   closeChat: jest.fn(),
   context,
-  selectedDayKey: "2026-03-11",
+  selectedDayKey: "2026-03-08",
   selectDay: jest.fn(),
   messages: [] as ChatMessage[],
   hasMore: false,
@@ -65,21 +65,21 @@ describe("ChatWindow", () => {
     });
   });
 
-  it("keeps day navigation in the options menu", async () => {
+  it("keeps week navigation in the options menu", async () => {
     mockedUseChat.mockReturnValue(baseChat);
 
     render(<ChatWindow />);
 
-    expect(screen.getByText("Today")).toBeInTheDocument();
-    expect(screen.queryByDisplayValue("2026-03-11")).not.toBeInTheDocument();
+    expect(screen.getByText("This week")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("2026-03-08")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Earlier day" }),
+      screen.queryByRole("button", { name: "Earlier week" }),
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Chat options" }));
-    expect(await screen.findByDisplayValue("2026-03-11")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("2026-03-08")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Earlier day" }),
+      screen.getByRole("button", { name: "Earlier week" }),
     ).toBeInTheDocument();
   });
 
@@ -97,23 +97,23 @@ describe("ChatWindow", () => {
     expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();
   });
 
-  it("shows a composer only for today and keeps history read-only", () => {
+  it("shows a composer only for this week and keeps history read-only", () => {
     const ownMessage: ChatMessage = {
       messageId: "m1",
       clientMessageId: "client-m1",
       churchId: "church-1",
-      dayKey: "2026-03-10",
+      dayKey: "2026-03-01",
       authorId: "actor-1",
       authorName: "You",
       authorSessionKind: "human",
       text: "Earlier note",
-      createdAt: Date.parse("2026-03-10T12:00:00.000Z"),
+      createdAt: Date.parse("2026-03-01T12:00:00.000Z"),
       reactions: [],
     };
 
     mockedUseChat.mockReturnValue({
       ...baseChat,
-      selectedDayKey: "2026-03-10",
+      selectedDayKey: "2026-03-01",
       messages: [ownMessage],
     });
 
@@ -125,7 +125,9 @@ describe("ChatWindow", () => {
     expect(
       screen.queryByRole("button", { name: "Edit message" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Back to today" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Back to this week" }),
+    ).toBeInTheDocument();
   });
 
   it("shows a blocking retry state when context failed to load", () => {
@@ -164,7 +166,7 @@ describe("ChatWindow", () => {
     expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();
   });
 
-  it("navigates earlier days from the options menu", async () => {
+  it("navigates earlier weeks from the options menu", async () => {
     const selectDay = jest.fn();
     mockedUseChat.mockReturnValue({
       ...baseChat,
@@ -174,9 +176,9 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     fireEvent.click(screen.getByRole("button", { name: "Chat options" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Earlier day" }),
+      await screen.findByRole("button", { name: "Earlier week" }),
     );
-    expect(selectDay).toHaveBeenCalledWith("2026-03-10");
+    expect(selectDay).toHaveBeenCalledWith("2026-03-01");
   });
 
   it("renders own and peer message chrome", () => {
@@ -185,7 +187,7 @@ describe("ChatWindow", () => {
         messageId: "m1",
         clientMessageId: "client-m1",
         churchId: "church-1",
-        dayKey: "2026-03-11",
+        dayKey: "2026-03-08",
         authorId: "actor-2",
         authorName: "Alex",
         authorSessionKind: "human",
@@ -202,7 +204,7 @@ describe("ChatWindow", () => {
         messageId: "m2",
         clientMessageId: "client-m2",
         churchId: "church-1",
-        dayKey: "2026-03-11",
+        dayKey: "2026-03-08",
         authorId: "actor-1",
         authorName: "You",
         authorSessionKind: "human",
@@ -238,7 +240,7 @@ describe("ChatWindow", () => {
           messageId: "m1",
           clientMessageId: "client-m1",
           churchId: "church-1",
-          dayKey: "2026-03-11",
+          dayKey: "2026-03-08",
           authorId: "actor-2",
           authorName: "Alex",
           authorSessionKind: "human",
@@ -250,7 +252,7 @@ describe("ChatWindow", () => {
           messageId: "m2",
           clientMessageId: "client-m2",
           churchId: "church-1",
-          dayKey: "2026-03-11",
+          dayKey: "2026-03-08",
           authorId: "actor-2",
           authorName: "Alex",
           authorSessionKind: "human",

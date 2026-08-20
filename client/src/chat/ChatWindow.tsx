@@ -19,7 +19,8 @@ import { cn } from "../utils/cnHelper";
 import {
   earliestDayKey,
   formatChatDayLabel,
-  shiftDayKey,
+  shiftWeekKey,
+  weekStartKey,
 } from "./chatDayUtils";
 import { getChatMessageGroupPosition } from "./chatMessageLayout";
 import { useChat } from "./ChatContext";
@@ -269,7 +270,7 @@ const ChatWindow = () => {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const updateTypingDraft = chat?.updateTypingDraft;
 
-  const isToday = Boolean(
+  const isCurrentWeek = Boolean(
     chat?.context && chat.selectedDayKey === chat.context.todayKey,
   );
   const minDay = useMemo(
@@ -282,7 +283,7 @@ const ChatWindow = () => {
   const canGoEarlier = Boolean(
     chat?.context && minDay && chat.selectedDayKey > minDay,
   );
-  const canGoLater = Boolean(chat?.context && !isToday);
+  const canGoLater = Boolean(chat?.context && !isCurrentWeek);
   const dayLabel =
     chat?.context && chat.selectedDayKey
       ? formatChatDayLabel(
@@ -293,8 +294,8 @@ const ChatWindow = () => {
       : "";
 
   useEffect(() => {
-    if (isToday) endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [chat?.messages.length, chat?.typingUsers.length, isToday]);
+    if (isCurrentWeek) endRef.current?.scrollIntoView({ block: "nearest" });
+  }, [chat?.messages.length, chat?.typingUsers.length, isCurrentWeek]);
 
   useEffect(
     () => () => {
@@ -375,7 +376,7 @@ const ChatWindow = () => {
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-white">{dayLabel}</p>
           <p className="truncate text-[11px] text-gray-400">
-            {isToday ? "Team messages" : "History · read-only"}
+            {isCurrentWeek ? "Team messages" : "History · read-only"}
           </p>
         </div>
         <span
@@ -400,6 +401,7 @@ const ChatWindow = () => {
           open={menuOpen}
           onOpenChange={setMenuOpen}
           align="end"
+          disablePortal
           contentClassName="w-64"
           bodyClassName="px-3 pb-3 pt-0"
           headerRowClassName="pr-1 pt-1"
@@ -417,7 +419,7 @@ const ChatWindow = () => {
           <div className="flex flex-col gap-3">
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                Day
+                Week
               </p>
               <div className="flex items-center gap-1">
                 <Button
@@ -426,9 +428,9 @@ const ChatWindow = () => {
                   iconSize="sm"
                   className="max-md:!min-h-9 max-md:!min-w-9"
                   disabled={!canGoEarlier || chat.isLoading}
-                  aria-label="Earlier day"
+                  aria-label="Earlier week"
                   onClick={() =>
-                    goToDay(shiftDayKey(chat.selectedDayKey, -1))
+                    goToDay(shiftWeekKey(chat.selectedDayKey, -1))
                   }
                 />
                 <span className="min-w-0 flex-1 truncate text-center text-sm text-white">
@@ -440,31 +442,31 @@ const ChatWindow = () => {
                   iconSize="sm"
                   className="max-md:!min-h-9 max-md:!min-w-9"
                   disabled={!canGoLater || chat.isLoading}
-                  aria-label="Later day"
-                  onClick={() => goToDay(shiftDayKey(chat.selectedDayKey, 1))}
+                  aria-label="Later week"
+                  onClick={() => goToDay(shiftWeekKey(chat.selectedDayKey, 1))}
                 />
               </div>
-              {!isToday ? (
+              {!isCurrentWeek ? (
                 <Button
                   variant="secondary"
                   className="mt-2 w-full justify-center text-sm"
                   onClick={() => goToDay(chat.context!.todayKey)}
                 >
-                  Back to today
+                  Back to this week
                 </Button>
               ) : null}
             </div>
             <Input
               type="date"
-              label="Jump to day"
+              label="Jump to week"
               value={chat.selectedDayKey}
               min={minDay}
               max={chat.context.todayKey}
               inputClassName="bg-gray-900"
-              onChange={(value) => goToDay(String(value))}
+              onChange={(value) => goToDay(weekStartKey(String(value)))}
             />
             <p className="text-[11px] text-gray-400">
-              Earlier days are read-only. Choose today to send.
+              Earlier weeks are read-only. Choose this week to send.
             </p>
           </div>
         </PopOver>
@@ -505,9 +507,9 @@ const ChatWindow = () => {
         ) : null}
         {!chat.isLoading && chat.messages.length === 0 ? (
           <div className="m-auto max-w-xs text-center text-sm text-gray-400">
-            {isToday
-              ? "No messages yet today. Start the conversation below."
-              : "There are no messages for this day."}
+            {isCurrentWeek
+              ? "No messages yet this week. Start the conversation below."
+              : "There are no messages for this week."}
           </div>
         ) : null}
         {chat.messages.map((message, index) => {
@@ -516,7 +518,7 @@ const ChatWindow = () => {
             <ChatMessageRow
               key={message.messageId}
               message={message}
-              canMutate={isToday}
+              canMutate={isCurrentWeek}
               startsGroup={group.startsGroup}
               endsGroup={group.endsGroup}
             />
@@ -526,7 +528,7 @@ const ChatWindow = () => {
       </div>
 
       <div className="shrink-0 border-t border-gray-700 bg-gray-800 p-2">
-        {isToday ? (
+        {isCurrentWeek ? (
           <>
             {chat.typingUsers.length ? (
               <div
@@ -695,7 +697,7 @@ const ChatWindow = () => {
               className="text-sm"
               onClick={() => goToDay(chat.context!.todayKey)}
             >
-              Back to today
+              Back to this week
             </Button>
           </div>
         )}

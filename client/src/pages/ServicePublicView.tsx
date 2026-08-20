@@ -25,8 +25,15 @@ import {
 
 const servicePublicItemDomId = (itemId: string) => `service-item-${itemId}`;
 
-/** Ignore scroll events from our own smooth scroll so they do not pause follow. */
-const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 1000;
+/**
+ * Ignore scroll events from our own smooth scroll so they do not pause
+ * follow. Smooth-scroll duration scales with distance, so this is a settle
+ * window that re-extends on every event while the animation is still
+ * producing scroll events, rather than a fixed timeout — a long scroll
+ * (live item far from the current position) can easily run past a fixed
+ * 1s window and have its own tail end mistaken for a manual scroll.
+ */
+const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 300;
 
 const scrollServicePublicItemNearTop = (itemId: string) => {
   document.getElementById(servicePublicItemDomId(itemId))?.scrollIntoView({
@@ -154,7 +161,14 @@ const ServicePublicView = ({
   };
 
   const handlePageScroll = () => {
-    if (Date.now() < suppressFollowPauseUntilRef.current) return;
+    if (Date.now() < suppressFollowPauseUntilRef.current) {
+      // Still inside our own smooth-scroll animation: extend the window so
+      // it keeps covering the animation for as long as it keeps producing
+      // scroll events, rather than expiring mid-animation on a fixed clock.
+      suppressFollowPauseUntilRef.current =
+        Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
+      return;
+    }
     pauseLiveFollow();
   };
 
@@ -648,7 +662,7 @@ const ServicePublicView = ({
         </div>
       </div>
 
-      {!embedded && currentItemId ? (
+      {!embedded && currentItemId && !isFollowingLive ? (
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-3 sm:bottom-6">
           <Button
             variant="cta"

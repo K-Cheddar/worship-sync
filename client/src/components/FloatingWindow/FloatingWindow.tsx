@@ -630,7 +630,13 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       ...(resolvedHeight !== undefined ? { height: resolvedHeight } : {}),
       zIndex: activeZ,
       transformOrigin: "bottom center",
-      transform: windowShrunk ? "scaleX(0.55) scaleY(0.08)" : "scaleX(1) scaleY(1)",
+      // Omitted (not an identity transform) at rest: any `transform` value,
+      // even `scaleX(1) scaleY(1)`, makes this element the containing block
+      // for `position: fixed` descendants — which breaks a non-portaled
+      // Radix popper's viewport-relative sizing (see Select's `disablePortal`),
+      // making it size itself for the full viewport and then get silently
+      // clipped by this window's `overflow-hidden` instead of fitting inside it.
+      ...(windowShrunk ? { transform: "scaleX(0.55) scaleY(0.08)" } : {}),
       opacity: windowShrunk ? 0 : 1,
       transition: `${minMaxTransition}, ${openCloseTransition}`,
     };
