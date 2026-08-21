@@ -377,6 +377,27 @@ Line two</td><td>Mics:
     }] }]);
   });
 
+  it("preserves separators between multiple people in a Led by cell", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="custom-printout">
+        <thead><tr>
+          <th>Start Time</th><th>Duration</th><th>Element Type</th><th>Title</th>
+          <th>Led by</th><th>Note</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td>11:11a</td><td>2m</td><td>Welcome</td><td>Host team</td>
+            <td>Jamie Rivera<br>Morgan Lee<br>Taylor Smith</td><td></td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+
+    expect(parsed.sections[0].rows[0].ledBy).toBe(
+      "Jamie Rivera, Morgan Lee, Taylor Smith",
+    );
+  });
+
   it("reads the song from the source's music marker on a share link", () => {
     const parsed = parseServicePlanningImportFromHtml(`
       <body>

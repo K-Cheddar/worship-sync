@@ -24,6 +24,7 @@ import {
 } from "../../api/auth";
 import {
   clearServicePlanningPlanOutline,
+  clearServicePlanningPreview,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningPlanOutline,
 } from "../../store/servicePlanningImportSlice";
@@ -78,6 +79,9 @@ export const useCurrentServicePlanSource = () => {
           !state.servicePlanningImport.servicePlanKey,
       ),
   );
+  const urlSelectionRevision = useSelector(
+    (state) => state.servicePlanningImport.urlSelectionRevision,
+  );
 
   const [savedPlans, setSavedPlans] = useState<ServicePlanSummary[]>([]);
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
@@ -91,6 +95,11 @@ export const useCurrentServicePlanSource = () => {
   const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const manualSelectionRef = useRef(false);
+  // A URL preview already present when this hook mounts belongs to an earlier
+  // Controller visit and must not suppress the linked/current saved plan. The
+  // revision changes only when the operator imports a URL in this visit.
+  const previousUrlSelectionRevisionRef = useRef(urlSelectionRevision);
+  const currentVisitUrlSelectionRef = useRef(false);
   const loadPlanPreviewRef = useRef(loadPlanPreview);
   useEffect(() => {
     loadPlanPreviewRef.current = loadPlanPreview;
@@ -167,17 +176,23 @@ export const useCurrentServicePlanSource = () => {
     void refreshPlans();
   }, [dispatch, isEnabled, refreshPlans]);
 
-  // A pasted URL is an explicit source choice. Drop any prior automatic plan
-  // selection so outline binding changes cannot silently replace that review.
+  // A URL pasted during this Controller visit is an explicit source choice.
+  // A URL preview carried in from an earlier visit intentionally does not take
+  // ownership here, allowing the linked/current saved plan to load instead.
   useEffect(() => {
+    if (urlSelectionRevision === previousUrlSelectionRevisionRef.current) {
+      return;
+    }
+    previousUrlSelectionRevisionRef.current = urlSelectionRevision;
     if (!hasUrlSourcedPreview) return;
+    currentVisitUrlSelectionRef.current = true;
     generationRef.current += 1;
     manualSelectionRef.current = false;
     planRef.current = null;
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     setIsLoading(false);
-  }, [hasUrlSourcedPreview]);
+  }, [hasUrlSourcedPreview, urlSelectionRevision]);
 
   // A refresh can remove a plan without an SSE removal event (for example,
   // after reconnecting or resuming a sleeping device). Reconcile a pinned key
@@ -208,7 +223,7 @@ export const useCurrentServicePlanSource = () => {
     if (
       !plansLoaded ||
       itemListLoading ||
-      hasUrlSourcedPreview ||
+      (hasUrlSourcedPreview && currentVisitUrlSelectionRef.current) ||
       manualSelectionRef.current
     ) {
       return;
@@ -218,10 +233,16 @@ export const useCurrentServicePlanSource = () => {
       boundPlanKey: outlinePlanBinding?.planKey,
       currentOccurrencePlanKey,
     });
+    if (selectedPlanKeyRef.current === nextKey) return;
+    if (nextKey) {
+      currentVisitUrlSelectionRef.current = false;
+      dispatch(clearServicePlanningPreview());
+    }
     selectedPlanKeyRef.current = nextKey;
     setSelectedPlanKey(nextKey);
   }, [
     currentOccurrencePlanKey,
+    dispatch,
     hasUrlSourcedPreview,
     itemListLoading,
     outlinePlanBinding?.planKey,
@@ -330,7 +351,9 @@ export const useCurrentServicePlanSource = () => {
       !selectedPlanKey ||
       !churchId ||
       itemListLoading ||
-      (hasUrlSourcedPreview && !manualSelectionRef.current)
+      (hasUrlSourcedPreview &&
+        currentVisitUrlSelectionRef.current &&
+        !manualSelectionRef.current)
     ) {
       if (plansLoaded && !selectedPlanKey) {
         planRef.current = null;
@@ -398,6 +421,7 @@ export const useCurrentServicePlanSource = () => {
   const selectPlan = useCallback(
     (planKey: string) => {
       manualSelectionRef.current = true;
+      currentVisitUrlSelectionRef.current = false;
       // Persist the operator's choice before waiting for plan details. The
       // picker is local component state, so delaying this until the detail
       // request settles can lose the chosen plan when the Controller unmounts.
@@ -411,7 +435,7 @@ export const useCurrentServicePlanSource = () => {
       planRef.current = null;
       selectedPlanKeyRef.current = planKey || null;
       setIsLoading(Boolean(planKey));
-      dispatch(clearServicePlanningPlanOutline());
+      dispatch(clearServicePlanningPreview());
       setSelectedPlanKey(planKey || null);
     },
     [dispatch, persistManualPlanBinding, savedPlans],

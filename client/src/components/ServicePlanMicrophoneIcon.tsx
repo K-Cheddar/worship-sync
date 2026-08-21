@@ -94,7 +94,7 @@ export const ServicePlanMicrophoneIcon = ({
       aria-hidden
     >
       {/* `text-current` opts out of menu/select `[&_svg:not([class*='text-'])]` defaults */}
-      <Icon className="size-[65%] text-current" style={{ color: ink }} />
+      <Icon className="size-[90%] text-current" style={{ color: ink }} />
     </span>
   );
 };

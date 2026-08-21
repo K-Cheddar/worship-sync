@@ -77,4 +77,41 @@ describe("WhosServingPanel", () => {
       screen.getByRole("button", { name: `Details for ${longName}` }),
     ).toBeInTheDocument();
   });
+
+  it("opens a profile image in a viewport-constrained modal", async () => {
+    const user = userEvent.setup();
+    const imageUrl = "https://example.com/profile.jpg";
+    const teamsWithImage: TeamsAssignmentSummaryTeamGroup[] = [
+      {
+        ...assignmentTeams[0],
+        filled: [
+          {
+            ...assignmentTeams[0].filled[0],
+            memberProfileImageUrl: imageUrl,
+          },
+        ],
+      },
+    ];
+
+    render(
+      <WhosServingPanel
+        assignmentTeams={teamsWithImage}
+        onOpenSchedule={jest.fn()}
+        microphones={microphones}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: `View profile image of ${longName}` }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: `${longName} profile image`,
+    });
+    expect(within(dialog).getByRole("img", { name: `${longName} profile` }))
+      .toHaveClass("max-h-[calc(100vh-8rem)]", "max-w-[calc(100vw-2rem)]");
+
+    await user.click(within(dialog).getByRole("button", { name: "Close modal" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

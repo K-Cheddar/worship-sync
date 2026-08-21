@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { ChevronDown, LocateFixed, Mic2, Moon, Radio, RefreshCw, Sun } from "lucide-react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
+import ProfileImagePreview from "../components/ProfileImagePreview/ProfileImagePreview";
 import Select from "../components/Select/Select";
 import ServicePlanRolePicker from "../components/ServicePlanRolePicker";
 import ServiceFlowRichText from "../components/ServiceFlowRichText/ServiceFlowRichText";
@@ -180,17 +181,17 @@ const PublicServingTeamsPanel = ({
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     {member.profileImageUrl ? (
-                      <img
-                        src={member.profileImageUrl}
-                        alt=""
-                        className="size-9 shrink-0 rounded-full object-cover"
+                      <ProfileImagePreview
+                        imageUrl={member.profileImageUrl}
+                        memberName={member.memberName}
+                        className="size-16"
                       />
                     ) : null}
                     <span className={cn("min-w-0 truncate text-xs font-medium", theme === "light" ? "text-slate-900" : "text-neutral-100")}>
                       {member.memberName}
                     </span>
                   </div>
-                  <span className={cn("shrink-0 text-[11px]", theme === "light" ? "text-slate-700" : "text-neutral-400")}>
+                  <span className={cn("shrink-0 text-xs", theme === "light" ? "text-slate-800" : "text-neutral-300")}>
                     {member.positionName}
                   </span>
                 </div>
@@ -493,40 +494,40 @@ const ServicePublicView = ({
       reconnecting: "text-slate-500",
     }
     : isGeneralView
-    ? {
-      page: "bg-neutral-950 text-neutral-100",
-      headerCard: "border-neutral-700/80 bg-neutral-900/95",
-      headerRule: "border-neutral-700/80",
-      churchName: "text-neutral-100",
-      meta: "text-neutral-400",
-      sectionTitle: "text-neutral-100",
-      list: "border-neutral-700 bg-neutral-900",
-      itemBorder: "border-neutral-700/80",
-      time: "text-neutral-300",
-      duration: "text-neutral-500",
-      title: "text-neutral-100",
-      credit: "text-neutral-400",
-      creditName: "text-neutral-300",
-      past: "bg-neutral-950/40 text-neutral-400",
-      reconnecting: "text-neutral-400",
-    }
-    : {
-      page: "bg-neutral-950 text-neutral-100",
-      headerCard: "border-neutral-700/80 bg-neutral-900/95",
-      headerRule: "border-neutral-700/80",
-      churchName: "text-neutral-400",
-      meta: "text-neutral-400",
-      sectionTitle: "text-neutral-400",
-      list: "border-neutral-700 bg-neutral-900",
-      itemBorder: "border-neutral-700/80",
-      time: "text-neutral-300",
-      duration: "text-neutral-500",
-      title: "text-neutral-100",
-      credit: "text-neutral-400",
-      creditName: "text-neutral-300",
-      past: "bg-neutral-950/40 text-neutral-400",
-      reconnecting: "text-neutral-400",
-    };
+      ? {
+        page: "bg-neutral-950 text-neutral-100",
+        headerCard: "border-neutral-700/80 bg-neutral-900/95",
+        headerRule: "border-neutral-700/80",
+        churchName: "text-neutral-100",
+        meta: "text-neutral-400",
+        sectionTitle: "text-neutral-100",
+        list: "border-neutral-700 bg-neutral-900",
+        itemBorder: "border-neutral-700/80",
+        time: "text-neutral-300",
+        duration: "text-neutral-500",
+        title: "text-neutral-100",
+        credit: "text-neutral-400",
+        creditName: "text-neutral-300",
+        past: "bg-neutral-950/40 text-neutral-400",
+        reconnecting: "text-neutral-400",
+      }
+      : {
+        page: "bg-neutral-950 text-neutral-100",
+        headerCard: "border-neutral-700/80 bg-neutral-900/95",
+        headerRule: "border-neutral-700/80",
+        churchName: "text-neutral-400",
+        meta: "text-neutral-400",
+        sectionTitle: "text-neutral-400",
+        list: "border-neutral-700 bg-neutral-900",
+        itemBorder: "border-neutral-700/80",
+        time: "text-neutral-300",
+        duration: "text-neutral-500",
+        title: "text-neutral-100",
+        credit: "text-neutral-400",
+        creditName: "text-neutral-300",
+        past: "bg-neutral-950/40 text-neutral-400",
+        reconnecting: "text-neutral-400",
+      };
   const churchNameBrandStyle = isGeneralView && churchSecondaryColor
     ? { color: churchSecondaryColor }
     : undefined;
@@ -544,305 +545,305 @@ const ServicePublicView = ({
       )}>
         <div className={cn(hasServingTeams && "lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start lg:gap-4")}>
           <div className="min-w-0">
-        <header className={cn(
-          embedded ? "pb-3" : cn(
-            "-mx-3 border-b px-3 pb-3 pt-1 sm:-mx-5 sm:px-5",
-            theme === "light" ? "border-slate-200" : "border-neutral-800/90",
-          ),
-        )}>
-          <div className={cn("rounded-xl p-3 shadow-lg sm:p-4", chrome.headerCard)}>
-            <div className="flex items-start gap-3">
-              <ChurchLogoImg
-                src={snapshot.churchLogoUrl || ""}
-                alt=""
-                variant="board-attendee"
-                className="!mt-0 !size-11 !rounded-md sm:!size-12"
-              />
-              <div className="min-w-0 flex-1">
-                {snapshot.churchName ? (
-                  <p
-                    className={cn("text-xs font-medium", chrome.churchName)}
-                    style={churchNameBrandStyle}
-                  >
-                    {snapshot.churchName}
-                  </p>
-                ) : null}
-                <h1 className="text-lg font-bold leading-snug tracking-tight sm:text-xl">{service.title}</h1>
-                <p className={cn("mt-0.5 text-xs sm:text-sm", chrome.meta)}>
-                  {formatServiceDate(service.startsAt, service.timezone)} · starts {formatServiceTime(Date.parse(service.startsAt), service.timezone)}
-                </p>
-              </div>
-              <Button
-                variant="none"
-                svg={theme === "dark" ? Sun : Moon}
-                iconSize="sm"
-                className={cn(
-                  "shrink-0 rounded-full border p-2",
-                  theme === "light"
-                    ? "border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                    : "border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white",
-                )}
-                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
-              />
-            </div>
+            <header className={cn(
+              embedded ? "pb-3" : cn(
+                "-mx-3 border-b px-3 pb-3 pt-1 sm:-mx-5 sm:px-5",
+                theme === "light" ? "border-slate-200" : "border-neutral-800/90",
+              ),
+            )}>
+              <div className={cn("rounded-xl p-3 shadow-lg sm:p-4", chrome.headerCard)}>
+                <div className="flex items-start gap-3">
+                  <ChurchLogoImg
+                    src={snapshot.churchLogoUrl || ""}
+                    alt=""
+                    variant="board-attendee"
+                    className="!mt-0 !size-11 !rounded-md sm:!size-12"
+                  />
+                  <div className="min-w-0 flex-1">
+                    {snapshot.churchName ? (
+                      <p
+                        className={cn("text-xs font-medium", chrome.churchName)}
+                        style={churchNameBrandStyle}
+                      >
+                        {snapshot.churchName}
+                      </p>
+                    ) : null}
+                    <h1 className="text-lg font-bold leading-snug tracking-tight sm:text-xl">{service.title}</h1>
+                    <p className={cn("mt-0.5 text-xs sm:text-sm", chrome.meta)}>
+                      {formatServiceDate(service.startsAt, service.timezone)} · starts {formatServiceTime(Date.parse(service.startsAt), service.timezone)}
+                    </p>
+                  </div>
+                  <Button
+                    variant="none"
+                    svg={theme === "dark" ? Sun : Moon}
+                    iconSize="sm"
+                    className={cn(
+                      "shrink-0 rounded-full border p-2",
+                      theme === "light"
+                        ? "border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                        : "border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white",
+                    )}
+                    aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                    onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+                  />
+                </div>
 
-            <div className={cn("mt-3 flex flex-wrap items-center gap-2 border-t pt-3", chrome.headerRule)}>
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                  statusBadgeClassName,
-                )}
-              >
-                <Radio className="size-3.5" aria-hidden="true" /> {statusLabel}
-              </span>
-              {showTeamNotesFilter || showRoleNotesFilter ? (
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none">
-                  <span className={cn("shrink-0 text-xs font-medium", theme === "light" ? "text-slate-500" : "text-neutral-400")}>
-                    Show notes for
+                <div className={cn("mt-3 flex flex-wrap items-center gap-2 border-t pt-3", chrome.headerRule)}>
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                      statusBadgeClassName,
+                    )}
+                  >
+                    <Radio className="size-3.5" aria-hidden="true" /> {statusLabel}
                   </span>
-                  {showTeamNotesFilter ? (
-                    <Select
-                      label="Team notes"
-                      hideLabel
-                      className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
-                      selectClassName="min-h-0 py-1 text-xs"
-                      labelFontSize="text-xs"
-                      value={selectedTeam || "__everyone__"}
-                      onChange={handleTeamNotesFilterChange}
-                      textColor={theme === "light" ? "text-slate-900" : undefined}
-                      backgroundColor={theme === "light" ? "bg-slate-50" : undefined}
-                      contentBackgroundColor={theme === "light" ? "bg-white" : undefined}
-                      contentTextColor={theme === "light" ? "text-slate-900" : undefined}
-                      options={[
-                        { value: "__everyone__", label: "All teams" },
-                        ...teamLabels.map((team) => ({ value: team, label: team })),
-                      ]}
-                    />
+                  {showTeamNotesFilter || showRoleNotesFilter ? (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none">
+                      <span className={cn("shrink-0 text-xs font-medium", theme === "light" ? "text-slate-500" : "text-neutral-400")}>
+                        Show notes for
+                      </span>
+                      {showTeamNotesFilter ? (
+                        <Select
+                          label="Team notes"
+                          hideLabel
+                          className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
+                          selectClassName="min-h-0 py-1 text-xs"
+                          labelFontSize="text-xs"
+                          value={selectedTeam || "__everyone__"}
+                          onChange={handleTeamNotesFilterChange}
+                          textColor={theme === "light" ? "text-slate-900" : undefined}
+                          backgroundColor={theme === "light" ? "bg-slate-50" : undefined}
+                          contentBackgroundColor={theme === "light" ? "bg-white" : undefined}
+                          contentTextColor={theme === "light" ? "text-slate-900" : undefined}
+                          options={[
+                            { value: "__everyone__", label: "All teams" },
+                            ...teamLabels.map((team) => ({ value: team, label: team })),
+                          ]}
+                        />
+                      ) : null}
+                      {showRoleNotesFilter ? (
+                        <ServicePlanRolePicker
+                          value={selectedRole}
+                          onValueChange={setSelectedRole}
+                          options={roleOptions}
+                          teamFilterStorageKey="worshipsyncServicePublicRoleTeamFilter"
+                          lockedTeamName={selectedTeam || undefined}
+                          ariaLabel="Filter role notes"
+                          label="Role notes"
+                          className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
-                  {showRoleNotesFilter ? (
-                    <ServicePlanRolePicker
-                      value={selectedRole}
-                      onValueChange={setSelectedRole}
-                      options={roleOptions}
-                      teamFilterStorageKey="worshipsyncServicePublicRoleTeamFilter"
-                      lockedTeamName={selectedTeam || undefined}
-                      ariaLabel="Filter role notes"
-                      label="Role notes"
-                      className="min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none"
-                    />
+                  {connection === "reconnecting" ? (
+                    <span className={cn("text-xs", chrome.reconnecting)} aria-live="polite">
+                      Updating…
+                    </span>
                   ) : null}
                 </div>
-              ) : null}
-              {connection === "reconnecting" ? (
-                <span className={cn("text-xs", chrome.reconnecting)} aria-live="polite">
-                  Updating…
-                </span>
-              ) : null}
-            </div>
 
-            {progress?.current ? (
-              <div className={cn("mt-2 rounded-lg border px-3 py-2", theme === "light" ? "border-emerald-200 bg-emerald-50" : "border-emerald-500/25 bg-emerald-500/5")} aria-label="Live service item">
-                <p className={cn("text-[11px] font-bold uppercase tracking-[0.14em]", theme === "light" ? "text-emerald-700" : "text-emerald-300/90")}>Now</p>
-                <p className={cn("text-sm font-semibold", theme === "light" ? "text-emerald-950" : "text-neutral-50")}>{progress.current.item.title}</p>
-                {progress.next ? (
-                  <p className={cn("mt-0.5 text-xs", chrome.meta)}>
-                    Up next: <span className={cn("font-medium", chrome.title)}>{progress.next.item.title}</span>
-                  </p>
+                {progress?.current ? (
+                  <div className={cn("mt-2 rounded-lg border px-3 py-2", theme === "light" ? "border-emerald-200 bg-emerald-50" : "border-emerald-500/25 bg-emerald-500/5")} aria-label="Live service item">
+                    <p className={cn("text-[11px] font-bold uppercase tracking-[0.14em]", theme === "light" ? "text-emerald-700" : "text-emerald-300/90")}>Now</p>
+                    <p className={cn("text-sm font-semibold", theme === "light" ? "text-emerald-950" : "text-neutral-50")}>{progress.current.item.title}</p>
+                    {progress.next ? (
+                      <p className={cn("mt-0.5 text-xs", chrome.meta)}>
+                        Up next: <span className={cn("font-medium", chrome.title)}>{progress.next.item.title}</span>
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            ) : null}
-          </div>
-        </header>
+            </header>
 
-        {error ? (
-          <p className="mt-3 text-sm text-amber-200" role="status">
-            Showing the latest available service. Updates will reconnect automatically.
-            {onRefresh ? (
-              <>
-                {" "}
-                <Button
-                  variant="tertiary"
-                  svg={RefreshCw}
-                  iconSize="xs"
-                  className="inline h-auto min-h-0 px-0 py-0 text-amber-100"
-                  onClick={() => onRefresh()}
-                >
-                  Refresh
-                </Button>
-              </>
-            ) : null}
-          </p>
-        ) : null}
-
-        <div className="mt-4 space-y-4">
-          {service.sections.map((section) => (
-            <section
-              key={section.id}
-              aria-labelledby={section.title ? `service-section-${section.id}` : undefined}
-            >
-              {section.title ? (
-                <h2
-                  id={`service-section-${section.id}`}
-                  className={cn(
-                    "mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em]",
-                    chrome.sectionTitle,
-                  )}
-                  style={sectionTitleBrandStyle}
-                >
-                  {section.title}
-                </h2>
-              ) : null}
-              <ol className={cn("overflow-hidden rounded-xl border shadow-lg", chrome.list)}>
-                {section.items.map((item) => {
-                  const timed = progress?.items.find((candidate) => candidate.item.id === item.id);
-                  const isCurrent = progress?.current?.item.id === item.id;
-                  const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
-                  const visibleAudienceNotes = !isGeneralView
-                    ? visibleAudienceNotesForItem(item, selectedTeam, selectedRole)
-                    : [];
-                  const visibleMicrophoneAssignments = !isGeneralView
-                    ? visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole)
-                    : [];
-                  const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole);
-                  const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
-                  const durationLabel = item.durationSeconds > 0
-                    ? formatServicePlanDuration(item)
-                    : "";
-                  return (
-                    <li
-                      key={item.id}
-                      id={servicePublicItemDomId(item.id)}
-                      className={cn(
-                        "scroll-mt-16 border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
-                        chrome.itemBorder,
-                        !isCurrent && !churchPrimaryColor && "border-l-transparent",
-                        isCurrent && (theme === "light" ? "border-l-emerald-600 bg-emerald-50 ring-1 ring-inset ring-emerald-200" : "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20"),
-                        isPast && chrome.past,
-                      )}
-                      style={
-                        !isCurrent && churchPrimaryColor
-                          ? { borderLeftColor: churchPrimaryColor }
-                          : undefined
-                      }
+            {error ? (
+              <p className="mt-3 text-sm text-amber-200" role="status">
+                Showing the latest available service. Updates will reconnect automatically.
+                {onRefresh ? (
+                  <>
+                    {" "}
+                    <Button
+                      variant="tertiary"
+                      svg={RefreshCw}
+                      iconSize="xs"
+                      className="inline h-auto min-h-0 px-0 py-0 text-amber-100"
+                      onClick={() => onRefresh()}
                     >
-                      <div className="flex items-baseline gap-2.5 sm:gap-3">
-                        <div className="w-[4.75rem] shrink-0 sm:w-[5.25rem]">
-                          <time
-                            className={cn(
-                              "block text-xs font-medium tabular-nums sm:text-sm",
-                              isCurrent ? (theme === "light" ? "text-emerald-700" : "text-emerald-300") : chrome.time,
-                            )}
-                          >
-                            {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
-                          </time>
-                          {durationLabel ? (
-                            <p className={cn("mt-0.5 text-[11px] tabular-nums", chrome.duration)}>
-                              {durationLabel}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                            <h3
-                              className={cn(
-                                "text-sm font-semibold leading-snug sm:text-[15px]",
-                                chrome.title,
-                              )}
-                            >
-                              {item.title}
-                            </h3>
-                            {isCurrent ? (
-                              <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "bg-emerald-100 text-emerald-700" : "bg-emerald-400/15 text-emerald-200")}>
-                                Live
-                              </span>
-                            ) : null}
-                            {item.creditName ? (
-                              <p className={cn("ml-auto text-xs", chrome.credit)}>
-                                Led by{" "}
-                                <span className={cn("font-medium", chrome.creditName)}>
-                                  {item.creditName}
-                                </span>
-                              </p>
-                            ) : null}
-                          </div>
+                      Refresh
+                    </Button>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
 
-                          {hasNotes ? (
-                            <div className="mt-1">
-                              <Button
-                                variant="tertiary"
-                                svg={ChevronDown}
-                                iconSize="xs"
+            <div className="mt-4 space-y-4">
+              {service.sections.map((section) => (
+                <section
+                  key={section.id}
+                  aria-labelledby={section.title ? `service-section-${section.id}` : undefined}
+                >
+                  {section.title ? (
+                    <h2
+                      id={`service-section-${section.id}`}
+                      className={cn(
+                        "mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.14em]",
+                        chrome.sectionTitle,
+                      )}
+                      style={sectionTitleBrandStyle}
+                    >
+                      {section.title}
+                    </h2>
+                  ) : null}
+                  <ol className={cn("overflow-hidden rounded-xl border shadow-lg", chrome.list)}>
+                    {section.items.map((item) => {
+                      const timed = progress?.items.find((candidate) => candidate.item.id === item.id);
+                      const isCurrent = progress?.current?.item.id === item.id;
+                      const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
+                      const visibleAudienceNotes = !isGeneralView
+                        ? visibleAudienceNotesForItem(item, selectedTeam, selectedRole)
+                        : [];
+                      const visibleMicrophoneAssignments = !isGeneralView
+                        ? visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole)
+                        : [];
+                      const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole);
+                      const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
+                      const durationLabel = item.durationSeconds > 0
+                        ? formatServicePlanDuration(item)
+                        : "";
+                      return (
+                        <li
+                          key={item.id}
+                          id={servicePublicItemDomId(item.id)}
+                          className={cn(
+                            "scroll-mt-16 border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
+                            chrome.itemBorder,
+                            !isCurrent && !churchPrimaryColor && "border-l-transparent",
+                            isCurrent && (theme === "light" ? "border-l-emerald-600 bg-emerald-50 ring-1 ring-inset ring-emerald-200" : "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20"),
+                            isPast && chrome.past,
+                          )}
+                          style={
+                            !isCurrent && churchPrimaryColor
+                              ? { borderLeftColor: churchPrimaryColor }
+                              : undefined
+                          }
+                        >
+                          <div className="flex items-baseline gap-2.5 sm:gap-3">
+                            <div className="w-[4.75rem] shrink-0 sm:w-[5.25rem]">
+                              <time
                                 className={cn(
-                                  "h-auto min-h-0 px-0 py-0 text-xs",
-                                  theme === "light" ? "text-slate-500 hover:text-slate-900" : "text-neutral-400 hover:text-neutral-200",
-                                  notesExpanded && "[&_svg]:rotate-180",
+                                  "block text-xs font-medium tabular-nums sm:text-sm",
+                                  isCurrent ? (theme === "light" ? "text-emerald-700" : "text-emerald-300") : chrome.time,
                                 )}
-                                aria-expanded={notesExpanded}
-                                onClick={() => toggleNotes(item.id)}
                               >
-                                {selectedTeam || selectedRole ? "Filtered notes" : "Notes"}
-                              </Button>
-                              {notesExpanded ? (
-                                <div className={cn("mt-1.5 space-y-2 border-l pl-2.5", theme === "light" ? "border-slate-300 text-slate-900" : "border-neutral-600/70 text-white")}>
-                                  {item.notes.blocks.length ? (
-                                    <div>
-                                      {visibleAudienceNotes.length || selectedTeam || selectedRole ? (
-                                        <p className={cn("mb-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
-                                          Shared notes
-                                        </p>
-                                      ) : null}
-                                      <ServiceFlowRichText
-                                        document={item.notes}
-                                        className={theme === "light" ? "text-slate-900" : undefined}
-                                      />
-                                    </div>
-                                  ) : null}
-                                  {visibleAudienceNotes.map((teamNote) => (
-                                    <div key={`${teamNote.scope || "team"}:${teamNote.positionId || teamNote.label}`}>
-                                      <p className={cn("mb-0.5 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
-                                        {teamNote.label}{teamNote.scope === "role" ? " role" : ""} notes
-                                      </p>
-                                      <ServiceFlowRichText
-                                        document={teamNote.notes}
-                                        className={theme === "light" ? "text-slate-900" : undefined}
-                                      />
-                                    </div>
-                                  ))}
-                                  {visibleMicrophoneAssignments.length ? (
-                                    <div>
-                                      <p className={cn("mb-1 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
-                                        Microphones
-                                      </p>
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {visibleMicrophoneAssignments.map((assignment) => (
-                                          <ServicePlanMicrophoneChip
-                                            key={assignment.microphone.id}
-                                            microphone={assignment.microphone}
-                                            className="gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
-                                            iconClassName="size-4"
-                                            details={[
-                                              assignment.holderName || "",
-                                            ]}
-                                            theme={theme}
+                                {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
+                              </time>
+                              {durationLabel ? (
+                                <p className={cn("mt-0.5 text-[11px] tabular-nums", chrome.duration)}>
+                                  {durationLabel}
+                                </p>
+                              ) : null}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                <h3
+                                  className={cn(
+                                    "text-sm font-semibold leading-snug sm:text-[15px]",
+                                    chrome.title,
+                                  )}
+                                >
+                                  {item.title}
+                                </h3>
+                                {isCurrent ? (
+                                  <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "bg-emerald-100 text-emerald-700" : "bg-emerald-400/15 text-emerald-200")}>
+                                    Live
+                                  </span>
+                                ) : null}
+                                {item.creditName ? (
+                                  <p className={cn("ml-auto text-xs", chrome.credit)}>
+                                    Led by{" "}
+                                    <span className={cn("font-medium", chrome.creditName)}>
+                                      {item.creditName}
+                                    </span>
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              {hasNotes ? (
+                                <div className="mt-1">
+                                  <Button
+                                    variant="tertiary"
+                                    svg={ChevronDown}
+                                    iconSize="xs"
+                                    className={cn(
+                                      "h-auto min-h-0 px-0 py-0 text-xs",
+                                      theme === "light" ? "text-slate-500 hover:text-slate-900" : "text-neutral-400 hover:text-neutral-200",
+                                      notesExpanded && "[&_svg]:rotate-180",
+                                    )}
+                                    aria-expanded={notesExpanded}
+                                    onClick={() => toggleNotes(item.id)}
+                                  >
+                                    {selectedTeam || selectedRole ? "Filtered notes" : "Notes"}
+                                  </Button>
+                                  {notesExpanded ? (
+                                    <div className={cn("mt-1.5 space-y-2 border-l pl-2.5", theme === "light" ? "border-slate-300 text-slate-900" : "border-neutral-600/70 text-white")}>
+                                      {item.notes.blocks.length ? (
+                                        <div>
+                                          {visibleAudienceNotes.length || selectedTeam || selectedRole ? (
+                                            <p className={cn("mb-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
+                                              Shared notes
+                                            </p>
+                                          ) : null}
+                                          <ServiceFlowRichText
+                                            document={item.notes}
+                                            className={theme === "light" ? "text-slate-900" : undefined}
                                           />
-                                        ))}
-                                      </div>
+                                        </div>
+                                      ) : null}
+                                      {visibleAudienceNotes.map((teamNote) => (
+                                        <div key={`${teamNote.scope || "team"}:${teamNote.positionId || teamNote.label}`}>
+                                          <p className={cn("mb-0.5 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
+                                            {teamNote.label}{teamNote.scope === "role" ? " role" : ""} notes
+                                          </p>
+                                          <ServiceFlowRichText
+                                            document={teamNote.notes}
+                                            className={theme === "light" ? "text-slate-900" : undefined}
+                                          />
+                                        </div>
+                                      ))}
+                                      {visibleMicrophoneAssignments.length ? (
+                                        <div>
+                                          <p className={cn("mb-1 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
+                                            Microphones
+                                          </p>
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {visibleMicrophoneAssignments.map((assignment) => (
+                                              <ServicePlanMicrophoneChip
+                                                key={assignment.microphone.id}
+                                                microphone={assignment.microphone}
+                                                className="gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
+                                                iconClassName="size-4"
+                                                details={[
+                                                  assignment.holderName || "",
+                                                ]}
+                                                theme={theme}
+                                              />
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null}
                                     </div>
                                   ) : null}
                                 </div>
                               ) : null}
                             </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            </section>
-          ))}
-        </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              ))}
+            </div>
           </div>
           {hasServingTeams ? (
             <div className="mt-4 self-start lg:sticky lg:top-4 lg:mt-0">

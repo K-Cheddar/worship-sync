@@ -17,6 +17,7 @@ const detailedSnapshot: PublicServiceFlowSnapshot = {
           positionId: "lead",
           positionName: "Lead vocal",
           memberName: "Avery Stone",
+          profileImageUrl: "https://example.com/avery.jpg",
           microphones: [
             { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
           ],
@@ -92,6 +93,21 @@ describe("ServicePublicView microphone assignments", () => {
     expect(within(panel).getByText("Avery Stone")).toBeInTheDocument();
     expect(within(panel).getByText("Lead vocal")).toBeInTheDocument();
     expect(within(panel).getByText("Blue")).toBeInTheDocument();
+  });
+
+  it("opens a serving member image in a viewport-constrained modal", async () => {
+    const user = userEvent.setup();
+    render(<ServicePublicView snapshot={detailedSnapshot} embedded />);
+
+    await user.click(
+      screen.getByRole("button", { name: "View profile image of Avery Stone" }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Avery Stone profile image",
+    });
+    expect(within(dialog).getByRole("img", { name: "Avery Stone profile" }))
+      .toHaveClass("max-h-[calc(100vh-8rem)]", "max-w-[calc(100vw-2rem)]");
   });
 
   it("keeps scheduled teams visible when plan items have no microphone assignments", () => {

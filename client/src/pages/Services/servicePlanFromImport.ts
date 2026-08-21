@@ -36,6 +36,15 @@ const AMBIGUOUS_SONG_WORDS = /\b(praise|worship)\b/;
 const NON_SONG_PHRASES =
   /\bcall to \w+|\bpraise report\b|\bworship (leader|cent(er|re))\b/;
 
+/** Service Planning stores every person in one free-text Led by cell. Turn the
+ * separators its printouts use into distinct assignee slots while retaining
+ * the untouched source string for refresh comparisons and overlay rules. */
+export const splitServicePlanningLedByNames = (ledBy: string): string[] =>
+  ledBy
+    .split(/\s*(?:,|;|\n|\s+&\s+|\s+and\s+)\s*/i)
+    .map((name) => name.trim())
+    .filter(Boolean);
+
 /** Whether a row names a song, given that "praise"/"worship" alone don't. */
 const readsAsSong = (text: string): boolean =>
   SONG_WORDS.test(text) ||
@@ -73,6 +82,7 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
     });
   const rawTitle = row.title?.trim() || row.elementType?.trim() || "Untitled";
   const ledBy = row.ledBy?.trim();
+  const assigneeNames = ledBy ? splitServicePlanningLedByNames(ledBy) : [];
 
   const element: ServicePlanElement = {
     id: generateRandomId(),
@@ -82,9 +92,12 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
     ...(row.elementType?.trim()
       ? { sourceElementTypeRaw: row.elementType.trim() }
       : {}),
-    ...(ledBy
+    ...(ledBy && assigneeNames.length
       ? {
-        assignees: [{ id: generateRandomId(), name: ledBy }],
+        assignees: assigneeNames.map((name) => ({
+          id: generateRandomId(),
+          name,
+        })),
         sourceLedByRaw: ledBy,
       }
       : {}),
