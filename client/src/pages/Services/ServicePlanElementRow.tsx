@@ -154,8 +154,8 @@ export const SERVICE_PLAN_COL = {
   title: "min-w-0 flex-1",
   assignedView: "hidden w-28 shrink-0 md:block lg:w-36",
   assignedEdit: "md:w-36 md:shrink-0",
-  /** Content-sized in view so empty live slots do not steal title space. */
-  actionsView: "flex min-w-0 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
+  /** Fixed so the header and rows keep Assigned aligned with live controls. */
+  actionsView: "flex w-28 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
   /** Fixed so live/delete trailing controls do not shift Assigned. */
   actionsEdit: "flex w-28 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
 } as const;
@@ -1315,7 +1315,10 @@ const ServicePlanElementRow = ({
           disabled={!canEdit || publicLiveBusy}
           onClick={onMakePublicLive}
           aria-label={`Make ${itemLabel} live`}
-        />
+          title={`Make ${itemLabel} live`}
+        >
+          {isEditing ? null : "Make live"}
+        </Button>
       ) : null}
     </>
   );

@@ -14,29 +14,41 @@ import type {
  * sync lifecycle while it itself is on screen, so surfaces like the current
  * service workspace need their own lightweight subscription to see it.
  */
-export const useLiveOutlinePreview = (): ServiceItemType[] => {
+export const useLiveOutlinePreview = (): {
+  items: ServiceItemType[];
+  isLoading: boolean;
+} => {
   const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
   const [items, setItems] = useState<ServiceItemType[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const activeListIdRef = useRef<string | undefined>(undefined);
 
   const loadOutlineItems = useCallback(
     async (listId: string | undefined) => {
       if (!db || !cloud || !listId) {
         setItems([]);
+        setIsLoading(false);
         return;
       }
+      setIsLoading(true);
       try {
         const response: DBItemListDetails | undefined = await db.get(listId);
         setItems(formatItemList(response?.items || [], cloud));
       } catch {
         setItems([]);
+      } finally {
+        setIsLoading(false);
       }
     },
     [db, cloud],
   );
 
   const loadActiveList = useCallback(async () => {
-    if (!db) return;
+    if (!db || !cloud) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
     try {
       const response: ItemLists | undefined = await db.get("ItemLists");
       const activeId = response?.activeList?._id;
@@ -45,8 +57,9 @@ export const useLiveOutlinePreview = (): ServiceItemType[] => {
     } catch {
       activeListIdRef.current = undefined;
       setItems([]);
+      setIsLoading(false);
     }
-  }, [db, loadOutlineItems]);
+  }, [cloud, db, loadOutlineItems]);
 
   useEffect(() => {
     void loadActiveList();
@@ -75,5 +88,5 @@ export const useLiveOutlinePreview = (): ServiceItemType[] => {
 
   useGlobalBroadcast(handleExternalUpdate);
 
-  return items;
+  return { items, isLoading };
 };

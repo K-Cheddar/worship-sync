@@ -11,7 +11,10 @@ const { shouldExcludeLyricsImport } = lyricsImportFilter;
 const LRCLIB_BASE_URL = "https://lrclib.net/api";
 const GENIUS_API_BASE_URL = "https://api.genius.com";
 const GENIUS_UNOFFICIAL_API_BASE_URL = "https://genius.com/api";
-const GENIUS_RESULT_LIMIT = 5;
+const LYRICS_OVH_API_BASE_URL = "https://api.lyrics.ovh";
+const GENIUS_RESULT_LIMIT = 3;
+const LYRICS_OVH_RESULT_LIMIT = 3;
+const PROVIDER_SEARCH_TIMEOUT_MS = 5000;
 const GENIUS_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36";
 
@@ -79,12 +82,16 @@ const normalizeComparableText = (value) => {
 };
 
 const normalizeLyricsImportTrack = (track) => {
+  const requestedSource = getStringValue(track.source);
   const source =
-    getStringValue(track.source) === "genius" ? "genius" : "lrclib";
+    requestedSource === "genius" || requestedSource === "lyricsovh"
+      ? requestedSource
+      : "lrclib";
   const lrclibId = Number(
     track.lrclibId ?? track.id ?? track.trackId ?? track.track_id ?? 0,
   );
   const geniusId = Number(track.geniusId ?? 0);
+  const lyricsOvhKey = getStringValue(track.lyricsOvhKey);
   const trackName =
     getStringValue(track.trackName) ??
     getStringValue(track.track_name) ??
@@ -102,7 +109,8 @@ const normalizeLyricsImportTrack = (track) => {
     !trackName ||
     !artistName ||
     (source === "lrclib" && !hasValidLrclibId) ||
-    (source === "genius" && !hasValidGeniusId)
+    (source === "genius" && !hasValidGeniusId) ||
+    (source === "lyricsovh" && !lyricsOvhKey)
   ) {
     throw new Error("Invalid lyrics import track payload");
   }
@@ -120,6 +128,7 @@ const normalizeLyricsImportTrack = (track) => {
     source,
     ...(hasValidLrclibId ? { lrclibId } : {}),
     ...(hasValidGeniusId ? { geniusId } : {}),
+    ...(lyricsOvhKey ? { lyricsOvhKey } : {}),
     geniusUrl: getStringValue(track.geniusUrl) ?? getStringValue(track.url),
     trackName,
     artistName,
@@ -218,30 +227,38 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     );
   };
 
-  const searchGeniusSongs = async (query) => {
+  const searchGeniusSongs = async (query, { signal } = {}) => {
     const sanitizedQuery = sanitizeGeniusQuery(query);
     const encodedQuery = encodeURIComponent(sanitizedQuery);
     const url = hasAccessToken
       ? `${GENIUS_API_BASE_URL}/search?q=${encodedQuery}`
-      : `${GENIUS_UNOFFICIAL_API_BASE_URL}/search/song?per_page=5&q=${encodedQuery}`;
+      : `${GENIUS_UNOFFICIAL_API_BASE_URL}/search/song?per_page=${GENIUS_RESULT_LIMIT}&q=${encodedQuery}`;
 
     try {
-      const response = await axios.get(url, {
-        headers: getGeniusSearchHeaders(),
-        timeout: 10000,
-      });
+      const response = await axios.get(
+        url,
+        withAbortSignal(
+          {
+            headers: getGeniusSearchHeaders(),
+            timeout: PROVIDER_SEARCH_TIMEOUT_MS,
+          },
+          signal,
+        ),
+      );
 
       return normalizeGeniusSearchHits(response.data)
         .filter((hit) => hit?.type === "song" && hit?.result)
         .map((hit) => hit.result);
     } catch (error) {
-      console.warn("Genius search request failed:", {
-        url,
-        hasAccessToken,
-        message: error.message,
-        status: error.response?.status,
-        code: error.code,
-      });
+      if (!isCanceledRequest(error)) {
+        console.warn("Genius search request failed:", {
+          url,
+          hasAccessToken,
+          message: error.message,
+          status: error.response?.status,
+          code: error.code,
+        });
+      }
       throw error;
     }
   };
@@ -303,22 +320,30 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     return stripGeniusLyricsPreamble(normalizedLyrics, title);
   };
 
-  const fetchGeniusLyrics = async (song) => {
+  const fetchGeniusLyrics = async (song, { signal } = {}) => {
     let response;
     try {
-      response = await axios.get(song.url, {
-        headers: {
-          "User-Agent": GENIUS_USER_AGENT,
-        },
-        timeout: 10000,
-      });
+      response = await axios.get(
+        song.url,
+        withAbortSignal(
+          {
+            headers: {
+              "User-Agent": GENIUS_USER_AGENT,
+            },
+            timeout: PROVIDER_SEARCH_TIMEOUT_MS,
+          },
+          signal,
+        ),
+      );
     } catch (error) {
-      console.warn("Genius lyrics page request failed:", {
-        url: song?.url,
-        message: error.message,
-        status: error.response?.status,
-        code: error.code,
-      });
+      if (!isCanceledRequest(error)) {
+        console.warn("Genius lyrics page request failed:", {
+          url: song?.url,
+          message: error.message,
+          status: error.response?.status,
+          code: error.code,
+        });
+      }
       return null;
     }
 
@@ -363,10 +388,13 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     const seenTrackIds = new Set();
 
     return tracks.filter((track) => {
-      const trackKey =
-        track.source === "genius"
-          ? `genius:${track.geniusId ?? ""}`
-          : `lrclib:${track.lrclibId ?? ""}`;
+      const sourceIds = {
+        genius: track.geniusId,
+        lyricsovh: track.lyricsOvhKey,
+        lrclib: track.lrclibId,
+      };
+      const sourceId = sourceIds[track.source];
+      const trackKey = `${track.source}:${sourceId ?? ""}`;
 
       if (seenTrackIds.has(trackKey)) {
         return false;
@@ -377,16 +405,16 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     });
   };
 
-  const searchGeniusTracks = async (params) => {
+  const searchGeniusTracks = async (params, { signal } = {}) => {
     const query = buildGeniusQuery(params);
 
     if (!query) return [];
 
-    const songs = await searchGeniusSongs(query);
+    const songs = await searchGeniusSongs(query, { signal });
 
     const lyricsResults = await Promise.all(
       songs.slice(0, GENIUS_RESULT_LIMIT).map(async (song) => {
-        const plainLyrics = await fetchGeniusLyrics(song);
+        const plainLyrics = await fetchGeniusLyrics(song, { signal });
 
         if (!plainLyrics) {
           return null;
@@ -403,7 +431,62 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     return dedupeTracksBySourceId(lyricsResults.filter(Boolean));
   };
 
-  const isExactGeniusMatch = (track, params) => {
+  const searchLyricsOvhTracks = async (params, { signal } = {}) => {
+    const query = buildGeniusQuery(params);
+    if (!query) return [];
+
+    const suggestionResponse = await axios.get(
+      `${LYRICS_OVH_API_BASE_URL}/suggest/${encodeURIComponent(query)}`,
+      withAbortSignal({ timeout: PROVIDER_SEARCH_TIMEOUT_MS }, signal),
+    );
+    const suggestions = Array.isArray(suggestionResponse.data?.data)
+      ? suggestionResponse.data.data
+      : [];
+
+    const tracks = await Promise.all(
+      suggestions.slice(0, LYRICS_OVH_RESULT_LIMIT).map(async (suggestion) => {
+        const trackName = getStringValue(suggestion?.title);
+        const artistName = getStringValue(suggestion?.artist?.name);
+        if (!trackName || !artistName) return null;
+
+        try {
+          const lyricsResponse = await axios.get(
+            `${LYRICS_OVH_API_BASE_URL}/v1/${encodeURIComponent(artistName)}/${encodeURIComponent(trackName)}`,
+            withAbortSignal({ timeout: PROVIDER_SEARCH_TIMEOUT_MS }, signal),
+          );
+          const plainLyrics = getStringValue(lyricsResponse.data?.lyrics);
+          if (!plainLyrics) return null;
+
+          const track = normalizeLyricsImportTrack({
+            source: "lyricsovh",
+            lyricsOvhKey: `${artistName}::${trackName}`,
+            trackName,
+            artistName,
+            albumName: getStringValue(suggestion?.album?.title),
+            durationMs: suggestion?.duration,
+            plainLyrics,
+            syncedLyrics: null,
+          });
+          return shouldExcludeLyricsImport(track) ? null : track;
+        } catch (error) {
+          if (!isCanceledRequest(error) && !isLyricsOvhMiss(error)) {
+            console.warn("lyrics.ovh lyrics lookup failed:", {
+              trackName,
+              artistName,
+              message: error.message,
+              status: error.response?.status,
+              code: error.code,
+            });
+          }
+          return null;
+        }
+      }),
+    );
+
+    return dedupeTracksBySourceId(tracks.filter(Boolean));
+  };
+
+  const isExactLyricsMatch = (track, params) => {
     const expectedTrackName = normalizeComparableText(params.track_name);
     const expectedArtistName = normalizeComparableText(params.artist_name);
     const trackName = normalizeComparableText(track.trackName);
@@ -429,7 +512,16 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     }
 
     const tracks = await searchGeniusTracks(params);
-    return tracks.find((track) => isExactGeniusMatch(track, params)) ?? null;
+    return tracks.find((track) => isExactLyricsMatch(track, params)) ?? null;
+  };
+
+  const getLyricsOvhTrack = async (params) => {
+    if (!params.artist_name) {
+      return null;
+    }
+
+    const tracks = await searchLyricsOvhTracks(params);
+    return tracks.find((track) => isExactLyricsMatch(track, params)) ?? null;
   };
 
   const getLrclibTrack = async (params) => {
@@ -445,7 +537,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     return normalizeLyricsImportTrack(response.data);
   };
 
-  const searchLrclibTracks = async (params) => {
+  const searchLrclibTracks = async (params, { signal } = {}) => {
     const response = await axios.get(`${LRCLIB_BASE_URL}/search`, {
       params: {
         query: params.track_name,
@@ -454,7 +546,8 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
         album_name: params.album_name,
         duration: params.duration,
       },
-      timeout: 10000,
+      timeout: PROVIDER_SEARCH_TIMEOUT_MS,
+      ...(signal ? { signal } : {}),
     });
 
     return sortLyricsImportTracksByStructure(
@@ -462,11 +555,57 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     );
   };
 
+  const searchAllLyricsTracks = async (params, { includeGenius = true } = {}) => {
+    const providers = [
+      ...(includeGenius
+        ? [{ name: "Genius", search: searchGeniusTracks }]
+        : []),
+      { name: "LRCLIB", search: searchLrclibTracks },
+      { name: "lyrics.ovh", search: searchLyricsOvhTracks },
+    ];
+    const providerResults = await Promise.all(
+      providers.map(async (provider) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(
+          () => controller.abort(),
+          PROVIDER_SEARCH_TIMEOUT_MS,
+        );
+
+        try {
+          return await provider.search(params, { signal: controller.signal });
+        } catch (error) {
+          console.warn(`${provider.name} lyrics search failed:`, {
+            message: error.message,
+            status: error.response?.status,
+            code: error.code,
+          });
+          return [];
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }),
+    );
+
+    return providerResults.flat();
+  };
+
   return {
     getGeniusTrack,
     getLrclibRequestParams,
     getLrclibTrack,
+    getLyricsOvhTrack,
+    searchAllLyricsTracks,
     searchGeniusTracks,
     searchLrclibTracks,
+    searchLyricsOvhTracks,
   };
 };
+
+const withAbortSignal = (config, signal) => {
+  if (!signal) return config;
+  return { ...config, signal };
+};
+
+const isCanceledRequest = (error) => error?.code === "ERR_CANCELED";
+
+const isLyricsOvhMiss = (error) => error?.response?.status === 404;

@@ -44,6 +44,9 @@ import { resolveLrclibImport } from "../../api/lrclib";
 import {
   createSongMetadataFromLrclib,
   getImportableLyricsFromTrack,
+  getLyricsImportSourceBadgeClass,
+  getLyricsImportSourceLabel,
+  sortLyricsImportTracksBySource,
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { cn } from "@/utils/cnHelper";
@@ -199,6 +202,11 @@ const CreateItem = ({
 
   const showLyricsImportPanel =
     selectedType === "song" && lyricsImportCandidates.length > 0;
+
+  const orderedLyricsImportCandidates = useMemo(
+    () => sortLyricsImportTracksBySource(lyricsImportCandidates),
+    [lyricsImportCandidates],
+  );
 
   const dismissLyricsImportPanel = () => {
     updateCreateItemDraft({
@@ -494,7 +502,7 @@ const CreateItem = ({
         Select a result below to import into this draft.
       </p>
       <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-        {lyricsImportCandidates.map((candidate) => {
+        {orderedLyricsImportCandidates.map((candidate) => {
           const lyricsText = getImportableLyricsFromTrack(candidate);
 
           return (
@@ -508,8 +516,12 @@ const CreateItem = ({
                   <p className="min-w-0 wrap-break-word font-semibold text-neutral-100">
                     {candidate.trackName}
                   </p>
-                  <span className="shrink-0 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200/95">
-                    {candidate.source === "genius" ? "Genius" : "LRCLIB"}
+                  <span
+                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getLyricsImportSourceBadgeClass(
+                      candidate.source,
+                    )}`}
+                  >
+                    {getLyricsImportSourceLabel(candidate.source)}
                   </span>
                 </div>
                 <p className="text-sm text-neutral-300">

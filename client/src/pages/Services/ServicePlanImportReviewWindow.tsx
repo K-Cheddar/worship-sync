@@ -32,6 +32,17 @@ const kindClassName: Record<ServicePlanImportChangeKind, string> = {
 const visibleFields = (change: ServicePlanImportSummary["changes"][number]) =>
   change.fields.filter((field) => field.label !== "Item type");
 
+const getInitialReviewWindowGeometry = () => {
+  // The desktop workspace gives the preview column roughly one third of the
+  // available width. Open the review alongside it, at the same edge and
+  // height, so the service plan remains visible underneath.
+  const width = Math.max(288, Math.round(window.innerWidth / 3));
+  return {
+    width,
+    position: { x: window.innerWidth - width, y: 0 },
+  };
+};
+
 /** Review the exact result of a Service Planning refresh before applying it. */
 const ServicePlanImportReviewWindow = ({
   summary,
@@ -49,6 +60,7 @@ const ServicePlanImportReviewWindow = ({
     selectedChangeKeys.has(servicePlanImportChangeKey(change)),
   );
   const changeCount = selectedChanges.length;
+  const initialGeometry = useMemo(getInitialReviewWindowGeometry, []);
   const summaryParts = [
     selectedChanges.filter((change) => change.kind === "added").length
       ? `${selectedChanges.filter((change) => change.kind === "added").length} added`
@@ -86,8 +98,9 @@ const ServicePlanImportReviewWindow = ({
       title="Review Service Planning updates"
       label="Import review"
       onClose={onClose}
-      defaultWidth={720}
-      defaultHeight={620}
+      defaultPosition={initialGeometry.position}
+      defaultWidth={initialGeometry.width}
+      defaultHeight={window.innerHeight}
       contentClassName="p-0"
     >
       <div className="flex h-full min-h-0 flex-col text-sm text-gray-100">

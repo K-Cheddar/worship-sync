@@ -5,6 +5,7 @@ import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { keepElementInView } from "../../utils/generalUtils";
 import { useLiveOutlinePreview } from "./useLiveOutlinePreview";
+import ServiceOutlineSkeleton from "../../containers/ServiceItems/ServiceOutlineSkeleton";
 import type { ServiceItem as ServiceItemType } from "../../types";
 
 const CurrentItemRow = ({
@@ -69,7 +70,7 @@ const CurrentServiceItemList = ({
   activeItemId?: string | null;
   activeListId?: string | null;
 }) => {
-  const serviceItems = useLiveOutlinePreview();
+  const { items: serviceItems, isLoading } = useLiveOutlinePreview();
 
   // The monitor reports which outline row (listId) is live, so a song
   // scheduled twice can be told apart. Fall back to matching by the
@@ -88,6 +89,7 @@ const CurrentServiceItemList = ({
     );
   }, [serviceItems, activeItemId, activeListId]);
 
+  if (isLoading) return <ServiceOutlineSkeleton />;
   if (serviceItems.length === 0) return null;
 
   return (

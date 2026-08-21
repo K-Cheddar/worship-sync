@@ -292,7 +292,7 @@ export const useCurrentServicePlanSource = () => {
    * `manualSelectionRef`, so it never overwrites an existing binding.
    */
   const persistManualPlanBinding = useCallback(
-    async (plan: ServicePlan) => {
+    async (plan: Pick<ServicePlan, "planKey" | "name">) => {
       if (
         !manualSelectionRef.current ||
         !db ||
@@ -398,6 +398,15 @@ export const useCurrentServicePlanSource = () => {
   const selectPlan = useCallback(
     (planKey: string) => {
       manualSelectionRef.current = true;
+      // Persist the operator's choice before waiting for plan details. The
+      // picker is local component state, so delaying this until the detail
+      // request settles can lose the chosen plan when the Controller unmounts.
+      const selectedPlanSummary = savedPlans.find(
+        (plan) => plan.planKey === planKey,
+      );
+      if (selectedPlanSummary) {
+        void persistManualPlanBinding(selectedPlanSummary);
+      }
       generationRef.current += 1;
       planRef.current = null;
       selectedPlanKeyRef.current = planKey || null;
@@ -405,7 +414,7 @@ export const useCurrentServicePlanSource = () => {
       dispatch(clearServicePlanningPlanOutline());
       setSelectedPlanKey(planKey || null);
     },
-    [dispatch],
+    [dispatch, persistManualPlanBinding, savedPlans],
   );
 
   const pinSelectedPlan = useCallback(() => {

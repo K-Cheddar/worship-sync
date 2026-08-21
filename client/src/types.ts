@@ -158,10 +158,11 @@ export type DBItem = ItemProperties & {
 };
 
 export type SongMetadata = {
-  source: "lrclib" | "genius" | "manual";
+  source: "lrclib" | "genius" | "lyricsovh" | "manual";
   lrclibId?: number;
   geniusId?: number;
   geniusUrl?: string;
+  lyricsOvhKey?: string;
   trackName: string;
   artistName: string;
   albumName?: string;

@@ -4,6 +4,55 @@ export type RawLrclibTrack = Record<string, unknown>;
 
 export type NormalizedLrclibTrack = Omit<SongMetadata, "importedAt">;
 
+export const getLyricsImportSourceLabel = (
+  source: NormalizedLrclibTrack["source"],
+): string => {
+  const labels = {
+    genius: "Genius",
+    lyricsovh: "Lyrics.ovh",
+    lrclib: "LRCLIB",
+    manual: "Manual",
+  } as const;
+  return labels[source];
+};
+
+export const getLyricsImportSourceBadgeClass = (
+  source: NormalizedLrclibTrack["source"],
+): string => {
+  const classes = {
+    genius:
+      "border-fuchsia-400/45 bg-fuchsia-400/10 text-fuchsia-200",
+    lrclib: "border-cyan-400/45 bg-cyan-400/10 text-cyan-200",
+    lyricsovh: "border-amber-400/45 bg-amber-400/10 text-amber-200",
+    manual: "border-slate-400/45 bg-slate-400/10 text-slate-200",
+  } as const;
+
+  return classes[source];
+};
+
+const lyricsImportSourceOrder: Record<
+  NormalizedLrclibTrack["source"],
+  number
+> = {
+  genius: 0,
+  lrclib: 1,
+  lyricsovh: 2,
+  manual: 3,
+};
+
+export const sortLyricsImportTracksBySource = (
+  tracks: NormalizedLrclibTrack[],
+): NormalizedLrclibTrack[] =>
+  tracks
+    .map((track, index) => ({ track, index }))
+    .sort(
+      (left, right) =>
+        lyricsImportSourceOrder[left.track.source] -
+          lyricsImportSourceOrder[right.track.source] ||
+        left.index - right.index,
+    )
+    .map(({ track }) => track);
+
 const asString = (value: unknown): string | undefined => {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -127,7 +176,11 @@ export const sortLrclibTracksByLyricsStructure = (
 export const normalizeLrclibTrack = (
   rawTrack: RawLrclibTrack,
 ): NormalizedLrclibTrack => {
-  const source = asString(rawTrack.source) === "genius" ? "genius" : "lrclib";
+  const requestedSource = asString(rawTrack.source);
+  const source =
+    requestedSource === "genius" || requestedSource === "lyricsovh"
+      ? requestedSource
+      : "lrclib";
   const lrclibId = Number(
     rawTrack.lrclibId ??
       rawTrack.id ??
@@ -136,6 +189,7 @@ export const normalizeLrclibTrack = (
       0,
   );
   const geniusId = Number(rawTrack.geniusId ?? 0);
+  const lyricsOvhKey = asString(rawTrack.lyricsOvhKey);
   const trackName =
     asString(rawTrack.trackName) ??
     asString(rawTrack.track_name) ??
@@ -154,7 +208,8 @@ export const normalizeLrclibTrack = (
     !trackName ||
     !artistName ||
     (source === "lrclib" && !hasValidLrclibId) ||
-    (source === "genius" && !hasValidGeniusId)
+    (source === "genius" && !hasValidGeniusId) ||
+    (source === "lyricsovh" && !lyricsOvhKey)
   ) {
     throw new Error("Invalid lyrics import track payload");
   }
@@ -170,6 +225,7 @@ export const normalizeLrclibTrack = (
     source,
     ...(hasValidLrclibId ? { lrclibId } : {}),
     ...(hasValidGeniusId ? { geniusId } : {}),
+    ...(lyricsOvhKey ? { lyricsOvhKey } : {}),
     geniusUrl: asString(rawTrack.geniusUrl) ?? asString(rawTrack.url),
     trackName,
     artistName,

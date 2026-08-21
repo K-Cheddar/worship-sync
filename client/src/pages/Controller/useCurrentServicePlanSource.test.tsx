@@ -253,6 +253,34 @@ describe("useCurrentServicePlanSource", () => {
     expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
   });
 
+  it("persists a manually selected plan before its detail request finishes", async () => {
+    const store = makeStore();
+    const db = {};
+    renderHookWith(store, enabledGlobalInfo, { db });
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe("service-1@2026-08-01"),
+    );
+    mockGetServicePlan.mockImplementation(
+      () => new Promise(() => undefined),
+    );
+
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        db,
+        "outline-1",
+        expect.objectContaining({
+          planKey: "service-2@2026-08-01",
+          planName: "Evening Service",
+        }),
+      ),
+    );
+  });
+
   it("sources assignments from the Teams schedule rather than the plan", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);

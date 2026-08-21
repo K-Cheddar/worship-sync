@@ -120,14 +120,16 @@ const {
   getGeniusTrack,
   getLrclibRequestParams,
   getLrclibTrack,
+  getLyricsOvhTrack,
+  searchAllLyricsTracks,
   searchGeniusTracks,
   searchLrclibTracks,
 } = createLyricsImportService({
   geniusAccessToken: process.env.GENIUS_ACCESS_TOKEN,
 });
-/** Genius lyrics scraping is unreliable from cloud hosts; LRCLIB is used there instead. */
+/** Set this flag to bypass Genius when its upstream service is unavailable. */
 const skipGeniusLyricsImport =
-  !isDevelopment || process.env.LYRICS_IMPORT_SKIP_GENIUS === "true";
+  process.env.LYRICS_IMPORT_SKIP_GENIUS === "true";
 
 const configuredAllowedOrigins = [
   frontEndHost,
@@ -2696,15 +2698,31 @@ app.get("/api/lrclib/get", async (req, res) => {
       return res.json(lrclibTrack);
     }
 
+    try {
+      const lyricsOvhTrack = await getLyricsOvhTrack(params);
+
+      if (lyricsOvhTrack) {
+        return res.json(lyricsOvhTrack);
+      }
+    } catch (error) {
+      console.warn("lyrics.ovh lookup failed after other providers:", {
+        message: error.message,
+        status: error.response?.status,
+        code: error.code,
+        trackName: params.track_name,
+        artistName: params.artist_name,
+      });
+    }
+
     return res.status(404).json({
       error:
-        "No exact importable lyrics match for this title and artist (Genius and LRCLIB were checked).",
+        "No exact importable lyrics match for this title and artist (Genius, LRCLIB, and lyrics.ovh were checked).",
     });
   } catch (error) {
     if (error.response?.status === 404) {
       return res.status(404).json({
         error:
-          "No exact importable lyrics match for this title and artist (Genius and LRCLIB were checked).",
+          "No exact importable lyrics match for this title and artist (Genius, LRCLIB, and lyrics.ovh were checked).",
       });
     }
     if (error.response?.status === 400) {
@@ -2731,27 +2749,13 @@ app.get("/api/lrclib/search", async (req, res) => {
   }
 
   try {
-    if (!skipGeniusLyricsImport) {
-      try {
-        const geniusTracks = await searchGeniusTracks(params);
-
-        if (geniusTracks.length > 0) {
-          return res.json(geniusTracks);
-        }
-      } catch (error) {
-        console.warn("Genius search failed, falling back to LRCLIB:", {
-          message: error.message,
-          status: error.response?.status,
-          code: error.code,
-          trackName: params.track_name,
-          artistName: params.artist_name,
-        });
-      }
-    }
-
-    res.json(await searchLrclibTracks(params));
+    res.json(
+      await searchAllLyricsTracks(params, {
+        includeGenius: !skipGeniusLyricsImport,
+      }),
+    );
   } catch (error) {
-    console.error("Error searching LRCLIB:", {
+    console.error("Error searching lyrics providers:", {
       message: error.message,
       status: error.response?.status,
       code: error.code,

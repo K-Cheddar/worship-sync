@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDown, LocateFixed, Mic2, Moon, Radio, RefreshCw, Sun } from "lucide-react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
@@ -221,7 +221,7 @@ export type ServicePublicViewProps = {
   error?: string;
   /**
    * Parent owns the page shell (My Schedule tabs). Skips the full-page scroll
-   * main and the fixed "Go to current" dock.
+   * main and the fixed "Follow live" dock.
    */
   embedded?: boolean;
   onRefresh?: () => void;
@@ -246,6 +246,7 @@ const ServicePublicView = ({
   const [theme, setTheme] = useState<ServicePublicTheme>(readServicePublicTheme);
   const followedLiveItemIdRef = useRef<string | null>(null);
   const suppressFollowPauseUntilRef = useRef(0);
+  const pointerScrollIntentUntilRef = useRef(0);
 
   useEffect(() => {
     const interval = window.setInterval(() => setClientNow(Date.now()), 1000);
@@ -281,7 +282,24 @@ const ServicePublicView = ({
         Date.now() + PROGRAMMATIC_SCROLL_SUPPRESS_MS;
       return;
     }
+    // A live-item change can make the browser adjust its scroll anchor before
+    // the follow effect starts. That scroll is not a viewer choosing to leave
+    // the live item, so only pause for a scroll preceded by pointer intent
+    // (such as dragging the scrollbar). Wheel, touch, and keyboard input pause
+    // directly through their own handlers below.
+    if (Date.now() >= pointerScrollIntentUntilRef.current) return;
+    pointerScrollIntentUntilRef.current = 0;
     pauseLiveFollow();
+  };
+
+  const notePointerScrollIntent = () => {
+    pointerScrollIntentUntilRef.current = Date.now() + 1_000;
+  };
+
+  const handlePageKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) {
+      pauseLiveFollow();
+    }
   };
 
   // Follow the live item near the top of the public page when it advances,
@@ -624,7 +642,7 @@ const ServicePublicView = ({
             </div>
 
             {progress?.current ? (
-              <div className={cn("mt-2 rounded-lg border px-3 py-2", theme === "light" ? "border-emerald-200 bg-emerald-50" : "border-emerald-500/25 bg-emerald-500/5")} aria-label="Current service item">
+              <div className={cn("mt-2 rounded-lg border px-3 py-2", theme === "light" ? "border-emerald-200 bg-emerald-50" : "border-emerald-500/25 bg-emerald-500/5")} aria-label="Live service item">
                 <p className={cn("text-[11px] font-bold uppercase tracking-[0.14em]", theme === "light" ? "text-emerald-700" : "text-emerald-300/90")}>Now</p>
                 <p className={cn("text-sm font-semibold", theme === "light" ? "text-emerald-950" : "text-neutral-50")}>{progress.current.item.title}</p>
                 {progress.next ? (
@@ -696,7 +714,7 @@ const ServicePublicView = ({
                       key={item.id}
                       id={servicePublicItemDomId(item.id)}
                       className={cn(
-                        "scroll-mt-3 border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
+                        "scroll-mt-16 border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
                         chrome.itemBorder,
                         !isCurrent && !churchPrimaryColor && "border-l-transparent",
                         isCurrent && (theme === "light" ? "border-l-emerald-600 bg-emerald-50 ring-1 ring-inset ring-emerald-200" : "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20"),
@@ -736,7 +754,7 @@ const ServicePublicView = ({
                             </h3>
                             {isCurrent ? (
                               <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "bg-emerald-100 text-emerald-700" : "bg-emerald-400/15 text-emerald-200")}>
-                                Current
+                                Live
                               </span>
                             ) : null}
                             {item.creditName ? (
@@ -846,7 +864,7 @@ const ServicePublicView = ({
             className="pointer-events-auto shadow-xl"
             onClick={jumpToCurrent}
           >
-            Go to current
+            Follow live
           </Button>
         </div>
       ) : null}
@@ -860,6 +878,8 @@ const ServicePublicView = ({
         onScroll={handlePageScroll}
         onWheel={pauseLiveFollow}
         onTouchMove={pauseLiveFollow}
+        onPointerDown={notePointerScrollIntent}
+        onKeyDown={handlePageKeyDown}
       >
         {body}
       </div>
@@ -872,6 +892,8 @@ const ServicePublicView = ({
       onScroll={handlePageScroll}
       onWheel={pauseLiveFollow}
       onTouchMove={pauseLiveFollow}
+      onPointerDown={notePointerScrollIntent}
+      onKeyDown={handlePageKeyDown}
     >
       {body}
     </main>

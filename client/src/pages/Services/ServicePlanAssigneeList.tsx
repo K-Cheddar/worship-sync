@@ -194,7 +194,9 @@ const DebouncedAssigneeNameField = ({
       hideLabel
       placeholder={placeholder}
       multiline={false}
-      className="w-32 sm:w-40"
+      // Let the name use the available mobile row width while keeping enough
+      // room for a useful name. Keep the desktop width unchanged.
+      className="min-w-[12rem] flex-1 sm:w-40 sm:min-w-0 sm:flex-none"
       inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
       value={draft.draftValue}
       onChange={draft.setDraftValue}
