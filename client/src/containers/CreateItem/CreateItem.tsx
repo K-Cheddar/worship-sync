@@ -507,7 +507,7 @@ const CreateItem = ({
 
           return (
             <li
-              key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
+              key={`${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.lyricsOvhKey ?? candidate.trackName
                 }-${candidate.artistName}`}
               className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
             >
