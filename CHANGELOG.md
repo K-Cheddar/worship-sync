@@ -1,3 +1,16 @@
+# [2.25.0](https://github.com/K-Cheddar/worship-sync/compare/v2.24.0...v2.25.0) (2026-08-21)
+
+
+### Bug Fixes
+
+* improvements for mic assignments and member management ([99eea51](https://github.com/K-Cheddar/worship-sync/commit/99eea51c1d6498344d7c522eff264c20bbd39182))
+* Minor fixes ([594092c](https://github.com/K-Cheddar/worship-sync/commit/594092c19195ac6be0cb9f9d6ab0153cd39574de))
+
+
+### Features
+
+* Auto-reset Restream chat when a new stream starts ([49396a3](https://github.com/K-Cheddar/worship-sync/commit/49396a37175049edf21dcf3e57bbd681ceb4577a))
+
 # [2.24.0](https://github.com/K-Cheddar/worship-sync/compare/v2.23.0...v2.24.0) (2026-08-12)
 
 
