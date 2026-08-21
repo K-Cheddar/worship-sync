@@ -11,6 +11,8 @@ import {
 } from "./externalResultsSection";
 import {
   getImportableLyricsFromTrack,
+  getLyricsImportSourceBadgeClass,
+  getLyricsImportSourceLabel,
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 
@@ -56,8 +58,12 @@ const ExternalLyricsResultItem = ({
                 nonHighlightWordColor="text-white"
                 allowPartial
               />
-              <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200/95">
-                {candidate.source === "genius" ? "Genius" : "LRCLIB"}
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getLyricsImportSourceBadgeClass(
+                  candidate.source,
+                )}`}
+              >
+                {getLyricsImportSourceLabel(candidate.source)}
               </span>
             </div>
             <p

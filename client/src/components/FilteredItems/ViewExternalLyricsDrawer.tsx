@@ -5,6 +5,8 @@ import Button from "../Button/Button";
 import HighlightWords from "./HighlightWords";
 import {
   getImportableLyricsFromTrack,
+  getLyricsImportSourceBadgeClass,
+  getLyricsImportSourceLabel,
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 
@@ -29,7 +31,7 @@ const ViewExternalLyricsDrawer = ({
 
   const lyricsText = getImportableLyricsFromTrack(candidate);
   const albumLabel = candidate.albumName ? ` • ${candidate.albumName}` : "";
-  const sourceLabel = candidate.source === "genius" ? "Genius" : "LRCLIB";
+  const sourceLabel = getLyricsImportSourceLabel(candidate.source);
 
   return (
     <Drawer
@@ -45,7 +47,11 @@ const ViewExternalLyricsDrawer = ({
         <div className="shrink-0 space-y-1 border-b border-gray-700 pb-4">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-lg font-semibold text-white">{candidate.trackName}</p>
-            <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-200/95">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getLyricsImportSourceBadgeClass(
+                candidate.source,
+              )}`}
+            >
               {sourceLabel}
             </span>
           </div>

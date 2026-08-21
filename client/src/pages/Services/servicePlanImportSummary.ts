@@ -243,10 +243,60 @@ export const summarizeServicePlanImport = (
     });
   });
 
+  // Keep the review in service order. Alphabetical sorting is convenient for
+  // a report, but makes an operator compare the import against the plan by
+  // hand before applying it.
+  const nextSectionIndex = new Map(
+    nextSections.map((section, index) => [section.id, index]),
+  );
+  const currentSectionIndex = new Map(
+    currentSections.map((section, index) => [section.id, index]),
+  );
+  const sectionOrder = new Map<string, number>();
+  [...nextSections, ...currentSections].forEach((section) => {
+    if (!sectionOrder.has(section.id)) {
+      sectionOrder.set(
+        section.id,
+        nextSectionIndex.get(section.id) ?? nextSections.length + (currentSectionIndex.get(section.id) ?? 0),
+      );
+    }
+  });
+  const nextIdsBySection = new Map(
+    nextSections.map((section) => [section.id, new Set(section.elements.map(({ id }) => id))]),
+  );
+  const nextPositionById = new Map(
+    nextSections.flatMap((section) =>
+      section.elements.map((element, index) => [element.id, index] as const),
+    ),
+  );
+  const currentPositionById = new Map(
+    currentSections.flatMap((section) =>
+      section.elements.map((element, index) => [element.id, index] as const),
+    ),
+  );
+  const originalChangeIndex = new Map(changes.map((change, index) => [servicePlanImportChangeKey(change), index]));
+
   changes.sort((left, right) => {
-    const section = left.sectionName.localeCompare(right.sectionName);
+    const section = (sectionOrder.get(left.sectionId) ?? Number.MAX_SAFE_INTEGER) -
+      (sectionOrder.get(right.sectionId) ?? Number.MAX_SAFE_INTEGER);
     if (section) return section;
-    return left.itemName.localeCompare(right.itemName);
+
+    const orderFor = (change: ServicePlanImportChange) => {
+      if (change.kind !== "removed") {
+        return nextPositionById.get(change.id) ?? Number.MAX_SAFE_INTEGER;
+      }
+      const currentSection = currentSections.find((section) => section.id === change.sectionId);
+      const nextIds = nextIdsBySection.get(change.sectionId) ?? new Set<string>();
+      const currentIndex = currentPositionById.get(change.id) ?? 0;
+      const nextItemsBefore = currentSection?.elements
+        .slice(0, currentIndex)
+        .filter(({ id }) => nextIds.has(id)).length ?? 0;
+      return nextItemsBefore - 0.5;
+    };
+    const item = orderFor(left) - orderFor(right);
+    if (item) return item;
+    return (originalChangeIndex.get(servicePlanImportChangeKey(left)) ?? 0) -
+      (originalChangeIndex.get(servicePlanImportChangeKey(right)) ?? 0);
   });
   return {
     changes,

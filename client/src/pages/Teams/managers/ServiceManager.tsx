@@ -33,7 +33,6 @@ import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import Checkbox from "../../../components/Checkbox/Checkbox";
-import { cn } from "@/utils/cnHelper";
 import {
   buildServiceTimeUpdate,
   canServicesShareDay,
@@ -66,18 +65,23 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
   const [draft, setDraft] = useState<Partial<ServiceTime>>(createEmptyServiceDraft);
   // Other services this one is combined with (shares one set of schedule cells).
   const [combineWith, setCombineWith] = useState<string[]>([]);
+  // Keep number inputs editable while the operator is typing. Values are
+  // normalized and committed when the field loses focus.
+  const [positionCountDrafts, setPositionCountDrafts] = useState<Record<string, string>>({});
 
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
     setDraft(createEmptyServiceDraft());
     setCombineWith([]);
+    setPositionCountDrafts({});
   };
 
   const startEdit = (service: TeamService) => {
     setEditing(service);
     setShowCreate(true);
     setDraft({ ...service });
+    setPositionCountDrafts({});
     setCombineWith(
       service.serviceGroupId
         ? services
@@ -180,6 +184,12 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
   const requirementCount = (positionId: string) =>
     requirements.find((req) => req.positionId === positionId)?.count ?? 0;
   const setPositionNeeded = (positionId: string, needed: boolean) => {
+    setPositionCountDrafts((current) => {
+      if (current[positionId] === undefined) return current;
+      const next = { ...current };
+      delete next[positionId];
+      return next;
+    });
     setDraft((current) => {
       const rest = (current.positionRequirements || []).filter((req) => req.positionId !== positionId);
       const next: PositionRequirement[] = needed
@@ -192,13 +202,32 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
     });
   };
   const setPositionCount = (positionId: string, count: number) => {
-    const safeCount = Math.max(1, Math.floor(Number(count) || 1));
+    const safeCount = Math.max(0, Math.floor(Number(count) || 0));
     setDraft((current) => {
       const list = current.positionRequirements || [];
+      if (safeCount === 0) {
+        return {
+          ...current,
+          positionRequirements: list.filter((req) => req.positionId !== positionId),
+        };
+      }
       const next = list.some((req) => req.positionId === positionId)
         ? list.map((req) => (req.positionId === positionId ? { ...req, count: safeCount } : req))
         : [...list, { positionId, count: safeCount }];
       return { ...current, positionRequirements: next };
+    });
+  };
+  const setPositionCountDraft = (positionId: string, value: string | number) => {
+    setPositionCountDrafts((current) => ({ ...current, [positionId]: String(value) }));
+  };
+  const commitPositionCount = (positionId: string) => {
+    const rawValue = positionCountDrafts[positionId]?.trim() ?? "";
+    const parsedValue = Number(rawValue);
+    setPositionCount(positionId, Number.isFinite(parsedValue) ? parsedValue : 0);
+    setPositionCountDrafts((current) => {
+      const next = { ...current };
+      delete next[positionId];
+      return next;
     });
   };
 
@@ -437,9 +466,9 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       <fieldset className="space-y-2">
         <legend className="p-1 text-sm font-semibold">Positions needed</legend>
         <p className="px-1 text-xs text-gray-400">
-          Choose the positions this service needs for every occurrence. You can add extra
-          team positions to a specific date later without changing the fill requirement. Leave
-          all unchecked to use the team&apos;s positions.
+          Set how many people each position needs for every occurrence. Use 0 for positions
+          this service does not need. You can add extra team positions to a specific date later
+          without changing the fill requirement.
         </p>
         {positionsByTeam.length === 0 ? (
           <p className="px-1 text-xs text-gray-500">
@@ -462,7 +491,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                   return (
                     <div
                       key={position.positionId}
-                      className="grid min-h-9 grid-cols-[1fr_auto] items-center gap-2"
+                      className="grid min-h-11 grid-cols-[1fr_auto] items-center gap-3 rounded-md px-1 py-1 transition-colors hover:bg-white/[0.04]"
                     >
                       <Checkbox
                         checked={needed}
@@ -477,26 +506,19 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                             {position.name}
                           </>
                         }
-                        labelClassName="gap-2 text-sm"
+                        className="min-w-0"
+                        labelClassName="flex-1 gap-2 text-sm"
                       />
-                      <div
-                        className={cn(
-                          "flex items-center gap-2",
-                          !needed && "pointer-events-none invisible",
-                        )}
-                        aria-hidden={!needed}
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          label="Required"
-                          disabled={!needed}
-                          value={needed ? count : 1}
-                          inputWidth="w-14"
-                          inputTextSize="text-xs"
-                          onChange={(value) => setPositionCount(position.positionId, Number(value))}
-                        />
-                      </div>
+                      <Input
+                        type="number"
+                        min={0}
+                        label="People needed"
+                        value={positionCountDrafts[position.positionId] ?? count}
+                        inputWidth="w-14"
+                        inputTextSize="text-xs"
+                        onChange={(value) => setPositionCountDraft(position.positionId, value)}
+                        onBlur={() => commitPositionCount(position.positionId)}
+                      />
                     </div>
                   );
                 })}

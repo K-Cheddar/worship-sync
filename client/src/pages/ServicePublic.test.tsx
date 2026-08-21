@@ -93,7 +93,7 @@ describe("ServicePublic", () => {
     expect(screen.getByText("Media Team notes")).toBeInTheDocument();
     expect(screen.getByText("Capture the greetings.")).toBeInTheDocument();
     // Still following live, so the return-to-live button stays hidden.
-    expect(screen.queryByRole("button", { name: /Go to current/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Follow live/i })).not.toBeInTheDocument();
   });
 
   it("shows item times from the plan's own timeline, including pre-service items", () => {
@@ -804,7 +804,7 @@ describe("ServicePublic", () => {
           block: "start",
         });
       });
-      expect(screen.getByLabelText("Current service item")).toHaveTextContent("Welcome");
+      expect(screen.getByLabelText("Live service item")).toHaveTextContent("Welcome");
 
       scrollIntoView.mockClear();
       mockUsePublicServiceFlow.mockReturnValue({
@@ -832,7 +832,7 @@ describe("ServicePublic", () => {
           block: "start",
         });
       });
-      expect(screen.getByLabelText("Current service item")).toHaveTextContent(
+      expect(screen.getByLabelText("Live service item")).toHaveTextContent(
         "Opening song",
       );
     } finally {
@@ -840,7 +840,7 @@ describe("ServicePublic", () => {
     }
   });
 
-  it("pauses auto-scroll after manual scroll and resumes from Go to current", async () => {
+  it("pauses auto-scroll after manual scroll and resumes from Follow live", async () => {
     const user = userEvent.setup();
     const scrollIntoView = jest.fn();
     const previousScrollIntoView = Element.prototype.scrollIntoView;
@@ -923,16 +923,91 @@ describe("ServicePublic", () => {
         await flushDoubleRaf();
       });
       expect(scrollIntoView).not.toHaveBeenCalled();
-      expect(screen.getByLabelText("Current service item")).toHaveTextContent(
+      expect(screen.getByLabelText("Live service item")).toHaveTextContent(
         "Opening song",
       );
-      expect(screen.getByRole("button", { name: /Go to current/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Follow live/i })).toBeInTheDocument();
 
-      await user.click(screen.getByRole("button", { name: /Go to current/i }));
+      await user.click(screen.getByRole("button", { name: /Follow live/i }));
       expect(scrollIntoView).toHaveBeenCalledWith({
         behavior: "smooth",
         block: "start",
       });
+    } finally {
+      Element.prototype.scrollIntoView = previousScrollIntoView;
+    }
+  });
+
+  it("keeps following when browser scroll anchoring runs during a live-item change", async () => {
+    const scrollIntoView = jest.fn();
+    const previousScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    const now = Date.now();
+    const baseSnapshot = {
+      success: true as const,
+      churchName: "Northside",
+      serverNowMs: now,
+      service: {
+        shareId: "share-token",
+        title: "Sunday Service",
+        startsAt: new Date(now - 30_000).toISOString(),
+        timezone: "UTC",
+        revision: now,
+        live: { mode: "manual" as const, currentItemId: "welcome" },
+        sections: [{
+          id: "main",
+          title: "Main service",
+          items: [
+            { id: "welcome", title: "Welcome", durationSeconds: 120, notes: { blocks: [] }, teamNotes: [] },
+            { id: "song", title: "Opening song", durationSeconds: 240, notes: { blocks: [] }, teamNotes: [] },
+          ],
+        }],
+      },
+    };
+
+    mockUsePublicServiceFlow.mockReturnValue({
+      snapshot: baseSnapshot,
+      error: "",
+      loading: false,
+      connection: "connected",
+      revoked: false,
+      refresh: jest.fn(),
+    });
+
+    try {
+      const { rerender } = render(<ServicePublic />);
+      await act(async () => {
+        await flushDoubleRaf();
+      });
+      scrollIntoView.mockClear();
+
+      // Browser scroll anchoring can dispatch this while React applies the
+      // current-item styling, without any viewer scroll input.
+      fireEvent.scroll(screen.getByRole("main"));
+
+      mockUsePublicServiceFlow.mockReturnValue({
+        snapshot: {
+          ...baseSnapshot,
+          service: {
+            ...baseSnapshot.service,
+            live: { mode: "manual", currentItemId: "song" },
+          },
+        },
+        error: "",
+        loading: false,
+        connection: "connected",
+        revoked: false,
+        refresh: jest.fn(),
+      });
+      rerender(<ServicePublic />);
+
+      await act(async () => {
+        await flushDoubleRaf();
+      });
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+      expect(screen.queryByRole("button", { name: /Follow live/i })).not.toBeInTheDocument();
     } finally {
       Element.prototype.scrollIntoView = previousScrollIntoView;
     }

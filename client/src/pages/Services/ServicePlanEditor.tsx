@@ -181,6 +181,40 @@ const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 const LIVE_CLOCK_ACTIVE_MS = 1_000;
 /** Enough to catch midnight rollover and the service window opening. */
 const LIVE_CLOCK_IDLE_MS = 30_000;
+const SERVICE_PLAN_PAUSE_ICON_COLOR = "#fbbf24";
+const SERVICE_PLAN_RESUME_ICON_COLOR = "#4ade80";
+const SERVICE_PLAN_SCHEDULE_ICON_COLOR = "#22d3ee";
+
+const ServicePlanSkeleton = () => (
+  <div
+    className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden"
+    role="status"
+    aria-live="polite"
+    aria-busy="true"
+    aria-label="Loading service plan"
+  >
+    {Array.from({ length: 3 }, (_, sectionIndex) => (
+      <section
+        key={sectionIndex}
+        className="overflow-hidden rounded-lg border border-gray-700 bg-gray-900/60"
+      >
+        <div className="flex items-center gap-3 border-b border-gray-700 bg-gray-800/70 px-3 py-2">
+          <div className="h-4 w-4 animate-pulse rounded bg-white/10" />
+          <div className="h-4 w-40 animate-pulse rounded bg-white/10" />
+        </div>
+        <div className="flex flex-col divide-y divide-gray-800">
+          {Array.from({ length: sectionIndex === 0 ? 3 : 2 }, (_, rowIndex) => (
+            <div key={rowIndex} className="flex items-center gap-3 px-3 py-3">
+              <div className="h-3 w-12 animate-pulse rounded bg-white/10" />
+              <div className="h-4 flex-1 animate-pulse rounded bg-white/10" />
+              <div className="h-3 w-20 animate-pulse rounded bg-white/10" />
+            </div>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+);
 
 type ServicePlanImportPreview = {
   currentSections: ServicePlanSection[];
@@ -1330,6 +1364,9 @@ const ServicePlanEditor = ({
     );
   }, [isTimelineAdjusted, liveElementId, liveProgress, planTimezone]);
   const shareActionsDisabled = !canEdit || publishing || !hasSections;
+  const showLiveToolbarActions = Boolean(
+    canEdit && !isEditing && isServiceDay && liveElementId,
+  );
 
   const shareViewActions = (
     kind: "detailed" | "simple",
@@ -1534,8 +1571,14 @@ const ServicePlanEditor = ({
               ) : null}
               {isServiceDay && liveElementId ? (
                 <>
-                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                  <DropdownMenuSeparator
+                    className={cn(
+                      "my-1 bg-gray-600",
+                      showLiveToolbarActions && "lg:hidden",
+                    )}
+                  />
                   <DropdownMenuItem
+                    className={showLiveToolbarActions ? "lg:hidden" : undefined}
                     disabled={!canEdit || updatingPublicLive}
                     onSelect={() => {
                       if (isManualLive) {
@@ -1552,6 +1595,7 @@ const ServicePlanEditor = ({
                   </DropdownMenuItem>
                   {isLiveOverridden ? (
                     <DropdownMenuItem
+                      className={showLiveToolbarActions ? "lg:hidden" : undefined}
                       disabled={!canEdit || updatingPublicLive}
                       onSelect={() => {
                         void handleResumePublicSchedule();
@@ -1630,7 +1674,7 @@ const ServicePlanEditor = ({
 
   const planBody = (
     <>
-      {loading ? <p className="text-sm text-gray-400">Loading plan…</p> : null}
+      {loading ? <ServicePlanSkeleton /> : null}
 
       {!loading && isEmpty && canEdit ? (
         <div
@@ -1958,6 +2002,54 @@ const ServicePlanEditor = ({
                     />
                   </div>
                 ) : null}
+                {showLiveToolbarActions ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      svg={Radio}
+                      iconSize="sm"
+                      color={
+                        isManualLive
+                          ? SERVICE_PLAN_RESUME_ICON_COLOR
+                          : SERVICE_PLAN_PAUSE_ICON_COLOR
+                      }
+                      className="hidden max-md:min-h-0 lg:inline-flex"
+                      disabled={updatingPublicLive}
+                      title={
+                        isManualLive
+                          ? "Continue automatic timing"
+                          : "Pause automatic advance"
+                      }
+                      onClick={() => {
+                        if (isManualLive) {
+                          void handleContinueAutomaticAdvance();
+                          return;
+                        }
+                        void handlePauseAutomaticAdvance();
+                      }}
+                    >
+                      {isManualLive
+                        ? "Resume auto-advance"
+                        : "Pause auto-advance"}
+                    </Button>
+                    {isLiveOverridden ? (
+                      <Button
+                        type="button"
+                        variant="primary"
+                        svg={Radio}
+                        iconSize="sm"
+                        color={SERVICE_PLAN_SCHEDULE_ICON_COLOR}
+                        className="hidden max-md:min-h-0 lg:inline-flex"
+                        disabled={updatingPublicLive}
+                        onClick={() => void handleResumePublicSchedule()}
+                        title="Return to planned schedule"
+                      >
+                        Resume schedule
+                      </Button>
+                    ) : null}
+                  </>
+                ) : null}
                 {canEdit && hasSections ? (
                   <Button
                     type="button"
@@ -2156,6 +2248,9 @@ const ServicePlanEditor = ({
               ) : null}
               <Button
                 type="button"
+                svg={RefreshCw}
+                iconSize="sm"
+                color="#22d3ee"
                 onClick={() => void handleImportFromServicePlanning()}
                 disabled={importing || !importUrl.trim()}
               >

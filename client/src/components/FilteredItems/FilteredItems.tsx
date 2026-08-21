@@ -34,6 +34,7 @@ import { computeSongSearchEnrichment } from "../../utils/songSearchUtils";
 import {
   createSongMetadataFromLrclib,
   getImportableLyricsFromTrack,
+  sortLyricsImportTracksBySource,
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
@@ -223,7 +224,9 @@ const FilteredItems = ({
         } else if (externalSearchResults.length === 0) {
           rows.push({ kind: "external-empty" });
         } else {
-          for (const candidate of externalSearchResults) {
+          for (const candidate of sortLyricsImportTracksBySource(
+            externalSearchResults,
+          )) {
             rows.push({ kind: "external", candidate });
           }
         }

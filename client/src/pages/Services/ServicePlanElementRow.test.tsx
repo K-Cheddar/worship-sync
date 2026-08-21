@@ -351,7 +351,7 @@ describe("ServicePlanElementRow", () => {
           <ServicePlanElementRow
             element={baseElement}
             canEdit
-            isEditing
+            isEditing={false}
             onRemove={jest.fn()}
             onUpdate={jest.fn()}
             onDurationChange={jest.fn()}
@@ -366,7 +366,14 @@ describe("ServicePlanElementRow", () => {
 
     expect(
       screen.getByRole("button", { name: /Make Pastoral Greetings live/i }),
-    ).toBeInTheDocument();
+    ).toHaveTextContent("Make live");
+  });
+
+  it("hides the Make live text while editing", () => {
+    renderRow({ isServiceDay: true, isEditing: true });
+    expect(
+      screen.getByRole("button", { name: /Make Pastoral Greetings live/i }),
+    ).not.toHaveTextContent("Make live");
   });
 
   it("minimizes notes to one preview line and expands to the editor", async () => {

@@ -27,6 +27,22 @@ const section = (elements: ServicePlanElement[]): ServicePlanSection => ({
 });
 
 describe("summarizeServicePlanImport", () => {
+  it("keeps changes in the order of items on the service", () => {
+    const current = [section([
+      element("first", "Zulu", { notes: plainTextToRichText("old") }),
+      element("second", "Alpha", { notes: plainTextToRichText("old") }),
+    ])];
+    const next = [section([
+      element("first", "Zulu", { notes: plainTextToRichText("new") }),
+      element("second", "Alpha", { notes: plainTextToRichText("new") }),
+    ])];
+
+    expect(summarizeServicePlanImport(current, next).changes.map((change) => change.id)).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
   it("lists added, removed, and selected field updates", () => {
     const summary = summarizeServicePlanImport(
       [

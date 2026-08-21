@@ -4,10 +4,43 @@ import {
   extractPlainLyricsFromSyncedLyrics,
   getLyricsImportStructureScore,
   normalizeLrclibTrack,
+  sortLyricsImportTracksBySource,
   sortLrclibTracksByLyricsStructure,
 } from "./lrclib";
 
 describe("lrclib utils", () => {
+  it("orders lyric providers as Genius, LRCLIB, then lyrics.ovh", () => {
+    const tracks = [
+      normalizeLrclibTrack({
+        source: "lyricsovh",
+        lyricsOvhKey: "Artist/Song",
+        trackName: "Song",
+        artistName: "Artist",
+        plainLyrics: "Lyrics.ovh",
+      }),
+      normalizeLrclibTrack({
+        source: "lrclib",
+        id: 1,
+        trackName: "Song",
+        artistName: "Artist",
+        plainLyrics: "LRCLIB",
+      }),
+      normalizeLrclibTrack({
+        source: "genius",
+        geniusId: 2,
+        trackName: "Song",
+        artistName: "Artist",
+        plainLyrics: "Genius",
+      }),
+    ];
+
+    expect(sortLyricsImportTracksBySource(tracks).map((track) => track.source)).toEqual([
+      "genius",
+      "lrclib",
+      "lyricsovh",
+    ]);
+  });
+
   it("normalizes LRCLIB track payloads and derives plain lyrics when needed", () => {
     const result = normalizeLrclibTrack({
       id: 15,

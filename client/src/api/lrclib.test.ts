@@ -79,25 +79,20 @@ describe("lrclib api", () => {
     });
   });
 
-  it("falls back to search when the exact lookup misses", async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => [
-          {
-            id: 11,
-            track_name: "Amazing Grace",
-            artist_name: "Choir",
-            plainLyrics: "Amazing grace",
-            syncedLyrics: null,
-          },
-        ],
-      });
+  it("returns search candidates instead of auto-selecting an exact lookup", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          id: 11,
+          track_name: "Amazing Grace",
+          artist_name: "Choir",
+          plainLyrics: "Amazing grace",
+          syncedLyrics: null,
+        },
+      ],
+    });
 
     const result = await resolveLrclibImport({
       trackName: "Amazing Grace",
@@ -119,25 +114,21 @@ describe("lrclib api", () => {
     });
   });
 
-  it("falls back to search when the exact lookup has a transient server error", async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 502,
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => [
-          {
-            id: 13,
-            track_name: "Great Is Thy Faithfulness",
-            artist_name: "Traditional",
-            plainLyrics: "Great is thy faithfulness",
-            syncedLyrics: null,
-          },
-        ],
-      });
+  it("returns combined provider search candidates when an artist is supplied", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          source: "genius",
+          geniusId: 13,
+          trackName: "Great Is Thy Faithfulness",
+          artistName: "Traditional",
+          plainLyrics: "Great is thy faithfulness",
+          syncedLyrics: null,
+        },
+      ],
+    });
 
     const result = await resolveLrclibImport({
       trackName: "Great Is Thy Faithfulness",
@@ -148,8 +139,8 @@ describe("lrclib api", () => {
       match: null,
       candidates: [
         {
-          lrclibId: 13,
-          source: "lrclib",
+          geniusId: 13,
+          source: "genius",
           trackName: "Great Is Thy Faithfulness",
           artistName: "Traditional",
           plainLyrics: "Great is thy faithfulness",
@@ -159,22 +150,21 @@ describe("lrclib api", () => {
     });
   });
 
-  it("falls back to search when the exact lookup throws", async () => {
-    (global.fetch as jest.Mock)
-      .mockRejectedValueOnce(new Error("socket hang up"))
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => [
-          {
-            id: 14,
-            track_name: "Be Thou My Vision",
-            artist_name: "Traditional",
-            plainLyrics: "Be thou my vision",
-            syncedLyrics: null,
-          },
-        ],
-      });
+  it("returns lyrics.ovh candidates from the shared search endpoint", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          source: "lyricsovh",
+          lyricsOvhKey: "Traditional::Be Thou My Vision",
+          trackName: "Be Thou My Vision",
+          artistName: "Traditional",
+          plainLyrics: "Be thou my vision",
+          syncedLyrics: null,
+        },
+      ],
+    });
 
     const result = await resolveLrclibImport({
       trackName: "Be Thou My Vision",
@@ -185,8 +175,8 @@ describe("lrclib api", () => {
       match: null,
       candidates: [
         {
-          lrclibId: 14,
-          source: "lrclib",
+          lyricsOvhKey: "Traditional::Be Thou My Vision",
+          source: "lyricsovh",
           trackName: "Be Thou My Vision",
           artistName: "Traditional",
           plainLyrics: "Be thou my vision",
@@ -232,16 +222,11 @@ describe("lrclib api", () => {
     });
   });
 
-  it("auto-selects a clearly best structured search result", async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => [
+  it("keeps structured results available for operator selection", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
           {
             id: 2,
             track_name: "Owe You Praise",
@@ -256,17 +241,17 @@ describe("lrclib api", () => {
             plainLyrics:
               "We're grateful people\nSo grateful\nYou woke me up this morning\nSo I owe You my praise\nWe're grateful people\nSo grateful",
           },
-        ],
-      });
+      ],
+    });
 
     const result = await resolveLrclibImport({
       trackName: "Owe You Praise",
       artistName: "Elevation Worship",
     });
 
-    expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(result.match?.lrclibId).toBe(2);
-    expect(result.candidates).toEqual([]);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(result.match).toBeNull();
+    expect(result.candidates[0]?.lrclibId).toBe(2);
   });
 
   it("returns an empty candidate list when the fallback search finds nothing", async () => {
