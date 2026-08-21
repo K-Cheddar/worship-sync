@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { TEAMS_TEAM_SEARCH_PARAM } from "../teamsReturnNavigation";
 
 /** Applies `?teamId=` from the URL once, then strips it. */
@@ -7,6 +7,7 @@ export const useTeamsTeamSearchParam = (
   activeTeamIds: string[],
   onTeamId: (teamId: string) => void,
 ) => {
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
@@ -16,6 +17,6 @@ export const useTeamsTeamSearchParam = (
     onTeamId(teamIdParam);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
-    setSearchParams(nextParams, { replace: true });
-  }, [activeTeamIds, onTeamId, searchParams, setSearchParams]);
+    setSearchParams(nextParams, { replace: true, state: location.state });
+  }, [activeTeamIds, location.state, onTeamId, searchParams, setSearchParams]);
 };

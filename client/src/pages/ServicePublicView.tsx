@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, LocateFixed, Radio, RefreshCw } from "lucide-react";
+import { ChevronDown, LocateFixed, Mic2, Moon, Radio, RefreshCw, Sun } from "lucide-react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import Select from "../components/Select/Select";
 import ServicePlanRolePicker from "../components/ServicePlanRolePicker";
 import ServiceFlowRichText from "../components/ServiceFlowRichText/ServiceFlowRichText";
 import { getServiceFlowProgress } from "../services/serviceFlowProgress";
-import type { PublicServiceFlowItem, PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
+import type {
+  PublicServiceFlowItem,
+  PublicServiceFlowServingTeam,
+  PublicServiceFlowSnapshot,
+} from "../services/serviceFlowTypes";
 import type { PublicServiceConnection } from "../services/usePublicServiceFlow";
 import { cn } from "../utils/cnHelper";
 import { formatServicePlanDuration } from "./Services/servicePlanDuration";
@@ -34,6 +38,26 @@ const servicePublicItemDomId = (itemId: string) => `service-item-${itemId}`;
  * 1s window and have its own tail end mistaken for a manual scroll.
  */
 const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 300;
+const SERVICE_PUBLIC_THEME_STORAGE_KEY = "worshipsyncServicePublicTheme";
+type ServicePublicTheme = "dark" | "light";
+
+const readServicePublicTheme = (): ServicePublicTheme => {
+  try {
+    return window.localStorage.getItem(SERVICE_PUBLIC_THEME_STORAGE_KEY) === "light"
+      ? "light"
+      : "dark";
+  } catch {
+    return "dark";
+  }
+};
+
+const persistServicePublicTheme = (theme: ServicePublicTheme) => {
+  try {
+    window.localStorage.setItem(SERVICE_PUBLIC_THEME_STORAGE_KEY, theme);
+  } catch {
+    // Embedded and privacy-restricted browsers can deny storage access.
+  }
+};
 
 const scrollServicePublicItemNearTop = (itemId: string) => {
   document.getElementById(servicePublicItemDomId(itemId))?.scrollIntoView({
@@ -108,6 +132,89 @@ const normalizePublicBrandHex = (raw: string) => {
   return null;
 };
 
+/**
+ * The detailed link is used by service teams. Keep their scheduled mic
+ * handoff beside the running order, without exposing it on the simple link.
+ */
+const PublicServingTeamsPanel = ({
+  teams,
+  secondaryColor,
+  theme,
+}: {
+  teams: PublicServiceFlowServingTeam[];
+  secondaryColor?: string | null;
+  theme: ServicePublicTheme;
+}) => (
+  <aside
+    className={cn(
+      "rounded-xl border p-3 shadow-lg lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto",
+      theme === "light" ? "border-slate-200 bg-white" : "border-neutral-700/80 bg-neutral-900/95",
+    )}
+    aria-label="Microphone assignments"
+  >
+    <div className="flex items-center gap-2">
+      <Mic2 className={cn("size-4", theme === "light" ? "text-cyan-800" : "text-cyan-300")} aria-hidden />
+      <h2 className={cn("text-sm font-semibold", theme === "light" ? "text-slate-900" : "text-neutral-100")}>
+        Microphone assignments
+      </h2>
+    </div>
+    <p className={cn("mt-1 text-xs leading-5", theme === "light" ? "text-slate-700" : "text-neutral-400")}>
+      Microphones in use for this service.
+    </p>
+    <div className="mt-3 space-y-4">
+      {teams.map((team) => (
+        <section key={team.teamId} aria-labelledby={`serving-team-${team.teamId}`}>
+          <h3
+            id={`serving-team-${team.teamId}`}
+            className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-200/90"
+            style={secondaryColor ? { color: secondaryColor } : undefined}
+          >
+            {team.teamName}
+          </h3>
+          <ul className="mt-1.5 space-y-1.5">
+            {team.members.map((member) => (
+              <li
+                key={`${member.positionId}:${member.memberName}`}
+                className={cn("rounded-md border px-2 py-1.5", theme === "light" ? "border-slate-200 bg-slate-50" : "border-neutral-700/70 bg-neutral-950/50")}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {member.profileImageUrl ? (
+                      <img
+                        src={member.profileImageUrl}
+                        alt=""
+                        className="size-9 shrink-0 rounded-full object-cover"
+                      />
+                    ) : null}
+                    <span className={cn("min-w-0 truncate text-xs font-medium", theme === "light" ? "text-slate-900" : "text-neutral-100")}>
+                      {member.memberName}
+                    </span>
+                  </div>
+                  <span className={cn("shrink-0 text-[11px]", theme === "light" ? "text-slate-700" : "text-neutral-400")}>
+                    {member.positionName}
+                  </span>
+                </div>
+                <div
+                  className="mt-1 flex flex-wrap gap-1"
+                  aria-label={`Microphones for ${member.memberName}`}
+                >
+                  {member.microphones.map((microphone) => (
+                    <ServicePlanMicrophoneChip
+                      key={microphone.id}
+                      microphone={microphone}
+                      theme={theme}
+                    />
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  </aside>
+);
+
 export type ServicePublicViewProps = {
   snapshot: PublicServiceFlowSnapshot;
   connection?: PublicServiceConnection;
@@ -136,6 +243,7 @@ const ServicePublicView = ({
   const [selectedRole, setSelectedRole] = useState("");
   const [collapsedNoteIds, setCollapsedNoteIds] = useState<ReadonlySet<string>>(() => new Set());
   const [isFollowingLive, setIsFollowingLive] = useState(true);
+  const [theme, setTheme] = useState<ServicePublicTheme>(readServicePublicTheme);
   const followedLiveItemIdRef = useRef<string | null>(null);
   const suppressFollowPauseUntilRef = useRef(0);
 
@@ -143,6 +251,10 @@ const ServicePublicView = ({
     const interval = window.setInterval(() => setClientNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    persistServicePublicTheme(theme);
+  }, [theme]);
 
   const serverOffsetMs = useMemo(() => snapshot.serverNowMs - Date.now(), [snapshot]);
   const progress = useMemo(
@@ -326,10 +438,10 @@ const ServicePublicView = ({
     live: "Live now",
   } as const;
   const statusBadgeClassNameByKind = {
-    upcoming: "bg-sky-400/10 text-sky-200",
-    live: "bg-emerald-400/10 text-emerald-200",
-    manual: "bg-amber-400/10 text-amber-200",
-    complete: "bg-neutral-700/80 text-neutral-300",
+    upcoming: theme === "light" ? "bg-sky-100 text-sky-700" : "bg-sky-400/10 text-sky-200",
+    live: theme === "light" ? "bg-emerald-100 text-emerald-700" : "bg-emerald-400/10 text-emerald-200",
+    manual: theme === "light" ? "bg-amber-100 text-amber-700" : "bg-amber-400/10 text-amber-200",
+    complete: theme === "light" ? "bg-slate-200 text-slate-600" : "bg-neutral-700/80 text-neutral-300",
   } as const;
   const statusLabel = statusLabelByKind[statusKind];
   const statusBadgeClassName = statusBadgeClassNameByKind[statusKind];
@@ -344,7 +456,25 @@ const ServicePublicView = ({
   // Shared neutral surfaces on both views. Brand color #2 tints section titles
   // on both views when set; simple view also uses it for the church name.
   // Brand color #1 accents item borders.
-  const chrome = isGeneralView
+  const chrome = theme === "light"
+    ? {
+      page: "bg-slate-50 text-slate-900",
+      headerCard: "border-slate-200 bg-white",
+      headerRule: "border-slate-200",
+      churchName: "text-slate-600",
+      meta: "text-slate-500",
+      sectionTitle: "text-slate-600",
+      list: "border-slate-200 bg-white",
+      itemBorder: "border-slate-200",
+      time: "text-slate-600",
+      duration: "text-slate-400",
+      title: "text-slate-900",
+      credit: "text-slate-500",
+      creditName: "text-slate-700",
+      past: "bg-slate-50 text-slate-500",
+      reconnecting: "text-slate-500",
+    }
+    : isGeneralView
     ? {
       page: "bg-neutral-950 text-neutral-100",
       headerCard: "border-neutral-700/80 bg-neutral-900/95",
@@ -385,12 +515,22 @@ const ServicePublicView = ({
   const sectionTitleBrandStyle = churchSecondaryColor
     ? { color: churchSecondaryColor }
     : undefined;
+  const servingTeams = !isGeneralView ? snapshot.servingTeams || [] : [];
+  const hasServingTeams = servingTeams.length > 0;
 
   const body = (
     <>
-      <div className={cn(embedded ? "px-0 pb-4 pt-0" : "mx-auto max-w-3xl px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6")}>
+      <div className={cn(
+        embedded ? "px-0 pb-4 pt-0" : "mx-auto px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6",
+        hasServingTeams ? "max-w-6xl" : "max-w-3xl",
+      )}>
+        <div className={cn(hasServingTeams && "lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start lg:gap-4")}>
+          <div className="min-w-0">
         <header className={cn(
-          embedded ? "pb-3" : "-mx-3 border-b border-neutral-800/90 px-3 pb-3 pt-1 sm:-mx-5 sm:px-5",
+          embedded ? "pb-3" : cn(
+            "-mx-3 border-b px-3 pb-3 pt-1 sm:-mx-5 sm:px-5",
+            theme === "light" ? "border-slate-200" : "border-neutral-800/90",
+          ),
         )}>
           <div className={cn("rounded-xl p-3 shadow-lg sm:p-4", chrome.headerCard)}>
             <div className="flex items-start gap-3">
@@ -414,6 +554,19 @@ const ServicePublicView = ({
                   {formatServiceDate(service.startsAt, service.timezone)} · starts {formatServiceTime(Date.parse(service.startsAt), service.timezone)}
                 </p>
               </div>
+              <Button
+                variant="none"
+                svg={theme === "dark" ? Sun : Moon}
+                iconSize="sm"
+                className={cn(
+                  "shrink-0 rounded-full border p-2",
+                  theme === "light"
+                    ? "border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    : "border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white",
+                )}
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+              />
             </div>
 
             <div className={cn("mt-3 flex flex-wrap items-center gap-2 border-t pt-3", chrome.headerRule)}>
@@ -427,7 +580,7 @@ const ServicePublicView = ({
               </span>
               {showTeamNotesFilter || showRoleNotesFilter ? (
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none">
-                  <span className="shrink-0 text-xs font-medium text-neutral-400">
+                  <span className={cn("shrink-0 text-xs font-medium", theme === "light" ? "text-slate-500" : "text-neutral-400")}>
                     Show notes for
                   </span>
                   {showTeamNotesFilter ? (
@@ -439,6 +592,10 @@ const ServicePublicView = ({
                       labelFontSize="text-xs"
                       value={selectedTeam || "__everyone__"}
                       onChange={handleTeamNotesFilterChange}
+                      textColor={theme === "light" ? "text-slate-900" : undefined}
+                      backgroundColor={theme === "light" ? "bg-slate-50" : undefined}
+                      contentBackgroundColor={theme === "light" ? "bg-white" : undefined}
+                      contentTextColor={theme === "light" ? "text-slate-900" : undefined}
                       options={[
                         { value: "__everyone__", label: "All teams" },
                         ...teamLabels.map((team) => ({ value: team, label: team })),
@@ -467,9 +624,9 @@ const ServicePublicView = ({
             </div>
 
             {progress?.current ? (
-              <div className="mt-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2" aria-label="Current service item">
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">Now</p>
-                <p className="text-sm font-semibold text-neutral-50">{progress.current.item.title}</p>
+              <div className={cn("mt-2 rounded-lg border px-3 py-2", theme === "light" ? "border-emerald-200 bg-emerald-50" : "border-emerald-500/25 bg-emerald-500/5")} aria-label="Current service item">
+                <p className={cn("text-[11px] font-bold uppercase tracking-[0.14em]", theme === "light" ? "text-emerald-700" : "text-emerald-300/90")}>Now</p>
+                <p className={cn("text-sm font-semibold", theme === "light" ? "text-emerald-950" : "text-neutral-50")}>{progress.current.item.title}</p>
                 {progress.next ? (
                   <p className={cn("mt-0.5 text-xs", chrome.meta)}>
                     Up next: <span className={cn("font-medium", chrome.title)}>{progress.next.item.title}</span>
@@ -542,7 +699,7 @@ const ServicePublicView = ({
                         "scroll-mt-3 border-b border-l-2 px-3 py-2 last:border-b-0 sm:px-3.5 sm:py-2.5",
                         chrome.itemBorder,
                         !isCurrent && !churchPrimaryColor && "border-l-transparent",
-                        isCurrent && "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20",
+                        isCurrent && (theme === "light" ? "border-l-emerald-600 bg-emerald-50 ring-1 ring-inset ring-emerald-200" : "border-l-emerald-400/80 bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/20"),
                         isPast && chrome.past,
                       )}
                       style={
@@ -556,7 +713,7 @@ const ServicePublicView = ({
                           <time
                             className={cn(
                               "block text-xs font-medium tabular-nums sm:text-sm",
-                              isCurrent ? "text-emerald-300" : chrome.time,
+                              isCurrent ? (theme === "light" ? "text-emerald-700" : "text-emerald-300") : chrome.time,
                             )}
                           >
                             {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
@@ -578,7 +735,7 @@ const ServicePublicView = ({
                               {item.title}
                             </h3>
                             {isCurrent ? (
-                              <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                              <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "bg-emerald-100 text-emerald-700" : "bg-emerald-400/15 text-emerald-200")}>
                                 Current
                               </span>
                             ) : null}
@@ -599,7 +756,8 @@ const ServicePublicView = ({
                                 svg={ChevronDown}
                                 iconSize="xs"
                                 className={cn(
-                                  "h-auto min-h-0 px-0 py-0 text-xs text-neutral-400 hover:text-neutral-200",
+                                  "h-auto min-h-0 px-0 py-0 text-xs",
+                                  theme === "light" ? "text-slate-500 hover:text-slate-900" : "text-neutral-400 hover:text-neutral-200",
                                   notesExpanded && "[&_svg]:rotate-180",
                                 )}
                                 aria-expanded={notesExpanded}
@@ -608,28 +766,34 @@ const ServicePublicView = ({
                                 {selectedTeam || selectedRole ? "Filtered notes" : "Notes"}
                               </Button>
                               {notesExpanded ? (
-                                <div className="mt-1.5 space-y-2 border-l border-neutral-600/70 pl-2.5 text-white">
+                                <div className={cn("mt-1.5 space-y-2 border-l pl-2.5", theme === "light" ? "border-slate-300 text-slate-900" : "border-neutral-600/70 text-white")}>
                                   {item.notes.blocks.length ? (
                                     <div>
                                       {visibleAudienceNotes.length || selectedTeam || selectedRole ? (
-                                        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+                                        <p className={cn("mb-0.5 text-[10px] font-semibold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
                                           Shared notes
                                         </p>
                                       ) : null}
-                                      <ServiceFlowRichText document={item.notes} />
+                                      <ServiceFlowRichText
+                                        document={item.notes}
+                                        className={theme === "light" ? "text-slate-900" : undefined}
+                                      />
                                     </div>
                                   ) : null}
                                   {visibleAudienceNotes.map((teamNote) => (
                                     <div key={`${teamNote.scope || "team"}:${teamNote.positionId || teamNote.label}`}>
-                                      <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-neutral-500">
+                                      <p className={cn("mb-0.5 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
                                         {teamNote.label}{teamNote.scope === "role" ? " role" : ""} notes
                                       </p>
-                                      <ServiceFlowRichText document={teamNote.notes} />
+                                      <ServiceFlowRichText
+                                        document={teamNote.notes}
+                                        className={theme === "light" ? "text-slate-900" : undefined}
+                                      />
                                     </div>
                                   ))}
                                   {visibleMicrophoneAssignments.length ? (
                                     <div>
-                                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-neutral-500">
+                                      <p className={cn("mb-1 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
                                         Microphones
                                       </p>
                                       <div className="flex flex-wrap gap-1.5">
@@ -642,6 +806,7 @@ const ServicePublicView = ({
                                             details={[
                                               assignment.holderName || "",
                                             ]}
+                                            theme={theme}
                                           />
                                         ))}
                                       </div>
@@ -659,6 +824,17 @@ const ServicePublicView = ({
               </ol>
             </section>
           ))}
+        </div>
+          </div>
+          {hasServingTeams ? (
+            <div className="mt-4 self-start lg:sticky lg:top-4 lg:mt-0">
+              <PublicServingTeamsPanel
+                teams={servingTeams}
+                secondaryColor={churchSecondaryColor}
+                theme={theme}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 

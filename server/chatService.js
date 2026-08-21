@@ -89,10 +89,28 @@ const chatCalendarDayKey = (date, timeZone) => {
 // field/param name stayed `dayKey` to avoid a schema and API rename.
 export const chatDayKey = (date, timeZone) => {
   const localDayKey = chatCalendarDayKey(date, timeZone);
-  const localMidnight = new Date(`${localDayKey}T00:00:00.000Z`);
-  localMidnight.setUTCDate(localMidnight.getUTCDate() - localMidnight.getUTCDay());
+  return chatWeekStartKey(localDayKey);
+};
+
+const chatWeekStartKey = (dayKey) => {
+  const localMidnight = new Date(`${dayKey}T00:00:00.000Z`);
+  localMidnight.setUTCDate(
+    localMidnight.getUTCDate() - localMidnight.getUTCDay(),
+  );
   return localMidnight.toISOString().slice(0, 10);
 };
+
+/**
+ * New messages use their Sunday week key. Keep the seven daily keys in the
+ * read set so messages written before the weekly grouping rollout remain
+ * visible for their normal retention period.
+ */
+const chatWeekStorageKeys = (weekKey) =>
+  Array.from({ length: 7 }, (_, offset) => {
+    const date = new Date(`${weekKey}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + offset);
+    return date.toISOString().slice(0, 10);
+  });
 
 const normalizeMessageText = (value, { allowEmpty = false } = {}) => {
   const text = String(value || "")
@@ -346,13 +364,13 @@ export const createChatService = ({
   };
 
   const assertDayInRetention = (dayKey, todayKey) => {
-    const normalized = normalizeDayKey(dayKey);
+    const normalized = chatWeekStartKey(normalizeDayKey(dayKey));
     if (normalized > todayKey) {
       throw createChatError("That chat week has not started yet.");
     }
     const earliest = new Date(`${todayKey}T00:00:00.000Z`);
     earliest.setUTCDate(earliest.getUTCDate() - CHAT_RETENTION_DAYS);
-    if (normalized < earliest.toISOString().slice(0, 10)) {
+    if (normalized < chatWeekStartKey(earliest.toISOString().slice(0, 10))) {
       throw createChatError("That chat week is no longer available.", 404);
     }
     return normalized;
@@ -374,13 +392,14 @@ export const createChatService = ({
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(limit) || 50));
     const beforeMs = Number(before) || 0;
     const db = getDb();
+    const storageKeys = chatWeekStorageKeys(selectedDayKey);
 
     let messages;
     if (db) {
       let query = db
         .collection(CHAT_MESSAGE_COLLECTION)
         .where("churchId", "==", churchId)
-        .where("dayKey", "==", selectedDayKey)
+        .where("dayKey", "in", storageKeys)
         .orderBy("createdAt", "desc");
       if (beforeMs > 0)
         query = query.where("createdAt", "<", new Date(beforeMs));
@@ -395,7 +414,7 @@ export const createChatService = ({
         .filter(
           (message) =>
             message.churchId === churchId &&
-            message.dayKey === selectedDayKey &&
+            storageKeys.includes(message.dayKey) &&
             (!beforeMs || timestampMs(message.createdAt) < beforeMs),
         )
         .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
@@ -811,9 +830,10 @@ export const createChatService = ({
   };
 
   const subscribe = ({ churchId, dayKey, onEvent }) => {
-    const selectedDayKey = normalizeDayKey(dayKey);
+    const selectedDayKey = chatWeekStartKey(normalizeDayKey(dayKey));
     const key = liveKey(churchId, selectedDayKey);
     const db = getDb();
+    const storageKeys = chatWeekStorageKeys(selectedDayKey);
     if (!db) {
       const subscribers = memorySubscribers.get(key) || new Set();
       subscribers.add(onEvent);
@@ -824,7 +844,7 @@ export const createChatService = ({
           .filter(
             (message) =>
               message.churchId === churchId &&
-              message.dayKey === selectedDayKey,
+              storageKeys.includes(message.dayKey),
           )
           .sort((a, b) => timestampMs(a.createdAt) - timestampMs(b.createdAt));
         onEvent({
@@ -855,7 +875,7 @@ export const createChatService = ({
       const query = db
         .collection(CHAT_MESSAGE_COLLECTION)
         .where("churchId", "==", churchId)
-        .where("dayKey", "==", selectedDayKey)
+        .where("dayKey", "in", storageKeys)
         .orderBy("createdAt", "desc")
         .limit(LIVE_QUERY_LIMIT);
       const unsubscribe = query.onSnapshot(

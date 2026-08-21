@@ -241,6 +241,13 @@ const WhosServingPanel = ({
                       {/* Position and name share the first line so both stay
                           readable; mic chips drop to a second line. */}
                       <div className="flex w-full items-center gap-2">
+                        {hasMicrophones && row.memberProfileImageUrl ? (
+                          <img
+                            src={row.memberProfileImageUrl}
+                            alt=""
+                            className="h-12 w-12 shrink-0 rounded-full object-cover"
+                          />
+                        ) : null}
                         <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
                           {row.slotLabel}
                         </span>

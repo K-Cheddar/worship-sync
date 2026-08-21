@@ -1,4 +1,8 @@
-import type { TeamBlockoutDateRange, TeamService } from "../../api/authTypes";
+import type {
+  TeamBlockoutDateRange,
+  TeamRosterMember,
+  TeamService,
+} from "../../api/authTypes";
 import {
   buildIntakeAvailabilityServiceOptions,
   filterBlockoutDatesForScheduleRange,
@@ -6,7 +10,9 @@ import {
   formatShortOccurrenceDate,
   isServiceActive,
   isServicePastEnd,
+  memberName,
   serviceDateBlockedOut,
+  sortTeamRosterMembersAlphabetically,
 } from "./teamsUtils";
 
 const service = (overrides: Partial<TeamService>): TeamService => ({
@@ -36,6 +42,29 @@ describe("formatShortOccurrenceDate", () => {
     );
   });
 });
+
+describe("memberName", () => {
+  const member = (overrides: Partial<TeamRosterMember>): TeamRosterMember => ({
+    memberId: "member-1",
+    churchId: "church-1",
+    firstName: "Jane",
+    lastName: "Smith",
+    positionIds: [],
+    blockoutDates: [],
+    ...overrides,
+  });
+
+  it("includes an optional title in formal display names without changing sort order", () => {
+    expect(memberName(member({ title: "Dr." }))).toBe("Dr. Jane Smith");
+    expect(
+      sortTeamRosterMembersAlphabetically([
+        member({ memberId: "z", title: "Dr.", firstName: "Zoe" }),
+        member({ memberId: "a", firstName: "Amy" }),
+      ]).map((item) => item.firstName),
+    ).toEqual(["Amy", "Zoe"]);
+  });
+});
+
 describe("filterBlockoutDatesForScheduleRange", () => {
   const range = (
     startDate: string,

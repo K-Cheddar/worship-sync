@@ -5,8 +5,8 @@ import {
 } from "./creditVersions";
 
 const DOC_ID = "credits-outline-1-credit-abc";
-const EARLIER = "2026-08-18T10:00:00.000Z";
-const LATER = "2026-08-18T10:00:05.000Z";
+const EARLIER = "2-earlier";
+const LATER = "3-later";
 
 describe("creditVersions", () => {
   beforeEach(() => {
@@ -17,12 +17,12 @@ describe("creditVersions", () => {
     expect(isStaleCreditDoc(DOC_ID, EARLIER)).toBe(false);
   });
 
-  it("rejects a revision older than the one already applied", () => {
+  it("rejects a lower PouchDB revision generation", () => {
     recordAppliedCreditVersion(DOC_ID, LATER);
     expect(isStaleCreditDoc(DOC_ID, EARLIER)).toBe(true);
   });
 
-  it("accepts a newer revision from another operator", () => {
+  it("accepts a higher PouchDB revision generation from another operator", () => {
     recordAppliedCreditVersion(DOC_ID, EARLIER);
     expect(isStaleCreditDoc(DOC_ID, LATER)).toBe(false);
   });
@@ -32,19 +32,19 @@ describe("creditVersions", () => {
     expect(isStaleCreditDoc(DOC_ID, LATER)).toBe(false);
   });
 
-  it("keeps the newest stamp when records arrive out of order", () => {
+  it("keeps the newest revision generation when records arrive out of order", () => {
     recordAppliedCreditVersion(DOC_ID, LATER);
     recordAppliedCreditVersion(DOC_ID, EARLIER);
     expect(isStaleCreditDoc(DOC_ID, EARLIER)).toBe(true);
   });
 
-  it("never rejects docs without a usable updatedAt", () => {
+  it("never rejects docs without a usable PouchDB revision", () => {
     recordAppliedCreditVersion(DOC_ID, LATER);
     expect(isStaleCreditDoc(DOC_ID, undefined)).toBe(false);
     expect(isStaleCreditDoc(DOC_ID, "not-a-date")).toBe(false);
   });
 
-  it("ignores unusable stamps when recording", () => {
+  it("ignores unusable revisions when recording", () => {
     recordAppliedCreditVersion(DOC_ID, "not-a-date");
     expect(isStaleCreditDoc(DOC_ID, EARLIER)).toBe(false);
   });

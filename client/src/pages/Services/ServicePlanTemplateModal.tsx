@@ -170,6 +170,7 @@ const ServicePlanTemplateModal = ({
                       <Button
                         type="button"
                         variant="tertiary"
+                        wrap
                         className="w-full justify-start"
                         aria-pressed={overwriteId === template.templateId}
                         onClick={() => {
@@ -218,12 +219,15 @@ const ServicePlanTemplateModal = ({
                     variant="tertiary"
                     svg={LayoutTemplate}
                     iconSize="sm"
-                    className="min-w-0 flex-1 justify-start"
+                    wrap
+                    className="min-w-0 flex-1 items-start justify-start"
                     aria-label={`Apply template ${template.name}`}
                     onClick={() => handleApply(template)}
                   >
-                    <span className="truncate">{template.name}</span>
-                    <span className="ml-2 shrink-0 text-xs text-gray-400">
+                    <span className="min-w-0 flex-1 whitespace-normal break-words text-left">
+                      {template.name}
+                    </span>
+                    <span className="ml-2 min-w-0 text-left text-xs text-gray-400">
                       {template.sections.length} sections · {countItems(template)} items
                       {template.serviceId === serviceId ? ` · ${serviceName}` : ""}
                     </span>

@@ -702,7 +702,10 @@ export const createNewItemInDb = async ({
       { ...item, createdAt: now, updatedAt: now },
       { isNew: true },
     );
-    db.put(doc);
+    // Do not return a newly-created item until its local database write has
+    // completed. Callers such as Service Plan's "Create and attach" flow use
+    // this resolution as their signal that a library reference is durable.
+    await db.put(doc);
     return item;
   }
 };

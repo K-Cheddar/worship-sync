@@ -190,6 +190,7 @@ const seedTeam = async (
         lastName: member.lastName,
         positionIds: (member.positions || []).map((name) => positionIds[name]),
         blockoutDates: member.blockoutDates || [],
+        recurringAvailability: member.recurringAvailability,
       },
     });
     memberIds[member.firstName] = res.payload.member.memberId;
@@ -880,12 +881,22 @@ test("schedule assignments block duplicate positions and unavailable members", a
         positions: ["Vocal"],
         blockoutDates: [{ startDate: "2026-07-05", endDate: "2026-07-05" }],
       },
+      {
+        firstName: "Jordan",
+        lastName: "Ray",
+        positions: ["Vocal"],
+        recurringAvailability: {
+          weeksOfMonth: [4],
+          includeLastWeekOfMonth: false,
+        },
+      },
     ],
   });
   const vocalId = positionIds.Vocal;
   const keysId = positionIds.Keys;
   const availableId = memberIds.Avery;
   const unavailableId = memberIds.Morgan;
+  const recurringUnavailableId = memberIds.Jordan;
 
   const serviceId = "service-sunday";
   const occurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
@@ -955,6 +966,49 @@ test("schedule assignments block duplicate positions and unavailable members", a
   );
   assert.equal(blockedUnavailable.statusCode, 400);
   assert.match(blockedUnavailable.payload.errorMessage, /unavailable/i);
+
+  const blockedByRecurringAvailability = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: schedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${vocalId}::0`,
+        memberId: recurringUnavailableId,
+        serviceDate: "2026-07-05",
+      },
+    },
+  );
+  assert.equal(blockedByRecurringAvailability.statusCode, 400);
+  assert.match(
+    blockedByRecurringAvailability.payload.errorMessage,
+    /week of the month/i,
+  );
+
+  const confirmedRecurringAvailability = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: schedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${vocalId}::0`,
+        memberId: recurringUnavailableId,
+        serviceDate: "2026-07-05",
+        allowRecurringAvailability: true,
+      },
+    },
+  );
+  assert.equal(confirmedRecurringAvailability.statusCode, 200);
+  assert.equal(
+    getMemberId(
+      confirmedRecurringAvailability.payload.schedule.assignments?.[
+        occurrenceId
+      ]?.[`${vocalId}::0`],
+    ),
+    recurringUnavailableId,
+  );
 
   const confirmedBlockout = await callHandler(
     authHandlers.updateTeamScheduleAssignment,
@@ -1784,11 +1838,35 @@ test("schedule assignment updates broadcast the new schedule over SSE", async (t
   });
   const scheduleId = schedule.payload.schedule.scheduleId;
 
+  const planKey = "service-sunday@2026-07-05";
+  const savedPlan = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId,
+      date: "2026-07-05",
+      name: "Sunday Service",
+      startsAt: "2026-07-05T10:00:00.000Z",
+      timezone: "America/New_York",
+      sections: [],
+    },
+  });
+  assert.equal(savedPlan.statusCode, 200);
+  const published = await callHandler(authHandlers.publishServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(published.statusCode, 200);
+  const publicToken = published.payload.publicUrl.split("/").at(-1);
+
   // Subscribe only after creating the schedule so we observe just the
   // assignment broadcast, not the create one.
   const sseClient = createSseClient();
+  const publicSseClient = createSseClient();
   addTeamsSseClient(context.churchId, sseClient);
+  addServiceFlowSseClient(publicToken, publicSseClient);
   t.after(() => removeTeamsSseClient(context.churchId, sseClient));
+  t.after(() => removeServiceFlowSseClient(publicToken, publicSseClient));
 
   const slotKey = `${positionIds.Vocal}::0`;
   const assign = await callHandler(authHandlers.updateTeamScheduleAssignment, {
@@ -1813,6 +1891,7 @@ test("schedule assignment updates broadcast the new schedule over SSE", async (t
     getMemberId(updates[0].schedule.assignments?.[occurrenceId]?.[slotKey]),
     memberIds.Avery,
   );
+  assert.equal(publicSseClient.events().at(-1)?.type, "service-updated");
 });
 
 test("schedule mutations do not broadcast to other churches", async (t) => {
@@ -2633,17 +2712,48 @@ test("member privacy and serving preferences are validated and birth dates are a
   const minor = await callHandler(authHandlers.createTeamRosterMember, {
     context,
     body: {
+      title: "Dr.",
       firstName: "Young",
       lastName: "Person",
       dateOfBirth: `${currentYear - 10}-01-01`,
       isMinor: false,
       servingFrequency: "monthly",
+      recurringAvailability: {
+        weeksOfMonth: [4],
+        includeLastWeekOfMonth: false,
+      },
       positionIds: [],
     },
   });
   assert.equal(minor.statusCode, 200);
   assert.equal(minor.payload.member.isMinor, true);
+  assert.equal(minor.payload.member.title, "Dr.");
   assert.equal(minor.payload.member.servingFrequency, "monthly");
+  assert.deepEqual(minor.payload.member.recurringAvailability, {
+    weeksOfMonth: [4],
+    includeLastWeekOfMonth: false,
+  });
+
+  // A client that predates these optional fields must not clear them while
+  // saving another member change.
+  const preservedOptionalFields = await callHandler(
+    authHandlers.updateTeamRosterMember,
+    {
+      context,
+      params: { memberId: minor.payload.member.memberId },
+      body: {
+        firstName: "Young",
+        lastName: "Person",
+        positionIds: [],
+      },
+    },
+  );
+  assert.equal(preservedOptionalFields.statusCode, 200);
+  assert.equal(preservedOptionalFields.payload.member.title, "Dr.");
+  assert.deepEqual(preservedOptionalFields.payload.member.recurringAvailability, {
+    weeksOfMonth: [4],
+    includeLastWeekOfMonth: false,
+  });
 
   const adult = await callHandler(authHandlers.createTeamRosterMember, {
     context,
@@ -2696,6 +2806,23 @@ test("member privacy and serving preferences are validated and birth dates are a
     },
   });
   assert.equal(invalidMinor.statusCode, 400);
+
+  const invalidRecurringAvailability = await callHandler(
+    authHandlers.createTeamRosterMember,
+    {
+      context,
+      body: {
+        firstName: "Invalid",
+        lastName: "Availability",
+        recurringAvailability: {
+          weeksOfMonth: [6],
+          includeLastWeekOfMonth: false,
+        },
+        positionIds: [],
+      },
+    },
+  );
+  assert.equal(invalidRecurringAvailability.statusCode, 400);
 });
 
 test("adding a team position to an existing member joins that team's roster", async (t) => {

@@ -29,6 +29,7 @@ import {
 } from "./scheduleMemberPickerUtils";
 import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
 import {
+  recurringAvailabilityLabel,
   resolveMemberMinorStatus,
   servingFrequencyLabel,
 } from "../memberPreferences";
@@ -177,6 +178,12 @@ const ScheduleMembersPanel = ({
           <dt className="font-semibold text-gray-400">Serving preference</dt>
           <dd className="mt-0.5 text-gray-200">
             {servingFrequencyLabel(member.servingFrequency)}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-gray-400">Recurring availability</dt>
+          <dd className="mt-0.5 text-gray-200">
+            {recurringAvailabilityLabel(member.recurringAvailability)}
           </dd>
         </div>
         {member.notes ? (

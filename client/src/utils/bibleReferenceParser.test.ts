@@ -60,6 +60,44 @@ KJV`,
     ]);
   });
 
+  it("extracts repeated chapters and pipe-separated references", () => {
+    const rows = extractBibleReferencesFromText(
+      "Genesis 7:1, 7:16 | Joshua 2:1–21 | Joshua 6:22–25 | Matthew 1:5",
+      "nkjv",
+    );
+
+    expect(rows.map(({ book, chapter, verseRange, version }) => ({
+      book,
+      chapter,
+      verseRange,
+      version,
+    }))).toEqual([
+      { book: "Genesis", chapter: "7", verseRange: "1", version: "nkjv" },
+      { book: "Genesis", chapter: "7", verseRange: "16", version: "nkjv" },
+      { book: "Joshua", chapter: "2", verseRange: "1-21", version: "nkjv" },
+      { book: "Joshua", chapter: "6", verseRange: "22-25", version: "nkjv" },
+      { book: "Matthew", chapter: "1", verseRange: "5", version: "nkjv" },
+    ]);
+  });
+
+  it("extracts shorthand references after semicolons, pipes, and and", () => {
+    const rows = extractBibleReferencesFromText(
+      "Genesis 7:1; 7:16 | 8:3 and 8:7",
+      "nkjv",
+    );
+
+    expect(rows.map(({ book, chapter, verseRange }) => ({
+      book,
+      chapter,
+      verseRange,
+    }))).toEqual([
+      { book: "Genesis", chapter: "7", verseRange: "1" },
+      { book: "Genesis", chapter: "7", verseRange: "16" },
+      { book: "Genesis", chapter: "8", verseRange: "3" },
+      { book: "Genesis", chapter: "8", verseRange: "7" },
+    ]);
+  });
+
   it("handles spaced colons, inline versions, and notes", () => {
     const rows = extractBibleReferencesFromText(
       `John 15 : 12–15 NKJV

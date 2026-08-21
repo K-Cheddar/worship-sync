@@ -48,6 +48,9 @@ const duplicateFirstNames = new Set<string>();
 describe("scheduleMemberPickerUtils", () => {
   it("keeps blockouts selectable only in the manual scheduling flow", () => {
     expect(getManualScheduleAssignmentIssue("Blocked out")).toBe("");
+    expect(
+      getManualScheduleAssignmentIssue("Unavailable this week of the month"),
+    ).toBe("");
     expect(getManualScheduleAssignmentIssue("Already assigned in this service")).toBe(
       "Already assigned in this service",
     );

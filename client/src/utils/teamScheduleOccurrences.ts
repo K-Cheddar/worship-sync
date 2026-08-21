@@ -187,21 +187,14 @@ export const isOccurrenceOnCalendarDay = (
   );
 };
 
-const startOfTodayMs = () => {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  return now.getTime();
-};
-
 /**
  * The occurrence the operator is most likely to work next: the earliest one that
- * starts on or after `referenceMs` (defaults to the start of today, so a service
- * earlier today still counts as up next). Occurrences need not be pre-sorted;
- * returns null when every occurrence is in the past.
+ * starts on or after `referenceMs` (defaults to now). Occurrences need not be
+ * pre-sorted; returns null when every occurrence is in the past.
  */
 export const findNextUpcomingOccurrenceId = (
   occurrences: TeamScheduleOccurrence[],
-  referenceMs: number = startOfTodayMs(),
+  referenceMs: number = Date.now(),
 ): string | null => {
   let bestId: string | null = null;
   let bestMs = Infinity;

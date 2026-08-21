@@ -33,6 +33,62 @@ test("chat day keys are the Sunday starting the church-local week", () => {
   assert.equal(chatDayKey(instant, "America/New_York"), "2026-08-02");
 });
 
+test("reads a weekly chat through both weekly and legacy daily storage keys", async () => {
+  const dayKeyFilters = [];
+  const messagesQuery = {
+    where(field, operator, value) {
+      if (field === "dayKey") dayKeyFilters.push({ operator, value });
+      return this;
+    },
+    orderBy() {
+      return this;
+    },
+    limit() {
+      return this;
+    },
+    async get() {
+      return { docs: [] };
+    },
+  };
+  const service = createChatService({
+    now: () => new Date("2026-08-12T16:00:00.000Z"),
+    getFirestore: () => ({
+      collection: (name) =>
+        name === "chatMessages"
+          ? messagesQuery
+          : {
+              doc: () => ({
+                get: async () => ({ exists: true, data: () => ({ timeZone: "UTC" }) }),
+              }),
+            },
+    }),
+  });
+
+  const result = await service.listMessages({
+    churchId: "church_1",
+    session: humanSession,
+    // An old caller can still send a daily key; it now selects its whole week.
+    dayKey: "2026-08-12",
+    timeZoneHint: "UTC",
+  });
+
+  assert.equal(result.dayKey, "2026-08-09");
+  assert.deepEqual(dayKeyFilters, [
+    {
+      operator: "in",
+      value: [
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15",
+      ],
+    },
+  ]);
+});
+
 test("caches the church timezone before typing heartbeats", async () => {
   let reads = 0;
   let writes = 0;

@@ -4,6 +4,7 @@ import {
   buildTeamsRestoreNavigationState,
   clearPersistedTeamsReturnTo,
   clearTeamsRestoreFromState,
+  isTeamsNavigationReload,
   persistTeamsReturnTo,
   readPersistedTeamsReturnTo,
   readTeamsRestore,
@@ -19,10 +20,15 @@ import {
 export const useTeamsReturnNavigation = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const canRestorePersistedReturnToRef = useRef(isTeamsNavigationReload());
   const returnTo = useMemo(
-    () =>
-      readTeamsReturnTo(location.state) ??
-      readPersistedTeamsReturnTo(location.pathname),
+    () => {
+      const returnToFromState = readTeamsReturnTo(location.state);
+      if (returnToFromState) return returnToFromState;
+      return canRestorePersistedReturnToRef.current
+        ? readPersistedTeamsReturnTo(location.pathname)
+        : null;
+    },
     [location.pathname, location.state],
   );
 

@@ -74,7 +74,7 @@ const buildRestreamState = (overrides: Record<string, unknown> = {}) => ({
 describe("CurrentServiceRestreamPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    window.sessionStorage.clear();
+    window.localStorage.clear();
     mockUseRestreamSession.mockReturnValue(buildRestreamState());
   });
 
@@ -294,10 +294,10 @@ describe("CurrentServiceRestreamPanel", () => {
     );
     unmountInitialPanel();
     await waitFor(() => {
-      expect(window.sessionStorage.length).toBe(1);
+      expect(window.localStorage.length).toBe(1);
     });
     const storedMarker = JSON.parse(
-      window.sessionStorage.getItem(
+      window.localStorage.getItem(
         "worshipsync:current-service-chat-read:v1:church-1",
       ) ?? "{}",
     ) as Record<string, unknown>;

@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { Camera, Plus, X } from "lucide-react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
@@ -44,7 +44,11 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import BlockoutDatesField from "../components/BlockoutDatesField";
+import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
+import SelectAllButton from "../../../components/SelectAllButton";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
+import { uploadImageToCloudinary } from "../../../containers/Media/utils/cloudinaryUpload";
+import { deleteCloudinaryAsset } from "../../../utils/cloudinaryUtils";
 import {
   countMemberAssignmentsOnTeam,
   describeDeletionImpacts,
@@ -74,7 +78,9 @@ import {
 import type { TeamsData } from "../types";
 import {
   DEFAULT_SERVING_FREQUENCY,
+  emptyRecurringAvailability,
   isMinorOnDate,
+  recurringAvailabilityWeekOptions,
   servingFrequencyOptions,
 } from "../memberPreferences";
 
@@ -86,6 +92,7 @@ const NO_TEAM_GROUP_ID = "__no_team";
 // Key used to track an in-flight save for the create form, which has no member
 // id yet. Existing members are tracked by their own memberId.
 const CREATE_SAVING_KEY = "__create__";
+const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /**
  * Membership lives on `team.memberIds`, so a member's teams have to be read off
@@ -114,12 +121,15 @@ const buildMemberDraft = (
   member: TeamRosterMember | null,
   teamIds: string[],
 ): TeamRosterMemberPayload => ({
+  title: member?.title || "",
   firstName: member?.firstName || "",
   lastName: member?.lastName || "",
   email: member?.email || "",
   dateOfBirth: member?.dateOfBirth || "",
   isMinor: Boolean(member?.isMinor),
   servingFrequency: member?.servingFrequency || DEFAULT_SERVING_FREQUENCY,
+  recurringAvailability:
+    member?.recurringAvailability || emptyRecurringAvailability(),
   positionIds: member?.positionIds || [],
   desiredPositionIds: member?.desiredPositionIds || [],
   teamIds,
@@ -127,6 +137,8 @@ const buildMemberDraft = (
   qualifications: member?.qualifications || [],
   blockoutDates: member?.blockoutDates || [],
   notes: member?.notes || "",
+  profileImageUrl: member?.profileImageUrl || "",
+  profileImagePublicId: member?.profileImagePublicId || "",
 });
 
 const qualificationStatusOptions: {
@@ -161,7 +173,7 @@ const MemberManager = ({
   onRemoved,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
-  const { showToast } = useToast();
+  const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const currentUserId = context?.userId || "";
   /**
@@ -183,6 +195,19 @@ const MemberManager = ({
   const [draft, setDraft] = useState<TeamRosterMemberPayload>(() =>
     buildMemberDraft(null, []),
   );
+  const [profileImageUploading, setProfileImageUploading] = useState(false);
+  const [pendingProfileImage, setPendingProfileImage] = useState<File | null>(null);
+  const [pendingProfileImagePreviewUrl, setPendingProfileImagePreviewUrl] =
+    useState("");
+  const profileImageInputRef = useRef<HTMLInputElement>(null);
+  const profileImageSelectionToastIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    return () => {
+      if (pendingProfileImagePreviewUrl) {
+        URL.revokeObjectURL(pendingProfileImagePreviewUrl);
+      }
+    };
+  }, [pendingProfileImagePreviewUrl]);
   const derivedMinorStatus = isMinorOnDate(draft.dateOfBirth || "");
   // Members with a save currently in flight, keyed by memberId (or
   // CREATE_SAVING_KEY for a new member). Tracking per-editor keeps the Save
@@ -193,7 +218,9 @@ const MemberManager = ({
   const [listFilters, setListFilters] = useState(emptyMemberListFilters);
   const [draftListFilters, setDraftListFilters] = useState(emptyMemberListFilters);
   const [showFilters, setShowFilters] = useState(false);
+  const [showDesiredPositions, setShowDesiredPositions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
@@ -202,6 +229,9 @@ const MemberManager = ({
   const openMemberEditor = useCallback(
     (member: TeamRosterMember) => {
       setShowFilters(false);
+      setShowDesiredPositions(false);
+      setPendingProfileImage(null);
+      setPendingProfileImagePreviewUrl("");
       setEditing(member);
       setShowCreate(true);
       setDraft(buildMemberDraft(member, readMemberTeamIds(member, data.teams)));
@@ -220,8 +250,8 @@ const MemberManager = ({
     pendingEditMemberIdRef.current = editMemberId;
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
-    setSearchParams(nextParams, { replace: true });
-  }, [canEdit, searchParams, setSearchParams]);
+    setSearchParams(nextParams, { replace: true, state: location.state });
+  }, [canEdit, location.state, searchParams, setSearchParams]);
 
   useEffect(() => {
     const editMemberId = pendingEditMemberIdRef.current;
@@ -256,7 +286,6 @@ const MemberManager = ({
 
   const handleFiltersOpenChange = useCallback(
     (next: boolean) => {
-      if (showCreate && next) return;
       if (next) {
         setDraftListFilters(listFilters);
         setShowFilters(true);
@@ -264,7 +293,7 @@ const MemberManager = ({
       }
       cancelFilters();
     },
-    [cancelFilters, listFilters, showCreate],
+    [cancelFilters, listFilters],
   );
 
   useEffect(() => {
@@ -335,9 +364,37 @@ const MemberManager = ({
     JSON.stringify(draftListFilters) !== JSON.stringify(listFilters);
 
   const reset = () => {
+    if (profileImageSelectionToastIdRef.current) {
+      removeToast(profileImageSelectionToastIdRef.current);
+      profileImageSelectionToastIdRef.current = null;
+    }
     setEditing(null);
     setShowCreate(false);
     setDraft(buildMemberDraft(null, []));
+    setShowDesiredPositions(false);
+    setProfileImageUploading(false);
+    setPendingProfileImage(null);
+    setPendingProfileImagePreviewUrl("");
+  };
+
+  const uploadProfileImage = async (file: File) => {
+    if (!canEdit || !file.type.startsWith("image/")) {
+      showToast("Choose an image file.", "error");
+      return;
+    }
+    if (file.size > MAX_PROFILE_IMAGE_BYTES) {
+      showToast("Profile images must be 5 MB or smaller.", "error");
+      return;
+    }
+    setPendingProfileImage(file);
+    setPendingProfileImagePreviewUrl(URL.createObjectURL(file));
+    if (profileImageSelectionToastIdRef.current) {
+      removeToast(profileImageSelectionToastIdRef.current);
+    }
+    profileImageSelectionToastIdRef.current = showToast(
+      "Profile image selected. Save the member to upload it.",
+      "success",
+    );
   };
 
   const cancelEditing = () => {
@@ -567,50 +624,127 @@ const MemberManager = ({
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
     setSavingIds((prev) => new Set(prev).add(savingKey));
-    const body = {
+    if (profileImageSelectionToastIdRef.current) {
+      removeToast(profileImageSelectionToastIdRef.current);
+      profileImageSelectionToastIdRef.current = null;
+    }
+    let body = {
       ...draft,
       blockoutDates: draft.blockoutDates.filter(
         (range) => range.startDate || range.endDate,
       ),
     };
-    const saveToastMessage = formatMemberSaveToast(wasEditing, body, {
-      positionNameById: new Map(
-        positions.map((position) => [position.positionId, position.name]),
-      ),
-      teamNameById: new Map(data.teams.map((team) => [team.teamId, team.name])),
-      roleNameById: new Map(
-        data.teamRoles.map((role) => [role.roleId, role.name]),
-      ),
-      priorTeamIds: joinedTeamIds,
-    });
-    const localMemberId = wasEditing?.memberId || `local-member-${generateRandomId()}`;
-    const optimisticMember: TeamRosterMember = {
-      churchId,
-      memberId: localMemberId,
-      firstName: body.firstName.trim(),
-      lastName: body.lastName.trim(),
-      email: (body.email || "").trim().toLowerCase(),
-      dateOfBirth: body.dateOfBirth || "",
-      isMinor: Boolean(body.isMinor),
-      servingFrequency: body.servingFrequency || DEFAULT_SERVING_FREQUENCY,
-      positionIds: body.positionIds,
-      desiredPositionIds: body.desiredPositionIds || [],
-      teamMemberships: body.teamMemberships || {},
-      qualifications: body.qualifications || [],
-      blockoutDates: body.blockoutDates,
-      notes: body.notes || "",
-      archivedAt: wasEditing?.archivedAt || null,
-    };
-    const savedRecord = wasEditing
-      ? { ...wasEditing, ...optimisticMember }
-      : optimisticMember;
-    onSaved(savedRecord);
+    const previousProfileImagePublicId = wasEditing?.profileImagePublicId || "";
+    const profileImageToUpload = pendingProfileImage;
+    let profileImageUploadFailed = false;
+    let uploadedProfileImagePublicId = "";
     try {
-      const response = wasEditing
+      if (profileImageToUpload) {
+        setProfileImageUploading(true);
+        try {
+          const uploaded = await uploadImageToCloudinary(
+            profileImageToUpload,
+            context?.uploadPreset || "bpqu4ma5",
+            "portable-media",
+            {},
+            { folder: `member-profiles/${churchId || "unassigned"}` },
+          );
+          uploadedProfileImagePublicId = uploaded.public_id;
+          body = {
+            ...body,
+            profileImageUrl: uploaded.secure_url,
+            profileImagePublicId: uploaded.public_id,
+          };
+        } catch (error) {
+          profileImageUploadFailed = true;
+          showApiErrorToast(
+            showToast,
+            error,
+            "The member will be saved, but the profile image could not be uploaded.",
+          );
+        } finally {
+          setProfileImageUploading(false);
+        }
+      }
+
+      const saveToastMessage = formatMemberSaveToast(wasEditing, body, {
+        positionNameById: new Map(
+          positions.map((position) => [position.positionId, position.name]),
+        ),
+        teamNameById: new Map(data.teams.map((team) => [team.teamId, team.name])),
+        roleNameById: new Map(
+          data.teamRoles.map((role) => [role.roleId, role.name]),
+        ),
+        priorTeamIds: joinedTeamIds,
+      });
+      const localMemberId =
+        wasEditing?.memberId || `local-member-${generateRandomId()}`;
+      const optimisticMember: TeamRosterMember = {
+        churchId,
+        memberId: localMemberId,
+        title: body.title?.trim() || "",
+        firstName: body.firstName.trim(),
+        lastName: body.lastName.trim(),
+        email: (body.email || "").trim().toLowerCase(),
+        dateOfBirth: body.dateOfBirth || "",
+        isMinor: Boolean(body.isMinor),
+        servingFrequency: body.servingFrequency || DEFAULT_SERVING_FREQUENCY,
+        recurringAvailability:
+          body.recurringAvailability || emptyRecurringAvailability(),
+        positionIds: body.positionIds,
+        desiredPositionIds: body.desiredPositionIds || [],
+        teamMemberships: body.teamMemberships || {},
+        qualifications: body.qualifications || [],
+        blockoutDates: body.blockoutDates,
+        notes: body.notes || "",
+        profileImageUrl: body.profileImageUrl || "",
+        profileImagePublicId: body.profileImagePublicId || "",
+        archivedAt: wasEditing?.archivedAt || null,
+      };
+      const savedRecord = wasEditing
+        ? { ...wasEditing, ...optimisticMember }
+        : optimisticMember;
+      onSaved(savedRecord);
+      let response = wasEditing
         ? await updateTeamRosterMember(churchId, wasEditing.memberId, body)
         : await createTeamRosterMember(churchId, body);
+      const finalMember: TeamRosterMember = {
+        ...response.member,
+        // Keep the editor's image fields authoritative when an older server
+        // response omits optional profile-image fields.
+        profileImageUrl:
+          body.profileImageUrl !== undefined
+            ? body.profileImageUrl
+            : response.member.profileImageUrl || "",
+        profileImagePublicId:
+          body.profileImagePublicId !== undefined
+            ? body.profileImagePublicId
+            : response.member.profileImagePublicId || "",
+      };
+      const profileImagePublicIdToDelete =
+        previousProfileImagePublicId &&
+        previousProfileImagePublicId !== body.profileImagePublicId
+          ? previousProfileImagePublicId
+          : "";
+      if (profileImagePublicIdToDelete) {
+        void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image");
+      }
+      if (!profileImageUploadFailed) {
+        setPendingProfileImage(null);
+        setPendingProfileImagePreviewUrl("");
+        setDraft(
+          buildMemberDraft(
+            finalMember,
+            readMemberTeamIds(finalMember, data.teams),
+          ),
+        );
+      }
       if (!wasEditing) {
-        onSaved(response.member, localMemberId);
+        onSaved(finalMember, localMemberId);
+      } else if (!profileImageUploadFailed) {
+        // The first optimistic save predates the Cloudinary upload. Reconcile
+        // the list with the final member record once the image is linked.
+        onSaved(finalMember, wasEditing.memberId);
       }
       // The server reconciles `team.memberIds` from the teams (and positions)
       // this save asked for. Apply the rosters it changed now so the Teams tab
@@ -618,6 +752,9 @@ const MemberManager = ({
       // waiting for the next poll.
       response.teams?.forEach((team) => onTeamSaved(team));
       showToast(saveToastMessage, "success");
+      if (profileImageUploadFailed) {
+        showToast("You can choose the image again and save to retry.", "error");
+      }
       // Cross-section return, or mobile where the form covers the list: close.
       // On desktop, keep the panel open for back-to-back editing.
       if (returnTo || isNarrowViewport) {
@@ -627,16 +764,19 @@ const MemberManager = ({
         // was in flight. Only refresh the selected record if they're still on
         // the one we just saved, so the panel never rebinds to a stale member.
         setEditing((current) =>
-          current?.memberId === wasEditing.memberId ? savedRecord : current,
+          current?.memberId === wasEditing.memberId ? finalMember : current,
         );
       } else {
         // Newly created: adopt the saved record so a subsequent Save updates it
         // instead of creating a duplicate — but only if the create form is still
         // the active editor and the operator hasn't selected another member.
-        const created = response.member;
+        const created = finalMember;
         setEditing((current) => (current === null ? created : current));
       }
     } catch (error) {
+      if (uploadedProfileImagePublicId) {
+        void deleteCloudinaryAsset(uploadedProfileImagePublicId, "image");
+      }
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();
     } finally {
@@ -655,7 +795,8 @@ const MemberManager = ({
   const isSavingCurrent = savingIds.has(currentEditorKey);
   const hasPendingChanges =
     JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
-    JSON.stringify(buildMemberDraft(editing, joinedTeamIds));
+      JSON.stringify(buildMemberDraft(editing, joinedTeamIds)) ||
+    Boolean(pendingProfileImage || pendingProfileImagePreviewUrl);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
@@ -684,6 +825,33 @@ const MemberManager = ({
     });
     return Array.from(labelById, ([id, label]) => ({ id, label }));
   }, [positionOptions]);
+  const desiredPositionSelectableIds = useMemo(
+    () =>
+      positionOptions
+        .filter(
+          (option) =>
+            !option.archived || (draft.desiredPositionIds || []).includes(option.id),
+        )
+        .map((option) => option.id),
+    [draft.desiredPositionIds, positionOptions],
+  );
+  const desiredPositionsAllSelected =
+    desiredPositionSelectableIds.length > 0 &&
+    desiredPositionSelectableIds.every((id) =>
+      (draft.desiredPositionIds || []).includes(id),
+    );
+  const toggleAllDesiredPositions = () => {
+    const selected = new Set(draft.desiredPositionIds || []);
+    if (desiredPositionsAllSelected) {
+      desiredPositionSelectableIds.forEach((id) => selected.delete(id));
+    } else {
+      desiredPositionSelectableIds.forEach((id) => selected.add(id));
+    }
+    setDraft((current) => ({
+      ...current,
+      desiredPositionIds: Array.from(selected),
+    }));
+  };
 
   // Positions the member asked for (intake) but is not yet eligible to be
   // scheduled for. Promoting one adds it to positionIds (the assignment gate).
@@ -837,9 +1005,11 @@ const MemberManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
-          setShowFilters(false);
-          reset();
-          setShowCreate(true);
+          requestDiscardAction(() => {
+            setShowFilters(false);
+            reset();
+            setShowCreate(true);
+          });
         }}
         canEdit={canEdit}
         title={editing ? "Edit member" : "Create member"}
@@ -857,21 +1027,26 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
+        keepCreateActionVisible
         scrollableList
         listToolbar={
           members.length > 0 ? (
             <MemberListFilterToolbar
+              data={data}
               listQuery={listQuery}
               onListQueryChange={setListQuery}
               filters={listFilters}
+              onFiltersChange={(filters) => {
+                setListFilters(filters);
+                setDraftListFilters(filters);
+              }}
               filtersOpen={showFilters}
-              filtersDisabled={showCreate}
               onFiltersOpenChange={handleFiltersOpenChange}
               onClearFilters={clearFilters}
             />
           ) : null
         }
-        asideOpen={showFilters && !showCreate}
+        asideOpen={showFilters}
         asideId={MEMBER_FILTER_PANEL_ID}
         asideTitle="Filter members"
         asideHeaderActions={
@@ -978,20 +1153,29 @@ const MemberManager = ({
               // The server rejects a malformed address, so blocking here turns
               // a failed round-trip into an inline message.
               Boolean(emailError) ||
-              isSavingCurrent
+              isSavingCurrent ||
+              profileImageUploading
             }
             isLoading={isSavingCurrent}
           />
         }
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input label="First name" value={draft.firstName} onChange={(firstName) => setDraft((d) => ({ ...d, firstName: String(firstName) }))} />
-          <Input label="Last name" value={draft.lastName} onChange={(lastName) => setDraft((d) => ({ ...d, lastName: String(lastName) }))} />
-        </div>
-        {/* Optional: existing members have no address, and requiring one would
+        <fieldset className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
+          <legend className="px-1 text-sm font-semibold">Member details</legend>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,0.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
+            <Input
+              label="Title"
+              placeholder="e.g. Dr."
+              value={draft.title || ""}
+              onChange={(title) => setDraft((d) => ({ ...d, title: String(title) }))}
+            />
+            <Input label="First name" value={draft.firstName} onChange={(firstName) => setDraft((d) => ({ ...d, firstName: String(firstName) }))} />
+            <Input label="Last name" value={draft.lastName} onChange={(lastName) => setDraft((d) => ({ ...d, lastName: String(lastName) }))} />
+          </div>
+          {/* Optional: existing members have no address, and requiring one would
             block saving them. Used for notifications only — never to identify
             which account this member is. */}
-        {/*
+          {/*
           One effective address per person, never two.
 
           Linked: the account email is it. They control it and can change it,
@@ -1005,179 +1189,294 @@ const MemberManager = ({
           real need, but it belongs in a deliberate additional-recipients
           feature, not in an ambiguous second field.
         */}
-        {editing?.userId ? (
-          <div className="flex flex-col gap-1">
-            <span className="text-sm text-gray-300">Email</span>
-            <span className="text-sm">
-              {linkedAccountEmail || "From their account"}
-            </span>
-            <span className="text-xs text-gray-400">
-              Comes from their account. Unlink to set an address here instead.
-            </span>
-          </div>
-        ) : (
-          <Input
-            label="Email"
-            type="email"
-            value={draft.email || ""}
-            errorText={emailError}
-            onChange={(email) =>
-              setDraft((d) => ({ ...d, email: String(email) }))
-            }
-          />
-        )}
-        {/* Account link. Separate from the email above on purpose: an address is
+          {editing?.userId ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-sm text-gray-300">Email</span>
+              <span className="text-sm">
+                {linkedAccountEmail || "From their account"}
+              </span>
+              <span className="text-xs text-gray-400">
+                Comes from their account. Unlink to set an address here instead.
+              </span>
+            </div>
+          ) : (
+            <Input
+              label="Email"
+              type="email"
+              value={draft.email || ""}
+              errorText={emailError}
+              onChange={(email) =>
+                setDraft((d) => ({ ...d, email: String(email) }))
+              }
+            />
+          )}
+          {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet
             while creating one. */}
-        {editing ? (
-          <div className="flex flex-col gap-2 text-sm">
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Naming the other account would need it on the roster payload;
+          {editing ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Naming the other account would need it on the roster payload;
                   the picker's list is only loaded on demand, so reading from it
                   here would show a name sometimes and not others. */}
-              <span className="text-gray-300">
-                {/* The address itself is shown by the Email block above, so
+                <span className="text-gray-300">
+                  {/* The address itself is shown by the Email block above, so
                     this only says whose account it is. */}
-                {editing.userId
-                  ? editing.userId === currentUserId
-                    ? "Linked to your account."
-                    : "Linked to their account."
-                  : editing.invitedAt
-                    ? "Invite sent. Not linked until they accept."
-                    : "Not linked to an account."}
-              </span>
-              {editing.userId ? (
-                <Button
-                  variant="tertiary"
-                  disabled={!canEdit || isUpdatingLink}
-                  isLoading={isUpdatingLink}
-                  onClick={() => void updateMemberLink(editing, "unlink")}
-                >
-                  Unlink
-                </Button>
-              ) : selfLinkedMember ? (
-                // Someone else's record and this account is already claimed:
-                // the remaining path is inviting them to make their own.
-                null
-              ) : (
-                // Offered only while this account has claimed no one. With a
-                // claim already made the server would reject this, so showing
-                // it would be an action guaranteed to fail.
-                <Button
-                  variant="tertiary"
-                  disabled={!canEdit || isUpdatingLink}
-                  isLoading={isUpdatingLink}
-                  onClick={() => void updateMemberLink(editing, "link")}
-                >
-                  This is me
-                </Button>
-              )}
-            </div>
-            {/* Only accounts already in this church are offered — the server
+                  {editing.userId
+                    ? editing.userId === currentUserId
+                      ? "Linked to your account."
+                      : "Linked to their account."
+                    : editing.invitedAt
+                      ? "Invite sent. Not linked until they accept."
+                      : "Not linked to an account."}
+                </span>
+                {editing.userId ? (
+                  <Button
+                    variant="tertiary"
+                    disabled={!canEdit || isUpdatingLink}
+                    isLoading={isUpdatingLink}
+                    onClick={() => void updateMemberLink(editing, "unlink")}
+                  >
+                    Unlink
+                  </Button>
+                ) : selfLinkedMember ? (
+                  // Someone else's record and this account is already claimed:
+                  // the remaining path is inviting them to make their own.
+                  null
+                ) : (
+                  // Offered only while this account has claimed no one. With a
+                  // claim already made the server would reject this, so showing
+                  // it would be an action guaranteed to fail.
+                  <Button
+                    variant="tertiary"
+                    disabled={!canEdit || isUpdatingLink}
+                    isLoading={isUpdatingLink}
+                    onClick={() => void updateMemberLink(editing, "link")}
+                  >
+                    This is me
+                  </Button>
+                )}
+              </div>
+              {/* Only accounts already in this church are offered — the server
                 refuses anything else, so showing more would only produce
                 errors. Accounts already linked to another member are excluded
                 rather than shown and rejected. */}
-            {!editing.userId && canEdit && isChurchAdmin ? (
-              showAccountPicker ? (
-                <SearchableSelect
-                  variant="dark"
-                  label="Link an account"
-                  value=""
-                  placeholder="Choose an account…"
-                  options={linkableAccounts}
-                  onChange={(userId) => {
-                    if (!userId) return;
-                    void updateMemberLink(editing, "link", userId);
-                  }}
-                />
-              ) : (
-                <Button
-                  variant="textLink"
-                  padding="p-0"
-                  disabled={isUpdatingLink}
-                  onClick={() => setShowAccountPicker(true)}
-                >
-                  Link an account
-                </Button>
-              )
-            ) : null}
-            {/* For someone who has no account at all.
+              {!editing.userId && canEdit && isChurchAdmin ? (
+                showAccountPicker ? (
+                  <SearchableSelect
+                    variant="dark"
+                    label="Link an account"
+                    value=""
+                    placeholder="Choose an account…"
+                    options={linkableAccounts}
+                    onChange={(userId) => {
+                      if (!userId) return;
+                      void updateMemberLink(editing, "link", userId);
+                    }}
+                  />
+                ) : (
+                  <Button
+                    variant="textLink"
+                    padding="p-0"
+                    disabled={isUpdatingLink}
+                    onClick={() => setShowAccountPicker(true)}
+                  >
+                    Link an account
+                  </Button>
+                )
+              ) : null}
+              {/* For someone who has no account at all.
                 Always rendered rather than hidden behind having an address: a
                 roster that has never collected emails would show this nowhere,
                 so the action would look like it does not exist. Disabled with
                 the reason is discoverable; absent is not.
                 The invite sends to the *saved* address, so an unsaved edit
                 blocks it too — otherwise it would quietly mail the old one. */}
-            {!editing.userId && canEdit && isChurchAdmin ? (
-              <div className="flex flex-col gap-1">
-                <Button
-                  variant="textLink"
-                  padding="p-0"
-                  disabled={isInviting || !canInviteMember}
-                  isLoading={isInviting}
-                  onClick={() => void inviteMemberToAccount(editing)}
-                >
-                  Invite them to create an account
-                </Button>
-                {canInviteMember ? null : (
-                  <span className="text-xs text-gray-400">
-                    {editing.email
-                      ? "Save your email change first."
-                      : "Add an email above and save to invite them."}
-                  </span>
-                )}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        <DatePicker
-          label="Date of birth"
-          value={draft.dateOfBirth || ""}
-          onChange={(dateOfBirth) =>
-            setDraft((current) => ({
-              ...current,
-              dateOfBirth,
-              isMinor:
-                isMinorOnDate(dateOfBirth) ?? Boolean(current.isMinor),
-            }))
-          }
-        />
-        <Checkbox
-          label={(
-            <span className="flex flex-col gap-0.5">
-              <span>Minor</span>
-              <span className="text-xs text-gray-400">
-                {derivedMinorStatus === null
-                  ? "Hides their last name from generated credits."
-                  : "Set automatically from the date of birth."}
-              </span>
+              {!editing.userId && canEdit && isChurchAdmin ? (
+                <div className="flex flex-col gap-1">
+                  <Button
+                    variant="textLink"
+                    padding="p-0"
+                    disabled={isInviting || !canInviteMember}
+                    isLoading={isInviting}
+                    onClick={() => void inviteMemberToAccount(editing)}
+                  >
+                    Invite them to create an account
+                  </Button>
+                  {canInviteMember ? null : (
+                    <span className="text-xs text-gray-400">
+                      {editing.email
+                        ? "Save your email change first."
+                        : "Add an email above and save to invite them."}
+                    </span>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-semibold">Profile image</span>
+            <span className="text-xs text-gray-400">
+              Public image used when this member appears in the roster and schedules.
             </span>
-          )}
-          checked={derivedMinorStatus ?? Boolean(draft.isMinor)}
-          disabled={derivedMinorStatus !== null}
-          onCheckedChange={(isMinor) =>
-            setDraft((current) => ({ ...current, isMinor }))
-          }
-        />
-        <div className="flex flex-col gap-1">
-          <Select
-            label="Serving preference"
-            value={draft.servingFrequency || DEFAULT_SERVING_FREQUENCY}
-            options={servingFrequencyOptions}
-            onChange={(servingFrequency) =>
+            <div className="flex flex-wrap items-center gap-3">
+            {pendingProfileImagePreviewUrl || draft.profileImageUrl ? (
+              <img
+                src={pendingProfileImagePreviewUrl || draft.profileImageUrl}
+                  alt={`${draft.firstName || "Member"} profile`}
+                  className="h-16 w-16 rounded-full object-cover"
+                />
+              ) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-700 text-gray-300">
+                  <Camera aria-hidden="true" size={22} />
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={Camera}
+                  isLoading={profileImageUploading}
+                  disabled={!canEdit || profileImageUploading}
+                  onClick={() => profileImageInputRef.current?.click()}
+                >
+                  {draft.profileImageUrl ? "Replace image" : "Choose image"}
+                </Button>
+              {pendingProfileImagePreviewUrl || draft.profileImageUrl ? (
+                  <Button
+                    type="button"
+                    variant="textLink"
+                    disabled={!canEdit || profileImageUploading}
+                  onClick={() => {
+                    setPendingProfileImage(null);
+                    setPendingProfileImagePreviewUrl("");
+                    setDraft((current) => ({
+                      ...current,
+                      profileImageUrl: "",
+                      profileImagePublicId: "",
+                    }));
+                  }}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+              </div>
+              <input
+                ref={profileImageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                aria-label="Profile image upload"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) void uploadProfileImage(file);
+                }}
+              />
+            </div>
+          </div>
+          <DatePicker
+            label="Date of birth"
+            value={draft.dateOfBirth || ""}
+            onChange={(dateOfBirth) =>
               setDraft((current) => ({
                 ...current,
-                servingFrequency:
-                  servingFrequency as TeamRosterMember["servingFrequency"],
+                dateOfBirth,
+                isMinor:
+                  isMinorOnDate(dateOfBirth) ?? Boolean(current.isMinor),
               }))
             }
           />
-          <span className="text-xs text-gray-400">
-            Used as a preference for recommendations and auto-fill, not as a
-            scheduling limit.
-          </span>
-        </div>
+          <Checkbox
+            label={(
+              <span className="flex flex-col gap-0.5">
+                <span>Minor</span>
+                <span className="text-xs text-gray-400">
+                  {derivedMinorStatus === null
+                    ? "Hides their last name from generated credits."
+                    : "Set automatically from the date of birth."}
+                </span>
+              </span>
+            )}
+            checked={derivedMinorStatus ?? Boolean(draft.isMinor)}
+            disabled={derivedMinorStatus !== null}
+            onCheckedChange={(isMinor) =>
+              setDraft((current) => ({ ...current, isMinor }))
+            }
+          />
+        </fieldset>
+        <fieldset className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
+          <legend className="px-1 text-sm font-semibold">Scheduling preferences</legend>
+          <div className="flex flex-col gap-1">
+            <Select
+            label="Serving frequency"
+              value={draft.servingFrequency || DEFAULT_SERVING_FREQUENCY}
+              options={servingFrequencyOptions}
+              onChange={(servingFrequency) =>
+                setDraft((current) => ({
+                  ...current,
+                  servingFrequency:
+                    servingFrequency as TeamRosterMember["servingFrequency"],
+                }))
+              }
+            />
+            <span className="text-xs text-gray-400">
+              Used as a preference for recommendations and auto-fill, not as a
+              scheduling limit.
+            </span>
+          </div>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-semibold">Recurring availability</legend>
+            <p className="text-xs text-gray-400">
+              Leave every week unchecked if this member can serve any week. Selected weeks are a scheduling limit.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {recurringAvailabilityWeekOptions.map((option) => {
+                const selectedWeeks = draft.recurringAvailability?.weeksOfMonth || [];
+                const checked = selectedWeeks.includes(option.value);
+                return (
+                  <Checkbox
+                    key={option.value}
+                    label={option.label}
+                    checked={checked}
+                    onCheckedChange={(nextChecked) =>
+                      setDraft((current) => {
+                        const currentAvailability =
+                          current.recurringAvailability || emptyRecurringAvailability();
+                        const weeksOfMonth = nextChecked
+                          ? [...currentAvailability.weeksOfMonth, option.value].sort()
+                          : currentAvailability.weeksOfMonth.filter(
+                            (week) => week !== option.value,
+                          );
+                        return {
+                          ...current,
+                          recurringAvailability: {
+                            ...currentAvailability,
+                            weeksOfMonth,
+                          },
+                        };
+                      })
+                    }
+                  />
+                );
+              })}
+              <Checkbox
+                label="Last week"
+                checked={Boolean(draft.recurringAvailability?.includeLastWeekOfMonth)}
+                onCheckedChange={(includeLastWeekOfMonth) =>
+                  setDraft((current) => ({
+                    ...current,
+                    recurringAvailability: {
+                      ...(current.recurringAvailability || emptyRecurringAvailability()),
+                      includeLastWeekOfMonth,
+                    },
+                  }))
+                }
+              />
+            </div>
+          </fieldset>
+        </fieldset>
         <EntityMultiSelect
           label="Teams"
           description="Rosters this member belongs to. Choosing a position below adds its team automatically."
@@ -1271,10 +1570,9 @@ const MemberManager = ({
             <p className="mt-0.5 text-xs text-amber-100/80">
               They stay on the {team.name} roster and can still be shadowed in.
               {team.assignmentCount
-                ? ` They are assigned ${
-                  team.assignmentCount === 1
-                    ? "once"
-                    : `${team.assignmentCount} times`
+                ? ` They are assigned ${team.assignmentCount === 1
+                  ? "once"
+                  : `${team.assignmentCount} times`
                 } on ${team.name} schedules.`
                 : ""}
             </p>
@@ -1322,18 +1620,41 @@ const MemberManager = ({
             </div>
           </div>
         ) : null}
-        <EntityMultiSelect
-          label="Desired positions"
-          description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
-          options={positionOptions}
-          groups={positionTeamFilters}
-          groupFilterLabel="Filter desired positions by team"
-          allGroupsLabel="All teams"
-          value={draft.desiredPositionIds || []}
-          onChange={(desiredPositionIds) =>
-            setDraft((d) => ({ ...d, desiredPositionIds }))
-          }
-        />
+        <div className="min-w-0 space-y-1">
+          <CollapsibleSectionTrigger
+            label="Desired positions"
+            expanded={showDesiredPositions}
+            onExpandedChange={setShowDesiredPositions}
+            endContent={
+              <span
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <SelectAllButton
+                  allSelected={desiredPositionsAllSelected}
+                  tone="admin"
+                  onClick={toggleAllDesiredPositions}
+                />
+              </span>
+            }
+          />
+          {showDesiredPositions ? (
+            <EntityMultiSelect
+              label="Desired positions"
+              hideLabel
+              hideSelectAll
+              description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
+              options={positionOptions}
+              groups={positionTeamFilters}
+              groupFilterLabel="Filter desired positions by team"
+              allGroupsLabel="All teams"
+              value={draft.desiredPositionIds || []}
+              onChange={(desiredPositionIds) =>
+                setDraft((d) => ({ ...d, desiredPositionIds }))
+              }
+            />
+          ) : null}
+        </div>
         <fieldset className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Team roles</legend>
           {roleTeams.length === 0 ? (

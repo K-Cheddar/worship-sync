@@ -421,6 +421,28 @@ Let Your fire fall`;
       expect(item.name).toBe("My Song");
       expect(item._id).toBe("song-fixed-id");
     });
+
+    it("does not report a new song as created when the database write fails", async () => {
+      const saveError = new Error("database unavailable");
+      const db = {
+        get: jest.fn().mockRejectedValue(new Error("not found")),
+        put: jest.fn().mockRejectedValue(saveError),
+      };
+
+      await expect(
+        createNewSong({
+          name: "My Song",
+          formattedLyrics: [],
+          songOrder: [],
+          list: [],
+          db: db as never,
+          background: "#000",
+          brightness: 100,
+        }),
+      ).rejects.toThrow(saveError);
+
+      expect(db.put).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("createNewFreeForm", () => {

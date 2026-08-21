@@ -45,11 +45,14 @@ export const splitTypedMemberName = (raw: string) => {
 };
 
 /**
- * A manual scheduler can acknowledge a blockout in a confirmation dialog.
- * Other assignment constraints remain hard stops in the picker.
+ * A manual scheduler can acknowledge an availability constraint in a
+ * confirmation dialog. Other assignment constraints remain hard stops in the
+ * picker.
  */
 export const getManualScheduleAssignmentIssue = (issue: string) =>
-  issue === "Blocked out" ? "" : issue;
+  issue === "Blocked out" || issue === "Unavailable this week of the month"
+    ? ""
+    : issue;
 
 export const memberQualifiesForPosition = (
   member: TeamRosterMember,

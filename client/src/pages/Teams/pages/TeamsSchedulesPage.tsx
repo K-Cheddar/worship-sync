@@ -6,6 +6,7 @@ import { useTeamsPage } from "../TeamsPageContext";
 import { buildTeamsMemberEditPath, canEditRosterMember } from "../teamsUtils";
 import {
   buildTeamsReturnNavigationState,
+  persistTeamsReturnTo,
   TEAMS_SECTION_PATHS,
   type TeamsReturnTo,
 } from "../teamsReturnNavigation";
@@ -60,8 +61,9 @@ const TeamsSchedulesPage = () => {
   );
   const handleEditMember = useCallback(
     (memberId: string, returnTo: TeamsReturnTo) => {
+      persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.members);
       navigate(buildTeamsMemberEditPath(memberId), {
-        state: buildTeamsReturnNavigationState(returnTo, TEAMS_SECTION_PATHS.members),
+        state: buildTeamsReturnNavigationState(returnTo),
       });
     },
     [navigate],

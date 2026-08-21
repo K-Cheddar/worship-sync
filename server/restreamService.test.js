@@ -773,6 +773,7 @@ test("restream service resets chat when a different broadcast connects after a l
     const session = firestore.read("restreamSessions", "db-1");
     assert.notEqual(session.sessionId, "session-last-week");
     assert.equal(session.messageCount, 0);
+    assert.equal(session.broadcastKey, "youtube-event-new");
     assert.deepEqual(boardDisplayUpdates, ["db-1"]);
   } finally {
     globalThis.WebSocket = originalWebSocket;

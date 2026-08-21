@@ -27,13 +27,160 @@ type MemberListFilterData = Pick<
 >;
 
 type MemberListFilterToolbarProps = {
+  data: MemberListFilterData;
   listQuery: string;
   onListQueryChange: (value: string) => void;
   filters: MemberListFilterState;
+  onFiltersChange: (value: MemberListFilterState) => void;
   filtersOpen: boolean;
   onFiltersOpenChange: (open: boolean) => void;
   onClearFilters: () => void;
   filtersDisabled?: boolean;
+};
+
+type ActiveMemberFilter = {
+  key: keyof MemberListFilterState;
+  id: string;
+  label: string;
+};
+
+const qualificationStatusLabels: Record<
+  MemberListFilterState["qualificationStatuses"][number],
+  string
+> = {
+  in_training: "In training",
+  completed: "Completed",
+  expired: "Expired",
+};
+
+const buildActiveMemberFilters = (
+  filters: MemberListFilterState,
+  data: MemberListFilterData,
+): ActiveMemberFilter[] => {
+  const labelsById = <T extends string>(items: { id: T; label: string }[]) =>
+    new Map(items.map((item) => [item.id, item.label]));
+  const teamLabels = labelsById(
+    data.teams.map((team) => ({ id: team.teamId, label: team.name })),
+  );
+  const positionLabels = labelsById(
+    data.positions.map((position) => ({
+      id: position.positionId,
+      label: position.name,
+    })),
+  );
+  const roleLabels = labelsById(
+    data.teamRoles.map((role) => ({ id: role.roleId, label: role.name })),
+  );
+  const areaLabels = labelsById(
+    data.qualificationAreas.map((area) => ({ id: area.areaId, label: area.name })),
+  );
+  const levelLabels = labelsById(
+    data.qualificationLevels.map((level) => ({
+      id: level.levelId,
+      label: level.name,
+    })),
+  );
+
+  return [
+    ...filters.teamIds.map((id) => ({
+      key: "teamIds" as const,
+      id,
+      label: `Team: ${teamLabels.get(id) || "Unavailable"}`,
+    })),
+    ...filters.positionIds.map((id) => ({
+      key: "positionIds" as const,
+      id,
+      label: `Position: ${positionLabels.get(id) || "Unavailable"}`,
+    })),
+    ...filters.roleIds.map((id) => ({
+      key: "roleIds" as const,
+      id,
+      label: `Role: ${roleLabels.get(id) || "Unavailable"}`,
+    })),
+    ...filters.qualificationAreaIds.map((id) => ({
+      key: "qualificationAreaIds" as const,
+      id,
+      label: `Qualification: ${areaLabels.get(id) || "Unavailable"}`,
+    })),
+    ...filters.qualificationLevelIds.map((id) => ({
+      key: "qualificationLevelIds" as const,
+      id,
+      label: `Level: ${levelLabels.get(id) || "Unavailable"}`,
+    })),
+    ...filters.qualificationStatuses.map((id) => ({
+      key: "qualificationStatuses" as const,
+      id,
+      label: `Status: ${qualificationStatusLabels[id]}`,
+    })),
+    ...(filters.includeArchived
+      ? [{ key: "includeArchived" as const, id: "true", label: "Show archived" }]
+      : []),
+  ];
+};
+
+const removeActiveMemberFilter = (
+  filters: MemberListFilterState,
+  filter: ActiveMemberFilter,
+  data: MemberListFilterData,
+): MemberListFilterState => {
+  if (filter.key === "includeArchived") {
+    return { ...filters, includeArchived: false };
+  }
+
+  if (filter.key === "teamIds") {
+    const teamIds = filters.teamIds.filter((id) => id !== filter.id);
+    const isInTeamScope = (teamId: string) =>
+      teamIds.length === 0 || teamIds.includes(teamId);
+    const positionIds = filters.positionIds.filter((id) => {
+      const position = data.positions.find((item) => item.positionId === id);
+      return position ? isInTeamScope(position.teamId) : false;
+    });
+    const roleIds = filters.roleIds.filter((id) => {
+      const role = data.teamRoles.find((item) => item.roleId === id);
+      return role ? isInTeamScope(role.teamId) : false;
+    });
+    const qualificationAreaIds = filters.qualificationAreaIds.filter((id) => {
+      const area = data.qualificationAreas.find((item) => item.areaId === id);
+      return area ? isInTeamScope(area.teamId) : false;
+    });
+    const qualificationLevelIds = filters.qualificationLevelIds.filter((id) => {
+      const level = data.qualificationLevels.find((item) => item.levelId === id);
+      return level ? qualificationAreaIds.includes(level.areaId) : false;
+    });
+
+    return {
+      ...filters,
+      teamIds,
+      positionIds,
+      roleIds,
+      qualificationAreaIds,
+      qualificationLevelIds,
+      qualificationStatuses:
+        qualificationAreaIds.length > 0 ? filters.qualificationStatuses : [],
+    };
+  }
+
+  if (filter.key === "qualificationAreaIds") {
+    const qualificationAreaIds = filters.qualificationAreaIds.filter(
+      (id) => id !== filter.id,
+    );
+    const qualificationLevelIds = filters.qualificationLevelIds.filter((id) => {
+      const level = data.qualificationLevels.find((item) => item.levelId === id);
+      return level ? qualificationAreaIds.includes(level.areaId) : false;
+    });
+    return {
+      ...filters,
+      qualificationAreaIds,
+      qualificationLevelIds,
+      qualificationStatuses:
+        qualificationAreaIds.length > 0 ? filters.qualificationStatuses : [],
+    };
+  }
+
+  return {
+    ...filters,
+    [filter.key]: filters[filter.key].filter((id) => id !== filter.id),
+  };
 };
 
 type MemberFilterPanelProps = {
@@ -71,9 +218,11 @@ const buildTeamGroups = <T extends { teamId: string }>({
     .filter((group) => (group.options?.length || 0) > 0);
 
 export const MemberListFilterToolbar = ({
+  data,
   listQuery,
   onListQueryChange,
   filters,
+  onFiltersChange,
   filtersOpen,
   onFiltersOpenChange,
   onClearFilters,
@@ -81,51 +230,83 @@ export const MemberListFilterToolbar = ({
 }: MemberListFilterToolbarProps) => {
   const activeCount = countActiveMemberListFilters(filters);
   const hasFilter = activeCount > 0;
+  const activeFilters = buildActiveMemberFilters(filters, data);
 
   return (
-    <div className="flex gap-2">
-      <EntityListSearch
-        className="min-w-0 flex-1"
-        label="Members"
-        value={listQuery}
-        onChange={onListQueryChange}
-      />
-      <div className="flex shrink-0">
-        <Button
-          type="button"
-          variant="tertiary"
-          svg={ListFilter}
-          iconSize="sm"
-          className={cn(
-            hasFilter &&
-            "rounded-r-none border-cyan-400/40 border-r-0 bg-cyan-400/10 text-cyan-50",
-          )}
-          aria-expanded={filtersOpen}
-          aria-controls={MEMBER_FILTER_PANEL_ID}
-          disabled={filtersDisabled}
-          aria-label={
-            hasFilter
-              ? `Filter members, ${activeCount} selected`
-              : "Filter members"
-          }
-          onClick={() => onFiltersOpenChange(!filtersOpen)}
-        >
-          {hasFilter ? `Filter (${activeCount})` : "Filter"}
-        </Button>
-        {hasFilter ? (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <EntityListSearch
+          className="min-w-0 flex-1"
+          label="Members"
+          value={listQuery}
+          onChange={onListQueryChange}
+        />
+        <div className="flex shrink-0">
           <Button
             type="button"
             variant="tertiary"
-            svg={X}
+            svg={ListFilter}
             iconSize="sm"
-            padding="px-1.5 py-1"
-            className="rounded-l-none border-cyan-400/40 bg-cyan-400/10 text-cyan-50"
+            className={cn(
+              hasFilter &&
+              "rounded-r-none border-cyan-400/40 border-r-0 bg-cyan-400/10 text-cyan-50",
+            )}
+            aria-expanded={filtersOpen}
+            aria-controls={MEMBER_FILTER_PANEL_ID}
             disabled={filtersDisabled}
-            aria-label="Clear all filters"
-            onClick={onClearFilters}
-          />
-        ) : null}
+            aria-label={
+              hasFilter
+                ? `Filter members, ${activeCount} selected`
+                : "Filter members"
+            }
+            onClick={() => onFiltersOpenChange(!filtersOpen)}
+          >
+            {hasFilter ? `Filter (${activeCount})` : "Filter"}
+          </Button>
+          {hasFilter ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={X}
+              iconSize="sm"
+              padding="px-1.5 py-1"
+              className="rounded-l-none border-cyan-400/40 bg-cyan-400/10 text-cyan-50"
+              disabled={filtersDisabled}
+              aria-label="Clear all filters"
+              onClick={onClearFilters}
+            />
+          ) : null}
+        </div>
       </div>
+      {hasFilter ? (
+        <div
+          className="flex flex-wrap gap-1.5"
+          aria-label="Active member filters"
+          role="group"
+        >
+          {activeFilters.map((filter) => (
+            <div
+              key={`${filter.key}-${filter.id}`}
+              className="flex min-w-0 items-center gap-1 rounded-full border border-cyan-400/40 bg-cyan-400/10 py-0.5 pl-2.5 pr-1 text-xs text-cyan-50"
+            >
+              <span className="truncate">{filter.label}</span>
+              <Button
+                type="button"
+                variant="textLink"
+                svg={X}
+                iconSize="xs"
+                padding="p-0.5"
+                className="shrink-0 rounded-full text-cyan-200 hover:bg-cyan-300/15 hover:text-white"
+                disabled={filtersDisabled}
+                aria-label={`Remove ${filter.label} filter`}
+                onClick={() =>
+                  onFiltersChange(removeActiveMemberFilter(filters, filter, data))
+                }
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 };

@@ -94,6 +94,24 @@ describe("Select", () => {
     expect(onChange).toHaveBeenCalledWith("");
   });
 
+  it("shows the placeholder for a value not present in the options", () => {
+    render(
+      <Select
+        label="Filter schedules by team"
+        value="missing-team"
+        onChange={jest.fn()}
+        options={[
+          { label: "All teams", value: "" },
+          { label: "Media", value: "team-1" },
+        ]}
+      />,
+    );
+
+    const trigger = screen.getByRole("combobox");
+    expect(trigger).toHaveAttribute("data-placeholder", "");
+    expect(trigger).toHaveTextContent("Select...");
+  });
+
   // An async options list (e.g. saved plans still loading) starts empty, so
   // `value` cannot match anything yet — Radix must not be left uncontrolled
   // for that first render only to flip to controlled once options land, or

@@ -10,6 +10,7 @@ const PickerHarness = ({
   hasCurrentAssignee,
   recentGuests,
   onAssignGuest,
+  onEditGuest,
 }: {
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
@@ -17,6 +18,7 @@ const PickerHarness = ({
   hasCurrentAssignee: boolean;
   recentGuests: TeamScheduleGuest[];
   onAssignGuest: jest.Mock;
+  onEditGuest: jest.Mock;
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   return (
@@ -41,6 +43,7 @@ const PickerHarness = ({
         getIssue={() => ""}
         onSelectMember={jest.fn()}
         onAssignGuest={onAssignGuest}
+        onEditGuest={onEditGuest}
       />
     </>
   );
@@ -53,6 +56,7 @@ const renderPicker = ({
   hasCurrentAssignee = false,
   recentGuests = [],
   onAssignGuest = jest.fn(),
+  onEditGuest = jest.fn(),
 }: {
   currentPrimaryMemberId?: string;
   currentAssigneeLabel?: string;
@@ -60,6 +64,7 @@ const renderPicker = ({
   hasCurrentAssignee?: boolean;
   recentGuests?: TeamScheduleGuest[];
   onAssignGuest?: jest.Mock;
+  onEditGuest?: jest.Mock;
 } = {}) => {
   render(
     <PickerHarness
@@ -69,9 +74,10 @@ const renderPicker = ({
       hasCurrentAssignee={hasCurrentAssignee}
       recentGuests={recentGuests}
       onAssignGuest={onAssignGuest}
+      onEditGuest={onEditGuest}
     />,
   );
-  return { onAssignGuest };
+  return { onAssignGuest, onEditGuest };
 };
 
 describe("ScheduleAssignmentPicker guests", () => {
@@ -163,5 +169,26 @@ describe("ScheduleAssignmentPicker guests", () => {
 
     expect(screen.getByRole("menuitem", { name: /Jordan Lee/i })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /Michael/i })).not.toBeInTheDocument();
+  });
+
+  it("edits a recent guest without assigning it to the active slot", async () => {
+    const { onAssignGuest, onEditGuest } = renderPicker({
+      recentGuests: [{ guestId: "scheduleGuest_1", name: "Alex Rivera" }],
+    });
+
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Recent guests" }));
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Edit Alex Rivera" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /Guest name/i }), {
+      target: { value: "Alex R." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(onEditGuest).toHaveBeenCalledWith({
+        guestId: "scheduleGuest_1",
+        name: "Alex R.",
+      }),
+    );
+    expect(onAssignGuest).not.toHaveBeenCalled();
   });
 });

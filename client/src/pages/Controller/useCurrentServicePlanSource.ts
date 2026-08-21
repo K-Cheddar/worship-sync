@@ -51,7 +51,7 @@ import {
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
-  const { canViewServices, churchId, loginState } =
+  const { canViewServices, canViewTeams, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { loadPlanPreview, isServicePlanningEnabled } =
@@ -112,6 +112,7 @@ export const useCurrentServicePlanSource = () => {
       loginState !== "guest" &&
       isServicePlanningEnabled,
   );
+  const canLoadTeamDetails = Boolean(canViewTeams);
 
   const clearUnavailablePlan = useCallback(
     (planKey: string, allowAutomaticFallback = false) => {
@@ -346,7 +347,9 @@ export const useCurrentServicePlanSource = () => {
       try {
         const [planResult, bootstrap] = await Promise.all([
           getServicePlan(churchId, selectedPlanKey),
-          getTeamsBootstrap(churchId).catch(() => null),
+          canLoadTeamDetails
+            ? getTeamsBootstrap(churchId).catch(() => null)
+            : Promise.resolve(null),
         ]);
         if (cancelled || generation !== generationRef.current) return;
         if (bootstrap) bootstrapRef.current = bootstrap;
@@ -380,6 +383,7 @@ export const useCurrentServicePlanSource = () => {
     };
   }, [
     applyPlan,
+    canLoadTeamDetails,
     churchId,
     clearUnavailablePlan,
     dispatch,
@@ -426,7 +430,10 @@ export const useCurrentServicePlanSource = () => {
         return;
       }
 
-      if (event.type === "schedule-updated" || event.type === "schedule-removed") {
+      if (
+        canLoadTeamDetails &&
+        (event.type === "schedule-updated" || event.type === "schedule-removed")
+      ) {
         if (!churchId || !planRef.current) return;
         void getTeamsBootstrap(churchId)
           .then((bootstrap) => {
@@ -463,10 +470,19 @@ export const useCurrentServicePlanSource = () => {
         }
       });
     },
-    [applyPlan, churchId, clearUnavailablePlan, isEnabled],
+    [
+      applyPlan,
+      canLoadTeamDetails,
+      churchId,
+      clearUnavailablePlan,
+      isEnabled,
+    ],
   );
 
-  useTeamsLiveSync(isEnabled ? churchId : null, handleLiveEvent);
+  useTeamsLiveSync(
+    isEnabled && canLoadTeamDetails ? churchId : null,
+    handleLiveEvent,
+  );
 
   const refresh = useCallback(async () => {
     const planKey = selectedPlanKeyRef.current;

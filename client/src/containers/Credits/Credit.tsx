@@ -122,7 +122,7 @@ const Credit = ({
       if (!doc) return;
       // Our own write is now the newest revision this window knows about, so a later
       // echo of an older revision can be recognised as stale and dropped.
-      recordAppliedCreditVersion(doc._id, doc.updatedAt);
+      recordAppliedCreditVersion(doc._id, doc._rev);
       // Only clear the dirty flag if nothing was typed while the save was in flight.
       if (
         draftHeadingRef.current === payload.heading &&

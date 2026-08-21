@@ -99,6 +99,19 @@ export type PublicServiceFlowRole = {
   teamName?: string;
 };
 
+/** Scheduled members holding church microphones on the detailed/team view. */
+export type PublicServiceFlowServingTeam = {
+  teamId: string;
+  teamName: string;
+  members: Array<{
+    positionId: string;
+    positionName: string;
+    memberName: string;
+    profileImageUrl?: string;
+    microphones: PublicServiceFlowMicrophoneAssignment["microphone"][];
+  }>;
+};
+
 export type PublicServiceFlowSnapshot = {
   success: true;
   churchName: string;
@@ -112,6 +125,8 @@ export type PublicServiceFlowSnapshot = {
    * Absent on simple/general view and on older snapshots.
    */
   roles?: PublicServiceFlowRole[];
+  /** Absent on the simple/general share link and when no mics are allocated. */
+  servingTeams?: PublicServiceFlowServingTeam[];
   serverNowMs: number;
   service: PublicServiceFlow;
 };

@@ -9,7 +9,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -115,6 +115,7 @@ const PositionManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
@@ -316,8 +317,8 @@ const PositionManager = ({
     pendingEditPositionIdRef.current = editPositionId;
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete(TEAMS_POSITION_EDIT_SEARCH_PARAM);
-    setSearchParams(nextParams, { replace: true });
-  }, [canEdit, searchParams, setSearchParams]);
+    setSearchParams(nextParams, { replace: true, state: location.state });
+  }, [canEdit, location.state, searchParams, setSearchParams]);
 
   useEffect(() => {
     const editPositionId = pendingEditPositionIdRef.current;

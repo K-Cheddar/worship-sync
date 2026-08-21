@@ -183,7 +183,7 @@ const CurrentServiceRestreamPanel = ({
         ? readMarkerFallbackRef.current
         : null;
     try {
-      const stored = window.sessionStorage.getItem(
+      const stored = window.localStorage.getItem(
         getChatReadStorageKey(churchId),
       );
       if (stored) {
@@ -241,7 +241,7 @@ const CurrentServiceRestreamPanel = ({
       }
 
       try {
-        window.sessionStorage.setItem(
+        window.localStorage.setItem(
           getChatReadStorageKey(churchId),
           JSON.stringify(marker),
         );

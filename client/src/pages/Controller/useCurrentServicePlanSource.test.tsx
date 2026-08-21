@@ -170,6 +170,7 @@ const renderHookWith = (
 const enabledGlobalInfo = {
   churchId: "church-1",
   canViewServices: true,
+  canViewTeams: true,
   loginState: "success",
 };
 
@@ -379,6 +380,21 @@ describe("useCurrentServicePlanSource", () => {
 
     await waitFor(() => expect(mockLiveHandler).toBeNull());
     expect(mockGetServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("loads Service Plans without Teams-only bootstrap or live sync for a workstation", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, canViewTeams: false });
+
+    await waitFor(() =>
+      expect(mockGetServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-08-01",
+      ),
+    );
+
+    expect(mockGetTeamsBootstrap).not.toHaveBeenCalled();
+    expect(mockLiveHandler).toBeNull();
   });
 
   it("does nothing for a guest session", async () => {

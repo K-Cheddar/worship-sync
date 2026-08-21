@@ -4,6 +4,17 @@ export const TEAMS_RETURN_TO_STATE_KEY = "teamsReturnTo";
 export const TEAMS_RESTORE_STATE_KEY = "teamsRestore";
 export const TEAMS_RETURN_STORAGE_KEY = "worship-sync:teams-return-to";
 
+/** Persisted return state only restores after a full document reload. */
+export const isTeamsNavigationReload = () => {
+  if (typeof performance === "undefined") return false;
+  const getEntriesByType = performance.getEntriesByType;
+  if (typeof getEntriesByType !== "function") return false;
+  const entry = getEntriesByType.call(performance, "navigation")[0] as
+    | PerformanceNavigationTiming
+    | undefined;
+  return entry?.type === "reload";
+};
+
 /** Shared deep-link param for team-scoped sections (positions, roles, qualifications). */
 export const TEAMS_TEAM_SEARCH_PARAM = "teamId";
 export const TEAMS_MEMBER_EDIT_SEARCH_PARAM = "editMember";
@@ -191,9 +202,7 @@ export const clearPersistedTeamsReturnTo = () => {
 
 export const buildTeamsReturnNavigationState = (
   returnTo: TeamsReturnTo,
-  destinationPathname: string,
 ): TeamsReturnNavigationState => {
-  persistTeamsReturnTo(returnTo, destinationPathname);
   return { [TEAMS_RETURN_TO_STATE_KEY]: returnTo };
 };
 
@@ -280,7 +289,7 @@ export const buildPlanToScheduleNavigationState = ({
   returnTo: TeamsReturnTo;
   restore: TeamsScheduleRestore;
 }): TeamsReturnNavigationState => ({
-  ...buildTeamsReturnNavigationState(returnTo, TEAMS_SECTION_PATHS.schedules),
+  ...buildTeamsReturnNavigationState(returnTo),
   ...buildTeamsRestoreNavigationState(restore),
 });
 

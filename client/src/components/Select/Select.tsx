@@ -114,10 +114,11 @@ const Select = ({
   // it would the moment an async options list (for example saved plans)
   // finishes loading and `value` starts matching an option. The sentinel
   // keeps this prop a defined string for the component's whole lifetime;
-  // since no real option is ever the sentinel, Radix still falls back to the
-  // placeholder whenever `value` doesn't match a current option.
+  // An unmatched caller value uses Radix's empty controlled value so its
+  // placeholder remains visible. The sentinel is reserved for a real option
+  // whose caller-facing value is the empty string.
   const valueExists = options.some((option) => option.value === value);
-  const selectValue = valueExists ? toRadixValue(value) : EMPTY_OPTION_VALUE;
+  const selectValue = valueExists ? toRadixValue(value) : "";
   const sections = useMemo(() => toOptionSections(options), [options]);
 
   return (

@@ -50,6 +50,7 @@ import {
 import WhosServingPanel from "../Teams/pages/WhosServingPanel";
 import {
   buildPlanToScheduleNavigationState,
+  persistTeamsReturnTo,
   TEAMS_SECTION_PATHS,
   type TeamsReturnTo,
 } from "../Teams/teamsReturnNavigation";
@@ -624,6 +625,7 @@ const CurrentServiceWorkspace = () => {
         label: "Current service",
         pathname: "/current-service",
       };
+      persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
       navigate(TEAMS_SECTION_PATHS.schedules, {
         state: buildPlanToScheduleNavigationState({
           returnTo,

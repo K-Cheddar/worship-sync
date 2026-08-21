@@ -52,6 +52,15 @@ describe("FloatingWindow", () => {
     expect(screen.queryByTestId("resize-handle-nw")).not.toBeInTheDocument();
   });
 
+  it("enables resizing by default and supports disabling resize handles", () => {
+    const { unmount } = renderWindow();
+    expect(screen.getByTestId("resize-handle-se")).toBeInTheDocument();
+    unmount();
+
+    renderWindow(jest.fn(), { resizable: false });
+    expect(screen.queryByTestId("resize-handle-se")).not.toBeInTheDocument();
+  });
+
   it("fires title bar actions from a touch tap without needing a second press", () => {
     const onClose = jest.fn();
     renderWindow(onClose);

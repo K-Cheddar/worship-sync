@@ -624,6 +624,7 @@ export const updateChurchIntegrations = async (
   });
 
 export type TeamRosterMemberPayload = {
+  title?: string;
   firstName: string;
   lastName: string;
   /** Omit to leave an existing address untouched; send "" to clear it. */
@@ -631,6 +632,7 @@ export type TeamRosterMemberPayload = {
   dateOfBirth?: string;
   isMinor?: boolean;
   servingFrequency?: TeamRosterMember["servingFrequency"];
+  recurringAvailability?: TeamRosterMember["recurringAvailability"];
   positionIds: string[];
   desiredPositionIds?: string[];
   /**
@@ -645,6 +647,8 @@ export type TeamRosterMemberPayload = {
   qualifications?: TeamRosterMember["qualifications"];
   blockoutDates: TeamRosterMember["blockoutDates"];
   notes?: string;
+  profileImageUrl?: string;
+  profileImagePublicId?: string;
 };
 
 export type TeamPositionPayload = {
@@ -1465,6 +1469,8 @@ export const updateTeamScheduleAssignment = async (
     shadowKind?: TeamScheduleShadowKind;
     /** Explicit acknowledgement that the member's blockout overlaps this service. */
     allowBlockout?: boolean;
+    /** Explicit acknowledgement that recurring availability excludes this service. */
+    allowRecurringAvailability?: boolean;
     allowCrossTeamConflict?: boolean;
   },
 ) =>

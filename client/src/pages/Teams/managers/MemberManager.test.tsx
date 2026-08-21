@@ -194,6 +194,86 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("keeps create and filter actions usable while a member is open", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: joinedData() });
+
+    await openMember(user, /Rae Kim/);
+
+    const createButton = screen.getByRole("button", { name: "Create member" });
+    const filterButton = screen.getByRole("button", { name: "Filter members" });
+    expect(createButton).toBeEnabled();
+    expect(filterButton).toBeEnabled();
+
+    await user.click(filterButton);
+    expect(
+      screen.getByRole("region", { name: "Filter members" }),
+    ).not.toHaveAttribute("inert");
+    expect(
+      screen.getByRole("region", { name: "Edit member" }),
+    ).not.toHaveAttribute("inert");
+
+    await user.click(screen.getByRole("button", { name: "Close filters" }));
+    await user.type(screen.getByLabelText(/First name/), " updated");
+    await user.click(createButton);
+    expect(
+      screen.getByRole("dialog", { name: "Unsaved changes" }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(
+      screen.getByRole("region", { name: "Create member" }),
+    ).not.toHaveAttribute("inert");
+    expect(screen.getByLabelText(/First name/)).toHaveValue("");
+  });
+
+  it("guards member changes after selecting a profile image and clears the preview", async () => {
+    const user = userEvent.setup();
+    const secondMember: TeamRosterMember = {
+      ...worshipMember,
+      memberId: "member-2",
+      firstName: "Jo",
+      lastName: "Smith",
+    };
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: jest.fn(() => "blob:member-preview"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: jest.fn(),
+    });
+
+    try {
+      renderManager({
+        data: joinedData({ members: [worshipMember, secondMember] }),
+      });
+      await openMember(user, /Rae Kim/);
+      const file = new File(["profile"], "profile.png", { type: "image/png" });
+      await user.upload(screen.getByLabelText("Profile image upload"), file);
+
+      await user.click(screen.getByRole("button", { name: /Jo Smith/ }));
+      expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeVisible();
+      expect(screen.getByDisplayValue("Rae")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Discard changes" }));
+
+      expect(screen.getByDisplayValue("Jo")).toBeInTheDocument();
+      expect(screen.queryByAltText("Rae profile")).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: originalCreateObjectURL,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      });
+    }
+  });
+
   it("allows manual minor status and saves the serving preference without a birth date", async () => {
     const user = userEvent.setup();
     mockCreateTeamRosterMember.mockResolvedValue({
@@ -214,7 +294,7 @@ describe("MemberManager member preferences", () => {
     const minorCheckbox = screen.getByRole("checkbox", { name: /Minor/ });
     expect(minorCheckbox).toBeEnabled();
     await user.click(minorCheckbox);
-    await user.click(screen.getByRole("combobox", { name: /Serving preference/ }));
+    await user.click(screen.getByRole("combobox", { name: /Serving frequency/ }));
     await user.click(screen.getByRole("option", { name: "Twice a month" }));
     await user.click(screen.getByRole("button", { name: "Save member" }));
 

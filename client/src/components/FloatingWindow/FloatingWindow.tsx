@@ -60,6 +60,8 @@ interface FloatingWindowProps {
   defaultHeight?: number;
   /** When true, height grows with content up to defaultHeight instead of being fixed. */
   autoHeight?: boolean;
+  /** Resize handles are shown by default for every floating window. */
+  resizable?: boolean;
   contentClassName?: string;
   className?: string;
   initiallyMinimized?: boolean;
@@ -95,6 +97,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       defaultWidth = 400,
       defaultHeight = 300,
       autoHeight = false,
+      resizable = true,
       contentClassName,
       className,
       initiallyMinimized = false,
@@ -711,7 +714,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         </div>
 
         {/* Resize handles — sides and bottom only (never on the title bar) */}
-        {!isMinimized && (
+        {resizable && !isMinimized && (
           <>
             <div data-testid="resize-handle-w" data-resize-dir="w" className={cn(SIDE_EDGE_RESIZE_CLASS, "left-0")} {...resizeHandleProps} />
             <div data-testid="resize-handle-e" data-resize-dir="e" className={cn(SIDE_EDGE_RESIZE_CLASS, "right-0")} {...resizeHandleProps} />

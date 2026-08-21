@@ -152,7 +152,14 @@ const TeamMicrophonesPanel = ({
                   className="rounded-md border border-gray-800 bg-gray-900/60 p-2"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 max-w-[60%] truncate text-xs font-medium text-gray-100">
+                    {row.memberProfileImageUrl ? (
+                      <img
+                        src={row.memberProfileImageUrl}
+                        alt=""
+                        className="h-16 w-16 shrink-0 rounded-full object-cover"
+                      />
+                    ) : null}
+                    <span className="min-w-0 max-w-[60%] flex-1 truncate text-xs font-medium text-gray-100">
                       {row.memberName || "Unassigned"}
                     </span>
                     <span className="min-w-0 shrink-0 truncate text-[11px] text-gray-400">

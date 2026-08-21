@@ -395,7 +395,7 @@ const CreditsEditor = ({
         // so stale entries from a previous outline would only waste memory.
         resetAppliedCreditVersions();
         for (const doc of creditDocs) {
-          recordAppliedCreditVersion(doc._id, doc.updatedAt);
+          recordAppliedCreditVersion(doc._id, doc._rev);
         }
 
         dispatch(initiateCreditsList(credits));
@@ -488,10 +488,10 @@ const CreditsEditor = ({
           .map((creditId) => {
             const doc = docsFromUpdates.get(creditId) ?? docsFromDbById.get(creditId);
             if (!doc) return undefined;
-            if (isStaleCreditDoc(doc._id, doc.updatedAt)) {
+            if (isStaleCreditDoc(doc._id, doc._rev)) {
               return onScreenById.get(creditId) ?? creditInfoFromDoc(doc);
             }
-            recordAppliedCreditVersion(doc._id, doc.updatedAt);
+            recordAppliedCreditVersion(doc._id, doc._rev);
             return {
               id: doc.id,
               heading: doc.heading ?? "",
@@ -530,8 +530,8 @@ const CreditsEditor = ({
           // Replication, broadcast, and post-reconnect pulls all land here with no ordering
           // guarantee between them. Dropping revisions older than the one already applied
           // stops a late straggler from reverting newer text.
-          if (isStaleCreditDoc(doc._id, doc.updatedAt)) return;
-          recordAppliedCreditVersion(doc._id, doc.updatedAt);
+          if (isStaleCreditDoc(doc._id, doc._rev)) return;
+          recordAppliedCreditVersion(doc._id, doc._rev);
           dispatch(
             updateCredit({
               id: doc.id,

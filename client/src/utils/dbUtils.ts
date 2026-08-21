@@ -583,8 +583,8 @@ export const putCreditDoc = async (
     existing.text = credit.text;
     existing.hidden = credit.hidden;
     existing.updatedAt = new Date().toISOString();
-    await db.put(existing);
-    return existing;
+    const result = await db.put(existing);
+    return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };
   } catch (e) {
     console.error("putCreditDoc failed", credit.id, e);
     return null;

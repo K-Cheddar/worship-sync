@@ -29,14 +29,14 @@ describe("teamsReturnNavigation persistence", () => {
     expect(sessionStorage.getItem(TEAMS_RETURN_STORAGE_KEY)).toBeNull();
   });
 
-  it("stores destination pathname when building return navigation state", () => {
+  it("builds return navigation state without persisting it", () => {
     const returnTo = buildScheduleReturnTo({ scheduleId: "sched-1" });
 
-    buildTeamsReturnNavigationState(returnTo, TEAMS_SECTION_PATHS.members);
+    expect(buildTeamsReturnNavigationState(returnTo)).toEqual({
+      teamsReturnTo: returnTo,
+    });
 
-    expect(readPersistedTeamsReturnTo(TEAMS_SECTION_PATHS.members)).toEqual(
-      returnTo,
-    );
+    expect(readPersistedTeamsReturnTo(TEAMS_SECTION_PATHS.members)).toBeNull();
   });
 
   it("clears legacy unscoped sessionStorage payloads", () => {

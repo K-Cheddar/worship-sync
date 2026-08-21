@@ -143,7 +143,10 @@ import {
   shadowKindLabel,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
-import { servingFrequencyTargetReached } from "../memberPreferences";
+import {
+  isMemberAvailableOnDate,
+  servingFrequencyTargetReached,
+} from "../memberPreferences";
 import {
   useTeamsRestoreOnMount,
   useTeamsReturnNavigation,
@@ -256,8 +259,9 @@ type PendingCrossTeamConflict = {
   onCancel?: () => void;
 };
 
-type PendingBlockoutConfirmation = {
+type PendingAvailabilityConfirmation = {
   memberId: string;
+  kind: "blockout" | "recurringAvailability";
   onConfirm: () => void;
 };
 
@@ -722,8 +726,8 @@ const ScheduleTab = ({
   const pendingCellAssignmentRef = useRef<PendingCellAssignment | null>(null);
   const [pendingCrossTeamConflict, setPendingCrossTeamConflict] =
     useState<PendingCrossTeamConflict | null>(null);
-  const [pendingBlockoutConfirmation, setPendingBlockoutConfirmation] =
-    useState<PendingBlockoutConfirmation | null>(null);
+  const [pendingAvailabilityConfirmation, setPendingAvailabilityConfirmation] =
+    useState<PendingAvailabilityConfirmation | null>(null);
   // Assignment saves are read-modify-write transactions on the same schedule
   // document. The UI updates optimistically, so a member can be removed from one
   // cell and immediately re-added (e.g. as a reverse shadow) before the first
@@ -774,7 +778,7 @@ const ScheduleTab = ({
     setAssignmentQuery("");
     setPickerAnchorEl(null);
     setPendingCrossTeamConflict(null);
-    setPendingBlockoutConfirmation(null);
+    setPendingAvailabilityConfirmation(null);
     resetUndoHistory();
   }, [resetUndoHistory, selectedScheduleId]);
 
@@ -838,8 +842,8 @@ const ScheduleTab = ({
     });
   }, []);
 
-  const dismissBlockoutConfirmation = useCallback(() => {
-    setPendingBlockoutConfirmation(null);
+  const dismissAvailabilityConfirmation = useCallback(() => {
+    setPendingAvailabilityConfirmation(null);
   }, []);
 
   const assignmentConflictPayload = (allowCrossTeamConflict?: boolean) =>
@@ -1290,9 +1294,12 @@ const ScheduleTab = ({
         return "Not eligible for this position";
       }
       if (serviceDateBlockedOut(member, getOccurrenceDate(occurrence))) return "Blocked out";
-      // Intake service availability is intentionally NOT a hard block — it is
-      // surfaced as a soft warning (see serviceAvailabilityWarning). Only
-      // blockout dates make a member truly unavailable.
+      if (!isMemberAvailableOnDate(member, getOccurrenceDate(occurrence))) {
+        return "Unavailable this week of the month";
+      }
+      // Intake service availability is intentionally not a hard block; it is
+      // surfaced as a soft warning. Blockouts and recurring availability need
+      // an explicit confirmation before a manual assignment can continue.
       return "";
     },
     [data.members, scheduleOccurrences, selectedSchedule?.assignments, selectedTeam],
@@ -1391,6 +1398,7 @@ const ScheduleTab = ({
     sourceServiceId,
     sourcePositionSlotKey,
     allowBlockout = false,
+    allowRecurringAvailability = false,
     allowCrossTeamConflict = false,
   }: {
     serviceId: string;
@@ -1400,6 +1408,7 @@ const ScheduleTab = ({
     sourceServiceId?: string;
     sourcePositionSlotKey?: string;
     allowBlockout?: boolean;
+    allowRecurringAvailability?: boolean;
     allowCrossTeamConflict?: boolean;
   }) => {
     if (!canEdit) return;
@@ -1412,8 +1421,9 @@ const ScheduleTab = ({
         positionId: sourcePositionSlotKey,
       });
       if (issue === "Blocked out" && !allowBlockout) {
-        setPendingBlockoutConfirmation({
+        setPendingAvailabilityConfirmation({
           memberId,
+          kind: "blockout",
           onConfirm: () =>
             void commitAssignment({
               serviceId,
@@ -1423,11 +1433,38 @@ const ScheduleTab = ({
               sourceServiceId,
               sourcePositionSlotKey,
               allowBlockout: true,
+              allowRecurringAvailability,
             }),
         });
         return;
       }
-      const blockingIssue = allowBlockout && issue === "Blocked out" ? "" : issue;
+      if (
+        issue === "Unavailable this week of the month" &&
+        !allowRecurringAvailability
+      ) {
+        setPendingAvailabilityConfirmation({
+          memberId,
+          kind: "recurringAvailability",
+          onConfirm: () =>
+            void commitAssignment({
+              serviceId,
+              cellKey,
+              basePositionId,
+              memberId,
+              sourceServiceId,
+              sourcePositionSlotKey,
+              allowBlockout,
+              allowRecurringAvailability: true,
+            }),
+        });
+        return;
+      }
+      const blockingIssue =
+        (allowBlockout && issue === "Blocked out") ||
+        (allowRecurringAvailability &&
+          issue === "Unavailable this week of the month")
+          ? ""
+          : issue;
       if (blockingIssue) {
         showToast(blockingIssue, "neutral");
         return;
@@ -1446,6 +1483,7 @@ const ScheduleTab = ({
               sourceServiceId,
               sourcePositionSlotKey,
               allowBlockout,
+              allowRecurringAvailability,
               allowCrossTeamConflict: true,
             }),
         });
@@ -1540,6 +1578,9 @@ const ScheduleTab = ({
             sourceServiceId,
             sourcePositionSlotKey,
             ...(allowBlockout ? { allowBlockout: true } : {}),
+            ...(allowRecurringAvailability
+              ? { allowRecurringAvailability: true }
+              : {}),
             ...assignmentConflictPayload(allowCrossTeamConflict),
           },
         );
@@ -1597,6 +1638,35 @@ const ScheduleTab = ({
       showToast(`${guest.name} added as a guest.`, "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not assign this guest.");
+      throw error;
+    }
+  };
+
+  const commitGuestEdit = async (guest: TeamScheduleGuest) => {
+    if (!canEdit || !selectedSchedule) return;
+    const guests = (selectedSchedule.guests || []).map((existingGuest) =>
+      existingGuest.guestId === guest.guestId ? guest : existingGuest,
+    );
+    try {
+      const response = await enqueueAssignmentSave(() =>
+        updateTeamSchedule(churchId, selectedSchedule.scheduleId, {
+          name: selectedSchedule.name,
+          description: selectedSchedule.description || "",
+          teamId: selectedSchedule.teamId,
+          startDate: selectedSchedule.startDate || "",
+          endDate: selectedSchedule.endDate || "",
+          serviceIds: selectedSchedule.serviceIds || [],
+          occurrences: selectedSchedule.occurrences,
+          assignments: selectedSchedule.assignments,
+          guests,
+          microphoneAssignments: selectedSchedule.microphoneAssignments,
+          additionalPositionSlots: selectedSchedule.additionalPositionSlots,
+        }),
+      );
+      onScheduleSaved(response.schedule);
+      showToast("Guest details updated.", "success");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not update this guest.");
       throw error;
     }
   };
@@ -1740,6 +1810,7 @@ const ScheduleTab = ({
     shadowKind,
     action,
     allowBlockout = false,
+    allowRecurringAvailability = false,
     allowCrossTeamConflict = false,
   }: {
     serviceId: string;
@@ -1749,6 +1820,7 @@ const ScheduleTab = ({
     shadowKind: TeamScheduleShadowKind;
     action: "add" | "remove";
     allowBlockout?: boolean;
+    allowRecurringAvailability?: boolean;
     allowCrossTeamConflict?: boolean;
   }) => {
     if (!canEdit) return;
@@ -1764,8 +1836,9 @@ const ScheduleTab = ({
         shadowKind,
       );
       if (issue === "Blocked out" && !allowBlockout) {
-        setPendingBlockoutConfirmation({
+        setPendingAvailabilityConfirmation({
           memberId,
+          kind: "blockout",
           onConfirm: () =>
             void commitShadowAssignment({
               serviceId,
@@ -1775,11 +1848,38 @@ const ScheduleTab = ({
               shadowKind,
               action,
               allowBlockout: true,
+              allowRecurringAvailability,
             }),
         });
         return;
       }
-      const blockingIssue = allowBlockout && issue === "Blocked out" ? "" : issue;
+      if (
+        issue === "Unavailable this week of the month" &&
+        !allowRecurringAvailability
+      ) {
+        setPendingAvailabilityConfirmation({
+          memberId,
+          kind: "recurringAvailability",
+          onConfirm: () =>
+            void commitShadowAssignment({
+              serviceId,
+              cellKey,
+              basePositionId,
+              memberId,
+              shadowKind,
+              action,
+              allowBlockout,
+              allowRecurringAvailability: true,
+            }),
+        });
+        return;
+      }
+      const blockingIssue =
+        (allowBlockout && issue === "Blocked out") ||
+        (allowRecurringAvailability &&
+          issue === "Unavailable this week of the month")
+          ? ""
+          : issue;
       if (blockingIssue) {
         showToast(blockingIssue, "neutral");
         return;
@@ -1798,6 +1898,7 @@ const ScheduleTab = ({
               shadowKind,
               action,
               allowBlockout,
+              allowRecurringAvailability,
               allowCrossTeamConflict: true,
             }),
         });
@@ -1865,6 +1966,9 @@ const ScheduleTab = ({
             shadowAction: action,
             shadowKind,
             ...(allowBlockout ? { allowBlockout: true } : {}),
+            ...(allowRecurringAvailability
+              ? { allowRecurringAvailability: true }
+              : {}),
             ...assignmentConflictPayload(allowCrossTeamConflict),
           },
         );
@@ -3217,12 +3321,16 @@ const ScheduleTab = ({
       duplicateScheduleFirstNames,
     )
     : "This person";
-  const pendingBlockoutMember = pendingBlockoutConfirmation
-    ? data.members.find((item) => item.memberId === pendingBlockoutConfirmation.memberId)
+  const pendingAvailabilityMember = pendingAvailabilityConfirmation
+    ? data.members.find(
+      (item) => item.memberId === pendingAvailabilityConfirmation.memberId,
+    )
     : null;
-  const pendingBlockoutMemberLabel = pendingBlockoutMember
-    ? scheduleMemberName(pendingBlockoutMember, duplicateScheduleFirstNames)
+  const pendingAvailabilityMemberLabel = pendingAvailabilityMember
+    ? scheduleMemberName(pendingAvailabilityMember, duplicateScheduleFirstNames)
     : "This person";
+  const pendingAvailabilityConfirmationIsRecurring =
+    pendingAvailabilityConfirmation?.kind === "recurringAvailability";
 
   // Flattened occurrences (in service order) for the by-position orientation,
   // where dates become columns.
@@ -4587,6 +4695,9 @@ const ScheduleTab = ({
                         ? undefined
                         : commitGuestAssignment
                     }
+                    onEditGuest={
+                      slotPickerMode === "replace" ? undefined : commitGuestEdit
+                    }
                     onClearAssignment={
                       slotPickerMode === "replace"
                         ? undefined
@@ -4763,15 +4874,25 @@ const ScheduleTab = ({
         ) : null}
       </Modal>
       <Modal
-        isOpen={Boolean(pendingBlockoutConfirmation)}
-        onClose={dismissBlockoutConfirmation}
-        title="Blocked-out date"
+        isOpen={Boolean(pendingAvailabilityConfirmation)}
+        onClose={dismissAvailabilityConfirmation}
+        title={
+          pendingAvailabilityConfirmationIsRecurring
+            ? "Recurring availability"
+            : "Blocked-out date"
+        }
         size="sm"
-        description="Confirm whether to schedule this member despite their blocked-out date."
+        description={
+          pendingAvailabilityConfirmationIsRecurring
+            ? "Confirm whether to schedule this member outside their recurring availability."
+            : "Confirm whether to schedule this member despite their blocked-out date."
+        }
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingBlockoutMemberLabel} marked this date as blocked out.
+            {pendingAvailabilityConfirmationIsRecurring
+              ? `${pendingAvailabilityMemberLabel} is not available during this week of the month.`
+              : `${pendingAvailabilityMemberLabel} marked this date as blocked out.`}
           </p>
           <p className="text-sm text-gray-400">
             Confirm that they are available before scheduling them.
@@ -4780,7 +4901,7 @@ const ScheduleTab = ({
             <Button
               type="button"
               variant="tertiary"
-              onClick={dismissBlockoutConfirmation}
+              onClick={dismissAvailabilityConfirmation}
             >
               Cancel
             </Button>
@@ -4788,8 +4909,8 @@ const ScheduleTab = ({
               type="button"
               variant="primary"
               onClick={() => {
-                const pending = pendingBlockoutConfirmation;
-                setPendingBlockoutConfirmation(null);
+                const pending = pendingAvailabilityConfirmation;
+                setPendingAvailabilityConfirmation(null);
                 pending?.onConfirm();
               }}
             >
