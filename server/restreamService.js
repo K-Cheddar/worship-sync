@@ -138,6 +138,27 @@ const readConnectionStreamTitle = (connectionInfo) => {
   return resolved?.trim() || "";
 };
 
+/** Identifies the actual broadcast (video/event), not just the destination
+ * platform connection, so a reconnecting connection can be told apart from a
+ * genuinely different stream. Falls back to url when no id is present. */
+const readConnectionBroadcastId = (connectionInfo) => {
+  const target = connectionInfo?.target ?? {};
+  const candidates = [
+    target?.event?.id,
+    target?.liveVideo?.id,
+    target?.broadcast?.id,
+    target?.stream?.id,
+    target?.event?.url,
+    target?.liveVideo?.url,
+    target?.broadcast?.url,
+    target?.stream?.url,
+  ];
+  const resolved = candidates.find(
+    (value) => typeof value === "string" && value.trim(),
+  );
+  return resolved?.trim() || "";
+};
+
 const readConnectionPlatform = (connectionInfo, eventTypeId) => {
   const direct = [
     connectionInfo?.eventSourceName,
@@ -259,6 +280,9 @@ const buildConnectionInsights = (connectionMap) => {
     platformSummary: buildPlatformSummary(connectionMap),
     streamTitle: preferredConnection
       ? readConnectionStreamTitle(preferredConnection)
+      : "",
+    broadcastKey: preferredConnection
+      ? readConnectionBroadcastId(preferredConnection)
       : "",
     totalConnectionCount: connections.length,
     activeConnectionCount: connections.filter(isConnectionHealthy).length,
@@ -934,11 +958,56 @@ export const createRestreamService = ({
     return { id: churchId, ...next };
   };
 
+  /**
+   * How long the receiver must show zero active connections before a later
+   * reconnect *with no recorded prior broadcast identity* counts as a new
+   * stream. Our own chat WebSocket to Restream reconnects (briefly zeroing
+   * `receiver.connections`) far more often than an operator actually starts a
+   * new broadcast, so a short threshold would wipe live chat mid-service on
+   * an ordinary network blip. This is only a fallback: when we can compare
+   * broadcast identity (below), a resumed connection to the *same* broadcast
+   * never resets, no matter how long the gap was.
+   */
+  const NEW_STREAM_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
+
+  /**
+   * A dropped connection reconnecting to the *same* video/event id is the
+   * same broadcast recovering (flaky venue internet, a platform-side ingest
+   * hiccup) — never a new stream, regardless of how long it was down. Only
+   * fall back to the elapsed-idle heuristic when we can't compare identity on
+   * both sides (e.g. a platform that doesn't expose a stable id/url).
+   */
+  const isGenuinelyNewBroadcast = (previousSession, insights) => {
+    const previousBroadcastKey = String(
+      previousSession?.broadcastKey || "",
+    ).trim();
+    const currentBroadcastKey = String(insights?.broadcastKey || "").trim();
+    if (previousBroadcastKey && currentBroadcastKey) {
+      return previousBroadcastKey !== currentBroadcastKey;
+    }
+    return true;
+  };
+
+  const maybeAutoResetForNewStream = async (receiver, previousSession, insights) => {
+    if (!(Number(previousSession?.messageCount || 0) > 0)) return;
+    if (!isGenuinelyNewBroadcast(previousSession, insights)) return;
+    const idleSince = Number(previousSession?.wentIdleAt || 0);
+    if (!idleSince || nowMs() - idleSince < NEW_STREAM_IDLE_THRESHOLD_MS) {
+      return;
+    }
+    await resetSession({ churchId: receiver.churchId, database: receiver.database });
+  };
+
   const persistReceiverSnapshot = async (receiver) => {
     const insights = buildConnectionInsights(receiver.connections);
     const liveChatReady =
       receiver.state === "connected" && insights.activeConnectionCount > 0;
     const connectionIssueMessage = insights.connectionIssues[0] || "";
+    const previousSession = await getDoc(
+      RESTREAM_SESSION_COLLECTION,
+      receiver.database,
+    );
+    const wasLive = Boolean(previousSession?.connected);
     const patch = {
       connectionState: receiver.state,
       lastError: receiver.lastError || connectionIssueMessage,
@@ -947,9 +1016,14 @@ export const createRestreamService = ({
       accountLabel: receiver.accountLabel || "",
       platformSummary: insights.platformSummary,
       streamTitle: insights.streamTitle,
+      // Only advance the recorded broadcast identity while actually live, so
+      // a dropped connection keeps pointing at the broadcast it dropped from
+      // until we know whether the same one resumed or a different one did.
+      ...(liveChatReady ? { broadcastKey: insights.broadcastKey } : {}),
       connectionIssues: insights.connectionIssues,
       activeConnectionCount: insights.activeConnectionCount,
       totalConnectionCount: insights.totalConnectionCount,
+      ...(wasLive && !liveChatReady ? { wentIdleAt: nowMs() } : {}),
     };
     await syncSessionSnapshot({
       churchId: receiver.churchId,
@@ -962,6 +1036,9 @@ export const createRestreamService = ({
       ...patch,
       startedAt: receiver.sessionStartedAt,
     });
+    if (!wasLive && liveChatReady) {
+      await maybeAutoResetForNewStream(receiver, previousSession, insights);
+    }
   };
 
   const scheduleReconnect = (receiver) => {
@@ -1627,6 +1704,7 @@ export const createRestreamService = ({
         lastError: "",
         platformSummary: [],
         streamTitle: "",
+        broadcastKey: "",
         connectionIssues: [],
         activeConnectionCount: 0,
         totalConnectionCount: 0,
@@ -1733,6 +1811,7 @@ export const createRestreamService = ({
         lastError: receiver?.lastError || insights.connectionIssues[0] || "",
         platformSummary: insights.platformSummary,
         streamTitle: insights.streamTitle,
+        broadcastKey: insights.broadcastKey,
         connectionIssues: insights.connectionIssues,
         activeConnectionCount: insights.activeConnectionCount,
         totalConnectionCount: insights.totalConnectionCount,

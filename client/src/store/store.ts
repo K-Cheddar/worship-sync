@@ -1287,6 +1287,7 @@ listenerMiddleware.startListening({
         type: presentationType,
         timerId: monitorInfo.timerId,
         itemId: monitorInfo.itemId,
+        listId: monitorInfo.listId,
       }),
     );
   },

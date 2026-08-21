@@ -1,5 +1,6 @@
 import type {
   TeamMemberServingFrequency,
+  TeamMemberRecurringAvailability,
   TeamRosterMember,
 } from "../../api/authTypes";
 import { parsePlainDate } from "../../utils/plainDate";
@@ -21,6 +22,64 @@ export const servingFrequencyLabel = (
 ) =>
   servingFrequencyOptions.find((option) => option.value === value)?.label ||
   servingFrequencyOptions[0].label;
+
+export const recurringAvailabilityWeekOptions: Array<{
+  value: 1 | 2 | 3 | 4 | 5;
+  label: string;
+}> = [
+  { value: 1, label: "1st week" },
+  { value: 2, label: "2nd week" },
+  { value: 3, label: "3rd week" },
+  { value: 4, label: "4th week" },
+  { value: 5, label: "5th week" },
+];
+
+export const emptyRecurringAvailability = (): TeamMemberRecurringAvailability => ({
+  weeksOfMonth: [],
+  includeLastWeekOfMonth: false,
+});
+
+/**
+ * Returns whether a calendar date is allowed by a member's recurring
+ * availability. A missing or empty rule intentionally means no restriction.
+ */
+export const isMemberAvailableOnDate = (
+  member: Pick<TeamRosterMember, "recurringAvailability">,
+  plainDate: string,
+) => {
+  const availability = member.recurringAvailability;
+  const selectedWeeks = availability?.weeksOfMonth || [];
+  if (!plainDate || (!availability?.includeLastWeekOfMonth && selectedWeeks.length === 0)) {
+    return true;
+  }
+
+  const date = parsePlainDate(plainDate);
+  if (!date) return true;
+  const dayOfMonth = date.getDate();
+  const weekOfMonth = (Math.floor((dayOfMonth - 1) / 7) + 1) as 1 | 2 | 3 | 4 | 5;
+  const lastDayOfMonth = new Date(
+    date.getFullYear(),
+    date.getMonth() + 1,
+    0,
+  ).getDate();
+  const isLastWeekOfMonth = dayOfMonth + 7 > lastDayOfMonth;
+
+  return (
+    selectedWeeks.includes(weekOfMonth) ||
+    (availability?.includeLastWeekOfMonth && isLastWeekOfMonth)
+  );
+};
+
+export const recurringAvailabilityLabel = (
+  availability: TeamRosterMember["recurringAvailability"],
+) => {
+  const selectedWeeks = availability?.weeksOfMonth || [];
+  const labels = recurringAvailabilityWeekOptions
+    .filter((option) => selectedWeeks.includes(option.value))
+    .map((option) => option.label);
+  if (availability?.includeLastWeekOfMonth) labels.push("last week");
+  return labels.length ? labels.join(", ") : "Every week";
+};
 
 export const isMinorOnDate = (
   dateOfBirth: string,

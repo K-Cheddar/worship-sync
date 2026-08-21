@@ -253,6 +253,96 @@ test("workstation redeem with platformType web establishes a session", async (t)
   assert.equal(redeemRes.payload?.bootstrap?.sessionKind, "workstation");
 });
 
+test("a paired workstation can view saved Service Plans but not edit them", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const context = await createAdminContext("ws_service_plans");
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey: "svc1@2026-09-06" },
+    body: {
+      serviceId: "svc1",
+      date: "2026-09-06",
+      name: "Sunday Service",
+      sections: [],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+
+  const createResPayload = await callHandler(
+    authHandlers.createWorkstationPairing,
+    {
+      context,
+      body: { label: "Booth iPad", appAccess: "view", platformType: "web" },
+    },
+  );
+  const pairingToken = createResPayload.payload?.pairing?.token;
+  assert.ok(pairingToken);
+
+  const workstationSession = createSession();
+  const redeemRes = createRes();
+  await authHandlers.redeemWorkstationPairing(
+    createReq({
+      session: workstationSession,
+      body: { token: pairingToken, platformType: "web" },
+    }),
+    redeemRes,
+  );
+  assert.equal(redeemRes.statusCode, 200);
+  // View-only regardless of appAccess tier, for now: no Teams roster access
+  // (that would leak member PII), read-only Service Plans access.
+  assert.deepEqual(redeemRes.payload?.bootstrap?.permissions, {
+    teams: "none",
+    services: "view",
+    teamScopes: {},
+  });
+
+  const listRes = createRes();
+  await authHandlers.listServicePlans(
+    createReq({
+      session: workstationSession,
+      params: { churchId: context.churchId },
+    }),
+    listRes,
+  );
+  assert.equal(listRes.statusCode, 200);
+  assert.equal(listRes.payload?.success, true);
+  assert.deepEqual(
+    listRes.payload?.servicePlans?.map((plan) => plan.planKey),
+    ["svc1@2026-09-06"],
+  );
+
+  const getRes = createRes();
+  await authHandlers.getServicePlan(
+    createReq({
+      session: workstationSession,
+      params: { churchId: context.churchId, planKey: "svc1@2026-09-06" },
+    }),
+    getRes,
+  );
+  assert.equal(getRes.statusCode, 200);
+  assert.equal(getRes.payload?.servicePlan?.planKey, "svc1@2026-09-06");
+
+  // Still no edit access from a workstation, even though its read access to
+  // plans was just widened: saveServicePlan's CSRF check rejects the session
+  // before it can reach the (human-only) services-edit permission check.
+  const saveRes = createRes();
+  await authHandlers.saveServicePlan(
+    createReq({
+      session: workstationSession,
+      params: { churchId: context.churchId, planKey: "svc1@2026-09-06" },
+      body: {
+        serviceId: "svc1",
+        date: "2026-09-06",
+        name: "Edited by workstation",
+        sections: [],
+      },
+    }),
+    saveRes,
+  );
+  assert.equal(saveRes.statusCode, 403);
+});
+
 test("display create then redeem issues a credential", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
 

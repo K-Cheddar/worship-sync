@@ -2,19 +2,10 @@ import { useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import {
   clearPersistedTeamsReturnTo,
+  isTeamsNavigationReload,
   readTeamsRestore,
   readTeamsReturnTo,
 } from "../teamsReturnNavigation";
-
-const isDocumentReload = () => {
-  if (typeof performance === "undefined") return false;
-  const getEntriesByType = performance.getEntriesByType;
-  if (typeof getEntriesByType !== "function") return false;
-  const entry = getEntriesByType.call(performance, "navigation")[0] as
-    | PerformanceNavigationTiming
-    | undefined;
-  return entry?.type === "reload";
-};
 
 /**
  * Clears abandoned cross-section return state when the operator navigates via
@@ -24,7 +15,7 @@ const isDocumentReload = () => {
  */
 export const useTeamsAbandonedReturnCleanup = () => {
   const location = useLocation();
-  const skipCleanupOnceRef = useRef(isDocumentReload());
+  const skipCleanupOnceRef = useRef(isTeamsNavigationReload());
 
   useEffect(() => {
     if (readTeamsReturnTo(location.state) || readTeamsRestore(location.state)) {

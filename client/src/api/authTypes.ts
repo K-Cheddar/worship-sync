@@ -47,7 +47,11 @@ export type ChurchBranding = {
 
 export type TeamsPermission = "none" | "view" | "edit";
 export type TeamScopedPermission = Exclude<TeamsPermission, "none">;
-export type ServicesPermission = "none" | "edit";
+/**
+ * "view" is workstation-only for now (see authService.js buildWorkstationBootstrap) —
+ * a human member's services permission is never normalized to "view".
+ */
+export type ServicesPermission = "none" | "view" | "edit";
 
 export type MemberPermissions = {
   teams: TeamsPermission;
@@ -175,9 +179,20 @@ export type TeamMemberServingFrequency =
   | "twice_monthly"
   | "monthly";
 
+/**
+ * A recurring, calendar-based limit on when a member may be scheduled. An
+ * empty rule means the member is available every week of the month.
+ */
+export type TeamMemberRecurringAvailability = {
+  weeksOfMonth: Array<1 | 2 | 3 | 4 | 5>;
+  includeLastWeekOfMonth: boolean;
+};
+
 export type TeamRosterMember = {
   memberId: string;
   churchId: string;
+  /** Optional display prefix, such as "Dr." or "Pastor". */
+  title?: string;
   firstName: string;
   lastName: string;
   /**
@@ -205,6 +220,8 @@ export type TeamRosterMember = {
   isMinor?: boolean;
   /** Desired cadence used as a soft scheduling recommendation signal. */
   servingFrequency?: TeamMemberServingFrequency;
+  /** Hard calendar-based scheduling limit, independent of serving frequency. */
+  recurringAvailability?: TeamMemberRecurringAvailability;
   /** Positions the member can be scheduled for. The hard assignment gate. */
   positionIds: string[];
   /**
@@ -223,6 +240,9 @@ export type TeamRosterMember = {
   qualifications?: TeamMemberQualification[];
   blockoutDates: TeamBlockoutDateRange[];
   notes?: string;
+  /** Public Cloudinary profile image used in roster and schedule surfaces. */
+  profileImageUrl?: string;
+  profileImagePublicId?: string;
   archivedAt?: string | null;
   /**
    * When this schedule was last sent to the people on it. Set only by the send

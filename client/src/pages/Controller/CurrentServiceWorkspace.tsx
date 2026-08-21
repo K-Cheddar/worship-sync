@@ -39,6 +39,7 @@ import {
   autosaveIndicatorSlice,
 } from "../../store/autosaveIndicatorSlice";
 import ServicePlanEditor from "../Services/ServicePlanEditor";
+import CurrentServiceItemList from "./CurrentServiceItemList";
 import {
   getOccurrenceAssignmentSummary,
   getScheduledMicrophoneHolders,
@@ -49,6 +50,7 @@ import {
 import WhosServingPanel from "../Teams/pages/WhosServingPanel";
 import {
   buildPlanToScheduleNavigationState,
+  persistTeamsReturnTo,
   TEAMS_SECTION_PATHS,
   type TeamsReturnTo,
 } from "../Teams/teamsReturnNavigation";
@@ -162,15 +164,23 @@ const LiveSlideProgressChrome = ({
 const DisplaysPreview = ({
   columns = 1,
   progress = null,
+  activeItemId = null,
+  activeListId = null,
 }: {
   columns?: 1 | 2;
   progress?: LiveSlideProgress | null;
+  activeItemId?: string | null;
+  activeListId?: string | null;
 }) => (
   <div className="flex h-full min-h-0 flex-col gap-2">
     <LiveSlideProgressChrome progress={progress} />
-    <div className="min-h-0 flex-1">
+    <div className="min-h-0">
       <TransmitHandler readOnly columns={columns} fillWidth />
     </div>
+    <CurrentServiceItemList
+      activeItemId={activeItemId}
+      activeListId={activeListId}
+    />
   </div>
 );
 
@@ -210,6 +220,8 @@ const PreviewPanel = ({
   value,
   onValueChange,
   progress,
+  activeItemId,
+  activeListId,
   assignmentTeams,
   microphones,
   assignmentsStatus,
@@ -225,6 +237,8 @@ const PreviewPanel = ({
   value: PreviewTab;
   onValueChange: (value: PreviewTab) => void;
   progress: LiveSlideProgress | null;
+  activeItemId: string | null;
+  activeListId: string | null;
   assignmentTeams: ReturnType<typeof groupAssignmentSummaryByTeam>;
   microphones: ServicePlanMicrophone[];
   assignmentsStatus: AssignmentsStatus;
@@ -280,7 +294,11 @@ const PreviewPanel = ({
           }
           aria-hidden={value !== "displays"}
         >
-          <DisplaysPreview columns={2} />
+          <DisplaysPreview
+            columns={2}
+            activeItemId={activeItemId}
+            activeListId={activeListId}
+          />
         </div>
         <div
           className={value === "credits" ? "h-full min-h-0" : "hidden"}
@@ -607,6 +625,7 @@ const CurrentServiceWorkspace = () => {
         label: "Current service",
         pathname: "/current-service",
       };
+      persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
       navigate(TEAMS_SECTION_PATHS.schedules, {
         state: buildPlanToScheduleNavigationState({
           returnTo,
@@ -718,7 +737,12 @@ const CurrentServiceWorkspace = () => {
               label: "Displays",
               content: (
                 <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                  <DisplaysPreview columns={2} progress={liveSlideProgress} />
+                  <DisplaysPreview
+                    columns={2}
+                    progress={liveSlideProgress}
+                    activeItemId={monitorInfo.itemId ?? null}
+                    activeListId={monitorInfo.listId ?? null}
+                  />
                 </section>
               ),
               contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
@@ -785,6 +809,8 @@ const CurrentServiceWorkspace = () => {
           value={desktopPreviewTab}
           onValueChange={setTab}
           progress={liveSlideProgress}
+          activeItemId={monitorInfo.itemId ?? null}
+          activeListId={monitorInfo.listId ?? null}
           assignmentTeams={assignmentTeams}
           microphones={microphones}
           assignmentsStatus={assignmentsStatus}

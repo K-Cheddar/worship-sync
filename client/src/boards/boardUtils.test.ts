@@ -15,7 +15,6 @@ import {
   isBoardAuthorInUse,
   boardHasOnlyPreviousDayPosts,
   isBoardPostOwnedByParticipant,
-  isRestreamChatFromPreviousDay,
   isTimestampFromPreviousLocalDay,
   isWorshipSyncModeratorBoardPost,
   normalizeAliasId,
@@ -349,56 +348,3 @@ describe("boardHasOnlyPreviousDayPosts", () => {
   });
 });
 
-describe("isRestreamChatFromPreviousDay", () => {
-  const now = new Date(2026, 5, 14, 10, 0, 0).getTime();
-  const yesterday = new Date(2026, 5, 13, 20, 0, 0).getTime();
-  const today = new Date(2026, 5, 14, 9, 0, 0).getTime();
-
-  const base = {
-    enabled: true,
-    messageCount: 5,
-    lastMessageAt: yesterday,
-    lastEventAt: yesterday,
-  };
-
-  it("returns true for an enabled session whose last message was an earlier day", () => {
-    expect(isRestreamChatFromPreviousDay(base, now)).toBe(true);
-  });
-
-  it("returns false when the last message is from today (active chat)", () => {
-    expect(
-      isRestreamChatFromPreviousDay(
-        { ...base, lastMessageAt: today, lastEventAt: today },
-        now,
-      ),
-    ).toBe(false);
-  });
-
-  it("returns false when there are no messages", () => {
-    expect(
-      isRestreamChatFromPreviousDay({ ...base, messageCount: 0 }, now),
-    ).toBe(false);
-  });
-
-  it("returns false when the session is disabled", () => {
-    expect(
-      isRestreamChatFromPreviousDay({ ...base, enabled: false }, now),
-    ).toBe(false);
-  });
-
-  it("returns false for a null session or missing activity timestamp", () => {
-    expect(isRestreamChatFromPreviousDay(null, now)).toBe(false);
-    expect(
-      isRestreamChatFromPreviousDay({ enabled: true, messageCount: 3 }, now),
-    ).toBe(false);
-  });
-
-  it("falls back to lastEventAt when lastMessageAt is absent", () => {
-    expect(
-      isRestreamChatFromPreviousDay(
-        { enabled: true, messageCount: 2, lastEventAt: yesterday },
-        now,
-      ),
-    ).toBe(true);
-  });
-});

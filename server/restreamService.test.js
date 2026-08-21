@@ -435,6 +435,353 @@ test("restream service resets the session without touching prior message documen
   );
 });
 
+test("restream service auto-resets chat once a new stream goes live after a long idle gap", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-last-week",
+      startedAt: 100,
+      messageCount: 2,
+      connected: false,
+      wentIdleAt: Date.now() - 10 * 60 * 1000,
+    });
+    firestore.seed("restreamMessages", "m1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-last-week",
+      text: "Last week's message",
+      postedAt: 50,
+      isHighlighted: false,
+      hidden: false,
+    });
+
+    await service.ensureReceiver("church-1");
+    sockets[0].emit("open");
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        payload: {
+          connectionIdentifier: "conn-1",
+          connectionUuid: "connection-uuid-1",
+          eventSourceId: 13,
+          status: "connected",
+          target: { owner: { displayName: "Main Channel" } },
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.notEqual(session.sessionId, "session-last-week");
+    assert.equal(session.messageCount, 0);
+    assert.deepEqual(boardDisplayUpdates, ["db-1"]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service keeps chat history across a brief reconnect mid-stream", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-mid-service",
+      startedAt: 100,
+      messageCount: 2,
+      connected: false,
+      wentIdleAt: Date.now() - 30 * 1000,
+    });
+
+    await service.ensureReceiver("church-1");
+    sockets[0].emit("open");
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        payload: {
+          connectionIdentifier: "conn-1",
+          connectionUuid: "connection-uuid-1",
+          eventSourceId: 13,
+          status: "connected",
+          target: { owner: { displayName: "Main Channel" } },
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 2);
+    assert.deepEqual(boardDisplayUpdates, []);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service keeps chat history when the same broadcast reconnects, even after a long gap", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    // A single-platform connection can drop and recover on Restream's side
+    // (flaky venue internet, a YouTube ingest hiccup) without our own socket
+    // ever reconnecting. That must never wipe chat for the same broadcast,
+    // no matter how long the gap was.
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-mid-service",
+      startedAt: 100,
+      messageCount: 2,
+      connected: false,
+      wentIdleAt: Date.now() - 20 * 60 * 1000,
+      broadcastKey: "youtube-event-1",
+    });
+
+    await service.ensureReceiver("church-1");
+    sockets[0].emit("open");
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        payload: {
+          connectionIdentifier: "conn-1",
+          connectionUuid: "connection-uuid-1",
+          eventSourceId: 13,
+          status: "connected",
+          target: {
+            event: { id: "youtube-event-1", title: "Sunday Live" },
+            owner: { displayName: "Main Channel" },
+          },
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.equal(session.sessionId, "session-mid-service");
+    assert.equal(session.messageCount, 2);
+    assert.deepEqual(boardDisplayUpdates, []);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
+test("restream service resets chat when a different broadcast connects after a long gap", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-last-week",
+      startedAt: 100,
+      messageCount: 2,
+      connected: false,
+      wentIdleAt: Date.now() - 20 * 60 * 1000,
+      broadcastKey: "youtube-event-old",
+    });
+    firestore.seed("restreamMessages", "m1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-last-week",
+      text: "Last week's message",
+      postedAt: 50,
+      isHighlighted: false,
+      hidden: false,
+    });
+
+    await service.ensureReceiver("church-1");
+    sockets[0].emit("open");
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        payload: {
+          connectionIdentifier: "conn-1",
+          connectionUuid: "connection-uuid-1",
+          eventSourceId: 13,
+          status: "connected",
+          target: {
+            event: { id: "youtube-event-new", title: "Wednesday Live" },
+            owner: { displayName: "Main Channel" },
+          },
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.notEqual(session.sessionId, "session-last-week");
+    assert.equal(session.messageCount, 0);
+    assert.equal(session.broadcastKey, "youtube-event-new");
+    assert.deepEqual(boardDisplayUpdates, ["db-1"]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
 test("restream service persists sessions and messages in RTDB when Firestore is unavailable", async () => {
   const realtimeDb = createRealtimeDbMock();
   const firstHarness = createServiceHarness({

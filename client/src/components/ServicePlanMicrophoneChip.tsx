@@ -15,6 +15,7 @@ type ServicePlanMicrophoneChipProps = {
   details?: string[];
   /** Trailing controls such as a remove button on editable assignee rows. */
   children?: ReactNode;
+  theme?: "dark" | "light";
 };
 
 const fallbackChromeClassName =
@@ -32,8 +33,12 @@ export const ServicePlanMicrophoneChip = ({
   iconClassName,
   details = [],
   children,
+  theme = "dark",
 }: ServicePlanMicrophoneChipProps) => {
   const chromeStyle = servicePlanMicrophoneChromeStyle(microphone.color);
+  const themedChromeStyle = chromeStyle
+    ? { ...chromeStyle, ...(theme === "light" ? { color: "#0f172a" } : {}) }
+    : undefined;
   const detailLabel = [microphone.type, ...details]
     .map((part) => part.trim())
     .filter(Boolean)
@@ -52,10 +57,12 @@ export const ServicePlanMicrophoneChip = ({
         // flex-wrap chips onto the next line instead of clipping them.
         "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border py-0.5 text-[11px]",
         children ? "pl-1.5 pr-2" : "px-1",
-        !chromeStyle && fallbackChromeClassName,
+        !chromeStyle && (theme === "light"
+          ? "border-slate-300 bg-slate-100 text-slate-900"
+          : fallbackChromeClassName),
         className,
       )}
-      style={chromeStyle}
+      style={themedChromeStyle}
     >
       <ServicePlanMicrophoneIcon
         microphone={microphone}

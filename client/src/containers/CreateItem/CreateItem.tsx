@@ -139,6 +139,7 @@ const CreateItem = ({
   const [searchParams, setSearchParams] = useSearchParams();
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
   const [mobileSongTab, setMobileSongTab] =
     useState<MobileSongTab>("create");
@@ -357,6 +358,15 @@ const CreateItem = ({
   };
 
   const createItem = async () => {
+    // A Service Plan must not point at a song that exists only in this tab's
+    // Redux state. The regular Controller creator can still build its local
+    // draft before Pouch is ready, but the embedded "Create and attach" path
+    // promises a durable library song, so wait for the library connection.
+    if (isEmbedded && !db) {
+      setCreateError("Song library is still connecting. Wait a moment, then try again.");
+      return;
+    }
+    setCreateError("");
     const draftText = removeParentheticals ? removeParentheticalPhrases(text) : text;
 
     if (selectedType === "song") {
@@ -370,22 +380,26 @@ const CreateItem = ({
         songOrder: _songOrder,
       });
 
-      const newItem = await createNewSong({
-        name: itemName,
-        formattedLyrics,
-        songOrder,
-        list,
-        db,
-        background: defaultSongBackground.background,
-        mediaInfo: defaultSongBackground.mediaInfo,
-        brightness: defaultSongBackgroundBrightness,
-        songMetadata,
-        shouldSendTo,
-      });
+      try {
+        const newItem = await createNewSong({
+          name: itemName,
+          formattedLyrics,
+          songOrder,
+          list,
+          db,
+          background: defaultSongBackground.background,
+          mediaInfo: defaultSongBackground.mediaInfo,
+          brightness: defaultSongBackgroundBrightness,
+          songMetadata,
+          shouldSendTo,
+        });
 
-      setJustCreated(true);
-      dispatch(resetCreateItem());
-      dispatchNewItem(newItem);
+        setJustCreated(true);
+        dispatch(resetCreateItem());
+        dispatchNewItem(newItem);
+      } catch {
+        setCreateError("Could not create the song. Check your connection and try again.");
+      }
       return;
     }
 
@@ -862,11 +876,22 @@ const CreateItem = ({
               </div>
             )}
             <div className="mt-3 flex shrink-0 flex-col gap-2">
+              {isEmbedded && !db ? (
+                <p className="text-sm text-amber-200" role="status">
+                  Song library is still connecting.
+                </p>
+              ) : null}
+              {createError ? (
+                <p className="text-sm text-red-200" role="alert">
+                  {createError}
+                </p>
+              ) : null}
               <Button
                 disabled={
                   !itemName ||
                   (selectedType !== "song" && !!existingItem) ||
-                  justCreated
+                  justCreated ||
+                  (isEmbedded && !db)
                 }
                 variant="cta"
                 className="w-full justify-center text-base"

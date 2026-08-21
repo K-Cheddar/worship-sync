@@ -1415,9 +1415,10 @@ const ServicePlanEditor = ({
             planActionsView === "roleNotes" || planActionsView === "switchService"
               ? "w-72"
               : "w-64",
-            (planActionsView === "roleNotes" ||
-              planActionsView === "switchService") &&
-            "max-h-80 overflow-y-auto",
+            // Role notes already scrolls its own team-filter and role list
+            // internally (see ServicePlanRolePickerContent); capping the
+            // outer menu too nests a second scrollbar inside the first.
+            planActionsView === "switchService" && "max-h-80 overflow-y-auto",
           )}
         >
           {planActionsView === "roleNotes" ? (

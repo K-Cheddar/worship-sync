@@ -30,6 +30,8 @@ type CreatePanelProps = {
   sectionTitle: ReactNode;
   /** Label for the collapsed create button (e.g. "Create position"). */
   createLabel: string;
+  /** Keep the create action available while an existing record is open. */
+  keepCreateActionVisible?: boolean;
   /** Optional helper text shown under the section title. */
   description?: ReactNode;
   /** Optional filters rendered above the list (e.g. search). Kept visible when the list scrolls. */
@@ -71,6 +73,7 @@ const CreatePanel = ({
   title,
   sectionTitle,
   createLabel,
+  keepCreateActionVisible = false,
   description,
   listToolbar,
   scrollableList = true,
@@ -145,7 +148,7 @@ const CreatePanel = ({
             <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">{sectionTitle}</h2>
-                {!open && canEdit ? (
+                {(!open || keepCreateActionVisible) && canEdit ? (
                   <Button variant="primary" svg={Plus} iconSize="sm" onClick={onOpenCreate}>
                     {createLabel}
                   </Button>

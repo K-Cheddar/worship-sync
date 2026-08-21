@@ -7,6 +7,7 @@ import {
 } from "./serviceFlowSse.js";
 import {
   buildPublicServicePlanSnapshot,
+  publicServingMemberIdsForPlan,
   richTextToPlainText,
 } from "./servicePlanPublic.js";
 // ServicePlan element titles/notes reuse the exact rich text shape (and its
@@ -119,6 +120,7 @@ export const createTeamsAuthHandlers = ({
   // Church membership without any teams grant — the guard a volunteer passes.
   requireHumanSession,
   requireServicesEditSession,
+  requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,
@@ -139,6 +141,10 @@ export const createTeamsAuthHandlers = ({
     requireTeamsEditForTeamSession ||
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
+  // Narrower than requireTeamsView: also admits a view-only paired
+  // workstation, but only for reading saved Service Plans (no roster PII).
+  const requireServicePlansView =
+    requireServicePlansViewSession || requireTeamsView;
 
   const withTeamsErrorNextStep = (message) => {
     if (/\btry again\b/i.test(message)) {
@@ -816,6 +822,54 @@ export const createTeamsAuthHandlers = ({
       throw httpError(400, "Choose a valid serving preference.");
     }
     return normalized;
+  };
+
+  const normalizeMemberProfileImage = (value, fieldLabel) => {
+    const normalized = normalizeShortText(value, { max: 2048 });
+    if (!normalized) return "";
+    let parsed;
+    try {
+      parsed = new URL(normalized);
+    } catch {
+      throw httpError(400, `${fieldLabel} must be a valid URL.`);
+    }
+    if (parsed.protocol !== "https:" || parsed.hostname !== "res.cloudinary.com") {
+      throw httpError(400, `${fieldLabel} must be hosted by Cloudinary.`);
+    }
+    return normalized;
+  };
+
+  const normalizeTeamMemberRecurringAvailability = (value) => {
+    if (value === undefined || value === null) {
+      return { weeksOfMonth: [], includeLastWeekOfMonth: false };
+    }
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, "Choose valid recurring availability weeks.");
+    }
+    const rawWeeks = value.weeksOfMonth;
+    if (rawWeeks !== undefined && !Array.isArray(rawWeeks)) {
+      throw httpError(400, "Choose valid recurring availability weeks.");
+    }
+    const weeksOfMonth = Array.from(
+      new Set(
+        (rawWeeks || []).map((week) => {
+          if (!Number.isInteger(week) || week < 1 || week > 5) {
+            throw httpError(400, "Choose valid recurring availability weeks.");
+          }
+          return week;
+        }),
+      ),
+    ).sort((a, b) => a - b);
+    if (
+      value.includeLastWeekOfMonth !== undefined &&
+      typeof value.includeLastWeekOfMonth !== "boolean"
+    ) {
+      throw httpError(400, "Last-week availability must be true or false.");
+    }
+    return {
+      weeksOfMonth,
+      includeLastWeekOfMonth: value.includeLastWeekOfMonth === true,
+    };
   };
 
   const isMinorFromDateOfBirth = (dateOfBirth, referenceDate = new Date()) => {
@@ -1665,7 +1719,7 @@ export const createTeamsAuthHandlers = ({
 
   const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
     const isGeneralView = viewMode === "general";
-    const [church, brandingChrome, positions, teams] = await Promise.all([
+    const [church, brandingChrome, positions, teams, schedules] = await Promise.all([
       getDoc(COLLECTIONS.churches, plan.churchId),
       readChurchPublicBrandingChrome(plan.churchId),
       isGeneralView
@@ -1682,7 +1736,27 @@ export const createTeamsAuthHandlers = ({
             "teamId",
             plan.churchId,
           ),
+      isGeneralView
+        ? Promise.resolve([])
+        : listTeamCollectionForChurch(
+            COLLECTIONS.teamSchedules,
+            "scheduleId",
+            plan.churchId,
+          ),
     ]);
+    const memberIds = isGeneralView
+      ? []
+      : publicServingMemberIdsForPlan({
+          plan,
+          schedules,
+          timezone: plan.timezone,
+        });
+    const members = await Promise.all(
+      memberIds.map(async (memberId) => {
+        const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+        return member ? { ...member, memberId } : null;
+      }),
+    );
     return buildPublicServicePlanSnapshot({
       plan,
       microphones: church?.servicePlanMicrophones || [],
@@ -1697,6 +1771,8 @@ export const createTeamsAuthHandlers = ({
           : undefined,
       positions,
       teams,
+      schedules,
+      members: members.filter(Boolean),
       churchName: church?.name || "WorshipSync",
       churchLogoUrl: brandingChrome.logoUrl,
       churchPrimaryColor: brandingChrome.primaryColor,
@@ -1721,6 +1797,60 @@ export const createTeamsAuthHandlers = ({
       )
       .forEach((token) => emitServiceFlowUpdated(token, revision));
   };
+
+  /** Re-fetch detailed links when a scheduled person or their mic changes. */
+  const emitPublicPlansForScheduleOccurrences = async ({
+    churchId,
+    occurrences,
+    revision,
+  }) => {
+    const occurrenceKeys = new Set(
+      (Array.isArray(occurrences) ? occurrences : [])
+        .map((occurrence) => {
+          const startsAt = String(occurrence?.startsAt || "").trim();
+          const serviceIds = (Array.isArray(occurrence?.serviceIds) && occurrence.serviceIds.length
+            ? occurrence.serviceIds
+            : [occurrence?.serviceId])
+            .map((serviceId) => String(serviceId || "").trim())
+            .filter(Boolean);
+          return startsAt && serviceIds.length
+            ? serviceIds.map((serviceId) => `${startsAt}\u0000${serviceId}`)
+            : [];
+        })
+        .flat(),
+    );
+    if (!occurrenceKeys.size) return;
+    const plans = await queryDocs(
+      COLLECTIONS.servicePlans,
+      [{ field: "churchId", value: churchId }],
+      { limit: TEAM_COLLECTION_QUERY_LIMIT },
+    );
+    await Promise.all(
+      plans
+        .filter((plan) => {
+          const planStartsAt = String(plan?.startsAt || "").trim();
+          if (!plan?.published || !planStartsAt) {
+            return false;
+          }
+          const planServiceIds = (
+            Array.isArray(plan?.serviceIds) && plan.serviceIds.length
+              ? plan.serviceIds
+              : [plan?.serviceId]
+          )
+            .map((serviceId) => String(serviceId || "").trim())
+            .filter(Boolean);
+          return planServiceIds.some((serviceId) =>
+            occurrenceKeys.has(`${planStartsAt}\u0000${serviceId}`));
+        })
+        .map((plan) => emitPublicServicePlanUpdated(plan, revision)),
+    );
+  };
+
+  const emitPublicPlansForScheduleOccurrence = async (args) =>
+    emitPublicPlansForScheduleOccurrences({
+      ...args,
+      occurrences: [args.occurrence],
+    });
 
   const normalizeBlockoutDates = (value) => {
     const ranges = Array.isArray(value) ? value : [];
@@ -2666,12 +2796,34 @@ export const createTeamsAuthHandlers = ({
       blockoutDates: normalizeBlockoutDates(body?.blockoutDates),
       notes: normalizeLongText(body?.notes),
     };
+    if (Object.prototype.hasOwnProperty.call(body || {}, "profileImageUrl")) {
+      payload.profileImageUrl = normalizeMemberProfileImage(
+        body?.profileImageUrl,
+        "Profile image",
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(body || {}, "profileImagePublicId")) {
+      payload.profileImagePublicId = normalizeShortText(
+        body?.profileImagePublicId,
+        { max: 512 },
+      );
+    }
     // Conditional like the other optional fields: a partial update that omits
     // `email` must not wipe an address the member already has.
     // `userId` / `invitedAt` are intentionally absent — they are server-owned
     // and set only by the invite-accept path, never by a client payload.
     if (Object.prototype.hasOwnProperty.call(body || {}, "email")) {
       payload.email = normalizeMemberEmail(body?.email);
+    }
+    if (Object.prototype.hasOwnProperty.call(body || {}, "title")) {
+      payload.title = normalizeShortText(body?.title, { max: 40 });
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body || {}, "recurringAvailability")
+    ) {
+      payload.recurringAvailability = normalizeTeamMemberRecurringAvailability(
+        body?.recurringAvailability,
+      );
     }
     if (Object.prototype.hasOwnProperty.call(body || {}, "teamMemberships")) {
       payload.teamMemberships = await normalizeTeamMemberships(
@@ -3352,7 +3504,7 @@ export const createTeamsAuthHandlers = ({
     return String(service?.date || "");
   };
 
-  const isMemberUnavailableForService = (member, service) => {
+  const isMemberBlockedOutForService = (member, service) => {
     const serviceDate = getConcreteTeamServiceDate(service);
     if (!serviceDate) return false;
     return (member.blockoutDates || []).some((range) => {
@@ -3360,6 +3512,29 @@ export const createTeamsAuthHandlers = ({
       const end = String(range?.endDate || start);
       return start <= serviceDate && serviceDate <= end;
     });
+  };
+
+  const isMemberAvailableDuringServiceWeek = (member, service) => {
+    const serviceDate = getConcreteTeamServiceDate(service);
+    const availability = member.recurringAvailability;
+    const selectedWeeks = availability?.weeksOfMonth || [];
+    if (
+      !serviceDate ||
+      (selectedWeeks.length === 0 && !availability?.includeLastWeekOfMonth)
+    ) {
+      return true;
+    }
+    const parsed = new Date(`${serviceDate}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) return true;
+    const dayOfMonth = parsed.getUTCDate();
+    const weekOfMonth = Math.floor((dayOfMonth - 1) / 7) + 1;
+    const lastDayOfMonth = new Date(
+      Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+    return (
+      selectedWeeks.includes(weekOfMonth) ||
+      (availability?.includeLastWeekOfMonth && dayOfMonth + 7 > lastDayOfMonth)
+    );
   };
 
   const TEAM_SCHEDULE_SHADOW_KINDS = new Set(["shadow", "reverse_shadow"]);
@@ -3973,6 +4148,7 @@ export const createTeamsAuthHandlers = ({
 
   const normalizeAllowCrossTeamConflict = (value) => value === true;
   const normalizeAllowBlockout = (value) => value === true;
+  const normalizeAllowRecurringAvailability = (value) => value === true;
 
   const parseScheduleSlotKey = (value) => {
     const raw = String(value || "");
@@ -4180,6 +4356,7 @@ export const createTeamsAuthHandlers = ({
     shadowAction,
     shadowKind,
     allowBlockout,
+    allowRecurringAvailability,
     guestAssignment = false,
   }) => {
     const rowIds = (schedule.occurrences || []).map(
@@ -4297,13 +4474,23 @@ export const createTeamsAuthHandlers = ({
         }
         if (
           !allowBlockout &&
-          isMemberUnavailableForService(member, { date: serviceDate || "" })
+          isMemberBlockedOutForService(member, { date: serviceDate || "" })
         ) {
           throw httpError(400, "That member is unavailable for this service.");
         }
-        // Note: intake service availability ("didn't pick this service") is a
-        // soft scheduling warning surfaced in the picker, not a hard block — only
-        // blockout dates make a member truly unavailable.
+        if (
+          !allowRecurringAvailability &&
+          !isMemberAvailableDuringServiceWeek(member, {
+            date: serviceDate || "",
+          })
+        ) {
+          throw httpError(
+            400,
+            "That member is unavailable during this week of the month.",
+          );
+        }
+        // Intake service availability is a soft warning surfaced in the picker.
+        // Blockout dates and recurring availability require confirmation.
 
         const serviceAssignments = assignments[serviceId] || {};
         const assignedElsewhere = Object.values(serviceAssignments).some(
@@ -4385,13 +4572,24 @@ export const createTeamsAuthHandlers = ({
       }
       if (
         !allowBlockout &&
-        isMemberUnavailableForService(member, { date: serviceDate || "" })
+        isMemberBlockedOutForService(member, { date: serviceDate || "" })
       ) {
         throw httpError(400, "That member is unavailable for this service.");
       }
+      if (
+        !allowRecurringAvailability &&
+        !isMemberAvailableDuringServiceWeek(member, {
+          date: serviceDate || "",
+        })
+      ) {
+        throw httpError(
+          400,
+          "That member is unavailable during this week of the month.",
+        );
+      }
     }
-    // Intake service availability is a soft warning only (surfaced in the
-    // picker); only blockout dates hard-block assignment here.
+    // Intake service availability is a soft warning surfaced in the picker.
+    // Blockout dates and recurring availability require confirmation.
 
     const serviceAssignments = assignments[serviceId] || {};
     const assignedElsewhere = Object.entries(serviceAssignments).some(
@@ -4467,8 +4665,14 @@ export const createTeamsAuthHandlers = ({
     if (!(member.positionIds || []).includes(positionId)) {
       throw httpError(400, "That member cannot serve in this position.");
     }
-    if (isMemberUnavailableForService(member, { date: serviceDate || "" })) {
+    if (isMemberBlockedOutForService(member, { date: serviceDate || "" })) {
       throw httpError(400, "That member is unavailable for this service.");
+    }
+    if (!isMemberAvailableDuringServiceWeek(member, { date: serviceDate || "" })) {
+      throw httpError(
+        400,
+        "That member is unavailable during this week of the month.",
+      );
     }
   };
 
@@ -4603,6 +4807,7 @@ export const createTeamsAuthHandlers = ({
     shadowAction,
     shadowKind,
     allowBlockout,
+    allowRecurringAvailability,
     allowCrossTeamConflict,
   }) => {
     const schedule = await assertTeamEntityInChurch(
@@ -4664,6 +4869,7 @@ export const createTeamsAuthHandlers = ({
       shadowAction,
       shadowKind,
       allowBlockout,
+      allowRecurringAvailability,
       guestAssignment: Boolean(resolvedGuest.guest),
     });
     if (
@@ -4738,6 +4944,7 @@ export const createTeamsAuthHandlers = ({
     shadowAction,
     shadowKind,
     allowBlockout,
+    allowRecurringAvailability,
     allowCrossTeamConflict,
     adminUserId,
   }) => {
@@ -4756,6 +4963,7 @@ export const createTeamsAuthHandlers = ({
         shadowAction,
         shadowKind,
         allowBlockout,
+        allowRecurringAvailability,
         allowCrossTeamConflict,
       });
       const current = await getTeamEntity("schedule", scheduleId);
@@ -4854,6 +5062,7 @@ export const createTeamsAuthHandlers = ({
         shadowAction,
         shadowKind,
         allowBlockout,
+        allowRecurringAvailability,
         guestAssignment: Boolean(resolvedGuest.guest),
       });
       if (
@@ -7187,6 +7396,11 @@ export const createTeamsAuthHandlers = ({
           scheduleId: schedule.scheduleId,
         });
         emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        await emitPublicPlansForScheduleOccurrences({
+          churchId: req.params.churchId,
+          occurrences: schedule.occurrences,
+          revision: schedule.updatedAt || nowIso(),
+        });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this schedule.");
@@ -7307,6 +7521,11 @@ export const createTeamsAuthHandlers = ({
           scheduleId: schedule.scheduleId,
         });
         emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        await emitPublicPlansForScheduleOccurrences({
+          churchId: req.params.churchId,
+          occurrences: schedule.occurrences,
+          revision: schedule.updatedAt || nowIso(),
+        });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this schedule.");
@@ -7341,6 +7560,11 @@ export const createTeamsAuthHandlers = ({
         });
         emitTeamsEvent(req.params.churchId, "schedule-removed", {
           scheduleId: req.params.scheduleId,
+        });
+        await emitPublicPlansForScheduleOccurrences({
+          churchId: req.params.churchId,
+          occurrences: existing.occurrences,
+          revision: nowIso(),
         });
         return res.json({ success: true });
       } catch (error) {
@@ -7478,7 +7702,7 @@ export const createTeamsAuthHandlers = ({
     async listServicePlans(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicePlansView(req, churchId);
         const docs = await queryDocs(
           COLLECTIONS.servicePlans,
           [{ field: "churchId", value: churchId }],
@@ -7506,7 +7730,7 @@ export const createTeamsAuthHandlers = ({
     async getServicePlan(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicePlansView(req, churchId);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8408,6 +8632,9 @@ export const createTeamsAuthHandlers = ({
           shadowAction: req.body?.shadowAction,
           shadowKind: req.body?.shadowKind,
           allowBlockout: normalizeAllowBlockout(req.body?.allowBlockout),
+          allowRecurringAvailability: normalizeAllowRecurringAvailability(
+            req.body?.allowRecurringAvailability,
+          ),
           allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
             req.body?.allowCrossTeamConflict,
           ),
@@ -8424,6 +8651,17 @@ export const createTeamsAuthHandlers = ({
           guestAssignment: req.body?.guest != null,
         });
         emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        const changedOccurrenceIds = new Set([
+          String(req.body?.serviceId || "").trim(),
+          String(req.body?.sourceServiceId || "").trim(),
+        ]);
+        await emitPublicPlansForScheduleOccurrences({
+          churchId: req.params.churchId,
+          occurrences: (schedule.occurrences || []).filter((item) =>
+            changedOccurrenceIds.has(String(item?.occurrenceId || "").trim()),
+          ),
+          revision: schedule.updatedAt || nowIso(),
+        });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(
@@ -8544,6 +8782,11 @@ export const createTeamsAuthHandlers = ({
         const updatedSchedule = { ...schedule, ...update };
         emitTeamsEvent(churchId, "schedule-updated", {
           schedule: updatedSchedule,
+        });
+        await emitPublicPlansForScheduleOccurrence({
+          churchId,
+          occurrence,
+          revision: update.updatedAt,
         });
         return res.json({ success: true, schedule: updatedSchedule });
       } catch (error) {
@@ -8766,6 +9009,13 @@ export const createTeamsAuthHandlers = ({
           );
         }
         emitTeamsEvent(churchId, "schedule-updated", { schedule });
+        await emitPublicPlansForScheduleOccurrence({
+          churchId,
+          occurrence: (schedule.occurrences || []).find(
+            (item) => item.occurrenceId === occurrenceId,
+          ),
+          revision: schedule.updatedAt || nowIso(),
+        });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(
@@ -8827,6 +9077,13 @@ export const createTeamsAuthHandlers = ({
           candidateMemberId: req.body?.candidateMemberId || null,
         });
         emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        await emitPublicPlansForScheduleOccurrence({
+          churchId: req.params.churchId,
+          occurrence: (schedule.occurrences || []).find(
+            (item) => item.occurrenceId === String(req.body?.serviceId || "").trim(),
+          ),
+          revision: schedule.updatedAt || nowIso(),
+        });
         return res.json({ success: true, schedule });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not apply this swap.");

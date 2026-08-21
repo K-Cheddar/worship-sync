@@ -23,6 +23,7 @@ import { deleteCredit, updateCredit } from "../../store/creditsSlice";
 import store, { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { putCreditDoc } from "../../utils/dbUtils";
+import { recordAppliedCreditVersion } from "../../utils/creditVersions";
 import { flushCreditsHistoryFromLatestList } from "../../utils/creditsHistoryFlush";
 import Input from "../../components/Input/Input";
 import { getCreditsDocId, type DBCredits } from "../../types";
@@ -79,18 +80,57 @@ const Credit = ({
     hiddenRef.current = hidden;
   }, [hidden]);
 
+  /** True while a field in this row holds focus. */
+  const isFieldFocusedRef = useRef(false);
+  /** True once the operator types, until those keystrokes are flushed to Redux and Pouch. */
+  const hasUnflushedEditsRef = useRef(false);
+  const renderedIdRef = useRef(id);
+
+  const adoptIncomingValues = useCallback(
+    (nextHeading: string, nextText: string) => {
+      setDraftHeading(nextHeading);
+      setDraftText(nextText);
+      draftHeadingRef.current = nextHeading;
+      draftTextRef.current = nextText;
+    },
+    [],
+  );
+
   useEffect(() => {
-    setDraftHeading(heading);
-    setDraftText(text);
-    draftHeadingRef.current = heading;
-    draftTextRef.current = text;
-  }, [id, heading, text]);
+    // A different credit now occupies this row (reorder, delete, outline switch): its
+    // values always win, since the drafts belong to the credit that just left.
+    if (renderedIdRef.current !== id) {
+      renderedIdRef.current = id;
+      hasUnflushedEditsRef.current = false;
+      adoptIncomingValues(heading, text);
+      return;
+    }
+
+    // Same credit: never overwrite what the operator is typing. Sync arriving mid-edit
+    // used to clobber the field (and, once the drafts were reset, the pending debounced
+    // save wrote the stale text straight back to Pouch). Held-back values are adopted on
+    // blur instead, in handleCreditFieldBlur.
+    if (isFieldFocusedRef.current || hasUnflushedEditsRef.current) return;
+
+    adoptIncomingValues(heading, text);
+  }, [id, heading, text, adoptIncomingValues]);
 
   const persistCredit = useCallback(
     async (payload: { heading: string; text: string; hidden?: boolean }) => {
       if (!db || !outlineId) return;
       const doc = await putCreditDoc(db, outlineId, { id, ...payload });
-      if (doc) broadcastCreditsUpdate([doc]);
+      if (!doc) return;
+      // Our own write is now the newest revision this window knows about, so a later
+      // echo of an older revision can be recognised as stale and dropped.
+      recordAppliedCreditVersion(doc._id, doc._rev);
+      // Only clear the dirty flag if nothing was typed while the save was in flight.
+      if (
+        draftHeadingRef.current === payload.heading &&
+        draftTextRef.current === payload.text
+      ) {
+        hasUnflushedEditsRef.current = false;
+      }
+      broadcastCreditsUpdate([doc]);
     },
     [db, id, outlineId]
   );
@@ -239,6 +279,7 @@ const Credit = ({
       const v = String(value);
       setDraftHeading(v);
       draftHeadingRef.current = v;
+      hasUnflushedEditsRef.current = true;
       scheduleDebouncedRedux();
       bumpPersistTimeout();
     },
@@ -250,14 +291,27 @@ const Credit = ({
       const val = String(value);
       setDraftText(val);
       draftTextRef.current = val;
+      hasUnflushedEditsRef.current = true;
       scheduleDebouncedRedux();
       bumpPersistTimeout();
     },
     [scheduleDebouncedRedux, bumpPersistTimeout]
   );
 
+  const handleCreditFieldFocus = useCallback(() => {
+    isFieldFocusedRef.current = true;
+  }, []);
+
   const handleCreditFieldBlur = useCallback(async () => {
+    isFieldFocusedRef.current = false;
     if (readOnly) return;
+    if (!hasUnflushedEditsRef.current) {
+      // Focus alone must not republish this row. Updates that arrived while the field was
+      // focused were held back by the sync effect, so adopt them now instead of writing
+      // the pre-focus value back over a newer edit from another operator.
+      adoptIncomingValues(heading, text);
+      return;
+    }
     if (reduxDebounceRef.current) {
       clearTimeout(reduxDebounceRef.current);
       reduxDebounceRef.current = null;
@@ -275,12 +329,23 @@ const Credit = ({
     if (db && outlineId) {
       await persistCredit(payload);
     }
+    hasUnflushedEditsRef.current = false;
     await flushCreditsHistoryFromLatestList(
       dispatch,
       () => store.getState(),
       db,
     );
-  }, [readOnly, flushDraftToRedux, persistCredit, db, outlineId, dispatch]);
+  }, [
+    readOnly,
+    flushDraftToRedux,
+    persistCredit,
+    db,
+    outlineId,
+    dispatch,
+    adoptIncomingValues,
+    heading,
+    text,
+  ]);
 
   return (
     <li
@@ -316,6 +381,7 @@ const Credit = ({
           placeholder="Heading"
           value={draftHeading}
           onChange={onHeadingChange}
+          onFocus={handleCreditFieldFocus}
           onBlur={handleCreditFieldBlur}
           data-ignore-undo="true"
           disabled={readOnly}
@@ -327,6 +393,7 @@ const Credit = ({
           onRemoveHistoryLine={onRemoveHistoryLine}
           disabled={readOnly}
           onFieldBlur={handleCreditFieldBlur}
+          onFieldFocus={handleCreditFieldFocus}
         />
       </div>
       {!readOnly && (

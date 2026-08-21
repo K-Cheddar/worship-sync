@@ -33,10 +33,10 @@ describe("findNextUpcomingOccurrenceId", () => {
     name: "Service",
     startsAt,
   });
-  // Reference = start of 2026-07-13.
-  const ref = new Date("2026-07-13T00:00:00.000Z").getTime();
+  // Reference = noon on 2026-07-13.
+  const ref = new Date("2026-07-13T12:00:00.000Z").getTime();
 
-  it("picks the earliest occurrence on or after the reference day", () => {
+  it("picks the earliest occurrence on or after the reference time", () => {
     const occurrences = [
       occ("past", "2026-07-05T10:00:00.000Z"),
       occ("later", "2026-07-26T10:00:00.000Z"),
@@ -45,9 +45,24 @@ describe("findNextUpcomingOccurrenceId", () => {
     expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBe("next");
   });
 
-  it("counts a service earlier the same day as still up next", () => {
+  // Behavior change: the Up next badge now represents the next service that has
+  // not started, rather than the earliest service on the current calendar day.
+  // This prevents a finished Friday service from masking Sabbath service.
+  it("skips a service that already started earlier the same day", () => {
     const occurrences = [occ("today", "2026-07-13T09:00:00.000Z")];
-    expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBe("today");
+    expect(findNextUpcomingOccurrenceId(occurrences, ref)).toBeNull();
+  });
+
+  it("chooses Saturday service after Friday service has started", () => {
+    const lateFriday = new Date("2026-07-17T23:59:00.000Z").getTime();
+    const occurrences = [
+      occ("friday", "2026-07-17T19:30:00.000Z"),
+      occ("sabbath", "2026-07-18T10:00:00.000Z"),
+    ];
+
+    expect(findNextUpcomingOccurrenceId(occurrences, lateFriday)).toBe(
+      "sabbath",
+    );
   });
 
   it("returns null when every occurrence is in the past", () => {

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { cn } from "@/utils/cnHelper";
 import {
   buildTeamsReturnNavigationState,
+  persistTeamsReturnTo,
   teamsRoutePathname,
   type TeamsReturnTo,
 } from "../teamsReturnNavigation";
@@ -24,7 +25,7 @@ const TeamsCrossSectionLink = ({
   children,
 }: TeamsCrossSectionLinkProps) => {
   const { requestNavigation } = useTeamsNavigationGuard();
-  const state = buildTeamsReturnNavigationState(returnTo, teamsRoutePathname(to));
+  const state = buildTeamsReturnNavigationState(returnTo);
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
     if (
@@ -37,7 +38,12 @@ const TeamsCrossSectionLink = ({
       return;
     }
     event.preventDefault();
-    requestNavigation(to, { state });
+    requestNavigation(to, {
+      state,
+      // Persist only after the guard accepts the navigation. Rendering this
+      // link, or cancelling a dirty-form prompt, must not create a return path.
+      onNavigated: () => persistTeamsReturnTo(returnTo, teamsRoutePathname(to)),
+    });
   };
 
   return (

@@ -11,6 +11,10 @@ jest.mock("electron", () => ({
     jest.fn().mockImplementation(() => ({
       loadURL: jest.fn(),
       loadFile: jest.fn(),
+      webContents: {
+        on: jest.fn(),
+        insertCSS: jest.fn(),
+      },
     })),
     {
       fromWebContents: jest.fn(() => null),
@@ -37,6 +41,43 @@ describe("createDisplayWindow", () => {
         }),
       }),
     );
+  });
+
+  it("hides the cursor once the display route finishes loading", () => {
+    const window = createDisplayWindow({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      route: "/projector-full",
+      isDev: true,
+      dirname: "C:/app/dist-electron/main",
+    });
+
+    const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
+      ([event]) => event === "dom-ready",
+    )?.[1];
+
+    expect(domReadyHandler).toBeDefined();
+
+    domReadyHandler();
+
+    expect(window.webContents.insertCSS).toHaveBeenCalledWith(
+      expect.stringContaining("cursor: none"),
+    );
+  });
+
+  it("keeps the cursor visible when hideCursor is false", () => {
+    const window = createDisplayWindow({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      route: "/boards/display",
+      isDev: true,
+      dirname: "C:/app/dist-electron/main",
+      hideCursor: false,
+    });
+
+    const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
+      ([event]) => event === "dom-ready",
+    )?.[1];
+
+    expect(domReadyHandler).toBeUndefined();
   });
 });
 

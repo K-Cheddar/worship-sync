@@ -60,4 +60,25 @@ describe("ToastContainer", () => {
     expect(statuses[0]).toHaveTextContent("Newer");
     expect(statuses[1]).toHaveTextContent("Older");
   });
+
+  it("keeps every stacked toast visible and actionable", () => {
+    render(
+      <ToastContainer
+        toasts={[
+          { id: "older", message: "Older", position: "top-center" },
+          { id: "newer", message: "Newer", position: "top-center" },
+        ]}
+        onRemove={jest.fn()}
+      />,
+    );
+
+    const group = screen.getByTestId("toast-group-top-center");
+    const statuses = within(group).getAllByRole("status");
+    const closeButtons = within(group).getAllByRole("button", {
+      name: "Close toast",
+    });
+
+    expect(statuses).toHaveLength(2);
+    expect(closeButtons).toHaveLength(2);
+  });
 });

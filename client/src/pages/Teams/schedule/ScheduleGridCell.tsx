@@ -18,6 +18,7 @@ import {
   getCellShadowAssignments,
   scheduleMemberName,
 } from "../teamsUtils";
+import { isMemberAvailableOnDate } from "../memberPreferences";
 import ScheduleAssignmentCell from "./ScheduleAssignmentCell";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
@@ -97,6 +98,14 @@ const ScheduleGridCell = memo(({
   const blockoutConflictLabel = blockoutConflict
     ? `Blocked out ${formatBlockoutDateRangeLabel(blockoutConflict)}`
     : "";
+  const recurringAvailabilityConflict = Boolean(
+    assignedMember && !isMemberAvailableOnDate(assignedMember, occurrenceDate),
+  );
+  const recurringAvailabilityConflictLabel = recurringAvailabilityConflict
+    ? "Unavailable this week of the month"
+    : "";
+  const availabilityConflictLabel =
+    blockoutConflictLabel || recurringAvailabilityConflictLabel;
   const response = readAssignmentResponse(assignmentResponse, assignedMemberId);
 
   const handleActivate = useCallback(
@@ -152,14 +161,14 @@ const ScheduleGridCell = memo(({
             aria-expanded={isActiveSlot}
             aria-label={cn(
               `${cellLabel}, ${displayLabel}`,
-              blockoutConflictLabel && `, ${blockoutConflictLabel}`,
+              availabilityConflictLabel && `, ${availabilityConflictLabel}`,
             )}
-            title={blockoutConflictLabel || undefined}
+            title={availabilityConflictLabel || undefined}
             disabled={!canEdit}
             className={cn(
               "min-w-0 flex-1 rounded-lg border px-2 py-1 text-left text-sm text-white focus:border-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60",
               rowTone ? "border-gray-800 bg-transparent" : "border-gray-800 bg-gray-950",
-              blockoutConflict && "border-amber-500/60 bg-amber-500/10",
+              availabilityConflictLabel && "border-amber-500/60 bg-amber-500/10",
               isActiveSlot && "border-cyan-400/60 ring-1 ring-cyan-400/40",
               !assignedMember && "text-gray-400 italic",
               !canEdit && "cursor-default",
@@ -173,7 +182,7 @@ const ScheduleGridCell = memo(({
                   memberName={displayLabel}
                 />
               ) : null}
-              {blockoutConflict ? (
+              {availabilityConflictLabel ? (
                 <TriangleAlert
                   className="h-3.5 w-3.5 shrink-0 text-amber-300"
                   aria-hidden

@@ -1,14 +1,14 @@
 # Team chat operations
 
 Team chat stores one Firestore document per message in `chatMessages`. The server
-keeps one Firestore listener per active church and chat day, then fans updates out
+keeps one Firestore listener per active church and chat week, then fans updates out
 to authenticated clients over server-sent events. Browser and Electron clients do
 not receive Firestore credentials.
 
 Typing presence is separate from message history. The client sends a throttled
 heartbeat through the authenticated server, which stores a short-lived entry under
 `worshipsyncChatTyping` in Firebase Realtime Database. The server shares one typing
-listener per active church and day. Typing stops after 2.5 seconds of inactivity,
+listener per active church and week. Typing stops after 2.5 seconds of inactivity,
 and clients discard any stale heartbeat after 10 seconds, so a disconnected client
 cannot leave someone shown as typing indefinitely. These heartbeats do not create
 Firestore documents or Firestore reads. The server also rate limits typing requests
@@ -35,7 +35,7 @@ firebase deploy --only firestore:indexes
 TTL deletion is asynchronous, so application reads also enforce the 365-day
 retention boundary. The first authenticated chat client for a church sets that
 church's chat timezone in `chatSettings`; later clients use the stored value so
-everyone rolls over to the same daily room.
+everyone rolls over to the same weekly room.
 
 Photo sharing uses the same R2 variables as song audio:
 
@@ -62,7 +62,7 @@ per server process; R2 lifecycle rules are the durable storage backstop.
 
 ## Firestore usage model
 
-- Opening an active daily room starts a server listener for the latest 100 messages.
+- Opening an active weekly room starts a server listener for the latest 100 messages.
   Its initial snapshot is sent to clients as one batch rather than one event per
   message.
 - Additional clients connected to the same server process reuse that listener and

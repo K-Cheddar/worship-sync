@@ -545,7 +545,7 @@ export const emptyRange = (): TeamBlockoutDateRange => ({
 
 export const memberName = (member?: TeamRosterMember | null) => {
   if (!member) return "Unassigned";
-  return `${member.firstName} ${member.lastName}`.trim();
+  return `${member.title || ""} ${member.firstName} ${member.lastName}`.trim();
 };
 
 export {
@@ -599,9 +599,11 @@ export const compareTeamRosterMembersByName = (
   a: TeamRosterMember,
   b: TeamRosterMember,
 ) =>
-  memberName(a).localeCompare(memberName(b), undefined, {
-    sensitivity: "base",
-  });
+  `${a.firstName} ${a.lastName}`.trim().localeCompare(
+    `${b.firstName} ${b.lastName}`.trim(),
+    undefined,
+    { sensitivity: "base" },
+  );
 
 export const getDuplicateScheduleFirstNames = (members: TeamRosterMember[]) => {
   const counts = new Map<string, number>();

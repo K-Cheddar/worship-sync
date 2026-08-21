@@ -31,6 +31,10 @@ export type EntityMultiSelectGroup = {
 
 type EntityMultiSelectProps = {
   label: string;
+  /** Hide the field legend when the parent already provides the section heading. */
+  hideLabel?: boolean;
+  /** Hide the built-in Select all control when the parent places it elsewhere. */
+  hideSelectAll?: boolean;
   description?: string;
   options: EntityMultiSelectOption[];
   value: string[];
@@ -59,6 +63,8 @@ type EntityMultiSelectProps = {
  */
 const EntityMultiSelect = ({
   label,
+  hideLabel = false,
+  hideSelectAll = false,
   description,
   options,
   value,
@@ -132,32 +138,44 @@ const EntityMultiSelect = ({
       className={cn("min-w-0", isBoard && boardIntakeFieldsetClassName)}
       aria-label={label}
     >
-      <div className="flex items-center justify-between gap-2">
-        <legend
-          className={cn(
-            isBoard ? boardFieldsetLegendClassName : "p-1 text-sm font-semibold",
-          )}
-        >
-          {label}
-          {value.length ? (
-            <span
-              className={cn(
-                "ml-1 text-xs font-normal",
-                isBoard ? "text-amber-300/80" : "text-cyan-300",
-              )}
-            >
-              ({value.length} selected)
-            </span>
+      {hideLabel ? (
+        !hideSelectAll && selectableIds.length > 0 ? (
+          <div className="flex justify-end">
+            <SelectAllButton
+              allSelected={allSelected}
+              tone={isBoard ? "board-attendee" : "admin"}
+              onClick={toggleSelectAll}
+            />
+          </div>
+        ) : null
+      ) : (
+        <div className="flex items-center justify-between gap-2">
+          <legend
+            className={cn(
+              isBoard ? boardFieldsetLegendClassName : "p-1 text-sm font-semibold",
+            )}
+          >
+            {label}
+            {value.length ? (
+              <span
+                className={cn(
+                  "ml-1 text-xs font-normal",
+                  isBoard ? "text-amber-300/80" : "text-cyan-300",
+                )}
+              >
+                ({value.length} selected)
+              </span>
+            ) : null}
+          </legend>
+          {!hideSelectAll && selectableIds.length > 0 ? (
+            <SelectAllButton
+              allSelected={allSelected}
+              tone={isBoard ? "board-attendee" : "admin"}
+              onClick={toggleSelectAll}
+            />
           ) : null}
-        </legend>
-        {selectableIds.length > 0 ? (
-          <SelectAllButton
-            allSelected={allSelected}
-            tone={isBoard ? "board-attendee" : "admin"}
-            onClick={toggleSelectAll}
-          />
-        ) : null}
-      </div>
+        </div>
+      )}
       {description ? (
         <p
           className={cn(

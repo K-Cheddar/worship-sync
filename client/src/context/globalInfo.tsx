@@ -398,6 +398,13 @@ type GlobalInfoContextType = {
   canViewTeams: boolean;
   canEditTeams: boolean;
   canEditServices: boolean;
+  /**
+   * Narrower than canViewTeams: also true for a view-only paired workstation
+   * (permissions.services === "view"). Gate Service Plan *viewing* on this,
+   * not canViewTeams — that flag also covers the Teams roster, which carries
+   * member PII a shared workstation must not receive.
+   */
+  canViewServices: boolean;
   canViewTeam?: (teamId: string) => boolean;
   canEditTeam?: (teamId: string) => boolean;
   churchId: string;
@@ -574,6 +581,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     canEditServices ||
     permissions.teams === "view" ||
     hasScopedTeamsAccess;
+  const canViewServices = canViewTeams || permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
@@ -2584,6 +2592,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       canViewTeams,
       canEditTeams,
       canEditServices,
+      canViewServices,
       canViewTeam,
       canEditTeam,
       churchId,
@@ -2646,6 +2655,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       canViewTeams,
       canEditTeams,
       canEditServices,
+      canViewServices,
       canViewTeam,
       canEditTeam,
       churchId,

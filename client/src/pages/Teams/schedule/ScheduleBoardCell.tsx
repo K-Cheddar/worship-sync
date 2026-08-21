@@ -18,6 +18,7 @@ import {
   getCellShadowAssignments,
   scheduleMemberName,
 } from "../teamsUtils";
+import { isMemberAvailableOnDate } from "../memberPreferences";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
@@ -96,6 +97,14 @@ const ScheduleBoardCell = memo(({
   const blockoutConflictLabel = blockoutConflict
     ? `Blocked out ${formatBlockoutDateRangeLabel(blockoutConflict)}`
     : "";
+  const recurringAvailabilityConflict = Boolean(
+    assignedMember && !isMemberAvailableOnDate(assignedMember, occurrenceDate),
+  );
+  const recurringAvailabilityConflictLabel = recurringAvailabilityConflict
+    ? "Unavailable this week of the month"
+    : "";
+  const availabilityConflictLabel =
+    blockoutConflictLabel || recurringAvailabilityConflictLabel;
   const response = readAssignmentResponse(assignmentResponse, assignedMemberId);
 
   const handleActivate = useCallback(
@@ -125,7 +134,7 @@ const ScheduleBoardCell = memo(({
         aria-expanded={isActiveSlot}
         aria-label={cn(
           `${occurrenceName} ${positionLabel}, ${assigneeLabel || "empty"}`,
-          blockoutConflictLabel && `, ${blockoutConflictLabel}`,
+          availabilityConflictLabel && `, ${availabilityConflictLabel}`,
         )}
         disabled={!canEdit}
         className={cn(
@@ -174,10 +183,10 @@ const ScheduleBoardCell = memo(({
               </span>
             ) : null}
           </span>
-          {blockoutConflictLabel ? (
+          {availabilityConflictLabel ? (
             <span className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-300">
               <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden />
-              <span className="truncate">{blockoutConflictLabel}</span>
+              <span className="truncate">{availabilityConflictLabel}</span>
             </span>
           ) : null}
         </span>

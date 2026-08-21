@@ -80,6 +80,8 @@ export type HistorySuggestFieldProps = {
   "data-ignore-undo"?: string;
   /** Fires when the field loses focus (after internal blur handling for the suggestion popover). */
   onFieldBlur?: () => void;
+  /** Fires when the field gains focus (alongside internal suggestion-popover handling). */
+  onFieldFocus?: () => void;
 };
 
 const HistorySuggestField = ({
@@ -99,6 +101,7 @@ const HistorySuggestField = ({
   autoResize = true,
   "data-ignore-undo": dataIgnoreUndo,
   onFieldBlur,
+  onFieldFocus,
 }: HistorySuggestFieldProps) => {
   const effectiveHideLabel = hideLabel ?? (multiline ? true : false);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -214,7 +217,8 @@ const HistorySuggestField = ({
   const handleFocus = useCallback(() => {
     setIsFocused(true);
     updateSuggestions(value);
-  }, [updateSuggestions, value]);
+    onFieldFocus?.();
+  }, [updateSuggestions, value, onFieldFocus]);
 
   const clearValue = useCallback(() => {
     onChange("");

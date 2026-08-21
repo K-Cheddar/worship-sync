@@ -109,9 +109,16 @@ const Select = ({
   const generatedId = useId();
   const id = idProp || generatedId;
 
-  // Check if value exists in options, if not use undefined to show placeholder
+  // Radix determines controlled-vs-uncontrolled from whether `value` is
+  // `undefined` on the *first* render, then warns if that ever flips — which
+  // it would the moment an async options list (for example saved plans)
+  // finishes loading and `value` starts matching an option. The sentinel
+  // keeps this prop a defined string for the component's whole lifetime;
+  // An unmatched caller value uses Radix's empty controlled value so its
+  // placeholder remains visible. The sentinel is reserved for a real option
+  // whose caller-facing value is the empty string.
   const valueExists = options.some((option) => option.value === value);
-  const selectValue = valueExists ? toRadixValue(value) : undefined;
+  const selectValue = valueExists ? toRadixValue(value) : "";
   const sections = useMemo(() => toOptionSections(options), [options]);
 
   return (

@@ -44,6 +44,7 @@ const ChatWindowHost = () => {
       defaultPosition={layout.defaultPosition}
       defaultWidth={layout.defaultWidth}
       defaultHeight={layout.defaultHeight}
+      resizable
       contentClassName="overflow-hidden p-0"
     >
       <ChatWindow />

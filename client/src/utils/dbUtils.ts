@@ -430,32 +430,44 @@ export const removeOverlayHistoryDoc = async (
   }
 };
 
-export const getCreditsByIds = async (
+/** Credit docs for `creditIds`, in index order, keeping `updatedAt` for revision comparisons. */
+export const getCreditDocsByIds = async (
   db: PouchDB.Database,
   outlineId: string,
   creditIds: string[],
-): Promise<CreditsInfo[]> => {
+): Promise<DBCredit[]> => {
   if (creditIds.length === 0) return [];
   const keys = creditIds.map((id) => getCreditDocId(outlineId, id));
   const result = (await db.allDocs({
     keys,
     include_docs: true,
   })) as { rows: { doc?: DBCredit }[] };
-  const byId = new Map<string, CreditsInfo>();
+  const byId = new Map<string, DBCredit>();
   for (const row of result.rows) {
     const doc = row.doc;
     if (doc && doc.id != null) {
-      byId.set(doc.id, {
-        id: doc.id,
-        heading: doc.heading,
-        text: doc.text,
-        hidden: doc.hidden,
-      });
+      byId.set(doc.id, doc);
     }
   }
   return creditIds
     .map((id) => byId.get(id))
-    .filter((c): c is CreditsInfo => c != null);
+    .filter((doc): doc is DBCredit => doc != null);
+};
+
+export const creditInfoFromDoc = (doc: DBCredit): CreditsInfo => ({
+  id: doc.id,
+  heading: doc.heading,
+  text: doc.text,
+  hidden: doc.hidden,
+});
+
+export const getCreditsByIds = async (
+  db: PouchDB.Database,
+  outlineId: string,
+  creditIds: string[],
+): Promise<CreditsInfo[]> => {
+  const docs = await getCreditDocsByIds(db, outlineId, creditIds);
+  return docs.map(creditInfoFromDoc);
 };
 
 /** All outline-scoped credit row docs in PouchDB, including orphans removed from the credits index. */
@@ -571,8 +583,8 @@ export const putCreditDoc = async (
     existing.text = credit.text;
     existing.hidden = credit.hidden;
     existing.updatedAt = new Date().toISOString();
-    await db.put(existing);
-    return existing;
+    const result = await db.put(existing);
+    return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };
   } catch (e) {
     console.error("putCreditDoc failed", credit.id, e);
     return null;

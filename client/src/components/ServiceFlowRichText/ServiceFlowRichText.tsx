@@ -2,6 +2,7 @@ import type {
   ServiceFlowRichText as ServiceFlowRichTextDocument,
   ServiceFlowTextSpan,
 } from "../../services/serviceFlowTypes";
+import { cn } from "../../utils/cnHelper";
 import {
   RICH_TEXT_COLOR_ATTR,
   normalizeHexColor,
@@ -155,7 +156,13 @@ const RichTextList = ({
 };
 
 /** Renders only structured text spans; it never receives or injects HTML. */
-const ServiceFlowRichText = ({ document }: { document: ServiceFlowRichTextDocument }) => {
+const ServiceFlowRichText = ({
+  document,
+  className,
+}: {
+  document: ServiceFlowRichTextDocument;
+  className?: string;
+}) => {
   if (!document.blocks.length) return null;
 
   const renderedBlocks = [];
@@ -178,7 +185,7 @@ const ServiceFlowRichText = ({ document }: { document: ServiceFlowRichTextDocume
   }
 
   return (
-    <div className="space-y-1.5 text-sm leading-relaxed text-white">
+    <div className={cn("space-y-1.5 text-sm leading-relaxed text-white", className)}>
       {renderedBlocks}
     </div>
   );

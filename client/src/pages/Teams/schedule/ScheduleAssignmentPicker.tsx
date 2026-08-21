@@ -108,6 +108,7 @@ type ScheduleAssignmentPickerProps = {
   onAssignGuest?: (
     guest: Omit<TeamScheduleGuest, "guestId"> & { guestId?: string },
   ) => Promise<void> | void;
+  onEditGuest?: (guest: TeamScheduleGuest) => Promise<void> | void;
   onClearAssignment?: () => void;
   /** Shadows currently on the active cell, offered for one-tap removal. */
   currentShadows?: { memberId: string; kind: TeamScheduleShadowKind; label: string }[];
@@ -149,6 +150,7 @@ const ScheduleAssignmentPicker = memo(({
   onCreateMember,
   recentGuests = [],
   onAssignGuest,
+  onEditGuest,
   onClearAssignment,
   currentShadows = emptyShadows,
   onRemoveShadow,
@@ -177,6 +179,7 @@ const ScheduleAssignmentPicker = memo(({
   });
   const [creatingMember, setCreatingMember] = useState(false);
   const [assigningGuest, setAssigningGuest] = useState(false);
+  const [editingGuest, setEditingGuest] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const duplicateFirstNameKeys = duplicateFirstNames || emptyDuplicateFirstNames;
 
@@ -239,6 +242,7 @@ const ScheduleAssignmentPicker = memo(({
       setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
       setCreatingMember(false);
       setAssigningGuest(false);
+      setEditingGuest(false);
       return;
     }
   }, [open]);
@@ -278,6 +282,7 @@ const ScheduleAssignmentPicker = memo(({
     setMenuView("members");
     setActiveSubmenuMemberId(null);
     setActiveSwapRecommendation(null);
+    setEditingGuest(false);
   }, []);
 
   const runAssignmentAction = (memberId: string, action: MemberAssignmentAction) => {
@@ -308,6 +313,18 @@ const ScheduleAssignmentPicker = memo(({
 
   const openRecentGuests = () => {
     setMenuView("recentGuests");
+  };
+
+  const openEditGuest = (guest: TeamScheduleGuest) => {
+    setGuestDraft({
+      guestId: guest.guestId,
+      name: guest.name,
+      email: guest.email || "",
+      phone: guest.phone || "",
+      note: guest.note || "",
+    });
+    setEditingGuest(true);
+    setMenuView("createGuest");
   };
 
   const openSwapConfirmation = (
@@ -351,6 +368,25 @@ const ScheduleAssignmentPicker = memo(({
   const submitCreateGuest = async () => {
     const name = guestDraft.name.trim();
     if (!name) return;
+    if (editingGuest && onEditGuest) {
+      setAssigningGuest(true);
+      try {
+        await onEditGuest({
+          guestId: guestDraft.guestId,
+          name,
+          ...(guestDraft.email.trim() ? { email: guestDraft.email.trim() } : {}),
+          ...(guestDraft.phone.trim() ? { phone: guestDraft.phone.trim() } : {}),
+          ...(guestDraft.note.trim() ? { note: guestDraft.note.trim() } : {}),
+        });
+        resetMenuView();
+        setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
+      } catch {
+        // The parent owns the operator-facing error toast.
+      } finally {
+        setAssigningGuest(false);
+      }
+      return;
+    }
     await assignGuest({
       ...(guestDraft.guestId ? { guestId: guestDraft.guestId } : {}),
       name,
@@ -390,7 +426,9 @@ const ScheduleAssignmentPicker = memo(({
 
   const currentAssigneePresent =
     hasCurrentAssignee ?? Boolean(currentPrimaryMemberId);
-  let guestSubmitLabel = currentAssigneePresent
+  let guestSubmitLabel = editingGuest
+    ? "Save changes"
+    : currentAssigneePresent
     ? "Replace & assign"
     : "Add & assign";
   if (assigningGuest) guestSubmitLabel = "Assigning…";
@@ -399,6 +437,9 @@ const ScheduleAssignmentPicker = memo(({
   const visibleRecentGuests = recentGuests
     .filter((guest) => guest.guestId !== currentPrimaryMemberId)
     .slice(0, 5);
+  const currentGuest = recentGuests.find(
+    (guest) => guest.guestId === currentPrimaryMemberId,
+  );
   const showRecentGuestsEntry =
     menuView === "members" &&
     !trimmedQuery &&
@@ -712,11 +753,13 @@ const ScheduleAssignmentPicker = memo(({
                 void submitCreateGuest();
               }}
             >
-              <p className="px-1 text-xs font-semibold text-gray-300">Add guest</p>
-              <p className="px-1 text-xs text-gray-500">
-                This person will only appear on the schedule.
-              </p>
-              {currentAssigneePresent ? (
+                <p className="px-1 text-xs font-semibold text-gray-300">
+                  {editingGuest ? "Edit guest" : "Add guest"}
+                </p>
+                <p className="px-1 text-xs text-gray-500">
+                  This person will only appear on the schedule.
+                </p>
+              {!editingGuest && currentAssigneePresent ? (
                 <p className="px-1 text-xs text-amber-200">
                   This will replace {currentAssigneeLabel} in this slot.
                 </p>
@@ -810,35 +853,50 @@ const ScheduleAssignmentPicker = memo(({
                 Recent guests
               </p>
               {visibleRecentGuests.map((guest) => (
-                <button
-                  key={guest.guestId}
-                  type="button"
-                  role="menuitem"
-                  disabled={assigningGuest}
-                  className="flex min-w-0 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    if (currentAssigneePresent) {
-                      setGuestDraft({
-                        guestId: guest.guestId,
-                        name: guest.name,
-                        email: guest.email || "",
-                        phone: guest.phone || "",
-                        note: guest.note || "",
-                      });
-                      setMenuView("createGuest");
-                      return;
-                    }
-                    void assignGuest(guest);
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate font-medium">
-                    {guest.name}
-                  </span>
-                  <span className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
-                    Guest
-                  </span>
-                </button>
+                <div key={guest.guestId} className="flex min-w-0 items-center gap-1">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={assigningGuest}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      if (currentAssigneePresent) {
+                        setGuestDraft({
+                          guestId: guest.guestId,
+                          name: guest.name,
+                          email: guest.email || "",
+                          phone: guest.phone || "",
+                          note: guest.note || "",
+                        });
+                        setEditingGuest(false);
+                        setMenuView("createGuest");
+                        return;
+                      }
+                      void assignGuest(guest);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium">{guest.name}</span>
+                    <span className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
+                      Guest
+                    </span>
+                  </button>
+                  {onEditGuest ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      padding="px-2 py-1"
+                      className="shrink-0 text-xs text-violet-200"
+                      aria-label={`Edit ${guest.name}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        openEditGuest(guest);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                  ) : null}
+                </div>
               ))}
             </div>
           ) : menuView === "swapConfirmation" && activeSwapRecommendation ? (
@@ -920,9 +978,26 @@ const ScheduleAssignmentPicker = memo(({
                           {currentAssigneeLabel}
                         </p>
                         {currentAssigneeIsGuest ? (
-                          <span className="rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
-                            Guest
-                          </span>
+                          <>
+                            <span className="rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
+                              Guest
+                            </span>
+                            {currentGuest && onEditGuest ? (
+                              <Button
+                                type="button"
+                                variant="tertiary"
+                                padding="px-1.5 py-0.5"
+                                className="text-[10px] text-violet-200"
+                                aria-label={`Edit ${currentGuest.name}`}
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  openEditGuest(currentGuest);
+                                }}
+                              >
+                                Edit
+                              </Button>
+                            ) : null}
+                          </>
                         ) : null}
                       </div>
                     </div>

@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Option } from "../../types";
 import Select from "./Select";
 
 const renderSelect = (options: React.ComponentProps<typeof Select>["options"]) =>
@@ -91,6 +92,61 @@ describe("Select", () => {
     await user.click(await screen.findByRole("option", { name: "All teams" }));
 
     expect(onChange).toHaveBeenCalledWith("");
+  });
+
+  it("shows the placeholder for a value not present in the options", () => {
+    render(
+      <Select
+        label="Filter schedules by team"
+        value="missing-team"
+        onChange={jest.fn()}
+        options={[
+          { label: "All teams", value: "" },
+          { label: "Media", value: "team-1" },
+        ]}
+      />,
+    );
+
+    const trigger = screen.getByRole("combobox");
+    expect(trigger).toHaveAttribute("data-placeholder", "");
+    expect(trigger).toHaveTextContent("Select...");
+  });
+
+  // An async options list (e.g. saved plans still loading) starts empty, so
+  // `value` cannot match anything yet — Radix must not be left uncontrolled
+  // for that first render only to flip to controlled once options land, or
+  // React logs "Select is changing from uncontrolled to controlled."
+  it("stays controlled across an initial render with no matching option", () => {
+    // Radix's useControllableState reports this via console.warn, not
+    // console.error — easy to mis-spy on and get a false-positive pass.
+    const consoleWarn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    try {
+      const { rerender } = render(
+        <Select
+          label="Service plan"
+          value="plan-2"
+          onChange={jest.fn()}
+          options={[] as Option[]}
+        />,
+      );
+      rerender(
+        <Select
+          label="Service plan"
+          value="plan-2"
+          onChange={jest.fn()}
+          options={[{ label: "Sunday plan", value: "plan-2" }]}
+        />,
+      );
+
+      const warnedAboutControlledState = consoleWarn.mock.calls.some((call) =>
+        String(call[0]).includes("changing from uncontrolled to controlled"),
+      );
+      expect(warnedAboutControlledState).toBe(false);
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 
   it("selects a grouped option by value", async () => {

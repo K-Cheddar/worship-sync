@@ -157,20 +157,25 @@ const renderPicker = (
     initialQuery?: string;
     initialLyrics?: string;
     startInCreate?: boolean;
+    controllerContext?: ReturnType<typeof createMockControllerContext>;
   } = {},
 ) => {
   const onSelectSong = jest.fn();
   const onClose = jest.fn();
+  const {
+    controllerContext = createMockControllerContext(),
+    ...pickerProps
+  } = props;
   render(
     <Provider store={store}>
       <MemoryRouter>
-        <ControllerInfoContext.Provider value={createMockControllerContext() as never}>
+        <ControllerInfoContext.Provider value={controllerContext as never}>
           <GlobalInfoContext.Provider value={createMockGlobalContext() as never}>
             <ServicePlanLibraryPicker
               isOpen
               onClose={onClose}
               onSelectSong={onSelectSong}
-              {...props}
+              {...pickerProps}
             />
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
@@ -332,5 +337,22 @@ describe("ServicePlanLibraryPicker", () => {
       songId: "song-new",
       songName: "Brand New Song",
     });
+  });
+
+  it("waits for the song library before allowing a new song to be attached", async () => {
+    const user = userEvent.setup();
+    const controllerContext = createMockControllerContext();
+    controllerContext.db = undefined;
+    renderPicker(createPickerStore(), {
+      controllerContext,
+    });
+
+    await user.click(screen.getByRole("button", { name: /Create a new song/i }));
+    await user.type(screen.getByLabelText(/Song name/i), "Brand New Song");
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Song library is still connecting.",
+    );
+    expect(screen.getByRole("button", { name: /Create and attach/i })).toBeDisabled();
   });
 });

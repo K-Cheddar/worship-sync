@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPublicServicePlanSnapshot } from "./servicePlanPublic.js";
+import {
+  buildPublicServicePlanSnapshot,
+  publicServingMemberIdsForPlan,
+} from "./servicePlanPublic.js";
 
 const plan = {
   published: true,
@@ -109,6 +112,180 @@ test("general snapshots omit the role roster", () => {
   });
 
   assert.equal(snapshot.roles, undefined);
+});
+
+test("detailed snapshots expose scheduled microphone holders by team", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      serviceId: "sunday",
+      date: "2026-07-27",
+    },
+    microphones: [
+      { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
+    ],
+    teams: [
+      { teamId: "worship", name: "Worship Team", usesMicrophoneAssignments: true },
+      { teamId: "media", name: "Media Team", usesMicrophoneAssignments: false },
+    ],
+    positions: [
+      { positionId: "lead", name: "Lead vocal", teamId: "worship" },
+      { positionId: "camera", name: "Camera", teamId: "media" },
+    ],
+    members: [
+      { memberId: "member-1", firstName: "Avery", lastName: "Stone" },
+      { memberId: "member-2", firstName: "Jordan", lastName: "Lee" },
+    ],
+    schedules: [
+      {
+        scheduleId: "worship-schedule",
+        teamId: "worship",
+        occurrences: [
+          {
+            occurrenceId: "sunday@2026-07-27T14:00:00.000Z",
+            serviceId: "sunday",
+            startsAt: "2026-07-27T14:00:00.000Z",
+          },
+        ],
+        assignments: {
+          "sunday@2026-07-27T14:00:00.000Z": {
+            "lead::0": { primaryMemberId: "member-1" },
+          },
+        },
+        microphoneAssignments: {
+          "sunday@2026-07-27T14:00:00.000Z": {
+            "lead::0": ["mic-blue"],
+          },
+        },
+      },
+      {
+        scheduleId: "media-schedule",
+        teamId: "media",
+        occurrences: [
+          {
+            occurrenceId: "sunday@2026-07-27T14:00:00.000Z",
+            serviceId: "sunday",
+            startsAt: "2026-07-27T14:00:00.000Z",
+          },
+        ],
+        assignments: {
+          "sunday@2026-07-27T14:00:00.000Z": {
+            "camera::0": { primaryMemberId: "member-2" },
+          },
+        },
+        microphoneAssignments: {
+          "sunday@2026-07-27T14:00:00.000Z": {
+            "camera::0": ["mic-blue"],
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(snapshot.servingTeams, [
+    {
+      teamId: "worship",
+      teamName: "Worship Team",
+      members: [
+        {
+          positionId: "lead",
+          positionName: "Lead vocal",
+          memberName: "Avery Stone",
+          microphones: [
+            { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
+          ],
+        },
+      ],
+    },
+  ]);
+});
+
+test("public detailed views load only members assigned to the matching occurrence", () => {
+  const schedules = [
+    {
+      occurrences: [
+        {
+          occurrenceId: "sunday@2026-07-27T14:00:00.000Z",
+          serviceId: "sunday",
+          startsAt: "2026-07-27T14:00:00.000Z",
+        },
+        {
+          occurrenceId: "sunday@2026-08-03T14:00:00.000Z",
+          serviceId: "sunday",
+          startsAt: "2026-08-03T14:00:00.000Z",
+        },
+      ],
+      assignments: {
+        "sunday@2026-07-27T14:00:00.000Z": {
+          "lead::0": { primaryMemberId: "member-current" },
+        },
+        "sunday@2026-08-03T14:00:00.000Z": {
+          "lead::0": { primaryMemberId: "member-future" },
+        },
+      },
+      microphoneAssignments: {
+        "sunday@2026-07-27T14:00:00.000Z": {
+          "lead::0": ["mic-current"],
+        },
+        "sunday@2026-08-03T14:00:00.000Z": {
+          "lead::0": ["mic-future"],
+        },
+      },
+    },
+  ];
+
+  assert.deepEqual(
+    publicServingMemberIdsForPlan({
+      plan: { ...plan, serviceId: "sunday", date: "2026-07-27" },
+      schedules,
+      timezone: "America/New_York",
+    }),
+    ["member-current"],
+  );
+});
+
+test("general snapshots never expose scheduled microphone holders", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      serviceId: "sunday",
+      date: "2026-07-27",
+      publicGeneralLinkToken: "general-share-token",
+    },
+    viewMode: "general",
+    shareId: "general-share-token",
+    microphones: [
+      { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
+    ],
+    teams: [{ teamId: "worship", name: "Worship Team", usesMicrophoneAssignments: true }],
+    positions: [{ positionId: "lead", name: "Lead vocal", teamId: "worship" }],
+    members: [{ memberId: "member-1", firstName: "Avery", lastName: "Stone" }],
+    schedules: [
+      {
+        scheduleId: "worship-schedule",
+        teamId: "worship",
+        occurrences: [
+          {
+            occurrenceId: "sunday@2026-07-27T14:00:00.000Z",
+            serviceId: "sunday",
+            startsAt: "2026-07-27T14:00:00.000Z",
+          },
+        ],
+        assignments: {
+          "sunday@2026-07-27T14:00:00.000Z": {
+            "lead::0": { primaryMemberId: "member-1" },
+          },
+        },
+        microphoneAssignments: {
+          "sunday@2026-07-27T14:00:00.000Z": {
+            "lead::0": ["mic-blue"],
+          },
+        },
+      },
+    ],
+  });
+
+  assert.equal(snapshot.servingTeams, undefined);
 });
 
 test("public service plan snapshot exposes display-only team notes but omits editor fields", () => {

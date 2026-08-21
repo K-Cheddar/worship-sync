@@ -53,6 +53,7 @@ import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
 import {
   buildPlansReturnTo,
   buildPlanToScheduleNavigationState,
+  persistTeamsReturnTo,
   TEAMS_SECTION_PATHS,
   type TeamsPlansRestore,
 } from "../teamsReturnNavigation";
@@ -619,13 +620,15 @@ const TeamsPlansPage = () => {
       slot?: { occurrenceId: string; columnKey: string };
     }) => {
       if (!selection) return;
+      const returnTo = buildPlansReturnTo({
+        serviceId: selection.service.serviceId,
+        occurrenceId: selection.occurrence.occurrenceId,
+        date: getOccurrenceDate(selection.occurrence),
+      });
+      persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
       navigate(TEAMS_SECTION_PATHS.schedules, {
         state: buildPlanToScheduleNavigationState({
-          returnTo: buildPlansReturnTo({
-            serviceId: selection.service.serviceId,
-            occurrenceId: selection.occurrence.occurrenceId,
-            date: getOccurrenceDate(selection.occurrence),
-          }),
+          returnTo,
           restore: {
             kind: "schedule",
             scheduleId,

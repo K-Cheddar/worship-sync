@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   getServicePlan,
@@ -23,8 +24,10 @@ import {
 } from "../../api/auth";
 import {
   clearServicePlanningPlanOutline,
+  setServicePlanningOutlinePlanBinding,
   setServicePlanningPlanOutline,
 } from "../../store/servicePlanningImportSlice";
+import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
 import {
   isServicePlanUpdatedEvent,
@@ -48,8 +51,9 @@ import {
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
-  const { canViewTeams, churchId, loginState } =
+  const { canViewServices, canViewTeams, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
   const { loadPlanPreview, isServicePlanningEnabled } =
     useServicePlanningImport();
   const serviceTimes = useSelector(
@@ -104,10 +108,11 @@ export const useCurrentServicePlanSource = () => {
 
   const isEnabled = Boolean(
     churchId &&
-      canViewTeams &&
+      canViewServices &&
       loginState !== "guest" &&
       isServicePlanningEnabled,
   );
+  const canLoadTeamDetails = Boolean(canViewTeams);
 
   const clearUnavailablePlan = useCallback(
     (planKey: string, allowAutomaticFallback = false) => {
@@ -278,6 +283,47 @@ export const useCurrentServicePlanSource = () => {
     [churchId, dispatch],
   );
 
+  /**
+   * Remembers a deliberate operator pick (dropdown selection or
+   * `pinSelectedPlan`) against this outline immediately, rather than only
+   * once the operator syncs — so reopening the outline restores the same
+   * plan without re-prompting even if it was never synced. An automatic
+   * fallback selection (see the effect below) never sets
+   * `manualSelectionRef`, so it never overwrites an existing binding.
+   */
+  const persistManualPlanBinding = useCallback(
+    async (plan: ServicePlan) => {
+      if (
+        !manualSelectionRef.current ||
+        !db ||
+        !selectedOutlineId ||
+        outlinePlanBinding?.planKey === plan.planKey
+      ) {
+        return;
+      }
+      const binding = {
+        planKey: plan.planKey,
+        planName: plan.name?.trim() || "Service plan",
+        linkedAt: new Date().toISOString(),
+      };
+      try {
+        await persistItemListServicePlanBinding(db, selectedOutlineId, binding);
+        dispatch(setServicePlanningOutlinePlanBinding(binding));
+      } catch (error) {
+        console.error("Could not link this outline to its service plan:", error);
+      }
+    },
+    [db, dispatch, outlinePlanBinding?.planKey, selectedOutlineId],
+  );
+  // Read via ref (not a "load" effect dependency): persisting a binding
+  // dispatches a Redux update that changes this callback's identity on every
+  // call, which would otherwise re-trigger — and needlessly refetch — the
+  // "load" effect below.
+  const persistManualPlanBindingRef = useRef(persistManualPlanBinding);
+  useEffect(() => {
+    persistManualPlanBindingRef.current = persistManualPlanBinding;
+  }, [persistManualPlanBinding]);
+
   useEffect(() => {
     if (
       !isEnabled ||
@@ -301,7 +347,9 @@ export const useCurrentServicePlanSource = () => {
       try {
         const [planResult, bootstrap] = await Promise.all([
           getServicePlan(churchId, selectedPlanKey),
-          getTeamsBootstrap(churchId).catch(() => null),
+          canLoadTeamDetails
+            ? getTeamsBootstrap(churchId).catch(() => null)
+            : Promise.resolve(null),
         ]);
         if (cancelled || generation !== generationRef.current) return;
         if (bootstrap) bootstrapRef.current = bootstrap;
@@ -312,6 +360,7 @@ export const useCurrentServicePlanSource = () => {
           clearUnavailablePlan(selectedPlanKey);
           return;
         }
+        void persistManualPlanBindingRef.current(plan);
         await applyPlan(
           plan,
           () =>
@@ -334,6 +383,7 @@ export const useCurrentServicePlanSource = () => {
     };
   }, [
     applyPlan,
+    canLoadTeamDetails,
     churchId,
     clearUnavailablePlan,
     dispatch,
@@ -380,7 +430,10 @@ export const useCurrentServicePlanSource = () => {
         return;
       }
 
-      if (event.type === "schedule-updated" || event.type === "schedule-removed") {
+      if (
+        canLoadTeamDetails &&
+        (event.type === "schedule-updated" || event.type === "schedule-removed")
+      ) {
         if (!churchId || !planRef.current) return;
         void getTeamsBootstrap(churchId)
           .then((bootstrap) => {
@@ -417,10 +470,19 @@ export const useCurrentServicePlanSource = () => {
         }
       });
     },
-    [applyPlan, churchId, clearUnavailablePlan, isEnabled],
+    [
+      applyPlan,
+      canLoadTeamDetails,
+      churchId,
+      clearUnavailablePlan,
+      isEnabled,
+    ],
   );
 
-  useTeamsLiveSync(isEnabled ? churchId : null, handleLiveEvent);
+  useTeamsLiveSync(
+    isEnabled && canLoadTeamDetails ? churchId : null,
+    handleLiveEvent,
+  );
 
   const refresh = useCallback(async () => {
     const planKey = selectedPlanKeyRef.current;

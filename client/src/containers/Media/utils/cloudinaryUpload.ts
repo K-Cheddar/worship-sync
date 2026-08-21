@@ -45,17 +45,23 @@ type UploadCallbacks = {
   setXhr?: (xhr: XMLHttpRequest) => void;
 };
 
+type CloudinaryUploadOptions = {
+  folder?: string;
+};
+
 export const uploadImageToCloudinary = async (
   file: File,
   uploadPreset: string,
   cloudName: string,
   callbacks: UploadCallbacks = {},
+  options: CloudinaryUploadOptions = {},
 ): Promise<mediaInfoType> => {
   // Create FormData for Cloudinary unsigned upload
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", uploadPreset);
   formData.append("resource_type", "image");
+  if (options.folder) formData.append("folder", options.folder);
 
   // Upload to Cloudinary
   const xhr = new XMLHttpRequest();

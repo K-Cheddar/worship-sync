@@ -377,6 +377,7 @@ describe("dbUtils", () => {
       text: "Old text",
       hidden: false,
     });
+    db.put.mockResolvedValueOnce({ rev: "2-credit" });
     const updated = await putCreditDoc(db as unknown as PouchDB.Database, oid, {
       id: "c1",
       heading: "New heading",
@@ -389,6 +390,7 @@ describe("dbUtils", () => {
         heading: "New heading",
         text: "New text",
         hidden: true,
+        _rev: "2-credit",
       }),
     );
 

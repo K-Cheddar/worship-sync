@@ -313,7 +313,7 @@ export const extractBibleReferencesFromText = (
       ? inlineVersion
       : fallbackVersion;
     const sourceText = match[0].trim();
-    const ranges = [firstVerseRange];
+    const references = [{ chapter, verseRange: firstVerseRange }];
     const nextStart = matches[index + 1]?.index ?? normalizedInput.length;
     const continuationText = normalizedInput.slice(
       (match.index ?? 0) + match[0].length,
@@ -321,21 +321,24 @@ export const extractBibleReferencesFromText = (
     );
 
     for (const continuation of continuationText.matchAll(
-      /,\s*(\d+(?:\s*-\s*\d+)?)(?=\s*(?:[,;)]|$|\n))/g,
+      /(?:[,;|]|\band\b)\s*(?:(\d+)\s*:\s*)?(\d+(?:\s*-\s*\d+)?)(?=\s*(?:[,;|)]|\band\b|$|\n))/gi,
     )) {
-      ranges.push(normalizeRange(continuation[1] || ""));
+      references.push({
+        chapter: continuation[1] || chapter,
+        verseRange: normalizeRange(continuation[2] || ""),
+      });
     }
 
-    for (const verseRange of ranges) {
-      const duplicateKey = `${normalizeBookName(book)}|${chapter}|${verseRange}|${version}`;
+    for (const reference of references) {
+      const duplicateKey = `${normalizeBookName(book)}|${reference.chapter}|${reference.verseRange}|${version}`;
       const isDuplicate = seen.has(duplicateKey);
       seen.add(duplicateKey);
 
       rows.push({
-        id: `${makeExtractionId(book, chapter, verseRange, version)}-${rows.length}`,
+        id: `${makeExtractionId(book, reference.chapter, reference.verseRange, version)}-${rows.length}`,
         book,
-        chapter,
-        verseRange,
+        chapter: reference.chapter,
+        verseRange: reference.verseRange,
         version,
         sourceText,
         note,

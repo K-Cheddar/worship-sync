@@ -208,6 +208,201 @@ const normalizePublicMicrophoneAudiences = (microphoneAudiences) =>
     })
     .filter(Boolean);
 
+/** YYYY-MM-DD for a schedule occurrence in the plan's own timezone. */
+const publicOccurrenceDate = (startsAt, timezone) => {
+  const date = new Date(startsAt);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const part = (type) => parts.find((item) => item.type === type)?.value;
+    const year = part("year");
+    const month = part("month");
+    const day = part("day");
+    return year && month && day ? `${year}-${month}-${day}` : "";
+  } catch {
+    return String(startsAt).slice(0, 10);
+  }
+};
+
+/**
+ * Schedules own their own occurrence ids, while plans key a combined service
+ * by service ids plus date. Prefer an exact start-time match, then retain the
+ * date-and-service fallback used by the internal plan sidebar for drifted
+ * schedule occurrences.
+ */
+const scheduleOccurrenceForPlan = (schedule, plan, timezone) => {
+  const planServiceIds = new Set(
+    (Array.isArray(plan?.serviceIds) && plan.serviceIds.length
+      ? plan.serviceIds
+      : [plan?.serviceId]
+    )
+      .map((serviceId) => String(serviceId || "").trim())
+      .filter(Boolean),
+  );
+  const planStartsAt = String(plan?.startsAt || "").trim();
+  const planDate = String(plan?.date || "").trim();
+  return (Array.isArray(schedule?.occurrences) ? schedule.occurrences : []).find(
+    (occurrence) => {
+      const occurrenceServiceIds = (
+        Array.isArray(occurrence?.serviceIds) && occurrence.serviceIds.length
+          ? occurrence.serviceIds
+          : [occurrence?.serviceId]
+      )
+        .map((serviceId) => String(serviceId || "").trim())
+        .filter(Boolean);
+      if (!occurrenceServiceIds.some((serviceId) => planServiceIds.has(serviceId))) {
+        return false;
+      }
+      const occurrenceStartsAt = String(occurrence?.startsAt || "").trim();
+      if (planStartsAt && occurrenceStartsAt === planStartsAt) return true;
+      return Boolean(
+        planDate && publicOccurrenceDate(occurrenceStartsAt, timezone) === planDate,
+      );
+    },
+  );
+};
+
+const publicMemberName = (member) =>
+  `${String(member?.firstName || "").trim()} ${String(member?.lastName || "").trim()}`.trim();
+
+/**
+ * Public detailed links only need roster records for people assigned to the
+ * matching schedule occurrence. Keep this selection beside the occurrence
+ * matcher so the loader and serializer cannot drift apart.
+ */
+export const publicServingMemberIdsForPlan = ({
+  plan,
+  schedules = [],
+  timezone,
+}) => {
+  const memberIds = new Set();
+  (Array.isArray(schedules) ? schedules : []).forEach((schedule) => {
+    const occurrence = scheduleOccurrenceForPlan(schedule, plan, timezone);
+    const occurrenceId = String(occurrence?.occurrenceId || "").trim();
+    if (!occurrenceId) return;
+    const assignments = schedule?.assignments?.[occurrenceId] || {};
+    Object.entries(schedule?.microphoneAssignments?.[occurrenceId] || {}).forEach(
+      ([slotKey, microphoneIds]) => {
+        if (!Array.isArray(microphoneIds) || !microphoneIds.length) return;
+        const assignment = assignments[slotKey];
+        const memberId = String(assignment?.primaryMemberId || "").trim();
+        if (memberId) memberIds.add(memberId);
+      },
+    );
+  });
+  return [...memberIds];
+};
+
+/**
+ * Minimal roster projection for the detailed/team share link. Only scheduled
+ * people on teams that opted into microphone assignments are included, and a
+ * row appears only when that person has an allocated church microphone.
+ */
+export const buildPublicServingTeams = ({
+  plan,
+  schedules = [],
+  positions = [],
+  members = [],
+  teams = [],
+  microphonesById,
+  timezone,
+}) => {
+  const teamsById = new Map(
+    (Array.isArray(teams) ? teams : [])
+      .map((team) => {
+        const teamId = String(team?.teamId || team?.id || "").trim();
+        return teamId ? [teamId, team] : null;
+      })
+      .filter(Boolean),
+  );
+  const positionsById = new Map(
+    (Array.isArray(positions) ? positions : [])
+      .map((position) => {
+        const positionId = String(position?.positionId || position?.id || "").trim();
+        return positionId ? [positionId, position] : null;
+      })
+      .filter(Boolean),
+  );
+  const membersById = new Map(
+    (Array.isArray(members) ? members : [])
+      .map((member) => {
+        const memberId = String(member?.memberId || member?.id || "").trim();
+        const memberName = publicMemberName(member);
+        return memberId && memberName
+          ? [
+              memberId,
+              {
+                memberName,
+                profileImageUrl: String(member?.profileImageUrl || "").trim(),
+              },
+            ]
+          : null;
+      })
+      .filter(Boolean),
+  );
+  const groupedTeams = new Map();
+
+  (Array.isArray(schedules) ? schedules : []).forEach((schedule) => {
+    const occurrence = scheduleOccurrenceForPlan(schedule, plan, timezone);
+    const occurrenceId = String(occurrence?.occurrenceId || "").trim();
+    if (!occurrenceId) return;
+    const microphoneRows = schedule?.microphoneAssignments?.[occurrenceId];
+    const assignmentRows = schedule?.assignments?.[occurrenceId];
+    if (!microphoneRows || !assignmentRows) return;
+    const guestsById = new Map(
+      (Array.isArray(schedule?.guests) ? schedule.guests : [])
+        .map((guest) => [String(guest?.guestId || "").trim(), String(guest?.name || "").trim()])
+        .filter((entry) => entry[0] && entry[1]),
+    );
+
+    Object.entries(microphoneRows).forEach(([slotKey, microphoneIds]) => {
+      const positionId = String(slotKey).split("::")[0];
+      const position = positionsById.get(positionId);
+      const teamId = String(position?.teamId || schedule?.teamId || "").trim();
+      const team = teamsById.get(teamId);
+      if (!team?.usesMicrophoneAssignments) return;
+      const memberId = String(assignmentRows?.[slotKey]?.primaryMemberId || "").trim();
+      const member = membersById.get(memberId);
+      const memberName = member?.memberName || guestsById.get(memberId) || "";
+      const microphoneList = (Array.isArray(microphoneIds) ? microphoneIds : [])
+        .map((microphoneId) => microphonesById?.get(String(microphoneId || "").trim()))
+        .filter(Boolean);
+      if (!memberName || !microphoneList.length) return;
+
+      const existing = groupedTeams.get(teamId) || {
+        teamId,
+        teamName: String(team?.name || "Team").trim() || "Team",
+        members: [],
+      };
+      existing.members.push({
+        positionId,
+        positionName: String(position?.name || "Position").trim() || "Position",
+        memberName,
+        ...(member?.profileImageUrl
+          ? { profileImageUrl: member.profileImageUrl }
+          : {}),
+        microphones: microphoneList,
+      });
+      groupedTeams.set(teamId, existing);
+    });
+  });
+
+  return Array.from(groupedTeams.values())
+    .map((team) => ({
+      ...team,
+      members: team.members.sort((left, right) =>
+        left.positionName.localeCompare(right.positionName) ||
+        left.memberName.localeCompare(right.memberName),
+      ),
+    }))
+    .sort((left, right) => left.teamName.localeCompare(right.teamName));
+};
+
 const serializePublicMicrophoneAssignments = (
   element,
   microphonesById,
@@ -313,6 +508,8 @@ export const buildPublicServicePlanSnapshot = ({
   microphoneAudiences,
   positions = [],
   teams = [],
+  schedules = [],
+  members = [],
   churchName = "",
   churchLogoUrl = "",
   churchPrimaryColor = "",
@@ -372,6 +569,17 @@ export const buildPublicServicePlanSnapshot = ({
     ? null
     : normalizePublicMicrophoneAudiences(microphoneAudiences);
   const roles = isGeneralView ? [] : buildPublicFilterRoles(positions, teams);
+  const servingTeams = isGeneralView
+    ? []
+    : buildPublicServingTeams({
+        plan,
+        schedules,
+        positions,
+        members,
+        teams,
+        microphonesById,
+        timezone,
+      });
 
   return {
     success: true,
@@ -382,6 +590,7 @@ export const buildPublicServicePlanSnapshot = ({
     ...(primaryColor ? { churchPrimaryColor: primaryColor } : {}),
     ...(secondaryColor ? { churchSecondaryColor: secondaryColor } : {}),
     ...(roles.length ? { roles } : {}),
+    ...(servingTeams.length ? { servingTeams } : {}),
     serverNowMs,
     service: {
       shareId: publicShareId,

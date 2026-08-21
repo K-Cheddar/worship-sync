@@ -39,11 +39,17 @@ import {
   ItemLists,
 } from "../../types";
 import {
+  creditInfoFromDoc,
   ensureCreditsIndexDoc,
   getAllCreditsHistory,
-  getCreditsByIds,
+  getCreditDocsByIds,
   getOverlaysByIds,
 } from "../../utils/dbUtils";
+import {
+  isStaleCreditDoc,
+  recordAppliedCreditVersion,
+  resetAppliedCreditVersions,
+} from "../../utils/creditVersions";
 import {
   initiateCreditsHistory,
   initiateCreditsList,
@@ -137,6 +143,11 @@ const CreditsEditor = ({
     (state) => state.undoable.present.itemLists.isInitialized,
   );
   const hasDispatchedPageReady = useRef(false);
+  /** Latest on-screen credits, read by the update handlers without re-subscribing per edit. */
+  const listRef = useRef(list);
+  useEffect(() => {
+    listRef.current = list;
+  }, [list]);
 
   const {
     generateFromOverlays,
@@ -376,8 +387,16 @@ const CreditsEditor = ({
           getCreditsDocId(outlineId),
         )) as DBCredits;
         const creditIds = creditsDoc.creditIds ?? [];
-        const credits = await getCreditsByIds(db, outlineId, creditIds);
+        const creditDocs = await getCreditDocsByIds(db, outlineId, creditIds);
+        const credits = creditDocs.map(creditInfoFromDoc);
         if (cancelled) return;
+
+        // Reseed revision tracking for the outline now on screen; ids are outline-scoped,
+        // so stale entries from a previous outline would only waste memory.
+        resetAppliedCreditVersions();
+        for (const doc of creditDocs) {
+          recordAppliedCreditVersion(doc._id, doc._rev);
+        }
 
         dispatch(initiateCreditsList(credits));
 
@@ -451,19 +470,35 @@ const CreditsEditor = ({
 
         const creditIds = indexFromUpdates.creditIds ?? [];
 
-        const creditsFromDb = await getCreditsByIds(db, outlineId, creditIds);
-        const creditsFromUpdates = updates
-          .filter((d): d is DBCredit => d.docType === "credit")
-          .map((d) => ({
-            id: d.id,
-            heading: d.heading ?? "",
-            text: d.text ?? "",
-            hidden: d.hidden,
-          }));
+        const docsFromDb = await getCreditDocsByIds(db, outlineId, creditIds);
+        const docsFromDbById = new Map(docsFromDb.map((d) => [d.id, d]));
+        const docsFromUpdates = new Map(
+          updates
+            .filter((d): d is DBCredit => d.docType === "credit")
+            .map((d) => [d.id, d]),
+        );
+        const onScreenById = new Map(listRef.current.map((c) => [c.id, c]));
 
-        const byIdFromUpdates = new Map(creditsFromUpdates.map((c) => [c.id, c]));
+        // An index-doc update only tells us which credits belong to the list and in what
+        // order. Row text is taken from the newest revision available, and a row whose
+        // stored revision predates what we already applied keeps its on-screen value —
+        // otherwise a routine index save from another surface reverts edits that are still
+        // inside this window's debounce.
         const credits = creditIds
-          .map((id) => byIdFromUpdates.get(id) ?? creditsFromDb.find((c) => c.id === id))
+          .map((creditId) => {
+            const doc = docsFromUpdates.get(creditId) ?? docsFromDbById.get(creditId);
+            if (!doc) return undefined;
+            if (isStaleCreditDoc(doc._id, doc._rev)) {
+              return onScreenById.get(creditId) ?? creditInfoFromDoc(doc);
+            }
+            recordAppliedCreditVersion(doc._id, doc._rev);
+            return {
+              id: doc.id,
+              heading: doc.heading ?? "",
+              text: doc.text ?? "",
+              hidden: doc.hidden,
+            };
+          })
           .filter((c): c is NonNullable<typeof c> => c != null);
 
         dispatch(updateCreditsListFromRemote(credits));
@@ -492,6 +527,11 @@ const CreditsEditor = ({
         if (!creditDocs.length) return;
 
         creditDocs.forEach((doc) => {
+          // Replication, broadcast, and post-reconnect pulls all land here with no ordering
+          // guarantee between them. Dropping revisions older than the one already applied
+          // stops a late straggler from reverting newer text.
+          if (isStaleCreditDoc(doc._id, doc._rev)) return;
+          recordAppliedCreditVersion(doc._id, doc._rev);
           dispatch(
             updateCredit({
               id: doc.id,

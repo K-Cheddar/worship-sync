@@ -43,6 +43,8 @@ export type TeamsAssignmentSummaryRow = {
   slotLabel: string;
   /** null when the slot is required but nobody is assigned yet. */
   memberName: string | null;
+  /** Public profile image for the assigned roster member, when present. */
+  memberProfileImageUrl?: string;
   /**
    * False when the assigned person has neither an email nor a linked account,
    * so a notification about this slot would reach nobody. null when the slot is
@@ -215,6 +217,10 @@ export const getOccurrenceAssignmentSummary = ({
       if (!member) return guestById.get(memberId)?.name || null;
       return `${member.firstName} ${member.lastName}`.trim();
     };
+    const memberProfileImageUrlFor = (memberId?: string) => {
+      if (!memberId) return undefined;
+      return memberById.get(memberId)?.profileImageUrl || undefined;
+    };
     // Resolved here, where the member record is already in hand — the panel
     // receives rows, not the roster, so it cannot look this up itself.
     const canNotifyFor = (memberId?: string) => {
@@ -228,6 +234,7 @@ export const getOccurrenceAssignmentSummary = ({
       columnKey,
       slotLabel,
       memberName,
+      memberProfileImageUrl,
       canNotify,
       microphoneIds,
     }: {
@@ -235,6 +242,7 @@ export const getOccurrenceAssignmentSummary = ({
       columnKey: string;
       slotLabel: string;
       memberName: string | null;
+      memberProfileImageUrl?: string;
       canNotify: boolean | null;
       microphoneIds: string[];
     }): TeamsAssignmentSummaryRow => {
@@ -250,6 +258,7 @@ export const getOccurrenceAssignmentSummary = ({
         columnKey,
         slotLabel,
         memberName,
+        memberProfileImageUrl,
         canNotify,
         microphoneIds,
       };
@@ -301,6 +310,9 @@ export const getOccurrenceAssignmentSummary = ({
             memberName: memberNameFor(
               cells?.[column.columnKey]?.primaryMemberId,
             ),
+            memberProfileImageUrl: memberProfileImageUrlFor(
+              cells?.[column.columnKey]?.primaryMemberId,
+            ),
             canNotify: canNotifyFor(
               cells?.[column.columnKey]?.primaryMemberId,
             ),
@@ -329,6 +341,7 @@ export const getOccurrenceAssignmentSummary = ({
           columnKey: slotKey,
           slotLabel: position?.name || "Position",
           memberName,
+          memberProfileImageUrl: memberProfileImageUrlFor(cell.primaryMemberId),
           canNotify: canNotifyFor(cell.primaryMemberId),
           microphoneIds:
             schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[slotKey] ||
@@ -364,6 +377,7 @@ export const getOccurrenceAssignmentSummary = ({
         slotLabel:
           required > 1 ? `${position.name} ${slot + 1}` : position.name,
         memberName: null,
+        memberProfileImageUrl: undefined,
         // Nobody scheduled, so there is no one to reach.
         canNotify: null,
         microphoneIds: [],

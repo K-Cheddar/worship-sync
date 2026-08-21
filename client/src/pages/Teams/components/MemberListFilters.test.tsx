@@ -12,6 +12,28 @@ import {
 } from "../teamsSelectors";
 
 describe("MemberListFilterToolbar", () => {
+  const filterData: ComponentProps<typeof MemberListFilterToolbar>["data"] = {
+    teams: [
+      {
+        teamId: "team-1",
+        churchId: "church-1",
+        name: "Production",
+        memberIds: [],
+      },
+    ],
+    positions: [
+      {
+        positionId: "position-camera",
+        churchId: "church-1",
+        teamId: "team-1",
+        name: "Camera",
+      },
+    ],
+    teamRoles: [],
+    qualificationAreas: [],
+    qualificationLevels: [],
+  };
+
   it("shows a clear control only when filters are active", async () => {
     const user = userEvent.setup();
     const onClearFilters = jest.fn();
@@ -22,9 +44,11 @@ describe("MemberListFilterToolbar", () => {
 
     const { rerender } = render(
       <MemberListFilterToolbar
+        data={filterData}
         listQuery=""
         onListQueryChange={() => undefined}
         filters={emptyMemberListFilters()}
+        onFiltersChange={() => undefined}
         filtersOpen={false}
         onFiltersOpenChange={() => undefined}
         onClearFilters={onClearFilters}
@@ -35,9 +59,11 @@ describe("MemberListFilterToolbar", () => {
 
     rerender(
       <MemberListFilterToolbar
+        data={filterData}
         listQuery=""
         onListQueryChange={() => undefined}
         filters={filters}
+        onFiltersChange={() => undefined}
         filtersOpen={false}
         onFiltersOpenChange={() => undefined}
         onClearFilters={onClearFilters}
@@ -49,6 +75,47 @@ describe("MemberListFilterToolbar", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear all filters" }));
     expect(onClearFilters).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows each active filter below the controls and removes one at a time", async () => {
+    const user = userEvent.setup();
+    const onFiltersChange = jest.fn();
+    const filters = {
+      ...emptyMemberListFilters(),
+      teamIds: ["team-1"],
+      positionIds: ["position-camera"],
+      includeArchived: true,
+    };
+
+    render(
+      <MemberListFilterToolbar
+        data={filterData}
+        listQuery=""
+        onListQueryChange={() => undefined}
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+        filtersOpen={false}
+        onFiltersOpenChange={() => undefined}
+        onClearFilters={() => undefined}
+      />,
+    );
+
+    const activeFilters = screen.getByRole("group", {
+      name: "Active member filters",
+    });
+    expect(within(activeFilters).getByText("Team: Production")).toBeInTheDocument();
+    expect(within(activeFilters).getByText("Position: Camera")).toBeInTheDocument();
+    expect(within(activeFilters).getByText("Show archived")).toBeInTheDocument();
+
+    await user.click(
+      within(activeFilters).getByRole("button", {
+        name: "Remove Position: Camera filter",
+      }),
+    );
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      ...filters,
+      positionIds: [],
+    });
   });
 });
 

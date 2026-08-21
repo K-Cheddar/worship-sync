@@ -27,6 +27,47 @@ const positionGroupClassName: Record<ToastPosition, string> = {
   "bottom-center": "bottom-4 left-1/2 -translate-x-1/2 items-center",
 };
 
+type ToastStackProps = {
+  position: ToastPosition;
+  // Already ordered newest-closest-to-the-viewport-edge.
+  toasts: ToastData[];
+  onRemove: (id: string) => void;
+};
+
+const ToastStack: React.FC<ToastStackProps> = ({
+  position,
+  toasts,
+  onRemove,
+}) => {
+  return (
+    <div
+      className={cn(
+        "toast-group fixed flex flex-col gap-2 max-w-[75vw]",
+        `toast-group-${position}`,
+        positionGroupClassName[position]
+      )}
+      data-testid={`toast-group-${position}`}
+    >
+      {toasts.map((toast) => {
+        const children =
+          typeof toast.children === "function"
+            ? toast.children(toast.id)
+            : toast.children;
+
+        return (
+          <div key={toast.id}>
+            <Toast
+              {...toast}
+              children={children}
+              onClose={() => onRemove(toast.id)}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const ToastContainer: React.FC<ToastContainerProps> = ({
   toasts,
   onRemove,
@@ -55,31 +96,12 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
           : positionToasts;
 
         return (
-          <div
+          <ToastStack
             key={position}
-            className={cn(
-              "toast-group fixed flex flex-col gap-2 max-w-[75vw]",
-              `toast-group-${position}`,
-              positionGroupClassName[toastPosition]
-            )}
-            data-testid={`toast-group-${position}`}
-          >
-            {orderedToasts.map((toast) => {
-              const children =
-                typeof toast.children === "function"
-                  ? toast.children(toast.id)
-                  : toast.children;
-
-              return (
-                <Toast
-                  key={toast.id}
-                  {...toast}
-                  children={children}
-                  onClose={() => onRemove(toast.id)}
-                />
-              );
-            })}
-          </div>
+            position={toastPosition}
+            toasts={orderedToasts}
+            onRemove={onRemove}
+          />
         );
       })}
     </div>

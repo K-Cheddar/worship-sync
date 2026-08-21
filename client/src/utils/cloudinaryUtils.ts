@@ -6,6 +6,13 @@ export const deleteFromCloudinary = async (
   publicId: string,
   resourceType?: "image" | "video"
 ): Promise<boolean> => {
+  return deleteCloudinaryAsset(publicId, resourceType);
+};
+
+export const deleteCloudinaryAsset = async (
+  publicId: string,
+  resourceType?: "image" | "video"
+): Promise<boolean> => {
   try {
     const response = await fetch(
       `${getApiBasePath()}api/cloudinary/delete`,
