@@ -1,3 +1,10 @@
+## [2.25.1](https://github.com/K-Cheddar/worship-sync/compare/v2.25.0...v2.25.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* Improvements for lyric imports and following live on service plans ([5b45e03](https://github.com/K-Cheddar/worship-sync/commit/5b45e039dc5602798fc7d0f2a2b97731bac53cc4))
+
 # [2.25.0](https://github.com/K-Cheddar/worship-sync/compare/v2.24.0...v2.25.0) (2026-08-21)
 
 
