@@ -111,7 +111,12 @@ const getElementText = (element?: Element | null) =>
 /** Share links render an unassigned "Led By" as a styled placeholder where the
  * printout simply leaves the cell empty — neither should import as a name. */
 const getLedByText = (element?: Element | null) => {
-  const text = getElementText(element);
+  if (!element) return "";
+  const clone = element.cloneNode(true) as Element;
+  clone
+    .querySelectorAll("br")
+    .forEach((lineBreak) => lineBreak.replaceWith(", "));
+  const text = normalizeCellText(clone.textContent || "");
   return /^\[not specified\]$/i.test(text) ? "" : text;
 };
 

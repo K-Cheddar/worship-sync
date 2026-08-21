@@ -111,6 +111,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlan = null;
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
+    mockPlanSource.isLoading = false;
     mockCreateNewItemList.mockResolvedValue({
       _id: "outline-new",
       name: "Sabbath Service · Aug 1",
@@ -233,6 +234,47 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(mockPlanSource.selectPlan).toHaveBeenCalledWith(
       "service-2@2026-08-06",
     );
+  });
+
+  it("shows a loading status instead of the previous plan while selection changes", () => {
+    mockPlanSource.isLoading = true;
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer },
+    });
+    store.dispatch(
+      setServicePlanningServiceOutline(
+        wrapImport({
+          overlayCandidates: [],
+          overlayPlan: [],
+          outlineCandidates: [],
+          lineItems: [
+            {
+              sectionName: "Welcome",
+              headingName: "Welcome",
+              sourceRowIndex: 0,
+              elementType: "Old imported item",
+              title: "Do not show",
+              ledBy: "",
+              selectedForOutline: false,
+              outlineItemType: "none",
+              matchedLibraryItem: null,
+              parsedRef: null,
+              overlayReady: false,
+              outlineAlreadyPresent: false,
+            },
+          ],
+          teamAssignments: [],
+        }) as any,
+      ),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading the selected plan",
+    );
+    expect(screen.queryByText("Old imported item")).not.toBeInTheDocument();
   });
 
   it("shows every planning row in one list with selection badges", () => {

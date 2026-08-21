@@ -3,8 +3,10 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { render, waitFor, act } from "@testing-library/react";
 import servicePlanningImportReducer, {
+  markServicePlanningUrlSelection,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
 } from "../../store/servicePlanningImportSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -269,6 +271,9 @@ describe("useCurrentServicePlanSource", () => {
       latestResult?.selectPlan("service-2@2026-08-01");
     });
 
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+
     await waitFor(() =>
       expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
         db,
@@ -335,7 +340,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a pasted URL preview when the target outline binding changes", async () => {
+  it("replaces a URL preview carried into the Controller with the current saved plan", async () => {
     const store = makeStore();
     const urlOutline = {
       ...outlineFixture,
@@ -346,7 +351,82 @@ describe("useCurrentServicePlanSource", () => {
 
     renderHookWith(store, enabledGlobalInfo);
 
-    await waitFor(() => expect(mockListServicePlans).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      outlineFixture,
+    );
+  });
+
+  it("replaces a stored imported outline restored while the Controller is loading", async () => {
+    let resolvePlans!: (value: {
+      servicePlans: Array<{
+        planKey: string;
+        serviceId: string;
+        date: string;
+        name: string;
+      }>;
+    }) => void;
+    mockListServicePlans.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePlans = resolve;
+        }),
+    );
+    const store = makeStore();
+    const storedOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/stored-plan",
+      planLabel: "Stored imported plan",
+    };
+
+    renderHookWith(store, enabledGlobalInfo);
+    await act(async () => {
+      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+      resolvePlans({
+        servicePlans: [
+          {
+            planKey: planFixture.planKey,
+            serviceId: planFixture.serviceId,
+            date: planFixture.date,
+            name: planFixture.name,
+          },
+        ],
+      });
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      outlineFixture,
+    );
+  });
+
+  it("keeps a URL preview imported during this Controller visit when the target binding changes", async () => {
+    const store = makeStore();
+    const urlOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/plan",
+      planLabel: "Pasted plan",
+    };
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      store.dispatch(setServicePlanningServiceOutline(urlOutline));
+      store.dispatch(markServicePlanningUrlSelection());
+    });
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+
     await act(async () => {
       store.dispatch(
         setServicePlanningOutlinePlanBinding({
@@ -357,8 +437,8 @@ describe("useCurrentServicePlanSource", () => {
       );
     });
 
-    expect(mockGetServicePlan).not.toHaveBeenCalled();
-    expect(mockLoadPlanPreview).not.toHaveBeenCalled();
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
     expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
       urlOutline,
     );

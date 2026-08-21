@@ -13,6 +13,7 @@ import { useDispatch, useSelector } from "../../hooks";
 import {
   cancelServicePlanningSync,
   clearServicePlanningSyncState,
+  markServicePlanningUrlSelection,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportUrl,
   setServicePlanningServiceOutline,
@@ -358,6 +359,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       const result = await loadPreview(trimmed);
       dispatch(setServicePlanningImportUrl(trimmed));
       dispatch(setServicePlanningServiceOutline(result));
+      dispatch(markServicePlanningUrlSelection());
       dispatch(setServicePlanningFloatingWindowDismissed(false));
       setIsImportOpen(false);
       setImportUrl("");
@@ -850,7 +852,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           </div>
         ) : null}
 
-        {preview ? (
+        {!isLoading && preview ? (
           <div className="flex flex-col gap-2">
             <div className="sticky -top-3 z-10 -mx-3 -mt-2 border-b border-zinc-700 bg-gray-800/95 px-3 pt-3 pb-2 backdrop-blur">
               <Tabs
@@ -1156,8 +1158,15 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
           </div>
         ) : null}
 
-        {!preview && !isFailed ? (
-          <p className="text-zinc-400">{emptyPreviewMessage}</p>
+        {(!preview || isLoading) && !isFailed ? (
+          <div
+            className="flex items-center gap-2 text-zinc-400"
+            role={isLoading ? "status" : undefined}
+            aria-live={isLoading ? "polite" : undefined}
+          >
+            {isLoading ? <Spinner width="14px" borderWidth="2px" /> : null}
+            <p>{emptyPreviewMessage}</p>
+          </div>
         ) : null}
       </div>
     </FloatingWindow>

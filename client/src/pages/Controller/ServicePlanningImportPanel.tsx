@@ -17,6 +17,7 @@ import {
 import {
   startServicePlanningSync,
   cancelServicePlanningSync,
+  markServicePlanningUrlSelection,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
@@ -384,6 +385,7 @@ const ServicePlanningImportPanel = () => {
     try {
       const result = await loadPreview(trimmed);
       dispatch(setServicePlanningServiceOutline(result));
+      dispatch(markServicePlanningUrlSelection());
       dispatch(setServicePlanningFloatingWindowDismissed(false));
       if (
         result.preview.outlineCandidates.length === 0 &&

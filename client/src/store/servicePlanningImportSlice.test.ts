@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import servicePlanningImportReducer, {
   advanceServicePlanningSyncStep,
   cancelServicePlanningSync,
+  clearServicePlanningPreview,
   clearServicePlanningSyncState,
   completeServicePlanningSync,
   failServicePlanningSync,
@@ -89,6 +90,19 @@ describe("servicePlanningImportSlice", () => {
     expect(state.url).toBe("https://example.com/plan");
     expect(state.preview).toBeNull();
     expect(state.serviceOutline).toBeNull();
+  });
+
+  it("clears a URL preview when a saved plan starts loading", () => {
+    const store = createStore();
+
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
+    store.dispatch(clearServicePlanningPreview());
+
+    const state = store.getState().servicePlanningImport;
+    expect(state.preview).toBeNull();
+    expect(state.serviceOutline).toBeNull();
+    expect(state.servicePlanKey).toBeNull();
+    expect(state.url).toBe(serviceOutlineFixture.sourceUrl);
   });
 
   it("preserves expand/collapse flags when preview is cleared", () => {

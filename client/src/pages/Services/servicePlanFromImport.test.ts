@@ -71,6 +71,36 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(richTextToPlainText(matched.title)).toBe("Great Are You Lord");
   });
 
+  it("imports multiple Led by names as separate assignees", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [
+          {
+            sectionName: "Welcome",
+            rows: [
+              {
+                elementType: "Welcome",
+                title: "Host team",
+                ledBy: "Jamie Rivera, Morgan Lee & Taylor Smith",
+              },
+            ],
+          },
+        ],
+      },
+      songs,
+    );
+
+    expect(section.elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Jamie Rivera",
+      "Morgan Lee",
+      "Taylor Smith",
+    ]);
+    expect(section.elements[0].sourceLedByRaw).toBe(
+      "Jamie Rivera, Morgan Lee & Taylor Smith",
+    );
+  });
+
   it("captures an unmatched song as a pending song reference", () => {
     const [section] = buildServicePlanSectionsFromImport(data, songs);
     const [, unmatched] = section.elements;

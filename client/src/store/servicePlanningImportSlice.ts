@@ -77,6 +77,10 @@ export type ServicePlanningImportState = {
    * re-scraping `url` (which may be stale or belong to a different service).
    */
   servicePlanKey: string | null;
+  /** Increments only when the operator explicitly loads a URL. Consumers use
+   * this event counter to distinguish a new choice from a stored import that
+   * was restored while entering a Controller surface. */
+  urlSelectionRevision: number;
   /** Plan deliberately associated with the currently selected outline. */
   outlinePlanBinding: ServicePlanOutlineBinding | null;
   floatingWindowDismissed: boolean;
@@ -113,6 +117,7 @@ export const initialServicePlanningImportState: ServicePlanningImportState = {
   serviceOutline: null,
   preview: null,
   servicePlanKey: null,
+  urlSelectionRevision: 0,
   outlinePlanBinding: null,
   floatingWindowDismissed: true,
   floatingWindowRestoreId: 0,
@@ -127,6 +132,9 @@ export const servicePlanningImportSlice = createSlice({
   reducers: {
     setServicePlanningImportUrl: (state, action: PayloadAction<string>) => {
       state.url = action.payload;
+    },
+    markServicePlanningUrlSelection: (state) => {
+      state.urlSelectionRevision += 1;
     },
     setServicePlanningOutlinePlanBinding: (
       state,
@@ -187,6 +195,17 @@ export const servicePlanningImportSlice = createSlice({
      */
     clearServicePlanningPlanOutline: (state) => {
       if (!state.servicePlanKey) return;
+      state.serviceOutline = null;
+      state.preview = null;
+      state.servicePlanKey = null;
+    },
+    /**
+     * Clears whichever preview is currently visible while a saved plan is
+     * being selected. Unlike `clearServicePlanningPlanOutline`, this also
+     * replaces a URL-sourced preview so an earlier import cannot remain on
+     * screen under the newly selected plan's label.
+     */
+    clearServicePlanningPreview: (state) => {
       state.serviceOutline = null;
       state.preview = null;
       state.servicePlanKey = null;
@@ -381,11 +400,13 @@ export const servicePlanningImportSlice = createSlice({
 
 export const {
   setServicePlanningImportUrl,
+  markServicePlanningUrlSelection,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
   setStoredServicePlanningOutlineIfIdle,
   setServicePlanningPlanOutline,
   clearServicePlanningPlanOutline,
+  clearServicePlanningPreview,
   resetServicePlanningImportPreview,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportOverlaySummaryExpanded,
