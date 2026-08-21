@@ -1,6 +1,7 @@
 import { ChevronRight, Pencil, Users } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
+import ProfileImagePreview from "../../../components/ProfileImagePreview/ProfileImagePreview";
 import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrophoneChip";
 import {
   Popover,
@@ -242,10 +243,9 @@ const WhosServingPanel = ({
                           readable; mic chips drop to a second line. */}
                       <div className="flex w-full items-center gap-2">
                         {hasMicrophones && row.memberProfileImageUrl ? (
-                          <img
-                            src={row.memberProfileImageUrl}
-                            alt=""
-                            className="h-12 w-12 shrink-0 rounded-full object-cover"
+                          <ProfileImagePreview
+                            imageUrl={row.memberProfileImageUrl}
+                            memberName={memberName}
                           />
                         ) : null}
                         <span className="min-w-0 flex-1 truncate text-xs text-gray-400">

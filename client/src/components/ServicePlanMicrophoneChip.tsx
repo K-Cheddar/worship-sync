@@ -55,7 +55,7 @@ export const ServicePlanMicrophoneChip = ({
         // the X sits flush against the pill edge on template/plan edit rows.
         // shrink-0 + no max-width so name and type stay fully readable; parents
         // flex-wrap chips onto the next line instead of clipping them.
-        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border py-0.5 text-[11px]",
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border py-0.5 text-xs",
         children ? "pl-1.5 pr-2" : "px-1",
         !chromeStyle && (theme === "light"
           ? "border-slate-300 bg-slate-100 text-slate-900"

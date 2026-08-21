@@ -16,7 +16,7 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
-  size?: "sm" | "md" | "lg" | "xl" | "2xl" | "full";
+  size?: "sm" | "md" | "lg" | "xl" | "2xl" | "fit" | "full";
   showCloseButton?: boolean;
   contentPadding?: string;
   headerAction?: React.ReactNode;
@@ -39,6 +39,7 @@ const sizeClasses = {
   lg: "max-w-4xl",
   xl: "max-w-6xl",
   "2xl": "max-w-7xl",
+  fit: "w-fit max-w-[calc(100%-2rem)]",
   full: "inset-0 left-0 top-0 h-full max-h-full w-full max-w-none translate-x-0 translate-y-0 p-0",
 };
 
@@ -100,7 +101,7 @@ const Modal = ({
                   "bg-gray-800",
                   size === "full"
                     ? "h-full rounded-none"
-                    : "rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
+                    : "w-fit max-w-full rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
                 )
             )}
           >
@@ -139,6 +140,8 @@ const Modal = ({
                 "min-h-0 flex-1",
                 size === "full"
                   ? "flex max-h-none flex-col overflow-hidden"
+                  : size === "fit"
+                    ? "max-h-[calc(100vh-8rem)] overflow-hidden"
                   : "max-h-[calc(90vh-120px)] overflow-y-auto scrollbar-variable max-md:max-h-[calc(100vh)]",
                 contentPadding
               )}
