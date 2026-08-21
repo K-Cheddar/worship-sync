@@ -1,3 +1,11 @@
+## [2.25.2](https://github.com/K-Cheddar/worship-sync/compare/v2.25.1...v2.25.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* Improve service plan selection in controller ([51058b6](https://github.com/K-Cheddar/worship-sync/commit/51058b6d3637e5a582dcf4547d99640fa5d44124))
+* Visual adjustments to microphones ([d661126](https://github.com/K-Cheddar/worship-sync/commit/d6611269659c94d117481713ec975ea57fbba98e))
+
 ## [2.25.1](https://github.com/K-Cheddar/worship-sync/compare/v2.25.0...v2.25.1) (2026-08-21)
 
 
