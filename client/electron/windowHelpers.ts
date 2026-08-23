@@ -157,8 +157,8 @@ interface WindowConfig {
   route: string;
   isDev: boolean;
   dirname: string;
-  /** Hide the mouse pointer in this window; skip for windows a user still needs to scroll/click, like the board display. */
-  hideCursor?: boolean;
+  /** Hide the mouse pointer in this window when the display is output-only. */
+  hideCursor: boolean;
 }
 
 export const setupWindowEventListeners = (
@@ -183,10 +183,9 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
     show: false,
   });
 
-  // Most display windows are output-only, and a stray pointer is distracting
-  // when the window is projected or streamed. The board display stays scrollable
-  // and clickable at the machine, so it keeps its cursor.
-  if (config.hideCursor !== false) {
+  // Output-only displays can hide a stray pointer, while operator-facing
+  // displays keep it available for local scrolling and interaction.
+  if (config.hideCursor) {
     window.webContents.on("dom-ready", () => {
       void window.webContents.insertCSS("*, *::before, *::after { cursor: none !important; }");
     });

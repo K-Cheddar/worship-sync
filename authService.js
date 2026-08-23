@@ -2281,6 +2281,17 @@ const establishHumanSession = async ({
 };
 
 const establishWorkstationSession = async ({ req, church, workstation }) => {
+  // A durable workstation token may be used after the cookie-backed session
+  // expired or disappeared with a dyno. Rotate the session id before restoring
+  // auth state so recovery cannot reuse a potentially fixed session id.
+  if (typeof req.session?.regenerate === "function") {
+    await new Promise((resolve, reject) => {
+      req.session.regenerate((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
   ensureSessionCsrfToken(req);
   req.session.auth = {
     sessionKind: SESSION_KIND_WORKSTATION,
@@ -3274,6 +3285,11 @@ const getHumanBootstrap = async (req) => {
     return null;
   }
   if (sessionExpired(authSession)) {
+    logAuthEvent("warn", "auth.session.expired", {
+      sessionKind: SESSION_KIND_HUMAN,
+      hasWorkstationToken: Boolean(parseDeviceTokens(req).workstationToken),
+      hasDisplayToken: Boolean(parseDeviceTokens(req).displayToken),
+    });
     await revokeHumanApiCredentialSlot(
       authSession.userId,
       authSession.deviceId,
@@ -3383,6 +3399,11 @@ const resolveWorkstationFromSession = async (req) => {
     return null;
   }
   if (sessionExpired(authSession)) {
+    logAuthEvent("warn", "auth.session.expired", {
+      sessionKind: SESSION_KIND_WORKSTATION,
+      hasWorkstationToken: Boolean(parseDeviceTokens(req).workstationToken),
+      hasDisplayToken: Boolean(parseDeviceTokens(req).displayToken),
+    });
     await destroySession(req);
     return null;
   }
@@ -3423,7 +3444,11 @@ const getWorkstationBootstrap = async (req, token) => {
   }
   const church = await getChurchById(workstation.churchId);
   if (!church) return null;
-  return buildWorkstationBootstrap({
+  logAuthEvent("warn", "auth.workstation_token_fallback", {
+    hadSession: Boolean(req.session?.auth),
+    sessionKind: req.session?.auth?.sessionKind || null,
+  });
+  return establishWorkstationSession({
     req,
     church,
     workstation: { deviceId: workstation.id, ...workstation },
@@ -4291,6 +4316,13 @@ export const authHandlers = {
       if (displayBootstrap) {
         return res.json(displayBootstrap);
       }
+
+      logAuthEvent("warn", "auth.me.unauthenticated", {
+        hadSession: Boolean(req.session?.auth),
+        sessionKind: req.session?.auth?.sessionKind || null,
+        hasWorkstationToken: Boolean(workstationToken),
+        hasDisplayToken: Boolean(displayToken),
+      });
 
       return res.json({
         authenticated: false,

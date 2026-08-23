@@ -22,6 +22,10 @@ const createSession = () => ({
   destroy(callback) {
     callback?.();
   },
+  regenerate(callback) {
+    delete this.auth;
+    callback?.();
+  },
 });
 
 const createReq = ({
@@ -251,6 +255,22 @@ test("workstation redeem with platformType web establishes a session", async (t)
   assert.equal(redeemRes.payload?.sessionEstablished, true);
   assert.ok(redeemRes.payload?.bootstrap?.authenticated);
   assert.equal(redeemRes.payload?.bootstrap?.sessionKind, "workstation");
+
+  const recoveredSession = createSession();
+  const meRes = createRes();
+  await authHandlers.getAuthMe(
+    createReq({
+      session: recoveredSession,
+      headers: {
+        "x-workstation-token": redeemRes.payload?.credential,
+      },
+    }),
+    meRes,
+  );
+  assert.equal(meRes.statusCode, 200);
+  assert.equal(meRes.payload?.authenticated, true);
+  assert.equal(meRes.payload?.sessionKind, "workstation");
+  assert.equal(recoveredSession.auth?.sessionKind, "workstation");
 });
 
 test("a paired workstation can view saved Service Plans but not edit them", async (t) => {

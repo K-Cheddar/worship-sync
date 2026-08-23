@@ -23,6 +23,41 @@ export const isFirebasePermissionDenied = (error: unknown): boolean => {
   );
 };
 
+export type FirebaseErrorDetails = {
+  code?: string;
+  message?: string;
+};
+
+export const getFirebaseErrorDetails = (error: unknown): FirebaseErrorDetails => {
+  if (!error || typeof error !== "object") {
+    return { message: String(error ?? "Unknown Firebase error") };
+  }
+  const maybe = error as { code?: unknown; message?: unknown };
+  return {
+    code: typeof maybe.code === "string" ? maybe.code : undefined,
+    message: typeof maybe.message === "string" ? maybe.message : String(error),
+  };
+};
+
+/** Emit consistent, token-free diagnostics for Firebase operations. */
+export const logFirebaseOperationFailure = (
+  operation: string,
+  path: string,
+  error: unknown,
+  context: Record<string, unknown> = {},
+) => {
+  console.error(
+    "[firebase diagnostic]",
+    JSON.stringify({
+      event: "firebase_operation_failed",
+      operation,
+      path,
+      ...getFirebaseErrorDetails(error),
+      ...context,
+    }),
+  );
+};
+
 /** Warn (and slow down) after this many consecutive denials (~20s of fast retries). */
 const PERMISSION_RETRY_WARN_AT = 12;
 /** Steady-state interval once denials look persistent — likely a real rules issue (ms). */
@@ -88,6 +123,18 @@ export const subscribeWithPermissionRetry = (
       (error) => {
         if (cancelled) return;
         if (isFirebasePermissionDenied(error)) {
+          if (attempt === 0) {
+            console.warn(
+              "[firebase diagnostic]",
+              JSON.stringify({
+                event: "firebase_listener_permission_denied",
+                operation: "subscribe",
+                path,
+                label: label ?? path,
+                retryScheduled: true,
+              }),
+            );
+          }
           if (attempt >= PERMISSION_RETRY_WARN_AT && !warned) {
             warned = true;
             console.warn(
@@ -100,7 +147,10 @@ export const subscribeWithPermissionRetry = (
           retryTimeout = setTimeout(attach, retryDelayMs(thisAttempt));
           return;
         }
-        console.error(`Could not subscribe to ${label ?? path}:`, error);
+        logFirebaseOperationFailure("subscribe", path, error, {
+          label: label ?? path,
+          permissionDenied: false,
+        });
         onError?.(error as Error);
       }
     );

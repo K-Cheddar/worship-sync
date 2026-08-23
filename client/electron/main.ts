@@ -272,6 +272,7 @@ const createProjectorWindow = () => {
     route: "/projector-full",
     isDev,
     dirname: __dirname,
+    hideCursor: true,
   });
 
   setDisplayWindow("projector", newWindow);
@@ -305,6 +306,7 @@ const createMonitorWindow = () => {
     route: "/monitor",
     isDev,
     dirname: __dirname,
+    hideCursor: false,
   });
 
   setDisplayWindow("monitor", newWindow);
