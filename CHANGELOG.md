@@ -1,3 +1,10 @@
+## [2.25.3](https://github.com/K-Cheddar/worship-sync/compare/v2.25.2...v2.25.3) (2026-08-23)
+
+
+### Bug Fixes
+
+* add logs and fix cursor on monitor ([5bd9c3a](https://github.com/K-Cheddar/worship-sync/commit/5bd9c3a44aedf066ec673b8ef184b3142329d8e3))
+
 ## [2.25.2](https://github.com/K-Cheddar/worship-sync/compare/v2.25.1...v2.25.2) (2026-08-21)
 
 
