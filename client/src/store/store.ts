@@ -100,6 +100,10 @@ import {
   migrateLegacyCreditsToActiveOutlineIfNeeded,
 } from "../utils/dbUtils";
 import { applyPouchAudit } from "@/utils/pouchAudit";
+import {
+  isFirebasePermissionDenied,
+  logFirebaseOperationFailure,
+} from "../utils/firebaseListeners";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -143,11 +147,19 @@ const writePendingTimersToStorageAndFirebase = async (
     getChurchDataPath(globalFireDbInfo.churchId, "timers"),
   );
 
-  const snapshot = await get(timersRef);
-  const currentTimers = Array.isArray(snapshot.val()) ? snapshot.val() : [];
-  const mergedTimers = mergeTimers(currentTimers, ownTimers, globalHostId);
+  try {
+    const snapshot = await get(timersRef);
+    const currentTimers = Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    const mergedTimers = mergeTimers(currentTimers, ownTimers, globalHostId);
 
-  await Promise.resolve(set(timersRef, cleanObject(mergedTimers)));
+    await Promise.resolve(set(timersRef, cleanObject(mergedTimers)));
+  } catch (error) {
+    logFirebaseOperationFailure("timer_sync", timersRef.toString(), error, {
+      churchId: globalFireDbInfo.churchId,
+      permissionDenied: isFirebasePermissionDenied(error),
+    });
+    throw error;
+  }
   return true;
 };
 
@@ -362,7 +374,7 @@ const getOverlaySelectionForUndoRedo = (
 };
 
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
-export const writePresentationSnapshotToFirebase = (state: RootState) => {
+export const writePresentationSnapshotToFirebase = async (state: RootState) => {
   if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
   const {
     projectorInfo,
@@ -435,13 +447,25 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
     JSON.stringify(streamItemContentBlocked),
   );
 
-  set(
-    ref(
-      globalFireDbInfo.db,
-      getChurchDataPath(globalFireDbInfo.churchId, "presentation"),
-    ),
-    cleanObject(presentationUpdate),
+  const presentationPath = getChurchDataPath(
+    globalFireDbInfo.churchId,
+    "presentation",
   );
+  try {
+    await Promise.resolve(
+      set(
+        ref(globalFireDbInfo.db, presentationPath),
+        cleanObject(presentationUpdate),
+      ),
+    );
+  } catch (error) {
+    logFirebaseOperationFailure("presentation_sync", presentationPath, error, {
+      churchId: globalFireDbInfo.churchId,
+      permissionDenied: isFirebasePermissionDenied(error),
+      includesOverlayLanes: true,
+    });
+    throw error;
+  }
 };
 
 let lastActionTime = 0;
@@ -2068,7 +2092,9 @@ listenerMiddleware.startListening({
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
-    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+    await writePresentationSnapshotToFirebase(
+      listenerApi.getState() as RootState,
+    );
   },
 });
 
@@ -2085,7 +2111,9 @@ listenerMiddleware.startListening({
   effect: async (_action, listenerApi) => {
     if (!globalFireDbInfo.db) return;
     await listenerApi.delay(15);
-    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+    await writePresentationSnapshotToFirebase(
+      listenerApi.getState() as RootState,
+    );
   },
 });
 
@@ -2099,7 +2127,9 @@ listenerMiddleware.startListening({
   effect: async (_action, listenerApi) => {
     if (!globalFireDbInfo.db) return;
     await listenerApi.delay(15);
-    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+    await writePresentationSnapshotToFirebase(
+      listenerApi.getState() as RootState,
+    );
   },
 });
 

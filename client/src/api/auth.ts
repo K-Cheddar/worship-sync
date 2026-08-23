@@ -2,8 +2,14 @@ import {
   getApiBasePath,
   isPackagedElectronRenderer,
 } from "../utils/environment";
-import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
+import {
+  getCsrfToken,
+  getHumanApiToken,
+  getWorkstationToken,
+  getDisplayToken,
+} from "../utils/authStorage";
 import { notifyAuthError, requestAuthRecovery } from "./authErrorBus";
+import { logAuthDiagnostic } from "../utils/authDiagnostics";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
   ServicePlan,
@@ -125,6 +131,7 @@ const apiFetch = async <T>(
 ) => {
   const runFetch = async () => {
     try {
+      const workstationToken = getWorkstationToken();
       const response = await fetch(`${getApiBasePath()}${path}`, {
         credentials: "include",
         ...options,
@@ -134,6 +141,9 @@ const apiFetch = async <T>(
           ...(extraHeaders || {}),
           ...(isPackagedElectronRenderer() && getHumanApiToken()
             ? { Authorization: `Bearer ${getHumanApiToken()}` }
+            : {}),
+          ...(workstationToken
+            ? { "x-workstation-token": workstationToken }
             : {}),
           ...((options.method || "GET").toUpperCase() !== "GET" &&
           getCsrfToken()
@@ -152,13 +162,17 @@ const apiFetch = async <T>(
 
   let { response, data } = await runFetch();
 
+  let recoveryAttempted = false;
+  let recoverySucceeded = false;
+
   if (
     !response.ok &&
     response.status === 401 &&
     config.authRecovery !== false
   ) {
-    const recovered = await requestAuthRecovery();
-    if (recovered) {
+    recoveryAttempted = true;
+    recoverySucceeded = await requestAuthRecovery();
+    if (recoverySucceeded) {
       ({ response, data } = await runFetch());
     }
   }
@@ -167,6 +181,15 @@ const apiFetch = async <T>(
     // A 401 means the session is gone; announce it so the app can prompt a
     // refresh no matter which action triggered the request.
     if (response.status === 401 && config.notifyAuthError !== false) {
+      logAuthDiagnostic("error", "auth_api_unauthorized", {
+        path,
+        recoveryAttempted,
+        recoverySucceeded,
+        responseMessage: data?.errorMessage || "",
+        hasWorkstationToken: Boolean(getWorkstationToken()),
+        hasDisplayToken: Boolean(getDisplayToken()),
+        hasHumanApiToken: Boolean(getHumanApiToken()),
+      });
       notifyAuthError();
     }
     throw new AuthApiError(data?.errorMessage || "Request failed", {

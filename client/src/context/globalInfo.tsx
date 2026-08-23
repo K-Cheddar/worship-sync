@@ -141,6 +141,7 @@ import {
   isFirebasePermissionDenied,
   subscribeWithPermissionRetry,
 } from "../utils/firebaseListeners";
+import { getAuthErrorDetails, logAuthDiagnostic } from "../utils/authDiagnostics";
 // import { useRealtimeDatabaseHealthCheck } from "@/hooks/useRealtimeDatabaseHealthCheck";
 
 /** Firebase client calls are Promise-like in production but may return void in tests. */
@@ -860,7 +861,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     const promise = (async () => {
       const persistedUser = await waitForHumanAuthUser();
-      if (!persistedUser) return false;
+      if (!persistedUser) {
+        logAuthDiagnostic("error", "auth_api_recovery_no_firebase_user", {
+          sessionKind,
+        });
+        return false;
+      }
 
       try {
         const idToken = await persistedUser.getIdToken(true);
@@ -876,7 +882,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           { notifyAuthError: false },
         );
 
-        if (!restoredSession.bootstrap) return false;
+        if (!restoredSession.bootstrap) {
+          logAuthDiagnostic("error", "auth_api_recovery_no_bootstrap", {
+            firebaseHumanUserAvailable: true,
+            sessionKind,
+            requiresEmailCode: restoredSession.requiresEmailCode,
+          });
+          return false;
+        }
 
         applyBootstrap(restoredSession.bootstrap);
         if (isPackagedElectronRenderer() && restoredSession.humanApiToken) {
@@ -887,7 +900,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         setAuthError("");
         return true;
       } catch (error) {
-        console.error("Silent auth session recovery failed:", error);
+        logAuthDiagnostic("error", "auth_api_recovery_failed", {
+          ...getAuthErrorDetails(error),
+          firebaseHumanUserAvailable: true,
+          sessionKind,
+        });
         return false;
       }
     })();
@@ -898,7 +915,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     } finally {
       recoverAuthSessionPromiseRef.current = null;
     }
-  }, [applyBootstrap, waitForHumanAuthUser]);
+  }, [applyBootstrap, sessionKind, waitForHumanAuthUser]);
 
   useEffect(() => {
     return registerAuthRecoveryHandler(recoverAuthSessionForApi);
@@ -1363,7 +1380,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (!bootstrap) {
           if (bootstrapError) {
-            console.error("Auth bootstrap server check failed:", bootstrapError);
+            logAuthDiagnostic("error", "auth_bootstrap_failed", {
+              attemptCount: MAX_INITIAL_SESSION_RETRIES + 1,
+              ...getAuthErrorDetails(bootstrapError),
+              hasWorkstationToken: Boolean(getWorkstationToken()),
+              hasDisplayToken: Boolean(getDisplayToken()),
+            });
           }
           if (bootstrapError && isReachabilityError(bootstrapError)) {
             applyOfflineBootstrapFallback();
@@ -1381,6 +1403,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         const persistedUser = await waitForHumanAuthUser();
         if (!persistedUser) {
+          logAuthDiagnostic("error", "auth_bootstrap_unauthenticated", {
+            hasWorkstationToken: Boolean(getWorkstationToken()),
+            hasDisplayToken: Boolean(getDisplayToken()),
+            firebaseHumanUserAvailable: false,
+          });
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
           return;
         }
@@ -1430,17 +1457,24 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
         } catch (error) {
           if (isReachabilityError(error)) {
-            console.error("Could not reach server while restoring session:", error);
+            logAuthDiagnostic("error", "auth_session_restore_unreachable", {
+              ...getAuthErrorDetails(error),
+            });
             applyOfflineBootstrapFallback();
             return;
           }
 
-          console.error("Auth session restore failed:", error);
+          logAuthDiagnostic("error", "auth_session_restore_failed", {
+            ...getAuthErrorDetails(error),
+            firebaseHumanUserAvailable: true,
+          });
           setAuthError(AUTH_SIGN_IN_AGAIN_MESSAGE);
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
         }
       } catch (error) {
-        console.error("Auth bootstrap failed:", error);
+        logAuthDiagnostic("error", "auth_bootstrap_unhandled_failure", {
+          ...getAuthErrorDetails(error),
+        });
         if (isReachabilityError(error)) {
           applyOfflineBootstrapFallback();
           return;
@@ -1568,7 +1602,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
               return;
             }
-            console.error("Shared realtime sign-in error:", error);
+            logAuthDiagnostic("error", "shared_realtime_auth_failed", {
+              ...getAuthErrorDetails(error),
+              sessionScope: targetSharedDataScope,
+              permissionDenied: isFirebasePermissionDenied(error),
+            });
             setFirebaseDb(undefined);
             setIsSharedDataReady(false);
             setAuthenticatedSharedDataScope(null);
@@ -1580,7 +1618,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
           return;
         }
-        console.error("Shared realtime sign-in error:", error);
+        logAuthDiagnostic("error", "shared_realtime_token_failed", {
+          ...getAuthErrorDetails(error),
+          sessionScope: targetSharedDataScope,
+          permissionDenied: isFirebasePermissionDenied(error),
+        });
         setFirebaseDb(undefined);
         setIsSharedDataReady(false);
         setAuthenticatedSharedDataScope(null);

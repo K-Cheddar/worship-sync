@@ -43,12 +43,13 @@ describe("createDisplayWindow", () => {
     );
   });
 
-  it("hides the cursor once the display route finishes loading", () => {
+  it("hides the cursor once the projector route finishes loading", () => {
     const window = createDisplayWindow({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       route: "/projector-full",
       isDev: true,
       dirname: "C:/app/dist-electron/main",
+      hideCursor: true,
     });
 
     const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
@@ -64,7 +65,23 @@ describe("createDisplayWindow", () => {
     );
   });
 
-  it("keeps the cursor visible when hideCursor is false", () => {
+  it("keeps the cursor visible for monitor displays", () => {
+    const window = createDisplayWindow({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      route: "/monitor",
+      isDev: true,
+      dirname: "C:/app/dist-electron/main",
+      hideCursor: false,
+    });
+
+    const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
+      ([event]) => event === "dom-ready",
+    )?.[1];
+
+    expect(domReadyHandler).toBeUndefined();
+  });
+
+  it("keeps the cursor visible for board displays", () => {
     const window = createDisplayWindow({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       route: "/boards/display",
