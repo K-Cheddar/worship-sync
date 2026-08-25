@@ -140,6 +140,43 @@ const loadStoreWithMediaPersistence = () => {
   };
 };
 
+const loadStoreWithOverlayTemplatePersistence = () => {
+  let storeModule: any;
+  let overlayTemplatesSliceModule: any;
+  const db = {
+    get: jest.fn(),
+    put: jest.fn(),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: undefined,
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlayTemplatesSliceModule = require("./overlayTemplatesSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    overlayTemplatesSlice:
+      overlayTemplatesSliceModule.overlayTemplatesSlice,
+    db,
+  };
+};
+
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
@@ -2075,6 +2112,51 @@ describe("store module", () => {
         hostId: "remote-host",
       }),
     ]);
+  });
+
+  it("persists a selected default when creating the overlay templates document", async () => {
+    jest.useFakeTimers();
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, overlayTemplatesSlice, db } =
+      loadStoreWithOverlayTemplatePersistence();
+    db.get.mockRejectedValue(new Error("missing"));
+    db.put.mockResolvedValue({
+      ok: true,
+      id: "overlay-templates",
+      rev: "1-overlay-templates",
+    });
+
+    store.dispatch(overlayTemplatesSlice.actions.initiateTemplates(undefined));
+    store.dispatch(
+      overlayTemplatesSlice.actions.addTemplate({
+        type: "participant",
+        template: {
+          id: "participant-default",
+          name: "Participant default",
+          formatting: {},
+          createdAt: "2026-08-25T00:00:00.000Z",
+          updatedAt: "2026-08-25T00:00:00.000Z",
+        },
+      }),
+    );
+    store.dispatch(
+      overlayTemplatesSlice.actions.setDefaultTemplate({
+        type: "participant",
+        templateId: "participant-default",
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "overlay-templates",
+        defaultTemplateIdsByType: {
+          participant: "participant-default",
+        },
+      }),
+    );
   });
 
   it("does not let a view-only display publish timers or service times", async () => {

@@ -2077,10 +2077,11 @@ listenerMiddleware.startListening({
       const db_templates = {
         _id: "overlay-templates",
         templatesByType: templatesByType,
+        defaultTemplateIdsByType,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      db.put(db_templates);
+      await db.put(db_templates);
     }
   },
 });
