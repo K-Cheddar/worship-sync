@@ -8,7 +8,11 @@ import {
   getWorkstationToken,
   getDisplayToken,
 } from "../utils/authStorage";
-import { notifyAuthError, requestAuthRecovery } from "./authErrorBus";
+import {
+  isAuthenticatedSessionExpected,
+  notifyAuthError,
+  requestAuthRecovery,
+} from "./authErrorBus";
 import { logAuthDiagnostic } from "../utils/authDiagnostics";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
@@ -114,12 +118,67 @@ type ApiFetchConfig = {
 
 const readJsonResponse = async <T>(response: Response) => {
   try {
-    return (await response.json()) as T & { errorMessage?: string };
+    return (await response.json()) as T & {
+      errorMessage?: string;
+      error?: string;
+    };
   } catch {
     throw new AuthApiError("Received an invalid server response.", {
       status: response.status,
       isReachabilityError: true,
     });
+  }
+};
+
+const performApiRequest = async <T>(
+  path: string,
+  options: RequestInit = {},
+  extraHeaders?: Record<string, string>,
+) => {
+  try {
+    const workstationToken = getWorkstationToken();
+    const response = await fetch(`${getApiBasePath()}${path}`, {
+      credentials: "include",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+        ...(extraHeaders || {}),
+        ...(isPackagedElectronRenderer() && getHumanApiToken()
+          ? { Authorization: `Bearer ${getHumanApiToken()}` }
+          : {}),
+        ...(workstationToken
+          ? { "x-workstation-token": workstationToken }
+          : {}),
+        ...((options.method || "GET").toUpperCase() !== "GET" &&
+        getCsrfToken()
+          ? { "x-csrf-token": getCsrfToken() }
+          : {}),
+      },
+    });
+    return { response, data: await readJsonResponse<T>(response) };
+  } catch (error) {
+    if (error instanceof AuthApiError) throw error;
+    throw new AuthApiError("Could not reach the server.", {
+      isReachabilityError: true,
+    });
+  }
+};
+
+type SessionVerification = "authenticated" | "unauthenticated" | "unknown";
+
+/** A final endpoint 401 is not proof that the current app session is gone. */
+const verifyCurrentAppSession = async (): Promise<SessionVerification> => {
+  try {
+    const { response, data } = await performApiRequest<AuthBootstrap>(
+      "api/auth/me",
+      { method: "GET" },
+    );
+    if (!response.ok) return "unknown";
+    return data.authenticated ? "authenticated" : "unauthenticated";
+  } catch {
+    // Network/server uncertainty must not be presented as a sign-in failure.
+    return "unknown";
   }
 };
 
@@ -129,46 +188,21 @@ const apiFetch = async <T>(
   extraHeaders?: Record<string, string>,
   config: ApiFetchConfig = {},
 ) => {
-  const runFetch = async () => {
-    try {
-      const workstationToken = getWorkstationToken();
-      const response = await fetch(`${getApiBasePath()}${path}`, {
-        credentials: "include",
-        ...options,
-        headers: {
-          "Content-Type": "application/json",
-          ...(options.headers || {}),
-          ...(extraHeaders || {}),
-          ...(isPackagedElectronRenderer() && getHumanApiToken()
-            ? { Authorization: `Bearer ${getHumanApiToken()}` }
-            : {}),
-          ...(workstationToken
-            ? { "x-workstation-token": workstationToken }
-            : {}),
-          ...((options.method || "GET").toUpperCase() !== "GET" &&
-          getCsrfToken()
-            ? { "x-csrf-token": getCsrfToken() }
-            : {}),
-        },
-      });
-      return { response, data: await readJsonResponse<T>(response) };
-    } catch (error) {
-      if (error instanceof AuthApiError) throw error;
-      throw new AuthApiError("Could not reach the server.", {
-        isReachabilityError: true,
-      });
-    }
-  };
+  const runFetch = () => performApiRequest<T>(path, options, extraHeaders);
 
   let { response, data } = await runFetch();
 
   let recoveryAttempted = false;
   let recoverySucceeded = false;
+  let sessionVerification: SessionVerification | "not_attempted" =
+    "not_attempted";
+  const authenticatedSessionExpected = isAuthenticatedSessionExpected();
 
   if (
     !response.ok &&
     response.status === 401 &&
-    config.authRecovery !== false
+    config.authRecovery !== false &&
+    authenticatedSessionExpected
   ) {
     recoveryAttempted = true;
     recoverySucceeded = await requestAuthRecovery();
@@ -177,25 +211,47 @@ const apiFetch = async <T>(
     }
   }
 
+  if (
+    !response.ok &&
+    response.status === 401 &&
+    config.notifyAuthError !== false &&
+    authenticatedSessionExpected
+  ) {
+    sessionVerification = await verifyCurrentAppSession();
+  }
+
   if (!response.ok) {
-    // A 401 means the session is gone; announce it so the app can prompt a
-    // refresh no matter which action triggered the request.
     if (response.status === 401 && config.notifyAuthError !== false) {
-      logAuthDiagnostic("error", "auth_api_unauthorized", {
-        path,
-        recoveryAttempted,
-        recoverySucceeded,
-        responseMessage: data?.errorMessage || "",
-        hasWorkstationToken: Boolean(getWorkstationToken()),
-        hasDisplayToken: Boolean(getDisplayToken()),
-        hasHumanApiToken: Boolean(getHumanApiToken()),
-      });
-      notifyAuthError();
+      const promptConfirmed =
+        isAuthenticatedSessionExpected() &&
+        sessionVerification === "unauthenticated";
+      logAuthDiagnostic(
+        promptConfirmed ? "error" : "warn",
+        promptConfirmed
+          ? "auth_api_unauthorized"
+          : "auth_api_unauthorized_prompt_suppressed",
+        {
+          path,
+          recoveryAttempted,
+          recoverySucceeded,
+          sessionVerification,
+          authenticatedSessionExpected,
+          authenticatedSessionExpectedNow: isAuthenticatedSessionExpected(),
+          responseMessage: data?.errorMessage || data?.error || "",
+          hasWorkstationToken: Boolean(getWorkstationToken()),
+          hasDisplayToken: Boolean(getDisplayToken()),
+          hasHumanApiToken: Boolean(getHumanApiToken()),
+        },
+      );
+      if (promptConfirmed) notifyAuthError();
     }
-    throw new AuthApiError(data?.errorMessage || "Request failed", {
-      status: response.status,
-      details: data,
-    });
+    throw new AuthApiError(
+      data?.errorMessage || data?.error || "Request failed",
+      {
+        status: response.status,
+        details: data,
+      },
+    );
   }
 
   return data;

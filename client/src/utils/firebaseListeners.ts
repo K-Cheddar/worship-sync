@@ -5,6 +5,27 @@ import {
   type DataSnapshot,
 } from "firebase/database";
 
+export type FirebaseDiagnosticContext = {
+  rendererId?: string | null;
+  sessionKind?: string | null;
+  access?: string | null;
+  surface?: string | null;
+  authGeneration?: number | null;
+  firebaseUserCorrelationId?: string | null;
+  scopeReady?: boolean;
+};
+
+let firebaseDiagnosticContext: FirebaseDiagnosticContext = {};
+
+/** Set token-free renderer/auth context included with subsequent diagnostics. */
+export const setFirebaseDiagnosticContext = (
+  context: FirebaseDiagnosticContext,
+) => {
+  firebaseDiagnosticContext = { ...context };
+};
+
+const getFirebaseDiagnosticContext = () => ({ ...firebaseDiagnosticContext });
+
 /**
  * Firebase RTDB cancels a listen *permanently* when a read is rejected by the
  * security rules (permission_denied) — common when a listener attaches before
@@ -49,6 +70,7 @@ export const logFirebaseOperationFailure = (
   console.error(
     "[firebase diagnostic]",
     JSON.stringify({
+      ...getFirebaseDiagnosticContext(),
       event: "firebase_operation_failed",
       operation,
       path,
@@ -101,11 +123,28 @@ export const subscribeWithPermissionRetry = (
   options: SubscribeWithRetryOptions = {}
 ): (() => void) => {
   const { label, onError } = options;
+  const listenerContext = getFirebaseDiagnosticContext();
   let cancelled = false;
   let unsubscribe: (() => void) | null = null;
   let retryTimeout: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let warned = false;
+  let firstDeniedAt: number | null = null;
+
+  const getListenerDiagnosticContext = () => {
+    const currentContext = getFirebaseDiagnosticContext();
+    const listenerAuthGeneration = listenerContext.authGeneration ?? null;
+    const currentAuthGeneration = currentContext.authGeneration ?? null;
+    return {
+      ...currentContext,
+      listenerAuthGeneration,
+      listenerSessionKind: listenerContext.sessionKind ?? null,
+      listenerScopeMatchesCurrent:
+        listenerAuthGeneration !== null &&
+        currentAuthGeneration !== null &&
+        listenerAuthGeneration === currentAuthGeneration,
+    };
+  };
 
   const attach = () => {
     if (cancelled) return;
@@ -117,16 +156,34 @@ export const subscribeWithPermissionRetry = (
     unsubscribe = onValue(
       valueRef,
       (snapshot) => {
+        if (attempt > 0) {
+          console.warn(
+            "[firebase diagnostic]",
+            JSON.stringify({
+              ...getListenerDiagnosticContext(),
+              event: "firebase_listener_permission_recovered",
+              operation: "subscribe",
+              path,
+              label: label ?? path,
+              attemptCount: attempt,
+              deniedForMs:
+                firstDeniedAt === null ? null : Date.now() - firstDeniedAt,
+            }),
+          );
+        }
         attempt = 0;
+        firstDeniedAt = null;
         onData(snapshot);
       },
       (error) => {
         if (cancelled) return;
         if (isFirebasePermissionDenied(error)) {
           if (attempt === 0) {
+            firstDeniedAt = Date.now();
             console.warn(
               "[firebase diagnostic]",
               JSON.stringify({
+                ...getListenerDiagnosticContext(),
                 event: "firebase_listener_permission_denied",
                 operation: "subscribe",
                 path,
@@ -148,6 +205,7 @@ export const subscribeWithPermissionRetry = (
           return;
         }
         logFirebaseOperationFailure("subscribe", path, error, {
+          ...getListenerDiagnosticContext(),
           label: label ?? path,
           permissionDenied: false,
         });

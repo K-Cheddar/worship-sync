@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode, useContext } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import GlobalInfoProvider from "./globalInfo";
-import { GlobalInfoContext } from "./globalInfo";
+import GlobalInfoProvider, {
+  GlobalInfoContext,
+  globalFireDbInfo,
+} from "./globalInfo";
 import * as authApi from "../api/auth";
 import { requestAuthRecovery } from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
@@ -242,6 +244,19 @@ const loggedInWorkstationBootstrap = {
   csrfToken: "csrf-test",
 };
 
+const loggedInDisplayBootstrap = {
+  ...loggedInWorkstationBootstrap,
+  sessionKind: "display" as const,
+  appAccess: "view" as const,
+  device: {
+    deviceId: "display-1",
+    label: "Projector",
+    operatorName: null,
+    surfaceType: "projector" as const,
+  },
+  csrfToken: null,
+};
+
 const renderProvider = (
   child: ReactNode = <div>child</div>,
   initialEntries = ["/controller"]
@@ -457,6 +472,40 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       getDatabaseMock()
     );
     (firebaseApps.getSharedDataDatabase as jest.Mock).mockClear();
+  });
+
+  it("does not sign shared-data auth out while initial bootstrap is loading", async () => {
+    let resolveBootstrap: ((value: typeof demoBootstrap) => void) | undefined;
+    (authApi.getAuthBootstrap as jest.Mock).mockImplementation(
+      () =>
+        new Promise<typeof demoBootstrap>((resolve) => {
+          resolveBootstrap = resolve;
+        }),
+    );
+
+    renderProvider();
+
+    await waitFor(() => expect(authApi.getAuthBootstrap).toHaveBeenCalled());
+    expect(signOutMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveBootstrap?.(demoBootstrap);
+    });
+
+    await waitFor(() => expect(signOutMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("marks display sessions as read-only for shared realtime data", async () => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
+      loggedInDisplayBootstrap,
+    );
+
+    renderProvider();
+
+    await waitFor(() =>
+      expect(firebaseApps.getSharedDataDatabase).toHaveBeenCalled(),
+    );
+    expect(globalFireDbInfo.canWriteSharedData).toBe(false);
   });
 
   it("routes storage updates to the current debounced projector, monitor, and stream actions", async () => {

@@ -11,6 +11,19 @@ type AuthRecoveryHandler = () => boolean | Promise<boolean>;
 
 const handlers = new Set<AuthErrorHandler>();
 const recoveryHandlers = new Set<AuthRecoveryHandler>();
+let authenticatedSessionExpected = false;
+
+/**
+ * Tracks whether the current UI bootstrap represents an authenticated app
+ * session. Public and signed-out requests must never turn an arbitrary 401
+ * into a global "sign in again" prompt.
+ */
+export const setAuthenticatedSessionExpected = (expected: boolean) => {
+  authenticatedSessionExpected = expected;
+};
+
+export const isAuthenticatedSessionExpected = () =>
+  authenticatedSessionExpected;
 
 /** Register a listener; returns an unsubscribe function. */
 export const registerAuthErrorHandler = (handler: AuthErrorHandler) => {

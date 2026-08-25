@@ -57,7 +57,10 @@ import {
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
-import { registerAuthRecoveryHandler } from "../api/authErrorBus";
+import {
+  registerAuthRecoveryHandler,
+  setAuthenticatedSessionExpected,
+} from "../api/authErrorBus";
 import type {
   ChurchBranding,
   EmailCodeChallengeFields,
@@ -139,6 +142,7 @@ import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
 import { setServerTimeOffset } from "../utils/serverTime";
 import {
   isFirebasePermissionDenied,
+  setFirebaseDiagnosticContext,
   subscribeWithPermissionRetry,
 } from "../utils/firebaseListeners";
 import { getAuthErrorDetails, logAuthDiagnostic } from "../utils/authDiagnostics";
@@ -453,6 +457,8 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
 
 type globalFireBaseInfoType = {
   db: Database | undefined;
+  isConnected: boolean;
+  canWriteSharedData: boolean;
   user: string;
   database: string;
   churchId: string;
@@ -460,6 +466,8 @@ type globalFireBaseInfoType = {
 
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
+  isConnected: false,
+  canWriteSharedData: false,
   user: "Demo",
   database: "demo",
   churchId: "",
@@ -589,13 +597,23 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const hasRehydratedServiceTimesRef = useRef(false);
   const sharedDataAuthRequestIdRef = useRef(0);
   const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
+  const firebaseUserCorrelationRef = useRef<{
+    uid: string;
+    correlationId: string;
+  } | null>(null);
+  const updateFirebaseDiagnosticContextRef = useRef<
+    (options?: {
+      authGeneration?: number;
+      firebaseUid?: string | null;
+      scopeReady?: boolean;
+    }) => string | null
+  >(() => null);
   const churchBrandingGateKeyRef = useRef("");
   const churchBrandingPermissionRetryRef = useRef(0);
   const churchBrandingRemintAttemptsRef = useRef(0);
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
-  const presentationRemintAttemptsRef = useRef(0);
   const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
@@ -606,6 +624,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const isOnHumanPath = presenceSurface === "controller";
 
   const hostId = useMemo(() => globalHostId, []);
+  const firebaseRendererContextRef = useRef<{
+    rendererId: string;
+    surface: ReturnType<typeof getPresenceSurface>;
+  }>({ rendererId: hostId, surface: presenceSurface });
+  firebaseRendererContextRef.current = {
+    rendererId: hostId,
+    surface: presenceSurface,
+  };
 
   useEffect(() => {
     if (sessionKind !== "human") {
@@ -648,10 +674,43 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
     churchIntegrationsRemintAttemptsRef.current = 0;
-    presentationRemintAttemptsRef.current = 0;
     hasSeenRealtimeConnectedRef.current = false;
     wasRealtimeConnectedRef.current = false;
   }, [sharedDataSessionScope]);
+
+  updateFirebaseDiagnosticContextRef.current = (options = {}) => {
+    const firebaseUid =
+      options.firebaseUid === undefined
+        ? getSharedDataAuth().currentUser?.uid
+        : options.firebaseUid;
+    if (
+      firebaseUid &&
+      firebaseUserCorrelationRef.current?.uid !== firebaseUid
+    ) {
+      firebaseUserCorrelationRef.current = {
+        uid: firebaseUid,
+        correlationId: `firebase-user-${generateRandomId()}`,
+      };
+    }
+    const firebaseUserCorrelationId = firebaseUid
+      ? (firebaseUserCorrelationRef.current?.correlationId ?? null)
+      : null;
+    setFirebaseDiagnosticContext({
+      rendererId: hostId,
+      sessionKind,
+      access,
+      surface: presenceSurface,
+      authGeneration:
+        options.authGeneration ?? sharedDataAuthRequestIdRef.current,
+      firebaseUserCorrelationId,
+      scopeReady: options.scopeReady ?? isSharedDataScopeReady,
+    });
+    return firebaseUserCorrelationId;
+  };
+
+  useEffect(() => {
+    updateFirebaseDiagnosticContextRef.current();
+  }, [access, hostId, isSharedDataScopeReady, presenceSurface, sessionKind]);
 
   useEffect(() => {
     setAuditSnapshot({
@@ -753,6 +812,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     bootstrap?: AuthBootstrap | null,
     options?: { clearWorkstationSessionOperator?: boolean }
   ) => {
+    setAuthenticatedSessionExpected(Boolean(bootstrap?.authenticated));
     if (!bootstrap?.authenticated) {
       setLoginState("idle");
       setSessionKind(null);
@@ -784,6 +844,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "";
       globalFireDbInfo.database = "";
       globalFireDbInfo.churchId = "";
+      globalFireDbInfo.canWriteSharedData = false;
       return;
     }
 
@@ -844,6 +905,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
+    globalFireDbInfo.canWriteSharedData =
+      (bootstrap.sessionKind === "human" ||
+        bootstrap.sessionKind === "workstation") &&
+      (bootstrap.appAccess || "view") !== "view" &&
+      (bootstrap.appAccess || "view") !== "member";
     if (bootstrap.sessionKind === "human") {
       const humanUser = getHumanAuth().currentUser;
       if (humanUser) {
@@ -1315,6 +1381,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "Demo";
       globalFireDbInfo.database = "demo";
       globalFireDbInfo.churchId = "";
+      globalFireDbInfo.canWriteSharedData = false;
       dispatch({ type: "RESET" });
       navigate(nextPath, { replace: true });
     },
@@ -1333,6 +1400,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       applyBootstrap(null);
       setFirebaseDb(undefined);
       globalFireDbInfo.db = undefined;
+      globalFireDbInfo.isConnected = false;
       navigate(nextPath, { replace: true });
     },
     [applyBootstrap, dispatch, navigate]
@@ -1403,11 +1471,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         const persistedUser = await waitForHumanAuthUser();
         if (!persistedUser) {
-          logAuthDiagnostic("error", "auth_bootstrap_unauthenticated", {
-            hasWorkstationToken: Boolean(getWorkstationToken()),
-            hasDisplayToken: Boolean(getDisplayToken()),
-            firebaseHumanUserAvailable: false,
-          });
+          const hasWorkstationToken = Boolean(getWorkstationToken());
+          const hasDisplayToken = Boolean(getDisplayToken());
+          if (hasWorkstationToken || hasDisplayToken) {
+            logAuthDiagnostic(
+              "warn",
+              "auth_bootstrap_device_credentials_rejected",
+              {
+                hasWorkstationToken,
+                hasDisplayToken,
+                firebaseHumanUserAvailable: false,
+              },
+            );
+          }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
           return;
         }
@@ -1547,18 +1623,29 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const auth = getSharedDataAuth();
     if (loginState !== "success") {
       sharedDataAuthRequestIdRef.current += 1;
+      updateFirebaseDiagnosticContextRef.current({
+        authGeneration: sharedDataAuthRequestIdRef.current,
+        firebaseUid: null,
+        scopeReady: false,
+      });
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
       setAuthenticatedSharedDataScope(null);
       setSharedDataTokenRemintNonce(0);
       globalFireDbInfo.db = undefined;
-      sharedDataAuthChainRef.current = Promise.resolve(
-        sharedDataAuthChainRef.current ?? Promise.resolve()
-      )
-        .catch(() => undefined)
-        .then(async () => {
-          await signOutFirebaseAuth(auth);
-        });
+      globalFireDbInfo.isConnected = false;
+      // "loading" is not an authenticated-state decision. Signing out here
+      // can interrupt this renderer while its server bootstrap is still in
+      // flight. Definitive unauthenticated states still clear the local Auth.
+      if (loginState !== "loading") {
+        sharedDataAuthChainRef.current = Promise.resolve(
+          sharedDataAuthChainRef.current ?? Promise.resolve()
+        )
+          .catch(() => undefined)
+          .then(async () => {
+            await signOutFirebaseAuth(auth);
+          });
+      }
       return;
     }
 
@@ -1567,10 +1654,17 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const targetSharedDataScope = sharedDataSessionScope;
     let cancelled = false;
 
+    updateFirebaseDiagnosticContextRef.current({
+      authGeneration: requestId,
+      firebaseUid: null,
+      scopeReady: false,
+    });
+
     setFirebaseDb(undefined);
     setIsSharedDataReady(false);
     setAuthenticatedSharedDataScope(null);
     globalFireDbInfo.db = undefined;
+    globalFireDbInfo.isConnected = false;
 
     void getSharedDataToken({
       workstationToken: getWorkstationToken(),
@@ -1593,6 +1687,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
               return;
             }
+            updateFirebaseDiagnosticContextRef.current({
+              authGeneration: requestId,
+              firebaseUid: auth.currentUser?.uid,
+              scopeReady: true,
+            });
             setFirebaseDb(_db);
             setIsSharedDataReady(true);
             setAuthenticatedSharedDataScope(targetSharedDataScope);
@@ -1606,11 +1705,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               ...getAuthErrorDetails(error),
               sessionScope: targetSharedDataScope,
               permissionDenied: isFirebasePermissionDenied(error),
+              ...firebaseRendererContextRef.current,
+              authGeneration: requestId,
             });
             setFirebaseDb(undefined);
             setIsSharedDataReady(false);
             setAuthenticatedSharedDataScope(null);
             globalFireDbInfo.db = undefined;
+            globalFireDbInfo.isConnected = false;
             setAuthError("Could not connect live data.");
           });
       })
@@ -1622,11 +1724,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           ...getAuthErrorDetails(error),
           sessionScope: targetSharedDataScope,
           permissionDenied: isFirebasePermissionDenied(error),
+          ...firebaseRendererContextRef.current,
+          authGeneration: requestId,
         });
         setFirebaseDb(undefined);
         setIsSharedDataReady(false);
         setAuthenticatedSharedDataScope(null);
         globalFireDbInfo.db = undefined;
+        globalFireDbInfo.isConnected = false;
         setAuthError("Could not connect live data.");
       });
 
@@ -1843,6 +1948,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
+      globalFireDbInfo.isConnected = isConnected;
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;
         return;
@@ -1882,6 +1988,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     });
 
     return () => {
+      globalFireDbInfo.isConnected = false;
       unsubscribe();
       unsubscribeOffset();
     };
@@ -2575,6 +2682,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     navigate(nextPath, { replace: true });
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
+    globalFireDbInfo.isConnected = false;
   }, [applyBootstrap, clearPendingLinkState, dispatch, navigate, sessionKind]);
 
   const unlinkCurrentWorkstation = useCallback(async () => {

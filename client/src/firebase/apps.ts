@@ -1,5 +1,10 @@
 import { FirebaseApp, getApp, getApps, initializeApp } from "firebase/app";
-import { Auth, getAuth } from "firebase/auth";
+import {
+  Auth,
+  getAuth,
+  inMemoryPersistence,
+  initializeAuth,
+} from "firebase/auth";
 import { Database, getDatabase } from "firebase/database";
 
 const firebaseConfig = {
@@ -24,7 +29,13 @@ export const getHumanAuthApp = () => getNamedApp("worshipsync-human-auth");
 export const getHumanAuth = (): Auth => getAuth(getHumanAuthApp());
 
 export const getSharedDataApp = () => getNamedApp("worshipsync-shared-data");
-export const getSharedDataAuth = (): Auth => getAuth(getSharedDataApp());
+/**
+ * Shared-data credentials are short-lived custom tokens minted during each
+ * renderer's bootstrap. Keep them renderer-local so a startup/sign-out in one
+ * tab or Electron window cannot replace the RTDB identity in another.
+ */
+export const getSharedDataAuth = (): Auth =>
+  initializeAuth(getSharedDataApp(), { persistence: inMemoryPersistence });
 export const getSharedDataDatabase = (): Database =>
   getDatabase(getSharedDataApp());
 
