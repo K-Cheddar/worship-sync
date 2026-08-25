@@ -114,6 +114,8 @@ import {
   setPendingDesktopEmailResendState,
   setWorkstationSessionOperatorName,
   getPendingDesktopEmailResendState,
+  getPendingProviderRedirectState,
+  setPendingProviderRedirectState,
 } from "../utils/authStorage";
 import {
   getHumanAuth,
@@ -212,7 +214,9 @@ type HumanFirebaseAuthResult =
   | { status: "success"; user: User }
   | { status: "requires-existing-method" }
   /** Full-page OAuth navigation started; current tab is about to leave the app. */
-  | { status: "redirect-started" };
+  | { status: "redirect-started" }
+  /** Redirect completion was requested, but Firebase had no result to consume. */
+  | { status: "redirect-not-completed" };
 
 const getCredentialJsonValue = (
   credentialJson: Record<string, unknown>,
@@ -302,6 +306,11 @@ const PASSWORD_SIGN_IN_FALLBACK_ERROR_CODES = new Set([
   "auth/user-not-found",
 ]);
 
+const POPUP_REDIRECT_FALLBACK_ERROR_CODES = new Set([
+  "auth/popup-blocked",
+  "auth/operation-not-supported-in-this-environment",
+]);
+
 type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
 type BootstrapStatus = "loading" | "ready";
 type AuthServerStatus = "checking" | "online" | "offline";
@@ -326,10 +335,14 @@ type GlobalInfoContextType = {
     method,
     email,
     password,
+    interaction,
+    redirectOnly,
   }: {
     method: HumanAuthMethod;
     email?: string;
     password?: string;
+    interaction?: "popup" | "redirect";
+    redirectOnly?: boolean;
   }) => Promise<EmailCodeChallengeFields>;
   completeDesktopExchange: ({
     desktopAuthId,
@@ -992,10 +1005,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       bootstrap,
       method,
       humanApiToken,
+      postAuthPath,
     }: {
       bootstrap: AuthBootstrap;
       method: HumanAuthMethod;
       humanApiToken?: string;
+      postAuthPath?: string;
     }) => {
       setPendingEmailVerificationId(null);
       setPendingEmailVerificationEmail(null);
@@ -1014,7 +1029,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       reloadElectronDisplayWindows();
       setAuthServerStatus("online");
-      navigate(getHumanPostAuthPath(location));
+      navigate(postAuthPath || getHumanPostAuthPath(location));
     },
     [applyBootstrap, dispatch, location, navigate],
   );
@@ -1153,11 +1168,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       email,
       password,
       interaction = "popup",
+      redirectOnly = false,
     }: {
       method: HumanAuthMethod;
       email?: string;
       password?: string;
       interaction?: "popup" | "redirect";
+      redirectOnly?: boolean;
     }): Promise<HumanFirebaseAuthResult> => {
       const auth = getHumanAuth();
       try {
@@ -1193,6 +1210,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             }
             if (redirectResult?.user) {
               firebaseUser = redirectResult.user;
+            } else if (redirectOnly) {
+              return { status: "redirect-not-completed" };
             } else {
               await signInWithRedirect(auth, provider);
               return { status: "redirect-started" };
@@ -2195,10 +2214,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     method,
     email,
     password,
+    interaction = "popup",
+    redirectOnly = false,
   }: {
     method: HumanAuthMethod;
     email?: string;
     password?: string;
+    interaction?: "popup" | "redirect";
+    redirectOnly?: boolean;
   }) => {
     if (authServerStatus !== "online") {
       setAuthError(
@@ -2214,15 +2237,65 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setAuthError("");
 
     try {
-      const authResult = await authenticateHumanWithFirebase({
-        method,
-        email,
-        password,
-      });
+      let authResult: HumanFirebaseAuthResult;
+      try {
+        authResult = await authenticateHumanWithFirebase({
+          method,
+          email,
+          password,
+          interaction,
+          redirectOnly,
+        });
+      } catch (error) {
+        const errorCode =
+          typeof error === "object" &&
+            error &&
+            "code" in error &&
+            typeof (error as { code?: unknown }).code === "string"
+            ? String((error as { code: string }).code)
+            : "";
+        const shouldFallbackToRedirect =
+          interaction === "popup" &&
+          method !== "password" &&
+          POPUP_REDIRECT_FALLBACK_ERROR_CODES.has(errorCode);
+
+        if (!shouldFallbackToRedirect) {
+          throw error;
+        }
+
+        setPendingProviderRedirectState({
+          method,
+          returnPath: getHumanPostAuthPath(location),
+        });
+        try {
+          authResult = await authenticateHumanWithFirebase({
+            method,
+            email,
+            password,
+            interaction: "redirect",
+          });
+        } catch (redirectError) {
+          setPendingProviderRedirectState(null);
+          throw redirectError;
+        }
+      }
+
+      if (authResult.status === "redirect-started") {
+        setLoginState("idle");
+        return { redirectStarted: true };
+      }
+      if (authResult.status === "redirect-not-completed") {
+        setPendingProviderRedirectState(null);
+        setAuthError("Provider sign-in did not complete. Try again.");
+        setLoginState("error");
+        return {};
+      }
       if (authResult.status !== "success") {
         setLoginState("error");
         return {};
       }
+      const pendingRedirect =
+        interaction === "redirect" ? getPendingProviderRedirectState() : null;
       const idToken = await authResult.user.getIdToken(true);
       const response = await createHumanSession({
         idToken,
@@ -2234,10 +2307,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       });
 
       if (response.bootstrap) {
+        setPendingProviderRedirectState(null);
         finalizeHumanSignIn({
           bootstrap: response.bootstrap,
           method,
           humanApiToken: response.humanApiToken,
+          postAuthPath: pendingRedirect?.returnPath,
         });
         return {};
       }
@@ -2260,6 +2335,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setAuthError(SIGN_IN_UNEXPECTED_RESPONSE);
       return {};
     } catch (e) {
+      setPendingProviderRedirectState(null);
       console.error("Sign-in error:", e);
       if (isReachabilityError(e)) {
         setAuthServerStatus("offline");
@@ -2300,6 +2376,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     authServerStatus,
     finalizeHumanSignIn,
     isReachabilityError,
+    location,
   ]);
 
   const completeDesktopExchange = useCallback(
@@ -2382,11 +2459,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       });
       const completedMethod =
         consumePendingEmailCodeSignInMethod() ?? "password";
+      const pendingRedirect = getPendingProviderRedirectState();
+      setPendingProviderRedirectState(null);
       setPendingDesktopEmailResendState(null);
       finalizeHumanSignIn({
         bootstrap: response.bootstrap,
         method: completedMethod,
         humanApiToken: response.humanApiToken,
+        postAuthPath: pendingRedirect?.returnPath,
       });
       return true;
     } catch (error) {

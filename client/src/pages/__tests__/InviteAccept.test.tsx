@@ -140,6 +140,20 @@ describe("InviteAccept", () => {
     );
   });
 
+  it("keeps Home available in the shared menu while accepting an invite", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+
+    const homeItem = screen.getByRole("menuitem", { name: "Home" });
+    expect(homeItem).toHaveAttribute(
+      "href",
+      "/",
+    );
+    await user.click(homeItem);
+  });
+
   it("shows the invited church name in the heading", async () => {
     renderPage();
 

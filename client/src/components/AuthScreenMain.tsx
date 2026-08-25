@@ -1,4 +1,5 @@
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import HomeToolbarMenu from "./HomeToolbarMenu/HomeToolbarMenu";
 
 type AuthScreenMainProps = Omit<ComponentPropsWithoutRef<"main">, "className"> & {
   children: ReactNode;
@@ -7,7 +8,7 @@ type AuthScreenMainProps = Omit<ComponentPropsWithoutRef<"main">, "className"> &
 
 /**
  * Pre-app shell: sign in, invite accept, password reset, and the bootstrap
- * splash. Deliberately has no navigation — the reader is not in the app yet.
+ * splash. Includes the shared app menu so the reader can leave the flow.
  *
  * Signed-in product pages use `AppPageShell` instead, which adds the app menu
  * and user popover and scrolls its body under a fixed header.
@@ -27,6 +28,9 @@ const AuthScreenMain = ({ children, className, ...rest }: AuthScreenMainProps) =
       .join(" ")}
     {...rest}
   >
+    <div className="mx-auto flex w-full max-w-2xl justify-start pb-4">
+      <HomeToolbarMenu />
+    </div>
     <div className="my-auto flex w-full justify-center">{children}</div>
   </main>
 );

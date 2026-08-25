@@ -11,9 +11,11 @@ import * as firebaseApps from "../firebase/apps";
 import * as environmentUtils from "../utils/environment";
 import {
   getPendingDesktopEmailResendState,
+  getPendingProviderRedirectState,
   getPendingLinkCredentialState,
   getPendingLinkState,
   setPendingDesktopEmailResendState,
+  setPendingProviderRedirectState,
   setPendingLinkCredentialState,
   setPendingLinkState,
   getWorkstationSessionOperatorName,
@@ -331,11 +333,13 @@ const ContextProbe = () => {
 
 const AuthActionsProbe = () => {
   const context = useContext(GlobalInfoContext);
+  const location = useLocation();
 
   if (!context) return null;
 
   return (
     <div>
+      <div data-testid="path">{location.pathname}</div>
       <div data-testid="probe-auth-status">{context.authServerStatus}</div>
       <div data-testid="probe-auth-error">{context.authError || "none"}</div>
       <div data-testid="pending-email-verification-id">
@@ -353,6 +357,18 @@ const AuthActionsProbe = () => {
         }
       >
         Google sign in
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void context.login({
+            method: "google",
+            interaction: "redirect",
+            redirectOnly: true,
+          })
+        }
+      >
+        Complete redirect sign in
       </button>
       <button
         type="button"
@@ -1367,6 +1383,64 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       );
     });
     expect(authApi.createHumanSession).not.toHaveBeenCalled();
+  });
+
+  it("falls back to redirect when the provider popup is blocked", async () => {
+    signInWithPopupMock.mockRejectedValueOnce(
+      Object.assign(new Error("popup blocked"), {
+        code: "auth/popup-blocked",
+      }),
+    );
+
+    renderProvider(<AuthActionsProbe />, ["/login"]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Google sign in" }));
+
+    await waitFor(() => {
+      expect(signInWithRedirectMock).toHaveBeenCalled();
+    });
+    expect(getPendingProviderRedirectState()).toEqual({
+      method: "google",
+      returnPath: "/home",
+    });
+    expect(screen.getByTestId("probe-auth-error")).toHaveTextContent("none");
+  });
+
+  it("completes a pending redirect and preserves its return path", async () => {
+    const providerUser = {
+      uid: "redirect-user",
+      getIdToken: jest.fn(() => Promise.resolve("redirect-id-token")),
+    };
+    setPendingProviderRedirectState({
+      method: "google",
+      returnPath: "/controller/bible?search=John%203:16",
+    });
+    getRedirectResultMock.mockResolvedValueOnce({ user: providerUser });
+
+    renderProvider(<AuthActionsProbe />, ["/login"]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Complete redirect sign in" }),
+    );
+
+    await waitFor(() => {
+      expect(authApi.createHumanSession).toHaveBeenCalledWith(
+        expect.objectContaining({ idToken: "redirect-id-token" }),
+      );
+    });
+    expect(getPendingProviderRedirectState()).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId("path")).toHaveTextContent(
+        "/controller/bible",
+      );
+    });
   });
 
   it("stores the pending verification id when provider login requires an email code", async () => {

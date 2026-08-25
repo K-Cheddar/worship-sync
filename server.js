@@ -116,6 +116,24 @@ const resolveProductionFrontEndHost = () => {
 const frontEndHost = isDevelopment
   ? "https://local.worshipsync.net:3000"
   : resolveProductionFrontEndHost();
+
+// The public app is deployed on the `www` hostname, but people naturally type
+// the apex domain. Normalize that hostname before any API or SPA handling so a
+// manually entered `worshipsync.net` URL behaves exactly like the invite link.
+// Keep the hash fragment client-side: it is not included in req.originalUrl,
+// and the browser will preserve it when following this redirect.
+if (!isDevelopment) {
+  app.use((req, res, next) => {
+    if (
+      req.hostname === "worshipsync.net" &&
+      (req.method === "GET" || req.method === "HEAD")
+    ) {
+      res.redirect(308, `${frontEndHost.replace(/\/$/, "")}${req.originalUrl}`);
+      return;
+    }
+    next();
+  });
+}
 const {
   getGeniusTrack,
   getLrclibRequestParams,
@@ -128,8 +146,7 @@ const {
   geniusAccessToken: process.env.GENIUS_ACCESS_TOKEN,
 });
 /** Set this flag to bypass Genius when its upstream service is unavailable. */
-const skipGeniusLyricsImport =
-  process.env.LYRICS_IMPORT_SKIP_GENIUS === "true";
+const skipGeniusLyricsImport = process.env.LYRICS_IMPORT_SKIP_GENIUS === "true";
 
 const configuredAllowedOrigins = [
   frontEndHost,
@@ -3012,8 +3029,6 @@ app.get("/api/getDbSession", async (req, res) => {
         });
       });
     }
-
-    console.log(cookies);
 
     if (cookies?.length) {
       // Set the new one exactly as CouchDB gave it, adjusting attributes

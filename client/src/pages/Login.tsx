@@ -36,6 +36,7 @@ import {
 import {
   getOrCreateDeviceId,
   getLastSignInMethod,
+  getPendingProviderRedirectState,
   getPendingDesktopAuthState,
   setPendingDesktopAuthState,
   setPendingDesktopEmailResendState,
@@ -139,6 +140,9 @@ const Login = () => {
     useState(false);
   const forgotPasswordSubmitBlockTimeoutRef = useRef(0);
   const [lastSignInMethod] = useState(() => getLastSignInMethod());
+  const [pendingProviderRedirect] = useState(() =>
+    getPendingProviderRedirectState(),
+  );
   const isElectronRuntime = isElectron();
   const { desktopAuthId: desktopBrowserAuthId, provider: desktopBrowserProvider } =
     useMemo(() => {
@@ -272,6 +276,7 @@ const Login = () => {
   const prevVerificationDigitsLenRef = useRef(0);
   const desktopAuthPollInFlightRef = useRef(false);
   const desktopBrowserAutoStartRef = useRef(false);
+  const providerRedirectCompletionStartedRef = useRef(false);
 
   const openVerificationCodeStep = useCallback(
     ({
@@ -396,6 +401,42 @@ const Login = () => {
     });
     clearPending();
   }, [clearProviderSignInAttempt, context, openVerificationCodeStep]);
+
+  useEffect(() => {
+    if (
+      isElectronRuntime ||
+      mode !== "signIn" ||
+      isHostedDesktopBrowserFlow ||
+      !pendingProviderRedirect ||
+      !isAuthServerOnline ||
+      providerRedirectCompletionStartedRef.current
+    ) {
+      return;
+    }
+
+    providerRedirectCompletionStartedRef.current = true;
+    setActiveProviderSignIn(pendingProviderRedirect.method);
+    finishingProviderSignInRef.current = pendingProviderRedirect.method;
+    void context
+      ?.login({
+        method: pendingProviderRedirect.method,
+        interaction: "redirect",
+        redirectOnly: true,
+      })
+      .then((response) => {
+        if (!response?.redirectStarted) {
+          clearProviderSignInAttempt();
+        }
+      });
+  }, [
+    clearProviderSignInAttempt,
+    context,
+    isAuthServerOnline,
+    isElectronRuntime,
+    isHostedDesktopBrowserFlow,
+    mode,
+    pendingProviderRedirect,
+  ]);
 
   useEffect(() => {
     const codeParam = searchParams.get("code");
