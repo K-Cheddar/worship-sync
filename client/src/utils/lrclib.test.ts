@@ -9,7 +9,7 @@ import {
 } from "./lrclib";
 
 describe("lrclib utils", () => {
-  it("orders lyric providers as Genius, LRCLIB, then lyrics.ovh", () => {
+  it("orders lyric providers as Genius, lyrics.ovh, then LRCLIB", () => {
     const tracks = [
       normalizeLrclibTrack({
         source: "lyricsovh",
@@ -36,8 +36,8 @@ describe("lrclib utils", () => {
 
     expect(sortLyricsImportTracksBySource(tracks).map((track) => track.source)).toEqual([
       "genius",
-      "lrclib",
       "lyricsovh",
+      "lrclib",
     ]);
   });
 

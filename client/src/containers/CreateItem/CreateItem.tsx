@@ -46,7 +46,6 @@ import {
   getImportableLyricsFromTrack,
   getLyricsImportSourceBadgeClass,
   getLyricsImportSourceLabel,
-  sortLyricsImportTracksBySource,
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { cn } from "@/utils/cnHelper";
@@ -202,11 +201,6 @@ const CreateItem = ({
 
   const showLyricsImportPanel =
     selectedType === "song" && lyricsImportCandidates.length > 0;
-
-  const orderedLyricsImportCandidates = useMemo(
-    () => sortLyricsImportTracksBySource(lyricsImportCandidates),
-    [lyricsImportCandidates],
-  );
 
   const dismissLyricsImportPanel = () => {
     updateCreateItemDraft({
@@ -502,7 +496,7 @@ const CreateItem = ({
         Select a result below to import into this draft.
       </p>
       <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-        {orderedLyricsImportCandidates.map((candidate) => {
+        {lyricsImportCandidates.map((candidate) => {
           const lyricsText = getImportableLyricsFromTrack(candidate);
 
           return (

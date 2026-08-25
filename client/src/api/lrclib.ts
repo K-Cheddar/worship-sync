@@ -2,8 +2,6 @@ import { getApiBasePath } from "../utils/environment";
 import {
   NormalizedLrclibTrack,
   normalizeLrclibTrack,
-  sortLyricsImportTracksBySource,
-  sortLrclibTracksByLyricsStructure,
 } from "../utils/lrclib";
 
 export type LrclibImportQuery = {
@@ -82,17 +80,13 @@ export const searchLrclibTracks = async (
   }
 
   const data = await response.json();
-  return sortLyricsImportTracksBySource(
-    sortLrclibTracksByLyricsStructure(normalizeTrackList(data)),
-  );
+  return normalizeTrackList(data);
 };
 
 export const resolveLrclibImport = async (
   query: LrclibImportQuery,
 ): Promise<LrclibImportResolution> => {
-  const candidates = sortLyricsImportTracksBySource(
-    await searchLrclibTracks(query),
-  );
+  const candidates = await searchLrclibTracks(query);
   return {
     match: null,
     candidates,
