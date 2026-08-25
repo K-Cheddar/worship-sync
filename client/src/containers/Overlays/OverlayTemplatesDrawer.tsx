@@ -1,6 +1,6 @@
 import Drawer from "../../components/Drawer";
 import OverlayPreview from "./OverlayPreview";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   defaultImageOverlayStyles,
   defaultParticipantOverlayStyles,
@@ -15,6 +15,7 @@ import { RootState } from "../../store/store";
 import {
   addTemplate,
   deleteTemplate,
+  setDefaultTemplate,
   updateTemplate,
 } from "../../store/overlayTemplatesSlice";
 import { OverlayFormatting, OverlayType, SavedTemplate } from "../../types";
@@ -69,6 +70,27 @@ const OverlayTemplatesDrawer = ({
     (state: RootState) =>
       state.undoable.present.overlayTemplates.templatesByType[currentType] || []
   );
+  const defaultTemplateId = useSelector(
+    (state: RootState) =>
+      state.undoable.present.overlayTemplates.defaultTemplateIdsByType[
+        currentType
+      ],
+  );
+  const sortedTemplates = useMemo(
+    () =>
+      [...currentTypeTemplates].sort(
+        (first, second) =>
+          Number(second.id === defaultTemplateId) -
+          Number(first.id === defaultTemplateId),
+      ),
+    [currentTypeTemplates, defaultTemplateId],
+  );
+  const builtInDefaultStyles = {
+    participant: defaultParticipantOverlayStyles,
+    "stick-to-bottom": defaultStbOverlayStyles,
+    "qr-code": defaultQrCodeOverlayStyles,
+    image: defaultImageOverlayStyles,
+  }[currentType];
 
   const handleCreateTemplateWithDefaultName = () => {
     const date = new Date();
@@ -90,6 +112,10 @@ const OverlayTemplatesDrawer = ({
 
   const handleDeleteTemplate = (id: string) => {
     dispatch(deleteTemplate({ type: currentType, templateId: id }));
+  };
+
+  const handleSetDefaultTemplate = (templateId: string | null) => {
+    dispatch(setDefaultTemplate({ type: currentType, templateId }));
   };
 
   const handleStartEdit = (template: SavedTemplate) => {
@@ -147,11 +173,11 @@ const OverlayTemplatesDrawer = ({
       >
         Create New Template
       </Button>
-      {currentTypeTemplates.length > 0 && (
+      {sortedTemplates.length > 0 && (
         <>
           <h4 className="text-sm font-semibold mb-2">Custom Templates</h4>
           <ul className="flex flex-col gap-2 w-full">
-            {currentTypeTemplates.map((template) => (
+            {sortedTemplates.map((template) => (
               <li
                 key={template.id}
                 className="flex flex-col gap-2 border border-slate-200 rounded py-2 px-2"
@@ -201,6 +227,11 @@ const OverlayTemplatesDrawer = ({
                         >
                           {template.name}
                         </span>
+                        {defaultTemplateId === template.id && (
+                          <span className="rounded bg-cyan-950 px-2 py-0.5 text-xs font-semibold text-cyan-200">
+                            Default
+                          </span>
+                        )}
                         <Button
                           className="text-xs px-1 py-1"
                           variant="tertiary"
@@ -211,6 +242,18 @@ const OverlayTemplatesDrawer = ({
                         />
                       </div>
                       <div className="flex items-center gap-2">
+                        {defaultTemplateId !== template.id && (
+                          <Button
+                            className="text-xs px-2 py-1"
+                            variant="tertiary"
+                            onClick={() => handleSetDefaultTemplate(template.id)}
+                            svg={Check}
+                            title="Set as default template"
+                            color="#22d3ee"
+                          >
+                            Set default
+                          </Button>
+                        )}
                         <Button
                           className="text-xs px-2 py-1"
                           variant="tertiary"
@@ -255,72 +298,35 @@ const OverlayTemplatesDrawer = ({
         </>
       )}
       <div className="px-4 pt-2 border-t-2 border-dashed border-slate-200 mt-4">
-        <h4 className="text-sm font-semibold mb-2">Default Template</h4>
+        <h4 className="text-sm font-semibold mb-2">
+          {defaultTemplateId ? "Built-in Template" : "Default Template"}
+        </h4>
       </div>
-      {selectedOverlay.type === "participant" && (
-        <OverlayPreview
-          overlay={selectedOverlay}
-          defaultStyles={defaultParticipantOverlayStyles}
-          onApply={() => {
-            onApplyFormatting({
-              ...selectedOverlay,
-              formatting: defaultParticipantOverlayStyles,
-            });
-          }}
-          onApplyToAll={() =>
-            onApplyFormattingToAll(defaultParticipantOverlayStyles)
-          }
-          isApplyToAllLoading={isApplyingFormattingToAll}
-        />
-      )}
-      {selectedOverlay.type === "stick-to-bottom" && (
-        <OverlayPreview
-          overlay={selectedOverlay}
-          defaultStyles={defaultStbOverlayStyles}
-          onApply={() => {
-            onApplyFormatting({
-              ...selectedOverlay,
-              formatting: defaultStbOverlayStyles,
-            });
-          }}
-          onApplyToAll={() =>
-            onApplyFormattingToAll(defaultStbOverlayStyles)
-          }
-          isApplyToAllLoading={isApplyingFormattingToAll}
-        />
-      )}
-      {selectedOverlay.type === "qr-code" && (
-        <OverlayPreview
-          overlay={selectedOverlay}
-          defaultStyles={defaultQrCodeOverlayStyles}
-          onApply={() => {
-            onApplyFormatting({
-              ...selectedOverlay,
-              formatting: defaultQrCodeOverlayStyles,
-            });
-          }}
-          onApplyToAll={() =>
-            onApplyFormattingToAll(defaultQrCodeOverlayStyles)
-          }
-          isApplyToAllLoading={isApplyingFormattingToAll}
-        />
-      )}
-      {selectedOverlay.type === "image" && (
-        <OverlayPreview
-          overlay={selectedOverlay}
-          defaultStyles={defaultImageOverlayStyles}
-          onApply={() => {
-            onApplyFormatting({
-              ...selectedOverlay,
-              formatting: defaultImageOverlayStyles,
-            });
-          }}
-          onApplyToAll={() =>
-            onApplyFormattingToAll(defaultImageOverlayStyles)
-          }
-          isApplyToAllLoading={isApplyingFormattingToAll}
-        />
-      )}
+      <OverlayPreview
+        overlay={selectedOverlay}
+        defaultStyles={builtInDefaultStyles}
+        onApply={() => {
+          onApplyFormatting({
+            ...selectedOverlay,
+            formatting: builtInDefaultStyles,
+          });
+        }}
+        onApplyToAll={() => onApplyFormattingToAll(builtInDefaultStyles)}
+        isApplyToAllLoading={isApplyingFormattingToAll}
+        secondaryAction={
+          defaultTemplateId ? (
+            <Button
+              className="justify-center flex-1 text-sm"
+              variant="secondary"
+              color="#22d3ee"
+              onClick={() => handleSetDefaultTemplate(null)}
+              svg={Check}
+            >
+              Set default
+            </Button>
+          ) : undefined
+        }
+      />
     </Drawer>
   );
 };

@@ -28,7 +28,10 @@ import generateRandomId from "../utils/generateRandomId";
 import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
-import { normalizeOverlayForSync } from "../utils/overlayUtils";
+import {
+  getConfiguredDefaultFormatting,
+  normalizeOverlayForSync,
+} from "../utils/overlayUtils";
 
 type ServicePlanningSyncResult = {
   updated: number;
@@ -146,7 +149,17 @@ export const useServicePlanningSync = () => {
             }
 
             const newId = generateRandomId();
-            const newOverlay = buildNewParticipantOverlay(cand.patch, newId);
+            const { templatesByType, defaultTemplateIdsByType } =
+              store.getState().undoable.present.overlayTemplates;
+            const newOverlay = buildNewParticipantOverlay(
+              cand.patch,
+              newId,
+              getConfiguredDefaultFormatting(
+                "participant",
+                templatesByType,
+                defaultTemplateIdsByType,
+              ),
+            );
             dispatch(addExistingOverlayToList({ overlay: newOverlay }));
             placeNewOverlayAfterAnchor(newId, overlayAnchorId);
             overlayAnchorId = newId;

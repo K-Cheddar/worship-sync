@@ -104,6 +104,7 @@ import {
   isFirebasePermissionDenied,
   logFirebaseOperationFailure,
 } from "../utils/firebaseListeners";
+import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -140,6 +141,10 @@ const writePendingTimersToStorageAndFirebase = async (
 
   if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) {
     return false;
+  }
+
+  if (!globalFireDbInfo.canWriteSharedData) {
+    return true;
   }
 
   const timersRef = ref(
@@ -373,9 +378,7 @@ const getOverlaySelectionForUndoRedo = (
   return targetOverlay || null;
 };
 
-/** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
-export const writePresentationSnapshotToFirebase = async (state: RootState) => {
-  if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
+const createPresentationUpdate = (state: RootState) => {
   const {
     projectorInfo,
     monitorInfo,
@@ -383,7 +386,7 @@ export const writePresentationSnapshotToFirebase = async (state: RootState) => {
     streamItemContentBlocked,
     monitorBoardAliasId,
   } = state.presentation;
-  const presentationUpdate = {
+  return {
     projectorInfo,
     monitorInfo,
     monitorBoardAliasId,
@@ -406,12 +409,27 @@ export const writePresentationSnapshotToFirebase = async (state: RootState) => {
     stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
     stream_boardPostStreamInfo: streamInfo.boardPostStreamInfo,
   };
+};
 
-  localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
-  localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+type PresentationUpdate = ReturnType<typeof createPresentationUpdate>;
+
+const persistPresentationUpdateLocally = (
+  state: RootState,
+  presentationUpdate: PresentationUpdate,
+) => {
+  const { streamInfo } = state.presentation;
+
+  localStorage.setItem(
+    "projectorInfo",
+    JSON.stringify(presentationUpdate.projectorInfo),
+  );
+  localStorage.setItem(
+    "monitorInfo",
+    JSON.stringify(presentationUpdate.monitorInfo),
+  );
   localStorage.setItem(
     "monitorBoardAliasId",
-    JSON.stringify(monitorBoardAliasId),
+    JSON.stringify(presentationUpdate.monitorBoardAliasId),
   );
   localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
   localStorage.setItem(
@@ -444,27 +462,150 @@ export const writePresentationSnapshotToFirebase = async (state: RootState) => {
   );
   localStorage.setItem(
     "stream_itemContentBlocked",
-    JSON.stringify(streamItemContentBlocked),
+    JSON.stringify(presentationUpdate.stream_itemContentBlocked),
   );
+};
+
+type PresentationWrite = {
+  churchId: string;
+  presentationUpdate: PresentationUpdate;
+  triggerAction?: string;
+  streamTransmitting: boolean;
+  activeOverlayLanes: string[];
+};
+
+const getActiveOverlayLanes = (state: RootState) => {
+  const { streamInfo } = state.presentation;
+  return [
+    hasParticipantOverlayData(streamInfo.participantOverlayInfo)
+      ? "participant"
+      : null,
+    hasStbOverlayData(streamInfo.stbOverlayInfo) ? "stb" : null,
+    hasQrOverlayData(streamInfo.qrCodeOverlayInfo) ? "qr" : null,
+    hasImageOverlayData(streamInfo.imageOverlayInfo) ? "image" : null,
+    hasBoardPostData(streamInfo.boardPostStreamInfo) ? "boardPost" : null,
+  ].filter((lane): lane is string => lane !== null);
+};
+
+const commitPresentationUpdate = async (write: PresentationWrite) => {
+  const firebaseDb = globalFireDbInfo.db;
+  if (!firebaseDb || !globalFireDbInfo.churchId) return false;
+  if (globalFireDbInfo.churchId !== write.churchId) return false;
 
   const presentationPath = getChurchDataPath(
-    globalFireDbInfo.churchId,
+    write.churchId,
     "presentation",
   );
   try {
     await Promise.resolve(
       set(
-        ref(globalFireDbInfo.db, presentationPath),
-        cleanObject(presentationUpdate),
+        ref(firebaseDb, presentationPath),
+        cleanObject(write.presentationUpdate),
       ),
     );
   } catch (error) {
+    const permissionDenied = isFirebasePermissionDenied(error);
     logFirebaseOperationFailure("presentation_sync", presentationPath, error, {
-      churchId: globalFireDbInfo.churchId,
-      permissionDenied: isFirebasePermissionDenied(error),
+      churchId: write.churchId,
+      permissionDenied,
       includesOverlayLanes: true,
+      triggerAction: write.triggerAction || null,
+      streamTransmitting: write.streamTransmitting,
+      activeOverlayLanes: write.activeOverlayLanes,
     });
     throw error;
+  }
+  return true;
+};
+
+/** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
+export const writePresentationSnapshotToFirebase = async (
+  state: RootState,
+  triggerAction?: string,
+) => {
+  const presentationUpdate = createPresentationUpdate(state);
+  persistPresentationUpdateLocally(state, presentationUpdate);
+  const activeOverlayLanes = getActiveOverlayLanes(state);
+  const churchId = globalFireDbInfo.churchId;
+  if (!globalFireDbInfo.canWriteSharedData) return true;
+  if (
+    !globalFireDbInfo.db ||
+    globalFireDbInfo.isConnected === false ||
+    !churchId
+  ) {
+    if (
+      triggerAction &&
+      STREAM_ACTIONS_REQUIRING_IMMEDIATE_DELIVERY.has(triggerAction)
+    ) {
+      console.error(
+        "[firebase diagnostic]",
+        JSON.stringify({
+          event: "presentation_sync_write_unavailable",
+          churchId: churchId || null,
+          realtimeConnected: globalFireDbInfo.isConnected === true,
+          triggerAction,
+          streamTransmitting: state.presentation.isStreamTransmitting,
+          activeOverlayLanes,
+        }),
+      );
+    }
+    return false;
+  }
+  return commitPresentationUpdate({
+    churchId,
+    presentationUpdate,
+    triggerAction,
+    streamTransmitting: state.presentation.isStreamTransmitting,
+    activeOverlayLanes,
+  });
+};
+
+const STREAM_ACTIONS_REQUIRING_IMMEDIATE_DELIVERY = new Set([
+  presentationSlice.actions.toggleStreamTransmitting.toString(),
+  presentationSlice.actions.setTransmitToAll.toString(),
+  presentationSlice.actions.updateStream.toString(),
+  presentationSlice.actions.clearStream.toString(),
+  presentationSlice.actions.clearStreamOverlaysOnly.toString(),
+  presentationSlice.actions.updateBibleDisplayInfo.toString(),
+  presentationSlice.actions.updateParticipantOverlayInfo.toString(),
+  presentationSlice.actions.updateStbOverlayInfo.toString(),
+  presentationSlice.actions.updateQrCodeOverlayInfo.toString(),
+  presentationSlice.actions.updateImageOverlayInfo.toString(),
+  presentationSlice.actions.updateFormattedTextDisplayInfo.toString(),
+  presentationSlice.actions.updateBoardPostStreamInfo.toString(),
+]);
+
+const OVERLAY_ACTIONS_REQUIRING_IMMEDIATE_DELIVERY = new Set([
+  presentationSlice.actions.updateParticipantOverlayInfo.toString(),
+  presentationSlice.actions.updateStbOverlayInfo.toString(),
+  presentationSlice.actions.updateQrCodeOverlayInfo.toString(),
+  presentationSlice.actions.updateImageOverlayInfo.toString(),
+  presentationSlice.actions.updateFormattedTextDisplayInfo.toString(),
+  presentationSlice.actions.updateBoardPostStreamInfo.toString(),
+  presentationSlice.actions.clearStreamOverlaysOnly.toString(),
+]);
+
+const reportPresentationDeliveryFailure = (triggerAction: string) => {
+  if (!OVERLAY_ACTIONS_REQUIRING_IMMEDIATE_DELIVERY.has(triggerAction)) return;
+  notifyPresentationSyncError(
+    "Overlay update was not sent. Check your connection and try again.",
+  );
+};
+
+const syncPresentationSnapshot = async (
+  state: RootState,
+  triggerAction: string,
+) => {
+  try {
+    const delivered = await writePresentationSnapshotToFirebase(
+      state,
+      triggerAction,
+    );
+    if (!delivered) reportPresentationDeliveryFailure(triggerAction);
+  } catch {
+    // The write already emitted a structured diagnostic. Do not replay a
+    // time-sensitive presentation action after the operator has moved on.
+    reportPresentationDeliveryFailure(triggerAction);
   }
 };
 
@@ -1910,14 +2051,16 @@ listenerMiddleware.startListening({
     );
 
     // update overlay templates
-    const { templatesByType } = (listenerApi.getState() as RootState).undoable
-      .present.overlayTemplates;
+    const { templatesByType, defaultTemplateIdsByType } = (
+      listenerApi.getState() as RootState
+    ).undoable.present.overlayTemplates;
 
     if (!db) return;
     try {
       const db_templates: DBOverlayTemplates =
         await db.get("overlay-templates");
       db_templates.templatesByType = templatesByType;
+      db_templates.defaultTemplateIdsByType = defaultTemplateIdsByType;
       db_templates.updatedAt = new Date().toISOString();
       db.put(db_templates);
       // Local machine updates
@@ -1934,10 +2077,11 @@ listenerMiddleware.startListening({
       const db_templates = {
         _id: "overlay-templates",
         templatesByType: templatesByType,
+        defaultTemplateIdsByType,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      db.put(db_templates);
+      await db.put(db_templates);
     }
   },
 });
@@ -2012,7 +2156,11 @@ listenerMiddleware.startListening({
           });
         }
       }
-      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
+      if (
+        globalFireDbInfo.db &&
+        globalFireDbInfo.churchId &&
+        globalFireDbInfo.canWriteSharedData
+      ) {
         set(
           ref(
             globalFireDbInfo.db,
@@ -2026,34 +2174,6 @@ listenerMiddleware.startListening({
         autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
           AUTOSAVE_DEBOUNCE_KEYS.serviceTimes,
         ),
-      );
-    }
-  },
-});
-
-// Ensure firebase has updated services on load
-listenerMiddleware.startListening({
-  actionCreator: serviceTimesSlice.actions.initiateServices,
-
-  effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
-
-    // update service times
-    const { list, isInitialized } = (listenerApi.getState() as RootState)
-      .undoable.present.serviceTimes;
-
-    if (!isInitialized) {
-      return;
-    }
-
-    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
-      set(
-        ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "services"),
-        ),
-        cleanObject(list),
       );
     }
   },
@@ -2089,11 +2209,11 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
-    await writePresentationSnapshotToFirebase(
+    await syncPresentationSnapshot(
       listenerApi.getState() as RootState,
+      action.type,
     );
   },
 });
@@ -2108,11 +2228,11 @@ listenerMiddleware.startListening({
     const prev = (previousState as RootState).presentation;
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
-  effect: async (_action, listenerApi) => {
-    if (!globalFireDbInfo.db) return;
+  effect: async (action, listenerApi) => {
     await listenerApi.delay(15);
-    await writePresentationSnapshotToFirebase(
+    await syncPresentationSnapshot(
       listenerApi.getState() as RootState,
+      action.type,
     );
   },
 });
@@ -2124,11 +2244,11 @@ listenerMiddleware.startListening({
     const prev = (previousState as RootState).presentation;
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
-  effect: async (_action, listenerApi) => {
-    if (!globalFireDbInfo.db) return;
+  effect: async (action, listenerApi) => {
     await listenerApi.delay(15);
-    await writePresentationSnapshotToFirebase(
+    await syncPresentationSnapshot(
       listenerApi.getState() as RootState,
+      action.type,
     );
   },
 });

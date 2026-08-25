@@ -2596,6 +2596,131 @@ test("intake form stores custom wording and ships it on the public preview", asy
   );
 });
 
+test("intake forms expose and enforce the owner's selected fields", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_selected_fields");
+
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Availability only",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      active: true,
+      enabledFields: ["availability"],
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  assert.deepEqual(form.payload.form.enabledFields, ["availability"]);
+
+  const previewRes = createRes();
+  await authHandlers.getTeamIntakePreview(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+    },
+    previewRes,
+  );
+  assert.deepEqual(previewRes.payload.form.enabledFields, ["availability"]);
+
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+      body: {
+        firstName: "Injected",
+        lastName: "Name",
+        email: "hidden@example.com",
+        notes: "This field was not enabled.",
+      },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const submission = bootstrap.payload.intakeSubmissions.find(
+    (item) => item.submissionId === submitRes.payload.submissionId,
+  );
+  assert.equal(submission.firstName, "");
+  assert.equal(submission.lastName, "");
+  assert.equal(submission.email, "");
+  assert.equal(submission.notes, "");
+});
+
+test("intake profile and scheduling fields carry onto a created member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_profile_fields");
+  const enabledFields = [
+    "firstName",
+    "lastName",
+    "email",
+    "title",
+    "birthDate",
+    "schedulingPreferences",
+  ];
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Member details",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      active: true,
+      enabledFields,
+    },
+  });
+
+  const submitRes = createRes();
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token: form.payload.publicToken },
+      body: {
+        title: "Dr.",
+        firstName: "Avery",
+        lastName: "Stone",
+        email: "avery@example.com",
+        birthDate: { year: 1990, month: 4, day: 12 },
+        servingFrequency: "twice_monthly",
+        recurringAvailability: {
+          weeksOfMonth: [1, 3],
+          includeLastWeekOfMonth: true,
+        },
+      },
+    },
+    submitRes,
+  );
+  assert.equal(submitRes.statusCode, 200);
+
+  const applyRes = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context,
+    params: { submissionId: submitRes.payload.submissionId },
+    body: { action: "applied", createMember: true },
+  });
+  assert.equal(applyRes.statusCode, 200);
+  assert.equal(applyRes.payload.member.title, "Dr.");
+  assert.equal(applyRes.payload.member.email, "avery@example.com");
+  assert.deepEqual(applyRes.payload.member.birthDate, {
+    year: 1990,
+    month: 4,
+    day: 12,
+  });
+  assert.equal(applyRes.payload.member.servingFrequency, "twice_monthly");
+  assert.deepEqual(applyRes.payload.member.recurringAvailability, {
+    weeksOfMonth: [1, 3],
+    includeLastWeekOfMonth: true,
+  });
+});
+
 test("intake submission rejects positions outside the form's team scope", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("intake_scope");
@@ -2715,7 +2840,7 @@ test("member privacy and serving preferences are validated and birth dates are a
       title: "Dr.",
       firstName: "Young",
       lastName: "Person",
-      dateOfBirth: `${currentYear - 10}-01-01`,
+      birthDate: { year: currentYear - 10, month: 1, day: 1 },
       isMinor: false,
       servingFrequency: "monthly",
       recurringAvailability: {
@@ -2733,6 +2858,23 @@ test("member privacy and serving preferences are validated and birth dates are a
     weeksOfMonth: [4],
     includeLastWeekOfMonth: false,
   });
+
+  const birthdayOnly = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Birthday",
+      lastName: "Only",
+      birthDate: { month: 2, day: 29 },
+      isMinor: true,
+      positionIds: [],
+    },
+  });
+  assert.equal(birthdayOnly.statusCode, 200);
+  assert.deepEqual(birthdayOnly.payload.member.birthDate, {
+    month: 2,
+    day: 29,
+  });
+  assert.equal(birthdayOnly.payload.member.isMinor, true);
 
   // A client that predates these optional fields must not clear them while
   // saving another member change.
@@ -2760,7 +2902,7 @@ test("member privacy and serving preferences are validated and birth dates are a
     body: {
       firstName: "Adult",
       lastName: "Person",
-      dateOfBirth: `${currentYear - 30}-01-01`,
+      birthDate: { year: currentYear - 30, month: 1, day: 1 },
       isMinor: true,
       servingFrequency: "weekly",
       positionIds: [],

@@ -24,6 +24,8 @@ export type ServicePlanningLineItem = {
   title: string;
   cleanedTitle: string;
   ledBy: string;
+  /** Current Service Plan assignees; imported rows use `ledBy` as a fallback. */
+  assigneeNames?: string[];
   selectedForOutline: boolean;
   outlineItemType: "song" | "bible" | "none";
   overlayReady: boolean;

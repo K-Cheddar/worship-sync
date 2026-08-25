@@ -1,8 +1,14 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { OverlayType, SavedTemplate, TemplatesByType } from "../types";
+import {
+  DefaultTemplateIdsByType,
+  OverlayType,
+  SavedTemplate,
+  TemplatesByType,
+} from "../types";
 
 export type OverlayTemplatesState = {
   templatesByType: TemplatesByType;
+  defaultTemplateIdsByType: DefaultTemplateIdsByType;
   isInitialized: boolean;
   isLoading: boolean;
   hasPendingUpdate: boolean;
@@ -15,6 +21,7 @@ const initialState: OverlayTemplatesState = {
     "qr-code": [],
     image: [],
   },
+  defaultTemplateIdsByType: {},
   isInitialized: false,
   isLoading: false,
   hasPendingUpdate: false,
@@ -29,9 +36,15 @@ const overlayTemplatesSlice = createSlice({
     },
     initiateTemplates: (
       state,
-      action: PayloadAction<TemplatesByType | undefined>,
+      action: PayloadAction<{
+        templatesByType?: TemplatesByType;
+        defaultTemplateIdsByType?: DefaultTemplateIdsByType;
+      } | undefined>,
     ) => {
-      state.templatesByType = action.payload || initialState.templatesByType;
+      state.templatesByType =
+        action.payload?.templatesByType || initialState.templatesByType;
+      state.defaultTemplateIdsByType =
+        action.payload?.defaultTemplateIdsByType || {};
       state.isInitialized = true;
       state.isLoading = false;
     },
@@ -72,13 +85,36 @@ const overlayTemplatesSlice = createSlice({
       state.templatesByType[type] = state.templatesByType[type].filter(
         (t) => t.id !== templateId,
       );
+      if (state.defaultTemplateIdsByType[type] === templateId) {
+        delete state.defaultTemplateIdsByType[type];
+      }
+      state.hasPendingUpdate = true;
+    },
+    setDefaultTemplate: (
+      state,
+      action: PayloadAction<{ type: OverlayType; templateId: string | null }>,
+    ) => {
+      const { type, templateId } = action.payload;
+      const templateExists = state.templatesByType[type].some(
+        (template) => template.id === templateId,
+      );
+      if (templateId && templateExists) {
+        state.defaultTemplateIdsByType[type] = templateId;
+      } else {
+        delete state.defaultTemplateIdsByType[type];
+      }
       state.hasPendingUpdate = true;
     },
     updateTemplatesFromRemote: (
       state,
-      action: PayloadAction<TemplatesByType>,
+      action: PayloadAction<{
+        templatesByType: TemplatesByType;
+        defaultTemplateIdsByType?: DefaultTemplateIdsByType;
+      }>,
     ) => {
-      state.templatesByType = action.payload;
+      state.templatesByType = action.payload.templatesByType;
+      state.defaultTemplateIdsByType =
+        action.payload.defaultTemplateIdsByType || {};
     },
     setIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
@@ -98,6 +134,7 @@ export const {
   addTemplate,
   updateTemplate,
   deleteTemplate,
+  setDefaultTemplate,
   updateTemplatesFromRemote,
   setIsLoading,
   setHasPendingUpdate,

@@ -9,6 +9,7 @@ import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
+import BirthDateField from "../components/BirthDateField";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -125,7 +126,7 @@ const buildMemberDraft = (
   firstName: member?.firstName || "",
   lastName: member?.lastName || "",
   email: member?.email || "",
-  dateOfBirth: member?.dateOfBirth || "",
+  birthDate: member?.birthDate || null,
   isMinor: Boolean(member?.isMinor),
   servingFrequency: member?.servingFrequency || DEFAULT_SERVING_FREQUENCY,
   recurringAvailability:
@@ -208,7 +209,7 @@ const MemberManager = ({
       }
     };
   }, [pendingProfileImagePreviewUrl]);
-  const derivedMinorStatus = isMinorOnDate(draft.dateOfBirth || "");
+  const derivedMinorStatus = isMinorOnDate(draft.birthDate);
   // Members with a save currently in flight, keyed by memberId (or
   // CREATE_SAVING_KEY for a new member). Tracking per-editor keeps the Save
   // spinner on the member actually saving and lets editing continue back-to-back
@@ -686,7 +687,7 @@ const MemberManager = ({
         firstName: body.firstName.trim(),
         lastName: body.lastName.trim(),
         email: (body.email || "").trim().toLowerCase(),
-        dateOfBirth: body.dateOfBirth || "",
+        birthDate: body.birthDate || null,
         isMinor: Boolean(body.isMinor),
         servingFrequency: body.servingFrequency || DEFAULT_SERVING_FREQUENCY,
         recurringAvailability:
@@ -1376,15 +1377,14 @@ const MemberManager = ({
               />
             </div>
           </div>
-          <DatePicker
-            label="Date of birth"
-            value={draft.dateOfBirth || ""}
-            onChange={(dateOfBirth) =>
+          <BirthDateField
+            label="Birthday"
+            value={draft.birthDate}
+            onChange={(birthDate) =>
               setDraft((current) => ({
                 ...current,
-                dateOfBirth,
-                isMinor:
-                  isMinorOnDate(dateOfBirth) ?? Boolean(current.isMinor),
+                birthDate,
+                isMinor: isMinorOnDate(birthDate) ?? Boolean(current.isMinor),
               }))
             }
           />
@@ -1395,7 +1395,7 @@ const MemberManager = ({
                 <span className="text-xs text-gray-400">
                   {derivedMinorStatus === null
                     ? "Hides their last name from generated credits."
-                    : "Set automatically from the date of birth."}
+                    : "Set automatically when the birth year is provided."}
                 </span>
               </span>
             )}

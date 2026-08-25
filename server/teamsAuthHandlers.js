@@ -809,6 +809,34 @@ export const createTeamsAuthHandlers = ({
     return date ? assertPlainDate(date, fieldLabel) : "";
   };
 
+  const normalizeBirthDate = (value, fieldLabel = "Birthday") => {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, `${fieldLabel} must include a month and day.`);
+    }
+    const month = Number(value.month);
+    const day = Number(value.day);
+    const year = value.year === undefined || value.year === null || value.year === ""
+      ? undefined
+      : Number(value.year);
+    const currentYear = new Date().getUTCFullYear();
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) {
+      throw httpError(400, `${fieldLabel} must include a valid month and day.`);
+    }
+    const validationYear = year === undefined ? 2000 : year;
+    if (
+      !Number.isInteger(validationYear) ||
+      (year !== undefined && (year < 1 || year > currentYear))
+    ) {
+      throw httpError(400, `${fieldLabel} must include a valid year.`);
+    }
+    const parsed = new Date(Date.UTC(validationYear, month - 1, day));
+    if (parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+      throw httpError(400, `${fieldLabel} must include a valid month and day.`);
+    }
+    return { month, day, ...(year === undefined ? {} : { year }) };
+  };
+
   const TEAM_MEMBER_SERVING_FREQUENCIES = new Set([
     "as_needed",
     "weekly",
@@ -872,9 +900,9 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const isMinorFromDateOfBirth = (dateOfBirth, referenceDate = new Date()) => {
-    if (!dateOfBirth) return null;
-    const [year, month, day] = dateOfBirth.split("-").map(Number);
+  const isMinorFromBirthDate = (birthDate, referenceDate = new Date()) => {
+    if (!birthDate?.year) return null;
+    const { year, month, day } = birthDate;
     const eighteenthBirthday = Date.UTC(year + 18, month - 1, day);
     const today = Date.UTC(
       referenceDate.getUTCFullYear(),
@@ -2770,12 +2798,10 @@ export const createTeamsAuthHandlers = ({
     if (!lastName) {
       throw httpError(400, "Last name is required.");
     }
-    const dateOfBirth = normalizeOptionalPlainDate(
-      body?.dateOfBirth,
-      "Date of birth",
-    );
+    const hasBirthDate = Object.prototype.hasOwnProperty.call(body || {}, "birthDate");
+    const birthDate = hasBirthDate ? normalizeBirthDate(body?.birthDate) : undefined;
     const isMinor =
-      isMinorFromDateOfBirth(dateOfBirth) ??
+      isMinorFromBirthDate(birthDate) ??
       normalizeManualMinorStatus(body?.isMinor);
     const servingFrequency = normalizeTeamMemberServingFrequency(
       body?.servingFrequency,
@@ -2789,7 +2815,7 @@ export const createTeamsAuthHandlers = ({
     const payload = {
       firstName,
       lastName,
-      dateOfBirth,
+      ...(hasBirthDate ? { birthDate } : {}),
       isMinor,
       servingFrequency,
       positionIds,
@@ -3699,6 +3725,41 @@ export const createTeamsAuthHandlers = ({
       })
       .filter(Boolean);
 
+  const TEAM_INTAKE_FIELD_IDS = new Set([
+    "firstName",
+    "lastName",
+    "email",
+    "title",
+    "birthDate",
+    "positions",
+    "availability",
+    "schedulingPreferences",
+    "blockoutDates",
+    "notes",
+  ]);
+  // Forms saved before field selection existed rendered these fields. Keeping
+  // this fallback avoids silently changing any live public link.
+  const LEGACY_TEAM_INTAKE_FIELDS = [
+    "firstName",
+    "lastName",
+    "email",
+    "positions",
+    "availability",
+    "blockoutDates",
+    "notes",
+  ];
+  const normalizeTeamIntakeFields = (value, existing) => {
+    if (value === undefined) {
+      return Array.isArray(existing)
+        ? existing
+        : [...LEGACY_TEAM_INTAKE_FIELDS];
+    }
+    if (!Array.isArray(value)) {
+      throw httpError(400, "Form fields must be a list.");
+    }
+    return [...new Set(value.filter((field) => TEAM_INTAKE_FIELD_IDS.has(field)))];
+  };
+
   const validateTeamIntakeFormPayload = (body, existing = null) => {
     const name = normalizeShortText(body?.name ?? existing?.name);
     if (!name) {
@@ -3730,6 +3791,10 @@ export const createTeamsAuthHandlers = ({
       body?.teamIds !== undefined
         ? normalizeIdArray(body.teamIds)
         : existing?.teamIds || [];
+    const enabledFields = normalizeTeamIntakeFields(
+      body?.enabledFields,
+      existing?.enabledFields,
+    );
     // Optional public-form copy overrides. Empty means "use the built-in
     // default" on the public form, so we store "" rather than a placeholder.
     const normalizeMessage = (key) =>
@@ -3743,11 +3808,14 @@ export const createTeamsAuthHandlers = ({
       availabilityServices,
       availabilityOccurrences,
       teamIds,
+      enabledFields,
       active: Boolean(body?.active ?? existing?.active),
       // Off by default so existing public forms keep accepting submissions
       // from people who have no address to give. Churches turn it on per form
       // once they want intake to be their address-collection path.
-      requireEmail: Boolean(body?.requireEmail ?? existing?.requireEmail),
+      requireEmail:
+        enabledFields.includes("email") &&
+        Boolean(body?.requireEmail ?? existing?.requireEmail),
       welcomeMessage: normalizeMessage("welcomeMessage"),
       positionsMessage: normalizeMessage("positionsMessage"),
       availabilityMessage: normalizeMessage("availabilityMessage"),
@@ -3786,10 +3854,20 @@ export const createTeamsAuthHandlers = ({
       .filter(Boolean);
 
   const validateTeamIntakeSubmissionPayload = async (body, form) => {
-    const firstName = normalizeShortText(body?.firstName, { max: 80 });
-    const lastName = normalizeShortText(body?.lastName, { max: 80 });
-    if (!firstName || !lastName) {
-      throw httpError(400, "First and last name are required.");
+    const enabledFields = new Set(
+      normalizeTeamIntakeFields(undefined, form?.enabledFields),
+    );
+    const firstName = enabledFields.has("firstName")
+      ? normalizeShortText(body?.firstName, { max: 80 })
+      : "";
+    const lastName = enabledFields.has("lastName")
+      ? normalizeShortText(body?.lastName, { max: 80 })
+      : "";
+    if (enabledFields.has("firstName") && !firstName) {
+      throw httpError(400, "First name is required.");
+    }
+    if (enabledFields.has("lastName") && !lastName) {
+      throw httpError(400, "Last name is required.");
     }
     // Intake is the only scalable way to collect member addresses — nothing in
     // the roster has one today.
@@ -3799,7 +3877,9 @@ export const createTeamsAuthHandlers = ({
     // volunteers on every existing form the moment this deploys — before the
     // public form even renders an email field. Churches enable it per form, and
     // the default can flip once the client field has shipped everywhere.
-    const email = normalizeMemberEmail(body?.email);
+    const email = enabledFields.has("email")
+      ? normalizeMemberEmail(body?.email)
+      : "";
     if (!email && form?.requireEmail === true) {
       throw httpError(400, "Email is required.");
     }
@@ -3807,22 +3887,24 @@ export const createTeamsAuthHandlers = ({
     // (empty teamIds means every team). Enforce that same scope on submission so
     // a crafted POST cannot smuggle in positions from teams outside the form.
     const scopedTeamIds = new Set(form.teamIds || []);
-    const positionIds = await assertTeamEntityIdsInChurch(
-      "position",
-      body?.positionIds,
-      form.churchId,
-      {
-        label: "Position",
-        assertEntity: (position) => {
-          if (scopedTeamIds.size > 0 && !scopedTeamIds.has(position.teamId)) {
-            throw httpError(
-              400,
-              "One or more selected positions are not available on this form.",
-            );
-          }
+    const positionIds = enabledFields.has("positions")
+      ? await assertTeamEntityIdsInChurch(
+        "position",
+        body?.positionIds,
+        form.churchId,
+        {
+          label: "Position",
+          assertEntity: (position) => {
+            if (scopedTeamIds.size > 0 && !scopedTeamIds.has(position.teamId)) {
+              throw httpError(
+                400,
+                "One or more selected positions are not available on this form.",
+              );
+            }
+          },
         },
-      },
-    );
+      )
+      : [];
     const occurrenceIds = new Set(
       (form.availabilityOccurrences || []).map(
         (occurrence) => occurrence.occurrenceId,
@@ -3835,6 +3917,7 @@ export const createTeamsAuthHandlers = ({
         ? body.occurrenceAvailability
         : {};
     Object.entries(rawAvailability).forEach(([occurrenceId, availability]) => {
+      if (!enabledFields.has("availability")) return;
       if (!occurrenceIds.has(occurrenceId)) return;
       occurrenceAvailability[occurrenceId] =
         availability === "unavailable" ? "unavailable" : "available";
@@ -3843,15 +3926,35 @@ export const createTeamsAuthHandlers = ({
       firstName,
       lastName,
       email,
+      title: enabledFields.has("title")
+        ? normalizeShortText(body?.title, { max: 40 })
+        : "",
+      birthDate: enabledFields.has("birthDate")
+        ? normalizeBirthDate(body?.birthDate)
+        : null,
       normalizedName: normalizePersonNameKey(firstName, lastName),
       positionIds,
       occurrenceAvailability,
-      blockoutRanges: normalizeIntakeBlockoutRanges(
-        body?.blockoutRanges,
-        form.startDate,
-        form.endDate,
-      ),
-      notes: normalizeLongText(body?.notes, { max: 2000 }),
+      blockoutRanges: enabledFields.has("blockoutDates")
+        ? normalizeIntakeBlockoutRanges(
+          body?.blockoutRanges,
+          form.startDate,
+          form.endDate,
+        )
+        : [],
+      notes: enabledFields.has("notes")
+        ? normalizeLongText(body?.notes, { max: 2000 })
+        : "",
+      ...(enabledFields.has("schedulingPreferences")
+        ? {
+          servingFrequency: normalizeTeamMemberServingFrequency(
+            body?.servingFrequency,
+          ),
+          recurringAvailability: normalizeTeamMemberRecurringAvailability(
+            body?.recurringAvailability,
+          ),
+        }
+        : {}),
     };
   };
 
@@ -6787,6 +6890,10 @@ export const createTeamsAuthHandlers = ({
             name: form.name,
             startDate: form.startDate,
             endDate: form.endDate,
+            enabledFields: normalizeTeamIntakeFields(
+              undefined,
+              form.enabledFields,
+            ),
             // Sent so the public form can mark the field required up front.
             // Enforcing on submit alone means a volunteer only discovers it
             // after filling the whole form and failing.
@@ -8443,12 +8550,18 @@ export const createTeamsAuthHandlers = ({
               kind: "member",
               churchId: req.params.churchId,
               payload: {
+                title: normalizeShortText(submission.title, { max: 40 }),
                 firstName: submission.firstName,
                 lastName: submission.lastName,
                 email: normalizeMemberEmail(submission.email),
-                dateOfBirth: "",
-                isMinor: false,
-                servingFrequency: "as_needed",
+                birthDate: normalizeBirthDate(submission.birthDate),
+                isMinor:
+                  isMinorFromBirthDate(submission.birthDate) ?? false,
+                servingFrequency:
+                  submission.servingFrequency || "as_needed",
+                recurringAvailability:
+                  submission.recurringAvailability ||
+                  normalizeTeamMemberRecurringAvailability(null),
                 positionIds: [],
                 desiredPositionIds,
                 serviceAvailability: submissionAvailability,
@@ -8508,6 +8621,10 @@ export const createTeamsAuthHandlers = ({
             // address is still the more deliberate record — never clobber it.
             const submittedEmail = normalizeMemberEmail(submission.email);
             const nextEmail = member.email ? member.email : submittedEmail;
+            const submittedTitle = normalizeShortText(submission.title, {
+              max: 40,
+            });
+            const submittedBirthDate = normalizeBirthDate(submission.birthDate);
             await setDoc(
               COLLECTIONS.teamRosterMembers,
               member.memberId,
@@ -8516,6 +8633,23 @@ export const createTeamsAuthHandlers = ({
                 serviceAvailability: nextServiceAvailability,
                 blockoutDates: nextBlockoutDates,
                 ...(nextEmail ? { email: nextEmail } : {}),
+                ...(!member.title && submittedTitle
+                  ? { title: submittedTitle }
+                  : {}),
+                ...(!member.birthDate && submittedBirthDate
+                  ? {
+                    birthDate: submittedBirthDate,
+                    isMinor:
+                      isMinorFromBirthDate(submittedBirthDate) ??
+                      Boolean(member.isMinor),
+                  }
+                  : {}),
+                ...(submission.servingFrequency
+                  ? { servingFrequency: submission.servingFrequency }
+                  : {}),
+                ...(submission.recurringAvailability
+                  ? { recurringAvailability: submission.recurringAvailability }
+                  : {}),
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
               },

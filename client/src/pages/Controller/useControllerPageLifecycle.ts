@@ -337,8 +337,14 @@ export const useControllerPageLifecycle = () => {
       try {
         const templates: DBOverlayTemplates | undefined =
           await db.get("overlay-templates");
-        const templatesByType: TemplatesByType = templates?.templatesByType;
-        dispatch(initiateTemplates(templatesByType));
+        const templatesByType: TemplatesByType | undefined =
+          templates?.templatesByType;
+        dispatch(
+          initiateTemplates({
+            templatesByType,
+            defaultTemplateIdsByType: templates?.defaultTemplateIdsByType,
+          }),
+        );
       } catch (e) {
         dispatch(initiateTemplates(undefined));
       }

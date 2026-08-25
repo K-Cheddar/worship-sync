@@ -3,6 +3,12 @@ import type { TeamScheduleResponses } from "../pages/Teams/schedule/scheduleResp
 
 export type { PositionRequirement };
 
+export type BirthDate = {
+  month: number;
+  day: number;
+  year?: number;
+};
+
 /**
  * Shared auth API types (client). Server: authService.js.
  * Hash fields are never returned; lists are sanitized server-side.
@@ -211,11 +217,11 @@ export type TeamRosterMember = {
    * superseded by `userId` once accepted, and cleared on unlink.
    */
   invitedAt?: string;
-  dateOfBirth?: string;
+  birthDate?: BirthDate | null;
   /**
    * Privacy flag used when publishing names outside the team workspace. A
-   * saved date of birth is authoritative; without one an operator may set this
-   * manually.
+   * A saved birth date with a year is authoritative; without a year an operator
+   * may set this manually.
    */
   isMinor?: boolean;
   /** Desired cadence used as a soft scheduling recommendation signal. */
@@ -529,6 +535,18 @@ export type TeamIntakeAvailabilityOccurrence = {
   startsAt: string;
 };
 
+export type TeamIntakeFieldId =
+  | "firstName"
+  | "lastName"
+  | "email"
+  | "title"
+  | "birthDate"
+  | "positions"
+  | "availability"
+  | "schedulingPreferences"
+  | "blockoutDates"
+  | "notes";
+
 export type TeamIntakeForm = {
   formId: string;
   churchId: string;
@@ -542,6 +560,8 @@ export type TeamIntakeForm = {
   // way).
   teamIds: string[];
   active: boolean;
+  /** Public fields selected by the form owner. Missing on legacy forms. */
+  enabledFields?: TeamIntakeFieldId[];
   /** When true the public form rejects a submission with no email address. */
   requireEmail?: boolean;
   /**
@@ -572,11 +592,15 @@ export type TeamIntakeSubmission = {
   lastName: string;
   /** Carried onto the member record on apply; absent on older submissions. */
   email?: string;
+  title?: string;
+  birthDate?: BirthDate | null;
   normalizedName: string;
   positionIds: string[];
   occurrenceAvailability: Record<string, "available" | "unavailable">;
   blockoutRanges: TeamIntakeBlockoutRange[];
   notes?: string;
+  servingFrequency?: TeamMemberServingFrequency;
+  recurringAvailability?: TeamMemberRecurringAvailability;
   status: TeamIntakeSubmissionStatus;
   submittedAt: string;
   reviewedAt?: string;
@@ -599,6 +623,7 @@ export type TeamIntakePreview = {
     | "startDate"
     | "endDate"
     | "requireEmail"
+    | "enabledFields"
     | "availabilityServices"
     | "availabilityOccurrences"
     | "welcomeMessage"
@@ -677,6 +702,7 @@ export type EmailCodeChallengeFields = {
   requiresEmailCode?: boolean;
   pendingAuthId?: string;
   verificationEmail?: string;
+  redirectStarted?: boolean;
 };
 
 export type DesktopAuthCompleteResponse = {

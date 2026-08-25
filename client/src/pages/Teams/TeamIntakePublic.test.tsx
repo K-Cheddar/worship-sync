@@ -107,7 +107,7 @@ test("blocks submission until a name is entered", async () => {
   await screen.findByText("Fall Volunteers");
 
   await userEvent.click(
-    screen.getByRole("button", { name: /submit availability/i }),
+    screen.getByRole("button", { name: /submit form/i }),
   );
 
   expect(mockSubmit).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ test("submits the entered availability for the form token", async () => {
   await userEvent.type(screen.getByLabelText(/first name/i), "Pat");
   await userEvent.type(screen.getByLabelText(/last name/i), "Reed");
   await userEvent.click(
-    screen.getByRole("button", { name: /submit availability/i }),
+    screen.getByRole("button", { name: /submit form/i }),
   );
 
   await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
@@ -134,4 +134,49 @@ test("submits the entered availability for the form token", async () => {
     expect.objectContaining({ firstName: "Pat", lastName: "Reed" }),
   );
   expect(await screen.findByText(/thanks, pat/i)).toBeInTheDocument();
+});
+
+test("renders only the fields selected by the form owner", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["availability"],
+      availabilityOccurrences: [
+        {
+          occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
+          serviceId: "service_1",
+          name: "Sunday service",
+          startsAt: "2026-09-06T10:00:00.000Z",
+        },
+      ],
+    },
+  } as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.queryByLabelText(/first name/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+  expect(screen.getByText("Service date availability")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /submit form/i }));
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+});
+
+test("shows the added profile and scheduling fields when selected", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["title", "birthDate", "schedulingPreferences"],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.getByLabelText("Title:")).toBeInTheDocument();
+  expect(screen.getByText("Birthday")).toBeInTheDocument();
+  expect(screen.getByLabelText("Serving frequency:")).toBeInTheDocument();
+  expect(screen.getByText("Weeks you can usually serve")).toBeInTheDocument();
 });

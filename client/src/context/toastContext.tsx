@@ -12,6 +12,7 @@ import { ToastPosition, ToastVariant } from "../components/Toast/Toast";
 import { appendToast } from "../components/Toast/toastQueue";
 import { registerAuthErrorHandler } from "../api/authErrorBus";
 import { showAuthErrorToast } from "../utils/apiErrorToast";
+import { registerPresentationSyncErrorHandler } from "../utils/presentationSyncErrorBus";
 
 type ToastContextType = {
   showToast: (
@@ -86,6 +87,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   // even if the call site doesn't handle the error itself.
   useEffect(() => {
     return registerAuthErrorHandler(() => showAuthErrorToast(showToast));
+  }, [showToast]);
+
+  useEffect(() => {
+    return registerPresentationSyncErrorHandler((message) =>
+      showToast(message, "error"),
+    );
   }, [showToast]);
 
   const toastPortal = useMemo(

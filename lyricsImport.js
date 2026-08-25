@@ -251,7 +251,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
         .map((hit) => hit.result);
     } catch (error) {
       if (!isCanceledRequest(error)) {
-        console.warn("Genius search request failed:", {
+        console.error("Genius search request failed:", {
           url,
           hasAccessToken,
           message: error.message,
@@ -337,7 +337,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       );
     } catch (error) {
       if (!isCanceledRequest(error)) {
-        console.warn("Genius lyrics page request failed:", {
+        console.error("Genius lyrics page request failed:", {
           url: song?.url,
           message: error.message,
           status: error.response?.status,
@@ -357,7 +357,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       // A 200 response with no lyrics container usually means Genius served a
       // bot-challenge/interstitial page instead of the real song page (common
       // when scraping from datacenter/cloud IPs), not that lyrics don't exist.
-      console.warn("Genius lyrics page returned no lyrics container:", {
+      console.error("Genius lyrics page returned no lyrics container:", {
         url: song?.url,
         status: response.status,
         htmlLength:
@@ -470,7 +470,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
           return shouldExcludeLyricsImport(track) ? null : track;
         } catch (error) {
           if (!isCanceledRequest(error) && !isLyricsOvhMiss(error)) {
-            console.warn("lyrics.ovh lyrics lookup failed:", {
+            console.error("lyrics.ovh lyrics lookup failed:", {
               trackName,
               artistName,
               message: error.message,
@@ -560,8 +560,8 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       ...(includeGenius
         ? [{ name: "Genius", search: searchGeniusTracks }]
         : []),
-      { name: "LRCLIB", search: searchLrclibTracks },
       { name: "lyrics.ovh", search: searchLyricsOvhTracks },
+      { name: "LRCLIB", search: searchLrclibTracks },
     ];
     const providerResults = await Promise.all(
       providers.map(async (provider) => {
@@ -574,7 +574,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
         try {
           return await provider.search(params, { signal: controller.signal });
         } catch (error) {
-          console.warn(`${provider.name} lyrics search failed:`, {
+          console.error(`${provider.name} lyrics search failed:`, {
             message: error.message,
             status: error.response?.status,
             code: error.code,

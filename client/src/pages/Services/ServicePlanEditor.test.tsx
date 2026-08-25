@@ -1783,7 +1783,10 @@ describe("ServicePlanEditor", () => {
         {
           id: "section-1",
           name: "Worship",
-          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+          elements: [
+            { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+            { id: "message", type: "free", title: plainTextToRichText("Message") },
+          ],
         },
       ],
     };
@@ -1818,9 +1821,16 @@ describe("ServicePlanEditor", () => {
         success: true,
         servicePlan: {
           ...publishedPlan,
+          publicLive: { mode: "manual", currentElementId: "message" },
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: {
+          ...publishedPlan,
           publicLive: {
             mode: "anchored",
-            currentElementId: "welcome",
+            currentElementId: "message",
             startedAt: new Date().toISOString(),
           },
         },
@@ -1889,6 +1899,15 @@ describe("ServicePlanEditor", () => {
       );
     });
 
+    await user.click(await screen.findByRole("button", { name: /Make Message live/i }));
+    await waitFor(() => {
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
+        "church-1",
+        planKey,
+        { mode: "manual", currentElementId: "message" },
+      );
+    });
+
     await user.click(screen.getByRole("button", { name: /Plan actions/i }));
     expect(
       await screen.findByRole("menuitem", { name: /Continue automatic timing/i }),
@@ -1898,7 +1917,7 @@ describe("ServicePlanEditor", () => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
         "church-1",
         planKey,
-        { mode: "anchored", currentElementId: "welcome" },
+        { mode: "anchored", currentElementId: "message" },
       );
     });
   });

@@ -41,26 +41,50 @@ type Props = {
   onCancel: () => void;
 };
 
-const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props) => {
+const ServiceTimesForm = ({
+  editingId,
+  initialValues,
+  onSave,
+  onCancel,
+}: Props) => {
   const { isMobile } = useContext(ControllerInfoContext) || {};
+  const isEditing = Boolean(editingId);
 
   // All form state lives here so typing doesn't re-render the parent
   const [name, setName] = useState(initialValues?.name ?? "");
   const [color, setColor] = useState(initialValues?.color ?? DEFAULT_COLOR);
-  const [background, setBackground] = useState(initialValues?.background ?? DEFAULT_BG);
-  const [recurrence, setRecurrence] = useState<RecurrenceType>(initialValues?.reccurence ?? "weekly");
+  const [background, setBackground] = useState(
+    initialValues?.background ?? DEFAULT_BG,
+  );
+  const [recurrence, setRecurrence] = useState<RecurrenceType>(
+    initialValues?.reccurence ?? "weekly",
+  );
   const [time, setTime] = useState(initialValues?.time ?? "10:00");
-  const [dateTimeISO, setDateTimeISO] = useState(initialValues?.dateTimeISO ?? "");
-  const [dayOfWeek, setDayOfWeek] = useState<Weekday>(initialValues?.dayOfWeek ?? 0);
-  const [daysOfWeek, setDaysOfWeek] = useState<MultiWeeklyDay[]>(initialValues?.daysOfWeek ?? []);
-  const [startDateISO, setStartDateISO] = useState(initialValues?.startDateISO ?? "");
+  const [dateTimeISO, setDateTimeISO] = useState(
+    initialValues?.dateTimeISO ?? "",
+  );
+  const [dayOfWeek, setDayOfWeek] = useState<Weekday>(
+    initialValues?.dayOfWeek ?? 0,
+  );
+  const [daysOfWeek, setDaysOfWeek] = useState<MultiWeeklyDay[]>(
+    initialValues?.daysOfWeek ?? [],
+  );
+  const [startDateISO, setStartDateISO] = useState(
+    initialValues?.startDateISO ?? "",
+  );
   const [endDateISO, setEndDateISO] = useState(initialValues?.endDateISO ?? "");
-  const [ordinal, setOrdinal] = useState<MonthWeekOrdinal>((initialValues?.ordinal as MonthWeekOrdinal) ?? 1);
+  const [ordinal, setOrdinal] = useState<MonthWeekOrdinal>(
+    (initialValues?.ordinal as MonthWeekOrdinal) ?? 1,
+  );
   const [weekday, setWeekday] = useState<Weekday>(initialValues?.weekday ?? 3);
   const [nameSize, setNameSize] = useState(initialValues?.nameFontSize ?? 12);
   const [timeSize, setTimeSize] = useState(initialValues?.timeFontSize ?? 35);
-  const [position, setPosition] = useState<ServiceTimePosition>(initialValues?.position ?? "top-right");
-  const [shouldShowName, setShouldShowName] = useState(initialValues?.shouldShowName ?? true);
+  const [position, setPosition] = useState<ServiceTimePosition>(
+    initialValues?.position ?? "top-right",
+  );
+  const [shouldShowName, setShouldShowName] = useState(
+    initialValues?.shouldShowName ?? true,
+  );
 
   // Re-initialize when the service being edited changes (not on every initialValues reference change)
   useEffect(() => {
@@ -89,11 +113,14 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
 
   // Match preview column height to form column height on desktop
   const articleRef = useRef<HTMLElement | null>(null);
-  const [previewMaxHeightPx, setPreviewMaxHeightPx] = useState<number | null>(null);
+  const [previewMaxHeightPx, setPreviewMaxHeightPx] = useState<number | null>(
+    null,
+  );
 
   const syncPreviewMaxHeight = useCallback(() => {
     const wide =
-      typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+      typeof window !== "undefined" &&
+      window.matchMedia("(min-width: 768px)").matches;
     const el = articleRef.current;
     if (!wide || !el) {
       setPreviewMaxHeightPx(null);
@@ -105,7 +132,9 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
   useLayoutEffect(() => {
     syncPreviewMaxHeight();
     const mq =
-      typeof window !== "undefined" ? window.matchMedia("(min-width: 768px)") : null;
+      typeof window !== "undefined"
+        ? window.matchMedia("(min-width: 768px)")
+        : null;
     const onMq = () => syncPreviewMaxHeight();
     mq?.addEventListener("change", onMq);
     const el = articleRef.current;
@@ -125,7 +154,8 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
 
   // True when all checked days share the same time — used by the "set all" control
   const allSameTime =
-    daysOfWeek.length > 0 && daysOfWeek.every((d) => d.time === daysOfWeek[0].time);
+    daysOfWeek.length > 0 &&
+    daysOfWeek.every((d) => d.time === daysOfWeek[0].time);
 
   const canSave = useMemo(() => {
     if (!name) return false;
@@ -133,12 +163,28 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
     if (recurrence === "weekly") return time.length > 0;
     if (recurrence === "monthly") return time.length > 0;
     if (recurrence === "multi_weekly")
-      return daysOfWeek.length > 0 && daysOfWeek.every((d) => d.time.length > 0);
+      return (
+        daysOfWeek.length > 0 && daysOfWeek.every((d) => d.time.length > 0)
+      );
     return false;
   }, [name, recurrence, dateTimeISO, time, daysOfWeek]);
 
   const handleSave = () => {
-    if (!canSave) return;
+    if (!editingId && !canSave) return;
+
+    if (editingId) {
+      onSave({
+        color,
+        background,
+        position,
+        nameFontSize: nameSize,
+        timeFontSize: timeSize,
+        shouldShowName,
+        updatedAt: serverDate().toISOString(),
+      });
+      return;
+    }
+
     const hasBounds =
       recurrence === "weekly" ||
       recurrence === "multi_weekly" ||
@@ -148,7 +194,10 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
       color,
       background,
       reccurence: recurrence,
-      time: recurrence !== "one_time" && recurrence !== "multi_weekly" ? time : undefined,
+      time:
+        recurrence !== "one_time" && recurrence !== "multi_weekly"
+          ? time
+          : undefined,
       dateTimeISO: recurrence === "one_time" ? dateTimeISO : undefined,
       dayOfWeek: recurrence === "weekly" ? dayOfWeek : undefined,
       daysOfWeek: recurrence === "multi_weekly" ? daysOfWeek : undefined,
@@ -176,206 +225,249 @@ const ServiceTimesForm = ({ editingId, initialValues, onSave, onCancel }: Props)
         className="w-full max-w-full shrink-0 self-start rounded-md border border-white/12 bg-black/30 p-4 md:w-fit md:max-w-lg"
       >
         <h2 className="text-xl font-semibold">
-          {editingId ? "Edit Service Timer" : "Create Service Timer"}
+          {isEditing
+            ? "Update Service Timer Appearance"
+            : "Create Service Timer"}
         </h2>
 
         <section className="mt-4 grid min-w-0 grid-cols-2 gap-4">
-          <Input
-            className={stackedFieldClass}
-            label="Name"
-            labelClassName={labelClassName}
-            value={name}
-            onChange={(v) => setName(String(v))}
-          />
-          <Select
-            className={stackedFieldClass}
-            selectClassName="w-full"
-            label="Type"
-            labelClassName={labelClassName}
-            value={recurrence}
-            onChange={(v) => setRecurrence(v as RecurrenceType)}
-            options={[
-              { label: "One-time date", value: "one_time" },
-              { label: "Weekly", value: "weekly" },
-              { label: "Multi-day weekly", value: "multi_weekly" },
-              { label: "Monthly", value: "monthly" },
-            ]}
-          />
-
-          {recurrence === "one_time" && (
-            <DateTimePicker
-              className={stackedFieldClass}
-              label="Date & Time"
-              labelClassName={labelClassName}
-              value={dateTimeISO}
-              onChange={setDateTimeISO}
-            />
-          )}
-
-          {recurrence === "weekly" && (
+          {!isEditing && (
             <>
+              <Input
+                className={stackedFieldClass}
+                label="Name"
+                labelClassName={labelClassName}
+                value={name}
+                onChange={(v) => setName(String(v))}
+              />
               <Select
                 className={stackedFieldClass}
                 selectClassName="w-full"
-                label="Day"
+                label="Type"
                 labelClassName={labelClassName}
-                value={String(dayOfWeek)}
-                onChange={(v) => setDayOfWeek(parseInt(v) as Weekday)}
-                options={weekdays.map((d) => ({ label: d.label, value: String(d.value) }))}
+                value={recurrence}
+                onChange={(v) => setRecurrence(v as RecurrenceType)}
+                options={[
+                  { label: "One-time date", value: "one_time" },
+                  { label: "Weekly", value: "weekly" },
+                  { label: "Multi-day weekly", value: "multi_weekly" },
+                  { label: "Monthly", value: "monthly" },
+                ]}
               />
-              <TimePicker
-                variant="countdown"
-                className={stackedFieldClass}
-                inputClassName="min-w-0 w-full"
-                label="Time"
-                value={time}
-                onChange={(v) => setTime(String(v))}
-              />
-            </>
-          )}
 
-          {recurrence === "multi_weekly" && (
-            <>
-              <div className={cn(stackedFieldClass, "col-span-2")}>
-                <span className={cn("text-sm font-medium text-gray-300", labelClassName)}>
-                  Days &amp; Times
-                </span>
-                <div className="mt-1 flex flex-col gap-1">
-                  {/* Bulk-set control — always visible so a time can be chosen before selecting days */}
-                  <div className="mb-1 flex items-center gap-3 border-b border-white/10 pb-2">
-                    <span className="w-32 shrink-0 text-xs text-gray-400">Set all to</span>
-                    <TimePicker
-                      variant="countdown"
-                      className="min-w-0 flex-1"
-                      inputClassName="min-w-0 w-full"
-                      value={
-                        allSameTime
-                          ? daysOfWeek[0].time
-                          : daysOfWeek.length === 0
-                            ? pendingSetAllTime
-                            : ""
-                      }
-                      onChange={(v) => {
-                        const t = String(v);
-                        setPendingSetAllTime(t);
-                        if (t) setDaysOfWeek(daysOfWeek.map((x) => ({ ...x, time: t })));
-                      }}
-                    />
-                  </div>
-                  {weekdays.map((d) => {
-                    const entry = daysOfWeek.find((x) => x.day === d.value);
-                    const checked = !!entry;
-                    return (
-                      <div key={d.value} className="flex items-center gap-3">
-                        <label className="flex w-32 shrink-0 cursor-pointer items-center gap-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 accent-cyan-400"
-                            checked={checked}
-                            onChange={() => {
-                              if (checked) {
-                                setDaysOfWeek(daysOfWeek.filter((x) => x.day !== d.value));
-                              } else {
-                                // Inherit the shared time when adding a new day so users
-                                // don't have to re-enter the same time repeatedly
-                                const defaultTime =
-                                  allSameTime && daysOfWeek.length > 0
-                                    ? daysOfWeek[0].time
-                                    : pendingSetAllTime || "10:00";
-                                setDaysOfWeek([
-                                  ...daysOfWeek,
-                                  { day: d.value, time: defaultTime },
-                                ]);
-                              }
-                            }}
-                          />
-                          <span className="text-sm text-gray-200">{d.label}</span>
-                        </label>
-                        {/* Always rendered to prevent layout shift; hidden via visibility when unchecked */}
-                        <div
-                          className={cn(
-                            "min-w-0 flex-1",
-                            !checked && "invisible pointer-events-none",
-                          )}
-                        >
-                          <TimePicker
-                            variant="countdown"
-                            className="min-w-0 w-full"
-                            inputClassName="min-w-0 w-full"
-                            value={entry?.time ?? "10:00"}
-                            onChange={(v) => {
+              {recurrence === "one_time" && (
+                <DateTimePicker
+                  className={stackedFieldClass}
+                  label="Date & Time"
+                  labelClassName={labelClassName}
+                  value={dateTimeISO}
+                  onChange={setDateTimeISO}
+                />
+              )}
+
+              {recurrence === "weekly" && (
+                <>
+                  <Select
+                    className={stackedFieldClass}
+                    selectClassName="w-full"
+                    label="Day"
+                    labelClassName={labelClassName}
+                    value={String(dayOfWeek)}
+                    onChange={(v) => setDayOfWeek(parseInt(v) as Weekday)}
+                    options={weekdays.map((d) => ({
+                      label: d.label,
+                      value: String(d.value),
+                    }))}
+                  />
+                  <TimePicker
+                    variant="countdown"
+                    className={stackedFieldClass}
+                    inputClassName="min-w-0 w-full"
+                    label="Time"
+                    value={time}
+                    onChange={(v) => setTime(String(v))}
+                  />
+                </>
+              )}
+
+              {recurrence === "multi_weekly" && (
+                <>
+                  <div className={cn(stackedFieldClass, "col-span-2")}>
+                    <span
+                      className={cn(
+                        "text-sm font-medium text-gray-300",
+                        labelClassName,
+                      )}
+                    >
+                      Days &amp; Times
+                    </span>
+                    <div className="mt-1 flex flex-col gap-1">
+                      {/* Bulk-set control — always visible so a time can be chosen before selecting days */}
+                      <div className="mb-1 flex items-center gap-3 border-b border-white/10 pb-2">
+                        <span className="w-32 shrink-0 text-xs text-gray-400">
+                          Set all to
+                        </span>
+                        <TimePicker
+                          variant="countdown"
+                          className="min-w-0 flex-1"
+                          inputClassName="min-w-0 w-full"
+                          value={
+                            allSameTime
+                              ? daysOfWeek[0].time
+                              : daysOfWeek.length === 0
+                                ? pendingSetAllTime
+                                : ""
+                          }
+                          onChange={(v) => {
+                            const t = String(v);
+                            setPendingSetAllTime(t);
+                            if (t)
                               setDaysOfWeek(
-                                daysOfWeek.map((x) =>
-                                  x.day === d.value ? { ...x, time: String(v) } : x,
-                                ),
+                                daysOfWeek.map((x) => ({ ...x, time: t })),
                               );
-                            }}
-                          />
-                        </div>
+                          }}
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      {weekdays.map((d) => {
+                        const entry = daysOfWeek.find((x) => x.day === d.value);
+                        const checked = !!entry;
+                        return (
+                          <div
+                            key={d.value}
+                            className="flex items-center gap-3"
+                          >
+                            <label className="flex w-32 shrink-0 cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-cyan-400"
+                                checked={checked}
+                                onChange={() => {
+                                  if (checked) {
+                                    setDaysOfWeek(
+                                      daysOfWeek.filter(
+                                        (x) => x.day !== d.value,
+                                      ),
+                                    );
+                                  } else {
+                                    // Inherit the shared time when adding a new day so users
+                                    // don't have to re-enter the same time repeatedly
+                                    const defaultTime =
+                                      allSameTime && daysOfWeek.length > 0
+                                        ? daysOfWeek[0].time
+                                        : pendingSetAllTime || "10:00";
+                                    setDaysOfWeek([
+                                      ...daysOfWeek,
+                                      { day: d.value, time: defaultTime },
+                                    ]);
+                                  }
+                                }}
+                              />
+                              <span className="text-sm text-gray-200">
+                                {d.label}
+                              </span>
+                            </label>
+                            {/* Always rendered to prevent layout shift; hidden via visibility when unchecked */}
+                            <div
+                              className={cn(
+                                "min-w-0 flex-1",
+                                !checked && "invisible pointer-events-none",
+                              )}
+                            >
+                              <TimePicker
+                                variant="countdown"
+                                className="min-w-0 w-full"
+                                inputClassName="min-w-0 w-full"
+                                value={entry?.time ?? "10:00"}
+                                onChange={(v) => {
+                                  setDaysOfWeek(
+                                    daysOfWeek.map((x) =>
+                                      x.day === d.value
+                                        ? { ...x, time: String(v) }
+                                        : x,
+                                    ),
+                                  );
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {recurrence === "monthly" && (
+                <>
+                  <Select
+                    className={stackedFieldClass}
+                    selectClassName="w-full"
+                    label="Ordinal"
+                    labelClassName={labelClassName}
+                    value={String(ordinal)}
+                    onChange={(v) =>
+                      setOrdinal(parseInt(v) as MonthWeekOrdinal)
+                    }
+                    options={ordinals.map((o) => ({
+                      label: o.label,
+                      value: String(o.value),
+                    }))}
+                  />
+                  <Select
+                    className={stackedFieldClass}
+                    selectClassName="w-full"
+                    label="Weekday"
+                    labelClassName={labelClassName}
+                    value={String(weekday)}
+                    onChange={(v) => setWeekday(parseInt(v) as Weekday)}
+                    options={weekdays.map((d) => ({
+                      label: d.label,
+                      value: String(d.value),
+                    }))}
+                  />
+                  <TimePicker
+                    variant="countdown"
+                    className={stackedFieldClass}
+                    inputClassName="min-w-0 w-full"
+                    label="Time"
+                    labelClassName={labelClassName}
+                    value={time}
+                    onChange={(v) => setTime(String(v))}
+                  />
+                </>
+              )}
+
+              {(recurrence === "weekly" ||
+                recurrence === "multi_weekly" ||
+                recurrence === "monthly") && (
+                <>
+                  <Input
+                    className={stackedFieldClass}
+                    label="Start Date (optional)"
+                    labelClassName={labelClassName}
+                    type="date"
+                    value={startDateISO}
+                    onChange={(v) => setStartDateISO(String(v))}
+                  />
+                  <Input
+                    className={stackedFieldClass}
+                    label="End Date (optional)"
+                    labelClassName={labelClassName}
+                    type="date"
+                    value={endDateISO}
+                    onChange={(v) => setEndDateISO(String(v))}
+                  />
+                </>
+              )}
             </>
           )}
 
-          {recurrence === "monthly" && (
-            <>
-              <Select
-                className={stackedFieldClass}
-                selectClassName="w-full"
-                label="Ordinal"
-                labelClassName={labelClassName}
-                value={String(ordinal)}
-                onChange={(v) => setOrdinal(parseInt(v) as MonthWeekOrdinal)}
-                options={ordinals.map((o) => ({ label: o.label, value: String(o.value) }))}
-              />
-              <Select
-                className={stackedFieldClass}
-                selectClassName="w-full"
-                label="Weekday"
-                labelClassName={labelClassName}
-                value={String(weekday)}
-                onChange={(v) => setWeekday(parseInt(v) as Weekday)}
-                options={weekdays.map((d) => ({ label: d.label, value: String(d.value) }))}
-              />
-              <TimePicker
-                variant="countdown"
-                className={stackedFieldClass}
-                inputClassName="min-w-0 w-full"
-                label="Time"
-                labelClassName={labelClassName}
-                value={time}
-                onChange={(v) => setTime(String(v))}
-              />
-            </>
-          )}
-
-          {(recurrence === "weekly" ||
-            recurrence === "multi_weekly" ||
-            recurrence === "monthly") && (
-              <>
-                <Input
-                  className={stackedFieldClass}
-                  label="Start Date (optional)"
-                  labelClassName={labelClassName}
-                  type="date"
-                  value={startDateISO}
-                  onChange={(v) => setStartDateISO(String(v))}
-                />
-                <Input
-                  className={stackedFieldClass}
-                  label="End Date (optional)"
-                  labelClassName={labelClassName}
-                  type="date"
-                  value={endDateISO}
-                  onChange={(v) => setEndDateISO(String(v))}
-                />
-              </>
-            )}
-
-          <ColorField className={fieldClass} label="Color" value={color} onChange={setColor} />
+          <ColorField
+            className={fieldClass}
+            label="Color"
+            value={color}
+            onChange={setColor}
+          />
           <ColorField
             className={fieldClass}
             label="Background"

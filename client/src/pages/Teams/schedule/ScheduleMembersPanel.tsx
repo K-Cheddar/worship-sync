@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Pencil, Users } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
 import { cn } from "@/utils/cnHelper";
-import { parsePlainDate } from "@/utils/plainDate";
+import { formatBirthDate } from "@/utils/birthDate";
 import type { TeamPosition, TeamRosterMember } from "../../../api/authTypes";
 import EntityListSearch from "../components/EntityListSearch";
 import MemberChip from "./MemberChip";
@@ -127,13 +127,7 @@ const ScheduleMembersPanel = ({
       scheduleStartDate,
       scheduleEndDate,
     );
-    const dateOfBirth = member.dateOfBirth
-      ? parsePlainDate(member.dateOfBirth)?.toLocaleDateString(undefined, {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })
-      : "";
+    const birthDate = formatBirthDate(member.birthDate);
 
     return (
       <dl className="space-y-2">
@@ -162,10 +156,10 @@ const ScheduleMembersPanel = ({
             )}
           </dd>
         </div>
-        {dateOfBirth ? (
+        {birthDate ? (
           <div>
-            <dt className="font-semibold text-gray-400">Date of birth</dt>
-            <dd className="mt-0.5 text-gray-200">{dateOfBirth}</dd>
+            <dt className="font-semibold text-gray-400">Birthday</dt>
+            <dd className="mt-0.5 text-gray-200">{birthDate}</dd>
           </div>
         ) : null}
         <div>

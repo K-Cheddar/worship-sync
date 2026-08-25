@@ -277,9 +277,9 @@ test("searchAllLyricsTracks returns usable results from every provider", async (
 
       assert.deepEqual(
         tracks.map((track) => track.source),
-        ["genius", "lrclib", "lyricsovh"],
+        ["genius", "lyricsovh", "lrclib"],
       );
-      assert.equal(tracks[2].lyricsOvhKey, "Example Artist::Example Lyrics Ovh");
+      assert.equal(tracks[1].lyricsOvhKey, "Example Artist::Example Lyrics Ovh");
     },
   );
 });
@@ -331,7 +331,7 @@ test("searchAllLyricsTracks keeps successful provider results when Genius fails"
 
       assert.deepEqual(
         tracks.map((track) => track.source),
-        ["lrclib", "lyricsovh"],
+        ["lyricsovh", "lrclib"],
       );
     },
   );

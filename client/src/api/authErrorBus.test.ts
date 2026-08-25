@@ -1,11 +1,21 @@
 import {
+  isAuthenticatedSessionExpected,
   notifyAuthError,
   registerAuthErrorHandler,
   registerAuthRecoveryHandler,
   requestAuthRecovery,
+  setAuthenticatedSessionExpected,
 } from "./authErrorBus";
 
 describe("authErrorBus", () => {
+  afterEach(() => setAuthenticatedSessionExpected(false));
+
+  it("tracks whether the current UI expects an authenticated session", () => {
+    expect(isAuthenticatedSessionExpected()).toBe(false);
+    setAuthenticatedSessionExpected(true);
+    expect(isAuthenticatedSessionExpected()).toBe(true);
+  });
+
   it("invokes every registered handler on notifyAuthError", () => {
     const a = jest.fn();
     const b = jest.fn();

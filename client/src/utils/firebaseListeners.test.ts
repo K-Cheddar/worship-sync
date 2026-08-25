@@ -1,5 +1,6 @@
 import {
   isFirebasePermissionDenied,
+  setFirebaseDiagnosticContext,
   subscribeWithPermissionRetry,
 } from "./firebaseListeners";
 
@@ -46,6 +47,7 @@ describe("subscribeWithPermissionRetry", () => {
   beforeEach(() => {
     listeners.length = 0;
     unsubscribe.mockClear();
+    setFirebaseDiagnosticContext({});
     jest.useFakeTimers();
   });
 
@@ -76,6 +78,73 @@ describe("subscribeWithPermissionRetry", () => {
     expect(listeners.length).toBeGreaterThan(15);
     // Each re-attach defensively tears down the previous listener.
     expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it("logs when a permission-denied listener recovers", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const onData = jest.fn();
+    subscribeWithPermissionRetry("db" as never, "path/a", onData, {
+      label: "test listener",
+    });
+
+    latest().error({ code: "PERMISSION_DENIED" });
+    jest.advanceTimersByTime(100);
+    latest().success({ val: () => 42 });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[firebase diagnostic]",
+      expect.stringContaining('"event":"firebase_listener_permission_recovered"'),
+    );
+    expect(onData).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it("correlates a stale listener with the current renderer auth generation", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    setFirebaseDiagnosticContext({
+      rendererId: "renderer-a",
+      sessionKind: "workstation",
+      access: "full",
+      surface: "controller",
+      authGeneration: 7,
+      firebaseUserCorrelationId: "firebase-user-a",
+      scopeReady: true,
+    });
+    subscribeWithPermissionRetry("db" as never, "path/a", jest.fn(), {
+      label: "test listener",
+    });
+
+    setFirebaseDiagnosticContext({
+      rendererId: "renderer-a",
+      sessionKind: "human",
+      access: "full",
+      surface: "controller",
+      authGeneration: 8,
+      firebaseUserCorrelationId: "firebase-user-b",
+      scopeReady: true,
+    });
+    latest().error({ code: "PERMISSION_DENIED" });
+
+    const diagnosticCall = warnSpy.mock.calls.find(
+      ([prefix, message]) =>
+        prefix === "[firebase diagnostic]" &&
+        String(message).includes("firebase_listener_permission_denied"),
+    );
+    expect(diagnosticCall).toBeDefined();
+    const diagnostic = JSON.parse(String(diagnosticCall?.[1]));
+    expect(diagnostic).toEqual(
+      expect.objectContaining({
+        rendererId: "renderer-a",
+        sessionKind: "human",
+        authGeneration: 8,
+        firebaseUserCorrelationId: "firebase-user-b",
+        listenerAuthGeneration: 7,
+        listenerSessionKind: "workstation",
+        listenerScopeMatchesCurrent: false,
+      }),
+    );
+    expect(diagnostic).not.toHaveProperty("uid");
+    warnSpy.mockRestore();
   });
 
   it("does not retry on non-permission errors", () => {

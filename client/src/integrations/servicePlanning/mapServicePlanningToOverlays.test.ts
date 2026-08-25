@@ -180,6 +180,34 @@ describe("mapServicePlanningRows", () => {
     expect(mapped[0].candidates[0].patch.event).toBe("Pastoral");
   });
 
+  it("uses every structured Service Plan assignee instead of extracting names from the title", () => {
+    const mapped = mapServicePlanningRows(
+      [
+        {
+          ...pastoralRow,
+          title: "Welcome home",
+          assigneeNames: ["Greg Baldeo", "Javar Baldeo"],
+        },
+      ],
+      integrationsPastoral,
+    );
+
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].candidates).toHaveLength(2);
+    expect(mapped[0].candidates.map((candidate) => candidate.rawNameToken)).toEqual([
+      "Greg Baldeo",
+      "Javar Baldeo",
+    ]);
+    expect(mapped[0].candidates.map((candidate) => candidate.patch.name)).toEqual([
+      "Dr. Greg Baldeo",
+      "Javar Baldeo",
+    ]);
+    expect(mapped[0].candidates.map((candidate) => candidate.patch.event)).toEqual([
+      "Welcome and Announcements",
+      "Welcome and Announcements",
+    ]);
+  });
+
   it("pastoral row: single overlay with combined names and titles", () => {
     const mapped = mapServicePlanningRows([pastoralRow], integrationsPastoral);
     expect(mapped).toHaveLength(1);

@@ -24,6 +24,7 @@ const PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY =
   "worshipsync_pending_email_code_sign_in_method";
 const PENDING_DESKTOP_AUTH_KEY = "worshipsync_pending_desktop_auth";
 const PENDING_DESKTOP_EMAIL_RESEND_KEY = "worshipsync_desktop_email_resend";
+const PENDING_PROVIDER_REDIRECT_KEY = "worshipsync_pending_provider_redirect";
 let csrfToken = "";
 
 export type StoredServerSessionHint =
@@ -34,6 +35,46 @@ export type StoredServerSessionHint =
 
 /** Human sign-in method remembered for the login screen. */
 export type StoredLastSignInMethod = "password" | "google" | "microsoft";
+
+export type PendingProviderRedirectState = {
+  method: Exclude<StoredLastSignInMethod, "password">;
+  returnPath: string;
+};
+
+export const getPendingProviderRedirectState =
+  (): PendingProviderRedirectState | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(PENDING_PROVIDER_REDIRECT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<PendingProviderRedirectState>;
+      if (
+        (parsed.method !== "google" && parsed.method !== "microsoft") ||
+        typeof parsed.returnPath !== "string" ||
+        !parsed.returnPath.trim()
+      ) {
+        return null;
+      }
+      return { method: parsed.method, returnPath: parsed.returnPath };
+    } catch {
+      return null;
+    }
+  };
+
+export const setPendingProviderRedirectState = (
+  state: PendingProviderRedirectState | null,
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state) {
+      sessionStorage.removeItem(PENDING_PROVIDER_REDIRECT_KEY);
+      return;
+    }
+    sessionStorage.setItem(PENDING_PROVIDER_REDIRECT_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore storage failures in private mode/quota constraints.
+  }
+};
 
 export const getLastSignInMethod = (): StoredLastSignInMethod | null => {
   if (typeof window === "undefined") return null;

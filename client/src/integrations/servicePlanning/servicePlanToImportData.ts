@@ -35,6 +35,7 @@ import {
 
 const elementToRow = (element: ServicePlanElement): EventData => {
   const title = richTextToPlainText(element.title).trim();
+  const assigneeNames = getServicePlanElementAssigneeNames(element);
   const notes = element.notes
     ? richTextToFormattedPlainText(element.notes).trim()
     : "";
@@ -85,7 +86,8 @@ const elementToRow = (element: ServicePlanElement): EventData => {
     title,
     ledBy:
       element.sourceLedByRaw?.trim()
-      || getServicePlanElementAssigneeNames(element).join(", "),
+      || assigneeNames.join(", "),
+    ...(assigneeNames.length ? { assigneeNames } : {}),
     ...(element.startTime ? { startTime: element.startTime } : {}),
     ...(typeof durationMinutes === "number" ? { durationMinutes } : {}),
     ...(notes ? { note: notes } : {}),

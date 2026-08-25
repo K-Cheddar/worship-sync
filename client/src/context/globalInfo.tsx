@@ -57,7 +57,10 @@ import {
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
-import { registerAuthRecoveryHandler } from "../api/authErrorBus";
+import {
+  registerAuthRecoveryHandler,
+  setAuthenticatedSessionExpected,
+} from "../api/authErrorBus";
 import type {
   ChurchBranding,
   EmailCodeChallengeFields,
@@ -111,6 +114,8 @@ import {
   setPendingDesktopEmailResendState,
   setWorkstationSessionOperatorName,
   getPendingDesktopEmailResendState,
+  getPendingProviderRedirectState,
+  setPendingProviderRedirectState,
 } from "../utils/authStorage";
 import {
   getHumanAuth,
@@ -139,6 +144,7 @@ import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
 import { setServerTimeOffset } from "../utils/serverTime";
 import {
   isFirebasePermissionDenied,
+  setFirebaseDiagnosticContext,
   subscribeWithPermissionRetry,
 } from "../utils/firebaseListeners";
 import { getAuthErrorDetails, logAuthDiagnostic } from "../utils/authDiagnostics";
@@ -208,7 +214,9 @@ type HumanFirebaseAuthResult =
   | { status: "success"; user: User }
   | { status: "requires-existing-method" }
   /** Full-page OAuth navigation started; current tab is about to leave the app. */
-  | { status: "redirect-started" };
+  | { status: "redirect-started" }
+  /** Redirect completion was requested, but Firebase had no result to consume. */
+  | { status: "redirect-not-completed" };
 
 const getCredentialJsonValue = (
   credentialJson: Record<string, unknown>,
@@ -298,6 +306,11 @@ const PASSWORD_SIGN_IN_FALLBACK_ERROR_CODES = new Set([
   "auth/user-not-found",
 ]);
 
+const POPUP_REDIRECT_FALLBACK_ERROR_CODES = new Set([
+  "auth/popup-blocked",
+  "auth/operation-not-supported-in-this-environment",
+]);
+
 type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
 type BootstrapStatus = "loading" | "ready";
 type AuthServerStatus = "checking" | "online" | "offline";
@@ -322,10 +335,14 @@ type GlobalInfoContextType = {
     method,
     email,
     password,
+    interaction,
+    redirectOnly,
   }: {
     method: HumanAuthMethod;
     email?: string;
     password?: string;
+    interaction?: "popup" | "redirect";
+    redirectOnly?: boolean;
   }) => Promise<EmailCodeChallengeFields>;
   completeDesktopExchange: ({
     desktopAuthId,
@@ -453,6 +470,8 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
 
 type globalFireBaseInfoType = {
   db: Database | undefined;
+  isConnected: boolean;
+  canWriteSharedData: boolean;
   user: string;
   database: string;
   churchId: string;
@@ -460,6 +479,8 @@ type globalFireBaseInfoType = {
 
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
+  isConnected: false,
+  canWriteSharedData: false,
   user: "Demo",
   database: "demo",
   churchId: "",
@@ -589,13 +610,23 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const hasRehydratedServiceTimesRef = useRef(false);
   const sharedDataAuthRequestIdRef = useRef(0);
   const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
+  const firebaseUserCorrelationRef = useRef<{
+    uid: string;
+    correlationId: string;
+  } | null>(null);
+  const updateFirebaseDiagnosticContextRef = useRef<
+    (options?: {
+      authGeneration?: number;
+      firebaseUid?: string | null;
+      scopeReady?: boolean;
+    }) => string | null
+  >(() => null);
   const churchBrandingGateKeyRef = useRef("");
   const churchBrandingPermissionRetryRef = useRef(0);
   const churchBrandingRemintAttemptsRef = useRef(0);
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
-  const presentationRemintAttemptsRef = useRef(0);
   const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
@@ -606,6 +637,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const isOnHumanPath = presenceSurface === "controller";
 
   const hostId = useMemo(() => globalHostId, []);
+  const firebaseRendererContextRef = useRef<{
+    rendererId: string;
+    surface: ReturnType<typeof getPresenceSurface>;
+  }>({ rendererId: hostId, surface: presenceSurface });
+  firebaseRendererContextRef.current = {
+    rendererId: hostId,
+    surface: presenceSurface,
+  };
 
   useEffect(() => {
     if (sessionKind !== "human") {
@@ -648,10 +687,43 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
     churchIntegrationsRemintAttemptsRef.current = 0;
-    presentationRemintAttemptsRef.current = 0;
     hasSeenRealtimeConnectedRef.current = false;
     wasRealtimeConnectedRef.current = false;
   }, [sharedDataSessionScope]);
+
+  updateFirebaseDiagnosticContextRef.current = (options = {}) => {
+    const firebaseUid =
+      options.firebaseUid === undefined
+        ? getSharedDataAuth().currentUser?.uid
+        : options.firebaseUid;
+    if (
+      firebaseUid &&
+      firebaseUserCorrelationRef.current?.uid !== firebaseUid
+    ) {
+      firebaseUserCorrelationRef.current = {
+        uid: firebaseUid,
+        correlationId: `firebase-user-${generateRandomId()}`,
+      };
+    }
+    const firebaseUserCorrelationId = firebaseUid
+      ? (firebaseUserCorrelationRef.current?.correlationId ?? null)
+      : null;
+    setFirebaseDiagnosticContext({
+      rendererId: hostId,
+      sessionKind,
+      access,
+      surface: presenceSurface,
+      authGeneration:
+        options.authGeneration ?? sharedDataAuthRequestIdRef.current,
+      firebaseUserCorrelationId,
+      scopeReady: options.scopeReady ?? isSharedDataScopeReady,
+    });
+    return firebaseUserCorrelationId;
+  };
+
+  useEffect(() => {
+    updateFirebaseDiagnosticContextRef.current();
+  }, [access, hostId, isSharedDataScopeReady, presenceSurface, sessionKind]);
 
   useEffect(() => {
     setAuditSnapshot({
@@ -753,6 +825,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     bootstrap?: AuthBootstrap | null,
     options?: { clearWorkstationSessionOperator?: boolean }
   ) => {
+    setAuthenticatedSessionExpected(Boolean(bootstrap?.authenticated));
     if (!bootstrap?.authenticated) {
       setLoginState("idle");
       setSessionKind(null);
@@ -784,6 +857,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "";
       globalFireDbInfo.database = "";
       globalFireDbInfo.churchId = "";
+      globalFireDbInfo.canWriteSharedData = false;
       return;
     }
 
@@ -844,6 +918,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
+    globalFireDbInfo.canWriteSharedData =
+      (bootstrap.sessionKind === "human" ||
+        bootstrap.sessionKind === "workstation") &&
+      (bootstrap.appAccess || "view") !== "view" &&
+      (bootstrap.appAccess || "view") !== "member";
     if (bootstrap.sessionKind === "human") {
       const humanUser = getHumanAuth().currentUser;
       if (humanUser) {
@@ -926,10 +1005,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       bootstrap,
       method,
       humanApiToken,
+      postAuthPath,
     }: {
       bootstrap: AuthBootstrap;
       method: HumanAuthMethod;
       humanApiToken?: string;
+      postAuthPath?: string;
     }) => {
       setPendingEmailVerificationId(null);
       setPendingEmailVerificationEmail(null);
@@ -948,7 +1029,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       reloadElectronDisplayWindows();
       setAuthServerStatus("online");
-      navigate(getHumanPostAuthPath(location));
+      navigate(postAuthPath || getHumanPostAuthPath(location));
     },
     [applyBootstrap, dispatch, location, navigate],
   );
@@ -1087,11 +1168,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       email,
       password,
       interaction = "popup",
+      redirectOnly = false,
     }: {
       method: HumanAuthMethod;
       email?: string;
       password?: string;
       interaction?: "popup" | "redirect";
+      redirectOnly?: boolean;
     }): Promise<HumanFirebaseAuthResult> => {
       const auth = getHumanAuth();
       try {
@@ -1127,6 +1210,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             }
             if (redirectResult?.user) {
               firebaseUser = redirectResult.user;
+            } else if (redirectOnly) {
+              return { status: "redirect-not-completed" };
             } else {
               await signInWithRedirect(auth, provider);
               return { status: "redirect-started" };
@@ -1315,6 +1400,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "Demo";
       globalFireDbInfo.database = "demo";
       globalFireDbInfo.churchId = "";
+      globalFireDbInfo.canWriteSharedData = false;
       dispatch({ type: "RESET" });
       navigate(nextPath, { replace: true });
     },
@@ -1333,6 +1419,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       applyBootstrap(null);
       setFirebaseDb(undefined);
       globalFireDbInfo.db = undefined;
+      globalFireDbInfo.isConnected = false;
       navigate(nextPath, { replace: true });
     },
     [applyBootstrap, dispatch, navigate]
@@ -1403,11 +1490,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         const persistedUser = await waitForHumanAuthUser();
         if (!persistedUser) {
-          logAuthDiagnostic("error", "auth_bootstrap_unauthenticated", {
-            hasWorkstationToken: Boolean(getWorkstationToken()),
-            hasDisplayToken: Boolean(getDisplayToken()),
-            firebaseHumanUserAvailable: false,
-          });
+          const hasWorkstationToken = Boolean(getWorkstationToken());
+          const hasDisplayToken = Boolean(getDisplayToken());
+          if (hasWorkstationToken || hasDisplayToken) {
+            logAuthDiagnostic(
+              "warn",
+              "auth_bootstrap_device_credentials_rejected",
+              {
+                hasWorkstationToken,
+                hasDisplayToken,
+                firebaseHumanUserAvailable: false,
+              },
+            );
+          }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
           return;
         }
@@ -1547,18 +1642,29 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const auth = getSharedDataAuth();
     if (loginState !== "success") {
       sharedDataAuthRequestIdRef.current += 1;
+      updateFirebaseDiagnosticContextRef.current({
+        authGeneration: sharedDataAuthRequestIdRef.current,
+        firebaseUid: null,
+        scopeReady: false,
+      });
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
       setAuthenticatedSharedDataScope(null);
       setSharedDataTokenRemintNonce(0);
       globalFireDbInfo.db = undefined;
-      sharedDataAuthChainRef.current = Promise.resolve(
-        sharedDataAuthChainRef.current ?? Promise.resolve()
-      )
-        .catch(() => undefined)
-        .then(async () => {
-          await signOutFirebaseAuth(auth);
-        });
+      globalFireDbInfo.isConnected = false;
+      // "loading" is not an authenticated-state decision. Signing out here
+      // can interrupt this renderer while its server bootstrap is still in
+      // flight. Definitive unauthenticated states still clear the local Auth.
+      if (loginState !== "loading") {
+        sharedDataAuthChainRef.current = Promise.resolve(
+          sharedDataAuthChainRef.current ?? Promise.resolve()
+        )
+          .catch(() => undefined)
+          .then(async () => {
+            await signOutFirebaseAuth(auth);
+          });
+      }
       return;
     }
 
@@ -1567,10 +1673,17 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const targetSharedDataScope = sharedDataSessionScope;
     let cancelled = false;
 
+    updateFirebaseDiagnosticContextRef.current({
+      authGeneration: requestId,
+      firebaseUid: null,
+      scopeReady: false,
+    });
+
     setFirebaseDb(undefined);
     setIsSharedDataReady(false);
     setAuthenticatedSharedDataScope(null);
     globalFireDbInfo.db = undefined;
+    globalFireDbInfo.isConnected = false;
 
     void getSharedDataToken({
       workstationToken: getWorkstationToken(),
@@ -1593,6 +1706,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
               return;
             }
+            updateFirebaseDiagnosticContextRef.current({
+              authGeneration: requestId,
+              firebaseUid: auth.currentUser?.uid,
+              scopeReady: true,
+            });
             setFirebaseDb(_db);
             setIsSharedDataReady(true);
             setAuthenticatedSharedDataScope(targetSharedDataScope);
@@ -1606,11 +1724,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               ...getAuthErrorDetails(error),
               sessionScope: targetSharedDataScope,
               permissionDenied: isFirebasePermissionDenied(error),
+              ...firebaseRendererContextRef.current,
+              authGeneration: requestId,
             });
             setFirebaseDb(undefined);
             setIsSharedDataReady(false);
             setAuthenticatedSharedDataScope(null);
             globalFireDbInfo.db = undefined;
+            globalFireDbInfo.isConnected = false;
             setAuthError("Could not connect live data.");
           });
       })
@@ -1622,11 +1743,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           ...getAuthErrorDetails(error),
           sessionScope: targetSharedDataScope,
           permissionDenied: isFirebasePermissionDenied(error),
+          ...firebaseRendererContextRef.current,
+          authGeneration: requestId,
         });
         setFirebaseDb(undefined);
         setIsSharedDataReady(false);
         setAuthenticatedSharedDataScope(null);
         globalFireDbInfo.db = undefined;
+        globalFireDbInfo.isConnected = false;
         setAuthError("Could not connect live data.");
       });
 
@@ -1843,6 +1967,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
+      globalFireDbInfo.isConnected = isConnected;
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;
         return;
@@ -1882,6 +2007,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     });
 
     return () => {
+      globalFireDbInfo.isConnected = false;
       unsubscribe();
       unsubscribeOffset();
     };
@@ -2088,10 +2214,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     method,
     email,
     password,
+    interaction = "popup",
+    redirectOnly = false,
   }: {
     method: HumanAuthMethod;
     email?: string;
     password?: string;
+    interaction?: "popup" | "redirect";
+    redirectOnly?: boolean;
   }) => {
     if (authServerStatus !== "online") {
       setAuthError(
@@ -2107,15 +2237,65 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setAuthError("");
 
     try {
-      const authResult = await authenticateHumanWithFirebase({
-        method,
-        email,
-        password,
-      });
+      let authResult: HumanFirebaseAuthResult;
+      try {
+        authResult = await authenticateHumanWithFirebase({
+          method,
+          email,
+          password,
+          interaction,
+          redirectOnly,
+        });
+      } catch (error) {
+        const errorCode =
+          typeof error === "object" &&
+            error &&
+            "code" in error &&
+            typeof (error as { code?: unknown }).code === "string"
+            ? String((error as { code: string }).code)
+            : "";
+        const shouldFallbackToRedirect =
+          interaction === "popup" &&
+          method !== "password" &&
+          POPUP_REDIRECT_FALLBACK_ERROR_CODES.has(errorCode);
+
+        if (!shouldFallbackToRedirect) {
+          throw error;
+        }
+
+        setPendingProviderRedirectState({
+          method,
+          returnPath: getHumanPostAuthPath(location),
+        });
+        try {
+          authResult = await authenticateHumanWithFirebase({
+            method,
+            email,
+            password,
+            interaction: "redirect",
+          });
+        } catch (redirectError) {
+          setPendingProviderRedirectState(null);
+          throw redirectError;
+        }
+      }
+
+      if (authResult.status === "redirect-started") {
+        setLoginState("idle");
+        return { redirectStarted: true };
+      }
+      if (authResult.status === "redirect-not-completed") {
+        setPendingProviderRedirectState(null);
+        setAuthError("Provider sign-in did not complete. Try again.");
+        setLoginState("error");
+        return {};
+      }
       if (authResult.status !== "success") {
         setLoginState("error");
         return {};
       }
+      const pendingRedirect =
+        interaction === "redirect" ? getPendingProviderRedirectState() : null;
       const idToken = await authResult.user.getIdToken(true);
       const response = await createHumanSession({
         idToken,
@@ -2127,10 +2307,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       });
 
       if (response.bootstrap) {
+        setPendingProviderRedirectState(null);
         finalizeHumanSignIn({
           bootstrap: response.bootstrap,
           method,
           humanApiToken: response.humanApiToken,
+          postAuthPath: pendingRedirect?.returnPath,
         });
         return {};
       }
@@ -2153,6 +2335,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setAuthError(SIGN_IN_UNEXPECTED_RESPONSE);
       return {};
     } catch (e) {
+      setPendingProviderRedirectState(null);
       console.error("Sign-in error:", e);
       if (isReachabilityError(e)) {
         setAuthServerStatus("offline");
@@ -2193,6 +2376,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     authServerStatus,
     finalizeHumanSignIn,
     isReachabilityError,
+    location,
   ]);
 
   const completeDesktopExchange = useCallback(
@@ -2275,11 +2459,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       });
       const completedMethod =
         consumePendingEmailCodeSignInMethod() ?? "password";
+      const pendingRedirect = getPendingProviderRedirectState();
+      setPendingProviderRedirectState(null);
       setPendingDesktopEmailResendState(null);
       finalizeHumanSignIn({
         bootstrap: response.bootstrap,
         method: completedMethod,
         humanApiToken: response.humanApiToken,
+        postAuthPath: pendingRedirect?.returnPath,
       });
       return true;
     } catch (error) {
@@ -2575,6 +2762,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     navigate(nextPath, { replace: true });
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
+    globalFireDbInfo.isConnected = false;
   }, [applyBootstrap, clearPendingLinkState, dispatch, navigate, sessionKind]);
 
   const unlinkCurrentWorkstation = useCallback(async () => {

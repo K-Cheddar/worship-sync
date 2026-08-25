@@ -5,6 +5,7 @@ import overlayTemplatesReducer, {
   addTemplate,
   updateTemplate,
   deleteTemplate,
+  setDefaultTemplate,
   updateTemplatesFromRemote,
   setIsLoading,
   setHasPendingUpdate,
@@ -39,10 +40,12 @@ describe("overlayTemplatesSlice", () => {
       const store = createStore();
       store.dispatch(
         initiateTemplates({
-          participant: [makeTemplate("t1", "T1")],
-          "stick-to-bottom": [],
-          "qr-code": [],
-          image: [],
+          templatesByType: {
+            participant: [makeTemplate("t1", "T1")],
+            "stick-to-bottom": [],
+            "qr-code": [],
+            image: [],
+          },
         }),
       );
       const state = store.getState().overlayTemplates;
@@ -149,6 +152,18 @@ describe("overlayTemplatesSlice", () => {
       expect(store.getState().overlayTemplates.hasPendingUpdate).toBe(true);
     });
 
+    it("clears a template's default assignment when it is deleted", () => {
+      const store = createStore();
+      store.dispatch(
+        addTemplate({ type: "participant", template: makeTemplate("t1", "T1") }),
+      );
+      store.dispatch(setDefaultTemplate({ type: "participant", templateId: "t1" }));
+      store.dispatch(deleteTemplate({ type: "participant", templateId: "t1" }));
+      expect(
+        store.getState().overlayTemplates.defaultTemplateIdsByType.participant,
+      ).toBeUndefined();
+    });
+
     it("is a no-op when the id does not exist", () => {
       const store = createStore();
       store.dispatch(
@@ -163,6 +178,27 @@ describe("overlayTemplatesSlice", () => {
     });
   });
 
+  describe("setDefaultTemplate", () => {
+    it("uses an existing custom template as the default", () => {
+      const store = createStore();
+      store.dispatch(
+        addTemplate({ type: "participant", template: makeTemplate("t1", "T1") }),
+      );
+      store.dispatch(setDefaultTemplate({ type: "participant", templateId: "t1" }));
+      expect(
+        store.getState().overlayTemplates.defaultTemplateIdsByType.participant,
+      ).toBe("t1");
+    });
+
+    it("falls back to the built-in default when cleared", () => {
+      const store = createStore();
+      store.dispatch(setDefaultTemplate({ type: "participant", templateId: null }));
+      expect(
+        store.getState().overlayTemplates.defaultTemplateIdsByType.participant,
+      ).toBeUndefined();
+    });
+  });
+
   describe("updateTemplatesFromRemote", () => {
     it("replaces all templates with remote data without setting hasPendingUpdate", () => {
       const store = createStore();
@@ -172,10 +208,12 @@ describe("overlayTemplatesSlice", () => {
       store.dispatch(setHasPendingUpdate(false));
       store.dispatch(
         updateTemplatesFromRemote({
-          participant: [makeTemplate("t2", "Remote")],
-          "stick-to-bottom": [],
-          "qr-code": [],
-          image: [],
+          templatesByType: {
+            participant: [makeTemplate("t2", "Remote")],
+            "stick-to-bottom": [],
+            "qr-code": [],
+            image: [],
+          },
         }),
       );
       const state = store.getState().overlayTemplates;

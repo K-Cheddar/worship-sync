@@ -31,12 +31,34 @@ const createScreenPresentation = (
   ...overrides,
 });
 
-const loadStoreWithPresentationSync = () => {
+const loadStoreWithPresentationSync = (
+  options: {
+    firebaseDb?: string;
+    firebaseReady?: boolean;
+    realtimeConnected?: boolean;
+    canWriteSharedData?: boolean;
+  } = {},
+) => {
   let storeModule: any;
   let presentationSliceModule: any;
   let serviceTimesSliceModule: any;
+  let timersSliceModule: any;
+  let presentationSyncErrorBusModule: any;
   const setMock = jest.fn();
   const refMock = jest.fn((_db: unknown, path: string) => path);
+  const globalFireDbInfo = {
+    db:
+      options.firebaseReady === false
+        ? undefined
+        : options.firebaseDb || "firebase-db",
+    database: "main",
+    churchId: "church-main",
+    isConnected:
+      options.firebaseReady === false
+        ? false
+        : options.realtimeConnected !== false,
+    canWriteSharedData: options.canWriteSharedData ?? true,
+  };
 
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
@@ -44,11 +66,7 @@ const loadStoreWithPresentationSync = () => {
       globalBroadcastRef: undefined,
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: {
-        db: "firebase-db",
-        database: "main",
-        churchId: "church-main",
-      },
+      globalFireDbInfo,
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -63,6 +81,10 @@ const loadStoreWithPresentationSync = () => {
     presentationSliceModule = require("./presentationSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     serviceTimesSliceModule = require("./serviceTimesSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    timersSliceModule = require("./timersSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    presentationSyncErrorBusModule = require("../utils/presentationSyncErrorBus");
   });
 
   return {
@@ -71,6 +93,10 @@ const loadStoreWithPresentationSync = () => {
       storeModule.writePresentationSnapshotToFirebase,
     presentationSlice: presentationSliceModule.presentationSlice,
     serviceTimesSlice: serviceTimesSliceModule.serviceTimesSlice,
+    timersSlice: timersSliceModule.timersSlice,
+    registerPresentationSyncErrorHandler:
+      presentationSyncErrorBusModule.registerPresentationSyncErrorHandler,
+    globalFireDbInfo,
     setMock,
     refMock,
   };
@@ -111,6 +137,43 @@ const loadStoreWithMediaPersistence = () => {
     mediaSlice: mediaSliceModule.mediaItemsSlice,
     db,
     postMessage,
+  };
+};
+
+const loadStoreWithOverlayTemplatePersistence = () => {
+  let storeModule: any;
+  let overlayTemplatesSliceModule: any;
+  const db = {
+    get: jest.fn(),
+    put: jest.fn(),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: undefined,
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlayTemplatesSliceModule = require("./overlayTemplatesSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    overlayTemplatesSlice:
+      overlayTemplatesSliceModule.overlayTemplatesSlice,
+    db,
   };
 };
 
@@ -235,6 +298,7 @@ const createTimerItem = (overrides: Record<string, unknown> = {}) => ({
 describe("store module", () => {
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
     jest.resetModules();
     jest.clearAllMocks();
     localStorage.clear();
@@ -1774,6 +1838,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
+      canWriteSharedData: true,
     };
 
     jest.isolateModules(() => {
@@ -1872,6 +1937,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
+      canWriteSharedData: true,
     };
 
     jest.isolateModules(() => {
@@ -1980,6 +2046,7 @@ describe("store module", () => {
           db: "firebase-db",
           database: "main",
           churchId: "church-main",
+          canWriteSharedData: true,
         },
         globalHostId: "host-123",
       }));
@@ -2045,6 +2112,99 @@ describe("store module", () => {
         hostId: "remote-host",
       }),
     ]);
+  });
+
+  it("persists a selected default when creating the overlay templates document", async () => {
+    jest.useFakeTimers();
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, overlayTemplatesSlice, db } =
+      loadStoreWithOverlayTemplatePersistence();
+    db.get.mockRejectedValue(new Error("missing"));
+    db.put.mockResolvedValue({
+      ok: true,
+      id: "overlay-templates",
+      rev: "1-overlay-templates",
+    });
+
+    store.dispatch(overlayTemplatesSlice.actions.initiateTemplates(undefined));
+    store.dispatch(
+      overlayTemplatesSlice.actions.addTemplate({
+        type: "participant",
+        template: {
+          id: "participant-default",
+          name: "Participant default",
+          formatting: {},
+          createdAt: "2026-08-25T00:00:00.000Z",
+          updatedAt: "2026-08-25T00:00:00.000Z",
+        },
+      }),
+    );
+    store.dispatch(
+      overlayTemplatesSlice.actions.setDefaultTemplate({
+        type: "participant",
+        templateId: "participant-default",
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "overlay-templates",
+        defaultTemplateIdsByType: {
+          participant: "participant-default",
+        },
+      }),
+    );
+  });
+
+  it("does not let a view-only display publish timers or service times", async () => {
+    jest.useFakeTimers();
+    const { store, serviceTimesSlice, timersSlice, setMock } =
+      loadStoreWithPresentationSync({ canWriteSharedData: false });
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([
+        {
+          id: "service-1",
+          name: "Remote Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-04-05T12:00:00.000Z",
+        },
+      ]),
+    );
+    store.dispatch(
+      timersSlice.actions.addTimer({
+        id: "timer-1",
+        hostId: "host-123",
+        name: "Display Timer",
+        timerType: "timer",
+        status: "stopped",
+        isActive: false,
+        countdownTime: "00:05",
+        duration: 5,
+        remainingTime: 5,
+        showMinutesOnly: false,
+        time: 100,
+      }),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.addService({
+        id: "service-2",
+        name: "Blocked Display Edit",
+        timerType: "countdown",
+        reccurence: "one_time",
+        dateTimeISO: "2026-04-05T12:30:00.000Z",
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1600);
+
+    expect(setMock).not.toHaveBeenCalled();
+    expect(store.getState().timers.shouldUpdateTimers).toBe(false);
+    expect(localStorage.getItem("timerInfo")).toContain("Display Timer");
   });
 
   it("writes projector, monitor, and stream snapshots to Firebase and localStorage", () => {
@@ -2167,6 +2327,134 @@ describe("store module", () => {
         streamInfo: expect.objectContaining({ name: "Remote Stream Snapshot" }),
       }),
     );
+  });
+
+  it("does not defer an overlay while the realtime socket is disconnected", async () => {
+    const setItemSpy = jest.spyOn(Storage.prototype, "setItem");
+    const consoleErrorSpy = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const {
+      store,
+      presentationSlice,
+      registerPresentationSyncErrorHandler,
+      globalFireDbInfo,
+      setMock,
+    } = loadStoreWithPresentationSync({ realtimeConnected: false });
+    const deliveryErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(deliveryErrorHandler);
+
+    store.dispatch(presentationSlice.actions.setTransmitToAll(true));
+    store.dispatch(
+      presentationSlice.actions.updateParticipantOverlayInfo({
+        id: "participant-queued",
+        name: "Queued speaker",
+        title: "Pastor",
+        duration: 10,
+      }),
+    );
+
+    await waitForListenerDelay();
+
+    expect(setMock).not.toHaveBeenCalled();
+    expect(setItemSpy).toHaveBeenCalledWith(
+      "stream_participantOverlayInfo",
+      expect.stringContaining("Queued speaker"),
+    );
+
+    globalFireDbInfo.isConnected = true;
+    await waitForListenerDelay(50);
+
+    expect(setMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[firebase diagnostic]",
+      expect.stringContaining(
+        '"event":"presentation_sync_write_unavailable"',
+      ),
+    );
+    expect(deliveryErrorHandler).toHaveBeenCalledWith(
+      "Overlay update was not sent. Check your connection and try again.",
+    );
+  });
+
+  it("does not publish unrelated pre-auth presentation state after hydration", async () => {
+    const { store, presentationSlice, globalFireDbInfo, setMock } =
+      loadStoreWithPresentationSync({ firebaseReady: false });
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 404, {
+          name: "Pre-auth local projector",
+        }),
+      ),
+    );
+    await waitForListenerDelay();
+
+    globalFireDbInfo.db = "firebase-db";
+    await waitForListenerDelay(50);
+
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it("reports but does not retry a rejected overlay write", async () => {
+    const consoleErrorSpy = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const {
+      store,
+      presentationSlice,
+      registerPresentationSyncErrorHandler,
+      setMock,
+    } = loadStoreWithPresentationSync();
+    const deliveryErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(deliveryErrorHandler);
+
+    store.dispatch(presentationSlice.actions.setTransmitToAll(true));
+    await waitForListenerDelay();
+    setMock.mockClear();
+    setMock
+      .mockRejectedValueOnce({ code: "PERMISSION_DENIED" })
+      .mockResolvedValueOnce(undefined);
+
+    store.dispatch(
+      presentationSlice.actions.updateImageOverlayInfo({
+        id: "image-retry",
+        imageUrl: "https://cdn.example.com/retry.png",
+        duration: 10,
+      }),
+    );
+
+    await waitForListenerDelay(220);
+
+    expect(setMock).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[firebase diagnostic]",
+      expect.stringContaining('"event":"firebase_operation_failed"'),
+    );
+    expect(deliveryErrorHandler).toHaveBeenCalledWith(
+      "Overlay update was not sent. Check your connection and try again.",
+    );
+  });
+
+  it("does not let a view-only display publish presentation state", async () => {
+    const {
+      store,
+      writePresentationSnapshotToFirebase,
+      presentationSlice,
+      setMock,
+    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+
+    store.dispatch(
+      presentationSlice.actions.updateParticipantOverlayInfo({
+        id: "display-overlay",
+        name: "Display overlay",
+        duration: 10,
+      }),
+    );
+
+    await writePresentationSnapshotToFirebase(store.getState());
+
+    expect(setMock).not.toHaveBeenCalled();
   });
 
   it("applies only newer remote projector updates", async () => {

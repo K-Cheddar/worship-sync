@@ -35,6 +35,7 @@ import generateRandomId from "../utils/generateRandomId";
 import { setActiveItemInList, updateItemList } from "../store/itemListSlice";
 import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
+import { getConfiguredDefaultFormatting } from "../utils/overlayUtils";
 import type {
   OutlineItemCandidate,
   OverlaySyncPlanItem,
@@ -322,7 +323,17 @@ export const useServicePlanningImport = () => {
             }
 
             const newId = generateRandomId();
-            const newOverlay = buildNewParticipantOverlay(cand.patch, newId);
+            const { templatesByType, defaultTemplateIdsByType } =
+              store.getState().undoable.present.overlayTemplates;
+            const newOverlay = buildNewParticipantOverlay(
+              cand.patch,
+              newId,
+              getConfiguredDefaultFormatting(
+                "participant",
+                templatesByType,
+                defaultTemplateIdsByType,
+              ),
+            );
             dispatch(addExistingOverlayToList({ overlay: newOverlay }));
             placeNewOverlayAfterAnchor(newId, overlayAnchorId);
             overlayAnchorId = newId;
@@ -802,7 +813,17 @@ export const useServicePlanningImport = () => {
       }
 
       const newId = generateRandomId();
-      const newOverlay = buildNewParticipantOverlay(step.patch, newId);
+      const { templatesByType, defaultTemplateIdsByType } =
+        store.getState().undoable.present.overlayTemplates;
+      const newOverlay = buildNewParticipantOverlay(
+        step.patch,
+        newId,
+        getConfiguredDefaultFormatting(
+          "participant",
+          templatesByType,
+          defaultTemplateIdsByType,
+        ),
+      );
       await persistNewParticipantOverlay(db, newOverlay);
       dispatch(
         addExistingOverlayToList({

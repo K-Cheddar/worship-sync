@@ -265,6 +265,9 @@ export const mapServicePlanningRows = (
     if (!rule || !ruleAppliesToOverlaySync(rule)) continue;
 
     const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
+    const structuredAssigneeNames = (row.assigneeNames || [])
+      .map((name) => name.trim())
+      .filter(Boolean);
     const merged = mergeColumns(row, rule.nameSources);
     const personMatchChunks = tokensPerColumnThenFlatten(
       row,
@@ -277,7 +280,10 @@ export const mapServicePlanningRows = (
       rule.multiOverlay.eventSuffixByPersonIndex,
     );
 
-    if (rule.multiOverlay.mode === "single") {
+    // A saved WorshipSync plan is authoritative about who is serving. Its
+    // assignee list therefore bypasses legacy title/"Led by" extraction and
+    // produces one overlay candidate per assigned person.
+    if (rule.multiOverlay.mode === "single" && !structuredAssigneeNames.length) {
       const matchedPeople = collectPeopleFromColumnTokens(
         personMatchChunks,
         merged,
@@ -326,9 +332,11 @@ export const mapServicePlanningRows = (
       continue;
     }
 
-    const tokens = tokensPerColumnThenFlatten(row, rule.nameSources, (cell) =>
-      splitTokensForMulti(cell, rule.multiOverlay.splitSeparators),
-    );
+    const tokens = structuredAssigneeNames.length
+      ? structuredAssigneeNames
+      : tokensPerColumnThenFlatten(row, rule.nameSources, (cell) =>
+        splitTokensForMulti(cell, rule.multiOverlay.splitSeparators),
+      );
     const candidates: ServicePlanningCandidate[] = tokens.map((token, idx) => {
       const person = findPersonForToken(token, config.people);
       const rawSuffix = resolveEventSuffixForSplitIndex(

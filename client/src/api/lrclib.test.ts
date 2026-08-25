@@ -266,7 +266,7 @@ describe("lrclib api", () => {
     expect(result).toEqual([]);
   });
 
-  it("normalizes the candidate list returned by the server", async () => {
+  it("preserves the candidate order returned by the server", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       status: 200,
@@ -298,32 +298,12 @@ describe("lrclib api", () => {
 
     const result = await searchLrclibTracks({ trackName: "Song" });
 
-    expect(result).toEqual([
-      {
-        lrclibId: 20,
-        source: "lrclib",
-        trackName: "Clean Song",
-        artistName: "Choir",
-        plainLyrics: "Grace and peace\n\nMore grace",
-        syncedLyrics: null,
-      },
-      {
-        lrclibId: 22,
-        source: "lrclib",
-        trackName: "Rude Song",
-        artistName: "Artist",
-        plainLyrics: "This lyric says fuck",
-        syncedLyrics: null,
-      },
-      {
-        lrclibId: 21,
-        source: "lrclib",
-        trackName: "Explicit Song",
-        artistName: "Artist",
-        plainLyrics: "clean words",
-        syncedLyrics: null,
-      },
-    ]);
+    expect(result.map((track) => track.lrclibId)).toEqual([20, 21, 22]);
+    expect(result[0]).toMatchObject({
+      trackName: "Clean Song",
+      artistName: "Choir",
+      plainLyrics: "Grace and peace\n\nMore grace",
+    });
   });
 
   it("throws when LRCLIB search returns a server error", async () => {

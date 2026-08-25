@@ -1,4 +1,4 @@
-import type { DBOverlay, OverlayInfo } from "../../types";
+import type { DBOverlay, OverlayFormatting, OverlayInfo } from "../../types";
 import type { ServicePlanningFieldPatch } from "./mapServicePlanningToOverlays";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
@@ -44,6 +44,7 @@ export const buildClonedParticipantOverlay = (
 export const buildNewParticipantOverlay = (
   patch: ServicePlanningFieldPatch,
   newId: string,
+  formatting: OverlayFormatting = getDefaultFormatting("participant"),
 ): OverlayInfo => ({
   id: newId,
   type: "participant",
@@ -56,7 +57,7 @@ export const buildNewParticipantOverlay = (
   url: "",
   description: "",
   imageUrl: "",
-  formatting: getDefaultFormatting("participant"),
+  formatting,
 });
 
 type PouchLike = {

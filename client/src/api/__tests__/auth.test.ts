@@ -36,6 +36,7 @@ import {
 } from "../auth";
 // eslint-disable-next-line import/first -- see mocked module setup above
 import {
+  setAuthenticatedSessionExpected,
   registerAuthErrorHandler,
   registerAuthRecoveryHandler,
 } from "../authErrorBus";
@@ -45,6 +46,7 @@ describe("api/auth", () => {
     csrfStore.token = "";
     packagedElectron.value = false;
     humanApiTokenStore.value = "";
+    setAuthenticatedSessionExpected(false);
     global.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
@@ -253,6 +255,7 @@ describe("api/auth", () => {
   });
 
   it("silently recovers a 401 session and retries the request once", async () => {
+    setAuthenticatedSessionExpected(true);
     const recoveryHandler = jest.fn(() => Promise.resolve(true));
     const authErrorHandler = jest.fn();
     const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
@@ -282,15 +285,22 @@ describe("api/auth", () => {
   });
 
   it("announces a 401 when silent recovery cannot restore the session", async () => {
+    setAuthenticatedSessionExpected(true);
     const recoveryHandler = jest.fn(() => Promise.resolve(false));
     const authErrorHandler = jest.fn();
     const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
     const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: false,
-      status: 401,
-      json: () => Promise.resolve({ errorMessage: "Authentication required" }),
-    });
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ authenticated: false }),
+      });
 
     try {
       await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
@@ -306,6 +316,123 @@ describe("api/auth", () => {
 
     expect(recoveryHandler).toHaveBeenCalledTimes(1);
     expect(authErrorHandler).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not show the global prompt for a signed-out or public request", async () => {
+    const recoveryHandler = jest.fn(() => Promise.resolve(false));
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ errorMessage: "Invalid public token" }),
+    });
+
+    try {
+      await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
+        expect.objectContaining<AuthApiError>({ status: 401 }),
+      );
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(recoveryHandler).not.toHaveBeenCalled();
+    expect(authErrorHandler).not.toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not prompt for a stale 401 when the current session is valid", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(false));
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ authenticated: true }),
+      });
+
+    try {
+      await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
+        expect.objectContaining<AuthApiError>({ status: 401 }),
+      );
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(authErrorHandler).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not turn an endpoint-specific 401 into a global sign-in prompt", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(false));
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ error: "This action is not available" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ authenticated: true }),
+      });
+
+    try {
+      await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
+        expect.objectContaining<AuthApiError>({
+          message: "This action is not available",
+          status: 401,
+        }),
+      );
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(authErrorHandler).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not claim sign-in failure when session verification is unreachable", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(false));
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+      })
+      .mockRejectedValueOnce(new TypeError("network unavailable"));
+
+    try {
+      await expect(removeChurchMember("church-1", "user-7")).rejects.toEqual(
+        expect.objectContaining<AuthApiError>({ status: 401 }),
+      );
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(authErrorHandler).not.toHaveBeenCalled();
   });
 });

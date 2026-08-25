@@ -35,8 +35,8 @@ const lyricsImportSourceOrder: Record<
   number
 > = {
   genius: 0,
-  lrclib: 1,
-  lyricsovh: 2,
+  lyricsovh: 1,
+  lrclib: 2,
   manual: 3,
 };
 
