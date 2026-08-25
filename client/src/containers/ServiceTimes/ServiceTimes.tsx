@@ -38,6 +38,7 @@ import {
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
 import { serverDate } from "../../utils/serverTime";
+import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 /** Service times editor for the overlay controller "Service times" tab only. */
 const ServiceTimes = () => {
@@ -55,11 +56,11 @@ const ServiceTimes = () => {
 
   const { updater, isMobile } = useContext(ControllerInfoContext) || {};
   const globalInfo = useContext(GlobalInfoContext);
-  // Service timers are service settings. A missing context only occurs in
-  // isolated embedded/test renders; authenticated app pages always provide it.
-  const canEdit = globalInfo
-    ? Boolean(globalInfo.canEditServices ?? globalInfo.canEditTeams)
-    : true;
+  // Service Times is an overlay-controller tool. Its visual settings and
+  // countdown adjustments are available to operator tiers, independently of
+  // the Teams/Services management permissions used by the scheduling pages.
+  // A missing context only occurs in isolated embedded/test renders.
+  const canEdit = !isViewOnlyAccess(globalInfo?.access);
 
   const editingService = useMemo(
     () => services.find((s) => s.id === editingId) ?? null,

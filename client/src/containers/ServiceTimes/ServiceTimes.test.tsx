@@ -159,9 +159,11 @@ describe("ServiceTimes", () => {
     expect(dbGet).not.toHaveBeenCalled();
   });
 
-  it("does not offer timer changes without Services edit access", () => {
+  it("offers timer changes without Services edit access", () => {
     render(
-      <GlobalInfoContext.Provider value={{ canEditServices: false } as never}>
+      <GlobalInfoContext.Provider
+        value={{ access: "music", canEditServices: false } as never}
+      >
         <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
           <ServiceTimes />
         </ControllerInfoContext.Provider>
@@ -169,7 +171,7 @@ describe("ServiceTimes", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Add Service Timer" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Add Service Timer" }),
+    ).toBeInTheDocument();
   });
 });
