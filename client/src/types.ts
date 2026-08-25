@@ -981,10 +981,14 @@ export type SavedTemplate = {
 
 export type TemplatesByType = Record<OverlayType, SavedTemplate[]>;
 
+/** The saved custom template that supplies defaults for each overlay type. */
+export type DefaultTemplateIdsByType = Partial<Record<OverlayType, string>>;
+
 export type DBOverlayTemplates = {
   _id: string;
   _rev: string;
   templatesByType: TemplatesByType;
+  defaultTemplateIdsByType?: DefaultTemplateIdsByType;
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;

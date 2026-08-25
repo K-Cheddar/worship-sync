@@ -4,7 +4,26 @@ import {
 } from "../components/DisplayWindow/defaultOverlayStyles";
 import { defaultQrCodeOverlayStyles } from "../components/DisplayWindow/defaultOverlayStyles";
 import { defaultImageOverlayStyles } from "../components/DisplayWindow/defaultOverlayStyles";
-import { DBOverlay, OverlayFormatting, OverlayInfo } from "../types";
+import {
+  DBOverlay,
+  DefaultTemplateIdsByType,
+  OverlayFormatting,
+  OverlayInfo,
+  OverlayType,
+  TemplatesByType,
+} from "../types";
+
+export const getConfiguredDefaultFormatting = (
+  type: OverlayType,
+  templatesByType: TemplatesByType,
+  defaultTemplateIdsByType: DefaultTemplateIdsByType,
+): OverlayFormatting => {
+  const templateId = defaultTemplateIdsByType[type];
+  const template = templatesByType[type]?.find(
+    (candidate) => candidate.id === templateId,
+  );
+  return template?.formatting || getDefaultFormatting(type);
+};
 
 export const getDefaultFormatting = (type: string): OverlayFormatting => {
   switch (type) {

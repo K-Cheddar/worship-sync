@@ -52,7 +52,12 @@ import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
 import OverlaysListSkeleton from "./OverlaysListSkeleton";
-import { getDefaultFormatting, normalizeOverlayForSync, loadOverlayForSelection } from "../../utils/overlayUtils";
+import {
+  getConfiguredDefaultFormatting,
+  getDefaultFormatting,
+  normalizeOverlayForSync,
+  loadOverlayForSelection,
+} from "../../utils/overlayUtils";
 import {
   shouldKeepLocalListRowForRemoteOverlay,
   syncSelectedOverlayFromRemote,
@@ -90,6 +95,15 @@ const Overlays = ({
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.itemList,
   );
+  const defaultParticipantFormatting = useSelector((state: RootState) => {
+    const { templatesByType, defaultTemplateIdsByType } =
+      state.undoable.present.overlayTemplates;
+    return getConfiguredDefaultFormatting(
+      "participant",
+      templatesByType,
+      defaultTemplateIdsByType,
+    );
+  });
 
   const defaultSelectedOverlay = useMemo(
     (): OverlayInfo => ({
@@ -104,9 +118,9 @@ const Overlays = ({
       title: "",
       description: "",
       id: "",
-      formatting: getDefaultFormatting("participant"),
+      formatting: defaultParticipantFormatting,
     }),
-    [],
+    [defaultParticipantFormatting],
   );
   const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
 
@@ -215,7 +229,12 @@ const Overlays = ({
           if (_update._id === "overlay-templates") {
             console.log("updating overlay templates from remote", event);
             const update = _update as DBOverlayTemplates;
-            dispatch(updateTemplatesFromRemote(update.templatesByType));
+            dispatch(
+              updateTemplatesFromRemote({
+                templatesByType: update.templatesByType,
+                defaultTemplateIdsByType: update.defaultTemplateIdsByType,
+              }),
+            );
           }
         }
       } catch (e) {

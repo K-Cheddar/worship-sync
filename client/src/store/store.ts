@@ -2051,14 +2051,16 @@ listenerMiddleware.startListening({
     );
 
     // update overlay templates
-    const { templatesByType } = (listenerApi.getState() as RootState).undoable
-      .present.overlayTemplates;
+    const { templatesByType, defaultTemplateIdsByType } = (
+      listenerApi.getState() as RootState
+    ).undoable.present.overlayTemplates;
 
     if (!db) return;
     try {
       const db_templates: DBOverlayTemplates =
         await db.get("overlay-templates");
       db_templates.templatesByType = templatesByType;
+      db_templates.defaultTemplateIdsByType = defaultTemplateIdsByType;
       db_templates.updatedAt = new Date().toISOString();
       db.put(db_templates);
       // Local machine updates
