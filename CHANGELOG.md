@@ -1,3 +1,20 @@
+# [2.26.0](https://github.com/K-Cheddar/worship-sync/compare/v2.25.3...v2.26.0) (2026-08-25)
+
+
+### Bug Fixes
+
+* harden realtime auth and overlay delivery ([5dd8739](https://github.com/K-Cheddar/worship-sync/commit/5dd87398351a90a28d370257ea61c8576cde9a01))
+* prioritize lyrics provider results consistently ([0682dd6](https://github.com/K-Cheddar/worship-sync/commit/0682dd6e314ce007406fc979d37e6ae983e0c60e))
+* recover provider sign-in redirects ([b22c2cf](https://github.com/K-Cheddar/worship-sync/commit/b22c2cf7e724bafa57858d42052f5e3de40de745))
+
+
+### Features
+
+* expand team intake profiles and field selection ([e15d919](https://github.com/K-Cheddar/worship-sync/commit/e15d919bd95c7e24d96d27bfb06eaa585b12b5fb))
+* improve service timer editing access ([26b4036](https://github.com/K-Cheddar/worship-sync/commit/26b40367d9e61abff0385b62087ded7914be82a0))
+* support configurable overlay template defaults ([8058b08](https://github.com/K-Cheddar/worship-sync/commit/8058b088ef5c407b528e6ebf848fccac60e66ad3))
+* sync structured service plan assignees ([2bbb560](https://github.com/K-Cheddar/worship-sync/commit/2bbb56083fcd612fc2333349bae3e552e7f1f4b6))
+
 ## [2.25.3](https://github.com/K-Cheddar/worship-sync/compare/v2.25.2...v2.25.3) (2026-08-23)
 
 
