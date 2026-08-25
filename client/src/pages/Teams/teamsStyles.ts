@@ -9,8 +9,8 @@ export const panelHeaderPaddingClassName = "px-4 pt-4";
 /** Scrollable body inside a panel; padding keeps the scrollbar at the panel edge. */
 export const panelScrollPaddingClassName = "px-4 pb-4";
 
-/** Form scroll body: bottom inset comes from the sticky footer instead. */
-export const panelFormScrollPaddingClassName = "px-4 pb-0";
+/** Form scroll body: keep the final field clear of the pinned footer. */
+export const panelFormScrollPaddingClassName = "px-4 pb-4";
 
 /** Teams outlet scroll region: page scroll on mobile, height-constrained panels on desktop. */
 export const teamsSectionScrollClassName =

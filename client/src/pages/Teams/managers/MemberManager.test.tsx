@@ -306,13 +306,13 @@ describe("MemberManager member preferences", () => {
 
   it("derives and disables minor status when a birth date is saved", async () => {
     const user = userEvent.setup();
-    const dateOfBirth = `${new Date().getFullYear() - 10}-01-01`;
+    const birthDate = { year: new Date().getFullYear() - 10, month: 1, day: 1 };
     renderManager({
       data: joinedData({
         members: [
           {
             ...worshipMember,
-            dateOfBirth,
+            birthDate,
             isMinor: false,
           },
         ],
@@ -323,7 +323,7 @@ describe("MemberManager member preferences", () => {
     const minorCheckbox = screen.getByRole("checkbox", { name: /Minor/ });
     expect(minorCheckbox).toBeChecked();
     expect(minorCheckbox).toBeDisabled();
-    expect(screen.getByText("Set automatically from the date of birth.")).toBeInTheDocument();
+    expect(screen.getByText("Set automatically when the birth year is provided.")).toBeInTheDocument();
   });
 });
 

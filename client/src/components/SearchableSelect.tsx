@@ -22,6 +22,7 @@ const SearchableSelect = ({
   ariaLabel,
   className,
   variant = "light",
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -31,6 +32,7 @@ const SearchableSelect = ({
   ariaLabel?: string;
   className?: string;
   variant?: "light" | "board-attendee" | "dark";
+  disabled?: boolean;
 }) => {
   const isBoardAttendee = variant === "board-attendee";
   // Matches components/ui/Select so this sits beside the other form controls
@@ -77,6 +79,7 @@ const SearchableSelect = ({
                   ? "border-stone-600 bg-stone-900 text-stone-100 hover:border-stone-500 focus:ring-amber-500/40"
                   : "border-gray-300 bg-white text-gray-900 hover:border-gray-400 focus:ring-amber-400/50",
             )}
+            disabled={disabled}
           >
             <span
               className={cn(

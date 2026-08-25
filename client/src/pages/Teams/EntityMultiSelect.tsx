@@ -278,8 +278,8 @@ const EntityMultiSelect = ({
                     "flex min-w-0 flex-1 items-start gap-3 px-2.5 py-2 text-left text-sm transition-colors",
                     !disabled &&
                     (isBoard
-                      ? "hover:bg-stone-800/40"
-                      : "hover:bg-gray-800/60"),
+                      ? "cursor-pointer hover:bg-stone-800/40"
+                      : "cursor-pointer hover:bg-gray-800/60"),
                     disabled && "cursor-not-allowed",
                   )}
                 >

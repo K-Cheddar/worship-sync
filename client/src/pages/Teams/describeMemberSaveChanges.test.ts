@@ -44,7 +44,7 @@ const payload = (
 ): TeamRosterMemberPayload => ({
   firstName: "Jane",
   lastName: "Doe",
-  dateOfBirth: "",
+  birthDate: null,
   positionIds: ["p1"],
   desiredPositionIds: [],
   teamMemberships: {

@@ -32,6 +32,16 @@ import EntityRow from "../components/EntityRow";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Modal from "../../../components/Modal/Modal";
 import { DEFAULT_INTAKE_FORM_COPY } from "../intakeFormCopy";
+import {
+  recurringAvailabilityLabel,
+  servingFrequencyLabel,
+} from "../memberPreferences";
+import { formatBirthDate } from "../../../utils/birthDate";
+import {
+  ALL_INTAKE_FORM_FIELDS,
+  INTAKE_FORM_FIELD_OPTIONS,
+  resolveIntakeFormFields,
+} from "../intakeFormFields";
 import { emptyData } from "../teamsConstants";
 import {
   buildTeamIntakePublicUrl,
@@ -142,6 +152,7 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
   availabilityOccurrences: [],
   teamIds: [],
   active: true,
+  enabledFields: [...ALL_INTAKE_FORM_FIELDS],
   requireEmail: false,
   welcomeMessage: "",
   positionsMessage: "",
@@ -193,6 +204,7 @@ const IntakeManager = ({
         availabilityOccurrences: editing.availabilityOccurrences || [],
         teamIds: editing.teamIds || [],
         active: editing.active,
+        enabledFields: resolveIntakeFormFields(editing),
         requireEmail: Boolean(editing.requireEmail),
         welcomeMessage: editing.welcomeMessage || "",
         positionsMessage: editing.positionsMessage || "",
@@ -239,6 +251,8 @@ const IntakeManager = ({
       availabilityOccurrences: form.availabilityOccurrences || [],
       teamIds: form.teamIds || [],
       active: form.active,
+      enabledFields: resolveIntakeFormFields(form),
+      requireEmail: Boolean(form.requireEmail),
       welcomeMessage: form.welcomeMessage || "",
       positionsMessage: form.positionsMessage || "",
       availabilityMessage: form.availabilityMessage || "",
@@ -676,6 +690,8 @@ const IntakeManager = ({
         .filter(([, status]) => status === "unavailable")
         .map(([occurrenceId]) => occurrenceId),
     );
+    const submissionName = `${submission.title || ""} ${submission.firstName} ${submission.lastName}`
+      .trim() || "Anonymous response";
 
     return (
       <article
@@ -685,7 +701,7 @@ const IntakeManager = ({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <h3 className="font-semibold">
-              {submission.firstName} {submission.lastName}
+              {submissionName}
             </h3>
             <p className="text-xs text-gray-400">
               {submission.status === "applied" && linkedMember
@@ -740,7 +756,11 @@ const IntakeManager = ({
                     svg={Plus}
                     iconSize="sm"
                     padding="px-2 py-1"
-                    disabled={isUpdatingThisSubmission}
+                    disabled={
+                      isUpdatingThisSubmission ||
+                      !submission.firstName ||
+                      !submission.lastName
+                    }
                     isLoading={
                       submissionUpdatingKey ===
                       submissionActionKey(submission.submissionId, "create")
@@ -784,6 +804,33 @@ const IntakeManager = ({
             </Button>
           ) : null}
         </div>
+        {submission.email || submission.birthDate ? (
+          <dl className="mt-3 grid gap-2 text-xs text-gray-300 sm:grid-cols-2">
+            {submission.email ? (
+              <div>
+                <dt className="font-semibold text-gray-400">Email</dt>
+                <dd>{submission.email}</dd>
+              </div>
+            ) : null}
+            {submission.birthDate ? (
+              <div>
+                <dt className="font-semibold text-gray-400">Birthday</dt>
+                <dd>{formatBirthDate(submission.birthDate)}</dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
+        {submission.servingFrequency || submission.recurringAvailability ? (
+          <ReviewQueueCollapsibleSection
+            title="Scheduling preferences"
+            summary={servingFrequencyLabel(submission.servingFrequency)}
+          >
+            <p className="text-gray-300">
+              {servingFrequencyLabel(submission.servingFrequency)}. Usually available: {" "}
+              {recurringAvailabilityLabel(submission.recurringAvailability)}.
+            </p>
+          </ReviewQueueCollapsibleSection>
+        ) : null}
         {requestedPositions.length > 0 ? (
           <ReviewQueueCollapsibleSection
             title="Requested positions"
@@ -859,16 +906,35 @@ const IntakeManager = ({
         onCheckedChange={(active) => setDraft((d) => ({ ...d, active }))}
         labelClassName="text-sm"
       />
+      <EntityMultiSelect
+        label="Fields to include"
+        description="Choose exactly what people will see on this public form."
+        showSearch={false}
+        options={INTAKE_FORM_FIELD_OPTIONS.map((field) => ({
+          id: field.id,
+          label: field.label,
+        }))}
+        value={draft.enabledFields || []}
+          onChange={(enabledFields) =>
+            setDraft((current) => ({
+              ...current,
+              enabledFields: enabledFields as TeamIntakeFormPayload["enabledFields"],
+            }))
+        }
+        emptyText="No fields selected."
+      />
       {/* Off by default: an address is how anyone reaches this person later,
           but requiring one turns away volunteers who do not have one to give. */}
-      <Checkbox
-        label="Require an email address"
-        checked={Boolean(draft.requireEmail)}
-        onCheckedChange={(requireEmail) =>
-          setDraft((d) => ({ ...d, requireEmail }))
-        }
-        labelClassName="text-sm"
-      />
+      {(draft.enabledFields || []).includes("email") ? (
+        <Checkbox
+          label="Require an email address"
+          checked={Boolean(draft.requireEmail)}
+          onCheckedChange={(requireEmail) =>
+            setDraft((d) => ({ ...d, requireEmail }))
+          }
+          labelClassName="text-sm"
+        />
+      ) : null}
       <EntityMultiSelect
         label="Teams to collect for"
         description="Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."

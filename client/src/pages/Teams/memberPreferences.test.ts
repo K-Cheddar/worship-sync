@@ -10,18 +10,18 @@ describe("member preferences", () => {
   const referenceDate = new Date(2026, 7, 11);
 
   it("derives minor status through the eighteenth birthday", () => {
-    expect(isMinorOnDate("2008-08-12", referenceDate)).toBe(true);
-    expect(isMinorOnDate("2008-08-11", referenceDate)).toBe(false);
-    expect(isMinorOnDate("2000-01-01", referenceDate)).toBe(false);
+    expect(isMinorOnDate({ year: 2008, month: 8, day: 12 }, referenceDate)).toBe(true);
+    expect(isMinorOnDate({ year: 2008, month: 8, day: 11 }, referenceDate)).toBe(false);
+    expect(isMinorOnDate({ year: 2000, month: 1, day: 1 }, referenceDate)).toBe(false);
   });
 
-  it("uses the manual flag only when no valid date of birth is present", () => {
-    expect(resolveMemberMinorStatus({ dateOfBirth: "", isMinor: true })).toBe(
+  it("uses the manual flag when the birth year is absent", () => {
+    expect(resolveMemberMinorStatus({ birthDate: { month: 8, day: 12 }, isMinor: true })).toBe(
       true,
     );
     expect(
       resolveMemberMinorStatus(
-        { dateOfBirth: "2000-01-01", isMinor: true },
+        { birthDate: { year: 2000, month: 1, day: 1 }, isMinor: true },
         referenceDate,
       ),
     ).toBe(false);
@@ -62,7 +62,7 @@ describe("member preferences", () => {
   it("limits scheduling to selected and last weeks of the month", () => {
     const fourthWeekOnly = {
       recurringAvailability: {
-        weeksOfMonth: [4] as const,
+        weeksOfMonth: [4],
         includeLastWeekOfMonth: false,
       },
     };

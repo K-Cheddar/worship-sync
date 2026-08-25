@@ -3,6 +3,7 @@ import type {
   TeamMemberRecurringAvailability,
   TeamRosterMember,
 } from "../../api/authTypes";
+import { isCompleteBirthDate } from "../../utils/birthDate";
 import { parsePlainDate } from "../../utils/plainDate";
 
 export const DEFAULT_SERVING_FREQUENCY: TeamMemberServingFrequency = "as_needed";
@@ -82,23 +83,22 @@ export const recurringAvailabilityLabel = (
 };
 
 export const isMinorOnDate = (
-  dateOfBirth: string,
+  birthDate: TeamRosterMember["birthDate"],
   referenceDate = new Date(),
 ): boolean | null => {
-  const birthDate = parsePlainDate(dateOfBirth);
-  if (!birthDate) return null;
+  if (!birthDate || !isCompleteBirthDate(birthDate)) return null;
   const eighteenthBirthday = new Date(
-    birthDate.getFullYear() + 18,
-    birthDate.getMonth(),
-    birthDate.getDate(),
+    birthDate.year! + 18,
+    birthDate.month - 1,
+    birthDate.day,
   );
   return referenceDate < eighteenthBirthday;
 };
 
 export const resolveMemberMinorStatus = (
-  member: Pick<TeamRosterMember, "dateOfBirth" | "isMinor">,
+  member: Pick<TeamRosterMember, "birthDate" | "isMinor">,
   referenceDate = new Date(),
-) => isMinorOnDate(member.dateOfBirth || "", referenceDate) ?? Boolean(member.isMinor);
+) => isMinorOnDate(member.birthDate, referenceDate) ?? Boolean(member.isMinor);
 
 export const servingFrequencyTargetReached = ({
   servingFrequency,

@@ -708,7 +708,7 @@ export type TeamRosterMemberPayload = {
   lastName: string;
   /** Omit to leave an existing address untouched; send "" to clear it. */
   email?: string;
-  dateOfBirth?: string;
+  birthDate?: import("./authTypes").BirthDate | null;
   isMinor?: boolean;
   servingFrequency?: TeamRosterMember["servingFrequency"];
   recurringAvailability?: TeamRosterMember["recurringAvailability"];
@@ -789,6 +789,7 @@ export type TeamIntakeFormPayload = {
   availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
   teamIds: string[];
   active: boolean;
+  enabledFields?: TeamIntakeForm["enabledFields"];
   requireEmail?: boolean;
   welcomeMessage?: string;
   positionsMessage?: string;
@@ -801,10 +802,14 @@ export type TeamIntakeSubmissionPayload = {
   lastName: string;
   /** Optional server-side; forms may opt into requiring it. */
   email?: string;
+  title?: string;
+  birthDate?: import("./authTypes").BirthDate | null;
   positionIds: string[];
   occurrenceAvailability: TeamIntakeSubmission["occurrenceAvailability"];
   blockoutRanges: TeamIntakeSubmission["blockoutRanges"];
   notes?: string;
+  servingFrequency?: TeamIntakeSubmission["servingFrequency"];
+  recurringAvailability?: TeamIntakeSubmission["recurringAvailability"];
 };
 
 /**
