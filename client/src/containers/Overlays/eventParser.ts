@@ -4,6 +4,11 @@ export interface EventData {
   elementType: string;
   title: string;
   ledBy: string;
+  /**
+   * The current structured assignees from a WorshipSync Service Plan. This is
+   * display data only: `ledBy` retains the source text used by import rules.
+   */
+  assigneeNames?: string[];
   /** 24-hour HH:mm schedule time when the printout provides one. */
   startTime?: string;
   /** Supports source durations such as 1m 30s without rounding them away. */

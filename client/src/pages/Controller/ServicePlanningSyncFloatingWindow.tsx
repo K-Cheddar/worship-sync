@@ -1050,7 +1050,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                                 </div>
                               </div>
 
-                              {(item.title || item.ledBy) && (
+                              {(item.title || item.assigneeNames?.length || item.ledBy) && (
                                 <div className="flex gap-2 flex-wrap">
                                   {item.title && (
                                     <div className={cn(
@@ -1068,14 +1068,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                                   )}
                                   <div className="flex gap-2">
 
-                                    {item.ledBy && item.title && (
+                                    {(item.assigneeNames?.length || item.ledBy) && item.title && (
                                       <div className="text-xs font-light text-zinc-400">
-                                        Led by:
+                                        {item.assigneeNames?.length ? "Assigned:" : "Led by:"}
                                       </div>
                                     )}
-                                    {item.ledBy && (
+                                    {(item.assigneeNames?.length || item.ledBy) && (
                                       <div className="wrap-break-word text-xs text-zinc-300">
-                                        {item.ledBy}
+                                        {item.assigneeNames?.join(", ") || item.ledBy}
                                       </div>
                                     )}
                                   </div>

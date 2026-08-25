@@ -32,6 +32,27 @@ describe("servicePlanToImportData", () => {
       elementType: "Worship Set",
       title: "How Great Thou Art",
       ledBy: "Dana R.",
+      assigneeNames: ["Dana Robinson"],
+    });
+  });
+
+  it("keeps source led-by data for matching while exposing all current assignees", () => {
+    const { sections } = servicePlanToImportData(
+      planWith([
+        element({
+          sourceLedByRaw: "Dana R.",
+          assignees: [
+            { id: "a1", name: "Dana Robinson" },
+            { id: "a2", name: "Morgan Lee" },
+            { id: "a3", name: "Taylor Smith" },
+          ],
+        }),
+      ]),
+    );
+
+    expect(sections[0].rows[0]).toMatchObject({
+      ledBy: "Dana R.",
+      assigneeNames: ["Dana Robinson", "Morgan Lee", "Taylor Smith"],
     });
   });
 

@@ -397,6 +397,7 @@ export const buildServicePlanningPreview = ({
         title: row.title,
         cleanedTitle,
         ledBy: row.ledBy,
+        ...(row.assigneeNames?.length ? { assigneeNames: row.assigneeNames } : {}),
         outlineItemType,
         matchedLibraryItem,
         // One row, one line item: the preview mirrors the source order of

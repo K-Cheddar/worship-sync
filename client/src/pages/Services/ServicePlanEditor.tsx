@@ -1058,11 +1058,16 @@ const ServicePlanEditor = ({
     setUpdatingPublicLive(true);
     try {
       const result = await updateServicePlanPublicLive(churchId, planKey, {
-        mode: "anchored",
+        mode: isManualLive ? "manual" : "anchored",
         currentElementId: elementId,
       });
       setPlan(result.servicePlan);
-      showToast("Live timeline updated. Following items will advance automatically.", "success");
+      showToast(
+        isManualLive
+          ? "Live item updated. Automatic advance remains paused."
+          : "Live timeline updated. Following items will advance automatically.",
+        "success",
+      );
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update shared service progress.");
     } finally {

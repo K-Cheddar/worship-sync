@@ -296,7 +296,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
             sourceRowIndex: 0,
             elementType: "Announcement",
             title: "Church Updates",
+            // A saved WorshipSync plan can have current people that differ
+            // from the original imported led-by text.
             ledBy: "Pastoral Team",
+            assigneeNames: ["Avery Brown", "Blair Clark", "Casey Davis"],
             selectedForOutline: false,
             outlineItemType: "none",
             matchedLibraryItem: null,
@@ -336,7 +339,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
     expect(screen.getByText("Announcement")).toBeInTheDocument();
     expect(screen.getByText("Church Updates")).toBeInTheDocument();
-    expect(screen.getByText("Pastoral Team")).toBeInTheDocument();
+    expect(screen.getByText("Assigned:")).toBeInTheDocument();
+    expect(screen.getByText("Avery Brown, Blair Clark, Casey Davis")).toBeInTheDocument();
+    expect(screen.queryByText("Pastoral Team")).not.toBeInTheDocument();
     expect(screen.getAllByText("Welcome Song")).toHaveLength(2);
     expect(screen.getByText("Overlay ready")).toBeInTheDocument();
     expect(screen.getByText("Song")).toBeInTheDocument();
