@@ -923,18 +923,6 @@ const IntakeManager = ({
         }
         emptyText="No fields selected."
       />
-      {/* Off by default: an address is how anyone reaches this person later,
-          but requiring one turns away volunteers who do not have one to give. */}
-      {(draft.enabledFields || []).includes("email") ? (
-        <Checkbox
-          label="Require an email address"
-          checked={Boolean(draft.requireEmail)}
-          onCheckedChange={(requireEmail) =>
-            setDraft((d) => ({ ...d, requireEmail }))
-          }
-          labelClassName="text-sm"
-        />
-      ) : null}
       <EntityMultiSelect
         label="Teams to collect for"
         description="Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."

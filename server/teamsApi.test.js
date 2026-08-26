@@ -5096,7 +5096,7 @@ test("a member email can be cleared explicitly", async (t) => {
   assert.ok(!updated.payload.member.email);
 });
 
-test("intake email is optional by default and required only when the form opts in", async (t) => {
+test("intake requires email when email is selected", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("intake_email_optin");
   const worship = await seedTeam(context, {
@@ -5129,7 +5129,7 @@ test("intake email is optional by default and required only when the form opts i
     },
     withoutEmail,
   );
-  assert.equal(withoutEmail.statusCode, 200);
+  assert.equal(withoutEmail.statusCode, 400);
 
   // And an address is captured when supplied.
   const withEmail = createRes();

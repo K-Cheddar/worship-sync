@@ -80,6 +80,7 @@ export type SelectProps = {
   /** Controlled open state (forwarded to Radix Select root). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  required?: boolean;
 };
 
 const Select = ({
@@ -104,6 +105,7 @@ const Select = ({
   disablePortal,
   open,
   onOpenChange,
+  required = false,
   ...rest
 }: SelectProps) => {
   const generatedId = useId();
@@ -146,6 +148,7 @@ const Select = ({
       >
         <SelectTrigger
           id={id}
+          aria-required={required}
           className={cn(backgroundColor, selectClassName, textColor)}
           chevronColor={chevronColor}
         >

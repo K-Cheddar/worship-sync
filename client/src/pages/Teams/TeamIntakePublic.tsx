@@ -36,6 +36,7 @@ import {
   servingFrequencyOptions,
 } from "./memberPreferences";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
+import { getBirthDateValidationError } from "../../utils/birthDate";
 import { useToast } from "../../context/toastContext";
 
 type PreviewPosition = TeamIntakePreview["positions"][number];
@@ -87,26 +88,45 @@ const TeamIntakePublic = () => {
   }, [token]);
 
   const submit = async () => {
-    const missingNameFields = [
+    const missingMemberDetailFields = [
+      enabledFields.includes("title") && !payload.title.trim()
+        ? "title"
+        : "",
       enabledFields.includes("firstName") && !payload.firstName.trim()
         ? "first name"
         : "",
       enabledFields.includes("lastName") && !payload.lastName.trim()
         ? "last name"
         : "",
+      enabledFields.includes("birthDate") && !payload.birthDate
+        ? "birthday"
+        : "",
+      enabledFields.includes("email") && !payload.email?.trim()
+        ? "email"
+        : "",
     ].filter(Boolean);
-    if (missingNameFields.length > 0) {
+    if (missingMemberDetailFields.length > 0) {
+      if (
+        missingMemberDetailFields.includes("first name") &&
+        missingMemberDetailFields.includes("last name") &&
+        missingMemberDetailFields.length === 2
+      ) {
+        showToast("First and last name are required.", "neutral");
+        return;
+      }
+      const labels = missingMemberDetailFields.map(
+        (field) => `${field[0].toUpperCase()}${field.slice(1)}`,
+      );
       const message =
-        missingNameFields.length === 2
-          ? "First and last name are required."
-          : `${missingNameFields[0][0].toUpperCase()}${missingNameFields[0].slice(1)} is required.`;
+        labels.length === 1
+          ? `${labels[0]} is required.`
+          : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)} are required.`;
       showToast(message, "neutral");
       return;
     }
-    // Toast, not `setError`: that state renders the "Form unavailable" screen
-    // and would throw away everything they had typed.
-    if (emailRequired && !payload.email?.trim()) {
-      showToast("Email is required.", "neutral");
+    const birthdayError = getBirthDateValidationError(payload.birthDate);
+    if (birthdayError) {
+      showToast(birthdayError, "neutral");
       return;
     }
     setSubmitting(true);
@@ -121,10 +141,8 @@ const TeamIntakePublic = () => {
   };
 
   const churchLogoUrl = preview?.churchLogoUrl?.trim() || "";
-  /** Per-form setting; the server rejects a blank address when it is on. */
+  /** The public form only renders fields selected by its owner. */
   const enabledFields = preview ? resolveIntakeFormFields(preview.form) : [];
-  const emailRequired =
-    enabledFields.includes("email") && Boolean(preview?.form?.requireEmail);
 
   // Group positions under their team so submitters can skip teams that aren't
   // theirs. The server already scopes which teams appear.
@@ -258,7 +276,7 @@ const TeamIntakePublic = () => {
           ].some((field) => enabledFields.includes(field as (typeof enabledFields)[number])) ? (
             <fieldset
               aria-label="Personal information"
-              className="grid gap-3 rounded-md border border-stone-700 bg-stone-950/20 p-4 sm:grid-cols-12"
+              className="grid grid-cols-12 gap-3 rounded-md border border-stone-700 bg-stone-950/20 p-4"
             >
               {enabledFields.includes("title") ? (
                 <Input
@@ -267,7 +285,8 @@ const TeamIntakePublic = () => {
                   placeholder="Pastor, Dr., Mrs., etc."
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
-                  className="sm:col-span-2"
+                  className="col-span-12 sm:col-span-2"
+                  required
                   onChange={(title) =>
                     setPayload((current) => ({ ...current, title: String(title) }))
                   }
@@ -279,7 +298,11 @@ const TeamIntakePublic = () => {
                   value={payload.firstName}
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
-                  className={enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6"}
+                  className={cn(
+                    "col-span-6",
+                    enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6",
+                  )}
+                  required
                   onChange={(firstName) =>
                     setPayload((current) => ({ ...current, firstName: String(firstName) }))
                   }
@@ -291,7 +314,11 @@ const TeamIntakePublic = () => {
                   value={payload.lastName}
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
-                  className={enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6"}
+                  className={cn(
+                    "col-span-6",
+                    enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6",
+                  )}
+                  required
                   onChange={(lastName) =>
                     setPayload((current) => ({ ...current, lastName: String(lastName) }))
                   }
@@ -304,7 +331,8 @@ const TeamIntakePublic = () => {
               value={payload.birthDate}
               labelClassName={boardFieldLabelClassName}
               inputClassName={boardDarkFieldClassName}
-              className="sm:col-span-6"
+              className="col-span-12 sm:col-span-6"
+              required
               onChange={(birthDate) =>
                 setPayload((current) => ({
                   ...current,
@@ -321,12 +349,13 @@ const TeamIntakePublic = () => {
               form is the worst time to learn it. */}
           {enabledFields.includes("email") ? (
             <Input
-              label={emailRequired ? "Email (required)" : "Email"}
+              label="Email (required)"
               type="email"
               value={payload.email || ""}
               labelClassName={boardFieldLabelClassName}
               inputClassName={boardDarkFieldClassName}
-              className="sm:col-span-6"
+              className="col-span-12 sm:col-span-6"
+              required
               onChange={(email) =>
                 setPayload((current) => ({ ...current, email: String(email) }))
               }

@@ -112,7 +112,7 @@ test("blocks submission until a name is entered", async () => {
 
   expect(mockSubmit).not.toHaveBeenCalled();
   expect(
-    await screen.findByText(/first and last name are required/i),
+    await screen.findByText(/first name.*last name.*email.*required/i),
   ).toBeInTheDocument();
 });
 
@@ -124,6 +124,7 @@ test("submits the entered availability for the form token", async () => {
 
   await userEvent.type(screen.getByLabelText(/first name/i), "Pat");
   await userEvent.type(screen.getByLabelText(/last name/i), "Reed");
+  await userEvent.type(screen.getByLabelText(/email/i), "pat@example.com");
   await userEvent.click(
     screen.getByRole("button", { name: /submit form/i }),
   );
@@ -176,7 +177,67 @@ test("shows the added profile and scheduling fields when selected", async () => 
   await screen.findByText("Fall Volunteers");
 
   expect(screen.getByLabelText("Title:")).toBeInTheDocument();
-  expect(screen.getByText("Birthday")).toBeInTheDocument();
+  expect(screen.getByText(/Birthday/)).toBeInTheDocument();
   expect(screen.getByLabelText("Serving frequency:")).toBeInTheDocument();
   expect(screen.getByText("Weeks you can usually serve")).toBeInTheDocument();
+});
+
+test("requires every selected member-detail field before submitting", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["title", "firstName", "lastName", "email", "birthDate"],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.getByLabelText("Title:")).toBeRequired();
+  expect(screen.getByLabelText("First name:")).toBeRequired();
+  expect(screen.getByLabelText("Last name:")).toBeRequired();
+  expect(screen.getByLabelText("Email (required):")).toBeRequired();
+  expect(screen.getByRole("combobox", { name: /Month/ })).toHaveAttribute(
+    "aria-required",
+    "true",
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: /submit form/i }));
+
+  expect(mockSubmit).not.toHaveBeenCalled();
+  expect(
+    await screen.findByText(
+      "Title, First name, Last name, Birthday and Email are required.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("keeps a partial birthday while editing and validates it on submit", async () => {
+  const user = userEvent.setup();
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["firstName", "lastName", "birthDate"],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  await user.type(screen.getByLabelText(/first name/i), "Pat");
+  await user.type(screen.getByLabelText(/last name/i), "Reed");
+  await user.click(screen.getByRole("combobox", { name: /month/i }));
+  await user.click(await screen.findByRole("option", { name: "January" }));
+  const day = screen.getByLabelText(/day/i);
+  await user.type(day, "12");
+  await user.clear(day);
+
+  expect(screen.getByRole("combobox", { name: /month/i })).toHaveTextContent("January");
+
+  await user.click(screen.getByRole("button", { name: /submit form/i }));
+
+  expect(mockSubmit).not.toHaveBeenCalled();
+  expect(
+    await screen.findByText("Birthday needs a valid month and day."),
+  ).toBeInTheDocument();
 });

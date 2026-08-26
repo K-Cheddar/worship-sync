@@ -3810,12 +3810,10 @@ export const createTeamsAuthHandlers = ({
       teamIds,
       enabledFields,
       active: Boolean(body?.active ?? existing?.active),
-      // Off by default so existing public forms keep accepting submissions
-      // from people who have no address to give. Churches turn it on per form
-      // once they want intake to be their address-collection path.
+      // Every selected member-detail field is required on the public form.
       requireEmail:
         enabledFields.includes("email") &&
-        Boolean(body?.requireEmail ?? existing?.requireEmail),
+        true,
       welcomeMessage: normalizeMessage("welcomeMessage"),
       positionsMessage: normalizeMessage("positionsMessage"),
       availabilityMessage: normalizeMessage("availabilityMessage"),
@@ -3880,8 +3878,20 @@ export const createTeamsAuthHandlers = ({
     const email = enabledFields.has("email")
       ? normalizeMemberEmail(body?.email)
       : "";
-    if (!email && form?.requireEmail === true) {
+    if (enabledFields.has("email") && !email) {
       throw httpError(400, "Email is required.");
+    }
+    const title = enabledFields.has("title")
+      ? normalizeShortText(body?.title, { max: 40 })
+      : "";
+    if (enabledFields.has("title") && !title) {
+      throw httpError(400, "Title is required.");
+    }
+    const birthDate = enabledFields.has("birthDate")
+      ? normalizeBirthDate(body?.birthDate)
+      : null;
+    if (enabledFields.has("birthDate") && !birthDate) {
+      throw httpError(400, "Birthday is required.");
     }
     // The public preview only offers positions from the form's scoped teams
     // (empty teamIds means every team). Enforce that same scope on submission so
@@ -3926,12 +3936,8 @@ export const createTeamsAuthHandlers = ({
       firstName,
       lastName,
       email,
-      title: enabledFields.has("title")
-        ? normalizeShortText(body?.title, { max: 40 })
-        : "",
-      birthDate: enabledFields.has("birthDate")
-        ? normalizeBirthDate(body?.birthDate)
-        : null,
+      title,
+      birthDate,
       normalizedName: normalizePersonNameKey(firstName, lastName),
       positionIds,
       occurrenceAvailability,
