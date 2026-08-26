@@ -1,4 +1,5 @@
-import { Plus, TriangleAlert, Trash2, UserRound, X } from "lucide-react";
+import { Plus, TriangleAlert, Trash2, UserPlus, UserRound, X } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import Button from "../../components/Button/Button";
 import HistorySuggestField from "../../components/HistorySuggestField/HistorySuggestField";
 import { ServicePlanMicrophoneChip } from "../../components/ServicePlanMicrophoneChip";
@@ -159,6 +160,8 @@ type ServicePlanAssigneeListProps = {
   allowEdit: boolean;
   microphones: ServicePlanMicrophone[];
   assignedToHistoryValues: string[];
+  onRemoveAssignedToHistoryValue?: (value: string) => void;
+  isAssignedToHistoryValueRemovable?: (value: string) => boolean;
   itemLabel: string;
   /**
    * Templates carry a microphone plan but never a person, so the name field is
@@ -167,6 +170,7 @@ type ServicePlanAssigneeListProps = {
   structureOnly?: boolean;
   /** Scheduled holders for the plan date, keyed by church microphone id. */
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  onEdit?: () => void;
   onChange: (next: ServicePlanAssignee[], coalesceKey?: string) => void;
 };
 
@@ -174,6 +178,8 @@ type DebouncedAssigneeNameFieldProps = {
   value: string;
   onCommit: (value: string) => void;
   historyValues: string[];
+  onRemoveHistoryValue?: (value: string) => void;
+  isHistoryValueRemovable?: (value: string) => boolean;
   label: string;
   placeholder: string;
 };
@@ -183,6 +189,8 @@ const DebouncedAssigneeNameField = ({
   value,
   onCommit,
   historyValues,
+  onRemoveHistoryValue,
+  isHistoryValueRemovable,
   label,
   placeholder,
 }: DebouncedAssigneeNameFieldProps) => {
@@ -194,14 +202,18 @@ const DebouncedAssigneeNameField = ({
       hideLabel
       placeholder={placeholder}
       multiline={false}
-      // Let the name use the available mobile row width while keeping enough
-      // room for a useful name. Keep the desktop width unchanged.
-      className="min-w-[12rem] flex-1 sm:w-40 sm:min-w-0 sm:flex-none"
-      inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
+      // Give names room to remain readable before microphone chips wrap.
+      className="min-w-[16rem] flex-1 sm:w-48 sm:min-w-0 sm:flex-none"
+      inputClassName={cn(
+        SERVICE_PLAN_INLINE_INPUT_CLASS,
+        "max-md:min-h-8 max-md:text-sm",
+      )}
       value={draft.draftValue}
       onChange={draft.setDraftValue}
       onFieldBlur={draft.flush}
       historyValues={historyValues}
+      onRemoveHistoryValue={onRemoveHistoryValue}
+      isHistoryValueRemovable={isHistoryValueRemovable}
     />
   );
 };
@@ -221,9 +233,12 @@ const ServicePlanAssigneeList = ({
   allowEdit,
   microphones,
   assignedToHistoryValues,
+  onRemoveAssignedToHistoryValue,
+  isAssignedToHistoryValueRemovable,
   itemLabel,
   structureOnly = false,
   scheduledMicrophoneHolders,
+  onEdit,
   onChange,
 }: ServicePlanAssigneeListProps) => {
   // Adding a person is the most common edit on a row, so the affordance stays
@@ -250,10 +265,18 @@ const ServicePlanAssigneeList = ({
   return (
     <div
       className={cn(
-        "space-y-1 px-1.5 pb-1.5 md:pb-1",
+        "service-plan-assignee-list space-y-1 px-1.5 pb-1.5 md:pb-1",
         allowEdit && "pl-9",
+        onEdit && "cursor-pointer rounded-md hover:bg-gray-800/60",
       )}
-      role="group"
+      role={onEdit ? "button" : "group"}
+      tabIndex={onEdit ? 0 : undefined}
+      onClick={onEdit}
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (!onEdit || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        onEdit();
+      }}
       aria-label={
         structureOnly
           ? `Microphone plan for ${itemLabel}`
@@ -267,8 +290,9 @@ const ServicePlanAssigneeList = ({
           {structureOnly ? "Microphone plan" : "Assignees"}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {assignees.map((assignee, assigneeIndex) => {
+      <div className="flex flex-col items-start gap-2">
+        <div className="flex w-full flex-wrap items-center gap-1.5">
+          {assignees.map((assignee, assigneeIndex) => {
           const isUnassigned = isUnassignedServicePlanAssignee(assignee);
           const assigneeMicrophones = (assignee.microphoneIds || [])
             .map((microphoneId) => microphonesById.get(microphoneId))
@@ -294,16 +318,16 @@ const ServicePlanAssigneeList = ({
             && itemHasMicrophones
             && !(assignee.microphoneIds || []).length;
 
-          return (
-            <div
-              key={assignee.id}
-              className={cn(
-                "inline-flex max-w-full flex-wrap items-center gap-1 rounded-md border px-1.5 py-1",
-                isUnassigned
-                  ? "border-gray-700/50 bg-gray-900/40"
-                  : "border-gray-700/60 bg-gray-950/50",
-              )}
-            >
+            return (
+              <div
+                key={assignee.id}
+                className={cn(
+                  "inline-flex w-full max-w-full flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5 md:w-auto md:gap-1 md:px-1.5 md:py-1",
+                  isUnassigned
+                    ? "border-gray-700/50 bg-gray-900/40"
+                    : "border-gray-700/60 bg-gray-950/50",
+                )}
+              >
               <UserRound
                 className="size-3.5 shrink-0 text-gray-400"
                 aria-hidden
@@ -336,6 +360,8 @@ const ServicePlanAssigneeList = ({
                         assignee.id,
                       )
                   }
+                  onRemoveHistoryValue={onRemoveAssignedToHistoryValue}
+                  isHistoryValueRemovable={isAssignedToHistoryValueRemovable}
                 />
               ) : (
                 <span
@@ -373,7 +399,7 @@ const ServicePlanAssigneeList = ({
                           variant="tertiary"
                           iconSize="xs"
                           padding="p-0"
-                          className="h-4 w-4 max-md:min-h-0"
+                          className="h-6 w-6 max-md:min-h-8 max-md:min-w-8"
                           svg={X}
                           aria-label={`Remove ${microphone.name} from ${label}`}
                           onClick={() =>
@@ -410,7 +436,7 @@ const ServicePlanAssigneeList = ({
                       svg={Plus}
                       iconSize="xs"
                       padding="px-1 py-0.5"
-                      className="h-6 max-md:min-h-0 border border-dashed border-violet-500/40 text-[11px] text-violet-200"
+                      className="h-7 max-md:min-h-8 max-md:px-2 border border-dashed border-violet-500/40 text-xs text-violet-200"
                       aria-haspopup="menu"
                       aria-label={`Add microphone for ${label}`}
                     >
@@ -464,7 +490,7 @@ const ServicePlanAssigneeList = ({
                   variant="tertiary"
                   iconSize="xs"
                   padding="p-0.5"
-                  className="h-6 w-6 shrink-0 max-md:min-h-0"
+                  className="h-7 w-7 shrink-0 max-md:min-h-8 max-md:min-w-8"
                   svg={Trash2}
                   aria-label={
                     isUnassigned
@@ -476,21 +502,22 @@ const ServicePlanAssigneeList = ({
                   }
                 />
               ) : null}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
 
-        {canAddPerson && !hasUnclaimedMicrophoneSlot(assignees) ? (
+        {canAddPerson ? (
           <Button
             type="button"
             variant="tertiary"
-            svg={Plus}
+            svg={UserPlus}
             iconSize="xs"
-            padding="px-1.5 py-0.5"
-            className="h-7 max-md:min-h-0 border border-dashed border-gray-600/80 text-[11px] text-gray-300"
+            padding="px-2 py-1"
+            className="h-7 max-md:min-h-0 border border-dashed border-gray-600/80 text-xs text-gray-300"
             onClick={() => onChange(addServicePlanAssignee(assignees))}
           >
-            {assignees.length ? "Add another person" : "Add a person"}
+            Add person
           </Button>
         ) : null}
       </div>

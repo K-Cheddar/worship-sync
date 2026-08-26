@@ -336,6 +336,42 @@ describe("ServicePlanElementRow", () => {
     });
   });
 
+  it("edits a scripture attachment in place", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        scriptureRefs: [
+          { label: "Psalm 100 (NIV)", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+          { label: "John 3:16 (NIV)", book: "John", chapter: "3", verseRange: "16", version: "NIV" },
+        ],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit scripture Psalm 100 (NIV)" }));
+
+    const field = await screen.findByLabelText(/Scripture reference/i);
+    expect(field).toHaveValue("Psalms 100");
+    await user.clear(field);
+    await user.type(field, "Psalm 23:1");
+    await user.click(screen.getByRole("button", { name: /Update scripture/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      scriptureRef: undefined,
+      scriptureRefs: [
+        expect.objectContaining({
+          book: "Psalms",
+          chapter: "23",
+          verseRange: "1",
+          version: "NIV",
+        }),
+        { label: "John 3:16 (NIV)", book: "John", chapter: "3", verseRange: "16", version: "NIV" },
+      ],
+    });
+  });
+
   it("shows Make live only on the service day", () => {
     const { rerender } = renderRow({ isServiceDay: false });
     expect(
@@ -965,7 +1001,10 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Add microphone for Pastor John/i }),
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Add microphone for Pastor John/i }),
     );
     await user.click(await screen.findByRole("menuitem", { name: /Orange/i }));
 
@@ -993,7 +1032,10 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Add microphone for Sarah Lee/i }),
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Add microphone for Sarah Lee/i }),
     );
 
     const menu = await screen.findByRole("menu");
@@ -1014,7 +1056,10 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Add microphone for Abigail/i }),
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Add microphone for Abigail/i }),
     );
 
     const orangeOption = await screen.findByRole("menuitem", { name: /Orange/i });
@@ -1040,7 +1085,10 @@ describe("assignees and their microphones", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Remove Orange from Unassigned/i }),
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Remove Orange from Unassigned/i }),
     );
 
     expect(onUpdate).toHaveBeenCalledWith({ assignees: [] }, undefined);
@@ -1063,7 +1111,8 @@ describe("microphone slots from a template", () => {
     { id: "choir-c", name: "Choir C", type: "Choir", color: "#a78bfa" },
   ];
 
-  it("does not offer another person while a microphone slot is unclaimed", () => {
+  it("offers another person while a microphone slot is unclaimed", async () => {
+    const user = userEvent.setup();
     renderRow({
       microphones: [orange],
       element: {
@@ -1072,14 +1121,19 @@ describe("microphone slots from a template", () => {
       },
     });
 
+    await user.click(
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+
     // The empty slot is the invitation — a rival blank row would leave the
     // microphone stranded behind it.
     expect(
-      screen.queryByRole("button", { name: /Add (a|another) person/i }),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("button", { name: /Add person/i }),
+    ).toBeInTheDocument();
   });
 
-  it("offers another person once every slot is claimed", () => {
+  it("offers another person once every slot is claimed", async () => {
+    const user = userEvent.setup();
     renderRow({
       microphones: [orange],
       element: {
@@ -1090,8 +1144,12 @@ describe("microphone slots from a template", () => {
       },
     });
 
+    await user.click(
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+
     expect(
-      screen.getByRole("button", { name: /Add another person/i }),
+      await screen.findByRole("button", { name: /Add person/i }),
     ).toBeInTheDocument();
   });
 
@@ -1109,7 +1167,13 @@ describe("microphone slots from a template", () => {
       },
     });
 
-    await user.type(screen.getByRole("textbox", { name: /Assigned to/i }), "Chorale");
+    await user.click(
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.type(
+      await screen.findByRole("textbox", { name: /Assigned to/i }),
+      "Chorale",
+    );
     await user.tab();
 
     const [changes] = onUpdate.mock.calls.at(-1) ?? [];
@@ -1135,7 +1199,12 @@ describe("microphone slots from a template", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Remove Pastor John .*keeping their microphones/i }),
+      screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Remove Pastor John .*keeping their microphones/i,
+      }),
     );
 
     expect(onUpdate).toHaveBeenCalledWith(

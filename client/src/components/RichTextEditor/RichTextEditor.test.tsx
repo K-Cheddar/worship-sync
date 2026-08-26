@@ -348,6 +348,10 @@ describe("RichTextEditor", () => {
       "contenteditable",
       "false",
     );
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveClass(
+      "select-text",
+      "cursor-text",
+    );
   });
 
   it("offers undo, emphasis, lists, and color as primary note toolbar controls", () => {

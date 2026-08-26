@@ -1,14 +1,9 @@
-import { NavLink, useLocation } from "react-router-dom";
-import { CalendarRange, Users } from "lucide-react";
+import { NavLink } from "react-router-dom";
 import Icon from "../../../components/Icon/Icon";
-import Button from "../../../components/Button/Button";
-import { SectionTabs } from "../../../components/SectionTabs/SectionTabs";
 import { cn } from "@/utils/cnHelper";
 import {
-  getActiveDomain,
   servicesNavSections,
   teamsNavSections,
-  type TeamsNavDomain,
   type TeamsNavSection,
 } from "../teamsNavSections";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
@@ -17,29 +12,9 @@ type TeamsSidebarNavProps = {
   /** Called after a section link is chosen (e.g. close the mobile drawer). */
   onNavigate?: () => void;
   className?: string;
-  /** Desktop-only: hide labels/descriptions and show icons only. */
+  /** Desktop-only: hide labels and section headers and show icons only. */
   collapsed?: boolean;
 };
-
-const DOMAIN_TABS: {
-  domain: TeamsNavDomain;
-  label: string;
-  defaultPath: string;
-  icon: typeof Users;
-}[] = [
-    {
-      domain: "teams",
-      label: "Teams",
-      defaultPath: teamsNavSections[0].path,
-      icon: Users,
-    },
-    {
-      domain: "services",
-      label: "Services",
-      defaultPath: servicesNavSections[0].path,
-      icon: CalendarRange,
-    },
-  ];
 
 const SectionLinkList = ({
   sections,
@@ -53,7 +28,7 @@ const SectionLinkList = ({
   const { requestNavigation } = useTeamsNavigationGuard();
 
   return (
-    <div className={cn("flex flex-col", collapsed ? "items-center gap-2" : "gap-3")}>
+    <div className={cn("flex flex-col", collapsed ? "items-center gap-2" : "gap-1")}>
       {sections.map((section) => (
         <NavLink
           key={section.path}
@@ -79,28 +54,16 @@ const SectionLinkList = ({
               "group rounded-lg border text-left text-sm transition-colors",
               collapsed
                 ? "flex size-10 items-center justify-center p-0"
-                : "flex items-start gap-3 px-3 py-3",
+                : "flex items-center gap-2 px-2 py-2.5",
               isActive
                 ? "border-cyan-400/40 bg-cyan-500/15 text-white"
                 : "border-transparent text-gray-200 hover:bg-gray-800 hover:text-white",
             )
           }
         >
-          <Icon
-            svg={section.icon}
-            size="md"
-            className={cn(
-              "shrink-0 text-cyan-300",
-              !collapsed && "mt-0.5",
-            )}
-          />
+          <Icon svg={section.icon} size="md" className="shrink-0 text-cyan-300" />
           {!collapsed ? (
-            <span className="min-w-0">
-              <span className="block font-semibold">{section.label}</span>
-              <span className="mt-0.5 block text-xs leading-snug text-gray-400 group-hover:text-gray-300">
-                {section.description}
-              </span>
-            </span>
+            <span className="min-w-0 truncate font-semibold">{section.label}</span>
           ) : null}
         </NavLink>
       ))}
@@ -108,109 +71,66 @@ const SectionLinkList = ({
   );
 };
 
+const SectionGroup = ({
+  label,
+  sections,
+  onNavigate,
+  collapsed = false,
+}: {
+  label: string;
+  sections: TeamsNavSection[];
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}) => (
+  <section aria-label={label}>
+    {!collapsed ? (
+      <h2 className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
+        {label}
+      </h2>
+    ) : null}
+    <SectionLinkList
+      sections={sections}
+      onNavigate={onNavigate}
+      collapsed={collapsed}
+    />
+  </section>
+);
+
 /**
- * Teams and Services share this one page/sidebar shell — scheduling always
- * happens for a specific service, so switching between "who's assigned" and
- * "what's happening" for it should be a click, not a different page. The
- * domain tabs at the top pick which subsection list is shown; only a section
- * link navigates (and closes the mobile drawer via onNavigate).
+ * Teams and Services share one navigation shell. Keep both groups visible so
+ * operators can move directly between service planning and team management.
  */
 const TeamsSidebarNav = ({
   onNavigate,
   className,
   collapsed = false,
-}: TeamsSidebarNavProps) => {
-  const location = useLocation();
-  const { requestNavigation } = useTeamsNavigationGuard();
-  const activeDomain = getActiveDomain(location.pathname);
-  const activeSections =
-    activeDomain === "services" ? servicesNavSections : teamsNavSections;
-
-  const switchDomain = (domain: TeamsNavDomain) => {
-    const next = DOMAIN_TABS.find((tab) => tab.domain === domain);
-    if (!next || next.domain === activeDomain) return;
-    // Domain switch lands on that group's default section, but must not close
-    // the mobile Sections sheet — the operator still picks a destination link.
-    requestNavigation(next.defaultPath);
-  };
-
-  if (collapsed) {
-    return (
-      <nav
-        className={cn("flex min-h-0 flex-1 flex-col items-center", className)}
-        aria-label="Teams sections"
-      >
-        <div
-          className="flex shrink-0 flex-col items-center gap-1 rounded-xl bg-gray-950 p-1"
-          role="tablist"
-          aria-label="Teams or Services"
-        >
-          {DOMAIN_TABS.map((tab) => {
-            const isActive = tab.domain === activeDomain;
-            return (
-              <Button
-                key={tab.domain}
-                type="button"
-                variant="tertiary"
-                padding="p-0"
-                role="tab"
-                aria-selected={isActive}
-                aria-label={tab.label}
-                title={tab.label}
-                className={cn(
-                  "flex size-9 min-h-0 max-md:min-h-0 items-center justify-center rounded-lg",
-                  isActive
-                    ? "bg-cyan-500/15 text-white"
-                    : "text-gray-300 hover:bg-gray-800 hover:text-white",
-                )}
-                onClick={() => switchDomain(tab.domain)}
-              >
-                <Icon svg={tab.icon} size="sm" className="text-cyan-300" />
-              </Button>
-            );
-          })}
-        </div>
-        <div className="mt-3 min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-px scrollbar-variable">
-          <SectionLinkList
-            sections={activeSections}
-            onNavigate={onNavigate}
-            collapsed
-          />
-        </div>
-      </nav>
-    );
-  }
-
-  return (
-    <nav
-      className={cn("flex min-h-0 flex-1 flex-col", className)}
-      aria-label="Teams sections"
-    >
-      <SectionTabs<TeamsNavDomain>
-        value={activeDomain}
-        onValueChange={switchDomain}
-        className="flex min-h-0 flex-1 flex-col"
-        tabBarClassName="shrink-0 overflow-visible rounded-xl bg-gray-950"
-        tabsContentClassName="mt-3 min-h-0 flex-1 space-y-0 overflow-x-hidden overflow-y-auto p-px scrollbar-variable"
-        items={DOMAIN_TABS.map((tab) => ({
-          value: tab.domain,
-          label: tab.label,
-          icon: tab.icon,
-          content: (
-            <SectionLinkList
-              sections={
-                tab.domain === "services"
-                  ? servicesNavSections
-                  : teamsNavSections
-              }
-              onNavigate={onNavigate}
-            />
-          ),
-          contentClassName: "outline-none",
-        }))}
+}: TeamsSidebarNavProps) => (
+  <nav
+    className={cn("flex min-h-0 flex-1 flex-col", className)}
+    aria-label="Teams and Services sections"
+  >
+    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-px scrollbar-variable">
+      <SectionGroup
+        label="Services"
+        sections={servicesNavSections}
+        onNavigate={onNavigate}
+        collapsed={collapsed}
       />
-    </nav>
-  );
-};
+      <div
+        className={cn(
+          "border-gray-700",
+          collapsed ? "mt-3 border-t pt-3" : "mt-4 border-t pt-2",
+        )}
+      >
+        <SectionGroup
+          label="Teams"
+          sections={teamsNavSections}
+          onNavigate={onNavigate}
+          collapsed={collapsed}
+        />
+      </div>
+    </div>
+  </nav>
+);
 
 export default TeamsSidebarNav;

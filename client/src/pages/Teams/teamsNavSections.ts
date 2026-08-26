@@ -117,7 +117,7 @@ export const servicesNavSections: TeamsNavSection[] = [
   {
     path: "/teams-and-services/service-settings",
     routePath: "service-settings",
-    label: "Service settings",
+    label: "Services",
     description: "Manage service times and required positions.",
     icon: Settings2,
     domain: "services",

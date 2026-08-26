@@ -977,25 +977,45 @@ export const createRestreamService = ({
    * fall back to the elapsed-idle heuristic when we can't compare identity on
    * both sides (e.g. a platform that doesn't expose a stable id/url).
    */
-  const isGenuinelyNewBroadcast = (previousSession, insights) => {
+  const compareBroadcastIdentity = (previousSession, insights) => {
     const previousBroadcastKey = String(
       previousSession?.broadcastKey || "",
     ).trim();
     const currentBroadcastKey = String(insights?.broadcastKey || "").trim();
     if (previousBroadcastKey && currentBroadcastKey) {
-      return previousBroadcastKey !== currentBroadcastKey;
+      return previousBroadcastKey === currentBroadcastKey
+        ? "same"
+        : "different";
     }
-    return true;
+    return "unknown";
   };
 
-  const maybeAutoResetForNewStream = async (receiver, previousSession, insights) => {
+  const maybeAutoResetForNewStream = async (
+    receiver,
+    previousSession,
+    insights,
+  ) => {
     if (!(Number(previousSession?.messageCount || 0) > 0)) return;
-    if (!isGenuinelyNewBroadcast(previousSession, insights)) return;
+    const identityComparison = compareBroadcastIdentity(
+      previousSession,
+      insights,
+    );
+    if (identityComparison === "same") return;
+    if (identityComparison === "different") {
+      await resetSession({
+        churchId: receiver.churchId,
+        database: receiver.database,
+      });
+      return;
+    }
     const idleSince = Number(previousSession?.wentIdleAt || 0);
     if (!idleSince || nowMs() - idleSince < NEW_STREAM_IDLE_THRESHOLD_MS) {
       return;
     }
-    await resetSession({ churchId: receiver.churchId, database: receiver.database });
+    await resetSession({
+      churchId: receiver.churchId,
+      database: receiver.database,
+    });
   };
 
   const persistReceiverSnapshot = async (receiver) => {

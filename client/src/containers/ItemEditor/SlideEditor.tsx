@@ -47,7 +47,7 @@ import {
   getSelectionHint,
 } from "../../utils/selectionHint";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
-import { ItemSlideType, SongMetadata } from "../../types";
+import { DBItem, ItemSlideType, SongMetadata } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -72,9 +72,9 @@ import TimerControls from "../../components/TimerControls/TimerControls";
 import SlideEditorSkeleton from "./SlideEditorSkeleton";
 import type { DisplayEditorChangeInfo } from "../../components/DisplayWindow/DisplayEditor";
 import {
-  ItemDetailsEditorFields,
   ItemDetailsModal,
 } from "../../components/ItemDetailsModal/ItemDetailsModal";
+import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
 import { LastUpdatedByline } from "../../components/LastUpdatedByline/LastUpdatedByline";
 import {
   Popover,
@@ -88,9 +88,6 @@ const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
   slideName.startsWith(lyricName) && !/^\d/.test(slideName.slice(lyricName.length));
 
 const BOX_EDIT_DEBOUNCE_MS = 200;
-const ITEM_DETAILS_POPOVER_CLASS =
-  "w-80 border border-gray-600 bg-gray-900 p-3 text-white";
-
 const resolveFormattedSlideIndex = ({
   oldSlides,
   newSlides,
@@ -155,7 +152,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   );
 
   const [isItemDetailsModalOpen, setIsItemDetailsModalOpen] = useState(false);
-  const [isSongDetailsPopoverOpen, setIsSongDetailsPopoverOpen] = useState(false);
+  const [isSongDetailsDrawerOpen, setIsSongDetailsDrawerOpen] = useState(false);
   const [isOpeningLyricsEditor, setIsOpeningLyricsEditor] = useState(false);
 
   const [isBoxLocked, setIsBoxLocked] = useState<boolean[]>([]);
@@ -462,6 +459,32 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   const nameEditButtonAriaLabel =
     type === "song" ? "Song details" : "Item details";
+
+  const controllerSong = useMemo(
+    () => ({
+      ...(baseItem ?? {}),
+      _id,
+      name,
+      type: "song" as const,
+      arrangements,
+      slides: __slides,
+      selectedArrangement,
+      songMetadata,
+      songLinks,
+      songAudio,
+    }) as DBItem,
+    [
+      _id,
+      __slides,
+      arrangements,
+      baseItem,
+      name,
+      selectedArrangement,
+      songAudio,
+      songLinks,
+      songMetadata,
+    ],
+  );
 
   const applyBoxChange = useCallback(({
     index,
@@ -1307,37 +1330,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               />
             </span>
             {type === "song" ? (
-              <Popover
-                open={isSongDetailsPopoverOpen}
-                onOpenChange={setIsSongDetailsPopoverOpen}
-              >
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="tertiary"
-                    disabled={isLoading || !canEdit}
-                    svg={Pencil}
-                    aria-label={nameEditButtonAriaLabel}
-                  />
-                </PopoverTrigger>
-                <PopoverContent
-                  align="start"
-                  className={ITEM_DETAILS_POPOVER_CLASS}
-                >
-                  <ItemDetailsEditorFields
-                    isOpen={isSongDetailsPopoverOpen}
-                    onClose={() => setIsSongDetailsPopoverOpen(false)}
-                    itemType={type}
-                    itemName={name}
-                    songMetadata={songMetadata}
-                    songLinks={songLinks}
-                    songAudio={songAudio}
-                    onUploadSongAudio={attachSongAudio}
-                    onGetSongAudioUrl={resolveSongAudioUrl}
-                    onRemoveSongAudio={removeSongAudio}
-                    onSave={saveSongDetails}
-                  />
-                </PopoverContent>
-              </Popover>
+              <Button
+                variant="tertiary"
+                disabled={isLoading || !canEdit}
+                svg={Pencil}
+                onClick={() => setIsSongDetailsDrawerOpen(true)}
+                aria-label={nameEditButtonAriaLabel}
+              />
             ) : (
               <Button
                 variant="tertiary"
@@ -1453,6 +1452,18 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           itemName={name}
           songMetadata={songMetadata}
           onSave={saveSongDetails}
+        />
+      )}
+      {type === "song" && (
+        <ViewSongSectionsDrawer
+          song={controllerSong}
+          isOpen={isSongDetailsDrawerOpen}
+          initialMode="edit"
+          onClose={() => setIsSongDetailsDrawerOpen(false)}
+          onSave={saveSongDetails}
+          onUploadSongAudio={attachSongAudio}
+          onGetSongAudioUrl={resolveSongAudioUrl}
+          onRemoveSongAudio={removeSongAudio}
         />
       )}
     </ErrorBoundary>

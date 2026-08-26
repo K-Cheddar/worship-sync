@@ -81,6 +81,8 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   onElementDurationChange: (elementId: string, durationSeconds: number) => void;
   onElementStartTimeChange: (elementId: string, time: string) => void;
   assignedToHistoryValues: string[];
+  onRemoveAssignedToHistoryValue?: (value: string) => void;
+  isAssignedToHistoryValueRemovable?: (value: string) => boolean;
   roleNoteOptions: ServicePlanRoleNoteOption[];
   teamNoteOptions: ServicePlanTeamNoteOption[];
   microphones: ServicePlanMicrophone[];
@@ -116,6 +118,8 @@ const SortableSectionCard = ({
   onElementDurationChange,
   onElementStartTimeChange,
   assignedToHistoryValues,
+  onRemoveAssignedToHistoryValue,
+  isAssignedToHistoryValueRemovable,
   roleNoteOptions,
   teamNoteOptions,
   microphones,
@@ -226,7 +230,7 @@ const SortableSectionCard = ({
             <ServicePlanElementColumnHeader
               isEditing={allowEdit}
               showActionsColumn={isServiceDay}
-              showAssignedColumn={!structureOnly}
+              showAssignedColumn={false}
             />
           ) : null}
           <SortableContext items={elementIds} strategy={verticalListSortingStrategy}>
@@ -246,6 +250,8 @@ const SortableSectionCard = ({
                   }
                   onStartTimeChange={(time) => onElementStartTimeChange(element.id, time)}
                   assignedToHistoryValues={assignedToHistoryValues}
+                  onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+                  isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
                   toneIndex={elementIndex}
                   isServiceDay={isServiceDay}
                   isLive={liveElementId === element.id}
@@ -313,6 +319,8 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
    */
   onAddElement: (sectionId: string) => void;
   assignedToHistoryValues?: string[];
+  onRemoveAssignedToHistoryValue?: (value: string) => void;
+  isAssignedToHistoryValueRemovable?: (value: string) => boolean;
   roleNoteOptions?: ServicePlanRoleNoteOption[];
   teamNoteOptions?: ServicePlanTeamNoteOption[];
   microphones?: ServicePlanMicrophone[];
@@ -355,6 +363,8 @@ const ServicePlanSectionList = ({
   onSectionsChange,
   onAddElement,
   assignedToHistoryValues = [],
+  onRemoveAssignedToHistoryValue,
+  isAssignedToHistoryValueRemovable,
   roleNoteOptions = [],
   teamNoteOptions = [],
   microphones = [],
@@ -483,6 +493,8 @@ const ServicePlanSectionList = ({
                 )
               }
               assignedToHistoryValues={assignedToHistoryValues}
+              onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+              isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
               roleNoteOptions={roleNoteOptions}
               teamNoteOptions={teamNoteOptions}
               microphones={microphones}

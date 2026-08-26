@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { BookOpen, Plus } from "lucide-react";
+import { BookOpen, Check, Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -21,10 +21,13 @@ export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-orange-300";
 
 type ServicePlanScripturePopoverProps = {
   disabled?: boolean;
+  initialScriptureRef?: ServicePlanScriptureReference;
   onSelect: (scriptureRef: ServicePlanScriptureReference) => void;
   /** Controlled open. When set, pair with `onOpenChange` and optionally `anchor`. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Use the anchor as a clickable trigger instead of a passive anchor. */
+  trigger?: boolean;
   /**
    * When provided (controlled mode), the built-in "Add scripture" trigger is
    * omitted and this node is used as the popover anchor — typically the row's
@@ -43,10 +46,12 @@ type ServicePlanScripturePopoverProps = {
  */
 const ServicePlanScripturePopover = ({
   disabled = false,
+  initialScriptureRef,
   onSelect,
   open: openProp,
   onOpenChange,
   anchor,
+  trigger = false,
 }: ServicePlanScripturePopoverProps) => {
   const isControlled = openProp !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -54,6 +59,21 @@ const ServicePlanScripturePopover = ({
   const setOpen = onOpenChange ?? setUncontrolledOpen;
   const [reference, setReference] = useState("");
   const [version, setVersion] = useState(DEFAULT_VERSION);
+  const isEditing = Boolean(initialScriptureRef);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!initialScriptureRef) {
+      setReference("");
+      setVersion(DEFAULT_VERSION);
+      return;
+    }
+    const verseSuffix = initialScriptureRef.verseRange
+      ? `:${initialScriptureRef.verseRange}`
+      : "";
+    setReference(`${initialScriptureRef.book} ${initialScriptureRef.chapter}${verseSuffix}`);
+    setVersion(initialScriptureRef.version.toLowerCase());
+  }, [initialScriptureRef, open]);
 
   const parsedReference = useMemo(
     () => (reference.trim() ? parseBibleReference(reference.trim()) : null),
@@ -121,7 +141,9 @@ const ServicePlanScripturePopover = ({
           </Button>
         </PopoverTrigger>
       ) : null}
-      {anchor ? <PopoverAnchor asChild>{anchor}</PopoverAnchor> : null}
+      {anchor ? (
+        trigger ? <PopoverTrigger asChild>{anchor}</PopoverTrigger> : <PopoverAnchor asChild>{anchor}</PopoverAnchor>
+      ) : null}
       <PopoverContent
         align="start"
         sideOffset={8}
@@ -168,10 +190,13 @@ const ServicePlanScripturePopover = ({
           ) : null}
           <Button
             type="button"
+            svg={isEditing ? Check : undefined}
+            color={isEditing ? "#22d3ee" : undefined}
+            className={isEditing ? "w-full justify-center" : undefined}
             disabled={!parsedReference}
             onClick={handleAttach}
           >
-            Attach scripture
+            {isEditing ? "Update scripture" : "Attach scripture"}
           </Button>
         </div>
       </PopoverContent>

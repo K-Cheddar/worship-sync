@@ -698,6 +698,53 @@ describe("BoardControllerContent", () => {
     expect(mockResetRestreamSession).not.toHaveBeenCalled();
   });
 
+  it("resets both the discussion board and Restream when the operator starts fresh", async () => {
+    const user = userEvent.setup();
+    const reloadRestream = jest.fn(() => Promise.resolve());
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-old",
+        startedAt: 100,
+        messageCount: 2,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      feedState: "empty",
+      reload: reloadRestream,
+    });
+
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start fresh for today/i,
+    });
+    expect(
+      within(dialog).getByText(/Earlier Restream chat is cleared/i),
+    ).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: /^Start fresh$/i }),
+    );
+
+    await waitFor(() => expect(reloadRestream).toHaveBeenCalled());
+    expect(mockResetRestreamSession).toHaveBeenCalledWith("church-1");
+    expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday");
+  });
+
   it("hides Hide and Highlight on posts when viewing an earlier session", async () => {
     const user = userEvent.setup();
     renderPage();

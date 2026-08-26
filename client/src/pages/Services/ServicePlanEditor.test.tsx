@@ -635,7 +635,9 @@ describe("ServicePlanEditor", () => {
 
     expect(screen.getByRole("textbox", { name: /Search roles/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^All roles$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitemcheckbox", { name: /^Hide notes$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitemcheckbox", { name: /^Hide notes$/i }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("menuitem", { name: /^Back$/i }));
     expect(
@@ -1040,15 +1042,37 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
     await user.click(screen.getByRole("button", { name: /Add element/i }));
-    // Microphones hang off a person now, so an item starts with nobody on it
-    // and the first assignee is added explicitly.
-    await user.click(await screen.findByRole("button", { name: /Add a person/i }));
+    // Microphones hang off a person now, so an item starts with nobody on it.
+    // Assignment editing opens in a side sheet to keep the plan list stable.
+    await user.click(
+      await screen.findByRole("button", { name: /Assignees for item/i }),
+    );
+    await user.click(await screen.findByRole("button", { name: /Add person/i }));
 
     const assignedToField = await screen.findByRole("textbox", { name: /Assigned to/i });
     await user.click(assignedToField);
 
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
     expect(screen.getByText("Guest Speaker Sam")).toBeInTheDocument();
+
+    mockSaveServicePlanAssignmentHistory.mockClear();
+    fireEvent.mouseDown(
+      screen.getByRole("button", {
+        name: /remove "Guest Speaker Sam" from history/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(mockSaveServicePlanAssignmentHistory).toHaveBeenCalledWith(
+        "church-1",
+        [],
+      ),
+    );
+    expect(screen.queryByText("Guest Speaker Sam")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /remove "Jane Doe" from history/i,
+      }),
+    ).not.toBeInTheDocument();
 
     // Confirms this is plain free-text suggestion, not roster-linked: typing
     // a name that isn't a suggestion is accepted as-is.
@@ -1491,6 +1515,10 @@ describe("ServicePlanEditor", () => {
       }],
     });
 
+    expect(
+      screen.queryByRole("button", { name: /Assignees for Living Hope/i }),
+    ).not.toBeInTheDocument();
+
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
 
     // Name, time, duration and assignee are all editable on the one-line row
@@ -1498,9 +1526,13 @@ describe("ServicePlanEditor", () => {
     expect(await screen.findByLabelText(/^Title/i)).toHaveValue("Living Hope");
     expect(screen.getByLabelText(/^Time/i)).toHaveValue("10:00 AM");
     expect(screen.getByLabelText(/^Duration/i)).toHaveValue("5 min");
-    expect(screen.getByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
     await user.type(screen.getByLabelText(/^Title/i), "!");
     expect(screen.getByLabelText(/^Title/i)).toHaveValue("Living Hope!");
+    await user.click(
+      screen.getByRole("button", { name: /Assignees for Living Hope/i }),
+    );
+    expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
+    await user.click(screen.getByRole("button", { name: /Close/i }));
 
     // Song, scripture, and notes stay on the row via a single Add menu.
     // Existing notes start minimized to one preview line — expand to edit.
@@ -1613,17 +1645,13 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitemcheckbox", { name: /^Hide notes$/i }));
+    await user.click(await screen.findByRole("button", { name: /^Hide notes$/i }));
     expect(screen.queryByRole("button", { name: /Expand notes/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Expand Band/i })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-    const hideNotesItem = await screen.findByRole("menuitemcheckbox", {
-      name: /^Hide notes$/i,
-    });
-    expect(hideNotesItem).toHaveAttribute("aria-checked", "true");
-    await user.click(hideNotesItem);
+    const showNotesButton = await screen.findByRole("button", { name: /^Show notes$/i });
+    expect(showNotesButton).toHaveAttribute("aria-pressed", "true");
+    await user.click(showNotesButton);
     expect(
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();

@@ -25,18 +25,16 @@ const renderSidebar = (
   );
 
 describe("TeamsSidebarNav", () => {
-  it("shows section labels and descriptions when expanded", () => {
+  it("shows service and team sections without descriptions when expanded", () => {
     renderSidebar();
 
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     expect(
-      screen.getByText(/Assign people to services by position/i),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Teams" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "Services" })).toBeInTheDocument();
+      screen.queryByText(/Assign people to services by position/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Services" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Teams" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Plans$/i })).toBeInTheDocument();
   });
 
   it("collapses to icon-only links while keeping accessible names", () => {
@@ -47,41 +45,21 @@ describe("TeamsSidebarNav", () => {
       screen.queryByText(/Assign people to services by position/i),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/^Schedules$/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Teams" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "Services" })).toBeInTheDocument();
   });
 
-  it("switches domains from the collapsed icon tabs", async () => {
-    const user = userEvent.setup();
+  it("shows both navigation groups in the collapsed icon rail", () => {
     renderSidebar("/teams-and-services/schedules", true);
 
-    await user.click(screen.getByRole("tab", { name: "Services" }));
-
-    expect(
-      await screen.findByRole("link", { name: /^Plans$/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /^Schedules$/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Services" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(screen.getByRole("link", { name: /^Plans$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+    expect(screen.queryByText(/^Services$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Teams$/i)).not.toBeInTheDocument();
   });
 
-  it("calls onNavigate for section links but not for domain tabs", async () => {
+  it("calls onNavigate for section links", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderSidebar("/teams-and-services/schedules", false, onNavigate);
-
-    await user.click(screen.getByRole("tab", { name: "Services" }));
-    expect(
-      await screen.findByRole("link", { name: /^Plans$/i }),
-    ).toBeInTheDocument();
-    expect(onNavigate).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("link", { name: /^Microphones$/i }));
     expect(onNavigate).toHaveBeenCalledTimes(1);

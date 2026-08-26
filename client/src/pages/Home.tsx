@@ -317,9 +317,10 @@ const DesktopDownloadHelp = ({
 };
 
 const Welcome = () => {
-  const { loginState, role, access, canViewTeams } =
+  const { loginState, role, access, canViewTeams, sessionKind } =
     useContext(GlobalInfoContext) || {};
   const isLoggedIn = loginState === "success";
+  const isHumanSession = sessionKind === "human";
   const isAdmin = role === "admin";
   const visibleAdminLinks = adminLinks.filter(
     (link) => isAdmin || (link.to === "/teams-and-services" && canViewTeams),
@@ -549,7 +550,7 @@ const Welcome = () => {
             grid for their own name is the problem this page removes. Its own
             section because it is personal — Controllers is service-operation
             surfaces, and Church administration is neither. */}
-        {isLoggedIn && (
+        {isLoggedIn && isHumanSession && (
           <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="grid gap-4 md:grid-cols-2">
               <HomeLinkCard {...mySchedulelink} />

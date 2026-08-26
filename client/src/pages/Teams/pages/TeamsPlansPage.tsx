@@ -10,10 +10,11 @@ import {
   Users,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import Icon from "../../../components/Icon/Icon";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
-import Select from "../../../components/Select/Select";
-import DatePicker from "@/components/ui/DatePicker";
+import DateRangePicker from "@/components/ui/DateRangePicker";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { useToast } from "../../../context/toastContext";
@@ -68,22 +69,51 @@ import type {
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 
-type RangePreset = "4w" | "8w" | "custom";
+type RangePreset = "thisMonth" | "nextMonth" | "thisQuarter" | "nextQuarter" | "custom";
 
-const ALL_SERVICES = "all";
+export const rangeFromPreset = (
+  preset: Exclude<RangePreset, "custom">,
+  now = new Date(),
+) => {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const quarterStartMonth = Math.floor(month / 3) * 3;
+  let start: Date;
+  let end: Date;
 
-const rangeFromPreset = (preset: "4w" | "8w") => {
-  const start = new Date();
-  start.setDate(start.getDate() - 7);
-  const end = new Date();
-  end.setDate(end.getDate() + (preset === "4w" ? 28 : 56));
+  switch (preset) {
+    case "thisMonth":
+      start = new Date(year, month, 1);
+      end = new Date(year, month + 1, 0);
+      break;
+    case "nextMonth":
+      start = new Date(year, month + 1, 1);
+      end = new Date(year, month + 2, 0);
+      break;
+    case "thisQuarter":
+      start = new Date(year, quarterStartMonth, 1);
+      end = new Date(year, quarterStartMonth + 3, 0);
+      break;
+    case "nextQuarter":
+      start = new Date(year, quarterStartMonth + 3, 1);
+      end = new Date(year, quarterStartMonth + 6, 0);
+      break;
+  }
+
   return {
     start: formatPlainDate(start),
     end: formatPlainDate(end),
   };
 };
 
-const defaultRange = () => rangeFromPreset("4w");
+const defaultRange = () => rangeFromPreset("thisMonth");
+
+const formatRangeDate = (value: string) =>
+  new Date(`${value}T12:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 
 /**
  * Plain date `days` away from `date`. Noon keeps the shift clear of DST edges.
@@ -311,8 +341,8 @@ const TeamsPlansPage = () => {
   const initialRange = useMemo(() => defaultRange(), []);
   const [windowStart, setWindowStart] = useState(initialRange.start);
   const [windowEnd, setWindowEnd] = useState(initialRange.end);
-  const [rangePreset, setRangePreset] = useState<RangePreset>("4w");
-  const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
+  const [rangePreset, setRangePreset] = useState<RangePreset>("thisMonth");
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
     readPlansOrganizeMode,
   );
@@ -507,10 +537,12 @@ const TeamsPlansPage = () => {
 
   const visibleGroups = useMemo(
     () =>
-      serviceFilter === ALL_SERVICES
+      selectedServiceIds.length === 0
         ? groups
-        : groups.filter((group) => group.serviceIds.includes(serviceFilter)),
-    [groups, serviceFilter],
+        : groups.filter((group) =>
+          group.serviceIds.some((serviceId) => selectedServiceIds.includes(serviceId)),
+        ),
+    [groups, selectedServiceIds],
   );
 
   const showOrganizeToggle = activeServices.length > 1;
@@ -580,30 +612,39 @@ const TeamsPlansPage = () => {
   );
 
   const serviceFilterOptions = useMemo(
-    () => [
-      { label: "All services", value: ALL_SERVICES },
-      ...activeServices.map((service) => ({
+    () => activeServices.map((service) => ({
         label: service.name,
         value: service.serviceId,
       })),
-    ],
     [activeServices],
   );
 
-  const applyPreset = (preset: "4w" | "8w") => {
+  const serviceFilterLabel = useMemo(() => {
+    if (selectedServiceIds.length === 0) return "All services";
+    if (selectedServiceIds.length === 1) {
+      return serviceFilterOptions.find(
+        (option) => option.value === selectedServiceIds[0],
+      )?.label ?? "1 service";
+    }
+    return `${selectedServiceIds.length} services selected`;
+  }, [selectedServiceIds, serviceFilterOptions]);
+
+  const applyPreset = (preset: Exclude<RangePreset, "custom">) => {
     const next = rangeFromPreset(preset);
     setWindowStart(next.start);
     setWindowEnd(next.end);
     setRangePreset(preset);
   };
 
-  const setCustomStart = (value: string) => {
-    setWindowStart(value);
-    setRangePreset("custom");
-  };
-
-  const setCustomEnd = (value: string) => {
-    setWindowEnd(value);
+  const setCustomRange = ({
+    startDate,
+    endDate,
+  }: {
+    startDate: string;
+    endDate: string;
+  }) => {
+    setWindowStart(startDate);
+    setWindowEnd(endDate);
     setRangePreset("custom");
   };
 
@@ -850,16 +891,54 @@ const TeamsPlansPage = () => {
           Pick a date to build or edit that service&apos;s order of service.
         </p>
 
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3">
+          <div className="grid items-end gap-3 md:grid-cols-[minmax(12rem,14rem)_auto_minmax(0,1fr)]">
             {activeServices.length > 1 ? (
-              <Select
-                label="Service"
-                className="w-full sm:w-56"
-                value={serviceFilter}
-                onChange={setServiceFilter}
-                options={serviceFilterOptions}
-              />
+              <div className="min-w-0">
+                <span className="block p-1 text-sm font-semibold">Service:</span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      aria-label="Service filter"
+                      aria-haspopup="dialog"
+                      className="w-full justify-between bg-neutral-900 text-left text-sm text-neutral-100"
+                    >
+                      <span className="truncate">{serviceFilterLabel}</span>
+                      <span aria-hidden className="ml-2 text-gray-400">▾</span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-2 text-gray-100"
+                  >
+                    <fieldset aria-label="Services" className="space-y-1">
+                      <Checkbox
+                        label="All services"
+                        checked={selectedServiceIds.length === 0}
+                        onCheckedChange={() => setSelectedServiceIds([])}
+                        className="rounded px-2 py-1.5"
+                      />
+                      {serviceFilterOptions.map((option) => (
+                        <Checkbox
+                          key={option.value}
+                          label={option.label}
+                          checked={selectedServiceIds.includes(option.value)}
+                          onCheckedChange={() => {
+                            setSelectedServiceIds((current) =>
+                              current.includes(option.value)
+                                ? current.filter((id) => id !== option.value)
+                                : [...current, option.value],
+                            );
+                          }}
+                          className="rounded px-2 py-1.5"
+                        />
+                      ))}
+                    </fieldset>
+                  </PopoverContent>
+                </Popover>
+              </div>
             ) : null}
 
             {showOrganizeToggle ? (
@@ -875,7 +954,8 @@ const TeamsPlansPage = () => {
               </div>
             ) : null}
 
-            <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+            <div className="min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+              <div className="flex flex-col gap-1.5">
               <span className="px-0.5 text-sm font-semibold">Range</span>
               <div
                 className="flex flex-wrap gap-1.5"
@@ -885,28 +965,54 @@ const TeamsPlansPage = () => {
                 <Button
                   type="button"
                   variant="tertiary"
-                  isSelected={rangePreset === "4w"}
+                  isSelected={rangePreset === "thisMonth"}
                   className={cn(
                     "text-xs",
-                    rangePreset === "4w" &&
+                    rangePreset === "thisMonth" &&
                     "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
                   )}
-                  onClick={() => applyPreset("4w")}
+                  onClick={() => applyPreset("thisMonth")}
                 >
-                  Next 4 weeks
+                  This month
                 </Button>
                 <Button
                   type="button"
                   variant="tertiary"
-                  isSelected={rangePreset === "8w"}
+                  isSelected={rangePreset === "nextMonth"}
                   className={cn(
                     "text-xs",
-                    rangePreset === "8w" &&
+                    rangePreset === "nextMonth" &&
                     "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
                   )}
-                  onClick={() => applyPreset("8w")}
+                  onClick={() => applyPreset("nextMonth")}
                 >
-                  Next 8 weeks
+                  Next month
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  isSelected={rangePreset === "thisQuarter"}
+                  className={cn(
+                    "text-xs",
+                    rangePreset === "thisQuarter" &&
+                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                  )}
+                  onClick={() => applyPreset("thisQuarter")}
+                >
+                  This quarter
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  isSelected={rangePreset === "nextQuarter"}
+                  className={cn(
+                    "text-xs",
+                    rangePreset === "nextQuarter" &&
+                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                  )}
+                  onClick={() => applyPreset("nextQuarter")}
+                >
+                  Next quarter
                 </Button>
                 <Button
                   type="button"
@@ -922,19 +1028,22 @@ const TeamsPlansPage = () => {
                   Custom
                 </Button>
               </div>
+              <p className="px-0.5 text-xs text-gray-400">
+                {formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
+              </p>
+              {rangePreset === "custom" ? (
+                <DateRangePicker
+                  label="Date range"
+                  hideLabel
+                  value={{ startDate: windowStart, endDate: windowEnd }}
+                  onChange={setCustomRange}
+                  className="w-full max-w-xs"
+                  inputClassName="py-1 text-xs"
+                />
+              ) : null}
+              </div>
             </div>
           </div>
-
-          {rangePreset === "custom" ? (
-            <div className="grid max-w-xl gap-3 sm:grid-cols-2">
-              <DatePicker
-                label="From"
-                value={windowStart}
-                onChange={setCustomStart}
-              />
-              <DatePicker label="To" value={windowEnd} onChange={setCustomEnd} />
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -970,11 +1079,7 @@ const TeamsPlansPage = () => {
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-base font-semibold text-gray-50">
-                  {serviceFilter === ALL_SERVICES
-                    ? "All services"
-                    : (activeServices.find(
-                      (service) => service.serviceId === serviceFilter,
-                    )?.name ?? "Plans")}
+                  {serviceFilterLabel}
                 </h3>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
@@ -1036,9 +1141,9 @@ const TeamsPlansPage = () => {
                         occurrence={occurrence}
                         shared={BY_DATE_TILE_SHARED}
                         serviceName={
-                          serviceFilter === ALL_SERVICES
-                            ? entry.serviceName
-                            : undefined
+                        selectedServiceIds.length !== 1
+                          ? entry.serviceName
+                          : undefined
                         }
                         hasPlan={hasPlan}
                         isPast={isPast}

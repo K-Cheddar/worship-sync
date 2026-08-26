@@ -114,7 +114,7 @@ const editorAttributes = ({
   "aria-disabled": String(disabled),
   class: cn(
     EDITABLE_CLASS_NAME,
-    disabled && "cursor-not-allowed opacity-60",
+    disabled && "cursor-text select-text opacity-60",
     editorClassName,
   ),
 });

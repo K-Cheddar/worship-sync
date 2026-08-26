@@ -782,6 +782,101 @@ test("restream service resets chat when a different broadcast connects after a l
   }
 });
 
+test("restream service resets chat for a different broadcast immediately after receiver startup", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalClientId = process.env.RESTREAM_CLIENT_ID;
+  const originalClientSecret = process.env.RESTREAM_CLIENT_SECRET;
+
+  const sockets = [];
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+
+    addEventListener(type, handler) {
+      const next = this.listeners.get(type) || [];
+      next.push(handler);
+      this.listeners.set(type, next);
+    }
+
+    emit(type, payload) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.forEach((handler) => handler(payload));
+    }
+
+    close() {
+      return undefined;
+    }
+  };
+  process.env.RESTREAM_CLIENT_ID = "client-id";
+  process.env.RESTREAM_CLIENT_SECRET = "client-secret";
+
+  try {
+    const { firestore, boardDisplayUpdates, service } = createServiceHarness();
+    firestore.seed("restreamTokens", "church-1", {
+      churchId: "church-1",
+      database: "db-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: Date.now() + 3_600_000,
+      accountLabel: "Main account",
+    });
+    firestore.seed("restreamSessions", "db-1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-last-week",
+      startedAt: 100,
+      messageCount: 2,
+      connected: true,
+      broadcastKey: "youtube-event-old",
+    });
+    firestore.seed("restreamMessages", "m1", {
+      churchId: "church-1",
+      database: "db-1",
+      sessionId: "session-last-week",
+      text: "Last week's message",
+      postedAt: 50,
+      isHighlighted: false,
+      hidden: false,
+    });
+
+    // Receiver startup first marks the stale persisted connection idle. The
+    // next broadcast must still reset immediately even though wentIdleAt was
+    // only just recorded during startup.
+    await service.ensureReceiver("church-1");
+    sockets[0].emit("open");
+    sockets[0].emit("message", {
+      data: JSON.stringify({
+        action: "connection_info",
+        payload: {
+          connectionIdentifier: "conn-1",
+          connectionUuid: "connection-uuid-1",
+          eventSourceId: 13,
+          status: "connected",
+          target: {
+            event: { id: "youtube-event-new", title: "Sunday Live" },
+            owner: { displayName: "Main Channel" },
+          },
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = firestore.read("restreamSessions", "db-1");
+    assert.notEqual(session.sessionId, "session-last-week");
+    assert.equal(session.messageCount, 0);
+    assert.equal(session.broadcastKey, "youtube-event-new");
+    assert.deepEqual(boardDisplayUpdates, ["db-1"]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    process.env.RESTREAM_CLIENT_ID = originalClientId;
+    process.env.RESTREAM_CLIENT_SECRET = originalClientSecret;
+  }
+});
+
 test("restream service persists sessions and messages in RTDB when Firestore is unavailable", async () => {
   const realtimeDb = createRealtimeDbMock();
   const firstHarness = createServiceHarness({

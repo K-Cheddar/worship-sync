@@ -32,6 +32,13 @@ type ViewSongSectionsDrawerProps = {
   song: DBItem | null;
   isOpen: boolean;
   searchHighlight?: string;
+  /** Opens the shared details sheet directly in edit mode for controller entry points. */
+  initialMode?: "view" | "edit";
+  /** Override persistence when the caller owns the active editor state. */
+  onSave?: (payload: ItemDetailsSavePayload) => void | Promise<void>;
+  onUploadSongAudio?: (file: File) => Promise<void>;
+  onGetSongAudioUrl?: (disposition: "inline" | "attachment") => Promise<string>;
+  onRemoveSongAudio?: () => Promise<void>;
   onClose: () => void;
 };
 
@@ -39,6 +46,11 @@ const ViewSongSectionsDrawer = ({
   song,
   isOpen,
   searchHighlight,
+  initialMode = "view",
+  onSave,
+  onUploadSongAudio: onUploadSongAudioOverride,
+  onGetSongAudioUrl: onGetSongAudioUrlOverride,
+  onRemoveSongAudio: onRemoveSongAudioOverride,
   onClose,
 }: ViewSongSectionsDrawerProps) => {
   const dispatch = useDispatch();
@@ -65,8 +77,8 @@ const ViewSongSectionsDrawer = ({
   }, [song]);
 
   useEffect(() => {
-    setIsEditing(false);
-  }, [isOpen, song?._id]);
+    setIsEditing(isOpen && initialMode === "edit");
+  }, [initialMode, isOpen, song?._id]);
 
   const persistSongPatch = useCallback(
     async (patch: PersistSongPatch) => {
@@ -235,10 +247,10 @@ const ViewSongSectionsDrawer = ({
               songMetadata={song.songMetadata}
               songLinks={song.songLinks}
               songAudio={song.songAudio}
-              onUploadSongAudio={attachSongAudio}
-              onGetSongAudioUrl={resolveSongAudioUrl}
-              onRemoveSongAudio={removeSongAudio}
-              onSave={persistSongPatch}
+              onUploadSongAudio={onUploadSongAudioOverride ?? attachSongAudio}
+              onGetSongAudioUrl={onGetSongAudioUrlOverride ?? resolveSongAudioUrl}
+              onRemoveSongAudio={onRemoveSongAudioOverride ?? removeSongAudio}
+              onSave={onSave ?? persistSongPatch}
             />
           </section>
         ) : (

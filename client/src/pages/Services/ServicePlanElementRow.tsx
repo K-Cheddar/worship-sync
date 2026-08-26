@@ -56,6 +56,13 @@ import {
   PopoverTrigger,
 } from "../../components/ui/Popover";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "../../components/ui/sheet";
+import {
   EMPTY_RICH_TEXT,
   isRichTextEmpty,
   plainTextToRichText,
@@ -885,6 +892,8 @@ type ServicePlanElementRowProps = {
    * entries — not roster-linked/position-ranked, just names to autocomplete
    * (same pattern HistorySuggestField already provides for Overlays/Credits). */
   assignedToHistoryValues: string[];
+  onRemoveAssignedToHistoryValue?: (value: string) => void;
+  isAssignedToHistoryValueRemovable?: (value: string) => boolean;
   /** Index within the section — drives alternating row surfaces. */
   toneIndex?: number;
   /** When the plan is published, operators can pin which item shared viewers
@@ -968,6 +977,8 @@ const ServicePlanElementRow = ({
   onDurationChange,
   onStartTimeChange,
   assignedToHistoryValues,
+  onRemoveAssignedToHistoryValue,
+  isAssignedToHistoryValueRemovable,
   toneIndex = 0,
   isServiceDay = false,
   isLive = false,
@@ -1007,11 +1018,13 @@ const ServicePlanElementRow = ({
   const [songPickerTargetIndex, setSongPickerTargetIndex] = useState<number | null>(
     null,
   );
+  const [assignmentSheetOpen, setAssignmentSheetOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
     null,
   );
   const [scriptureOpen, setScriptureOpen] = useState(false);
+  const [scriptureEditIndex, setScriptureEditIndex] = useState<number | null>(null);
   const formattedDuration = formatServicePlanDuration(element);
   const [durationText, setDurationText] = useState(formattedDuration);
 
@@ -1246,7 +1259,10 @@ const ServicePlanElementRow = ({
       roleNoteOptions={roleNoteOptions}
       microphones={availableMicrophones}
       onAddSong={() => openSongPicker(false)}
-      onAddScripture={() => setScriptureOpen(true)}
+      onAddScripture={() => {
+        setScriptureEditIndex(null);
+        setScriptureOpen(true);
+      }}
       onAddNote={handleAddNote}
       onAddTeamNote={handleAddTeamNote}
       onAddRoleNote={handleCreateRoleNote}
@@ -1323,9 +1339,7 @@ const ServicePlanElementRow = ({
     </>
   );
 
-  const attachmentChips = (
-    songRefs.length > 0 || scriptureLabel || attachmentsTrailing
-  ) ? (
+  const attachmentChips = (songRefs.length > 0 || scriptureLabel) ? (
     <div
       className={cn(
         "flex flex-wrap items-center gap-1 px-1.5 pb-1.5 md:pb-1",
@@ -1475,12 +1489,45 @@ const ServicePlanElementRow = ({
             SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
           )}
         >
-          <Icon
-            svg={BookOpen}
-            size="xs"
-            className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
-          />
-          <span className="max-w-44 truncate">{scriptureLabel}</span>
+          {allowEdit ? (
+            <ServicePlanScripturePopover
+              open={scriptureEditIndex === 0}
+              onOpenChange={(open) => setScriptureEditIndex(open ? 0 : null)}
+              initialScriptureRef={scriptureRefs[0]}
+              trigger
+              onSelect={(scriptureRef) => {
+                onUpdate({
+                  scriptureRef: undefined,
+                  scriptureRefs: scriptureRefs.map((current, index) =>
+                    index === 0 ? scriptureRef : current,
+                  ),
+                });
+              }}
+              anchor={(
+                <button
+                  type="button"
+                  className="flex min-w-0 items-center gap-0.5 rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                  aria-label={`Edit scripture ${scriptureLabel}`}
+                >
+                  <Icon
+                    svg={BookOpen}
+                    size="xs"
+                    className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
+                  />
+                  <span className="max-w-44 truncate">{scriptureLabel}</span>
+                </button>
+              )}
+            />
+          ) : (
+            <>
+              <Icon
+                svg={BookOpen}
+                size="xs"
+                className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
+              />
+              <span className="max-w-44 truncate">{scriptureLabel}</span>
+            </>
+          )}
           {allowEdit ? (
             <Button
               type="button"
@@ -1505,8 +1552,39 @@ const ServicePlanElementRow = ({
             key={`${additionalScripture.label}:${scriptureIndex}`}
             className={cn(SERVICE_PLAN_ATTACHMENT_CHIP_CLASS, SERVICE_PLAN_SCRIPTURE_CHIP_CLASS)}
           >
-            <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
-            <span className="max-w-44 truncate">{additionalScripture.label}</span>
+            {allowEdit ? (
+              <ServicePlanScripturePopover
+                open={scriptureEditIndex === scriptureIndex}
+                onOpenChange={(open) =>
+                  setScriptureEditIndex(open ? scriptureIndex : null)
+                }
+                initialScriptureRef={additionalScripture}
+                trigger
+                onSelect={(scriptureRef) => {
+                  onUpdate({
+                    scriptureRef: undefined,
+                    scriptureRefs: scriptureRefs.map((current, currentIndex) =>
+                      currentIndex === scriptureIndex ? scriptureRef : current,
+                    ),
+                  });
+                }}
+                anchor={(
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-0.5 rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                    aria-label={`Edit scripture ${additionalScripture.label}`}
+                  >
+                    <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
+                    <span className="max-w-44 truncate">{additionalScripture.label}</span>
+                  </button>
+                )}
+              />
+            ) : (
+              <>
+                <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
+                <span className="max-w-44 truncate">{additionalScripture.label}</span>
+              </>
+            )}
             {allowEdit ? (
               <Button
                 type="button"
@@ -1525,7 +1603,6 @@ const ServicePlanElementRow = ({
           </span>
         );
       })}
-      {attachmentsTrailing}
     </div>
   ) : null;
 
@@ -1779,6 +1856,8 @@ const ServicePlanElementRow = ({
       allowEdit={allowEdit}
       microphones={microphones}
       assignedToHistoryValues={assignedToHistoryValues}
+      onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+      isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
       itemLabel={itemLabel}
       structureOnly={structureOnly}
       scheduledMicrophoneHolders={scheduledMicrophoneHolders}
@@ -1786,6 +1865,40 @@ const ServicePlanElementRow = ({
         onUpdate({ assignees: nextAssignees }, coalesceKey)
       }
     />
+  ) : null;
+  const readOnlyAssigneesBlock = assignees.length > 0 ? (
+    <ServicePlanAssigneeList
+      assignees={
+        visibleMicrophoneIds
+          ? assignees.map((assignee) => ({
+            ...assignee,
+            microphoneIds: (assignee.microphoneIds || []).filter((id) =>
+              visibleMicrophoneIds.has(id),
+            ),
+          }))
+          : assignees
+      }
+      allowEdit={false}
+      microphones={microphones}
+      assignedToHistoryValues={assignedToHistoryValues}
+      onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+      isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+      itemLabel={itemLabel}
+      structureOnly={structureOnly}
+      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+      onEdit={() => setAssignmentSheetOpen(true)}
+      onChange={() => undefined}
+    />
+  ) : allowEdit && !structureOnly ? (
+    <Button
+      type="button"
+      variant="tertiary"
+      className="mx-1 mb-1 rounded-md px-1.5 py-1 text-left text-xs text-gray-400 hover:bg-gray-800/60 hover:text-white"
+      aria-label={`Assignees for ${itemLabel}`}
+      onClick={() => setAssignmentSheetOpen(true)}
+    >
+      Unassigned
+    </Button>
   ) : null;
 
   return (
@@ -1868,16 +1981,6 @@ const ServicePlanElementRow = ({
                 onUpdate({ title: plainTextToRichText(value) }, "title")
               }
             />
-            {structureOnly ? null : (
-              <span
-                className={cn(
-                  "truncate text-xs leading-4 text-gray-400",
-                  SERVICE_PLAN_COL.assignedEdit,
-                )}
-              >
-                {assigneeSummary || "Add a person below"}
-              </span>
-            )}
           </div>
 
           <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:ml-auto")}>
@@ -1915,22 +2018,12 @@ const ServicePlanElementRow = ({
             <p className="truncate text-xs font-medium leading-5 text-gray-50">
               {titleText.trim() || "Untitled"}
             </p>
-            {!structureOnly && assigneeSummary ? (
+            {!structureOnly && !isEditing && assigneeSummary ? (
               <p className="truncate text-[11px] leading-4 text-gray-400 md:hidden">
                 {assigneeSummary}
               </p>
             ) : null}
           </div>
-          {structureOnly ? null : (
-            <span
-              className={cn(
-                SERVICE_PLAN_COL.assignedView,
-                "truncate text-xs leading-4 text-gray-400",
-              )}
-            >
-              {assigneeSummary}
-            </span>
-          )}
           {isLive || showLiveControls ? (
             <div className={cn(SERVICE_PLAN_COL.actionsView, "self-center")}>
               {liveControls}
@@ -1939,11 +2032,36 @@ const ServicePlanElementRow = ({
         </div>
       )}
 
+      {allowEdit && !structureOnly
+        ? readOnlyAssigneesBlock
+        : assigneesBlock}
       {attachmentChips}
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
-      {assigneesBlock}
+      {attachmentsTrailing ? (
+        <div className="flex items-center px-1.5 pb-1.5 pl-9 md:pb-1">
+          {attachmentsTrailing}
+        </div>
+      ) : null}
+      {allowEdit && !structureOnly ? (
+        <Sheet open={assignmentSheetOpen} onOpenChange={setAssignmentSheetOpen}>
+          <SheetContent
+            side="right"
+            className="flex w-full max-w-md flex-col gap-0 border-gray-700 bg-gray-950 p-0"
+          >
+            <SheetHeader className="border-b border-gray-800">
+              <SheetTitle>Edit assignments</SheetTitle>
+              <SheetDescription className="truncate">
+                {itemLabel}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0">
+              {assigneesBlock}
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
       {songPickerOpen ? (
         <ServicePlanLibraryPicker
           isOpen
