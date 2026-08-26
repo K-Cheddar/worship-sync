@@ -1,3 +1,10 @@
+## [2.26.2](https://github.com/K-Cheddar/worship-sync/compare/v2.26.1...v2.26.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* Improve public intake forms ([18460e1](https://github.com/K-Cheddar/worship-sync/commit/18460e1f1a50af23ebe65c39c20f689bccdbdb54))
+
 ## [2.26.1](https://github.com/K-Cheddar/worship-sync/compare/v2.26.0...v2.26.1) (2026-08-26)
 
 
