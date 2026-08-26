@@ -516,17 +516,19 @@ export const BoardControllerContent = () => {
     }
   }, [churchId, reloadRestreamSession, showToast]);
 
-  // Restream chat resets itself automatically server-side once a new stream
-  // goes live after a real gap (see restreamService.js), so this only ever
-  // archives the board's stale posts.
+  // Automatic stream detection remains the normal Restream reset path. This
+  // explicit fresh-start action resets both sources as a reliable fallback for
+  // platforms that do not expose a stable broadcast identity.
   const handleConfirmFreshBoardSession = useCallback(async () => {
-    if (!selectedAlias) return;
+    if (!selectedAlias || !churchId) return;
     const aliasId = selectedAlias.aliasId;
     try {
+      await resetRestreamSession(churchId);
       await hardResetBoardAlias(aliasId);
+      await reloadRestreamSession();
       setSelectedBoardId("");
       setFreshBoardConfirmOpen(false);
-      showToast("Started a fresh session for today.", "success");
+      showToast("Started fresh for today and cleared earlier Restream chat.", "success");
       pullFromRemote?.();
     } catch (error) {
       showToast(
@@ -536,7 +538,7 @@ export const BoardControllerContent = () => {
         "error",
       );
     }
-  }, [selectedAlias, showToast, pullFromRemote]);
+  }, [selectedAlias, churchId, reloadRestreamSession, showToast, pullFromRemote]);
 
   // Prompt (never force) a fresh start when the current board only holds
   // content from an earlier day.
@@ -1102,8 +1104,11 @@ export const BoardControllerContent = () => {
           itemName="today's session"
           title="Start fresh for today"
           message="Are you sure you want to start fresh for"
-          warningMessage="Board posts move to history, not deleted."
-          impacts={["Discussion board archives its current posts and starts empty"]}
+          warningMessage="Board posts move to history. Earlier Restream chat is cleared."
+          impacts={[
+            "Discussion board archives its current posts and starts empty",
+            "Restream chat starts a new session",
+          ]}
           confirmText="Start fresh"
           isConfirming={false}
         />

@@ -30,6 +30,7 @@ type MultiCheckboxGroupProps = {
   value: string[];
   onChange: (value: string[]) => void;
   defaultExpanded?: boolean;
+  optionGridClassName?: string;
 };
 
 const renderCheckboxOptions = (
@@ -50,12 +51,11 @@ const renderCheckboxOptions = (
         key={option.id}
         className={cn("rounded px-2 py-1", unavailable && "text-gray-400")}
         label={
-          <span className="truncate">
+          <span className="whitespace-normal break-words">
             {option.label}
             {statusLabel}
           </span>
         }
-        labelClassName="truncate"
         checked={checked}
         disabled={unavailable && !checked}
         onCheckedChange={() => {
@@ -131,6 +131,7 @@ const MultiCheckboxGroup = ({
   value,
   onChange,
   defaultExpanded = true,
+  optionGridClassName = "grid gap-2 sm:grid-cols-2",
 }: MultiCheckboxGroupProps) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const groupedOptions = groups ?? [];
@@ -145,7 +146,7 @@ const MultiCheckboxGroup = ({
     body = renderOptionGroups(groupedOptions, value, onChange);
   } else {
     body = (
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className={optionGridClassName}>
         {renderCheckboxOptions(options, value, onChange)}
       </div>
     );

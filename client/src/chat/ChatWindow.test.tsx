@@ -330,4 +330,26 @@ describe("ChatWindow", () => {
       screen.queryByRole("button", { name: "Add a photo" }),
     ).not.toBeInTheDocument();
   });
+
+  it("closes the composer emoji picker on outside click, Escape, or selection", () => {
+    mockedUseChat.mockReturnValue(baseChat);
+    render(<ChatWindow />);
+
+    const emojiButton = screen.getByRole("button", { name: "Add an emoji" });
+    fireEvent.click(emojiButton);
+    expect(screen.getByLabelText("Message emojis")).toBeInTheDocument();
+
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByLabelText("Message emojis")).not.toBeInTheDocument();
+
+    fireEvent.click(emojiButton);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByLabelText("Message emojis")).not.toBeInTheDocument();
+
+    fireEvent.click(emojiButton);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^Add .* to message$/ })[0],
+    );
+    expect(screen.queryByLabelText("Message emojis")).not.toBeInTheDocument();
+  });
 });

@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { Minus, Plus } from "lucide-react";
 import Input from "../../../components/Input/Input";
+import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
 import TimePicker from "../../../components/TimePicker/TimePicker";
 import DatePicker from "@/components/ui/DatePicker";
@@ -230,6 +232,15 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       return next;
     });
   };
+  const adjustPositionCount = (positionId: string, delta: number) => {
+    const currentCount = Number(positionCountDrafts[positionId] ?? requirementCount(positionId));
+    setPositionCount(positionId, currentCount + delta);
+    setPositionCountDrafts((current) => {
+      const next = { ...current };
+      delete next[positionId];
+      return next;
+    });
+  };
 
   const recurrence = draft.reccurence || "weekly";
   const canSave =
@@ -319,18 +330,20 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
         />
       }
     >
-      <Input label="Name" value={draft.name || ""} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-      <Select
-        label="Type"
-        value={recurrence}
-        onChange={(value) => updateRecurrence(value as RecurrenceType)}
-        options={[
-          { label: "One-time date", value: "one_time" },
-          { label: "Weekly", value: "weekly" },
-          { label: "Multi-day weekly", value: "multi_weekly" },
-          { label: "Monthly", value: "monthly" },
-        ]}
-      />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Name" value={draft.name || ""} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
+        <Select
+          label="Type"
+          value={recurrence}
+          onChange={(value) => updateRecurrence(value as RecurrenceType)}
+          options={[
+            { label: "One-time date", value: "one_time" },
+            { label: "Weekly", value: "weekly" },
+            { label: "Multi-day weekly", value: "multi_weekly" },
+            { label: "Monthly", value: "monthly" },
+          ]}
+        />
+      </div>
 
       {recurrence === "one_time" ? (
         <DateTimePicker
@@ -451,6 +464,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
         <MultiCheckboxGroup
           label="Combined services"
           description="Combine back-to-back services on the same day so the schedule shows one set of positions for them together — assign someone once and it covers every combined service that day."
+          optionGridClassName="grid gap-2"
           options={combinableServices.map((service) => ({
             id: service.serviceId,
             label: [service.name, formatServiceTiming(service)]
@@ -484,6 +498,10 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                   {team.name}
                 </p>
+                <div className="grid grid-cols-[1fr_7rem] items-center gap-3 px-1 text-xs font-semibold text-gray-300">
+                  <span />
+                  <span className="text-center">People needed</span>
+                </div>
                 {teamPositions.map((position) => {
                   const PositionIcon = resolvePositionLucideIcon(position.icon);
                   const needed = requirements.some((req) => req.positionId === position.positionId);
@@ -491,7 +509,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                   return (
                     <div
                       key={position.positionId}
-                      className="grid min-h-11 grid-cols-[1fr_auto] items-center gap-3 rounded-md px-1 py-1 transition-colors hover:bg-white/[0.04]"
+                      className="grid min-h-11 grid-cols-[1fr_7rem] items-center gap-3 rounded-md px-1 py-1 transition-colors hover:bg-white/[0.04]"
                     >
                       <Checkbox
                         checked={needed}
@@ -509,16 +527,36 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
                         className="min-w-0"
                         labelClassName="flex-1 gap-2 text-sm"
                       />
-                      <Input
-                        type="number"
-                        min={0}
-                        label="People needed"
-                        value={positionCountDrafts[position.positionId] ?? count}
-                        inputWidth="w-14"
-                        inputTextSize="text-xs"
-                        onChange={(value) => setPositionCountDraft(position.positionId, value)}
-                        onBlur={() => commitPositionCount(position.positionId)}
-                      />
+                      <div className="flex items-center justify-center gap-1">
+                        <Button
+                          variant="tertiary"
+                          svg={Minus}
+                          padding="p-1"
+                          className="min-h-0!"
+                          aria-label={`Decrease people needed for ${position.name}`}
+                          onClick={() => adjustPositionCount(position.positionId, -1)}
+                          disabled={count <= 0}
+                        />
+                        <Input
+                          type="number"
+                          min={0}
+                          hideLabel
+                          aria-label={`People needed for ${position.name}`}
+                          value={positionCountDrafts[position.positionId] ?? count}
+                          inputWidth="w-14"
+                          inputTextSize="text-xs"
+                          onChange={(value) => setPositionCountDraft(position.positionId, value)}
+                          onBlur={() => commitPositionCount(position.positionId)}
+                        />
+                        <Button
+                          variant="tertiary"
+                          svg={Plus}
+                          padding="p-1"
+                          className="min-h-0!"
+                          aria-label={`Increase people needed for ${position.name}`}
+                          onClick={() => adjustPositionCount(position.positionId, 1)}
+                        />
+                      </div>
                     </div>
                   );
                 })}

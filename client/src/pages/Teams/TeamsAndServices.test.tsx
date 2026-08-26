@@ -348,42 +348,20 @@ describe("Teams", () => {
     window.localStorage.clear();
   });
 
-  it("switches the sidebar between the Teams and Services domains, keeping the other domain's sections out of view", async () => {
+  it("shows both sidebar domains and navigates between their sections", async () => {
     const user = userEvent.setup();
     renderTeams();
 
     await waitForTeamsBootstrap();
     await openTeamsSectionsNavIfNeeded(user);
-    expect(screen.getByRole("tab", { name: "Teams" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /^Plans$/i }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Services" }));
-    // Domain tabs switch the group list without closing the mobile Sections
-    // sheet — the operator still picks a destination link. Page content behind
-    // the open sheet is aria-hidden, so assert on the sheet links instead.
-    expect(
-      await screen.findByRole("link", { name: /^Plans$/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Services" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(screen.getByRole("link", { name: /^Plans$/i })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /^Microphones$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Service settings$/i }),
+      screen.getByRole("link", { name: /^Services$/i }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /^Schedules$/i }),
-    ).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("link", { name: /^Microphones$/i }));
     expect(
       await screen.findByRole("heading", { name: /^Microphones$/i }),
@@ -391,10 +369,7 @@ describe("Teams", () => {
     expect(mockGetServicePlanMicrophones).toHaveBeenCalledWith("church-1");
 
     await openTeamsSectionsNavIfNeeded(user);
-    await user.click(screen.getByRole("tab", { name: "Teams" }));
-    expect(
-      await screen.findByRole("link", { name: /^Schedules$/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     await waitForTeamsBootstrap();
   });

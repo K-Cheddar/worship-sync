@@ -132,7 +132,7 @@ const TeamsAndServicesLayout = () => {
           <aside
             className={cn(
               "relative hidden min-h-0 flex-col border-gray-700 bg-gray-950/70 transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
-              sidebarCollapsed ? "w-14 lg:p-2" : "w-64 lg:p-4",
+              sidebarCollapsed ? "w-14 lg:p-2" : "w-44 lg:p-2",
             )}
           >
             <Button

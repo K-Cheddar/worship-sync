@@ -227,6 +227,29 @@ describe("Home", () => {
     ).toHaveAttribute("href", "/credits-editor");
   });
 
+  it("hides the personal schedule from shared workstations", () => {
+    const provider = createMockGlobalContext({
+      loginState: "success",
+      sessionKind: "workstation",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={provider as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: /My schedule/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides board moderation and display outputs for view access", () => {
     render(
       <MemoryRouter initialEntries={["/home"]}>

@@ -268,6 +268,7 @@ const ChatWindow = () => {
   const [imageError, setImageError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const updateTypingDraft = chat?.updateTypingDraft;
 
   const isCurrentWeek = Boolean(
@@ -313,6 +314,27 @@ const ChatWindow = () => {
     setSelectedImageUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [selectedImage]);
+
+  useEffect(() => {
+    if (!showComposerEmojis) return undefined;
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !composerRef.current?.contains(target)) {
+        setShowComposerEmojis(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowComposerEmojis(false);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showComposerEmojis]);
 
   if (!chat?.context) {
     const blockingError = chat?.error
@@ -529,7 +551,7 @@ const ChatWindow = () => {
 
       <div className="shrink-0 border-t border-gray-700 bg-gray-800 p-2">
         {isCurrentWeek ? (
-          <>
+          <div ref={composerRef}>
             {chat.typingUsers.length ? (
               <div
                 className="mb-1.5 flex min-h-5 items-center gap-1.5 px-2 text-xs text-cyan-300"
@@ -600,7 +622,10 @@ const ChatWindow = () => {
                     variant="tertiary"
                     className="px-1.5 py-1 text-base max-md:!min-h-9"
                     aria-label={`Add ${emoji} to message`}
-                    onClick={() => updateDraft(`${draft}${emoji}`)}
+                    onClick={() => {
+                      updateDraft(`${draft}${emoji}`);
+                      setShowComposerEmojis(false);
+                    }}
                   >
                     {emoji}
                   </Button>
@@ -641,6 +666,7 @@ const ChatWindow = () => {
                   color="#cbd5e1"
                   className="mb-0.5 shrink-0 rounded-full p-2 max-md:!min-h-10 max-md:!min-w-10"
                   aria-label="Add an emoji"
+                  aria-expanded={showComposerEmojis}
                   onClick={() =>
                     setShowComposerEmojis((current) => !current)
                   }
@@ -686,7 +712,7 @@ const ChatWindow = () => {
                 {draft.length}/{MAX_MESSAGE_LENGTH}
               </p>
             ) : null}
-          </>
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-2 py-1">
             <p className="text-center text-sm text-gray-400">

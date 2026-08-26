@@ -178,6 +178,33 @@ describe("HistorySuggestField", () => {
       expect(onRemove).toHaveBeenCalledWith("Alice");
     });
 
+    it("only shows remove controls for values allowed by the history predicate", () => {
+      const onRemove = jest.fn();
+      const Wrapper = () => {
+        const [value, setValue] = useState("");
+        return (
+          <HistorySuggestField
+            label="Name"
+            value={value}
+            onChange={setValue}
+            historyValues={["Alice", "Bob"]}
+            onRemoveHistoryValue={onRemove}
+            isHistoryValueRemovable={(suggestion) => suggestion === "Bob"}
+            multiline={false}
+          />
+        );
+      };
+      render(<Wrapper />);
+      fireEvent.focus(screen.getByRole("textbox", { name: /Name/i }));
+
+      expect(
+        screen.queryByRole("button", { name: /remove "Alice" from history/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /remove "Bob" from history/i }),
+      ).toBeInTheDocument();
+    });
+
     it("shows suggestions sorted alphabetically when empty", () => {
       const unsorted = ["Zara", "Alice", "Molly"];
       const Wrapper = () => {

@@ -6,6 +6,8 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   LayoutTemplate,
   MoreHorizontal,
   Pencil,
@@ -603,6 +605,25 @@ const ServicePlanEditor = ({
   const assignedToSuggestions = useMemo(
     () => Array.from(new Set([...members.map((member) => memberName(member)), ...assignmentHistory])),
     [members, assignmentHistory],
+  );
+
+  const removeAssignmentHistoryValue = useCallback((value: string) => {
+    const normalized = value.trim().toLowerCase();
+    const next = assignmentHistory.filter(
+      (entry) => entry.trim().toLowerCase() !== normalized,
+    );
+    if (next.length === assignmentHistory.length || !churchId) return;
+    setAssignmentHistory(next);
+    saveServicePlanAssignmentHistory(churchId, next).catch(() => {
+      // Best-effort — the current plan remains usable if history saving fails.
+    });
+  }, [assignmentHistory, churchId]);
+
+  const isAssignmentHistoryValueRemovable = useCallback(
+    (value: string) => assignmentHistory.some(
+      (entry) => entry.trim().toLowerCase() === value.trim().toLowerCase(),
+    ),
+    [assignmentHistory],
   );
 
   // The published timeline renders in this timezone, so it must stay whatever
@@ -1815,6 +1836,8 @@ const ServicePlanEditor = ({
               </div>
             }
             assignedToHistoryValues={assignedToSuggestions}
+            onRemoveAssignedToHistoryValue={removeAssignmentHistoryValue}
+            isAssignedToHistoryValueRemovable={isAssignmentHistoryValueRemovable}
             roleNoteOptions={roleNoteOptions}
             teamNoteOptions={teamNoteOptions}
             microphones={microphones}
@@ -2054,6 +2077,20 @@ const ServicePlanEditor = ({
                       </Button>
                     ) : null}
                   </>
+                ) : null}
+                {isDesktop && hasSections ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={hideNotes ? Eye : EyeOff}
+                    iconSize="sm"
+                    className="hidden max-md:min-h-0 lg:inline-flex"
+                    aria-pressed={hideNotes}
+                    aria-label={hideNotes ? "Show notes" : "Hide notes"}
+                    onClick={() => setHideNotes((current) => !current)}
+                  >
+                    {hideNotes ? "Show notes" : "Hide notes"}
+                  </Button>
                 ) : null}
                 {canEdit && hasSections ? (
                   <Button

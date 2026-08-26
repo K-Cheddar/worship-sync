@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ContextType } from "react";
-import TeamsPlansPage from "./TeamsPlansPage";
+import TeamsPlansPage, { rangeFromPreset } from "./TeamsPlansPage";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastProvider } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
@@ -49,10 +49,8 @@ const sabbath: TeamService = {
 };
 
 /**
- * The plans window runs from a week back to four weeks ahead of today, so the
- * one-time service's date is derived from today rather than hard-coded: a fixed
- * date quietly falls out of the window as real time passes and the service stops
- * rendering a tile at all.
+ * The one-time service's date is derived from today rather than hard-coded so
+ * it remains visible in the default current-month range as real time passes.
  */
 const oneTimeDate = (() => {
   const date = new Date();
@@ -156,6 +154,38 @@ describe("TeamsPlansPage", () => {
     });
   });
 
+  it("uses complete calendar months and quarters for range presets", () => {
+    const lateQuarterDate = new Date("2026-09-28T12:00:00");
+
+    expect(rangeFromPreset("thisMonth", lateQuarterDate)).toEqual({
+      start: "2026-09-01",
+      end: "2026-09-30",
+    });
+    expect(rangeFromPreset("nextMonth", lateQuarterDate)).toEqual({
+      start: "2026-10-01",
+      end: "2026-10-31",
+    });
+    expect(rangeFromPreset("thisQuarter", lateQuarterDate)).toEqual({
+      start: "2026-07-01",
+      end: "2026-09-30",
+    });
+    expect(rangeFromPreset("nextQuarter", lateQuarterDate)).toEqual({
+      start: "2026-10-01",
+      end: "2026-12-31",
+    });
+  });
+
+  it("shows one date-range input for a custom range", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /^Custom$/i }));
+
+    expect(screen.getByRole("textbox", { name: "Date range" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("To")).not.toBeInTheDocument();
+  });
+
   it("defaults to by-date order with an organize control when multiple services exist", async () => {
     renderPage();
 
@@ -166,8 +196,8 @@ describe("TeamsPlansPage", () => {
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Next 4 weeks/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /This month/i })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
       (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
@@ -200,8 +230,8 @@ describe("TeamsPlansPage", () => {
 
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Next 4 weeks/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /This month/i })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
       (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
@@ -323,8 +353,8 @@ describe("TeamsPlansPage", () => {
     });
 
     await screen.findByRole("heading", { name: "All services" });
-    await user.click(screen.getByRole("combobox"));
-    await user.click(await screen.findByRole("option", { name: "Sabbath Service" }));
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Sabbath Service" }));
 
     await screen.findByRole("heading", { name: "Sabbath Service" });
     const sabbathTiles = await screen.findAllByRole("button", {
@@ -703,11 +733,29 @@ describe("TeamsPlansPage", () => {
     await screen.findByRole("heading", { name: "All services" });
     expect(screen.getByText("Easter Sunday")).toBeInTheDocument();
     await screen.findAllByRole("button", { name: /Add plan for /i });
-    await user.click(screen.getByRole("combobox"));
-    await user.click(await screen.findByRole("option", { name: "Sabbath Service" }));
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Sabbath Service" }));
 
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
-    expect(screen.queryByText("Easter Sunday")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Easter Sunday" })).not.toBeInTheDocument();
+  });
+
+  it("allows multiple services to be selected", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Sabbath Service" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Easter Sunday" }));
+
+    expect(screen.getByRole("heading", { name: "2 services selected" })).toBeInTheDocument();
+    expect(
+      await screen.findAllByRole("button", { name: /Easter Sunday/i }),
+    ).not.toHaveLength(0);
+    expect(
+      await screen.findAllByRole("button", { name: /Sabbath Service/i }),
+    ).not.toHaveLength(0);
   });
 
   it("marks the soonest upcoming occurrence with an Up next badge", async () => {
@@ -733,7 +781,7 @@ describe("TeamsPlansPage", () => {
     // Regression test: a one-time service's single occurrence used to always
     // show regardless of the selected Range preset, since only recurring
     // services were filtered by window — long-past one-time services (e.g.
-    // old test data) would leak into "Next 4 weeks" forever.
+    // old test data) would leak into the selected range forever.
     const longAgoOneTime: TeamService = {
       id: "long-ago",
       serviceId: "long-ago",

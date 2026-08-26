@@ -338,7 +338,7 @@ describe("SlideEditor", () => {
     });
   });
 
-  it("opens song details popover when song name edit button is clicked", () => {
+  it("opens song details sheet in edit mode when song name edit button is clicked", () => {
     mockState = makeBaseState({
       undoable: {
         present: {

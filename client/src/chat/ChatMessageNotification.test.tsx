@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ChatMessageNotification from "./ChatMessageNotification";
+import ChatReactionNotification from "./ChatReactionNotification";
 import type { ChatMessage } from "./types";
 
 const message: ChatMessage = {
@@ -143,5 +144,25 @@ describe("ChatMessageNotification", () => {
 
     expect(screen.getByText("Sent a photo")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatReactionNotification", () => {
+  it("summarizes one or more reactions and opens team chat", () => {
+    const onOpen = jest.fn();
+    render(
+      <ChatReactionNotification
+        notices={[
+          { actorId: "user_3", name: "Taylor", emoji: "👍" },
+          { actorId: "user_4", name: "Morgan", emoji: "🙏" },
+        ]}
+        onOpen={onOpen}
+      />,
+    );
+
+    expect(screen.getByText(/Taylor and 1 others reacted/)).toBeInTheDocument();
+    expect(screen.getByText(/👍 🙏/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });

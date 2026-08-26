@@ -29,6 +29,9 @@ import type {
   ChatTyper,
 } from "./types";
 import ChatMessageNotification from "./ChatMessageNotification";
+import ChatReactionNotification, {
+  type ChatReactionNotice,
+} from "./ChatReactionNotification";
 
 type ChatConnectionStatus = "idle" | "connecting" | "connected" | "retrying";
 
@@ -127,7 +130,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const todayFallbackRef = useRef<Promise<void> | null>(null);
   const activeRoomRef = useRef("");
   const knownMessageIdsRef = useRef(new Set<string>());
+  const knownMessagesRef = useRef(new Map<string, ChatMessage>());
   const chatToastIdRef = useRef<string | null>(null);
+  const reactionToastRef = useRef<{
+    messageId: string;
+    notices: ChatReactionNotice[];
+  } | null>(null);
   const pendingSendRef = useRef<{
     text: string;
     clientMessageId: string;
@@ -245,11 +253,14 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       removeToast(chatToastIdRef.current);
       chatToastIdRef.current = null;
     }
+    reactionToastRef.current = null;
     if (context) setSelectedDayKey(context.todayKey);
     setIsOpen(true);
   }, [context, removeToast]);
 
   const upsertMessage = useCallback((message: ChatMessage) => {
+    knownMessageIdsRef.current.add(message.messageId);
+    knownMessagesRef.current.set(message.messageId, message);
     setMessagesByDay((current) => {
       const existing = current[message.dayKey] || [];
       const index = existing.findIndex(
@@ -339,6 +350,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         response.messages.forEach((message) =>
           knownMessageIdsRef.current.add(message.messageId),
         );
+        response.messages.forEach((message) =>
+          knownMessagesRef.current.set(message.messageId, message),
+        );
         initialMessagesReceivedRef.current = true;
         setMessagesByDay((current) => {
           const byId = new Map(
@@ -396,6 +410,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       todayFallbackRef.current = null;
       activeRoomRef.current = "";
       knownMessageIdsRef.current.clear();
+      knownMessagesRef.current.clear();
       if (chatToastIdRef.current) {
         removeToast(chatToastIdRef.current);
         chatToastIdRef.current = null;
@@ -408,6 +423,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     todayFallbackRef.current = null;
     activeRoomRef.current = "";
     knownMessageIdsRef.current.clear();
+    knownMessagesRef.current.clear();
     setContext(null);
     setMessagesByDay({});
     setHasMoreByDay({});
@@ -478,6 +494,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
               messages.forEach((message) =>
                 knownMessageIdsRef.current.add(message.messageId),
               );
+              messages.forEach((message) =>
+                knownMessagesRef.current.set(message.messageId, message),
+              );
               setMessagesByDay((current) => {
                 const byId = new Map(
                   [...(current[context.todayKey] || []), ...messages].map(
@@ -504,9 +523,88 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             }
             if (event.type === "message-updated" && "message" in event) {
               const message = event.message as ChatMessage;
+              const previousMessage = knownMessagesRef.current.get(
+                message.messageId,
+              );
               const isNew = !knownMessageIdsRef.current.has(message.messageId);
               knownMessageIdsRef.current.add(message.messageId);
+              knownMessagesRef.current.set(message.messageId, message);
               upsertMessage(message);
+              const addedReactions = previousMessage
+                ? message.reactions.flatMap((reaction) => {
+                  const previous = previousMessage.reactions.find(
+                    (candidate) => candidate.emoji === reaction.emoji,
+                  );
+                  return reaction.actors
+                    .filter(
+                      (actor) =>
+                        !previous?.actors.some(
+                          (candidate) => candidate.actorId === actor.actorId,
+                        ),
+                    )
+                    .map((actor) => ({
+                      actorId: actor.actorId,
+                      emoji: reaction.emoji,
+                      name: actor.name,
+                    }));
+                })
+                .filter((notice) => notice.name && notice.emoji)
+                .filter((notice) =>
+                  notice.actorId !== context.actorId &&
+                  message.authorId === context.actorId,
+                )
+                : [];
+              if (
+                addedReactions.length > 0 &&
+                liveStreamReadyRef.current &&
+                !isOpenRef.current &&
+                message.dayKey === context.todayKey
+              ) {
+                const priorNotice = reactionToastRef.current;
+                const notices =
+                  priorNotice?.messageId === message.messageId
+                    ? [...priorNotice.notices, ...addedReactions].filter(
+                      (notice, index, all) =>
+                        all.findIndex(
+                          (candidate) =>
+                            candidate.name === notice.name &&
+                            candidate.emoji === notice.emoji,
+                        ) === index,
+                    )
+                    : addedReactions;
+                reactionToastRef.current = { messageId: message.messageId, notices };
+                const renderReactionToast = (toastId: string) => (
+                  <ChatReactionNotification
+                    notices={notices}
+                    onOpen={() => {
+                      removeToast(toastId);
+                      chatToastIdRef.current = null;
+                      reactionToastRef.current = null;
+                      openChat();
+                    }}
+                  />
+                );
+                if (
+                  priorNotice?.messageId === message.messageId &&
+                  chatToastIdRef.current
+                ) {
+                  const reactionToastId = chatToastIdRef.current;
+                  updateToast(reactionToastId, {
+                    children: () => renderReactionToast(reactionToastId),
+                  });
+                } else {
+                  if (chatToastIdRef.current) {
+                    removeToast(chatToastIdRef.current);
+                  }
+                  const toastId = showToast({
+                    variant: "chat",
+                    position: "top-right",
+                    duration: 12_000,
+                    children: () => renderReactionToast(toastId),
+                  });
+                  chatToastIdRef.current = toastId;
+                }
+              }
               if (
                 isNew &&
                 liveStreamReadyRef.current &&
@@ -518,6 +616,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                 if (chatToastIdRef.current) {
                   removeToast(chatToastIdRef.current);
                 }
+                reactionToastRef.current = null;
                 chatToastIdRef.current = showToast({
                   variant: "chat",
                   position: "top-right",

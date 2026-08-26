@@ -61,6 +61,8 @@ export type HistorySuggestFieldProps = {
   historyValues: string[];
   /** Optional callback to remove a value from the underlying history store. */
   onRemoveHistoryValue?: (value: string) => void;
+  /** Optional predicate for histories that also contain non-removable suggestions. */
+  isHistoryValueRemovable?: (value: string) => boolean;
   /** If true, use TextArea with line-scoped suggestions; if false, use Input with whole-value suggestions. */
   multiline?: boolean;
   /** Label for the field (passed to Input/TextArea). */
@@ -89,6 +91,7 @@ const HistorySuggestField = ({
   onChange,
   historyValues,
   onRemoveHistoryValue,
+  isHistoryValueRemovable,
   multiline = true,
   label = "Text",
   placeholder = "Text",
@@ -347,7 +350,8 @@ const HistorySuggestField = ({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-white">{s}</span>
-                {onRemoveHistoryValue && (
+                {onRemoveHistoryValue &&
+                  (!isHistoryValueRemovable || isHistoryValueRemovable(s)) && (
                   <Button
                     type="button"
                     variant="tertiary"

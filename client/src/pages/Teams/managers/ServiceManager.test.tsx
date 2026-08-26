@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import ServiceManager from "./ServiceManager";
 import { ToastProvider } from "../../../context/toastContext";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
-import type { TeamService } from "../../../api/authTypes";
+import type { TeamPosition, TeamRecord, TeamService } from "../../../api/authTypes";
 
 const mockDispatch = jest.fn();
 
@@ -58,15 +58,19 @@ const midweek = service({
   time: "18:30",
 });
 
-const renderManager = (services: TeamService[]) =>
+const renderManager = (
+  services: TeamService[],
+  positions: TeamPosition[] = [],
+  teams: TeamRecord[] = [],
+) =>
   render(
     <MemoryRouter>
       <ToastProvider>
         <TeamsNavigationGuardProvider>
           <ServiceManager
             services={services}
-            positions={[]}
-            teams={[]}
+            positions={positions}
+            teams={teams}
             canEdit
           />
         </TeamsNavigationGuardProvider>
@@ -177,5 +181,38 @@ describe("ServiceManager combined services", () => {
         payload: { id: "first", changes: { serviceGroupId: groupId } },
       }),
     );
+  });
+});
+
+describe("ServiceManager position requirements", () => {
+  it("uses one heading and adjusts people needed with plus and minus buttons", async () => {
+    const user = userEvent.setup();
+    const team: TeamRecord = {
+      teamId: "media",
+      churchId: "church-1",
+      name: "Media",
+      memberIds: [],
+    };
+    const position: TeamPosition = {
+      positionId: "producer",
+      churchId: "church-1",
+      teamId: team.teamId,
+      name: "Producer",
+    };
+    renderManager([sundayMorning], [position], [team]);
+
+    await user.click(screen.getByRole("button", { name: "Create service" }));
+
+    expect(screen.getByText("People needed")).toBeInTheDocument();
+    expect(screen.queryByText("People needed:")).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(0);
+
+    await user.click(screen.getByRole("button", { name: "Increase people needed for Producer" }));
+    expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(1);
+    expect(screen.getByRole("checkbox", { name: "Producer" })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Decrease people needed for Producer" }));
+    expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(0);
+    expect(screen.getByRole("checkbox", { name: "Producer" })).not.toBeChecked();
   });
 });
