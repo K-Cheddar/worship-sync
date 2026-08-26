@@ -10,6 +10,7 @@ type BirthDateFieldProps = {
   labelClassName?: string;
   inputClassName?: string;
   className?: string;
+  required?: boolean;
 };
 
 const monthOptions = [
@@ -28,6 +29,7 @@ const BirthDateField = ({
   labelClassName,
   inputClassName,
   className,
+  required = false,
 }: BirthDateFieldProps) => {
   const [draft, setDraft] = useState<BirthDate>(() => ({ ...(value || {}) } as BirthDate));
 
@@ -38,16 +40,20 @@ const BirthDateField = ({
   const update = (part: "month" | "day" | "year", raw: string) => {
     const next = { ...draft, [part]: raw ? Number(raw) : undefined } as BirthDate;
     setDraft(next);
-    if (!next.month || !next.day) {
-      if (value) onChange(null);
-      return;
-    }
-    onChange(next);
+    // Keep partial edits in the parent draft so a re-render does not erase the
+    // other birthday fields. The form validates this value when it is saved.
+    onChange(next.month || next.day || next.year ? next : null);
   };
 
   return (
     <div className={className || "sm:col-span-6"}>
-      <span className={`block p-1 text-sm font-semibold ${labelClassName || ""}`}>{label}</span>
+      <span
+        className={`block p-1 text-sm font-semibold ${labelClassName || ""}`}
+        aria-required={required}
+      >
+        {label}
+        {required ? " (required)" : ""}
+      </span>
       <div className="grid grid-cols-3 gap-2">
         <div>
           <Select
@@ -56,6 +62,7 @@ const BirthDateField = ({
             options={monthOptions}
             value={draft.month ? String(draft.month) : ""}
             onChange={(month) => update("month", month)}
+            required={required}
             selectClassName={`${inputClassName || ""} ${birthdayControlClassName}`}
           />
         </div>
@@ -69,6 +76,7 @@ const BirthDateField = ({
             placeholder="Day"
             value={draft.day ? String(draft.day) : ""}
             onChange={(day) => update("day", String(day))}
+            required={required}
             inputClassName={`${inputClassName || ""} ${birthdayControlClassName}`}
           />
         </div>
@@ -86,7 +94,7 @@ const BirthDateField = ({
           />
         </div>
       </div>
-      <p className="mt-1 text-xs text-gray-400">Month and day are required. Year is optional.</p>
+      <p className="mt-1 text-xs text-gray-400">Year is optional.</p>
     </div>
   );
 };

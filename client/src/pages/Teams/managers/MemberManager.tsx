@@ -10,6 +10,7 @@ import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
+import { getBirthDateValidationError } from "../../../utils/birthDate";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -619,6 +620,11 @@ const MemberManager = ({
 
   const submit = async () => {
     if (!canEdit) return;
+    const birthdayError = getBirthDateValidationError(draft.birthDate);
+    if (birthdayError) {
+      showToast(birthdayError, "neutral");
+      return;
+    }
     const wasEditing = editing;
     const savingKey = wasEditing?.memberId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —

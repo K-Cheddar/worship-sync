@@ -562,7 +562,7 @@ export type TeamIntakeForm = {
   active: boolean;
   /** Public fields selected by the form owner. Missing on legacy forms. */
   enabledFields?: TeamIntakeFieldId[];
-  /** When true the public form rejects a submission with no email address. */
+  /** Derived true when email is among the selected member-detail fields. */
   requireEmail?: boolean;
   /**
    * Optional copy overrides shown on the public form. When blank, the public
