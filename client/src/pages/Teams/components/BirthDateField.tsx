@@ -11,6 +11,7 @@ type BirthDateFieldProps = {
   inputClassName?: string;
   className?: string;
   required?: boolean;
+  errorText?: string;
 };
 
 const monthOptions = [
@@ -30,6 +31,7 @@ const BirthDateField = ({
   inputClassName,
   className,
   required = false,
+  errorText,
 }: BirthDateFieldProps) => {
   const [draft, setDraft] = useState<BirthDate>(() => ({ ...(value || {}) } as BirthDate));
 
@@ -52,7 +54,6 @@ const BirthDateField = ({
         aria-required={required}
       >
         {label}
-        {required ? " (required)" : ""}
       </span>
       <div className="grid grid-cols-3 gap-2">
         <div>
@@ -64,6 +65,7 @@ const BirthDateField = ({
             onChange={(month) => update("month", month)}
             required={required}
             selectClassName={`${inputClassName || ""} ${birthdayControlClassName}`}
+            ariaInvalid={Boolean(errorText)}
           />
         </div>
         <div>
@@ -77,6 +79,7 @@ const BirthDateField = ({
             value={draft.day ? String(draft.day) : ""}
             onChange={(day) => update("day", String(day))}
             required={required}
+            aria-invalid={Boolean(errorText)}
             inputClassName={`${inputClassName || ""} ${birthdayControlClassName}`}
           />
         </div>
@@ -90,11 +93,17 @@ const BirthDateField = ({
             max={new Date().getFullYear()}
             value={draft.year ? String(draft.year) : ""}
             onChange={(year) => update("year", String(year))}
+            aria-invalid={Boolean(errorText)}
             inputClassName={`${inputClassName || ""} ${birthdayControlClassName}`}
           />
         </div>
       </div>
       <p className="mt-1 text-xs text-gray-400">Year is optional.</p>
+      {errorText ? (
+        <p className="mt-1 text-sm text-red-400" role="alert">
+          {errorText}
+        </p>
+      ) : null}
     </div>
   );
 };

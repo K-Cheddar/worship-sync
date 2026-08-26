@@ -40,6 +40,8 @@ import { getBirthDateValidationError } from "../../utils/birthDate";
 import { useToast } from "../../context/toastContext";
 
 type PreviewPosition = TeamIntakePreview["positions"][number];
+type MemberDetailField = "title" | "firstName" | "lastName" | "birthDate" | "email";
+type MemberDetailErrors = Partial<Record<MemberDetailField, string>>;
 
 const emptyPayload = (): TeamIntakeSubmissionPayload => ({
   firstName: "",
@@ -66,6 +68,16 @@ const TeamIntakePublic = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<MemberDetailErrors>({});
+
+  const clearFieldError = (field: MemberDetailField) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +100,23 @@ const TeamIntakePublic = () => {
   }, [token]);
 
   const submit = async () => {
+    const nextFieldErrors: MemberDetailErrors = {};
+    if (enabledFields.includes("title") && !payload.title.trim()) {
+      nextFieldErrors.title = "Enter your title.";
+    }
+    if (enabledFields.includes("firstName") && !payload.firstName.trim()) {
+      nextFieldErrors.firstName = "Enter your first name.";
+    }
+    if (enabledFields.includes("lastName") && !payload.lastName.trim()) {
+      nextFieldErrors.lastName = "Enter your last name.";
+    }
+    if (enabledFields.includes("birthDate") && !payload.birthDate) {
+      nextFieldErrors.birthDate = "Enter your birthday.";
+    }
+    if (enabledFields.includes("email") && !payload.email?.trim()) {
+      nextFieldErrors.email = "Enter your email.";
+    }
+
     const missingMemberDetailFields = [
       enabledFields.includes("title") && !payload.title.trim()
         ? "title"
@@ -106,6 +135,7 @@ const TeamIntakePublic = () => {
         : "",
     ].filter(Boolean);
     if (missingMemberDetailFields.length > 0) {
+      setFieldErrors(nextFieldErrors);
       if (
         missingMemberDetailFields.includes("first name") &&
         missingMemberDetailFields.includes("last name") &&
@@ -126,9 +156,11 @@ const TeamIntakePublic = () => {
     }
     const birthdayError = getBirthDateValidationError(payload.birthDate);
     if (birthdayError) {
+      setFieldErrors({ birthDate: birthdayError });
       showToast(birthdayError, "neutral");
       return;
     }
+    setFieldErrors({});
     setSubmitting(true);
     try {
       await submitTeamIntake(token, payload);
@@ -283,19 +315,22 @@ const TeamIntakePublic = () => {
                   label="Title"
                   value={payload.title || ""}
                   placeholder="Pastor, Dr., Mrs., etc."
+                  errorText={fieldErrors.title}
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
                   className="col-span-12 sm:col-span-2"
                   required
-                  onChange={(title) =>
-                    setPayload((current) => ({ ...current, title: String(title) }))
-                  }
+                  onChange={(title) => {
+                    clearFieldError("title");
+                    setPayload((current) => ({ ...current, title: String(title) }));
+                  }}
                 />
               ) : null}
               {enabledFields.includes("firstName") ? (
                 <Input
                   label="First name"
                   value={payload.firstName}
+                  errorText={fieldErrors.firstName}
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
                   className={cn(
@@ -303,15 +338,17 @@ const TeamIntakePublic = () => {
                     enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6",
                   )}
                   required
-                  onChange={(firstName) =>
-                    setPayload((current) => ({ ...current, firstName: String(firstName) }))
-                  }
+                  onChange={(firstName) => {
+                    clearFieldError("firstName");
+                    setPayload((current) => ({ ...current, firstName: String(firstName) }));
+                  }}
                 />
               ) : null}
               {enabledFields.includes("lastName") ? (
                 <Input
                   label="Last name"
                   value={payload.lastName}
+                  errorText={fieldErrors.lastName}
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
                   className={cn(
@@ -319,9 +356,10 @@ const TeamIntakePublic = () => {
                     enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6",
                   )}
                   required
-                  onChange={(lastName) =>
-                    setPayload((current) => ({ ...current, lastName: String(lastName) }))
-                  }
+                  onChange={(lastName) => {
+                    clearFieldError("lastName");
+                    setPayload((current) => ({ ...current, lastName: String(lastName) }));
+                  }}
                 />
               ) : null}
 
@@ -332,13 +370,15 @@ const TeamIntakePublic = () => {
               labelClassName={boardFieldLabelClassName}
               inputClassName={boardDarkFieldClassName}
               className="col-span-12 sm:col-span-6"
+              errorText={fieldErrors.birthDate}
               required
-              onChange={(birthDate) =>
+              onChange={(birthDate) => {
+                clearFieldError("birthDate");
                 setPayload((current) => ({
                   ...current,
                   birthDate,
-                }))
-              }
+                }));
+              }}
             />
           ) : null}
 
@@ -349,16 +389,18 @@ const TeamIntakePublic = () => {
               form is the worst time to learn it. */}
           {enabledFields.includes("email") ? (
             <Input
-              label="Email (required)"
+              label="Email"
               type="email"
               value={payload.email || ""}
+              errorText={fieldErrors.email}
               labelClassName={boardFieldLabelClassName}
               inputClassName={boardDarkFieldClassName}
               className="col-span-12 sm:col-span-6"
               required
-              onChange={(email) =>
-                setPayload((current) => ({ ...current, email: String(email) }))
-              }
+              onChange={(email) => {
+                clearFieldError("email");
+                setPayload((current) => ({ ...current, email: String(email) }));
+              }}
             />
           ) : null}
 
