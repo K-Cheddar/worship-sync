@@ -17,7 +17,7 @@ import type { ServicePlanScriptureReference } from "../../types/servicePlan";
 const DEFAULT_VERSION = "niv";
 const FIELD_LABEL_CLASS = "text-neutral-100";
 
-export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-orange-300";
+export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-yellow-300";
 
 type ServicePlanScripturePopoverProps = {
   disabled?: boolean;

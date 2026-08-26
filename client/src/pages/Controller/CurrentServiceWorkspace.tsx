@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ListChecks } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListChecks } from "lucide-react";
 import { onValue, ref } from "firebase/database";
+import Button from "../../components/Button/Button";
 import HomeToolbarMenu from "../../components/HomeToolbarMenu/HomeToolbarMenu";
 import { SectionTabs } from "../../components/SectionTabs/SectionTabs";
 import {
@@ -360,6 +361,7 @@ const CurrentServiceWorkspace = () => {
   const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [tab, setTab] = useState<WorkspaceTab>("plan");
+  const [isPreviewPanelOpen, setIsPreviewPanelOpen] = useState(true);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [rolePositions, setRolePositions] = useState<TeamPosition[]>([]);
   const [roleTeams, setRoleTeams] = useState<TeamRecord[]>([]);
@@ -799,33 +801,59 @@ const CurrentServiceWorkspace = () => {
 
   return (
     <WorkspacePage service={headerService} serviceTimeText={serviceTimeText}>
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)] gap-4 overflow-hidden">
-        <section className="flex min-h-0 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {planEditor}
         </section>
 
-        <PreviewPanel
-          credits={liveCredits}
-          value={desktopPreviewTab}
-          onValueChange={setTab}
-          progress={liveSlideProgress}
-          activeItemId={monitorInfo.itemId ?? null}
-          activeListId={monitorInfo.listId ?? null}
-          assignmentTeams={assignmentTeams}
-          microphones={microphones}
-          assignmentsStatus={assignmentsStatus}
-          onOpenSchedule={openSchedule}
-          churchId={churchId || ""}
-          youtubeConnected={Boolean(
-            loginState === "success" && churchIntegrations?.youtube?.connected,
-          )}
-          youtubeAccountLabel={
-            churchIntegrations?.youtube?.accountLabel || ""
-          }
-          chatUnreadCount={chatUnreadCount}
-          onChatUnreadCountChange={setChatUnreadCount}
-          showToast={showToast}
-        />
+        <aside
+          className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${
+            isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
+          }`}
+          aria-label="Workspace preview"
+        >
+          <Button
+            type="button"
+            variant="tertiary"
+            padding="p-0"
+            className="absolute left-0 top-1/2 z-20 flex size-8 min-h-0 shrink-0 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-gray-700 bg-gray-950 shadow-sm"
+            aria-expanded={isPreviewPanelOpen}
+            aria-label={
+              isPreviewPanelOpen ? "Hide workspace preview" : "Show workspace preview"
+            }
+            onClick={() => setIsPreviewPanelOpen((open) => !open)}
+          >
+            {isPreviewPanelOpen ? (
+              <ChevronRight className="size-4 shrink-0" aria-hidden />
+            ) : (
+              <ChevronLeft className="size-4 shrink-0" aria-hidden />
+            )}
+          </Button>
+          {isPreviewPanelOpen ? (
+            <PreviewPanel
+              credits={liveCredits}
+              value={desktopPreviewTab}
+              onValueChange={setTab}
+              progress={liveSlideProgress}
+              activeItemId={monitorInfo.itemId ?? null}
+              activeListId={monitorInfo.listId ?? null}
+              assignmentTeams={assignmentTeams}
+              microphones={microphones}
+              assignmentsStatus={assignmentsStatus}
+              onOpenSchedule={openSchedule}
+              churchId={churchId || ""}
+              youtubeConnected={Boolean(
+                loginState === "success" && churchIntegrations?.youtube?.connected,
+              )}
+              youtubeAccountLabel={
+                churchIntegrations?.youtube?.accountLabel || ""
+              }
+              chatUnreadCount={chatUnreadCount}
+              onChatUnreadCountChange={setChatUnreadCount}
+              showToast={showToast}
+            />
+          ) : null}
+        </aside>
       </div>
     </WorkspacePage>
   );

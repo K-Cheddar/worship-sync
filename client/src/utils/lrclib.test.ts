@@ -121,6 +121,7 @@ describe("lrclib utils", () => {
           trackName: "  Holy Holy Holy ",
           artistName: " Reginald Heber ",
           albumName: " Hymns ",
+          key: " Eb ",
         },
         "2026-04-05T12:00:00.000Z",
       ),
@@ -129,6 +130,7 @@ describe("lrclib utils", () => {
       trackName: "Holy Holy Holy",
       artistName: "Reginald Heber",
       albumName: "Hymns",
+      key: "Eb",
       importedAt: "2026-04-05T12:00:00.000Z",
     });
   });

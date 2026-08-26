@@ -58,6 +58,9 @@ export type PublicServiceFlowItem = {
   id: string;
   title: string;
   durationSeconds: number;
+  /** Display-only attachment labels from the service plan. */
+  songs?: string[];
+  scriptureRefs?: string[];
   notes: ServiceFlowRichText;
   teamNotes?: PublicServiceFlowTeamNote[];
   microphoneAssignments?: PublicServiceFlowMicrophoneAssignment[];

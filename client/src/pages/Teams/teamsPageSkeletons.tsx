@@ -265,6 +265,85 @@ const SkeletonScheduleWorkspace = () => (
   </div>
 );
 
+const SkeletonPlansFilter = () => (
+  <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3">
+    <div className="grid items-end gap-3 md:grid-cols-[minmax(12rem,14rem)_auto_minmax(0,1fr)]">
+      <div className="space-y-1.5">
+        <div className={cn(skeletonBar, "h-4 w-16")} />
+        <div className={cn(skeletonBar, "h-10 w-full")} />
+      </div>
+      <div className="rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+        <div className={cn(skeletonBar, "h-4 w-20")} />
+        <div className="mt-1.5 flex gap-1.5">
+          <div className={cn(skeletonBar, "h-8 w-20")} />
+          <div className={cn(skeletonBar, "h-8 w-20")} />
+        </div>
+      </div>
+      <div className="rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+        <div className={cn(skeletonBar, "h-4 w-12")} />
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div key={index} className={cn(skeletonBar, "h-8 w-20")} />
+          ))}
+        </div>
+        <div className={cn(skeletonBar, "mt-2 h-3 w-44")} />
+      </div>
+    </div>
+  </div>
+);
+
+const SkeletonPlanTile = () => (
+  <div className="rounded-lg border border-gray-700/80 bg-gray-900/45 p-3">
+    <div className="flex items-start gap-3">
+      <div className="flex w-14 shrink-0 flex-col items-center gap-1 rounded-md border border-gray-700 bg-gray-950/70 p-2">
+        <div className={cn(skeletonBar, "h-3 w-8")} />
+        <div className={cn(skeletonBar, "h-6 w-8")} />
+        <div className={cn(skeletonBar, "h-3 w-10")} />
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className={cn(skeletonBar, "h-5 w-44 max-w-full")} />
+        <div className="flex flex-wrap gap-2">
+          <div className={cn(skeletonBar, "h-5 w-24")} />
+          <div className={cn(skeletonBar, "h-5 w-32")} />
+        </div>
+      </div>
+      <div className={cn(skeletonBar, "h-9 w-24 shrink-0")} />
+    </div>
+  </div>
+);
+
+const SkeletonPlansGroups = () => (
+  <div className="space-y-4">
+    {Array.from({ length: 2 }, (_, groupIndex) => (
+      <section key={groupIndex} className="space-y-2">
+        <div className={cn(skeletonBar, "h-5 w-36")} />
+        <div className="space-y-2">
+          <SkeletonPlanTile />
+          <SkeletonPlanTile />
+        </div>
+      </section>
+    ))}
+  </div>
+);
+
+export const TeamsPlansPageSkeleton = () => (
+  <SkeletonStatus label="Loading plans">
+    <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="shrink-0 space-y-4">
+        <div className="flex items-center gap-2">
+          <div className={cn(skeletonBar, "size-5 rounded")} />
+          <div className={cn(skeletonBar, "h-6 w-20")} />
+        </div>
+        <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
+        <SkeletonPlansFilter />
+      </div>
+      <div className="min-h-0 flex-1">
+        <SkeletonPlansGroups />
+      </div>
+    </div>
+  </SkeletonStatus>
+);
+
 export const TeamsSchedulesPageSkeleton = () => (
   <SkeletonStatus label="Loading schedules">
     <div className={scheduleTabRootClassName}>
@@ -502,7 +581,7 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
     case "service-settings":
       return <TeamsServicesPageSkeleton />;
     case "plans":
-      return <TeamsServicesPageSkeleton />;
+      return <TeamsPlansPageSkeleton />;
     case "templates":
       return <TeamsTemplatesPageSkeleton />;
     case "microphones":

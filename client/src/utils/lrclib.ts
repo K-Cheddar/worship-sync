@@ -255,6 +255,7 @@ export const createManualSongMetadata = (
     trackName: string;
     artistName: string;
     albumName?: string;
+    key?: string;
   },
   importedAt = new Date().toISOString(),
 ): SongMetadata => ({
@@ -262,6 +263,7 @@ export const createManualSongMetadata = (
   trackName: fields.trackName.trim(),
   artistName: fields.artistName.trim(),
   ...(fields.albumName?.trim() ? { albumName: fields.albumName.trim() } : {}),
+  ...(fields.key?.trim() ? { key: fields.key.trim() } : {}),
   importedAt,
 });
 

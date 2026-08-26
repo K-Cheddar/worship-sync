@@ -167,6 +167,29 @@ const publicAssigneeCredit = (element) =>
     .filter(Boolean)
     .join(", ");
 
+/** Display-only attachment labels; never expose library ids or pending lyrics. */
+const publicSongLabels = (element) => {
+  const refs = Array.isArray(element?.songRefs)
+    ? element.songRefs
+    : element?.songRef
+      ? [element.songRef]
+      : [];
+  return refs
+    .map((ref) => String(ref?.kind === "library" ? ref.songName : ref?.title || "").trim())
+    .filter(Boolean);
+};
+
+const publicScriptureLabels = (element) => {
+  const refs = Array.isArray(element?.scriptureRefs)
+    ? element.scriptureRefs
+    : element?.scriptureRef
+      ? [element.scriptureRef]
+      : [];
+  return refs
+    .map((ref) => String(ref?.label || "").trim())
+    .filter(Boolean);
+};
+
 /** Church mic catalog keyed by id — built once per public snapshot. */
 const buildPublicMicrophonesById = (microphones) =>
   new Map(
@@ -617,6 +640,12 @@ export const buildPublicServicePlanSnapshot = ({
           notes: isGeneralView
             ? { blocks: [] }
             : normalizeRichTextDocument(element.notes),
+          ...(publicSongLabels(element).length
+            ? { songs: publicSongLabels(element) }
+            : {}),
+          ...(publicScriptureLabels(element).length
+            ? { scriptureRefs: publicScriptureLabels(element) }
+            : {}),
           teamNotes: isGeneralView
             ? []
             : serializePublicTeamNotes(element.teamNotes),

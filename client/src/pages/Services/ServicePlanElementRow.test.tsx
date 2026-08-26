@@ -197,18 +197,18 @@ describe("ServicePlanElementRow", () => {
     window.matchMedia = originalMatchMedia;
   });
 
-  it("collapses attachment actions into one Add menu with colored options", async () => {
+  it("keeps content and notes in separate contextual Add menus", async () => {
     const user = userEvent.setup();
     renderRow({ teamNoteOptions: [{ teamId: "band", label: "Band" }] });
 
     expect(screen.queryByRole("button", { name: /Add song/i })).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: /Add to Pastoral Greetings/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /Add content to Pastoral Greetings/i }));
 
     expect(await screen.findByRole("menuitem", { name: /^Song$/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /^Scripture$/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /^Note$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /^Note$/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More actions for Pastoral Greetings/i }));
+    expect(await screen.findByRole("menuitem", { name: /^Note$/i })).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /Team-specific note/i }),
     ).toBeInTheDocument();
@@ -221,9 +221,7 @@ describe("ServicePlanElementRow", () => {
     const user = userEvent.setup();
     renderRow();
 
-    await user.click(
-      screen.getByRole("button", { name: /Add to Pastoral Greetings/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /Add content to Pastoral Greetings/i }));
     await user.click(screen.getByRole("menuitem", { name: /^Scripture$/i }));
 
     const field = await screen.findByLabelText(/Scripture reference/i);
@@ -233,7 +231,7 @@ describe("ServicePlanElementRow", () => {
   // Attaching scripture clears the legacy singular `songRef` as part of moving
   // the element onto the arrays. It has to write `songRefs` in the same update
   // or the merged element ends up with no song at all.
-  it("keeps a legacy single song when scripture is attached", async () => {
+  it("keeps a legacy single song when scripture is added through the content manager", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
     renderRow({
@@ -246,8 +244,9 @@ describe("ServicePlanElementRow", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Add to Pastoral Greetings/i }),
+      screen.getByRole("button", { name: /Manage content for Pastoral Greetings/i }),
     );
+    await user.click(screen.getByRole("button", { name: /Add content to Pastoral Greetings/i }));
     await user.click(screen.getByRole("menuitem", { name: /^Scripture$/i }));
     await user.type(
       await screen.findByLabelText(/Scripture reference/i),
@@ -278,7 +277,7 @@ describe("ServicePlanElementRow", () => {
       }],
     });
 
-    await user.click(screen.getByRole("button", { name: /Add to Pastoral Greetings/i }));
+    await user.click(screen.getByRole("button", { name: /More actions for Pastoral Greetings/i }));
     await user.click(await screen.findByRole("menuitem", { name: /Role-specific note/i }));
 
     expect(onUpdate).not.toHaveBeenCalled();
@@ -306,7 +305,7 @@ describe("ServicePlanElementRow", () => {
     });
   });
 
-  it("keeps every song and scripture attachment visible and removable", async () => {
+  it("summarizes extra attachments and reveals them in the content manager", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
     renderRow({
@@ -325,7 +324,11 @@ describe("ServicePlanElementRow", () => {
     });
 
     expect(screen.getByText("Opening Song")).toBeInTheDocument();
-    expect(screen.getByText("Response Song")).toBeInTheDocument();
+    expect(screen.queryByText("Response Song")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Manage content for Pastoral Greetings/i })).toHaveTextContent("3");
+
+    await user.click(screen.getByRole("button", { name: /Manage content for Pastoral Greetings/i }));
+    expect(await screen.findByText("Response Song")).toBeInTheDocument();
     expect(screen.getByText("Psalm 100")).toBeInTheDocument();
     expect(screen.getByText("John 3:16")).toBeInTheDocument();
 
@@ -479,7 +482,7 @@ describe("ServicePlanElementRow", () => {
     expect(screen.queryByText("Watch the bridge cue.")).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: /Add to Pastoral Greetings/i }),
+      screen.getByRole("button", { name: /Add content to Pastoral Greetings/i }),
     );
     expect(await screen.findByRole("menuitem", { name: /^Song$/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /^Scripture$/i })).toBeInTheDocument();
@@ -635,7 +638,7 @@ describe("ServicePlanElementRow", () => {
     expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Drag to reorder/i })).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Add to Pastoral Greetings/i }),
+      screen.queryByRole("button", { name: /Add content to Pastoral Greetings/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove note/i })).not.toBeInTheDocument();
   });
@@ -694,6 +697,7 @@ describe("ServicePlanElementRow", () => {
     await user.click(
       screen.getByRole("button", { name: /View song details for Opening Song/i }),
     );
+    await user.click(screen.getByRole("button", { name: /Manage content for Pastoral Greetings/i }));
     await user.click(
       screen.getByRole("button", { name: /View song details for Response Song/i }),
     );
@@ -985,6 +989,22 @@ describe("assignees and their microphones", () => {
     expect(screen.getAllByText("Pastor John").length).toBeGreaterThan(0);
     // The legacy mic had no person on it, so it lands on the unassigned slot.
     expect(screen.getByText("Unassigned")).toBeInTheDocument();
+    expect(screen.getByText("Orange")).toBeInTheDocument();
+  });
+
+  it("keeps microphone assignments visible when notes are filtered", () => {
+    renderRow({
+      canEdit: true,
+      isEditing: false,
+      teamNotesFilter: "Media Team",
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Pastor John", microphoneIds: [orange.id] }],
+      },
+    });
+
+    expect(screen.getAllByText("Pastor John").length).toBeGreaterThan(0);
     expect(screen.getByText("Orange")).toBeInTheDocument();
   });
 

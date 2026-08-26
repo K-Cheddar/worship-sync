@@ -42,6 +42,11 @@ import {
   type OccurrenceOrganizeMode,
 } from "../occurrenceOrganizeMode";
 import {
+  readPlansFilterPreferences,
+  writePlansFilterPreferences,
+  type PlansRangePreset,
+} from "../plansFilterPersistence";
+import {
   getOccurrenceAssignmentSummary,
   getScheduledMicrophoneHolders,
   getUnhydratedOccurrenceScheduleIds,
@@ -69,7 +74,7 @@ import type {
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 
-type RangePreset = "thisMonth" | "nextMonth" | "thisQuarter" | "nextQuarter" | "custom";
+type RangePreset = PlansRangePreset;
 
 export const rangeFromPreset = (
   preset: Exclude<RangePreset, "custom">,
@@ -346,6 +351,7 @@ const TeamsPlansPage = () => {
   const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
     readPlansOrganizeMode,
   );
+  const [filtersHydratedForChurchId, setFiltersHydratedForChurchId] = useState<string | null>(null);
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
   // Mild placeholders for planned chips / progress / checks until listServicePlans
   // resolves. Stays false on revision refreshes so badges do not flash.
@@ -362,6 +368,31 @@ const TeamsPlansPage = () => {
   const [openServingTabOnSelection, setOpenServingTabOnSelection] = useState(false);
   const [servingPanelOpen, setServingPanelOpen] = useState(true);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+
+  useEffect(() => {
+    if (!churchId || filtersHydratedForChurchId === churchId) return;
+    const preferences = readPlansFilterPreferences(churchId);
+    if (preferences) {
+      setSelectedServiceIds(preferences.serviceIds);
+      setOrganizeMode(preferences.organizeMode);
+      setRangePreset(preferences.rangePreset);
+      if (preferences.rangePreset === "custom") {
+        setWindowStart(preferences.customStartDate || initialRange.start);
+        setWindowEnd(preferences.customEndDate || initialRange.end);
+      } else {
+        const restoredRange = rangeFromPreset(preferences.rangePreset);
+        setWindowStart(restoredRange.start);
+        setWindowEnd(restoredRange.end);
+      }
+    } else {
+      setSelectedServiceIds([]);
+      setOrganizeMode(readPlansOrganizeMode());
+      setRangePreset("thisMonth");
+      setWindowStart(initialRange.start);
+      setWindowEnd(initialRange.end);
+    }
+    setFiltersHydratedForChurchId(churchId);
+  }, [churchId, filtersHydratedForChurchId, initialRange.end, initialRange.start]);
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
@@ -486,6 +517,33 @@ const TeamsPlansPage = () => {
     () => pageData.services.filter(isActive),
     [pageData.services],
   );
+
+  useEffect(() => {
+    if (!churchId || filtersHydratedForChurchId !== churchId) return;
+    const activeServiceIds = new Set(activeServices.map((service) => service.serviceId));
+    const validServiceIds = selectedServiceIds.filter((id) => activeServiceIds.has(id));
+    if (validServiceIds.length !== selectedServiceIds.length) {
+      setSelectedServiceIds(validServiceIds);
+      return;
+    }
+    writePlansFilterPreferences(churchId, {
+      serviceIds: selectedServiceIds,
+      organizeMode,
+      rangePreset,
+      ...(rangePreset === "custom"
+        ? { customStartDate: windowStart, customEndDate: windowEnd }
+        : {}),
+    });
+  }, [
+    activeServices,
+    churchId,
+    filtersHydratedForChurchId,
+    organizeMode,
+    rangePreset,
+    selectedServiceIds,
+    windowEnd,
+    windowStart,
+  ]);
 
   const groups: ServiceGroup[] = useMemo(() => {
     const activeServiceIds = new Set(
@@ -613,9 +671,9 @@ const TeamsPlansPage = () => {
 
   const serviceFilterOptions = useMemo(
     () => activeServices.map((service) => ({
-        label: service.name,
-        value: service.serviceId,
-      })),
+      label: service.name,
+      value: service.serviceId,
+    })),
     [activeServices],
   );
 
@@ -791,8 +849,8 @@ const TeamsPlansPage = () => {
     );
 
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3 lg:gap-3">
-        <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
+        <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ServicePlanEditor
               service={selection.service}
@@ -956,91 +1014,91 @@ const TeamsPlansPage = () => {
 
             <div className="min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
               <div className="flex flex-col gap-1.5">
-              <span className="px-0.5 text-sm font-semibold">Range</span>
-              <div
-                className="flex flex-wrap gap-1.5"
-                role="group"
-                aria-label="Date range presets"
-              >
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  isSelected={rangePreset === "thisMonth"}
-                  className={cn(
-                    "text-xs",
-                    rangePreset === "thisMonth" &&
-                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                  )}
-                  onClick={() => applyPreset("thisMonth")}
+                <span className="px-0.5 text-sm font-semibold">Range</span>
+                <div
+                  className="flex flex-wrap gap-1.5"
+                  role="group"
+                  aria-label="Date range presets"
                 >
-                  This month
-                </Button>
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  isSelected={rangePreset === "nextMonth"}
-                  className={cn(
-                    "text-xs",
-                    rangePreset === "nextMonth" &&
-                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                  )}
-                  onClick={() => applyPreset("nextMonth")}
-                >
-                  Next month
-                </Button>
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  isSelected={rangePreset === "thisQuarter"}
-                  className={cn(
-                    "text-xs",
-                    rangePreset === "thisQuarter" &&
-                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                  )}
-                  onClick={() => applyPreset("thisQuarter")}
-                >
-                  This quarter
-                </Button>
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  isSelected={rangePreset === "nextQuarter"}
-                  className={cn(
-                    "text-xs",
-                    rangePreset === "nextQuarter" &&
-                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                  )}
-                  onClick={() => applyPreset("nextQuarter")}
-                >
-                  Next quarter
-                </Button>
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  isSelected={rangePreset === "custom"}
-                  className={cn(
-                    "text-xs",
-                    rangePreset === "custom" &&
-                    "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                  )}
-                  onClick={() => setRangePreset("custom")}
-                >
-                  Custom
-                </Button>
-              </div>
-              <p className="px-0.5 text-xs text-gray-400">
-                {formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
-              </p>
-              {rangePreset === "custom" ? (
-                <DateRangePicker
-                  label="Date range"
-                  hideLabel
-                  value={{ startDate: windowStart, endDate: windowEnd }}
-                  onChange={setCustomRange}
-                  className="w-full max-w-xs"
-                  inputClassName="py-1 text-xs"
-                />
-              ) : null}
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    isSelected={rangePreset === "thisMonth"}
+                    className={cn(
+                      "text-xs",
+                      rangePreset === "thisMonth" &&
+                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                    )}
+                    onClick={() => applyPreset("thisMonth")}
+                  >
+                    This month
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    isSelected={rangePreset === "nextMonth"}
+                    className={cn(
+                      "text-xs",
+                      rangePreset === "nextMonth" &&
+                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                    )}
+                    onClick={() => applyPreset("nextMonth")}
+                  >
+                    Next month
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    isSelected={rangePreset === "thisQuarter"}
+                    className={cn(
+                      "text-xs",
+                      rangePreset === "thisQuarter" &&
+                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                    )}
+                    onClick={() => applyPreset("thisQuarter")}
+                  >
+                    This quarter
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    isSelected={rangePreset === "nextQuarter"}
+                    className={cn(
+                      "text-xs",
+                      rangePreset === "nextQuarter" &&
+                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                    )}
+                    onClick={() => applyPreset("nextQuarter")}
+                  >
+                    Next quarter
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    isSelected={rangePreset === "custom"}
+                    className={cn(
+                      "text-xs",
+                      rangePreset === "custom" &&
+                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                    )}
+                    onClick={() => setRangePreset("custom")}
+                  >
+                    Custom
+                  </Button>
+                </div>
+                <p className="px-0.5 text-xs text-gray-400">
+                  {formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
+                </p>
+                {rangePreset === "custom" ? (
+                  <DateRangePicker
+                    label="Date range"
+                    hideLabel
+                    value={{ startDate: windowStart, endDate: windowEnd }}
+                    onChange={setCustomRange}
+                    className="w-full max-w-xs"
+                    inputClassName="py-1 text-xs"
+                  />
+                ) : null}
               </div>
             </div>
           </div>
@@ -1141,9 +1199,9 @@ const TeamsPlansPage = () => {
                         occurrence={occurrence}
                         shared={BY_DATE_TILE_SHARED}
                         serviceName={
-                        selectedServiceIds.length !== 1
-                          ? entry.serviceName
-                          : undefined
+                          selectedServiceIds.length !== 1
+                            ? entry.serviceName
+                            : undefined
                         }
                         hasPlan={hasPlan}
                         isPast={isPast}

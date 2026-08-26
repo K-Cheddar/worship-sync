@@ -3,6 +3,38 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ItemDetailsEditorFields } from "./ItemDetailsModal";
 
 describe("ItemDetailsEditorFields song links", () => {
+  it("creates manual metadata when a song key is the only detail", async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    render(
+      <ItemDetailsEditorFields
+        isOpen
+        onClose={jest.fn()}
+        itemType="song"
+        itemName="Example song"
+        songMetadata={undefined}
+        songLinks={[]}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Key/i), {
+      target: { value: "  D  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith({
+        name: "Example song",
+        songMetadataPatch: expect.objectContaining({
+          trackName: "Example song",
+          artistName: "",
+          key: "D",
+        }),
+        songLinksPatch: [],
+      });
+    });
+  });
+
   it("saves an unlabeled YouTube link with a timestamp segment", async () => {
     const onClose = jest.fn();
     const onSave = jest.fn().mockResolvedValue(undefined);

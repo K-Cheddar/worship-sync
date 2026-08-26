@@ -358,6 +358,58 @@ describe("ServicePublic", () => {
     expect(screen.queryByRole("button", { name: "Media Team · Director" })).not.toBeInTheDocument();
   });
 
+  it("scopes team notes to the selected role when all teams are selected", async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    mockUsePublicServiceFlow.mockReturnValue({
+      snapshot: {
+        success: true,
+        churchName: "Northside",
+        serverNowMs: now,
+        roles: [{
+          positionId: "front-of-house-audio",
+          label: "Front of House Audio",
+          teamName: "Media Team",
+        }],
+        service: {
+          shareId: "share-token",
+          title: "Sunday Service",
+          startsAt: new Date(now - 30_000).toISOString(),
+          timezone: "UTC",
+          revision: now,
+          live: { mode: "schedule" },
+          sections: [{
+            id: "main",
+            title: "Main service",
+            items: [{
+              id: "welcome",
+              title: "Welcome",
+              durationSeconds: 120,
+              notes: { blocks: [{ type: "paragraph", spans: [{ text: "Shared cue" }] }] },
+              teamNotes: [
+                { label: "Media Team", notes: { blocks: [{ type: "paragraph", spans: [{ text: "Audio cue." }] }] } },
+                { label: "Coordinators", notes: { blocks: [{ type: "paragraph", spans: [{ text: "Coordinator cue." }] }] } },
+              ],
+            }],
+          }],
+        },
+      },
+      error: "",
+      loading: false,
+      connection: "connected",
+      revoked: false,
+      refresh: jest.fn(),
+    });
+
+    render(<ServicePublic />);
+    await user.click(screen.getByRole("button", { name: /Filter role notes/i }));
+    await user.click(screen.getByRole("button", { name: "Front of House Audio" }));
+
+    expect(screen.getByText("Shared cue")).toBeInTheDocument();
+    expect(screen.getByText("Audio cue.")).toBeInTheDocument();
+    expect(screen.queryByText("Coordinator cue.")).not.toBeInTheDocument();
+  });
+
   it("lets a quiet roster role hide other roles notes and clear with All roles", async () => {
     const user = userEvent.setup();
     const now = Date.now();

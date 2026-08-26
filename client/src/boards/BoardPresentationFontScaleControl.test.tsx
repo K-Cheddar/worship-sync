@@ -1,10 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BoardPresentationFontScaleControl from "./BoardPresentationFontScaleControl";
 
 describe("BoardPresentationFontScaleControl", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("accumulates a burst of clicks and persists only the final size once", async () => {
-    const user = userEvent.setup();
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     const onChange = jest.fn();
     render(
       <BoardPresentationFontScaleControl value={1} onChange={onChange} />,
@@ -20,9 +25,14 @@ describe("BoardPresentationFontScaleControl", () => {
     // Readout tracks every click immediately, not just the first.
     expect(screen.getByText("130%")).toBeInTheDocument();
 
+    expect(onChange).not.toHaveBeenCalled();
+
     // The debounced write lands once, carrying the accumulated size — not a
     // single step, and not one request per click.
-    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    act(() => {
+      jest.advanceTimersByTime(250);
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith(1.3);
   });
 

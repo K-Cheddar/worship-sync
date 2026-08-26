@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
   LayoutTemplate,
   MoreHorizontal,
   Pencil,
@@ -32,9 +33,13 @@ import {
   AuthApiError,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
-import ServicePlanSectionList from "./ServicePlanSectionList";
+import ServicePlanSectionList, {
+  servicePlanSectionDomId,
+  type ServicePlanSelection,
+} from "./ServicePlanSectionList";
 import {
   formatPlanStartTimeDisplay,
+  servicePlanElementDomId,
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
@@ -166,6 +171,7 @@ const ServicePlanTemplateEditor = ({
   const [sections, setSections] = useState<ServicePlanSection[]>(
     template.sections,
   );
+  const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(null);
   // A new template opens ready to build; an existing one opens as a readable
   // outline, matching how the plan editor behaves.
   const [isEditing, setIsEditing] = useState(isNew && canEdit);
@@ -422,9 +428,40 @@ const ServicePlanTemplateEditor = ({
 
   const anchorStartTime = sections[0]?.elements?.[0]?.startTime || "";
   const itemCount = countServicePlanTemplateItems(sections);
+  const selectedPlanSection = sections.find(
+    (section) => section.id === selectedPlanTarget?.sectionId,
+  );
 
-  const handleAddElement = (sectionId: string) => {
-    updateDraftSections(addElement(sections, sectionId));
+  const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
+    const existingElementIds = new Set(
+      sections.flatMap((section) => section.elements.map((element) => element.id)),
+    );
+    const next = addElement(sections, sectionId, "free", insertAfterElementId);
+    const newElement = next
+      .find((section) => section.id === sectionId)
+      ?.elements.find((element) => !existingElementIds.has(element.id));
+    if (!newElement) return null;
+    updateDraftSections(next);
+    setSelectedPlanTarget({ sectionId, elementId: newElement.id });
+    window.requestAnimationFrame(() => {
+      const row = document.getElementById(servicePlanElementDomId(newElement.id));
+      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      row?.querySelector<HTMLInputElement>('input[placeholder="Item name"]')?.focus({ preventScroll: true });
+    });
+    return newElement.id;
+  };
+
+  const handleAddSection = () => {
+    const next = addSection(sections);
+    const newSection = next.at(-1);
+    updateDraftSections(next);
+    if (!newSection) return;
+    setSelectedPlanTarget({ sectionId: newSection.id });
+    window.requestAnimationFrame(() => {
+      const section = document.getElementById(servicePlanSectionDomId(newSection.id));
+      section?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      section?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    });
   };
 
   /** Scope is part of the saved document, so changing it is a draft edit. */
@@ -573,7 +610,8 @@ const ServicePlanTemplateEditor = ({
           canEdit={canEdit}
           isEditing={isEditing}
           onSectionsChange={updateDraftSections}
-          onAddElement={handleAddElement}
+          selection={selectedPlanTarget}
+          onSelectionChange={setSelectedPlanTarget}
           ariaLabel="Service plan template"
           structureOnly
           hideNotes={hideNotes}
@@ -637,16 +675,56 @@ const ServicePlanTemplateEditor = ({
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canEdit && isEditing ? (
-            <Button
-              type="button"
-              variant="tertiary"
-              svg={Plus}
-              iconSize="sm"
-              className="max-md:min-h-0"
-              onClick={() => updateDraftSections(addSection(sections))}
-            >
-              Add section
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={Plus}
+                iconSize="sm"
+                className="max-md:min-h-0"
+                disabled={!selectedPlanSection}
+                onClick={() =>
+                  selectedPlanSection
+                  && handleAddElement(selectedPlanSection.id, selectedPlanTarget?.elementId)
+                }
+              >
+                Add item
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={ChevronDown}
+                    iconSize="sm"
+                    className="max-md:min-h-0"
+                    aria-label="Choose item destination"
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-56">
+                  {sections.map((section) => (
+                    <DropdownMenuItem
+                      key={section.id}
+                      onSelect={() => void handleAddElement(section.id)}
+                    >
+                      Add to {section.name.trim() || "Untitled section"}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <div className="flex items-center border-l border-gray-600 pl-2">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={Plus}
+                  iconSize="sm"
+                  className="max-md:min-h-0"
+                  onClick={handleAddSection}
+                >
+                  Add section
+                </Button>
+              </div>
+            </>
           ) : null}
           {canEdit ? (
             <div

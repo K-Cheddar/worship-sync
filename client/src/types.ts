@@ -166,6 +166,7 @@ export type SongMetadata = {
   trackName: string;
   artistName: string;
   albumName?: string;
+  key?: string;
   durationMs?: number;
   instrumental?: boolean;
   plainLyrics?: string | null;

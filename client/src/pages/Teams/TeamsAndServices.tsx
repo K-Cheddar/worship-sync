@@ -1,4 +1,11 @@
-import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { ChevronLeft, ChevronRight, ListChecks, PanelLeft, Users } from "lucide-react";
 import {
   Navigate,
@@ -6,6 +13,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 import HomeToolbarMenu from "../../components/HomeToolbarMenu/HomeToolbarMenu";
 import Icon from "../../components/Icon/Icon";
@@ -31,6 +39,10 @@ import {
   servicesNavSections,
   teamsNavSections,
 } from "./teamsNavSections";
+import {
+  getStoredTeamsAndServicesRoute,
+  saveTeamsAndServicesRoute,
+} from "./teamsRoutePersistence";
 
 const TeamsSchedulesPage = lazy(() => import("./pages/TeamsSchedulesPage"));
 const TeamsFormsPage = lazy(() => import("./pages/TeamsFormsPage"));
@@ -76,6 +88,18 @@ const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
   </ErrorBoundary>
 );
 
+const TeamsAndServicesIndexRedirect = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    navigate(getStoredTeamsAndServicesRoute() ?? teamsNavSections[0].path, {
+      replace: true,
+    });
+  }, [navigate]);
+
+  return null;
+};
+
 const TeamsAndServicesLayout = () => {
   const { loading, toolbarLogoUrl, churchName } = useTeamsPage();
   const location = useLocation();
@@ -83,14 +107,23 @@ const TeamsAndServicesLayout = () => {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const activeSection = useMemo(
-    () => getActiveTeamsNavSection(location.pathname),
+    () =>
+      getActiveTeamsNavSection(
+        location.pathname === "/teams-and-services"
+          ? getStoredTeamsAndServicesRoute() ?? teamsNavSections[0].path
+          : location.pathname,
+      ),
     [location.pathname],
   );
 
+  useEffect(() => {
+    saveTeamsAndServicesRoute(location.pathname);
+  }, [location.pathname]);
+
   return (
     <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white">
-      <div className="mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col px-4 pb-6 lg:px-6">
-        <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-3 text-lg">
+      <div className="mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col">
+        <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-2 text-lg">
           <div className="flex flex-wrap items-center gap-3 justify-self-start">
             <HomeToolbarMenu />
             <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
@@ -112,7 +145,7 @@ const TeamsAndServicesLayout = () => {
           </div>
         </div>
 
-        <section className="mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
+        <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-2 lg:hidden">
             <Button
               variant="secondary"
@@ -189,7 +222,7 @@ const TeamsAndServicesLayout = () => {
 const TeamsAndServicesRoutes = () => (
   <Routes>
     <Route element={<TeamsAndServicesLayout />}>
-      <Route index element={<Navigate to="schedules" replace />} />
+      <Route index element={<TeamsAndServicesIndexRedirect />} />
       <Route
         path={teamsNavSections[0].routePath}
         element={

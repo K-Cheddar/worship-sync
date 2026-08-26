@@ -150,6 +150,7 @@ export function ItemDetailsEditorFields({
   const [localName, setLocalName] = useState(itemName);
   const [artistName, setArtistName] = useState("");
   const [albumName, setAlbumName] = useState("");
+  const [songKey, setSongKey] = useState("");
   const [localSongLinks, setLocalSongLinks] = useState<EditableSongLink[]>(() =>
     toEditableSongLinks(songLinks),
   );
@@ -163,6 +164,7 @@ export function ItemDetailsEditorFields({
     setLocalName(itemName);
     setArtistName(songMetadata?.artistName ?? "");
     setAlbumName(songMetadata?.albumName ?? "");
+    setSongKey(songMetadata?.key ?? "");
     setLocalSongLinks(toEditableSongLinks(songLinks));
     setLinkError("");
     setSaveError("");
@@ -318,19 +320,21 @@ export function ItemDetailsEditorFields({
 
     const trimmedArtist = artistName.trim();
     const trimmedAlbum = albumName.trim();
-    const hasArtistOrAlbum = Boolean(trimmedArtist || trimmedAlbum);
+    const trimmedKey = songKey.trim();
+    const hasSongDetails = Boolean(trimmedArtist || trimmedAlbum || trimmedKey);
     const nextSongLinks = validateSongLinks();
     if (!nextSongLinks) return;
 
     if (!songMetadata) {
       await saveAndClose({
         name: nextName,
-        ...(hasArtistOrAlbum
+        ...(hasSongDetails
           ? {
             songMetadataPatch: createManualSongMetadata({
               trackName: nextName,
               artistName: trimmedArtist,
               albumName: trimmedAlbum || undefined,
+              key: trimmedKey || undefined,
             }),
           }
           : {}),
@@ -339,7 +343,7 @@ export function ItemDetailsEditorFields({
       return;
     }
 
-    if (songMetadata.source === "manual" && !hasArtistOrAlbum) {
+    if (songMetadata.source === "manual" && !hasSongDetails) {
       await saveAndClose({
         name: nextName,
         songMetadataPatch: null,
@@ -355,6 +359,7 @@ export function ItemDetailsEditorFields({
         trackName: nextName,
         artistName: trimmedArtist,
         albumName: trimmedAlbum || undefined,
+        key: trimmedKey || undefined,
       },
       songLinksPatch: nextSongLinks,
     });
@@ -380,6 +385,12 @@ export function ItemDetailsEditorFields({
             label="Album"
             value={albumName}
             onChange={(v) => setAlbumName(v as string)}
+            data-ignore-undo="true"
+          />
+          <Input
+            label="Key"
+            value={songKey}
+            onChange={(v) => setSongKey(v as string)}
             data-ignore-undo="true"
           />
           <section className="border-t border-gray-700 pt-3" aria-label="Song links">

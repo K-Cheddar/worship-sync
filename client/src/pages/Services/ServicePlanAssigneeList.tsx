@@ -283,16 +283,15 @@ const ServicePlanAssigneeList = ({
           : `Assignees for ${itemLabel}`
       }
     >
-      {/* Same chrome as Notes: icon + title so chips read as a named group. */}
-      <div className="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5">
-        <UserRound className="size-3.5 shrink-0 text-gray-300" aria-hidden />
-        <span className="shrink-0 text-xs font-medium text-white">
-          {structureOnly ? "Microphone plan" : "Assignees"}
-        </span>
-      </div>
-      <div className="flex flex-col items-start gap-2">
-        <div className="flex w-full flex-wrap items-center gap-1.5">
-          {assignees.map((assignee, assigneeIndex) => {
+      <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-0.5">
+        {/* Same chrome as Notes: icon + title so chips read as a named group. */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <UserRound className="size-3.5 shrink-0 text-gray-300" aria-hidden />
+          <span className="shrink-0 text-xs font-medium text-white">
+            {structureOnly ? "Microphone plan" : "Assignees"}
+          </span>
+        </div>
+        {assignees.map((assignee, assigneeIndex) => {
           const isUnassigned = isUnassignedServicePlanAssignee(assignee);
           const assigneeMicrophones = (assignee.microphoneIds || [])
             .map((microphoneId) => microphonesById.get(microphoneId))
@@ -504,8 +503,7 @@ const ServicePlanAssigneeList = ({
               ) : null}
               </div>
             );
-          })}
-        </div>
+        })}
 
         {canAddPerson ? (
           <Button
@@ -514,7 +512,7 @@ const ServicePlanAssigneeList = ({
             svg={UserPlus}
             iconSize="xs"
             padding="px-2 py-1"
-            className="h-7 max-md:min-h-0 border border-dashed border-gray-600/80 text-xs text-gray-300"
+            className="h-7 max-md:mt-0.5 max-md:basis-full max-md:justify-start max-md:min-h-0 border border-dashed border-gray-600/80 text-xs text-gray-300"
             onClick={() => onChange(addServicePlanAssignee(assignees))}
           >
             Add person

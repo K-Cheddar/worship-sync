@@ -95,6 +95,32 @@ describe("ServicePublicView microphone assignments", () => {
     expect(within(panel).getByText("Blue")).toBeInTheDocument();
   });
 
+  it("shows songs and scripture beneath the item title", () => {
+    render(
+      <ServicePublicView
+        snapshot={{
+          ...detailedSnapshot,
+          service: {
+            ...detailedSnapshot.service,
+            sections: [{
+              ...detailedSnapshot.service.sections[0],
+              items: [{
+                ...detailedSnapshot.service.sections[0].items[0],
+                songs: ["Opening Song"],
+                scriptureRefs: ["Psalm 100:1–5", "John 4:23–24"],
+              }],
+            }],
+          },
+        }}
+      />,
+    );
+
+    const item = within(screen.getByRole("main")).getAllByRole("listitem")[0];
+    expect(within(item).getByText("Opening Song")).toBeInTheDocument();
+    expect(within(item).getByText("Psalm 100:1–5")).toBeInTheDocument();
+    expect(within(item).getByText("John 4:23–24")).toBeInTheDocument();
+  });
+
   it("opens a serving member image in a viewport-constrained modal", async () => {
     const user = userEvent.setup();
     render(<ServicePublicView snapshot={detailedSnapshot} embedded />);
