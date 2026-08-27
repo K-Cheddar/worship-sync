@@ -334,7 +334,7 @@ const ServicePlanAssigneeList = ({
 
               {allowEdit ? (
                 <DebouncedAssigneeNameField
-                  label={`Assignees for ${itemLabel}`}
+                  label="Assigned to"
                   // A template names standing groups, never this week's people
                   // — "Audience", "Chorale", whoever always carries the mic.
                   placeholder={structureOnly ? "Assignees" : "Assigned to"}
