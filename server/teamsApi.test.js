@@ -2762,6 +2762,7 @@ test("intake submission rejects positions outside the form's team scope", async 
       body: {
         firstName: "Pat",
         lastName: "Reed",
+        email: "pat.reed@example.com",
         positionIds: [inScopePositionId],
       },
     },
@@ -3249,6 +3250,7 @@ test("applying intake as a new member adds them to position teams", async (t) =>
       body: {
         firstName: "Pat",
         lastName: "Reed",
+        email: "pat.reed@example.com",
         positionIds: [positionId],
       },
     },
@@ -3329,7 +3331,12 @@ test("creating a member with no requested positions still joins the form's teams
       headers: {},
       session: createSession(),
       query: { token: form.payload.publicToken },
-      body: { firstName: "Pat", lastName: "Reed", positionIds: [] },
+      body: {
+        firstName: "Pat",
+        lastName: "Reed",
+        email: "pat.reed@example.com",
+        positionIds: [],
+      },
     },
     submitRes,
   );
@@ -3397,6 +3404,7 @@ test("applying intake to an existing member sets desire without granting eligibi
       body: {
         firstName: "Sam",
         lastName: "Lee",
+        email: "sam.lee@example.com",
         positionIds: [keysId],
       },
     },
@@ -3460,6 +3468,7 @@ test("a dismissed intake submission can be restored to the active queue", async 
       body: {
         firstName: "Pat",
         lastName: "Reed",
+        email: "pat.reed@example.com",
         positionIds: [worship.positionIds.Vocal],
       },
     },
@@ -3538,6 +3547,7 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
       body: {
         firstName: "Sam",
         lastName: "Lee",
+        email: "sam.lee@example.com",
         positionIds: [worship.positionIds.Vocal],
         // A single day already inside the member's existing range, plus a
         // duplicate of that range — both should collapse into one entry.
@@ -3640,6 +3650,7 @@ test("intake service availability is a soft warning, not a hard block", async (t
       body: {
         firstName: "Sam",
         lastName: "Lee",
+        email: "sam.lee@example.com",
         positionIds: [vocalId],
         occurrenceAvailability: {
           [availableOccurrenceId]: "available",
@@ -5116,7 +5127,7 @@ test("intake requires email when email is selected", async (t) => {
   });
   assert.equal(openForm.statusCode, 200);
 
-  // Default: a submission with no email still succeeds. `/api/team-intake/submit`
+  // Email is selected on the default form, so a submission without it is rejected.
   // is public and live — defaulting to required would reject real volunteers.
   const withoutEmail = createRes();
   await authHandlers.submitTeamIntake(

@@ -148,7 +148,21 @@ describe("MySchedule", () => {
 
     expect(screen.getByRole("heading", { name: "Sunday Gathering" })).toBeInTheDocument();
     expect(screen.getByText("Director · Media")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /Schedule or service plan/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: /My schedule service view/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Schedule" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Service plan" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /Schedule layout/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "By date" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "By position" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Grid" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save as PDF" })).toBeInTheDocument();
   });
 
   it("shows the public schedule table with the viewer highlighted", async () => {
@@ -191,7 +205,7 @@ describe("MySchedule", () => {
     renderPage();
 
     await openFirstService(user);
-    await user.click(screen.getByRole("button", { name: /^Service plan$/i }));
+    await user.click(screen.getByRole("tab", { name: /^Service plan$/i }));
 
     expect(screen.getByText("Great Is Thy Faithfulness")).toBeInTheDocument();
     expect(screen.getByText("Worship")).toBeInTheDocument();
@@ -228,7 +242,7 @@ describe("MySchedule", () => {
     renderPage();
 
     await openFirstService(user);
-    await user.click(screen.getByRole("button", { name: /^Service plan$/i }));
+    await user.click(screen.getByRole("tab", { name: /^Service plan$/i }));
 
     expect(
       screen.getByRole("button", { name: /Copy detailed view link/i }),
@@ -501,9 +515,6 @@ describe("MySchedule", () => {
       expect(await screen.findByText("1 upcoming")).toBeInTheDocument();
 
       await expandTimeOff(user);
-      expect(
-        screen.getByText(/1 is kept on your record for a year/i),
-      ).toBeInTheDocument();
 
       // One editable row, for the upcoming trip only.
       const removeButtons = screen.getAllByRole("button", {

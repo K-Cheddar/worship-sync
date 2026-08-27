@@ -214,11 +214,11 @@ describe("ServicePlanTemplateEditor", () => {
   it("opens a brand-new template straight into editing", () => {
     renderEditor({ template: createServicePlanTemplateDraft() });
 
-    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Edit template details" })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Template name/i)).toBeInTheDocument();
   });
 
-  it("offers a standing group label, never a week's assignee field", async () => {
+  it("edits standing assignees from a side sheet", async () => {
     const user = userEvent.setup();
     renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -229,11 +229,14 @@ describe("ServicePlanTemplateEditor", () => {
     await user.hover(within(menu).getByRole("menuitem", { name: /Microphone/i }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Orange/i }));
 
-    // "Assigned to" names this week's people and has no meaning in a pattern;
-    // a slot instead carries a standing label like "Audience" or "Chorale".
-    expect(screen.queryByLabelText(/^Assigned to/i)).not.toBeInTheDocument();
     expect(
-      await screen.findByPlaceholderText("Group (optional)"),
+      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+    );
+    expect(
+      await screen.findByPlaceholderText("Assignees"),
     ).toBeInTheDocument();
   });
 
@@ -248,8 +251,11 @@ describe("ServicePlanTemplateEditor", () => {
     await user.hover(within(menu).getByRole("menuitem", { name: /Microphone/i }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Orange/i }));
 
+    await user.click(
+      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+    );
     await user.type(
-      await screen.findByPlaceholderText("Group (optional)"),
+      await screen.findByPlaceholderText("Assignees"),
       "Audience",
     );
 
@@ -304,6 +310,7 @@ describe("ServicePlanTemplateEditor", () => {
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
     expect(screen.getByLabelText(/^Preferred for/i)).toHaveTextContent(
       "Sabbath Service (archived)",
     );
@@ -318,6 +325,7 @@ describe("ServicePlanTemplateEditor", () => {
     renderEditor({ editorServices: archivedServices });
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
     await user.click(screen.getByLabelText(/^Preferred for/i));
 
     expect(
@@ -347,13 +355,18 @@ describe("ServicePlanTemplateEditor", () => {
 
     // A template has no people: its rows are the ordered microphone plan that
     // a dated plan hands out, so they read as slots rather than as gaps.
+    await user.click(
+      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+    );
     expect(
-      await screen.findByRole("button", {
+      await within(screen.getByRole("dialog")).findByRole("button", {
         name: /Remove Orange from Slot 1/i,
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("group", { name: /Microphone plan for Opening prayer/i }),
+      within(screen.getByRole("dialog")).getByRole("group", {
+        name: /Microphone plan for Opening prayer/i,
+      }),
     ).toBeInTheDocument();
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
       timeout: 2_500,
@@ -389,13 +402,18 @@ describe("ServicePlanTemplateEditor", () => {
       await screen.findByRole("menuitem", { name: /Blue \u00b7 Lapel/i }),
     );
 
+    await user.click(
+      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+    );
     expect(
-      await screen.findByRole("button", {
+      await within(screen.getByRole("dialog")).findByRole("button", {
         name: /Remove Orange from Slot 1/i,
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Remove Blue from Slot 2/i }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /Remove Blue from Slot 2/i,
+      }),
     ).toBeInTheDocument();
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
       timeout: 2_500,
@@ -411,6 +429,7 @@ describe("ServicePlanTemplateEditor", () => {
     const user = userEvent.setup();
     const { onSaved } = renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
 
     const nameField = screen.getByLabelText(/^Template name/i);
     await user.clear(nameField);
@@ -443,6 +462,7 @@ describe("ServicePlanTemplateEditor", () => {
     }));
     renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
 
     const nameField = screen.getByLabelText(/^Template name/i);
     await user.type(nameField, " A");
@@ -463,6 +483,7 @@ describe("ServicePlanTemplateEditor", () => {
     const user = userEvent.setup();
     renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
 
     await user.click(screen.getByRole("combobox", { name: /Preferred for/i }));
     await user.click(await screen.findByRole("option", { name: "Any service" }));
@@ -479,12 +500,14 @@ describe("ServicePlanTemplateEditor", () => {
     const user = userEvent.setup();
     renderEditor({ template: createServicePlanTemplateDraft() });
 
+    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Add section" }));
     expect(
       screen.getByText("Give this template a name to start saving it."),
     ).toBeInTheDocument();
     expect(mockSaveServicePlanTemplate).not.toHaveBeenCalled();
 
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
     await user.type(screen.getByLabelText(/^Template name/i), "Fresh start");
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
@@ -500,11 +523,14 @@ describe("ServicePlanTemplateEditor", () => {
     const user = userEvent.setup();
     renderEditor({ template: createServicePlanTemplateDraft() });
 
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
     await user.type(screen.getByLabelText(/^Template name/i), "Fresh start");
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
       timeout: 2_500,
     });
 
+    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Add section" }));
 
     await waitFor(
@@ -526,6 +552,7 @@ describe("ServicePlanTemplateEditor", () => {
 
     renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
     await user.type(screen.getByLabelText(/^Template name/i), "!");
 
     expect(
@@ -534,8 +561,10 @@ describe("ServicePlanTemplateEditor", () => {
       }),
     ).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Reload latest" }));
 
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
     expect(screen.getByLabelText(/^Template name/i)).toHaveValue(
       "Their version",
     );

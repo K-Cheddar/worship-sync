@@ -318,6 +318,35 @@ test("public service plan snapshot exposes display-only team notes but omits edi
   });
 });
 
+test("public service plan snapshot exposes sanitized song and scripture labels", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          songRefs: [
+            { kind: "library", songId: "private-song", songName: "Great Are You Lord" },
+            { kind: "pending", title: "Unlinked Song", lyricsText: "private lyrics" },
+          ],
+          scriptureRefs: [
+            { label: "Psalm 100:1–5", book: "Psalm", chapter: "100", verseRange: "1–5", version: "NIV" },
+          ],
+        }],
+      }],
+    },
+  });
+
+  assert.deepEqual(snapshot.service.sections[0].items[0].songs, [
+    "Great Are You Lord",
+    "Unlinked Song",
+  ]);
+  assert.deepEqual(snapshot.service.sections[0].items[0].scriptureRefs, ["Psalm 100:1–5"]);
+  assert.equal(JSON.stringify(snapshot).includes("private-song"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private lyrics"), false);
+});
+
 test("public snapshots preserve a server-anchored live timeline", () => {
   const snapshot = buildPublicServicePlanSnapshot({
     plan: {

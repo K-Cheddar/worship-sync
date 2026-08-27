@@ -196,7 +196,7 @@ test("requires every selected member-detail field before submitting", async () =
   expect(screen.getByLabelText("Title:")).toBeRequired();
   expect(screen.getByLabelText("First name:")).toBeRequired();
   expect(screen.getByLabelText("Last name:")).toBeRequired();
-  expect(screen.getByLabelText("Email (required):")).toBeRequired();
+  expect(screen.getByLabelText("Email:")).toBeRequired();
   expect(screen.getByRole("combobox", { name: /Month/ })).toHaveAttribute(
     "aria-required",
     "true",
@@ -205,6 +205,19 @@ test("requires every selected member-detail field before submitting", async () =
   await userEvent.click(screen.getByRole("button", { name: /submit form/i }));
 
   expect(mockSubmit).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Title:")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("First name:")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Last name:")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Email:")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByRole("combobox", { name: /month/i })).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  expect(screen.getByText("Enter your title.")).toBeInTheDocument();
+  expect(screen.getByText("Enter your first name.")).toBeInTheDocument();
+  expect(screen.getByText("Enter your last name.")).toBeInTheDocument();
+  expect(screen.getByText("Enter your birthday.")).toBeInTheDocument();
+  expect(screen.getByText("Enter your email.")).toBeInTheDocument();
   expect(
     await screen.findByText(
       "Title, First name, Last name, Birthday and Email are required.",
@@ -237,7 +250,7 @@ test("keeps a partial birthday while editing and validates it on submit", async 
   await user.click(screen.getByRole("button", { name: /submit form/i }));
 
   expect(mockSubmit).not.toHaveBeenCalled();
-  expect(
-    await screen.findByText("Birthday needs a valid month and day."),
-  ).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Birthday needs a valid month and day.",
+  );
 });

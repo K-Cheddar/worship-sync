@@ -12,6 +12,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Copy,
   ExternalLink,
   TriangleAlert,
@@ -36,7 +37,9 @@ import {
   type MyScheduleServing,
 } from "../api/auth";
 import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
-import { buildMyScheduleExportModel } from "./buildMyScheduleExportModel";
+import {
+  buildMyScheduleExportModelForOccurrences,
+} from "./buildMyScheduleExportModel";
 import MyScheduleBlockouts from "./MyScheduleBlockouts";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
 import {
@@ -44,7 +47,9 @@ import {
   formatBlockoutDateRangeLabel,
 } from "./Teams/teamsUtils";
 import ScheduleExportTable from "./Teams/schedule/ScheduleExportTable";
+import SchedulePdfExportButton from "./Teams/schedule/SchedulePdfExportButton";
 import ScheduleUpNextBadge from "./Teams/schedule/ScheduleUpNextBadge";
+import type { ScheduleExportLayout } from "./Teams/schedule/scheduleExportPdf";
 import { scheduleUpNextBorderClassName } from "./Teams/schedule/scheduleUtils";
 import { cn } from "@/utils/cnHelper";
 
@@ -70,6 +75,15 @@ const ALL_TEAMS = "__all_teams__";
 const ALL_SERVICES = "__all_services__";
 
 type DetailTab = "schedule" | "servicePlan";
+
+const SCHEDULE_LAYOUT_OPTIONS: {
+  value: ScheduleExportLayout;
+  label: string;
+}[] = [
+  { value: "byDate", label: "By date" },
+  { value: "transpose", label: "By position" },
+  { value: "grid", label: "Grid" },
+];
 
 type OccurrenceTileParts = {
   weekday: string;
@@ -415,6 +429,7 @@ const OccurrenceTile = ({
 
 type OccurrenceDetailProps = {
   occurrence: MyScheduleOccurrence;
+  scheduleOccurrences: MyScheduleOccurrence[];
   jumpOptions: { value: string; label: string }[];
   onJump: (occurrenceId: string) => void;
   onPrevious?: () => void;
@@ -435,6 +450,7 @@ type OccurrenceDetailProps = {
 
 const OccurrenceDetail = ({
   occurrence,
+  scheduleOccurrences,
   jumpOptions,
   onJump,
   onPrevious,
@@ -448,6 +464,8 @@ const OccurrenceDetail = ({
   respondingKey = "",
 }: OccurrenceDetailProps) => {
   const [tab, setTab] = useState<DetailTab>("schedule");
+  const [scheduleLayout, setScheduleLayout] =
+    useState<ScheduleExportLayout>("byDate");
   const serviceName = occurrenceServiceLabel(occurrence);
   const role = myRoleLabel(occurrence);
   const plan = occurrence.plan;
@@ -455,12 +473,55 @@ const OccurrenceDetail = ({
   const generalUrl = plan?.publicUrls?.general || teamUrl;
   const canShare = Boolean(plan?.published && teamUrl);
   const scheduleModel = useMemo(
-    () => buildMyScheduleExportModel(occurrence),
-    [occurrence],
+    () => buildMyScheduleExportModelForOccurrences(scheduleOccurrences),
+    [scheduleOccurrences],
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/70">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+      <nav
+        className="shrink-0 rounded-xl border border-gray-700 bg-gray-950/70 p-3 lg:w-44 lg:p-4"
+        aria-label="My schedule service view"
+      >
+        <div className="flex gap-1 lg:flex-col lg:gap-2" role="tablist">
+          <Button
+            type="button"
+            variant="none"
+            svg={CalendarDays}
+            iconSize="sm"
+            role="tab"
+            aria-selected={tab === "schedule"}
+            className={cn(
+              "min-h-0 flex-1 justify-start rounded-lg border px-3 py-2.5 text-left text-sm font-semibold transition-colors lg:flex-none",
+              tab === "schedule"
+                ? "border-cyan-400/40 bg-cyan-500/15 text-white"
+                : "border-transparent text-gray-200 hover:bg-gray-800 hover:text-white",
+            )}
+            onClick={() => setTab("schedule")}
+          >
+            Schedule
+          </Button>
+          <Button
+            type="button"
+            variant="none"
+            svg={ClipboardList}
+            iconSize="sm"
+            role="tab"
+            aria-selected={tab === "servicePlan"}
+            className={cn(
+              "min-h-0 flex-1 justify-start rounded-lg border px-3 py-2.5 text-left text-sm font-semibold transition-colors lg:flex-none",
+              tab === "servicePlan"
+                ? "border-cyan-400/40 bg-cyan-500/15 text-white"
+                : "border-transparent text-gray-200 hover:bg-gray-800 hover:text-white",
+            )}
+            onClick={() => setTab("servicePlan")}
+          >
+            Service plan
+          </Button>
+        </div>
+      </nav>
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/70">
       <header className="shrink-0 space-y-2 border-b border-gray-800 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <Button
@@ -548,61 +609,67 @@ const OccurrenceDetail = ({
               ))}
           </div>
         ) : null}
-        <SegmentedControl
-          ariaLabel="Schedule or service plan"
-          variant="admin"
-          fullWidth
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "schedule", label: "Schedule" },
-            { value: "servicePlan", label: "Service plan" },
-          ]}
-        />
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3 sm:p-4">
-        {tab === "schedule" ? (
-          <ScheduleExportTable
-            model={scheduleModel}
-            theme="board-attendee"
-            layout="byDate"
-          />
-        ) : (
-          <>
-            {canShare && teamUrl ? (
-              <section className="rounded-lg border border-gray-700/80 bg-gray-900/50 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  Public service plan
-                </p>
-                <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-                  <div className="min-w-0 flex-1">
-                    <ShareViewActions
-                      label="Detailed view"
-                      url={teamUrl}
-                      onCopy={onCopyLink}
-                      onView={onViewLink}
-                    />
-                  </div>
-                  {generalUrl ? (
+          {tab === "schedule" ? (
+            <>
+              <div className="flex w-full flex-wrap items-end justify-end gap-2">
+                <SchedulePdfExportButton
+                  model={scheduleModel}
+                  layout={scheduleLayout}
+                />
+              </div>
+              <SegmentedControl
+                ariaLabel="Schedule layout"
+                variant="admin"
+                value={scheduleLayout}
+                onChange={setScheduleLayout}
+                options={SCHEDULE_LAYOUT_OPTIONS}
+                fullWidth
+              />
+              <ScheduleExportTable
+                model={scheduleModel}
+                theme="board-attendee"
+                layout={scheduleLayout}
+              />
+            </>
+          ) : (
+            <>
+              {canShare && teamUrl ? (
+                <section className="rounded-lg border border-gray-700/80 bg-gray-900/50 p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Public service plan
+                  </p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
                     <div className="min-w-0 flex-1">
                       <ShareViewActions
-                        label="Simple view"
-                        url={generalUrl}
+                        label="Detailed view"
+                        url={teamUrl}
                         onCopy={onCopyLink}
                         onView={onViewLink}
                       />
                     </div>
-                  ) : null}
-                </div>
-              </section>
-            ) : null}
-            <MyScheduleServicePlanPanel
-              occurrence={occurrence}
-              churchName={churchName}
-            />
-          </>
-        )}
+                    {generalUrl ? (
+                      <div className="min-w-0 flex-1">
+                        <ShareViewActions
+                          label="Simple view"
+                          url={generalUrl}
+                          onCopy={onCopyLink}
+                          onView={onViewLink}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+              <MyScheduleServicePlanPanel
+                occurrence={occurrence}
+                churchName={churchName}
+              />
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -918,7 +985,7 @@ const MySchedule = () => {
       title="My schedule"
       icon={CalendarDays}
     >
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+      <div className="flex w-full flex-col gap-4">
         {status === "loading" ? (
           <p className="text-sm text-gray-300">Loading your schedule…</p>
         ) : null}
@@ -943,6 +1010,7 @@ const MySchedule = () => {
         {status === "ready" && hasMemberRecord && selected ? (
           <OccurrenceDetail
             occurrence={selected}
+            scheduleOccurrences={navigable}
             jumpOptions={jumpOptions}
             onJump={setSelectedId}
             onPrevious={

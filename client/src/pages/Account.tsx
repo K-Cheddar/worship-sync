@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { lazy, Suspense, useContext, useMemo, useState, type ReactNode } from "react";
 import { Building2, ListChecks, LogIn, PanelLeft } from "lucide-react";
 import {
@@ -9,10 +8,8 @@ import {
   useLocation,
 } from "react-router-dom";
 import Button from "../components/Button/Button";
-import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
-import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { ChurchLogoImg } from "../components/ChurchLogoImg";
+import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import { useSelector } from "../hooks";
 import type { RootState } from "../store/store";
 import Icon from "../components/Icon/Icon";
@@ -35,6 +32,7 @@ import AccountDeleteModalHost from "./Account/components/AccountDeleteModalHost"
 import AccountSectionHeader from "./Account/components/AccountSectionHeader";
 import AccountSidebarNav from "./Account/components/AccountSidebarNav";
 import { AccountSectionRouteSkeleton } from "./Account/accountPageSkeletons";
+import Sidebar from "../components/Sidebar/Sidebar";
 
 const AccountPeoplePage = lazy(() => import("./Account/pages/AccountPeoplePage"));
 const AccountSetupPage = lazy(() => import("./Account/pages/AccountSetupPage"));
@@ -89,7 +87,6 @@ const AccountSectionLayout = () => {
     () => getActiveAccountSection(location.pathname),
     [location.pathname],
   );
-
   if (!canManage) {
     return <AccountAccessDenied />;
   }
@@ -117,57 +114,32 @@ const AccountShell = () => {
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
   );
-
   return (
-    <main
-      className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white"
-      style={
-        {
-          "--scrollbar-width": scrollbarWidth,
-        } as CSSProperties
+    <AppWorkspaceShell
+      title="Church administration"
+      icon={Building2}
+      toolbarLogoUrl={toolbarLogoUrl}
+      churchName={churchNameTrimmed}
+      scrollbarWidth={scrollbarWidth}
+      toolbarActions={
+        !isLoggedIn ? (
+          <Button
+            variant="tertiary"
+            svg={LogIn}
+            iconSize="sm"
+            padding="px-4 py-1"
+            component="link"
+            to="/login"
+          >
+            Sign in
+          </Button>
+        ) : null
       }
     >
-      <div className="mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col px-4 pb-6 lg:px-6">
-        <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-3 text-lg">
-          <div className="flex flex-wrap items-center gap-3 justify-self-start">
-            <HomeToolbarMenu />
-            <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
-              <Icon svg={Building2} size="md" className="text-cyan-400" />
-              Church administration
-            </h1>
-          </div>
-          <div className="flex max-w-[min(22rem,calc(100vw-6rem))] justify-center justify-self-center px-1 sm:max-w-[min(26rem,calc(100vw-10rem))]">
-            {toolbarLogoUrl ? (
-              <ChurchLogoImg
-                src={toolbarLogoUrl}
-                alt={
-                  churchNameTrimmed ? `${churchNameTrimmed} logo` : "Church logo"
-                }
-                variant="account-header"
-              />
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-end justify-self-end gap-4">
-            {!isLoggedIn ? (
-              <Button
-                variant="tertiary"
-                svg={LogIn}
-                iconSize="sm"
-                padding="px-4 py-1"
-                component="link"
-                to="/login"
-              >
-                Sign in
-              </Button>
-            ) : null}
-            <UserSection />
-          </div>
-        </div>
-
         <section
           className={cn(
-            "mx-auto mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:mt-4",
-            canManage && "lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]",
+            "mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40",
+            canManage && "lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]",
           )}
         >
           {canManage ? (
@@ -187,9 +159,9 @@ const AccountShell = () => {
                 </p>
               </div>
 
-              <aside className="hidden min-h-0 border-gray-700 bg-gray-950/70 lg:block lg:border-r lg:p-4">
+              <Sidebar className="hidden lg:block lg:border-r">
                 <AccountSidebarNav />
-              </aside>
+              </Sidebar>
             </>
           ) : null}
 
@@ -197,8 +169,6 @@ const AccountShell = () => {
             <Outlet />
           </div>
         </section>
-      </div>
-
       {canManage ? (
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           <SheetContent
@@ -215,7 +185,7 @@ const AccountShell = () => {
           </SheetContent>
         </Sheet>
       ) : null}
-    </main>
+    </AppWorkspaceShell>
   );
 };
 

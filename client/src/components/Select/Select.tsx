@@ -58,6 +58,8 @@ export type SelectProps = {
   className?: string;
   value: string;
   onChange: (value: string) => void;
+  /** Optional text to show in the trigger for the selected option. */
+  selectedValueLabel?: string;
   label?: string;
   labelClassName?: string;
   labelFontSize?: string;
@@ -81,12 +83,14 @@ export type SelectProps = {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   required?: boolean;
+  ariaInvalid?: boolean;
 };
 
 const Select = ({
   options,
   value,
   onChange,
+  selectedValueLabel,
   label,
   hideLabel = false,
   className,
@@ -106,6 +110,7 @@ const Select = ({
   open,
   onOpenChange,
   required = false,
+  ariaInvalid = false,
   ...rest
 }: SelectProps) => {
   const generatedId = useId();
@@ -149,10 +154,11 @@ const Select = ({
         <SelectTrigger
           id={id}
           aria-required={required}
+          aria-invalid={ariaInvalid}
           className={cn(backgroundColor, selectClassName, textColor)}
           chevronColor={chevronColor}
         >
-          <SelectValue placeholder="Select..." />
+          <SelectValue placeholder="Select...">{selectedValueLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent
           className={contentClassName}

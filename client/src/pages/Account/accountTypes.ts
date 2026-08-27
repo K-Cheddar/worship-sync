@@ -23,6 +23,8 @@ export type HumanDevice = {
   deviceId: string;
   label: string;
   platformType?: string | null;
+  status?: string | null;
+  createdAt?: string | null;
   revokedAt?: string | null;
   lastSeenAt?: string | null;
   user?: {
@@ -36,6 +38,9 @@ export type WorkstationDevice = {
   deviceId: string;
   label: string;
   appAccess: string;
+  status?: string | null;
+  createdAt?: string | null;
+  lastSeenAt?: string | null;
   lastOperatorName?: string | null;
   revokedAt?: string | null;
 };
@@ -44,6 +49,9 @@ export type DisplayDevice = {
   deviceId: string;
   label: string;
   surfaceType: string;
+  status?: string | null;
+  createdAt?: string | null;
+  lastSeenAt?: string | null;
   revokedAt?: string | null;
 };
 

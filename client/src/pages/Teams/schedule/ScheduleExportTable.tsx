@@ -371,7 +371,7 @@ const TransposeLayout = ({
 };
 
 const ByDateLayout = ({ model, p }: { model: ScheduleExportModel; p: Palette }) => (
-  <div className="space-y-4">
+  <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
     {model.groups.map((group, groupIndex) =>
       group.rows.map((row, rowIndex) => {
         const entries = model.columnLabels
@@ -384,7 +384,7 @@ const ByDateLayout = ({ model, p }: { model: ScheduleExportModel; p: Palette }) 
         return (
           <div
             key={`${groupIndex}-${rowIndex}`}
-            className={cn("overflow-hidden rounded-lg border", p.container)}
+            className={cn("h-fit overflow-hidden rounded-lg border", p.container)}
           >
             <div className={cn("px-3 py-2 text-sm font-bold", p.serviceBg, p.serviceText)}>
               {group.serviceName} — {row.rowLabel}

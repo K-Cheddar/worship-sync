@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ChevronDown, LocateFixed, Mic2, Moon, Radio, RefreshCw, Sun } from "lucide-react";
+import { BookOpen, ChevronDown, LocateFixed, Mic2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import ProfileImagePreview from "../components/ProfileImagePreview/ProfileImagePreview";
@@ -15,6 +15,8 @@ import type {
 import type { PublicServiceConnection } from "../services/usePublicServiceFlow";
 import { cn } from "../utils/cnHelper";
 import { formatServicePlanDuration } from "./Services/servicePlanDuration";
+import { SERVICE_PLAN_SONG_ICON_CLASS } from "./Services/servicePlanChipStyles";
+import { SERVICE_PLAN_SCRIPTURE_ICON_CLASS } from "./Services/ServicePlanScripturePopover";
 import { ServicePlanMicrophoneChip } from "../components/ServicePlanMicrophoneChip";
 import {
   readServicePublicNotesTeam,
@@ -81,10 +83,11 @@ const itemHasNotes = (
   item: PublicServiceFlowItem,
   selectedTeam: string,
   selectedRole: string,
+  selectedRoleTeamName: string,
 ) => {
   if (item.notes.blocks.length) return true;
   return Boolean(
-    visibleAudienceNotesForItem(item, selectedTeam, selectedRole).length
+    visibleAudienceNotesForItem(item, selectedTeam, selectedRole, selectedRoleTeamName).length
     || visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole).length,
   );
 };
@@ -93,13 +96,15 @@ const visibleAudienceNotesForItem = (
   item: PublicServiceFlowItem,
   selectedTeam: string,
   selectedRole: string,
+  selectedRoleTeamName: string,
 ) => {
   const notes = item.teamNotes || [];
+  const audienceTeam = selectedTeam || selectedRoleTeamName;
   return notes.filter((note) =>
     note.scope === "role"
       ? roleNoteMatchesServicePlanTeam(note, selectedTeam)
       && (!selectedRole || rolePositionIds(note).includes(selectedRole))
-      : !selectedTeam || note.label === selectedTeam,
+      : !audienceTeam || note.label === audienceTeam,
   );
 };
 
@@ -118,6 +123,49 @@ const visibleMicrophoneAssignmentsForItem = (
       && (!selectedRole || audience.positionId === selectedRole),
     );
   });
+
+const PublicItemContent = ({
+  item,
+  theme,
+}: {
+  item: PublicServiceFlowItem;
+  theme: ServicePublicTheme;
+}) => {
+  const songs = item.songs || [];
+  const scriptureRefs = item.scriptureRefs || [];
+  if (!songs.length && !scriptureRefs.length) return null;
+
+  const renderReferences = (labels: string[], IconComponent: typeof Music, tone: string) => {
+    const visible = labels.slice(0, 3);
+    const remaining = labels.length - visible.length;
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+        {visible.map((label, index) => (
+          <span key={`${label}:${index}`} className="inline-flex min-w-0 items-center gap-1">
+            <IconComponent className={cn("size-3.5 shrink-0", tone)} aria-hidden />
+            <span className="truncate">{label}</span>
+          </span>
+        ))}
+        {remaining > 0 ? (
+          <span title={labels.slice(3).join(", ")}>+{remaining} more</span>
+        ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className={cn(
+        "mt-1.5 space-y-0.5 text-xs leading-5",
+        theme === "light" ? "text-slate-700" : "text-neutral-300",
+      )}
+      aria-label="Songs and scripture"
+    >
+      {songs.length ? renderReferences(songs, Music, SERVICE_PLAN_SONG_ICON_CLASS) : null}
+      {scriptureRefs.length ? renderReferences(scriptureRefs, BookOpen, SERVICE_PLAN_SCRIPTURE_ICON_CLASS) : null}
+    </div>
+  );
+};
 
 const rolePositionIds = (note: { positionId?: string; positionIds?: string[] }) =>
   note.positionIds?.filter(Boolean) ?? (note.positionId ? [note.positionId] : []);
@@ -410,6 +458,10 @@ const ServicePublicView = ({
     ),
     [allRoleOptions, selectedTeam],
   );
+  const selectedRoleTeamName = useMemo(
+    () => roleOptions.find((role) => role.positionId === selectedRole)?.teamName || "",
+    [roleOptions, selectedRole],
+  );
 
   useEffect(() => {
     if (!teamLabels.length) {
@@ -700,12 +752,12 @@ const ServicePublicView = ({
                       const isCurrent = progress?.current?.item.id === item.id;
                       const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
                       const visibleAudienceNotes = !isGeneralView
-                        ? visibleAudienceNotesForItem(item, selectedTeam, selectedRole)
+                        ? visibleAudienceNotesForItem(item, selectedTeam, selectedRole, selectedRoleTeamName)
                         : [];
                       const visibleMicrophoneAssignments = !isGeneralView
                         ? visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole)
                         : [];
-                      const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole);
+                      const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole, selectedRoleTeamName);
                       const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
                       const durationLabel = item.durationSeconds > 0
                         ? formatServicePlanDuration(item)
@@ -767,6 +819,8 @@ const ServicePublicView = ({
                                   </p>
                                 ) : null}
                               </div>
+
+                              <PublicItemContent item={item} theme={theme} />
 
                               {hasNotes ? (
                                 <div className="mt-1">

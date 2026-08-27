@@ -1041,7 +1041,8 @@ describe("ServicePlanEditor", () => {
     await user.click(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
-    await user.click(screen.getByRole("button", { name: /Add element/i }));
+    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
     // Microphones hang off a person now, so an item starts with nobody on it.
     // Assignment editing opens in a side sheet to keep the plan list stable.
     await user.click(
@@ -1088,8 +1089,9 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
-    // Seeded with one default section already.
-    await user.click(screen.getByRole("button", { name: /Add element/i }));
+    // Seeded with one default section already; choose it before adding.
+    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
     await user.type(screen.getByLabelText(/^Title/i), "Great Are You Lord");
 
     await waitFor(() => {
@@ -1114,8 +1116,9 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
-    await user.click(screen.getByRole("button", { name: /Add element/i }));
-    await user.click(screen.getByRole("button", { name: /Add element/i }));
+    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
 
     // fireEvent.change (not userEvent.clear/type) — number inputs behave
     // unpredictably under userEvent's per-keystroke typing simulation in jsdom.
@@ -1466,7 +1469,10 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Edit service details/i }));
     expect(await screen.findByLabelText(/Plan name/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Close/i }));
     expect(
       screen.queryByRole("button", { name: /Start from scratch/i }),
     ).not.toBeInTheDocument();
@@ -1534,7 +1540,7 @@ describe("ServicePlanEditor", () => {
     expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
     await user.click(screen.getByRole("button", { name: /Close/i }));
 
-    // Song, scripture, and notes stay on the row via a single Add menu.
+    // Content and notes stay close to the row, but use separate actions.
     // Existing notes start minimized to one preview line — expand to edit.
     // AnimateCollapse keeps the editor mounted while minimized, so prefer roles
     // over getByText (preview and hidden editor both contain the note text).
@@ -1546,16 +1552,16 @@ describe("ServicePlanEditor", () => {
     expect(await screen.findByRole("textbox", { name: "Notes" })).toHaveTextContent(
       "Slow the tempo down.",
     );
-    expect(screen.queryByRole("button", { name: /Add song/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Add scripture/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Add note/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add content to Living Hope/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /More actions for Living Hope/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Add to Living Hope/i }));
+    await user.click(screen.getByRole("button", { name: /Add content to Living Hope/i }));
     expect(await screen.findByRole("menuitem", { name: /^Song$/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /^Scripture$/i })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /^Note$/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /More actions for Living Hope/i }));
     expect(
-      screen.getByRole("menuitem", { name: /Team-specific note/i }),
+      await screen.findByRole("menuitem", { name: /Team-specific note/i }),
     ).toBeInTheDocument();
   });
 
@@ -1645,13 +1651,22 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
 
-    await user.click(await screen.findByRole("button", { name: /^Hide notes$/i }));
-    expect(screen.queryByRole("button", { name: /Expand notes/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Expand Band/i })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: /^Hide notes$/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Expand notes/i })).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Expand Band/i })).not.toBeInTheDocument();
+    });
 
-    const showNotesButton = await screen.findByRole("button", { name: /^Show notes$/i });
-    expect(showNotesButton).toHaveAttribute("aria-pressed", "true");
-    await user.click(showNotesButton);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    const hideNotesMenuItem = await screen.findByRole("menuitemcheckbox", {
+      name: /^Hide notes$/i,
+    });
+    expect(hideNotesMenuItem).toHaveAttribute("data-state", "checked");
+    await user.click(hideNotesMenuItem);
     expect(
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
@@ -1717,7 +1732,7 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByRole("button", { name: /Expand notes/i })).toBeInTheDocument();
   });
 
-  it("collapses and expands a whole section, hiding its elements and Add element", async () => {
+  it("keeps the plan-level Add item control available while sections collapse", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -1744,7 +1759,7 @@ describe("ServicePlanEditor", () => {
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await screen.findByLabelText(/^Title/i);
-    expect(screen.getByRole("button", { name: /Add element/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Choose item destination/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Collapse section/i }));
     // Collapsed section content stays mounted for the height animation but is
@@ -1754,11 +1769,11 @@ describe("ServicePlanEditor", () => {
       "false",
     );
     expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Add element/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Choose item destination/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Expand section/i }));
     expect(await screen.findByRole("textbox", { name: /^Title/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Add element/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Choose item destination/i })).toBeInTheDocument();
   });
 
   it("disables editing controls when canEdit is false", async () => {

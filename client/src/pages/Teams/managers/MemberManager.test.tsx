@@ -212,6 +212,17 @@ describe("MemberManager member preferences", () => {
     expect(
       screen.getByRole("region", { name: "Edit member" }),
     ).not.toHaveAttribute("inert");
+    const filterPanel = screen.getByRole("region", { name: "Filter members" });
+    expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+    expect(within(filterPanel).getByRole("button", { name: "Clear all" })).toBeDisabled();
+
+    await user.click(
+      within(filterPanel).getByRole("checkbox", { name: "Worship" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Filter members, 1 selected" }),
+    ).toBeInTheDocument();
+    expect(within(filterPanel).getByRole("button", { name: "Clear all" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Close filters" }));
     await user.type(screen.getByLabelText(/First name/), " updated");

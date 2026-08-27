@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { GripVertical, Plus, Trash2 } from "lucide-react";
+import { GripVertical, Trash2 } from "lucide-react";
 import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
 import {
   arrayMove,
@@ -46,6 +46,14 @@ const ELEMENT_ID_PREFIX = "element:";
 export const sectionDndId = (sectionId: string) =>
   `${SECTION_ID_PREFIX}${sectionId}`;
 
+export const servicePlanSectionDomId = (sectionId: string) =>
+  `service-plan-section-${sectionId}`;
+
+export type ServicePlanSelection = {
+  sectionId: string;
+  elementId?: string;
+};
+
 const EMPTY_RESOLVED_SONG_REFS: ReadonlyMap<string, ServicePlanSongReference[]> =
   new Map();
 
@@ -71,7 +79,10 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   isEditing: boolean;
   onRename: (name: string) => void;
   onRemove: () => void;
-  onAddElement: () => void;
+  isSelected: boolean;
+  selectedElementId?: string;
+  onSelectSection: () => void;
+  onSelectElement: (elementId: string) => void;
   onRemoveElement: (elementId: string) => void;
   onUpdateElement: (
     elementId: string,
@@ -112,7 +123,10 @@ const SortableSectionCard = ({
   isEditing,
   onRename,
   onRemove,
-  onAddElement,
+  isSelected,
+  selectedElementId,
+  onSelectSection,
+  onSelectElement,
   onRemoveElement,
   onUpdateElement,
   onElementDurationChange,
@@ -165,6 +179,7 @@ const SortableSectionCard = ({
 
   return (
     <section
+      id={servicePlanSectionDomId(section.id)}
       ref={setNodeRef}
       style={{
         transform: CSS.Transform.toString(transform),
@@ -173,7 +188,13 @@ const SortableSectionCard = ({
       }}
       className="overflow-hidden rounded-md border border-gray-700/80 bg-gray-950/40"
     >
-      <div className="flex items-center gap-1 bg-gray-800/95 px-1.5 py-1">
+      <div
+        className={cn(
+          "flex items-center gap-1 bg-gray-800/95 px-1.5 py-1",
+          isSelected && "bg-cyan-950/50",
+        )}
+        onClick={onSelectSection}
+      >
         {allowEdit ? (
           <Button
             ref={setActivatorNodeRef}
@@ -229,7 +250,9 @@ const SortableSectionCard = ({
           {section.elements.length > 0 ? (
             <ServicePlanElementColumnHeader
               isEditing={allowEdit}
-              showActionsColumn={isServiceDay}
+              // Keep the flexible title/content columns aligned with edit mode,
+              // which always reserves the trailing actions gutter.
+              showActionsColumn={canEdit || isServiceDay}
               showAssignedColumn={false}
             />
           ) : null}
@@ -241,6 +264,8 @@ const SortableSectionCard = ({
                   element={element}
                   canEdit={canEdit}
                   isEditing={isEditing}
+                  isSelected={selectedElementId === element.id}
+                  onSelect={() => onSelectElement(element.id)}
                   onRemove={() => onRemoveElement(element.id)}
                   onUpdate={(changes, coalesceKey) =>
                     onUpdateElement(element.id, changes, coalesceKey)
@@ -284,19 +309,6 @@ const SortableSectionCard = ({
               ))}
             </div>
           </SortableContext>
-
-          {allowEdit ? (
-            <Button
-              type="button"
-              variant="tertiary"
-              svg={Plus}
-              iconSize="sm"
-              className="mx-1 mt-1 max-md:min-h-0"
-              onClick={onAddElement}
-            >
-              Add element
-            </Button>
-          ) : null}
         </div>
       </AnimateCollapse>
     </section>
@@ -313,11 +325,8 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
    * useServicePlanDraftHistory.
    */
   onSectionsChange: (next: ServicePlanSection[], coalesceKey?: string) => void;
-  /**
-   * Adding the first element seeds an anchor start time from the occurrence in
-   * the plan editor, so the owner handles it rather than this list.
-   */
-  onAddElement: (sectionId: string) => void;
+  selection?: ServicePlanSelection | null;
+  onSelectionChange?: (selection: ServicePlanSelection) => void;
   assignedToHistoryValues?: string[];
   onRemoveAssignedToHistoryValue?: (value: string) => void;
   isAssignedToHistoryValueRemovable?: (value: string) => boolean;
@@ -361,7 +370,8 @@ const ServicePlanSectionList = ({
   canEdit,
   isEditing,
   onSectionsChange,
-  onAddElement,
+  selection = null,
+  onSelectionChange,
   assignedToHistoryValues = [],
   onRemoveAssignedToHistoryValue,
   isAssignedToHistoryValueRemovable,
@@ -385,6 +395,8 @@ const ServicePlanSectionList = ({
 }: ServicePlanSectionListProps) => {
   const sensors = useSensors();
   const sectionIds = sections.map((section) => sectionDndId(section.id));
+  const selectedSectionId = selection?.sectionId || null;
+  const selectedElementId = selection?.elementId || null;
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -462,7 +474,18 @@ const ServicePlanSectionList = ({
                 )
               }
               onRemove={() => onSectionsChange(removeSection(sections, section.id))}
-              onAddElement={() => onAddElement(section.id)}
+              isSelected={selectedSectionId === section.id && !selectedElementId}
+              selectedElementId={
+                selectedSectionId === section.id ? selectedElementId || undefined : undefined
+              }
+              onSelectSection={() => {
+                if (!canEdit || !isEditing) return;
+                onSelectionChange?.({ sectionId: section.id });
+              }}
+              onSelectElement={(elementId) => {
+                if (!canEdit || !isEditing) return;
+                onSelectionChange?.({ sectionId: section.id, elementId });
+              }}
               onRemoveElement={(elementId) =>
                 onSectionsChange(removeElement(sections, section.id, elementId))
               }
@@ -511,6 +534,7 @@ const ServicePlanSectionList = ({
               {...liveRowState}
             />
           ))}
+
         </div>
       </SortableContext>
     </DndContext>

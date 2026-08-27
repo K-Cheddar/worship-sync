@@ -229,9 +229,6 @@ const MyScheduleBlockouts = ({
           <p className="text-xs text-gray-400">
             Add the dates you are away. Your team leads see these when they build
             the schedule.
-            {ended.length > 0
-              ? ` Dates that have passed are not shown; ${ended.length === 1 ? "1 is" : `${ended.length} are`} kept on your record for a year.`
-              : ""}
           </p>
 
           <BlockoutDatesField

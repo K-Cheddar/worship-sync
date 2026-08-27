@@ -52,6 +52,7 @@ const song = {
     trackName: "Living Hope",
     artistName: "Phil Wickham",
     albumName: "Living Hope",
+    key: "A",
     importedAt: "2026-08-06T12:00:00.000Z",
   },
   songAudio: {
@@ -111,6 +112,7 @@ describe("ViewSongSectionsDrawer", () => {
       screen.getByRole("heading", { name: "Song details — Living Hope" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Phil Wickham")).toBeInTheDocument();
+    expect(screen.getByText("A")).toBeInTheDocument();
     expect(screen.getByText("living-hope-reference.mp3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tutorial" })).toHaveAttribute(
@@ -136,6 +138,9 @@ describe("ViewSongSectionsDrawer", () => {
     fireEvent.change(screen.getByLabelText(/Artist/i), {
       target: { value: "Phil Wickham and team" },
     });
+    fireEvent.change(screen.getByLabelText(/Key/i), {
+      target: { value: "G" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -146,6 +151,7 @@ describe("ViewSongSectionsDrawer", () => {
           name: "Living Hope (Acoustic)",
           songMetadata: expect.objectContaining({
             artistName: "Phil Wickham and team",
+            key: "G",
           }),
           songLinks: song.songLinks,
           songAudio: song.songAudio,

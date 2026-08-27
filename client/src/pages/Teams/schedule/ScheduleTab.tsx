@@ -3819,6 +3819,11 @@ const ScheduleTab = ({
                     // Bind to the record, not the hydrated schedule, so the name
                     // stays in the trigger while its assignments load.
                     value={selectedScheduleRecord?.scheduleId || ""}
+                    selectedValueLabel={
+                      selectedScheduleRecord
+                        ? `${selectedScheduleRecord.name} — ${selectedTeam?.name || "No team"}`
+                        : undefined
+                    }
                     onChange={(scheduleId) => {
                       if (scheduleId === BROWSE_ALL_SCHEDULES_VALUE) {
                         setIsBrowsingSchedules(true);

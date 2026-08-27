@@ -6,7 +6,6 @@ import { cn } from "@/utils/cnHelper";
 import type { TeamPosition, TeamRecord, TeamRole } from "../../../api/authTypes";
 import {
   countActiveMemberListFilters,
-  emptyMemberListFilters,
   type MemberListFilterState,
 } from "../teamsSelectors";
 import { orderPositionsByTeamList } from "../teamsUtils";
@@ -316,7 +315,6 @@ export const MemberFilterPanel = ({
   value,
   onChange,
 }: MemberFilterPanelProps) => {
-  const hasFilter = countActiveMemberListFilters(value) > 0;
   const scopedTeamIds = value.teamIds;
 
   const teamOptions = useMemo(
@@ -413,19 +411,6 @@ export const MemberFilterPanel = ({
 
   return (
     <>
-      {hasFilter ? (
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            variant="textLink"
-            padding="p-0"
-            className="text-xs text-cyan-300"
-            onClick={() => onChange(emptyMemberListFilters())}
-          >
-            Clear all
-          </Button>
-        </div>
-      ) : null}
       <Checkbox
         label="Show archived members"
         checked={value.includeArchived}

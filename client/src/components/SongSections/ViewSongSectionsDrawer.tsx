@@ -269,6 +269,14 @@ const ViewSongSectionsDrawer = ({
                     </dd>
                   </>
                 ) : null}
+                {song.songMetadata.key ? (
+                  <>
+                    <dt className="text-gray-400">Key</dt>
+                    <dd className="min-w-0 truncate text-gray-100">
+                      {song.songMetadata.key}
+                    </dd>
+                  </>
+                ) : null}
               </dl>
             ) : null}
 

@@ -67,12 +67,26 @@ export const addElement = (
   sections: ServicePlanSection[],
   sectionId: string,
   type: ServicePlanElementType = "free",
+  insertAfterElementId?: string,
 ): ServicePlanSection[] =>
   sections.map((section) =>
     section.id === sectionId
       ? {
           ...section,
-          elements: [...section.elements, createEmptyServicePlanElement(type)],
+          elements: (() => {
+            const nextElement = createEmptyServicePlanElement(type);
+            const insertAfterIndex = insertAfterElementId
+              ? section.elements.findIndex((element) => element.id === insertAfterElementId)
+              : -1;
+            if (insertAfterIndex === -1) {
+              return [...section.elements, nextElement];
+            }
+            return [
+              ...section.elements.slice(0, insertAfterIndex + 1),
+              nextElement,
+              ...section.elements.slice(insertAfterIndex + 1),
+            ];
+          })(),
         }
       : section,
   );

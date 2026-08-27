@@ -269,21 +269,14 @@ const MemberManager = ({
     setShowFilters(false);
   }, [showCreate]);
 
-  const cancelFilters = useCallback(() => {
-    setDraftListFilters(listFilters);
+  const closeFilters = useCallback(() => {
     setShowFilters(false);
-  }, [listFilters]);
-
-  const applyFilters = useCallback(() => {
-    setListFilters(draftListFilters);
-    setShowFilters(false);
-  }, [draftListFilters]);
+  }, []);
 
   const clearFilters = useCallback(() => {
     const empty = emptyMemberListFilters();
     setListFilters(empty);
     setDraftListFilters(empty);
-    setShowFilters(false);
   }, []);
 
   const handleFiltersOpenChange = useCallback(
@@ -293,19 +286,19 @@ const MemberManager = ({
         setShowFilters(true);
         return;
       }
-      cancelFilters();
+      closeFilters();
     },
-    [cancelFilters, listFilters],
+    [closeFilters, listFilters],
   );
 
   useEffect(() => {
     if (!showFilters) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancelFilters();
+      if (event.key === "Escape") closeFilters();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [cancelFilters, showFilters]);
+  }, [closeFilters, showFilters]);
 
   const positionNameById = useMemo(
     () => new Map(positions.map((position) => [position.positionId, position.name])),
@@ -362,9 +355,6 @@ const MemberManager = ({
       ),
     [members, listQuery, listFilters, positionNameById, teamsById],
   );
-  const hasPendingFilterChanges =
-    JSON.stringify(draftListFilters) !== JSON.stringify(listFilters);
-
   const reset = () => {
     if (profileImageSelectionToastIdRef.current) {
       removeToast(profileImageSelectionToastIdRef.current);
@@ -1065,24 +1055,43 @@ const MemberManager = ({
             padding="p-0.5"
             className="shrink-0 text-gray-400 hover:text-white"
             aria-label="Close filters"
-            onClick={cancelFilters}
+            onClick={closeFilters}
           />
         }
         aside={
           <MemberFilterPanel
             data={data}
             value={draftListFilters}
-            onChange={setDraftListFilters}
+            onChange={(filters) => {
+              setDraftListFilters(filters);
+              setListFilters(filters);
+            }}
           />
         }
         asideFooter={
-          <FormActionButtons
-            pinFooter
-            saveLabel="Apply"
-            onSave={applyFilters}
-            onCancel={cancelFilters}
-            hasPendingChanges={hasPendingFilterChanges}
-          />
+          <div className="shrink-0 border-t border-gray-700/50 bg-gray-950/45 px-4 py-3">
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1 justify-center"
+                disabled={activeFilterCount === 0}
+                onClick={clearFilters}
+              >
+                Clear all
+              </Button>
+              <Button
+                type="button"
+                variant="cta"
+                svg={X}
+                iconSize="sm"
+                className="flex-1 justify-center"
+                onClick={closeFilters}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
         }
         list={
           <>

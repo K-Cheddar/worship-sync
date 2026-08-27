@@ -3,7 +3,7 @@ import { cn } from "../../utils/cnHelper";
 
 const skeletonBar = "animate-pulse rounded bg-white/10";
 const cardClassName =
-  "rounded-xl border border-gray-700 bg-gray-950/50 p-4 space-y-4";
+  "rounded-xl border border-gray-700 bg-gray-950/50 p-3 space-y-3";
 
 const SkeletonStatus = ({
   label,

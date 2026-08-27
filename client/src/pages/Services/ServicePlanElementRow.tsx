@@ -11,9 +11,9 @@ import {
   BookOpen,
   Check,
   ChevronDown,
+  Ellipsis,
   GripVertical,
   Music,
-  Mic2,
   Plus,
   Radio,
   StickyNote,
@@ -27,11 +27,7 @@ import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
-import { ServicePlanMicrophoneIcon } from "../../components/ServicePlanMicrophoneIcon";
-import ServicePlanAssigneeList, {
-  addServicePlanAssignee,
-  addMicrophoneSlot,
-} from "./ServicePlanAssigneeList";
+import ServicePlanAssigneeList, { addMicrophoneSlot } from "./ServicePlanAssigneeList";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -45,6 +41,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -89,6 +86,7 @@ import {
 } from "./servicePlanChipStyles";
 import type {
   ServicePlanElement,
+  ServicePlanAssignee,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
   ServicePlanSongReference,
@@ -153,18 +151,20 @@ export const SERVICE_PLAN_COL = {
   drag: "w-7 shrink-0",
   /** Wide enough for "10:00 AM" / "07:00 PM" tabular time. */
   timeView: "w-[4.75rem] shrink-0",
-  /** Desktop edit width; pair with flex-1 on small screens. */
-  timeEdit: "md:w-24 md:shrink-0 md:flex-none",
+  /** Keep the edit and view time columns aligned. */
+  timeEdit: "md:w-[4.75rem] md:shrink-0 md:flex-none",
   /** Wide enough for "10 min" / "99 min" tabular duration. */
   durationView: "w-16 shrink-0",
   durationEdit: "md:w-16 md:shrink-0 md:flex-none",
   title: "min-w-0 flex-1",
+  /** Keep content compact so title and assignment columns retain room. */
+  contentView: "w-full shrink-0 md:w-48 md:flex-none",
   assignedView: "hidden w-28 shrink-0 md:block lg:w-36",
   assignedEdit: "md:w-36 md:shrink-0",
   /** Fixed so the header and rows keep Assigned aligned with live controls. */
-  actionsView: "flex w-28 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
-  /** Fixed so live/delete trailing controls do not shift Assigned. */
-  actionsEdit: "flex w-28 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
+  actionsView: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
+  /** Keep only a compact minimum gutter when a row has no live controls. */
+  actionsEdit: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
 } as const;
 
 /** Shared column header for the compact plan list. */
@@ -199,6 +199,7 @@ export const ServicePlanElementColumnHeader = ({
       {isEditing ? "Length" : "Len"}
     </span>
     <span className={SERVICE_PLAN_COL.title}>Title</span>
+    <span className={cn(SERVICE_PLAN_COL.contentView, "max-md:hidden")}>Content</span>
     {showAssignedColumn ? (
       <span
         className={
@@ -352,26 +353,22 @@ const ExpandableNotePanel = ({
   </>
 );
 
-type AddAttachmentMenuProps = {
+type ItemActionsMenuProps = {
   itemLabel: string;
   canEdit: boolean;
-  canAddSong: boolean;
-  canAddScripture: boolean;
+  structureOnly: boolean;
+  microphones: ServicePlanMicrophone[];
+  assignees: ServicePlanAssignee[];
   canAddNote: boolean;
   canAddTeamNote: boolean;
   canAddRoleNote: boolean;
-  canAddMicrophone: boolean;
-  canAddPerson: boolean;
   teamNoteOptions: ServicePlanTeamNoteOption[];
   roleNoteOptions: ServicePlanRoleNoteOption[];
-  microphones: ServicePlanMicrophone[];
-  onAddSong: () => void;
-  onAddScripture: () => void;
   onAddNote: () => void;
   onAddTeamNote: (teamId: string) => void;
   onAddRoleNote: (positionId: string) => void;
   onAddMicrophone: (microphoneId: string) => void;
-  onAddPerson: () => void;
+  onRemove: () => void;
 };
 
 const ROLE_TEAM_FILTER_STORAGE_KEY = "worshipsyncServicePlanRoleTeamFilter";
@@ -724,27 +721,23 @@ const RoleNoteAudiencePicker = ({
   );
 };
 
-const AddAttachmentMenu = ({
+const ItemActionsMenu = ({
   itemLabel,
   canEdit,
-  canAddSong,
-  canAddScripture,
+  structureOnly,
+  microphones,
+  assignees,
   canAddNote,
   canAddTeamNote,
   canAddRoleNote,
-  canAddMicrophone,
-  canAddPerson,
   teamNoteOptions,
   roleNoteOptions,
-  microphones,
-  onAddSong,
-  onAddScripture,
   onAddNote,
   onAddTeamNote,
   onAddRoleNote,
   onAddMicrophone,
-  onAddPerson,
-}: AddAttachmentMenuProps) => {
+  onRemove,
+}: ItemActionsMenuProps) => {
   const [open, setOpen] = useState(false);
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
@@ -752,41 +745,15 @@ const AddAttachmentMenu = ({
         <Button
           type="button"
           variant="tertiary"
-          svg={Plus}
+          svg={Ellipsis}
           iconSize="sm"
           disabled={!canEdit}
           aria-haspopup="menu"
-          aria-label={`Add to ${itemLabel}`}
-          className="max-md:min-h-0 border border-dashed border-gray-600/80 text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
-        >
-          Add
-        </Button>
+          aria-label={structureOnly ? `Add to ${itemLabel}` : `More actions for ${itemLabel}`}
+          className="max-md:min-h-0 shrink-0"
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-48">
-        {canAddPerson ? (
-          <DropdownMenuItem onSelect={onAddPerson}>
-            <UserRound className="size-4 text-gray-400" aria-hidden />
-            Person
-          </DropdownMenuItem>
-        ) : null}
-        {canAddSong ? (
-          <DropdownMenuItem onSelect={onAddSong}>
-            <Music
-              className={cn("size-4", SERVICE_PLAN_SONG_ICON_CLASS)}
-              aria-hidden
-            />
-            Song
-          </DropdownMenuItem>
-        ) : null}
-        {canAddScripture ? (
-          <DropdownMenuItem onSelect={onAddScripture}>
-            <BookOpen
-              className={cn("size-4", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
-              aria-hidden
-            />
-            Scripture
-          </DropdownMenuItem>
-        ) : null}
         {canAddNote ? (
           <DropdownMenuItem onSelect={onAddNote}>
             <StickyNote
@@ -795,6 +762,37 @@ const AddAttachmentMenu = ({
             />
             Note
           </DropdownMenuItem>
+        ) : null}
+        {structureOnly && microphones.length > 0 ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <UserRound className="size-4" aria-hidden />
+              Microphone
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="p-1">
+              {microphones
+                .filter((microphone) =>
+                  !assignees.some((assignee) =>
+                    (assignee.microphoneIds || []).includes(microphone.id),
+                  ),
+                )
+                .map((microphone) => (
+                  <DropdownMenuItem
+                    key={microphone.id}
+                    onSelect={(event) => {
+                      // Keep the catalog open so consecutive microphones can
+                      // be assigned in their intended order.
+                      event.preventDefault();
+                      onAddMicrophone(microphone.id);
+                    }}
+                  >
+                    <span className="truncate">
+                      {microphone.name} · {microphone.type}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         ) : null}
         {canAddTeamNote ? (
           <DropdownMenuSub>
@@ -836,36 +834,57 @@ const AddAttachmentMenu = ({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         ) : null}
-        {canAddMicrophone ? (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <Mic2 className="size-4 text-violet-300" aria-hidden />
-              Microphones
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="max-h-64 min-w-52 overflow-y-auto p-1">
-              {microphones.map((microphone) => (
-                <DropdownMenuItem
-                  key={microphone.id}
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    onAddMicrophone(microphone.id);
-                  }}
-                >
-                  <ServicePlanMicrophoneIcon
-                    microphone={microphone}
-                    color={microphone.color}
-                    className="size-5 shrink-0"
-                  />
-                  <span className="truncate">{microphone.name} · {microphone.type}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        ) : null}
+        <DropdownMenuSeparator className="my-1 bg-gray-700" />
+        <DropdownMenuItem
+          className="text-red-300 focus:bg-red-950/50 focus:text-red-100"
+          onSelect={onRemove}
+        >
+          <Trash2 className="size-4 text-red-300" aria-hidden />
+          Delete item
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 };
+
+const AddContentMenu = ({
+  itemLabel,
+  canEdit,
+  onAddSong,
+  onAddScripture,
+}: {
+  itemLabel: string;
+  canEdit: boolean;
+  onAddSong: () => void;
+  onAddScripture: () => void;
+}) => (
+  <DropdownMenu modal={false}>
+    <DropdownMenuTrigger asChild>
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={Plus}
+        iconSize="sm"
+        disabled={!canEdit}
+        aria-haspopup="menu"
+        aria-label={`Add content to ${itemLabel}`}
+        className="max-md:min-h-0 border border-dashed border-gray-600/80 text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+      >
+        Add content
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="start" className="min-w-40">
+      <DropdownMenuItem onSelect={onAddSong}>
+        <Music className={cn("size-4", SERVICE_PLAN_SONG_ICON_CLASS)} aria-hidden />
+        Song
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={onAddScripture}>
+        <BookOpen className={cn("size-4", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} aria-hidden />
+        Scripture
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
+);
 
 type ServicePlanElementRowProps = {
   element: ServicePlanElement;
@@ -932,6 +951,9 @@ type ServicePlanElementRowProps = {
    * canEdit, show editable fields — stacked on small screens, columns on md+.
    */
   isEditing?: boolean;
+  /** Editor-local selection used to place the next added item. */
+  isSelected?: boolean;
+  onSelect?: () => void;
   /** Opens the shared lyrics viewer for a library song badge. */
   onViewSongLyrics?: (songRef: ServicePlanSongReference) => void;
   /**
@@ -998,6 +1020,8 @@ const ServicePlanElementRow = ({
   microphoneAudiences,
   scheduledMicrophoneHolders,
   isEditing = false,
+  isSelected = false,
+  onSelect,
   onViewSongLyrics,
   canCreateLibrarySong = false,
   onCreatePendingSong,
@@ -1019,6 +1043,7 @@ const ServicePlanElementRow = ({
     null,
   );
   const [assignmentSheetOpen, setAssignmentSheetOpen] = useState(false);
+  const [contentManagerOpen, setContentManagerOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
     null,
@@ -1032,6 +1057,10 @@ const ServicePlanElementRow = ({
     setDurationText(formattedDuration);
   }, [formattedDuration]);
   const allowEdit = canEdit && isEditing;
+  const noteEditorClassName = cn(
+    SERVICE_PLAN_INLINE_EDITOR_CLASS,
+    !allowEdit && "opacity-100",
+  );
   const {
     attributes,
     listeners,
@@ -1057,45 +1086,6 @@ const ServicePlanElementRow = ({
       getServicePlanRoleNotePositionIds(note).includes(roleNotesFilter),
     )
     : teamScopedRoleNotes;
-  /**
-   * Who a microphone is addressed to. Configured once per microphone on the
-   * Microphones page, church-wide — this is the only source of that targeting.
-   */
-  const microphoneAudiencesFor = (microphoneId: string) =>
-    microphoneAudiences
-    ?? element.microphoneAssignments?.find(
-      (assignment) => assignment.microphoneId === microphoneId,
-    )?.audiences
-    ?? [];
-
-  /**
-   * Note filters narrow microphone chips, never the assignee rows themselves —
-   * who is doing an item is plain assignment info that every viewer saw in the
-   * Assigned column before microphones moved onto people.
-   *
-   * View mode only: hiding chips while editing would let an operator delete a
-   * row without seeing everything on it.
-   */
-  const visibleMicrophoneIds =
-    allowEdit || (!teamNotesFilter && !roleNotesFilter)
-      ? null
-      : new Set(
-        assignees.flatMap((assignee) =>
-          (assignee.microphoneIds || []).filter((microphoneId) => {
-            const audiences = microphoneAudiencesFor(microphoneId);
-            if (
-              teamNotesFilter
-              && !audiences.some((audience) => audience.teamName === teamNotesFilter)
-            ) {
-              return false;
-            }
-            return (
-              !roleNotesFilter
-              || audiences.some((audience) => audience.positionId === roleNotesFilter)
-            );
-          }),
-        ),
-      );
   const titleText = richTextToPlainText(element.title);
   const itemLabel = titleText.trim() || "item";
   // What the plan means today: the stored reference, unless a song it couldn't
@@ -1131,21 +1121,7 @@ const ServicePlanElementRow = ({
     .map((assignee) => assignee.name?.trim())
     .filter(Boolean)
     .join(", ");
-  const assignedMicrophoneIds = new Set(
-    assignees.flatMap((assignee) => assignee.microphoneIds || []),
-  );
-  const availableMicrophones = microphones.filter(
-    (microphone) => !assignedMicrophoneIds.has(microphone.id),
-  );
-  // Not gated by structureOnly: a template carries its microphone plan (see
-  // cloneSectionsForTemplate), so it has to be editable where templates are.
-  const canAddMicrophone = !hideNotes && availableMicrophones.length > 0;
-  // Templates carry a microphone plan but never a person (see
-  // cloneSectionsForTemplate), so the structure-only surface offers mics only.
-  const canAddPerson = !structureOnly;
-  const canAddAttachment =
-    canAddSong || canAddScripture || canAddNote || canAddTeamNote
-    || canAddRoleNote || canAddMicrophone || canAddPerson;
+  const canAddContent = canAddSong || canAddScripture;
   const showLiveControls = isServiceDay;
 
   const handleAddNote = () => {
@@ -1245,41 +1221,45 @@ const ServicePlanElementRow = ({
     });
   };
 
-  const addMenu = (
-    <AddAttachmentMenu
+  const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel);
+  const contentReferenceCount = songRefs.length + scriptureRefs.length;
+
+  const itemActionsMenu = allowEdit ? (
+    <ItemActionsMenu
       itemLabel={itemLabel}
       canEdit={allowEdit}
-      canAddSong={canAddSong}
-      canAddScripture={canAddScripture}
+      structureOnly={structureOnly}
+      microphones={microphones}
+      assignees={assignees}
       canAddNote={canAddNote}
       canAddTeamNote={canAddTeamNote}
       canAddRoleNote={canAddRoleNote}
-      canAddMicrophone={canAddMicrophone}
       teamNoteOptions={teamNoteOptions}
       roleNoteOptions={roleNoteOptions}
-      microphones={availableMicrophones}
+      onAddNote={handleAddNote}
+      onAddTeamNote={handleAddTeamNote}
+      onAddRoleNote={handleCreateRoleNote}
+      onAddMicrophone={(microphoneId) =>
+        onUpdate({ assignees: addMicrophoneSlot(assignees, microphoneId) })
+      }
+      onRemove={onRemove}
+    />
+  ) : null;
+
+  const addContentMenu = canAddContent ? (
+    <AddContentMenu
+      itemLabel={itemLabel}
+      canEdit={allowEdit}
       onAddSong={() => openSongPicker(false)}
       onAddScripture={() => {
         setScriptureEditIndex(null);
         setScriptureOpen(true);
       }}
-      onAddNote={handleAddNote}
-      onAddTeamNote={handleAddTeamNote}
-      onAddRoleNote={handleCreateRoleNote}
-      onAddPerson={() => onUpdate({ assignees: addServicePlanAssignee(assignees) })}
-      canAddPerson={canAddPerson}
-      // Each microphone added here becomes its own slot at the end of the
-      // order, ready for a name. Grouping several onto one holder is done from
-      // that slot's own "+ Mic" control.
-      onAddMicrophone={(microphoneId) => onUpdate({
-        assignees: addMicrophoneSlot(assignees, microphoneId),
-      })}
     />
-  );
+  ) : null;
 
-  let attachmentsTrailing: ReactNode = null;
-  if (allowEdit && canAddAttachment) {
-    attachmentsTrailing = canAddScripture ? (
+  const contentAddControl = allowEdit && addContentMenu ? (
+    canAddScripture ? (
       <ServicePlanScripturePopover
         open={scriptureOpen}
         onOpenChange={setScriptureOpen}
@@ -1294,12 +1274,12 @@ const ServicePlanElementRow = ({
           scriptureRef: undefined,
           scriptureRefs: [...scriptureRefs, scriptureRef],
         })}
-        anchor={<span className="inline-flex">{addMenu}</span>}
+        anchor={<span className="inline-flex">{addContentMenu}</span>}
       />
     ) : (
-      addMenu
-    );
-  }
+      addContentMenu
+    )
+  ) : null;
 
   const liveControls = (
     <>
@@ -1339,250 +1319,209 @@ const ServicePlanElementRow = ({
     </>
   );
 
-  const attachmentChips = (songRefs.length > 0 || scriptureLabel) ? (
-    <div
-      className={cn(
-        "flex flex-wrap items-center gap-1 px-1.5 pb-1.5 md:pb-1",
-        allowEdit ? "pl-9" : "pl-1.5",
-      )}
-    >
-      {songRefs.map((currentSongRef, songIndex) => {
-        const label = songRefLabel(currentSongRef);
-        if (!label) return null;
-        const isSongUnlinked = currentSongRef.kind === "pending";
-        const canLinkSong = isSongUnlinked && allowEdit;
-        const canCreateMissingSong =
-          isSongUnlinked && canCreateLibrarySong && !canLinkSong;
-        const songChipInteractive =
-          canLinkSong || canCreateMissingSong || Boolean(onViewSongLyrics);
-        const pendingTitle =
-          currentSongRef.kind === "pending" ? currentSongRef.title : "";
+  const firstSongIndex = songRefs.findIndex((songRef) => Boolean(songRefLabel(songRef)));
+  const attachmentChips = (placement: "below" | "manager" | "summary" = "below") =>
+    hasContentReferences ? (
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-1 px-1.5 pb-1.5 md:pb-1",
+          placement === "manager"
+            ? "w-full flex-col items-stretch gap-0.5 overflow-hidden p-0"
+            : placement === "summary"
+              ? "min-w-0 flex-1 overflow-hidden p-0"
+              : allowEdit ? "pl-9" : "pl-1.5",
+        )}
+      >
+        {songRefs.map((currentSongRef, songIndex) => {
+          const label = songRefLabel(currentSongRef);
+          if (!label) return null;
+          if (placement === "summary" && songIndex !== firstSongIndex) return null;
+          const isSongUnlinked = currentSongRef.kind === "pending";
+          const canLinkSong = isSongUnlinked && allowEdit;
+          const canCreateMissingSong =
+            isSongUnlinked && canCreateLibrarySong && !canLinkSong;
+          const songChipInteractive =
+            canLinkSong || canCreateMissingSong || Boolean(onViewSongLyrics);
+          const pendingTitle =
+            currentSongRef.kind === "pending" ? currentSongRef.title : "";
 
-        const requestCreatePendingSong = () => {
-          if (currentSongRef.kind !== "pending") return;
-          if (onCreatePendingSong) {
-            onCreatePendingSong(currentSongRef);
-            return;
-          }
-          openSongPicker(true, songIndex);
-        };
+          const requestCreatePendingSong = () => {
+            if (currentSongRef.kind !== "pending") return;
+            if (onCreatePendingSong) {
+              onCreatePendingSong(currentSongRef);
+              return;
+            }
+            openSongPicker(true, songIndex);
+          };
 
-        const handleSongChipClick = () => {
+          const handleSongChipClick = () => {
+            if (canLinkSong) {
+              setSongSuggestionsIndex(songIndex);
+              return;
+            }
+            if (canCreateMissingSong) {
+              requestCreatePendingSong();
+              return;
+            }
+            onViewSongLyrics?.(currentSongRef);
+          };
+
+          let songChipLabel = `View song details for ${label}`;
           if (canLinkSong) {
-            setSongSuggestionsIndex(songIndex);
-            return;
+            songChipLabel = `Link ${label} to a song in the library`;
+          } else if (canCreateMissingSong) {
+            songChipLabel = `Create ${label} in the library`;
+          } else if (isSongUnlinked) {
+            songChipLabel = `View reference lyrics for ${label}`;
           }
-          if (canCreateMissingSong) {
-            requestCreatePendingSong();
-            return;
-          }
-          onViewSongLyrics?.(currentSongRef);
-        };
 
-        let songChipLabel = `View song details for ${label}`;
-        if (canLinkSong) {
-          songChipLabel = `Link ${label} to a song in the library`;
-        } else if (canCreateMissingSong) {
-          songChipLabel = `Create ${label} in the library`;
-        } else if (isSongUnlinked) {
-          songChipLabel = `View reference lyrics for ${label}`;
-        }
-
-        const songChipContent = (
-          <>
-            <Icon
-              svg={Music}
-              size="xs"
-              className={
-                isSongUnlinked
-                  ? SERVICE_PLAN_UNLINKED_SONG_ICON_CLASS
-                  : SERVICE_PLAN_SONG_ICON_CLASS
-              }
-            />
-            <span className="max-w-44 truncate">{label}</span>
-            {isSongUnlinked ? (
-              <span className="shrink-0 whitespace-nowrap text-amber-200/90">
-                · Not in library
-              </span>
-            ) : null}
-          </>
-        );
-
-        const songChipButton = songChipInteractive ? (
-          <button
-            type="button"
-            className={cn(
-              "flex min-w-0 items-center gap-0.5 rounded text-left focus-visible:outline-none focus-visible:ring-1",
-              isSongUnlinked
-                ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
-                : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
-            )}
-            aria-haspopup={
-              canLinkSong || canCreateMissingSong ? "dialog" : undefined
-            }
-            aria-expanded={
-              canLinkSong ? songSuggestionsIndex === songIndex : undefined
-            }
-            aria-label={songChipLabel}
-            // Opens rather than toggles: the chip is the popover's anchor, not its
-            // trigger, so Radix already dismisses on a click outside the panel.
-            onClick={handleSongChipClick}
-          >
-            {songChipContent}
-          </button>
-        ) : (
-          <span className="flex min-w-0 items-center gap-0.5">{songChipContent}</span>
-        );
-
-        return (
-          <span
-            key={`${currentSongRef.kind}:${label}:${songIndex}`}
-            className={cn(
-              SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-              isSongUnlinked
-                ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
-                : SERVICE_PLAN_SONG_CHIP_CLASS,
-            )}
-          >
-            {canLinkSong ? (
-              <ServicePlanSongSuggestionPopover
-                open={songSuggestionsIndex === songIndex}
-                onOpenChange={(open) =>
-                  setSongSuggestionsIndex(open ? songIndex : null)
-                }
-                title={pendingTitle}
-                onSelectSong={(nextSongRef) =>
-                  replaceSongAt(songIndex, nextSongRef)
-                }
-                onOpenLibrary={() => openSongPicker(false, songIndex)}
-                onCreateSong={
-                  canCreateLibrarySong
-                    ? requestCreatePendingSong
-                    : undefined
-                }
-                anchor={songChipButton}
-              />
-            ) : (
-              songChipButton
-            )}
-            {allowEdit ? (
-              <Button
-                type="button"
-                variant="tertiary"
-                iconSize="xs"
-                padding="p-0"
-                className="h-4 w-4 max-md:min-h-0"
-                svg={X}
-                aria-label={
-                  songIndex === 0 ? "Remove song" : `Remove song ${label}`
-                }
-                onClick={() => removeSongAt(songIndex)}
-              />
-            ) : null}
-          </span>
-        );
-      })}
-      {scriptureLabel ? (
-        <span
-          className={cn(
-            SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-            SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
-          )}
-        >
-          {allowEdit ? (
-            <ServicePlanScripturePopover
-              open={scriptureEditIndex === 0}
-              onOpenChange={(open) => setScriptureEditIndex(open ? 0 : null)}
-              initialScriptureRef={scriptureRefs[0]}
-              trigger
-              onSelect={(scriptureRef) => {
-                onUpdate({
-                  scriptureRef: undefined,
-                  scriptureRefs: scriptureRefs.map((current, index) =>
-                    index === 0 ? scriptureRef : current,
-                  ),
-                });
-              }}
-              anchor={(
-                <button
-                  type="button"
-                  className="flex min-w-0 items-center gap-0.5 rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
-                  aria-label={`Edit scripture ${scriptureLabel}`}
-                >
-                  <Icon
-                    svg={BookOpen}
-                    size="xs"
-                    className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
-                  />
-                  <span className="max-w-44 truncate">{scriptureLabel}</span>
-                </button>
-              )}
-            />
-          ) : (
+          const songChipContent = (
             <>
               <Icon
-                svg={BookOpen}
+                svg={Music}
                 size="xs"
-                className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS}
+                className={cn(
+                  "shrink-0",
+                  isSongUnlinked
+                    ? SERVICE_PLAN_UNLINKED_SONG_ICON_CLASS
+                    : SERVICE_PLAN_SONG_ICON_CLASS,
+                )}
               />
-              <span className="max-w-44 truncate">{scriptureLabel}</span>
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate",
+                )}
+              >
+                {label}
+              </span>
+              {isSongUnlinked ? (
+                <span className="shrink-0 whitespace-nowrap text-amber-200/90">
+                  · Not in library
+                </span>
+              ) : null}
             </>
-          )}
-          {allowEdit ? (
-            <Button
+          );
+
+          const songChipButton = songChipInteractive ? (
+            <button
               type="button"
-              variant="tertiary"
-              iconSize="xs"
-              padding="p-0"
-              className="h-4 w-4 max-md:min-h-0"
-              svg={X}
-              aria-label="Remove scripture"
-              onClick={() => onUpdate({
-                scriptureRef: undefined,
-                scriptureRefs: scriptureRefs.slice(1),
-              })}
-            />
-          ) : null}
-        </span>
-      ) : null}
-      {scriptureRefs.slice(1).map((additionalScripture, index) => {
-        const scriptureIndex = index + 1;
-        return (
+              className={cn(
+                "flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left focus-visible:outline-none focus-visible:ring-1",
+                isSongUnlinked
+                  ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
+                  : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
+              )}
+              aria-haspopup={
+                canLinkSong || canCreateMissingSong ? "dialog" : undefined
+              }
+              aria-expanded={
+                canLinkSong ? songSuggestionsIndex === songIndex : undefined
+              }
+              aria-label={songChipLabel}
+              // Opens rather than toggles: the chip is the popover's anchor, not its
+              // trigger, so Radix already dismisses on a click outside the panel.
+              onClick={handleSongChipClick}
+            >
+              {songChipContent}
+            </button>
+          ) : (
+            <span className="flex min-w-0 items-center gap-0.5">{songChipContent}</span>
+          );
+
+          return (
+            <span
+              key={`${currentSongRef.kind}:${label}:${songIndex}`}
+              className={cn(
+                SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+                placement === "summary" && "h-6 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                isSongUnlinked
+                  ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
+                  : SERVICE_PLAN_SONG_CHIP_CLASS,
+              )}
+            >
+              {canLinkSong ? (
+                <ServicePlanSongSuggestionPopover
+                  open={songSuggestionsIndex === songIndex}
+                  onOpenChange={(open) =>
+                    setSongSuggestionsIndex(open ? songIndex : null)
+                  }
+                  title={pendingTitle}
+                  onSelectSong={(nextSongRef) =>
+                    replaceSongAt(songIndex, nextSongRef)
+                  }
+                  onOpenLibrary={() => openSongPicker(false, songIndex)}
+                  onCreateSong={
+                    canCreateLibrarySong
+                      ? requestCreatePendingSong
+                      : undefined
+                  }
+                  anchor={songChipButton}
+                />
+              ) : (
+                songChipButton
+              )}
+              {allowEdit ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  iconSize="xs"
+                  padding="p-0"
+                  className="h-4 w-4 max-md:min-h-0"
+                  svg={X}
+                  aria-label={
+                    songIndex === 0 ? "Remove song" : `Remove song ${label}`
+                  }
+                  onClick={() => removeSongAt(songIndex)}
+                />
+              ) : null}
+            </span>
+          );
+        })}
+        {scriptureLabel && (placement !== "summary" || firstSongIndex < 0) ? (
           <span
-            key={`${additionalScripture.label}:${scriptureIndex}`}
-            className={cn(SERVICE_PLAN_ATTACHMENT_CHIP_CLASS, SERVICE_PLAN_SCRIPTURE_CHIP_CLASS)}
+            className={cn(
+              SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
+              SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
+              placement === "summary" && "h-6 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+            )}
           >
             {allowEdit ? (
               <ServicePlanScripturePopover
-                open={scriptureEditIndex === scriptureIndex}
-                onOpenChange={(open) =>
-                  setScriptureEditIndex(open ? scriptureIndex : null)
-                }
-                initialScriptureRef={additionalScripture}
+                open={scriptureEditIndex === 0}
+                onOpenChange={(open) => setScriptureEditIndex(open ? 0 : null)}
+                initialScriptureRef={scriptureRefs[0]}
                 trigger
                 onSelect={(scriptureRef) => {
                   onUpdate({
                     scriptureRef: undefined,
-                    scriptureRefs: scriptureRefs.map((current, currentIndex) =>
-                      currentIndex === scriptureIndex ? scriptureRef : current,
+                    scriptureRefs: scriptureRefs.map((current, index) =>
+                      index === 0 ? scriptureRef : current,
                     ),
                   });
                 }}
                 anchor={(
                   <button
                     type="button"
-                    className="flex min-w-0 items-center gap-0.5 rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
-                    aria-label={`Edit scripture ${additionalScripture.label}`}
+                    className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                    aria-label={`Edit scripture ${scriptureLabel}`}
                   >
-                    <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
-                    <span className="max-w-44 truncate">{additionalScripture.label}</span>
+                    <Icon
+                      svg={BookOpen}
+                      size="xs"
+                      className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{scriptureLabel}</span>
                   </button>
                 )}
               />
             ) : (
               <>
-                <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
-                <span className="max-w-44 truncate">{additionalScripture.label}</span>
+                <Icon
+                  svg={BookOpen}
+                  size="xs"
+                  className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
+                />
+                <span className="min-w-0 flex-1 truncate">{scriptureLabel}</span>
               </>
             )}
             {allowEdit ? (
@@ -1593,18 +1532,105 @@ const ServicePlanElementRow = ({
                 padding="p-0"
                 className="h-4 w-4 max-md:min-h-0"
                 svg={X}
-                aria-label={`Remove scripture ${additionalScripture.label}`}
+                aria-label="Remove scripture"
                 onClick={() => onUpdate({
                   scriptureRef: undefined,
-                  scriptureRefs: scriptureRefs.filter((_, currentIndex) => currentIndex !== scriptureIndex),
+                  scriptureRefs: scriptureRefs.slice(1),
                 })}
               />
             ) : null}
           </span>
-        );
-      })}
+        ) : null}
+        {placement !== "summary" && scriptureRefs.slice(1).map((additionalScripture, index) => {
+          const scriptureIndex = index + 1;
+          return (
+            <span
+              key={`${additionalScripture.label}:${scriptureIndex}`}
+              className={cn(SERVICE_PLAN_ATTACHMENT_CHIP_CLASS, SERVICE_PLAN_SCRIPTURE_CHIP_CLASS)}
+            >
+              {allowEdit ? (
+                <ServicePlanScripturePopover
+                  open={scriptureEditIndex === scriptureIndex}
+                  onOpenChange={(open) =>
+                    setScriptureEditIndex(open ? scriptureIndex : null)
+                  }
+                  initialScriptureRef={additionalScripture}
+                  trigger
+                  onSelect={(scriptureRef) => {
+                    onUpdate({
+                      scriptureRef: undefined,
+                      scriptureRefs: scriptureRefs.map((current, currentIndex) =>
+                        currentIndex === scriptureIndex ? scriptureRef : current,
+                      ),
+                    });
+                  }}
+                  anchor={(
+                    <button
+                      type="button"
+                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                      aria-label={`Edit scripture ${additionalScripture.label}`}
+                    >
+                      <Icon svg={BookOpen} size="xs" className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} />
+                      <span className="min-w-0 flex-1 truncate">{additionalScripture.label}</span>
+                    </button>
+                  )}
+                />
+              ) : (
+                <>
+                  <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
+                  <span className="min-w-0 flex-1 truncate">{additionalScripture.label}</span>
+                </>
+              )}
+              {allowEdit ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  iconSize="xs"
+                  padding="p-0"
+                  className="h-4 w-4 max-md:min-h-0"
+                  svg={X}
+                  aria-label={`Remove scripture ${additionalScripture.label}`}
+                  onClick={() => onUpdate({
+                    scriptureRef: undefined,
+                    scriptureRefs: scriptureRefs.filter((_, currentIndex) => currentIndex !== scriptureIndex),
+                  })}
+                />
+              ) : null}
+            </span>
+          );
+        })}
+      </div>
+    ) : null;
+
+  const contentSummaryControl = hasContentReferences ? (
+    <div className="flex min-w-0 max-w-full items-center overflow-hidden rounded border border-cyan-500/50 bg-gray-950/30">
+      {attachmentChips("summary")}
+      {allowEdit || contentReferenceCount > 1 ? (
+        <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={contentReferenceCount > 1 ? undefined : ChevronDown}
+              iconSize="xs"
+              className="h-6 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 text-xs text-gray-300 hover:text-cyan-50"
+              aria-label={`Manage content for ${itemLabel}`}
+            >
+              {contentReferenceCount > 1 ? `+${contentReferenceCount - 1}` : null}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-80 border-gray-700 bg-gray-900 p-2 text-gray-100"
+          >
+            <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
+            {attachmentChips("manager")}
+            {contentAddControl ? <div className="px-1 pt-2">{contentAddControl}</div> : null}
+          </PopoverContent>
+        </Popover>
+      ) : null}
     </div>
-  ) : null;
+  ) : contentAddControl;
 
   const notesBlock = showNotesEditor ? (
     <div
@@ -1638,7 +1664,7 @@ const ServicePlanElementRow = ({
           placeholder="Notes for this item (optional)"
           value={element.notes || EMPTY_RICH_TEXT}
           disabled={!allowEdit}
-          editorClassName={SERVICE_PLAN_INLINE_EDITOR_CLASS}
+          editorClassName={noteEditorClassName}
           onChange={(notes) => onUpdate({ notes }, "notes")}
         />
       </ExpandableNotePanel>
@@ -1722,7 +1748,7 @@ const ServicePlanElementRow = ({
               placeholder="Only shown to this team"
               value={teamNote.note}
               disabled={!allowEdit}
-              editorClassName={SERVICE_PLAN_INLINE_EDITOR_CLASS}
+              editorClassName={noteEditorClassName}
               onChange={(note) =>
                 onUpdate({
                   teamNotes: scopedNotes.map((existing) =>
@@ -1819,7 +1845,7 @@ const ServicePlanElementRow = ({
               placeholder="Only shown to this role"
               value={roleNote.note}
               disabled={!allowEdit}
-              editorClassName={SERVICE_PLAN_INLINE_EDITOR_CLASS}
+              editorClassName={noteEditorClassName}
               onChange={(note) =>
                 onUpdate({
                   teamNotes: scopedNotes.map((existing) =>
@@ -1843,16 +1869,7 @@ const ServicePlanElementRow = ({
    */
   const assigneesBlock = assignees.length > 0 || (allowEdit && !structureOnly) ? (
     <ServicePlanAssigneeList
-      assignees={
-        visibleMicrophoneIds
-          ? assignees.map((assignee) => ({
-            ...assignee,
-            microphoneIds: (assignee.microphoneIds || []).filter((id) =>
-              visibleMicrophoneIds.has(id),
-            ),
-          }))
-          : assignees
-      }
+      assignees={assignees}
       allowEdit={allowEdit}
       microphones={microphones}
       assignedToHistoryValues={assignedToHistoryValues}
@@ -1868,16 +1885,7 @@ const ServicePlanElementRow = ({
   ) : null;
   const readOnlyAssigneesBlock = assignees.length > 0 ? (
     <ServicePlanAssigneeList
-      assignees={
-        visibleMicrophoneIds
-          ? assignees.map((assignee) => ({
-            ...assignee,
-            microphoneIds: (assignee.microphoneIds || []).filter((id) =>
-              visibleMicrophoneIds.has(id),
-            ),
-          }))
-          : assignees
-      }
+      assignees={assignees}
       allowEdit={false}
       microphones={microphones}
       assignedToHistoryValues={assignedToHistoryValues}
@@ -1889,16 +1897,6 @@ const ServicePlanElementRow = ({
       onEdit={() => setAssignmentSheetOpen(true)}
       onChange={() => undefined}
     />
-  ) : allowEdit && !structureOnly ? (
-    <Button
-      type="button"
-      variant="tertiary"
-      className="mx-1 mb-1 rounded-md px-1.5 py-1 text-left text-xs text-gray-400 hover:bg-gray-800/60 hover:text-white"
-      aria-label={`Assignees for ${itemLabel}`}
-      onClick={() => setAssignmentSheetOpen(true)}
-    >
-      Unassigned
-    </Button>
   ) : null;
 
   return (
@@ -1910,8 +1908,12 @@ const ServicePlanElementRow = ({
         transition,
         opacity: isDragging ? 0.6 : undefined,
       }}
-      className={surfaceClassName}
+      className={cn(
+        surfaceClassName,
+        isSelected && isEditing && "bg-cyan-950/35 ring-1 ring-inset ring-cyan-400/50",
+      )}
       data-element-tone={toneIndex % 2 === 0 ? "even" : "odd"}
+      onClick={onSelect}
     >
       {allowEdit ? (
         <div
@@ -1983,21 +1985,29 @@ const ServicePlanElementRow = ({
             />
           </div>
 
-          <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:ml-auto")}>
+          <div
+            className={cn(
+              SERVICE_PLAN_COL.contentView,
+              "min-w-0 self-start py-0.5 max-md:order-4",
+              !hasContentReferences && !contentAddControl && "max-md:hidden",
+            )}
+            aria-label="Songs and scripture"
+          >
+            {contentSummaryControl}
+          </div>
+
+          <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:ml-auto max-md:order-5")}>
             {liveControls}
-            <Button
-              type="button"
-              variant="tertiary"
-              iconSize="sm"
-              className="shrink-0 max-md:min-h-0"
-              svg={Trash2}
-              aria-label={`Remove ${itemLabel}`}
-              onClick={onRemove}
-            />
+            {itemActionsMenu}
           </div>
         </div>
       ) : (
-        <div className={cn(SERVICE_PLAN_COL.row, "items-start py-2.5 md:py-1.5")}>
+        <div
+          className={cn(
+            SERVICE_PLAN_COL.row,
+            "items-start py-2.5 max-md:flex-wrap md:py-1.5",
+          )}
+        >
           <span
             className={cn(
               SERVICE_PLAN_COL.timeView,
@@ -2009,7 +2019,7 @@ const ServicePlanElementRow = ({
           <span
             className={cn(
               SERVICE_PLAN_COL.durationView,
-              "whitespace-nowrap text-xs leading-4 tabular-nums text-gray-500",
+              "whitespace-nowrap text-xs leading-4 tabular-nums text-gray-400",
             )}
           >
             {formattedDuration || "—"}
@@ -2024,39 +2034,59 @@ const ServicePlanElementRow = ({
               </p>
             ) : null}
           </div>
-          {isLive || showLiveControls ? (
-            <div className={cn(SERVICE_PLAN_COL.actionsView, "self-center")}>
+          {!allowEdit ? (
+            <div
+              className={cn(
+                SERVICE_PLAN_COL.contentView,
+                "min-w-0 self-start py-0.5 max-md:order-4",
+                !hasContentReferences && "max-md:hidden",
+              )}
+              aria-label="Songs and scripture"
+            >
+              {contentSummaryControl}
+            </div>
+          ) : null}
+          {canEdit || isLive || showLiveControls ? (
+            <div className={cn(SERVICE_PLAN_COL.actionsView, "self-center max-md:order-5")}>
               {liveControls}
             </div>
           ) : null}
         </div>
       )}
 
-      {allowEdit && !structureOnly
-        ? readOnlyAssigneesBlock
-        : assigneesBlock}
-      {attachmentChips}
+      {allowEdit ? (
+        readOnlyAssigneesBlock || (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={UserRound}
+            iconSize="sm"
+            className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+            aria-label={`Assignees for ${itemLabel}`}
+            onClick={() => setAssignmentSheetOpen(true)}
+          >
+            {structureOnly ? "Add microphones" : "Assign people & mics"}
+          </Button>
+        )
+      ) : (
+        assigneesBlock
+      )}
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
-      {attachmentsTrailing ? (
-        <div className="flex items-center px-1.5 pb-1.5 pl-9 md:pb-1">
-          {attachmentsTrailing}
-        </div>
-      ) : null}
-      {allowEdit && !structureOnly ? (
+      {allowEdit ? (
         <Sheet open={assignmentSheetOpen} onOpenChange={setAssignmentSheetOpen}>
           <SheetContent
             side="right"
             className="flex w-full max-w-md flex-col gap-0 border-gray-700 bg-gray-950 p-0"
           >
             <SheetHeader className="border-b border-gray-800">
-              <SheetTitle>Edit assignments</SheetTitle>
+              <SheetTitle>Edit assignees</SheetTitle>
               <SheetDescription className="truncate">
                 {itemLabel}
               </SheetDescription>
             </SheetHeader>
-            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0">
+            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
               {assigneesBlock}
             </div>
           </SheetContent>

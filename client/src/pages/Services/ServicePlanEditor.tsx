@@ -2,12 +2,11 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type Rea
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
   ExternalLink,
-  Eye,
-  EyeOff,
   LayoutTemplate,
   MoreHorizontal,
   Pencil,
@@ -116,7 +115,10 @@ import {
   servicePlanElementDomId,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
-import ServicePlanSectionList from "./ServicePlanSectionList";
+import ServicePlanSectionList, {
+  servicePlanSectionDomId,
+  type ServicePlanSelection,
+} from "./ServicePlanSectionList";
 import ServicePlanSetlist from "./ServicePlanSetlist";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ViewSongSectionsDrawer from "../../components/SongSections/ViewSongSectionsDrawer";
@@ -397,6 +399,7 @@ const ServicePlanEditor = ({
   const [plan, setPlan] = useState<ServicePlan | null>(null);
   const [planName, setPlanName] = useState("");
   const [sections, setSections] = useState<ServicePlanSection[] | null>(null);
+  const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(null);
   const [sourceImport, setSourceImport] = useState<ServicePlanSourceImport | undefined>(
     undefined,
   );
@@ -436,6 +439,7 @@ const ServicePlanEditor = ({
   const planTabPlanKeyRef = useRef(planKey);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
+  const [showServiceDetails, setShowServiceDetails] = useState(false);
   /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
   const [planActionsView, setPlanActionsView] = useState<
     "root" | "roleNotes" | "switchService"
@@ -530,6 +534,7 @@ const ServicePlanEditor = ({
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
     setIsEditing(false);
+    setShowServiceDetails(false);
     // A different date is a different running order — open on it, not on
     // whichever side tab the previous plan was left on. On first mount, keep
     // the caller's requested tab (used when returning to the mobile roster).
@@ -969,27 +974,50 @@ const ServicePlanEditor = ({
     setRefreshOptions((current) => ({ ...current, [key]: checked }));
   };
 
-  const handleAddElement = (sectionId: string) => {
-    if (!sections) return;
+  const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
+    if (!sections) return null;
     const isFirstElementOverall = sections.every((s) => s.elements.length === 0);
-    let next = addElement(sections, sectionId);
+    const existingElementIds = new Set(
+      sections.flatMap((section) => section.elements.map((element) => element.id)),
+    );
+    let next = addElement(sections, sectionId, "free", insertAfterElementId);
+    const newElement = next
+      .find((section) => section.id === sectionId)
+      ?.elements.find((element) => !existingElementIds.has(element.id));
+    if (!newElement) return null;
     if (isFirstElementOverall) {
       const anchor = occurrenceLocalTime(occurrence.startsAt, planTimezone);
-      const newElement = next
-        .find((s) => s.id === sectionId)
-        ?.elements.slice(-1)[0];
-      if (newElement) {
-        next = applyPlanAnchorStartTime(
-          updateElement(next, sectionId, newElement.id, {
-            startTime: anchor,
-            durationSeconds: 0,
-            durationMinutes: 0,
-          }),
-          anchor,
-        );
-      }
+      next = applyPlanAnchorStartTime(
+        updateElement(next, sectionId, newElement.id, {
+          startTime: anchor,
+          durationSeconds: 0,
+          durationMinutes: 0,
+        }),
+        anchor,
+      );
     }
     updateDraftSections(next);
+    setSelectedPlanTarget({ sectionId, elementId: newElement.id });
+    window.requestAnimationFrame(() => {
+      const row = document.getElementById(servicePlanElementDomId(newElement.id));
+      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      row?.querySelector<HTMLInputElement>('input[placeholder="Item name"]')?.focus({ preventScroll: true });
+    });
+    return newElement.id;
+  };
+
+  const handleAddSection = () => {
+    if (!sections) return;
+    const next = addSection(sections);
+    const newSection = next.at(-1);
+    updateDraftSections(next);
+    if (!newSection) return;
+    setSelectedPlanTarget({ sectionId: newSection.id });
+    window.requestAnimationFrame(() => {
+      const section = document.getElementById(servicePlanSectionDomId(newSection.id));
+      section?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      section?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    });
   };
 
   const ensurePublishedUrls = async (): Promise<ServicePlanPublicUrls | null> => {
@@ -1580,6 +1608,14 @@ const ServicePlanEditor = ({
                 </>
               ) : null}
               <DropdownMenuItem
+                disabled={!canEdit}
+                onSelect={() => setShowServiceDetails(true)}
+              >
+                <Pencil aria-hidden />
+                Edit service details
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="my-1 bg-gray-600" />
+              <DropdownMenuItem
                 disabled={!canEdit || !hasSections}
                 onSelect={() => setTemplateModal("save")}
               >
@@ -1700,6 +1736,39 @@ const ServicePlanEditor = ({
 
   const planBody = (
     <>
+      <Sheet open={showServiceDetails} onOpenChange={setShowServiceDetails}>
+        <SheetContent side="right" className="w-full max-w-md gap-0">
+          <SheetHeader>
+            <SheetTitle>Edit service details</SheetTitle>
+            <SheetDescription>
+              Update the name or planned start time for this service.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 px-6 py-5">
+            <DebouncedInput
+              key={`plan-name:${planKey}`}
+              label="Plan name"
+              value={planName}
+              disabled={!canEdit}
+              onChange={updateDraftName}
+            />
+            <TimePicker
+              label="Service start time"
+              labelLayout="stacked"
+              value={anchorStartTime}
+              disabled={!canEdit || !sections || sections.every((section) => section.elements.length === 0)}
+              onChange={(value) => {
+                if (!value || !sections) return;
+                updateDraftSections(
+                  applyPlanAnchorStartTime(sections, String(value)),
+                  "anchorStartTime",
+                );
+              }}
+            />
+            <p className="text-xs text-gray-400">Changes save automatically.</p>
+          </div>
+        </SheetContent>
+      </Sheet>
       {loading ? <ServicePlanSkeleton /> : null}
 
       {!loading && isEmpty && canEdit ? (
@@ -1793,46 +1862,19 @@ const ServicePlanEditor = ({
             canEdit={canEdit}
             isEditing={isEditing}
             onSectionsChange={updateDraftSections}
-            onAddElement={handleAddElement}
+            selection={selectedPlanTarget}
+            onSelectionChange={setSelectedPlanTarget}
             scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
             header={
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-                {isEditing ? (
-                  <>
-                    <DebouncedInput
-                      key={`plan-name:${planKey}`}
-                      label="Plan name"
-                      className="min-w-0 w-full sm:max-w-md sm:flex-1"
-                      value={planName}
-                      disabled={!canEdit}
-                      onChange={updateDraftName}
-                    />
-                    <TimePicker
-                      label="Service start time"
-                      labelLayout="stacked"
-                      className="w-full shrink-0 sm:w-40"
-                      value={anchorStartTime}
-                      disabled={!canEdit || sections.every((s) => s.elements.length === 0)}
-                      onChange={(value) =>
-                        value && updateDraftSections(
-                          applyPlanAnchorStartTime(sections, String(value)),
-                          "anchorStartTime",
-                        )
-                      }
-                    />
-                  </>
-                ) : (
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-gray-100">
-                      {planName.trim() || occurrence.name || service.name}
-                    </p>
-                    {anchorStartTime ? (
-                      <p className="mt-0.5 text-xs text-gray-400">
-                        Starts {formatPlanStartTimeDisplay(anchorStartTime)}
-                      </p>
-                    ) : null}
-                  </div>
-                )}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-gray-100">
+                  {planName.trim() || occurrence.name || service.name}
+                </p>
+                {anchorStartTime ? (
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    Starts {formatPlanStartTimeDisplay(anchorStartTime)}
+                  </p>
+                ) : null}
               </div>
             }
             assignedToHistoryValues={assignedToSuggestions}
@@ -1900,20 +1942,63 @@ const ServicePlanEditor = ({
    * inside the running order, so a failed or conflicted save is never hidden
    * behind the Microphones tab.
    */
+  const selectedPlanSection = sections?.find(
+    (section) => section.id === selectedPlanTarget?.sectionId,
+  );
   const planToolbar =
     hasSections && sections ? (
       <div className="flex shrink-0 flex-wrap gap-2">
         {canEdit && isEditing && activeTab === "plan" ? (
-          <Button
-            type="button"
-            variant="tertiary"
-            svg={Plus}
-            iconSize="sm"
-            className="max-md:min-h-0"
-            onClick={() => updateDraftSections(addSection(sections))}
-          >
-            Add section
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={Plus}
+              iconSize="sm"
+              className="max-md:min-h-0"
+              disabled={!selectedPlanSection}
+              onClick={() =>
+                selectedPlanSection
+                && handleAddElement(selectedPlanSection.id, selectedPlanTarget?.elementId)
+              }
+            >
+              Add item
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={ChevronDown}
+                  iconSize="sm"
+                  className="max-md:min-h-0"
+                  aria-label="Choose item destination"
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-56">
+                {sections.map((section) => (
+                  <DropdownMenuItem
+                    key={section.id}
+                    onSelect={() => void handleAddElement(section.id)}
+                  >
+                    Add to {section.name.trim() || "Untitled section"}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <div className="flex items-center border-l border-gray-600 pl-2">
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={Plus}
+                iconSize="sm"
+                className="max-md:min-h-0"
+                onClick={handleAddSection}
+              >
+                Add section
+              </Button>
+            </div>
+          </>
         ) : null}
         <div
           className={cn(
@@ -2077,20 +2162,6 @@ const ServicePlanEditor = ({
                       </Button>
                     ) : null}
                   </>
-                ) : null}
-                {isDesktop && hasSections ? (
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    svg={hideNotes ? Eye : EyeOff}
-                    iconSize="sm"
-                    className="hidden max-md:min-h-0 lg:inline-flex"
-                    aria-pressed={hideNotes}
-                    aria-label={hideNotes ? "Show notes" : "Hide notes"}
-                    onClick={() => setHideNotes((current) => !current)}
-                  >
-                    {hideNotes ? "Show notes" : "Hide notes"}
-                  </Button>
                 ) : null}
                 {canEdit && hasSections ? (
                   <Button

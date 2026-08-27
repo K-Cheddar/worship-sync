@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
   LayoutTemplate,
   MoreHorizontal,
   Pencil,
@@ -23,6 +24,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "@/utils/cnHelper";
 import { useToast } from "../../context/toastContext";
 import {
@@ -32,9 +40,13 @@ import {
   AuthApiError,
 } from "../../api/auth";
 import { showApiErrorToast } from "../../utils/apiErrorToast";
-import ServicePlanSectionList from "./ServicePlanSectionList";
+import ServicePlanSectionList, {
+  servicePlanSectionDomId,
+  type ServicePlanSelection,
+} from "./ServicePlanSectionList";
 import {
   formatPlanStartTimeDisplay,
+  servicePlanElementDomId,
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
@@ -166,6 +178,7 @@ const ServicePlanTemplateEditor = ({
   const [sections, setSections] = useState<ServicePlanSection[]>(
     template.sections,
   );
+  const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(null);
   // A new template opens ready to build; an existing one opens as a readable
   // outline, matching how the plan editor behaves.
   const [isEditing, setIsEditing] = useState(isNew && canEdit);
@@ -177,6 +190,7 @@ const ServicePlanTemplateEditor = ({
     ServicePlanMicrophoneAudience[] | undefined
   >();
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [detailsSheetOpen, setDetailsSheetOpen] = useState(isNew && canEdit);
   const [draftChangeVersion, setDraftChangeVersion] = useState(0);
   const [conflictTemplate, setConflictTemplate] =
     useState<ServicePlanTemplate | null>(null);
@@ -422,9 +436,40 @@ const ServicePlanTemplateEditor = ({
 
   const anchorStartTime = sections[0]?.elements?.[0]?.startTime || "";
   const itemCount = countServicePlanTemplateItems(sections);
+  const selectedPlanSection = sections.find(
+    (section) => section.id === selectedPlanTarget?.sectionId,
+  );
 
-  const handleAddElement = (sectionId: string) => {
-    updateDraftSections(addElement(sections, sectionId));
+  const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
+    const existingElementIds = new Set(
+      sections.flatMap((section) => section.elements.map((element) => element.id)),
+    );
+    const next = addElement(sections, sectionId, "free", insertAfterElementId);
+    const newElement = next
+      .find((section) => section.id === sectionId)
+      ?.elements.find((element) => !existingElementIds.has(element.id));
+    if (!newElement) return null;
+    updateDraftSections(next);
+    setSelectedPlanTarget({ sectionId, elementId: newElement.id });
+    window.requestAnimationFrame(() => {
+      const row = document.getElementById(servicePlanElementDomId(newElement.id));
+      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      row?.querySelector<HTMLInputElement>('input[placeholder="Item name"]')?.focus({ preventScroll: true });
+    });
+    return newElement.id;
+  };
+
+  const handleAddSection = () => {
+    const next = addSection(sections);
+    const newSection = next.at(-1);
+    updateDraftSections(next);
+    if (!newSection) return;
+    setSelectedPlanTarget({ sectionId: newSection.id });
+    window.requestAnimationFrame(() => {
+      const section = document.getElementById(servicePlanSectionDomId(newSection.id));
+      section?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      section?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    });
   };
 
   /** Scope is part of the saved document, so changing it is a draft edit. */
@@ -573,7 +618,8 @@ const ServicePlanTemplateEditor = ({
           canEdit={canEdit}
           isEditing={isEditing}
           onSectionsChange={updateDraftSections}
-          onAddElement={handleAddElement}
+          selection={selectedPlanTarget}
+          onSelectionChange={setSelectedPlanTarget}
           ariaLabel="Service plan template"
           structureOnly
           hideNotes={hideNotes}
@@ -583,70 +629,130 @@ const ServicePlanTemplateEditor = ({
           teamNoteOptions={teamNoteOptions}
           header={
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-              {canEdit && isEditing ? (
-                <>
-                  <Input
-                    label="Template name"
-                    placeholder="e.g. Standard Sabbath"
-                    className="min-w-0 w-full sm:max-w-xs sm:flex-1"
-                    value={name}
-                    onChange={(value) =>
-                      updateDraft({ name: String(value) }, "templateName")
-                    }
-                  />
-                  <Select
-                    label="Preferred for"
-                    className="w-full shrink-0 sm:w-52"
-                    value={serviceId || ANY_SERVICE_SCOPE_VALUE}
-                    options={serviceOptions}
-                    onChange={(value) =>
-                      updateDraftServiceId(
-                        value === ANY_SERVICE_SCOPE_VALUE ? "" : value,
-                      )
-                    }
-                  />
-                  <TimePicker
-                    label="Start time"
-                    labelLayout="stacked"
-                    className="w-full shrink-0 sm:w-40"
-                    value={anchorStartTime}
-                    disabled={sections.every((s) => s.elements.length === 0)}
-                    onChange={(value) =>
-                      value && updateDraftSections(
-                        applyPlanAnchorStartTime(sections, String(value)),
-                        "anchorStartTime",
-                      )
-                    }
-                  />
-                </>
-              ) : (
+              <div className="flex min-w-0 items-center gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-gray-100">
                     {trimmedName || "Untitled template"}
                   </p>
-                  {anchorStartTime ? (
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      Starts {formatPlanStartTimeDisplay(anchorStartTime)}
-                    </p>
-                  ) : null}
+                  <p className="truncate text-xs text-gray-400">
+                    {anchorStartTime
+                      ? ` · Starts ${formatPlanStartTimeDisplay(anchorStartTime)}`
+                      : "No start time set"}
+                  </p>
                 </div>
-              )}
+                {canEdit && isEditing ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={Pencil}
+                    iconSize="sm"
+                    className="shrink-0 max-md:min-h-0"
+                    onClick={() => setDetailsSheetOpen(true)}
+                  >
+                    Edit details
+                  </Button>
+                ) : null}
+              </div>
             </div>
           }
         />
 
+        {canEdit && isEditing ? (
+          <Sheet open={detailsSheetOpen} onOpenChange={setDetailsSheetOpen}>
+            <SheetContent side="right" className="w-full max-w-md gap-0">
+              <SheetHeader>
+                <SheetTitle>Edit template details</SheetTitle>
+                <SheetDescription>
+                  Update the reusable template settings.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="scrollbar-variable min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+                <Input
+                  label="Template name"
+                  placeholder="e.g. Standard Sabbath"
+                  value={name}
+                  onChange={(value) =>
+                    updateDraft({ name: String(value) }, "templateName")
+                  }
+                />
+                <Select
+                  label="Preferred for"
+                  value={serviceId || ANY_SERVICE_SCOPE_VALUE}
+                  options={serviceOptions}
+                  onChange={(value) =>
+                    updateDraftServiceId(
+                      value === ANY_SERVICE_SCOPE_VALUE ? "" : value,
+                    )
+                  }
+                />
+                <TimePicker
+                  label="Start time"
+                  value={anchorStartTime}
+                  disabled={sections.every((s) => s.elements.length === 0)}
+                  onChange={(value) =>
+                    value && updateDraftSections(
+                      applyPlanAnchorStartTime(sections, String(value)),
+                      "anchorStartTime",
+                    )
+                  }
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        ) : null}
+
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canEdit && isEditing ? (
-            <Button
-              type="button"
-              variant="tertiary"
-              svg={Plus}
-              iconSize="sm"
-              className="max-md:min-h-0"
-              onClick={() => updateDraftSections(addSection(sections))}
-            >
-              Add section
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={Plus}
+                iconSize="sm"
+                className="max-md:min-h-0"
+                disabled={!selectedPlanSection}
+                onClick={() =>
+                  selectedPlanSection
+                  && handleAddElement(selectedPlanSection.id, selectedPlanTarget?.elementId)
+                }
+              >
+                Add item
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={ChevronDown}
+                    iconSize="sm"
+                    className="max-md:min-h-0"
+                    aria-label="Choose item destination"
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-56">
+                  {sections.map((section) => (
+                    <DropdownMenuItem
+                      key={section.id}
+                      onSelect={() => void handleAddElement(section.id)}
+                    >
+                      Add to {section.name.trim() || "Untitled section"}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <div className="flex items-center border-l border-gray-600 pl-2">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={Plus}
+                  iconSize="sm"
+                  className="max-md:min-h-0"
+                  onClick={handleAddSection}
+                >
+                  Add section
+                </Button>
+              </div>
+            </>
           ) : null}
           {canEdit ? (
             <div
