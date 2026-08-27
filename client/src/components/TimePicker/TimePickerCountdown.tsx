@@ -54,6 +54,7 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   const pendingSegmentRef = useRef<Segment | null>(null);
   const activeSegmentRef = useRef<Segment | null>(null);
   const openRef = useRef(false);
+  const blurTimeoutRef = useRef<number | null>(null);
   const hourRef = useRef(hour);
   const minuteRef = useRef(minute);
   const meridiemRef = useRef(meridiem);
@@ -175,7 +176,11 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
 
   const handleInputBlur = () => {
     // Defer so focus moving into the open popover listboxes does not complete early.
-    window.setTimeout(() => {
+    if (blurTimeoutRef.current !== null) {
+      window.clearTimeout(blurTimeoutRef.current);
+    }
+    blurTimeoutRef.current = window.setTimeout(() => {
+      blurTimeoutRef.current = null;
       if (openRef.current) {
         const active = document.activeElement;
         const focusMovedIntoPopover =
@@ -397,6 +402,13 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   };
 
   const handleFocus = () => {
+    // Selecting a value in a popover list can briefly blur and refocus the
+    // input. That is still one editing gesture, so do not complete the draft
+    // from the stale deferred blur in between those focus events.
+    if (blurTimeoutRef.current !== null) {
+      window.clearTimeout(blurTimeoutRef.current);
+      blurTimeoutRef.current = null;
+    }
     const requested = pendingSegmentRef.current;
     if (requested) {
       const range =
