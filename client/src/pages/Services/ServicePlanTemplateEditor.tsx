@@ -24,6 +24,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "@/utils/cnHelper";
 import { useToast } from "../../context/toastContext";
 import {
@@ -183,6 +190,7 @@ const ServicePlanTemplateEditor = ({
     ServicePlanMicrophoneAudience[] | undefined
   >();
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [detailsSheetOpen, setDetailsSheetOpen] = useState(isNew && canEdit);
   const [draftChangeVersion, setDraftChangeVersion] = useState(0);
   const [conflictTemplate, setConflictTemplate] =
     useState<ServicePlanTemplate | null>(null);
@@ -621,57 +629,77 @@ const ServicePlanTemplateEditor = ({
           teamNoteOptions={teamNoteOptions}
           header={
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-              {canEdit && isEditing ? (
-                <>
-                  <Input
-                    label="Template name"
-                    placeholder="e.g. Standard Sabbath"
-                    className="min-w-0 w-full sm:max-w-xs sm:flex-1"
-                    value={name}
-                    onChange={(value) =>
-                      updateDraft({ name: String(value) }, "templateName")
-                    }
-                  />
-                  <Select
-                    label="Preferred for"
-                    className="w-full shrink-0 sm:w-52"
-                    value={serviceId || ANY_SERVICE_SCOPE_VALUE}
-                    options={serviceOptions}
-                    onChange={(value) =>
-                      updateDraftServiceId(
-                        value === ANY_SERVICE_SCOPE_VALUE ? "" : value,
-                      )
-                    }
-                  />
-                  <TimePicker
-                    label="Start time"
-                    labelLayout="stacked"
-                    className="w-full shrink-0 sm:w-40"
-                    value={anchorStartTime}
-                    disabled={sections.every((s) => s.elements.length === 0)}
-                    onChange={(value) =>
-                      value && updateDraftSections(
-                        applyPlanAnchorStartTime(sections, String(value)),
-                        "anchorStartTime",
-                      )
-                    }
-                  />
-                </>
-              ) : (
+              <div className="flex min-w-0 items-center gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-gray-100">
                     {trimmedName || "Untitled template"}
                   </p>
-                  {anchorStartTime ? (
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      Starts {formatPlanStartTimeDisplay(anchorStartTime)}
-                    </p>
-                  ) : null}
+                  <p className="truncate text-xs text-gray-400">
+                    {anchorStartTime
+                      ? ` · Starts ${formatPlanStartTimeDisplay(anchorStartTime)}`
+                      : "No start time set"}
+                  </p>
                 </div>
-              )}
+                {canEdit && isEditing ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={Pencil}
+                    iconSize="sm"
+                    className="shrink-0 max-md:min-h-0"
+                    onClick={() => setDetailsSheetOpen(true)}
+                  >
+                    Edit details
+                  </Button>
+                ) : null}
+              </div>
             </div>
           }
         />
+
+        {canEdit && isEditing ? (
+          <Sheet open={detailsSheetOpen} onOpenChange={setDetailsSheetOpen}>
+            <SheetContent side="right" className="w-full max-w-md gap-0">
+              <SheetHeader>
+                <SheetTitle>Edit template details</SheetTitle>
+                <SheetDescription>
+                  Update the reusable template settings.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="scrollbar-variable min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+                <Input
+                  label="Template name"
+                  placeholder="e.g. Standard Sabbath"
+                  value={name}
+                  onChange={(value) =>
+                    updateDraft({ name: String(value) }, "templateName")
+                  }
+                />
+                <Select
+                  label="Preferred for"
+                  value={serviceId || ANY_SERVICE_SCOPE_VALUE}
+                  options={serviceOptions}
+                  onChange={(value) =>
+                    updateDraftServiceId(
+                      value === ANY_SERVICE_SCOPE_VALUE ? "" : value,
+                    )
+                  }
+                />
+                <TimePicker
+                  label="Start time"
+                  value={anchorStartTime}
+                  disabled={sections.every((s) => s.elements.length === 0)}
+                  onChange={(value) =>
+                    value && updateDraftSections(
+                      applyPlanAnchorStartTime(sections, String(value)),
+                      "anchorStartTime",
+                    )
+                  }
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        ) : null}
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canEdit && isEditing ? (

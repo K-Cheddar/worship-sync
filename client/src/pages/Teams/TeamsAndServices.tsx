@@ -15,10 +15,8 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import HomeToolbarMenu from "../../components/HomeToolbarMenu/HomeToolbarMenu";
 import Icon from "../../components/Icon/Icon";
-import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
-import { ChurchLogoImg } from "../../components/ChurchLogoImg";
+import AppWorkspaceShell from "../../components/AppPageShell/AppWorkspaceShell";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Button from "../../components/Button/Button";
 import {
@@ -28,6 +26,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/utils/cnHelper";
+import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sidebar";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
@@ -121,31 +120,13 @@ const TeamsAndServicesLayout = () => {
   }, [location.pathname]);
 
   return (
-    <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white">
-      <div className="mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col">
-        <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-2 text-lg">
-          <div className="flex flex-wrap items-center gap-3 justify-self-start">
-            <HomeToolbarMenu />
-            <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
-              <Icon svg={Users} size="md" className="text-orange-400" />
-              Teams and Services
-            </h1>
-          </div>
-          <div className="flex max-w-[min(22rem,calc(100vw-6rem))] justify-center justify-self-center px-1 sm:max-w-[min(26rem,calc(100vw-10rem))]">
-            {toolbarLogoUrl ? (
-              <ChurchLogoImg
-                src={toolbarLogoUrl}
-                alt={churchName ? `${churchName} logo` : "Church logo"}
-                variant="account-header"
-              />
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-end justify-self-end gap-4">
-            <UserSection />
-          </div>
-        </div>
-
-        <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
+    <AppWorkspaceShell
+      title="Teams and Services"
+      icon={Users}
+      toolbarLogoUrl={toolbarLogoUrl}
+      churchName={churchName}
+    >
+        <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-2 lg:hidden">
             <Button
               variant="secondary"
@@ -162,10 +143,10 @@ const TeamsAndServicesLayout = () => {
             </p>
           </div>
 
-          <aside
+          <Sidebar
             className={cn(
-              "relative hidden min-h-0 flex-col border-gray-700 bg-gray-950/70 transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
-              sidebarCollapsed ? "w-14 lg:p-2" : "w-44 lg:p-2",
+              "relative hidden flex-col transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
+              sidebarCollapsed ? "w-14 lg:p-2" : `${APP_SIDEBAR_WIDTH_CLASS} lg:p-2`,
             )}
           >
             <Button
@@ -187,7 +168,7 @@ const TeamsAndServicesLayout = () => {
               )}
             </Button>
             <TeamsSidebarNav collapsed={sidebarCollapsed} />
-          </aside>
+          </Sidebar>
 
           <div className={teamsSectionScrollClassName}>
             <div className="flex min-h-0 flex-1 flex-col">
@@ -199,8 +180,6 @@ const TeamsAndServicesLayout = () => {
             </div>
           </div>
         </section>
-      </div>
-
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
         <SheetContent
           side="left"
@@ -215,7 +194,7 @@ const TeamsAndServicesLayout = () => {
           </div>
         </SheetContent>
       </Sheet>
-    </main>
+    </AppWorkspaceShell>
   );
 };
 

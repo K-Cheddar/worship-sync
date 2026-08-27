@@ -334,14 +334,10 @@ const ServicePlanAssigneeList = ({
 
               {allowEdit ? (
                 <DebouncedAssigneeNameField
-                  label={
-                    structureOnly
-                      ? `Group for ${itemLabel}`
-                      : `Assigned to for ${itemLabel}`
-                  }
+                  label={`Assignees for ${itemLabel}`}
                   // A template names standing groups, never this week's people
                   // — "Audience", "Chorale", whoever always carries the mic.
-                  placeholder={structureOnly ? "Group (optional)" : "Assigned to"}
+                  placeholder={structureOnly ? "Assignees" : "Assigned to"}
                   value={assignee.name || ""}
                   onCommit={(value) =>
                     updateAssignee(

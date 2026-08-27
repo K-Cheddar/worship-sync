@@ -107,3 +107,51 @@ export const buildMyScheduleExportModel = (
     ],
   };
 };
+
+/**
+ * Combines the member's service occurrences into one public-style schedule.
+ * Columns are shared across occurrences; positions that are not used by a
+ * service are marked inactive so the date cards stay focused on that service.
+ */
+export const buildMyScheduleExportModelForOccurrences = (
+  occurrences: MyScheduleOccurrence[],
+): ScheduleExportModel => {
+  const models = occurrences.map(buildMyScheduleExportModel);
+  const columnKeys: string[] = [];
+  const columnLabels = new Map<string, string>();
+
+  models.forEach((model) => {
+    model.columnKeys.forEach((columnKey, index) => {
+      if (columnLabels.has(columnKey)) return;
+      columnKeys.push(columnKey);
+      columnLabels.set(columnKey, model.columnLabels[index]);
+    });
+  });
+
+  const inactiveCell: ScheduleExportCell = {
+    state: "inactive",
+    tokens: [],
+    highlighted: false,
+  };
+
+  return {
+    churchName: "",
+    scheduleName: "My schedule",
+    dateRangeLabel: "",
+    highlightName: models[0]?.highlightName || "You",
+    columnLabels: columnKeys.map((columnKey) => columnLabels.get(columnKey) || "Role"),
+    columnKeys,
+    groups: models.flatMap((model) =>
+      model.groups.map((group) => ({
+        ...group,
+        rows: group.rows.map((row) => ({
+          ...row,
+          cells: columnKeys.map((columnKey) => {
+            const index = model.columnKeys.indexOf(columnKey);
+            return index >= 0 ? row.cells[index] : inactiveCell;
+          }),
+        })),
+      })),
+    ),
+  };
+};

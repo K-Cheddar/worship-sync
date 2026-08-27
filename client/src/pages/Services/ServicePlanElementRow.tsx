@@ -27,7 +27,7 @@ import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
-import ServicePlanAssigneeList from "./ServicePlanAssigneeList";
+import ServicePlanAssigneeList, { addMicrophoneSlot } from "./ServicePlanAssigneeList";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -86,6 +86,7 @@ import {
 } from "./servicePlanChipStyles";
 import type {
   ServicePlanElement,
+  ServicePlanAssignee,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
   ServicePlanSongReference,
@@ -355,6 +356,9 @@ const ExpandableNotePanel = ({
 type ItemActionsMenuProps = {
   itemLabel: string;
   canEdit: boolean;
+  structureOnly: boolean;
+  microphones: ServicePlanMicrophone[];
+  assignees: ServicePlanAssignee[];
   canAddNote: boolean;
   canAddTeamNote: boolean;
   canAddRoleNote: boolean;
@@ -363,6 +367,7 @@ type ItemActionsMenuProps = {
   onAddNote: () => void;
   onAddTeamNote: (teamId: string) => void;
   onAddRoleNote: (positionId: string) => void;
+  onAddMicrophone: (microphoneId: string) => void;
   onRemove: () => void;
 };
 
@@ -719,6 +724,9 @@ const RoleNoteAudiencePicker = ({
 const ItemActionsMenu = ({
   itemLabel,
   canEdit,
+  structureOnly,
+  microphones,
+  assignees,
   canAddNote,
   canAddTeamNote,
   canAddRoleNote,
@@ -727,6 +735,7 @@ const ItemActionsMenu = ({
   onAddNote,
   onAddTeamNote,
   onAddRoleNote,
+  onAddMicrophone,
   onRemove,
 }: ItemActionsMenuProps) => {
   const [open, setOpen] = useState(false);
@@ -740,7 +749,7 @@ const ItemActionsMenu = ({
           iconSize="sm"
           disabled={!canEdit}
           aria-haspopup="menu"
-          aria-label={`More actions for ${itemLabel}`}
+          aria-label={structureOnly ? `Add to ${itemLabel}` : `More actions for ${itemLabel}`}
           className="max-md:min-h-0 shrink-0"
         />
       </DropdownMenuTrigger>
@@ -753,6 +762,37 @@ const ItemActionsMenu = ({
             />
             Note
           </DropdownMenuItem>
+        ) : null}
+        {structureOnly && microphones.length > 0 ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <UserRound className="size-4" aria-hidden />
+              Microphone
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="p-1">
+              {microphones
+                .filter((microphone) =>
+                  !assignees.some((assignee) =>
+                    (assignee.microphoneIds || []).includes(microphone.id),
+                  ),
+                )
+                .map((microphone) => (
+                  <DropdownMenuItem
+                    key={microphone.id}
+                    onSelect={(event) => {
+                      // Keep the catalog open so consecutive microphones can
+                      // be assigned in their intended order.
+                      event.preventDefault();
+                      onAddMicrophone(microphone.id);
+                    }}
+                  >
+                    <span className="truncate">
+                      {microphone.name} · {microphone.type}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         ) : null}
         {canAddTeamNote ? (
           <DropdownMenuSub>
@@ -1188,6 +1228,9 @@ const ServicePlanElementRow = ({
     <ItemActionsMenu
       itemLabel={itemLabel}
       canEdit={allowEdit}
+      structureOnly={structureOnly}
+      microphones={microphones}
+      assignees={assignees}
       canAddNote={canAddNote}
       canAddTeamNote={canAddTeamNote}
       canAddRoleNote={canAddRoleNote}
@@ -1196,6 +1239,9 @@ const ServicePlanElementRow = ({
       onAddNote={handleAddNote}
       onAddTeamNote={handleAddTeamNote}
       onAddRoleNote={handleCreateRoleNote}
+      onAddMicrophone={(microphoneId) =>
+        onUpdate({ assignees: addMicrophoneSlot(assignees, microphoneId) })
+      }
       onRemove={onRemove}
     />
   ) : null;
@@ -1851,18 +1897,6 @@ const ServicePlanElementRow = ({
       onEdit={() => setAssignmentSheetOpen(true)}
       onChange={() => undefined}
     />
-  ) : allowEdit && !structureOnly ? (
-    <Button
-      type="button"
-      variant="tertiary"
-      svg={UserRound}
-      iconSize="sm"
-      className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
-      aria-label={`Assignees for ${itemLabel}`}
-      onClick={() => setAssignmentSheetOpen(true)}
-    >
-      Assign people & mics
-    </Button>
   ) : null;
 
   return (
@@ -2020,20 +2054,34 @@ const ServicePlanElementRow = ({
         </div>
       )}
 
-      {allowEdit && !structureOnly
-        ? readOnlyAssigneesBlock
-        : assigneesBlock}
+      {allowEdit ? (
+        readOnlyAssigneesBlock || (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={UserRound}
+            iconSize="sm"
+            className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+            aria-label={`Assignees for ${itemLabel}`}
+            onClick={() => setAssignmentSheetOpen(true)}
+          >
+            {structureOnly ? "Add microphones" : "Assign people & mics"}
+          </Button>
+        )
+      ) : (
+        assigneesBlock
+      )}
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
-      {allowEdit && !structureOnly ? (
+      {allowEdit ? (
         <Sheet open={assignmentSheetOpen} onOpenChange={setAssignmentSheetOpen}>
           <SheetContent
             side="right"
             className="flex w-full max-w-md flex-col gap-0 border-gray-700 bg-gray-950 p-0"
           >
             <SheetHeader className="border-b border-gray-800">
-              <SheetTitle>Edit assignments</SheetTitle>
+              <SheetTitle>Edit assignees</SheetTitle>
               <SheetDescription className="truncate">
                 {itemLabel}
               </SheetDescription>
