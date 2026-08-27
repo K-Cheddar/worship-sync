@@ -1,3 +1,16 @@
+# [2.27.0](https://github.com/K-Cheddar/worship-sync/compare/v2.26.2...v2.27.0) (2026-08-27)
+
+
+### Bug Fixes
+
+* Improve public intake form ([843f601](https://github.com/K-Cheddar/worship-sync/commit/843f6014eb550fcfe05ae8bfd2e1b677aa28b56b))
+* Make admin screens a little more compact ([9c4eb9b](https://github.com/K-Cheddar/worship-sync/commit/9c4eb9bdcd247fda79ff0474eaf79bc2dfbd0730))
+
+
+### Features
+
+* Improve UX for service plans ([51d9346](https://github.com/K-Cheddar/worship-sync/commit/51d93461f8743fbe3dc2d010b09e8ba3821644e0))
+
 ## [2.26.2](https://github.com/K-Cheddar/worship-sync/compare/v2.26.1...v2.26.2) (2026-08-26)
 
 
