@@ -1511,7 +1511,7 @@ describe("Teams", () => {
     const conflictDialog = await conflictDialogPromise.catch(() => null);
     if (conflictDialog) {
       await user.click(
-        within(conflictDialog).getByRole("button", { name: /Schedule anyway/i }),
+        within(conflictDialog).getByRole("button", { name: /Save anyway/i }),
       );
     }
 
