@@ -1,3 +1,17 @@
+# [2.28.0](https://github.com/K-Cheddar/worship-sync/compare/v2.27.0...v2.28.0) (2026-08-28)
+
+
+### Bug Fixes
+
+* consolidate Restream connection status issues ([55db77d](https://github.com/K-Cheddar/worship-sync/commit/55db77db5d4f7f8746e81f91292520cb3487d4d3))
+
+
+### Features
+
+* add contextual browser page titles ([9c27909](https://github.com/K-Cheddar/worship-sync/commit/9c27909fc7a10273015f367e808040467017f4e9))
+* expand Teams planning and scheduling workflows ([e027498](https://github.com/K-Cheddar/worship-sync/commit/e027498417202662a1e3f360a76f3b1ce647e881))
+* improve public service view controls ([19c2e85](https://github.com/K-Cheddar/worship-sync/commit/19c2e85ef3a0e23366f68a38ace8e914883c0f03))
+
 # [2.27.0](https://github.com/K-Cheddar/worship-sync/compare/v2.26.2...v2.27.0) (2026-08-27)
 
 
