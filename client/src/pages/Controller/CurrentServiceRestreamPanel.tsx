@@ -8,6 +8,7 @@ import {
 import { BoardYouTubeChatComposer } from "../../boards/BoardYouTubeChatComposer";
 import { useRestreamSession } from "../../boards/useRestreamSession";
 import { useStickToBottomScroll } from "../../hooks/useStickToBottomScroll";
+import { getRestreamStatusIssues } from "../../boards/boardUtils";
 import type { RestreamMessage, RestreamSession } from "../../types";
 
 type CurrentServiceRestreamPanelProps = {
@@ -153,6 +154,10 @@ const CurrentServiceRestreamPanel = ({
   showToast,
 }: CurrentServiceRestreamPanelProps) => {
   const restream = useRestreamSession(churchId);
+  const restreamStatusIssues = getRestreamStatusIssues(
+    restream.session?.connectionIssues,
+    restream.session?.lastError,
+  );
   const readMarkerFallbackRef = useRef<ChatReadMarker | null>(null);
   const messages = useMemo(
     () =>
@@ -329,21 +334,15 @@ const CurrentServiceRestreamPanel = ({
             </p>
           ) : null}
 
-          {restream.session?.connectionIssues?.length ? (
+          {restreamStatusIssues.length ? (
             <div className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3">
               <p className="text-xs font-semibold text-amber-100">Connection issues</p>
               <div className="mt-1.5 space-y-1 text-xs text-amber-100/90">
-                {restream.session.connectionIssues.map((issue) => (
+                {restreamStatusIssues.map((issue) => (
                   <p key={issue}>{issue}</p>
                 ))}
               </div>
             </div>
-          ) : null}
-
-          {restream.session?.lastError ? (
-            <p className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3 text-xs text-amber-100/90">
-              {restream.session.lastError}
-            </p>
           ) : null}
 
           {restream.isLoading ? (

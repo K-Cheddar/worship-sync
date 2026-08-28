@@ -51,6 +51,7 @@ import {
   isWorshipSyncModeratorBoardPost,
   setStoredBoardDisplayAliasId,
   sortBoardPostsAscending,
+  getRestreamStatusIssues,
 } from "../boards/boardUtils";
 import {
   BOARD_PANEL_BODY,
@@ -775,22 +776,23 @@ export const BoardControllerContent = () => {
           Restream is not configured yet.
         </p>
       ) : null}
-      {restreamSession.session?.connectionIssues?.length ? (
+      {getRestreamStatusIssues(
+        restreamSession.session?.connectionIssues,
+        restreamSession.session?.lastError,
+      ).length ? (
         <div className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-100/90">
             Connection issues
           </p>
           <div className="mt-2 space-y-1 text-xs text-amber-100/90">
-            {restreamSession.session.connectionIssues.map((issue) => (
+            {getRestreamStatusIssues(
+              restreamSession.session?.connectionIssues,
+              restreamSession.session?.lastError,
+            ).map((issue) => (
               <p key={issue}>{issue}</p>
             ))}
           </div>
         </div>
-      ) : null}
-      {restreamSession.session?.lastError ? (
-        <p className="text-xs text-amber-100/90">
-          {restreamSession.session.lastError}
-        </p>
       ) : null}
       {restreamSession.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-gray-300">
@@ -819,8 +821,10 @@ export const BoardControllerContent = () => {
     restreamSession.isOffline ||
     Boolean(restreamSession.session?.streamTitle) ||
     !restreamSession.oauthConfigured ||
-    Boolean(restreamSession.session?.connectionIssues?.length) ||
-    Boolean(restreamSession.session?.lastError) ||
+    getRestreamStatusIssues(
+      restreamSession.session?.connectionIssues,
+      restreamSession.session?.lastError,
+    ).length > 0 ||
     restreamSession.isLoading ||
     Boolean(restreamSession.error) ||
     (!restreamSession.isLoading &&

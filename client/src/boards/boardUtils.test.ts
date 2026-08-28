@@ -9,6 +9,7 @@ import {
   generateAnonymousDisplayName,
   getAliasDocId,
   getAnonymousDisplayNameUniqueCount,
+  getRestreamStatusIssues,
   getBoardAuthorNameColorClass,
   getBoardPostRange,
   getBoardPostsForAttendeeView,
@@ -36,6 +37,23 @@ const createPost = (overrides: Partial<DBBoardPost>): DBBoardPost => ({
   hidden: false,
   highlighted: false,
   ...overrides,
+});
+
+describe("getRestreamStatusIssues", () => {
+  it("does not repeat a last error already listed as a connection issue", () => {
+    expect(
+      getRestreamStatusIssues(
+        ["YouTube: YouTube livechat ended"],
+        "YouTube: YouTube livechat ended",
+      ),
+    ).toEqual(["YouTube: YouTube livechat ended"]);
+  });
+
+  it("keeps distinct connection issues and errors", () => {
+    expect(
+      getRestreamStatusIssues(["YouTube: YouTube livechat ended"], "Retrying"),
+    ).toEqual(["YouTube: YouTube livechat ended", "Retrying"]);
+  });
 });
 
 describe("boardUtils", () => {
