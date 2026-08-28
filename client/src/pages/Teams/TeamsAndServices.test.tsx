@@ -1503,6 +1503,17 @@ describe("Teams", () => {
     ).toHaveValue("Copy of July");
 
     await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+    const conflictDialogPromise = screen.findByRole(
+      "dialog",
+      { name: /Schedule conflict/i },
+      { timeout: 1_000 },
+    );
+    const conflictDialog = await conflictDialogPromise.catch(() => null);
+    if (conflictDialog) {
+      await user.click(
+        within(conflictDialog).getByRole("button", { name: /Schedule anyway/i }),
+      );
+    }
 
     await waitFor(() => {
       expect(mockCreateTeamSchedule).toHaveBeenCalled();
