@@ -848,11 +848,21 @@ describe("Teams", () => {
     renderTeams("/teams-and-services/groups");
     await user.click(await screen.findByRole("button", { name: /Edit Main Team/i }));
 
-    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Edit team" })).getByRole(
+        "button",
+        { name: "Close" },
+      ),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Use microphone assignments/i }));
 
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Edit team" })).getByRole(
+        "button",
+        { name: "Cancel" },
+      ),
+    ).toBeInTheDocument();
   });
 
   it("confirms before leaving a team with unsaved changes", async () => {
