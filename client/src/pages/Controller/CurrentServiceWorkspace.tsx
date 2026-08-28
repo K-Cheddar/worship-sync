@@ -711,6 +711,7 @@ const CurrentServiceWorkspace = () => {
         },
       }}
       canEdit={Boolean(canEditServices ?? canEditTeams)}
+      showSummary={false}
       occurrenceSwitcher={occurrenceSwitcher}
     />
   );

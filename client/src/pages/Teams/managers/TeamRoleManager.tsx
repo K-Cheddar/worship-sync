@@ -1,6 +1,6 @@
 import { useCallback, useContext, useMemo, useState } from "react";
+import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
-import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -15,7 +15,12 @@ import {
 import type { TeamRecord, TeamRole } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
-import EntityListSearch from "../components/EntityListSearch";
+import {
+  EntityListFilterPanel,
+  EntityListFilterFooter,
+  EntityListFilterToolbar,
+  type EntityListFilterState,
+} from "../components/EntityListFilters";
 import EntityRow from "../components/EntityRow";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
@@ -71,6 +76,8 @@ const TeamRoleManager = ({
   // actually saving and lets editing continue back-to-back in the background.
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
+  const [listFilters, setListFilters] = useState<EntityListFilterState>({ teamIds: [], includeArchived: false });
+  const [showFilters, setShowFilters] = useState(false);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
@@ -85,7 +92,10 @@ const TeamRoleManager = ({
   );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
-  const teamRoles = roles.filter((role) => role.teamId === teamId);
+  const teamRoles = roles.filter((role) =>
+    (listFilters.teamIds.length === 0 || listFilters.teamIds.includes(role.teamId)) &&
+    (listFilters.includeArchived || isActive(role)),
+  );
   const filteredTeamRoles = useMemo(
     () => teamRoles.filter((role) => roleMatchesListQuery(role, listQuery)),
     [teamRoles, listQuery],
@@ -102,6 +112,7 @@ const TeamRoleManager = ({
   };
 
   const openRoleEditor = (role: TeamRole) => {
+    setShowFilters(false);
     setEditing(role);
     setSelectedTeamId(role.teamId);
     setShowCreate(true);
@@ -212,7 +223,12 @@ const TeamRoleManager = ({
   // currently open, so a background save elsewhere never spins or disables it.
   const currentEditorKey = editing ? editing.roleId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
-  const hasPendingChanges = editing
+  // The list view has no draft to protect. Without this guard, the initial
+  // empty draft (teamId "") differs from the first active team and makes every
+  // navigation into this section look dirty before the operator edits anything.
+  const hasPendingChanges = !showCreate
+    ? false
+    : editing
     ? JSON.stringify(draft) !==
       JSON.stringify({
         teamId: editing.teamId,
@@ -228,10 +244,14 @@ const TeamRoleManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
-          reset();
-          setShowCreate(true);
+          requestDiscardAction(() => {
+            setShowFilters(false);
+            reset();
+            setShowCreate(true);
+          });
         }}
         canEdit={canEdit}
+        keepCreateActionVisible
         title={editing ? "Edit role" : "Create role"}
         sectionTitle="Team roles"
         description="Define team roles for members."
@@ -252,28 +272,15 @@ const TeamRoleManager = ({
               {returnTo && !showCreate ? (
                 <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
               ) : null}
-              <Select
-                label="Team"
-                value={teamId}
-                onChange={(value) => {
-                  setSelectedTeamId(value);
-                  if (editing) reset();
-                }}
-                options={activeTeams.map((team) => ({
-                  label: team.name,
-                  value: team.teamId,
-                }))}
-              />
-              {teamRoles.length > 0 ? (
-                <EntityListSearch
-                  label="Roles"
-                  value={listQuery}
-                  onChange={setListQuery}
-                />
-              ) : null}
+              <EntityListFilterToolbar entityLabel="Roles" query={listQuery} onQueryChange={setListQuery} filters={listFilters} onFiltersChange={setListFilters} filtersOpen={showFilters} onFiltersOpenChange={setShowFilters} />
             </div>
           )
         }
+        asideOpen={showFilters}
+        asideTitle="Filter roles"
+        asideHeaderActions={<Button variant="tertiary" onClick={() => setShowFilters(false)}>Close</Button>}
+        aside={<EntityListFilterPanel entityLabel="roles" filters={listFilters} onFiltersChange={setListFilters} teamOptions={activeTeams.map((team) => ({ id: team.teamId, label: team.name }))} />}
+        asideFooter={<EntityListFilterFooter filters={listFilters} onClear={() => setListFilters({ teamIds: [], includeArchived: false })} onClose={() => setShowFilters(false)} />}
         list={
           <>
             {activeTeams.length === 0 ? (
@@ -284,7 +291,7 @@ const TeamRoleManager = ({
             ) : (
               <>
                 {teamRoles.length === 0 ? (
-                  <p className="text-sm text-gray-300">No roles in this team yet.</p>
+                  <p className="text-sm text-gray-300">No roles match the current filters.</p>
                 ) : null}
                 {teamRoles.length > 0 && filteredTeamRoles.length === 0 ? (
                   <p className="text-sm text-gray-300">No matches.</p>

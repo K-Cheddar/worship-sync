@@ -164,6 +164,7 @@ const renderEditor = ({
   planNavigation,
   occurrenceSwitcher,
   teamMicrophones,
+  scheduledAssignmentRows,
   mobileServingContent,
 }: {
   service?: TeamService;
@@ -189,6 +190,7 @@ const renderEditor = ({
       microphoneIds: string[],
     ) => void;
   };
+  scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   mobileServingContent?: ReactNode;
 } = {}) =>
   render(
@@ -211,6 +213,7 @@ const renderEditor = ({
           planNavigation={planNavigation}
           occurrenceSwitcher={occurrenceSwitcher}
           teamMicrophones={teamMicrophones}
+          scheduledAssignmentRows={scheduledAssignmentRows}
           mobileServingContent={mobileServingContent}
         />
       </ToastProvider>
@@ -749,6 +752,73 @@ describe("ServicePlanEditor", () => {
     // Re-keyed on apply so two plans from one template never share ids.
     expect(body.sections[0].id).not.toBe("tpl-section");
     expect(body.sections[0].elements[0].id).not.toBe("tpl-el");
+  });
+
+  it("automatically starts a new occurrence from the service default template", async () => {
+    const serviceWithDefault: TeamService = {
+      ...oneTimeService,
+      defaultPlanTemplateId: "tpl-default",
+    };
+    mockListServicePlanTemplates.mockResolvedValue({
+      success: true,
+      templates: [
+        {
+          templateId: "tpl-default",
+          churchId: "church-1",
+          name: "Standard Sabbath",
+          serviceId: "service-1",
+          sections: [
+            {
+              id: "tpl-section",
+              name: "Word",
+              elements: [
+                {
+                  id: "tpl-reading",
+                  type: "free",
+                  title: plainTextToRichText("Scripture reading"),
+                  scheduledPositionIds: ["reader"],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    renderEditor({
+      service: serviceWithDefault,
+      scheduledAssignmentRows: [
+        {
+          teamId: "worship-elements",
+          teamName: "Worship Elements",
+          scheduleId: "schedule-1",
+          occurrenceId: occurrence.occurrenceId,
+          positionId: "reader",
+          positionName: "Scripture Reader",
+          columnKey: "reader::0",
+          slotLabel: "Scripture Reader",
+          memberId: "member-1",
+          memberName: "Avery Stone",
+          canNotify: true,
+          microphoneIds: [],
+        },
+      ],
+    });
+
+    expect(await screen.findByText(/Avery Stone/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Apply a template/i }),
+    ).not.toBeInTheDocument();
+
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
+      { timeout: 2_500 },
+    );
+    const [, , body] = mockSaveServicePlan.mock.calls[0];
+    expect(body.sections[0].elements[0].scheduledPositionIds).toEqual([
+      "reader",
+    ]);
+    expect(body.sections[0].elements[0].id).not.toBe("tpl-reading");
   });
 
   it("saves the current plan's structure as a template without its week-specific picks", async () => {

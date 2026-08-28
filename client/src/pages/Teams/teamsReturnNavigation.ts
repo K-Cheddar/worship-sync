@@ -21,14 +21,14 @@ export const TEAMS_MEMBER_EDIT_SEARCH_PARAM = "editMember";
 export const TEAMS_POSITION_EDIT_SEARCH_PARAM = "editPosition";
 
 export const TEAMS_SECTION_PATHS = {
-  plans: "/teams-and-services/plans",
+  plans: "/teams-and-services/services",
   schedules: "/teams-and-services/schedules",
   members: "/teams-and-services/members",
   positions: "/teams-and-services/positions",
   groups: "/teams-and-services/groups",
   roles: "/teams-and-services/roles",
   qualifications: "/teams-and-services/qualifications",
-  services: "/teams-and-services/service-settings",
+  services: "/teams-and-services/service-setup",
   forms: "/teams-and-services/forms",
 } as const;
 

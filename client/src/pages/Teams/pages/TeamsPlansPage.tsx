@@ -21,6 +21,7 @@ import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
   listServicePlans,
+  updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentMicrophones,
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
@@ -442,6 +443,33 @@ const TeamsPlansPage = () => {
     }
   };
 
+  const saveScheduledAssignment = async (
+    row: TeamsAssignmentSummaryRow,
+    memberId: string | null,
+    allowOccurrenceConflict = false,
+  ): Promise<void> => {
+    if (!churchId || !row.scheduleId) return;
+    try {
+      const result = await trackTeamsSave(
+        updateTeamScheduleAssignment(churchId, row.scheduleId, {
+          serviceId: row.occurrenceId,
+          positionSlotKey: row.columnKey,
+          memberId,
+          ...(allowOccurrenceConflict ? { allowOccurrenceConflict: true } : {}),
+        }),
+      );
+      upsertData("schedules", "scheduleId", result.schedule);
+    } catch (error) {
+      if ((error as { status?: number })?.status === 409 && !allowOccurrenceConflict) {
+        if (window.confirm("This person is already assigned during this service. Assign anyway?")) {
+          await saveScheduledAssignment(row, memberId, true);
+          return;
+        }
+      }
+      showApiErrorToast(showToast, error, "Could not update this assignment.");
+    }
+  };
+
   useEffect(() => {
     if (!pendingPlanRestore || !pageData.services.length) return;
     const { occurrenceId, date } = pendingPlanRestore;
@@ -859,6 +887,14 @@ const TeamsPlansPage = () => {
               positions={pageData.positions}
               teams={pageData.teams}
               scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledAssignmentRows={assignments}
+              onOpenScheduledAssignment={(row) => {
+                if (!row.scheduleId) return;
+                openSchedule({
+                  scheduleId: row.scheduleId,
+                  slot: { occurrenceId: row.occurrenceId, columnKey: row.columnKey },
+                });
+              }}
               teamMicrophones={{
                 rows: assignments,
                 assignmentsStatus,
@@ -868,6 +904,7 @@ const TeamsPlansPage = () => {
                 },
               }}
               canEdit={canEditPlan}
+              backLabel="Back to Services"
               onBack={() => {
                 setOpenServingTabOnSelection(false);
                 setSelection(null);
@@ -875,22 +912,25 @@ const TeamsPlansPage = () => {
               planNavigation={planNavigation}
               initialTab={openServingTabOnSelection ? "serving" : "plan"}
               mobileServingContent={
-                !isDesktop ? (
-                  <WhosServingPanel
-                    assignmentTeams={assignmentTeams}
-                    onOpenSchedule={openSchedule}
-                    microphones={microphones}
-                    assignmentsStatus={assignmentsStatus}
-                    showHeading={false}
-                  />
-                ) : undefined
+                <WhosServingPanel
+                  assignmentTeams={assignmentTeams}
+                  onOpenSchedule={openSchedule}
+                  microphones={microphones}
+                  assignmentsStatus={assignmentsStatus}
+                  showHeading={false}
+                  members={pageData.members}
+                  canEdit={canEditPlan}
+                  onAssign={(row, memberId) => {
+                    void saveScheduledAssignment(row, memberId);
+                  }}
+                />
               }
             />
           </div>
           {isDesktop ? (
             <aside
               className={cn(
-                "relative min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700/80 bg-gray-950/70 transition-[width] duration-300 ease-in-out lg:flex",
+                "relative min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700/80 bg-gray-950/70 transition-[width] duration-300 ease-in-out hidden",
                 servingPanelOpen ? "w-64" : "w-10",
               )}
               aria-label="Who's serving"
@@ -943,7 +983,7 @@ const TeamsPlansPage = () => {
       <div className="shrink-0 space-y-4">
         <div className="flex items-center gap-2">
           <Icon svg={CalendarRange} size="md" className="text-orange-300" />
-          <h2 className="text-lg font-semibold">Plans</h2>
+          <h2 className="text-lg font-semibold">Services</h2>
         </div>
         <p className="text-sm text-gray-400">
           Pick a date to build or edit that service&apos;s order of service.
@@ -1003,7 +1043,7 @@ const TeamsPlansPage = () => {
               <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
                 <span className="px-0.5 text-sm font-semibold">Organize</span>
                 <SegmentedControl
-                  ariaLabel="Organize plans"
+                  ariaLabel="Organize services"
                   variant="compact"
                   value={organizeMode}
                   onChange={changeOrganizeMode}

@@ -1439,7 +1439,7 @@ test("schedule assignments require confirmation for cross-team service conflicts
   assert.equal(copiedScheduleConfirmed.statusCode, 200);
 });
 
-test("cross-team conflict checks ignore same team, different dates, and archived schedules", async (t) => {
+test("occurrence conflict checks include same-team roles, different dates, and archived schedules", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("cross_team_no_conflict");
 
@@ -1571,7 +1571,22 @@ test("cross-team conflict checks ignore same team, different dates, and archived
       },
     },
   );
-  assert.equal(sameTeam.statusCode, 200);
+  assert.equal(sameTeam.statusCode, 409);
+  const sameTeamConfirmed = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: sameTeamSchedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: firstOccurrence.occurrenceId,
+        positionSlotKey: `${worship.positionIds.Vocal}::0`,
+        memberId: averyId,
+        serviceDate: "2026-07-05",
+        allowOccurrenceConflict: true,
+      },
+    },
+  );
+  assert.equal(sameTeamConfirmed.statusCode, 200);
 
   const differentDate = await callHandler(
     authHandlers.updateTeamScheduleAssignment,

@@ -290,9 +290,13 @@ const TeamsAndServicesRoutes = () => (
           </TeamsSectionRoute>
         }
       />
-      {/* Old path from before Services/Teams shared this page. */}
+      {/* Compatibility redirects retained for one release. */}
       <Route
-        path="services"
+        path="plans/*"
+        element={<Navigate to={servicesNavSections[0].path} replace />}
+      />
+      <Route
+        path="service-settings/*"
         element={<Navigate to={servicesNavSections[3].path} replace />}
       />
       <Route path="*" element={<Navigate to="schedules" replace />} />

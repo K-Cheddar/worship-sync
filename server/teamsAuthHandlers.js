@@ -951,6 +951,7 @@ export const createTeamsAuthHandlers = ({
   const MAX_SERVICE_PLAN_MICROPHONES = 80;
   const MAX_SERVICE_PLAN_MICROPHONE_AUDIENCES = 24;
   const MAX_SERVICE_PLAN_ASSIGNEES = 24;
+  const MAX_SERVICE_PLAN_POSITIONS = 40;
 
   const isRichTextDocEmpty = (doc) =>
     !doc?.blocks?.length ||
@@ -1273,6 +1274,18 @@ export const createTeamsAuthHandlers = ({
       scriptureRef: scriptureRefs?.[0],
       positionId:
         normalizeShortText(raw?.positionId, { max: 160 }) || undefined,
+      scheduledPositionIds: Array.from(
+        new Set(
+          (Array.isArray(raw?.scheduledPositionIds)
+            ? raw.scheduledPositionIds
+            : raw?.positionId
+              ? [raw.positionId]
+              : []
+          )
+            .map((positionId) => normalizeShortText(positionId, { max: 160 }))
+            .filter(Boolean),
+        ),
+      ).slice(0, MAX_SERVICE_PLAN_POSITIONS),
       sourceLedByRaw:
         normalizeShortText(raw?.sourceLedByRaw, { max: 200 }) || undefined,
       sourceElementTypeRaw:
@@ -4253,9 +4266,13 @@ export const createTeamsAuthHandlers = ({
     `${positionId}${SCHEDULE_SLOT_KEY_SEPARATOR}${slot}`;
 
   const CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE =
-    "This person is already scheduled on another team for this service. Confirm to schedule them anyway.";
+    "This person is already scheduled on another team or in another role for this service. Confirm to schedule them anyway.";
 
   const normalizeAllowCrossTeamConflict = (value) => value === true;
+  // Canonical name for all occurrence conflicts. Keep the old field accepted
+  // through this release so older clients can still acknowledge warnings.
+  const normalizeAllowOccurrenceConflict = (body) =>
+    body?.allowOccurrenceConflict === true || body?.allowCrossTeamConflict === true;
   const normalizeAllowBlockout = (value) => value === true;
   const normalizeAllowRecurringAvailability = (value) => value === true;
 
@@ -4334,6 +4351,7 @@ export const createTeamsAuthHandlers = ({
     assignments,
     schedules,
     memberIds,
+    targetCellKey,
   }) => {
     const memberIdSet = memberIds?.size
       ? memberIds
@@ -4360,8 +4378,13 @@ export const createTeamsAuthHandlers = ({
 
       for (const otherSchedule of schedules || []) {
         if (!otherSchedule || otherSchedule.archivedAt) continue;
-        if (otherSchedule.scheduleId === schedule.scheduleId) continue;
-        if (otherSchedule.teamId === schedule.teamId) continue;
+        // Bulk validation does not know which cell is being edited and keeps
+        // the historical cross-team-only behavior. Direct assignment writes
+        // provide the target cell, allowing same-schedule role conflicts too.
+        if (
+          otherSchedule.scheduleId === schedule.scheduleId &&
+          !targetCellKey
+        ) continue;
         const otherOccurrence = getScheduleOccurrencesForConflict(
           otherSchedule,
         ).find((candidate) =>
@@ -4374,9 +4397,19 @@ export const createTeamsAuthHandlers = ({
         );
         if (!otherOccurrence) continue;
         const otherRow =
-          otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
+          otherSchedule.scheduleId === schedule.scheduleId
+            ? assignments?.[otherOccurrence.occurrenceId] || {}
+            : otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
         const otherMemberIds = new Set(
-          Object.values(otherRow).flatMap(getScheduleAssignmentCellMemberIds),
+          Object.entries(otherRow)
+            .filter(
+              ([cellKey]) =>
+                !(
+                  otherSchedule.scheduleId === schedule.scheduleId &&
+                  cellKey === targetCellKey
+                ),
+            )
+            .flatMap(([, cell]) => getScheduleAssignmentCellMemberIds(cell)),
         );
         targetMemberIds.forEach((memberId) => {
           if (otherMemberIds.has(memberId)) {
@@ -4399,6 +4432,7 @@ export const createTeamsAuthHandlers = ({
     schedules,
     memberIds,
     allowCrossTeamConflict,
+    targetCellKey,
   }) => {
     if (allowCrossTeamConflict) return;
     const conflicts = findCrossTeamScheduleAssignmentConflicts({
@@ -4406,6 +4440,7 @@ export const createTeamsAuthHandlers = ({
       assignments,
       schedules,
       memberIds,
+      targetCellKey,
     });
     if (conflicts.length > 0) {
       throw httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
@@ -4466,6 +4501,7 @@ export const createTeamsAuthHandlers = ({
     shadowKind,
     allowBlockout,
     allowRecurringAvailability,
+    allowOccurrenceConflict = false,
     guestAssignment = false,
   }) => {
     const rowIds = (schedule.occurrences || []).map(
@@ -4814,6 +4850,7 @@ export const createTeamsAuthHandlers = ({
     targetPosition,
     sourcePosition,
     serviceDate,
+    allowOccurrenceConflict = false,
   }) => {
     assertScheduleRowContains(schedule, serviceId);
     const targetSlot = parseScheduleSlotKey(targetPositionSlotKey);
@@ -4898,7 +4935,9 @@ export const createTeamsAuthHandlers = ({
       primaryMemberId: normalizedCurrentMemberId,
       shadows: sourceCell.shadows,
     });
-    assertNoDuplicateScheduleMembersForService(row);
+    if (!allowOccurrenceConflict) {
+      assertNoDuplicateScheduleMembersForService(row);
+    }
     assignments[serviceId] = row;
     return assignments;
   };
@@ -4979,6 +5018,7 @@ export const createTeamsAuthHandlers = ({
       shadowKind,
       allowBlockout,
       allowRecurringAvailability,
+      allowOccurrenceConflict: allowCrossTeamConflict,
       guestAssignment: Boolean(resolvedGuest.guest),
     });
     if (
@@ -4997,6 +5037,7 @@ export const createTeamsAuthHandlers = ({
         schedules,
         memberIds: new Set([normalizedMemberId]),
         allowCrossTeamConflict,
+        targetCellKey: positionSlotKey,
       });
     }
     return { assignments, guests: resolvedGuest.guests };
@@ -5172,6 +5213,7 @@ export const createTeamsAuthHandlers = ({
         shadowKind,
         allowBlockout,
         allowRecurringAvailability,
+        allowOccurrenceConflict: allowCrossTeamConflict,
         guestAssignment: Boolean(resolvedGuest.guest),
       });
       if (
@@ -5190,6 +5232,7 @@ export const createTeamsAuthHandlers = ({
           schedules,
           memberIds: new Set([normalizedMemberId]),
           allowCrossTeamConflict,
+          targetCellKey: positionSlotKey,
         });
       }
       const update = {
@@ -5303,6 +5346,7 @@ export const createTeamsAuthHandlers = ({
         targetPosition,
         sourcePosition,
         serviceDate,
+        allowOccurrenceConflict: allowCrossTeamConflict,
       });
       const schedules = await listTeamCollectionForChurch(
         COLLECTIONS.teamSchedules,
@@ -5417,6 +5461,7 @@ export const createTeamsAuthHandlers = ({
         targetPosition,
         sourcePosition,
         serviceDate,
+        allowOccurrenceConflict: allowCrossTeamConflict,
       });
       const schedules = await listTransactionSchedulesForChurch(
         transaction,
@@ -7491,9 +7536,7 @@ export const createTeamsAuthHandlers = ({
             schedule: { churchId: req.params.churchId, ...payload },
             assignments: payload.assignments,
             schedules,
-            allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
-              req.body?.allowCrossTeamConflict,
-            ),
+            allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
           });
         }
         const schedule = await upsertTeamEntity({
@@ -7612,9 +7655,7 @@ export const createTeamsAuthHandlers = ({
             },
             assignments: newAssignmentConflictChecks,
             schedules,
-            allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
-              req.body?.allowCrossTeamConflict,
-            ),
+            allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
           });
         }
         const saved = await upsertTeamEntity({
@@ -8775,9 +8816,7 @@ export const createTeamsAuthHandlers = ({
           allowRecurringAvailability: normalizeAllowRecurringAvailability(
             req.body?.allowRecurringAvailability,
           ),
-          allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
-            req.body?.allowCrossTeamConflict,
-          ),
+          allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -9196,9 +9235,7 @@ export const createTeamsAuthHandlers = ({
             req.body?.serviceDate,
             "Service date",
           ),
-          allowCrossTeamConflict: normalizeAllowCrossTeamConflict(
-            req.body?.allowCrossTeamConflict,
-          ),
+          allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({

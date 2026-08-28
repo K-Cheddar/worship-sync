@@ -798,13 +798,14 @@ const ScheduleTab = ({
           schedule: selectedSchedule,
           occurrenceId,
           memberId,
+          cellKey: activeSlot?.columnKey,
           // Conflict checks only need the schedules overlapping this one, and
           // selecting a schedule hydrates exactly that set.
           schedules: onlyHydratedSchedules(data.schedules),
           teams: data.teams,
         }),
       ),
-    [data.schedules, data.teams, selectedSchedule],
+    [activeSlot?.columnKey, data.schedules, data.teams, selectedSchedule],
   );
 
   const hasUnhydratedOverlappingTeamSchedule = useMemo(
@@ -847,7 +848,7 @@ const ScheduleTab = ({
   }, []);
 
   const assignmentConflictPayload = (allowCrossTeamConflict?: boolean) =>
-    allowCrossTeamConflict ? { allowCrossTeamConflict: true as const } : {};
+    allowCrossTeamConflict ? { allowOccurrenceConflict: true as const } : {};
 
   const positionNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1281,15 +1282,6 @@ const ScheduleTab = ({
       // reason — it applies even to eligible members and tells the admin the
       // person is taken (vs. simply not eligible). Surface it before the
       // eligibility/blockout checks so those don't mask it.
-      const row = selectedSchedule?.assignments?.[occurrenceId] || {};
-      const assignedElsewhere = Object.entries(row).some(([assignedPositionSlotKey, cell]) => {
-        const isSourceCell =
-          source?.serviceId === occurrenceId && source?.positionId === assignedPositionSlotKey;
-        if (isSourceCell && assignmentKind === "primary") return false;
-        const assignedMemberIds = getCellMemberIds(cell);
-        return assignedMemberIds.includes(memberId);
-      });
-      if (assignedElsewhere) return "Already assigned in this service";
       if (assignmentKind !== "shadow" && !(member.positionIds || []).includes(positionId)) {
         return "Not eligible for this position";
       }
@@ -1302,7 +1294,7 @@ const ScheduleTab = ({
       // an explicit confirmation before a manual assignment can continue.
       return "";
     },
-    [data.members, scheduleOccurrences, selectedSchedule?.assignments, selectedTeam],
+    [data.members, scheduleOccurrences, selectedTeam],
   );
 
   // Soft, non-blocking warning: the member marked this service unavailable on an
@@ -1899,7 +1891,7 @@ const ScheduleTab = ({
               action,
               allowBlockout,
               allowRecurringAvailability,
-              allowCrossTeamConflict: true,
+              allowOccurrenceConflict: true,
             }),
         });
         return;

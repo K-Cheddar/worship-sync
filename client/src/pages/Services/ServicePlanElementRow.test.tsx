@@ -75,7 +75,7 @@ describe("getServicePlanElementSurfaceClassName", () => {
   it("alternates list-row backgrounds without type-colored borders", () => {
     const even = getServicePlanElementSurfaceClassName({ toneIndex: 0 });
     const odd = getServicePlanElementSurfaceClassName({ toneIndex: 1 });
-    expect(even).toContain("bg-gray-900/50");
+    expect(even).toContain("bg-gray-800/35");
     expect(odd).toContain("bg-transparent");
     expect(even).toContain("border-b");
     expect(even).not.toContain("border-l-4");

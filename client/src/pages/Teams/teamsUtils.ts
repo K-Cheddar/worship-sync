@@ -1252,6 +1252,8 @@ export const buildServiceTimeUpdate = (
     shouldShowName: existing?.shouldShowName,
     positionRequirements:
       draft.positionRequirements ?? existing?.positionRequirements,
+    defaultPlanTemplateId:
+      draft.defaultPlanTemplateId || undefined,
     serviceGroupId: draft.serviceGroupId,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),

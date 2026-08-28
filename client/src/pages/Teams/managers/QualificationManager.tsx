@@ -2,7 +2,6 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { Plus, Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
-import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -24,7 +23,12 @@ import type {
 } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
-import EntityListSearch from "../components/EntityListSearch";
+import {
+  EntityListFilterPanel,
+  EntityListFilterFooter,
+  EntityListFilterToolbar,
+  type EntityListFilterState,
+} from "../components/EntityListFilters";
 import EntityRow from "../components/EntityRow";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
@@ -93,6 +97,8 @@ const QualificationManager = ({
   // actually saving and lets editing continue back-to-back in the background.
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
+  const [listFilters, setListFilters] = useState<EntityListFilterState>({ teamIds: [], includeArchived: false });
+  const [showFilters, setShowFilters] = useState(false);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const isNarrowViewport = useTeamsNarrowViewport();
@@ -114,7 +120,10 @@ const QualificationManager = ({
   );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
-  const teamAreas = areas.filter((area) => area.teamId === teamId);
+  const teamAreas = areas.filter((area) =>
+    (listFilters.teamIds.length === 0 || listFilters.teamIds.includes(area.teamId)) &&
+    (listFilters.includeArchived || isActive(area)),
+  );
   const filteredTeamAreas = useMemo(
     () =>
       teamAreas.filter((area) => qualificationAreaMatchesListQuery(area, listQuery)),
@@ -173,6 +182,7 @@ const QualificationManager = ({
   };
 
   const openAreaEditor = (area: TeamQualificationArea) => {
+    setShowFilters(false);
     setEditing(area);
     setSelectedTeamId(area.teamId);
     setShowCreate(true);
@@ -382,10 +392,14 @@ const QualificationManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
-          reset();
-          setShowCreate(true);
+          requestDiscardAction(() => {
+            setShowFilters(false);
+            reset();
+            setShowCreate(true);
+          });
         }}
         canEdit={canEdit}
+        keepCreateActionVisible
         title={editing ? "Edit qualification area" : "Create qualification area"}
         sectionTitle="Qualifications"
         description="Define qualification areas and levels."
@@ -406,28 +420,15 @@ const QualificationManager = ({
               {returnTo && !showCreate ? (
                 <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
               ) : null}
-              <Select
-                label="Team"
-                value={teamId}
-                onChange={(value) => {
-                  setSelectedTeamId(value);
-                  if (editing) reset();
-                }}
-                options={activeTeams.map((team) => ({
-                  label: team.name,
-                  value: team.teamId,
-                }))}
-              />
-              {teamAreas.length > 0 ? (
-                <EntityListSearch
-                  label="Qualification areas"
-                  value={listQuery}
-                  onChange={setListQuery}
-                />
-              ) : null}
+              <EntityListFilterToolbar entityLabel="Qualification areas" query={listQuery} onQueryChange={setListQuery} filters={listFilters} onFiltersChange={setListFilters} filtersOpen={showFilters} onFiltersOpenChange={setShowFilters} />
             </div>
           )
         }
+        asideOpen={showFilters}
+        asideTitle="Filter qualifications"
+        asideHeaderActions={<Button variant="tertiary" onClick={() => setShowFilters(false)}>Close</Button>}
+        aside={<EntityListFilterPanel entityLabel="qualification areas" filters={listFilters} onFiltersChange={setListFilters} teamOptions={activeTeams.map((team) => ({ id: team.teamId, label: team.name }))} />}
+        asideFooter={<EntityListFilterFooter filters={listFilters} onClear={() => setListFilters({ teamIds: [], includeArchived: false })} onClose={() => setShowFilters(false)} />}
         list={
           <>
             {activeTeams.length === 0 ? (
@@ -438,9 +439,9 @@ const QualificationManager = ({
             ) : (
               <>
                 {teamAreas.length === 0 ? (
-                  <p className="text-sm text-gray-300">
-                    No qualification areas in this team yet.
-                  </p>
+                    <p className="text-sm text-gray-300">
+                      No qualification areas match the current filters.
+                    </p>
                 ) : null}
                 {teamAreas.length > 0 && filteredTeamAreas.length === 0 ? (
                   <p className="text-sm text-gray-300">No matches.</p>

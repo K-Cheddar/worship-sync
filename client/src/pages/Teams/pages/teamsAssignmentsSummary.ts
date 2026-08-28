@@ -19,6 +19,10 @@ import {
 } from "../schedule/scheduleRequirements";
 import { sortPositionsByOrder } from "../teamsUtils";
 import { canNotifyMember } from "../unnotifiableMembers";
+import {
+  readAssignmentResponse,
+  type AssignmentResponse,
+} from "../schedule/scheduleResponseState";
 
 export type TeamsAssignmentSummaryRow = {
   teamId: string;
@@ -43,6 +47,8 @@ export type TeamsAssignmentSummaryRow = {
   slotLabel: string;
   /** null when the slot is required but nobody is assigned yet. */
   memberName: string | null;
+  memberId?: string;
+  response?: AssignmentResponse;
   /** Public profile image for the assigned roster member, when present. */
   memberProfileImageUrl?: string;
   /**
@@ -234,6 +240,7 @@ export const getOccurrenceAssignmentSummary = ({
       columnKey,
       slotLabel,
       memberName,
+      memberId,
       memberProfileImageUrl,
       canNotify,
       microphoneIds,
@@ -242,6 +249,7 @@ export const getOccurrenceAssignmentSummary = ({
       columnKey: string;
       slotLabel: string;
       memberName: string | null;
+      memberId?: string;
       memberProfileImageUrl?: string;
       canNotify: boolean | null;
       microphoneIds: string[];
@@ -258,6 +266,11 @@ export const getOccurrenceAssignmentSummary = ({
         columnKey,
         slotLabel,
         memberName,
+        memberId,
+        response: readAssignmentResponse(
+          schedule.responses?.[scheduleOccurrenceId]?.[columnKey],
+          memberId || "",
+        ),
         memberProfileImageUrl,
         canNotify,
         microphoneIds,
@@ -310,6 +323,7 @@ export const getOccurrenceAssignmentSummary = ({
             memberName: memberNameFor(
               cells?.[column.columnKey]?.primaryMemberId,
             ),
+            memberId: cells?.[column.columnKey]?.primaryMemberId,
             memberProfileImageUrl: memberProfileImageUrlFor(
               cells?.[column.columnKey]?.primaryMemberId,
             ),
@@ -341,6 +355,7 @@ export const getOccurrenceAssignmentSummary = ({
           columnKey: slotKey,
           slotLabel: position?.name || "Position",
           memberName,
+          memberId: cell.primaryMemberId,
           memberProfileImageUrl: memberProfileImageUrlFor(cell.primaryMemberId),
           canNotify: canNotifyFor(cell.primaryMemberId),
           microphoneIds:

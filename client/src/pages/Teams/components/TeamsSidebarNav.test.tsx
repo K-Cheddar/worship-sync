@@ -34,7 +34,7 @@ describe("TeamsSidebarNav", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Services" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Plans$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
   });
 
   it("collapses to icon-only links while keeping accessible names", () => {
@@ -50,7 +50,7 @@ describe("TeamsSidebarNav", () => {
   it("shows both navigation groups in the collapsed icon rail", () => {
     renderSidebar("/teams-and-services/schedules", true);
 
-    expect(screen.getByRole("link", { name: /^Plans$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     expect(screen.queryByText(/^Services$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Teams$/i)).not.toBeInTheDocument();

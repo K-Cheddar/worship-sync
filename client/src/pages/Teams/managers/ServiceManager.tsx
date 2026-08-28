@@ -26,6 +26,7 @@ import type {
   Weekday,
 } from "../../../types";
 import type { TeamRecord, TeamPosition, TeamService } from "../../../api/authTypes";
+import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import Icon from "../../../components/Icon/Icon";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
 import { sanitizePositionRequirements } from "../schedule/scheduleRequirements";
@@ -54,10 +55,17 @@ type ServiceManagerProps = {
   services: TeamService[];
   positions: TeamPosition[];
   teams: TeamRecord[];
+  planTemplates?: ServicePlanTemplate[];
   canEdit: boolean;
 };
 
-const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerProps) => {
+const ServiceManager = ({
+  services,
+  positions,
+  teams,
+  planTemplates = [],
+  canEdit,
+}: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
   const isNarrowViewport = useTeamsNarrowViewport();
@@ -102,6 +110,7 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
       ...createEmptyServiceDraft(),
       id: current.id,
       name: current.name || "",
+      defaultPlanTemplateId: current.defaultPlanTemplateId,
       reccurence: recurrence,
     }));
   };
@@ -173,6 +182,27 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
   );
 
   const activePositions = positions.filter(isActive);
+  const eligiblePlanTemplates = planTemplates.filter(
+    (template) =>
+      !template.serviceId || template.serviceId === editing?.serviceId,
+  );
+  const selectedDefaultTemplateId = draft.defaultPlanTemplateId || "";
+  const selectedDefaultTemplateIsMissing = Boolean(
+    selectedDefaultTemplateId &&
+    !eligiblePlanTemplates.some(
+      (template) => template.templateId === selectedDefaultTemplateId,
+    ),
+  );
+  const defaultPlanTemplateOptions = [
+    { label: "No automatic template", value: "" },
+    ...eligiblePlanTemplates.map((template) => ({
+      label: template.name,
+      value: template.templateId,
+    })),
+    ...(selectedDefaultTemplateIsMissing
+      ? [{ label: "Unavailable template", value: selectedDefaultTemplateId }]
+      : []),
+  ];
   // Positions are owned by teams, so group the requirement checklist by team. A
   // service can be run by more than one team, so several groups may show.
   const positionsByTeam = teams
@@ -459,6 +489,25 @@ const ServiceManager = ({ services, positions, teams, canEdit }: ServiceManagerP
           />
         </div>
       ) : null}
+
+      <div className="space-y-1">
+        <Select
+          label="Default plan template"
+          value={selectedDefaultTemplateId}
+          onChange={(defaultPlanTemplateId) =>
+            setDraft((current) => ({
+              ...current,
+              defaultPlanTemplateId:
+                String(defaultPlanTemplateId || "") || undefined,
+            }))
+          }
+          options={defaultPlanTemplateOptions}
+        />
+        <p className="text-xs text-gray-400">
+          New service plans start from this template. Scheduled role links in
+          the template fill from that date&apos;s team schedules.
+        </p>
+      </div>
 
       {combinableServices.length > 0 ? (
         <MultiCheckboxGroup

@@ -39,6 +39,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
 } from "../../types/servicePlan";
+import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 
 const SECTION_ID_PREFIX = "section:";
 const ELEMENT_ID_PREFIX = "element:";
@@ -95,10 +96,13 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   onRemoveAssignedToHistoryValue?: (value: string) => void;
   isAssignedToHistoryValueRemovable?: (value: string) => boolean;
   roleNoteOptions: ServicePlanRoleNoteOption[];
+  scheduledPositionOptions: ServicePlanRoleNoteOption[];
   teamNoteOptions: ServicePlanTeamNoteOption[];
   microphones: ServicePlanMicrophone[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
+  onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /** Local view preference: hide shared and team notes on every element. */
   hideNotes?: boolean;
   /** Empty string = all teams; otherwise only team notes with this label. */
@@ -135,10 +139,13 @@ const SortableSectionCard = ({
   onRemoveAssignedToHistoryValue,
   isAssignedToHistoryValueRemovable,
   roleNoteOptions,
+  scheduledPositionOptions,
   teamNoteOptions,
   microphones,
   microphoneAudiences,
   scheduledMicrophoneHolders,
+  scheduledAssignmentRows,
+  onOpenScheduledAssignment,
   isServiceDay = false,
   liveElementId = null,
   isManualLive = false,
@@ -300,6 +307,8 @@ const SortableSectionCard = ({
                   microphones={microphones}
                   microphoneAudiences={microphoneAudiences}
                   scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+                  scheduledAssignmentRows={scheduledAssignmentRows}
+                  onOpenScheduledAssignment={onOpenScheduledAssignment}
                   onViewSongLyrics={onViewSongLyrics}
                   canCreateLibrarySong={canCreateLibrarySong}
                   onCreatePendingSong={onCreatePendingSong}
@@ -331,10 +340,13 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   onRemoveAssignedToHistoryValue?: (value: string) => void;
   isAssignedToHistoryValueRemovable?: (value: string) => boolean;
   roleNoteOptions?: ServicePlanRoleNoteOption[];
+  scheduledPositionOptions?: ServicePlanRoleNoteOption[];
   teamNoteOptions?: ServicePlanTeamNoteOption[];
   microphones?: ServicePlanMicrophone[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
+  onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   hideNotes?: boolean;
   teamNotesFilter?: string;
   roleNotesFilter?: string;
@@ -376,10 +388,13 @@ const ServicePlanSectionList = ({
   onRemoveAssignedToHistoryValue,
   isAssignedToHistoryValueRemovable,
   roleNoteOptions = [],
+  scheduledPositionOptions = roleNoteOptions,
   teamNoteOptions = [],
   microphones = [],
   microphoneAudiences,
   scheduledMicrophoneHolders,
+  scheduledAssignmentRows,
+  onOpenScheduledAssignment,
   hideNotes = false,
   teamNotesFilter = "",
   roleNotesFilter = "",
@@ -518,11 +533,14 @@ const ServicePlanSectionList = ({
               assignedToHistoryValues={assignedToHistoryValues}
               onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
               isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
-              roleNoteOptions={roleNoteOptions}
+                  roleNoteOptions={roleNoteOptions}
+                  scheduledPositionOptions={scheduledPositionOptions}
               teamNoteOptions={teamNoteOptions}
               microphones={microphones}
               microphoneAudiences={microphoneAudiences}
               scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledAssignmentRows={scheduledAssignmentRows}
+              onOpenScheduledAssignment={onOpenScheduledAssignment}
               hideNotes={hideNotes}
               teamNotesFilter={teamNotesFilter}
               roleNotesFilter={roleNotesFilter}

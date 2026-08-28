@@ -189,9 +189,9 @@ describe("TeamsPlansPage", () => {
   it("defaults to by-date order with an organize control when multiple services exist", async () => {
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Plans" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Services" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /Organize plans/i })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /Organize services/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^By date$/i })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -321,7 +321,7 @@ describe("TeamsPlansPage", () => {
     await user.click(addPlanButtons[0]);
 
     expect(
-      await screen.findByRole("button", { name: /Back to Plans/i }),
+      await screen.findByRole("button", { name: /Back to Services/i }),
     ).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
@@ -335,8 +335,8 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("button", { name: /Previous plan/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Next plan/i })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: /Back to Plans/i }));
-    expect(await screen.findByRole("heading", { name: "Plans" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Back to Services/i }));
+    expect(await screen.findByRole("heading", { name: "Services" })).toBeInTheDocument();
   });
 
   it("navigates to the previous and next plan for the same service from the header", async () => {

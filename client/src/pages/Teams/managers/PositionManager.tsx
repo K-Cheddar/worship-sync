@@ -11,6 +11,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useLocation, useSearchParams } from "react-router-dom";
 import Input from "../../../components/Input/Input";
+import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -25,7 +26,12 @@ import {
 import type { TeamRecord, TeamPosition } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
-import EntityListSearch from "../components/EntityListSearch";
+import {
+  EntityListFilterPanel,
+  EntityListFilterFooter,
+  EntityListFilterToolbar,
+  type EntityListFilterState,
+} from "../components/EntityListFilters";
 import EntityRow from "../components/EntityRow";
 import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
@@ -114,6 +120,11 @@ const PositionManager = ({
   // back-to-back while a background save resolves.
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [listQuery, setListQuery] = useState("");
+  const [listFilters, setListFilters] = useState<EntityListFilterState>({
+    teamIds: [],
+    includeArchived: false,
+  });
+  const [showFilters, setShowFilters] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
@@ -140,7 +151,10 @@ const PositionManager = ({
     [data.qualificationAreas, teamId],
   );
 
-  const teamPositions = positions.filter((position) => position.teamId === teamId);
+  const teamPositions = positions.filter((position) =>
+    (listFilters.teamIds.length === 0 || listFilters.teamIds.includes(position.teamId)) &&
+    (listFilters.includeArchived || isActive(position)),
+  );
   const filteredTeamPositions = useMemo(
     () =>
       teamPositions.filter((position) => positionMatchesListQuery(position, listQuery)),
@@ -149,7 +163,12 @@ const PositionManager = ({
 
   // Reordering acts on the full team list, so disable it while a search filter
   // is narrowing what's shown.
-  const canReorder = canEdit && !listQuery.trim() && teamPositions.length > 1;
+  const canReorder =
+    canEdit &&
+    listFilters.teamIds.length === 1 &&
+    listFilters.teamIds[0] === teamId &&
+    !listQuery.trim() &&
+    teamPositions.length > 1;
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -294,6 +313,7 @@ const PositionManager = ({
   useTeamsUnsavedChanges(hasPendingChanges && !isSavingCurrent);
 
   const openPositionEditor = useCallback((position: TeamPosition) => {
+    setShowFilters(false);
     setEditing(position);
     setSelectedTeamId(position.teamId);
     setShowCreate(true);
@@ -344,10 +364,14 @@ const PositionManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
-          reset();
-          setShowCreate(true);
+          requestDiscardAction(() => {
+            setShowFilters(false);
+            reset();
+            setShowCreate(true);
+          });
         }}
         canEdit={canEdit}
+        keepCreateActionVisible
         title={editing ? "Edit position" : "Create position"}
         sectionTitle="Positions"
         description="Define roles and position requirements."
@@ -368,28 +392,25 @@ const PositionManager = ({
               {returnTo && !showCreate ? (
                 <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
               ) : null}
-              <Select
-                label="Team"
-                value={teamId}
-                onChange={(value) => {
-                  setSelectedTeamId(value);
-                  if (editing) reset();
-                }}
-                options={activeTeams.map((team) => ({
-                  label: team.name,
-                  value: team.teamId,
-                }))}
+              <EntityListFilterToolbar
+                entityLabel="Positions"
+                query={listQuery}
+                onQueryChange={setListQuery}
+                filters={listFilters}
+                onFiltersChange={setListFilters}
+                filtersOpen={showFilters}
+                onFiltersOpenChange={setShowFilters}
               />
-              {teamPositions.length > 0 ? (
-                <EntityListSearch
-                  label="Positions"
-                  value={listQuery}
-                  onChange={setListQuery}
-                />
-              ) : null}
             </div>
           )
         }
+        asideOpen={showFilters}
+        asideTitle="Filter positions"
+        asideHeaderActions={
+          <Button variant="tertiary" onClick={() => setShowFilters(false)}>Close</Button>
+        }
+        aside={<EntityListFilterPanel entityLabel="positions" filters={listFilters} onFiltersChange={setListFilters} teamOptions={activeTeams.map((team) => ({ id: team.teamId, label: team.name }))} />}
+        asideFooter={<EntityListFilterFooter filters={listFilters} onClear={() => setListFilters({ teamIds: [], includeArchived: false })} onClose={() => setShowFilters(false)} />}
         list={
           <>
             {activeTeams.length === 0 ? (
@@ -400,7 +421,7 @@ const PositionManager = ({
             ) : (
               <>
                 {teamPositions.length === 0 ? (
-                  <p className="text-sm text-gray-300">No positions in this team yet.</p>
+                  <p className="text-sm text-gray-300">No positions match the current filters.</p>
                 ) : null}
                 {teamPositions.length > 0 && filteredTeamPositions.length === 0 ? (
                   <p className="text-sm text-gray-300">No matches.</p>

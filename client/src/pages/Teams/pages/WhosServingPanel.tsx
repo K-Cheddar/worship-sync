@@ -9,6 +9,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { TeamRosterMember } from "../../../api/authTypes";
 import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
 import {
   summarizeNeededPositions,
@@ -36,6 +37,9 @@ export type WhosServingPanelProps = {
   assignmentsStatus?: "ready" | "loading" | "unavailable";
   /** When false, skip the panel title (e.g. a Sheet/tab already provides one). */
   showHeading?: boolean;
+  members?: TeamRosterMember[];
+  canEdit?: boolean;
+  onAssign?: (row: TeamsAssignmentSummaryRow, memberId: string | null) => void;
 };
 
 /**
@@ -110,6 +114,33 @@ const ServingMemberName = ({
       </div>
     </PopoverContent>
   </Popover>
+  );
+
+const AssignmentSelect = ({
+  row,
+  members,
+  onAssign,
+}: {
+  row: TeamsAssignmentSummaryRow;
+  members: TeamRosterMember[];
+  onAssign: (row: TeamsAssignmentSummaryRow, memberId: string | null) => void;
+}) => (
+  <select
+    className="max-w-32 rounded border border-gray-600 bg-gray-900 px-1 py-0.5 text-xs text-gray-100"
+    aria-label={`Assign ${row.slotLabel}`}
+    value={row.memberName ? members.find((member) =>
+      `${member.firstName} ${member.lastName}`.trim() === row.memberName)?.memberId || "" : ""}
+    onChange={(event) => onAssign(row, event.target.value || null)}
+  >
+    <option value="">Unassigned</option>
+    {members
+      .filter((member) => member.positionIds?.includes(row.positionId))
+      .map((member) => (
+        <option key={member.memberId} value={member.memberId}>
+          {`${member.firstName} ${member.lastName}`.trim()}
+        </option>
+      ))}
+  </select>
 );
 
 /**
@@ -123,12 +154,15 @@ const WhosServingPanel = ({
   microphones = [],
   assignmentsStatus = "ready",
   showHeading = true,
+  members = [],
+  canEdit = false,
+  onAssign,
 }: WhosServingPanelProps) => (
   <>
     {showHeading ? (
       <div className="flex items-center gap-2">
         <Icon svg={Users} size="sm" className="text-orange-300" />
-        <h3 className="text-sm font-semibold">Who&apos;s serving</h3>
+        <h3 className="text-sm font-semibold">People</h3>
       </div>
     ) : null}
     {assignmentsStatus === "ready" ? null : (
@@ -257,6 +291,10 @@ const WhosServingPanel = ({
                           canNotify={row.canNotify}
                           heldMicrophones={heldMicrophones}
                         />
+                        <span className="text-[10px] capitalize text-gray-500">{row.response || "pending"}</span>
+                        {canEdit && onAssign ? (
+                          <AssignmentSelect row={row} members={members} onAssign={onAssign} />
+                        ) : null}
                       </div>
                       {hasMicrophones ? (
                         <span
@@ -277,23 +315,35 @@ const WhosServingPanel = ({
                 })}
               </ul>
               {team.unfilled.length > 0 ? (
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-start gap-1 rounded-md px-1.5 py-1 text-left text-xs font-medium text-amber-300 transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
-                  onClick={() =>
-                    onOpenSchedule({
-                      scheduleId,
-                      slot: {
-                        occurrenceId: team.unfilled[0].occurrenceId,
-                        columnKey: team.unfilled[0].columnKey,
-                      },
-                    })
-                  }
-                  aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
-                >
-                  {team.unfilled.length} unfilled
-                  <Icon svg={ChevronRight} size="xs" />
-                </button>
+                <>
+                  {canEdit && onAssign ? (
+                    <ul className="space-y-1.5">
+                      {team.unfilled.map((row) => (
+                        <li key={`${scheduleId}-${row.columnKey}`} className="flex items-center justify-between gap-2 px-1.5 py-1">
+                          <span className="truncate text-xs text-amber-300">{row.slotLabel}</span>
+                          <AssignmentSelect row={row} members={members} onAssign={onAssign} />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-start gap-1 rounded-md px-1.5 py-1 text-left text-xs font-medium text-amber-300 transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+                    onClick={() =>
+                      onOpenSchedule({
+                        scheduleId,
+                        slot: {
+                          occurrenceId: team.unfilled[0].occurrenceId,
+                          columnKey: team.unfilled[0].columnKey,
+                        },
+                      })
+                    }
+                    aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
+                  >
+                    {team.unfilled.length} unfilled
+                    <Icon svg={ChevronRight} size="xs" />
+                  </button>
+                </>
               ) : null}
             </section>
           );

@@ -179,6 +179,8 @@ export type ServicePlanElement = {
   assignedName?: string;
   /** Team position this element maps to; scopes roster assignment suggestions. */
   positionId?: string;
+  /** Team positions whose schedule slots should populate this item. */
+  scheduledPositionIds?: string[];
   /** Raw scraped "led by" text, kept for traceability and re-import diffing. */
   sourceLedByRaw?: string;
   /**

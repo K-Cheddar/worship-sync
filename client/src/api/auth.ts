@@ -1556,6 +1556,7 @@ export const updateTeamScheduleAssignment = async (
     /** Explicit acknowledgement that recurring availability excludes this service. */
     allowRecurringAvailability?: boolean;
     allowCrossTeamConflict?: boolean;
+    allowOccurrenceConflict?: boolean;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
@@ -1611,6 +1612,7 @@ export const updateTeamScheduleAssignmentSwap = async (
     candidateMemberId: string;
     serviceDate?: string;
     allowCrossTeamConflict?: boolean;
+    allowOccurrenceConflict?: boolean;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
