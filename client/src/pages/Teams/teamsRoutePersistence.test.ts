@@ -30,10 +30,10 @@ describe("teams and services route persistence", () => {
   });
 
   it("saves the section root instead of a transient child route", () => {
-    saveTeamsAndServicesRoute("/teams-and-services/plans/2026-08-26");
+    saveTeamsAndServicesRoute("/teams-and-services/services/2026-08-26");
 
     expect(getStoredTeamsAndServicesRoute()).toBe(
-      "/teams-and-services/plans",
+      "/teams-and-services/services",
     );
   });
 

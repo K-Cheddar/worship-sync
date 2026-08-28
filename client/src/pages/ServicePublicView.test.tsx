@@ -72,6 +72,7 @@ describe("ServicePublicView microphone assignments", () => {
     render(<ServicePublicView snapshot={detailedSnapshot} />);
 
     const toggle = screen.getByRole("button", { name: "Switch to light mode" });
+    expect(screen.getByRole("button", { name: /fullscreen/i })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveClass("bg-neutral-950");
 
     await user.click(toggle);
@@ -87,6 +88,11 @@ describe("ServicePublicView microphone assignments", () => {
     const panel = screen.getByRole("complementary", {
       name: "Microphone assignments",
     });
+    expect(panel).toHaveClass(
+      "lg:max-h-[calc(100dvh-2rem)]",
+      "lg:overflow-y-auto",
+      "lg:overscroll-contain",
+    );
     expect(within(panel).getByRole("heading", { name: "Worship Team" }))
       .toHaveStyle({ color: "#f59e0b" });
     expect(within(panel).getByText("Microphones in use for this service.")).toBeInTheDocument();

@@ -68,6 +68,7 @@ import {
   getServicePlan,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
+  listServicePlanTemplates,
   publishServicePlan,
   saveServicePlan,
   saveServicePlanAssignmentHistory,
@@ -159,11 +160,13 @@ import type {
   ServicePlanSourceImport,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServicePlanTemplate,
 } from "../../types/servicePlan";
 import { getServicePlanElementAssigneeNames } from "../../types/servicePlan";
 import {
   addElement,
   addSection,
+  cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   replaceMatchingPendingSongReferences,
   updateElement,
@@ -175,7 +178,6 @@ import {
   collectServicePlanTeamNoteOptions,
 } from "./servicePlanNoteOptions";
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
-import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const SERVICE_PLAN_LIST_SCROLL_ID = "service-plan-list";
 
@@ -292,6 +294,9 @@ type ServicePlanEditorProps = {
   teams?: TeamRecord[];
   /** Scheduled team holders for church microphones on this occurrence. */
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  /** Schedule-derived rows shown under linked plan items. */
+  scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
+  onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /**
    * Day-level microphone allocation for this occurrence's scheduled roles.
    * When the occurrence has slots on a team that uses microphone assignments,
@@ -315,6 +320,8 @@ type ServicePlanEditorProps = {
     ) => void;
   };
   canEdit: boolean;
+  /** Current-service controller surfaces already show live status elsewhere. */
+  showSummary?: boolean;
   /** When set, renders a shared editor chrome with back control + title. */
   onBack?: () => void;
   backLabel?: string;
@@ -359,8 +366,11 @@ const ServicePlanEditor = ({
   positions = [],
   teams = [],
   scheduledMicrophoneHolders,
+  scheduledAssignmentRows,
+  onOpenScheduledAssignment,
   teamMicrophones,
   canEdit,
+  showSummary = true,
   onBack,
   backLabel = "Back to Plans",
   planNavigation,
@@ -395,6 +405,7 @@ const ServicePlanEditor = ({
   }, [db, dispatch]);
 
   const planKey = getServicePlanKey(occurrence);
+  const defaultPlanTemplateId = service.defaultPlanTemplateId?.trim() || "";
 
   const [plan, setPlan] = useState<ServicePlan | null>(null);
   const [planName, setPlanName] = useState("");
@@ -407,6 +418,13 @@ const ServicePlanEditor = ({
   // Otherwise a fast click can create a local draft that the initial response
   // immediately replaces.
   const [loading, setLoading] = useState(Boolean(churchId && planKey));
+  const [defaultPlanTemplate, setDefaultPlanTemplate] =
+    useState<ServicePlanTemplate | null>(null);
+  const [defaultPlanTemplateLoading, setDefaultPlanTemplateLoading] =
+    useState(false);
+  const [defaultPlanTemplateMissing, setDefaultPlanTemplateMissing] =
+    useState(false);
+  const defaultTemplateAppliedPlanKeyRef = useRef("");
   const [showImport, setShowImport] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -434,10 +452,10 @@ const ServicePlanEditor = ({
   const [roleNotesFilter, setRoleNotesFilter] = useState("");
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(false);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Microphones live beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
   const planTabPlanKeyRef = useRef(planKey);
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [showServiceDetails, setShowServiceDetails] = useState(false);
   /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
@@ -519,6 +537,44 @@ const ServicePlanEditor = ({
   // actually moving. See LIVE_CLOCK_* below.
 
   useEffect(() => {
+    setDefaultPlanTemplate(null);
+    setDefaultPlanTemplateMissing(false);
+    if (!churchId || !defaultPlanTemplateId || !canEdit) {
+      setDefaultPlanTemplateLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setDefaultPlanTemplateLoading(true);
+    listServicePlanTemplates(churchId)
+      .then((response) => {
+        if (cancelled) return;
+        const template =
+          response.templates.find(
+            (candidate) => candidate.templateId === defaultPlanTemplateId,
+          ) || null;
+        setDefaultPlanTemplate(template);
+        setDefaultPlanTemplateMissing(!template);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setDefaultPlanTemplateMissing(true);
+        showApiErrorToast(
+          showToast,
+          error,
+          "Could not load the default plan template. Try again.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setDefaultPlanTemplateLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canEdit, churchId, defaultPlanTemplateId, showToast]);
+
+  useEffect(() => {
     setPlan(null);
     setSections(null);
     setPlanName("");
@@ -531,6 +587,7 @@ const ServicePlanEditor = ({
     setImportPreview(null);
     setPublicUrls(null);
     setConflictPlan(null);
+    defaultTemplateAppliedPlanKeyRef.current = "";
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
     setIsEditing(false);
@@ -571,6 +628,41 @@ const ServicePlanEditor = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planKey, churchId]);
+
+  // The service's default template is the durable link between its recurring
+  // plan structure and scheduled positions. Apply it only after confirming
+  // that this occurrence has no saved plan; the normal autosave then creates
+  // the dated plan without another weekly template or role-selection step.
+  useEffect(() => {
+    if (
+      !canEdit ||
+      loading ||
+      defaultPlanTemplateLoading ||
+      !defaultPlanTemplate ||
+      plan ||
+      sections !== null ||
+      defaultTemplateAppliedPlanKeyRef.current === planKey
+    ) {
+      return;
+    }
+    defaultTemplateAppliedPlanKeyRef.current = planKey;
+    setSections(cloneSectionsFromTemplate(defaultPlanTemplate.sections));
+    setPlanName(occurrence.name || service.name || "");
+    setSourceImport(undefined);
+    setDraftChangeVersion((version) => version + 1);
+    resetDraftHistory();
+  }, [
+    canEdit,
+    defaultPlanTemplate,
+    defaultPlanTemplateLoading,
+    loading,
+    occurrence.name,
+    plan,
+    planKey,
+    resetDraftHistory,
+    sections,
+    service.name,
+  ]);
 
   // Assignment suggestions are church-wide, not per-occurrence, so this loads
   // once per church rather than resetting on every occurrence switch.
@@ -838,6 +930,11 @@ const ServicePlanEditor = ({
   /** Undo history is scoped to a single editing session: Done commits the
    * plan, so there is nothing left to step back through. */
   const toggleEditing = () => {
+    if (isEditing) {
+      // Selection is an editing affordance; do not leave a section or item
+      // highlighted after returning to the read-only plan view.
+      setSelectedPlanTarget(null);
+    }
     resetDraftHistory();
     setIsEditing((editing) => !editing);
   };
@@ -1182,6 +1279,14 @@ const ServicePlanEditor = ({
   // Starter actions stay available both before a plan exists and after every
   // section has been removed. A fresh "Start from scratch" draft still has one
   // empty section, so it does not bounce back into this empty state.
+  const initializingDefaultPlan = Boolean(
+    canEdit &&
+    defaultPlanTemplateId &&
+    !plan &&
+    sections === null &&
+    (defaultPlanTemplateLoading || defaultPlanTemplate),
+  );
+  const loadingInitialContent = loading || initializingDefaultPlan;
   const hasSections = Boolean(sections && sections.length > 0);
   /** Whether the draft holds anything an import would have to reconcile. */
   const hasPlanContent = Boolean(
@@ -1201,15 +1306,77 @@ const ServicePlanEditor = ({
   // panel already explains an empty catalog or a service with no eligible
   // scheduled roles, which is more useful than making the tab disappear.
   const showMicrophoneTab = Boolean(teamMicrophones);
-  const showServingTab = Boolean(mobileServingContent) && !isDesktop;
+  const showServingTab = Boolean(mobileServingContent);
   const activeTab: ServicePlanEditorTab =
     (planTab === "microphones" && !showMicrophoneTab) ||
       (planTab === "serving" && !showServingTab)
       ? "plan"
       : planTab;
+  const scheduledRows = useMemo(
+    () => scheduledAssignmentRows || [],
+    [scheduledAssignmentRows],
+  );
+  const filledScheduledRows = scheduledRows.filter((row) => Boolean(row.memberName));
+  const micCoveredRows = scheduledRows.filter(
+    (row) => Boolean(row.memberName) && row.microphoneIds.length > 0,
+  );
+  const respondedRows = filledScheduledRows.filter((row) => (row.response || "pending") !== "pending");
+  const workspaceSummary = (
+    <div className="shrink-0 rounded-lg border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5 text-xs" aria-label="Service summary">
+      <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-medium text-gray-100">{plan || hasSections ? "Plan ready" : "Plan needs work"}</span>
+        <span className="text-gray-300">{filledScheduledRows.length}/{scheduledRows.length} filled</span>
+        <span className="text-gray-300">{respondedRows.length}/{filledScheduledRows.length} responses</span>
+        <button
+          type="button"
+          className="ml-auto rounded px-1.5 py-0.5 text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
+          aria-expanded={summaryExpanded}
+          onClick={() => setSummaryExpanded((expanded) => !expanded)}
+        >
+          {summaryExpanded ? "Hide details" : "Details"}
+        </button>
+      </div>
+      {summaryExpanded ? (
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 border-t border-gray-700/70 pt-1 text-gray-400">
+          <span>Schedule send: Managed in schedules</span>
+          <span>Conflicts: Review in People</span>
+          {teamMicrophones ? <span>Mics: {micCoveredRows.length}/{filledScheduledRows.length} covered</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
   const roleNoteOptions = useMemo(
     () => collectServicePlanRoleNoteOptions(sections, positions, teams, microphoneAudiences),
     [microphoneAudiences, positions, sections, teams],
+  );
+  const scheduledPositionOptions = useMemo(
+    () => {
+      const options = new Map<string, ServicePlanRoleNoteOption>();
+      positions
+        .filter((position) => !position.archivedAt)
+        .forEach((position) => options.set(position.positionId, {
+          positionId: position.positionId,
+          roleName: position.name,
+          label: position.name,
+          teamId: position.teamId,
+          teamName: teams.find((team) => team.teamId === position.teamId)?.name,
+          ...(position.icon ? { icon: position.icon } : {}),
+        }));
+      // Keep the picker useful while a lean/stale bootstrap is being hydrated:
+      // schedule rows are authoritative for positions already visible on this
+      // date and carry the same stable position IDs.
+      scheduledRows.forEach((row) => {
+        if (options.has(row.positionId)) return;
+        options.set(row.positionId, {
+          positionId: row.positionId,
+          roleName: row.positionName,
+          label: row.positionName,
+          teamName: row.teamName,
+        });
+      });
+      return Array.from(options.values());
+    },
+    [positions, scheduledRows, teams],
   );
   const teamNoteOptions = useMemo<ServicePlanTeamNoteOption[]>(
     () => collectServicePlanTeamNoteOptions(teams),
@@ -1332,7 +1499,7 @@ const ServicePlanEditor = ({
         section.elements.some((element) => element.sourcePlanningManaged),
     ),
   );
-  const isEmpty = !loading && !hasSections;
+  const isEmpty = !loadingInitialContent && !hasSections;
   const showChrome = Boolean(onBack);
   const publicSharingEnabled = Boolean(plan?.published);
   const isServiceDay = isOccurrenceOnCalendarDay(occurrence, planTimezone);
@@ -1769,9 +1936,9 @@ const ServicePlanEditor = ({
           </div>
         </SheetContent>
       </Sheet>
-      {loading ? <ServicePlanSkeleton /> : null}
+      {loadingInitialContent ? <ServicePlanSkeleton /> : null}
 
-      {!loading && isEmpty && canEdit ? (
+      {!loadingInitialContent && isEmpty && canEdit ? (
         <div
           className={cn(
             "flex flex-col gap-3",
@@ -1785,8 +1952,9 @@ const ServicePlanEditor = ({
                 {plan ? "This plan is empty" : "No plan yet"}
               </p>
               <p className="max-w-md text-sm text-gray-400">
-                Start from a saved template, build from a blank plan, or
-                import one from Service Planning.
+                {defaultPlanTemplateMissing
+                  ? "The default template is unavailable. Choose another template here or update Service setup."
+                  : "Start from a saved template, build from a blank plan, or import one from Service Planning."}
               </p>
             </>
           ) : null}
@@ -1881,10 +2049,13 @@ const ServicePlanEditor = ({
             onRemoveAssignedToHistoryValue={removeAssignmentHistoryValue}
             isAssignedToHistoryValueRemovable={isAssignmentHistoryValueRemovable}
             roleNoteOptions={roleNoteOptions}
+            scheduledPositionOptions={scheduledPositionOptions}
             teamNoteOptions={teamNoteOptions}
             microphones={microphones}
             microphoneAudiences={microphoneAudiences}
             scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+            scheduledAssignmentRows={scheduledAssignmentRows}
+            onOpenScheduledAssignment={onOpenScheduledAssignment}
             isServiceDay={isServiceDay}
             liveElementId={liveElementId}
             isManualLive={isManualLive}
@@ -2183,6 +2354,7 @@ const ServicePlanEditor = ({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
+        {showSummary ? workspaceSummary : null}
         <Tabs
           value={activeTab}
           onValueChange={(next) => setPlanTab(next as ServicePlanEditorTab)}
@@ -2196,9 +2368,9 @@ const ServicePlanEditor = ({
             <TabsTrigger
               value="plan"
               className={lineTabsTriggerSmClassName}
-              aria-label="Order of service"
+              aria-label="Plan / Order of service"
             >
-              Order
+              Plan
             </TabsTrigger>
             <TabsTrigger
               value="setlist"
@@ -2220,9 +2392,9 @@ const ServicePlanEditor = ({
               <TabsTrigger
                 value="serving"
                 className={lineTabsTriggerSmClassName}
-                aria-label="Who's serving"
+                aria-label="People / Who's serving"
               >
-                Team
+                People
               </TabsTrigger>
             ) : null}
           </TabsList>

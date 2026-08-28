@@ -153,7 +153,7 @@ describe("findCrossTeamScheduleOccurrenceConflicts", () => {
     );
   });
 
-  it("ignores the current schedule, same-team schedules, archived schedules, and nonmatching occurrences", () => {
+  it("reports same-team schedules while ignoring archived and nonmatching occurrences", () => {
     const current = schedule({
       assignments: {
         "svc-a@2026-07-05T10:00:00.000Z": {
@@ -205,6 +205,39 @@ describe("findCrossTeamScheduleOccurrenceConflicts", () => {
         schedules: [current, sameTeam, archived, differentDate],
         teams,
       }),
-    ).toEqual([]);
+    ).toEqual([
+      expect.objectContaining({
+        scheduleId: "same-team",
+        kind: "other-schedule",
+        positionId: "vocal",
+      }),
+    ]);
+  });
+
+  it("reports another position in the current schedule when the target cell is provided", () => {
+    const current = schedule({
+      assignments: {
+        "svc-a@2026-07-05T10:00:00.000Z": {
+          "vocal::0": { primaryMemberId: "member-a" },
+          "keys::0": { primaryMemberId: "member-a" },
+        },
+      },
+    });
+
+    const conflicts = findCrossTeamScheduleOccurrenceConflicts({
+      schedule: current,
+      occurrenceId: "svc-a@2026-07-05T10:00:00.000Z",
+      memberId: "member-a",
+      cellKey: "vocal::0",
+      schedules: [current],
+      teams,
+    });
+
+    expect(conflicts).toEqual([
+      expect.objectContaining({
+        kind: "other-position",
+        positionId: "keys",
+      }),
+    ]);
   });
 });

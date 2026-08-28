@@ -12,6 +12,8 @@ export type ScheduleAssignmentConflict = {
   teamId: string;
   teamName: string;
   occurrenceId: string;
+  positionId?: string;
+  kind?: "other-team" | "other-schedule" | "other-position";
 };
 
 const occurrenceServiceIds = (occurrence?: TeamScheduleOccurrence | null) =>
@@ -89,12 +91,15 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
   memberId,
   schedules,
   teams,
+  positionId,
+  cellKey,
 }: {
   schedule: TeamSchedule | null | undefined;
   occurrenceId: string;
   memberId: string;
   schedules: TeamSchedule[];
   teams: TeamRecord[];
+  cellKey?: string;
 }): ScheduleAssignmentConflict[] => {
   if (!schedule || !memberId) return [];
   const currentOccurrence = scheduleOccurrencesForConflict(schedule).find(
@@ -105,8 +110,7 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
 
   return schedules.flatMap((otherSchedule) => {
     if (!otherSchedule || otherSchedule.archivedAt) return [];
-    if (otherSchedule.scheduleId === schedule.scheduleId) return [];
-    if (otherSchedule.teamId === schedule.teamId) return [];
+    if (otherSchedule.scheduleId === schedule.scheduleId && !cellKey) return [];
     const otherOccurrence = scheduleOccurrencesForConflict(otherSchedule).find(
       (candidate) =>
         scheduleOccurrencesConflict(currentOccurrence, candidate, {
@@ -115,30 +119,39 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
     );
     if (!otherOccurrence) return [];
     const row = otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
-    const isAssigned = Object.values(row).some((cell) =>
-      getCellMemberIds(cell).includes(memberId),
+    const matchingCells = Object.entries(row).filter(([candidateCellKey, cell]) =>
+      getCellMemberIds(cell).includes(memberId) &&
+      !(otherSchedule.scheduleId === schedule.scheduleId && candidateCellKey === cellKey),
     );
-    if (!isAssigned) return [];
-    return [
-      {
+    if (matchingCells.length === 0) return [];
+    return matchingCells.map(([candidateCellKey]) => ({
         memberId,
         scheduleId: otherSchedule.scheduleId,
         scheduleName: otherSchedule.name || "Schedule",
         teamId: otherSchedule.teamId,
         teamName: teamNameById.get(otherSchedule.teamId) || "another team",
         occurrenceId: otherOccurrence.occurrenceId,
-      },
-    ];
+        positionId: candidateCellKey.split("::")[0],
+        kind: otherSchedule.scheduleId === schedule.scheduleId
+          ? "other-position"
+          : otherSchedule.teamId === schedule.teamId
+            ? "other-schedule"
+            : "other-team",
+      }));
   });
 };
 
 export const formatCrossTeamScheduleConflictWarning = (
   conflicts: ScheduleAssignmentConflict[],
 ) => {
-  const teamNames = [...new Set(conflicts.map((conflict) => conflict.teamName))]
+  const descriptions = [...new Set(conflicts.map((conflict) => {
+    if (conflict.kind === "other-position") return "another position";
+    if (conflict.kind === "other-schedule") return conflict.scheduleName || "another schedule";
+    return conflict.teamName;
+  }))]
     .filter(Boolean)
     .slice(0, 2);
-  if (teamNames.length === 0) return "";
-  const extra = conflicts.length - teamNames.length;
-  return `Also scheduled on ${teamNames.join(", ")}${extra > 0 ? ` +${extra} more` : ""}`;
+  if (descriptions.length === 0) return "";
+  const extra = conflicts.length - descriptions.length;
+  return `Also scheduled on ${descriptions.join(", ")}${extra > 0 ? ` +${extra} more` : ""}`;
 };

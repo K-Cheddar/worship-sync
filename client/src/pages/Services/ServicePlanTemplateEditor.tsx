@@ -439,6 +439,19 @@ const ServicePlanTemplateEditor = ({
   const selectedPlanSection = sections.find(
     (section) => section.id === selectedPlanTarget?.sectionId,
   );
+  const scheduledPositionOptions = useMemo<ServicePlanRoleNoteOption[]>(
+    () => positions
+      .filter((position) => !position.archivedAt)
+      .map((position) => ({
+        positionId: position.positionId,
+        roleName: position.name,
+        label: position.name,
+        teamId: position.teamId,
+        teamName: teams.find((team) => team.teamId === position.teamId)?.name,
+        ...(position.icon ? { icon: position.icon } : {}),
+      })),
+    [positions, teams],
+  );
 
   const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
     const existingElementIds = new Set(
@@ -625,7 +638,8 @@ const ServicePlanTemplateEditor = ({
           hideNotes={hideNotes}
           microphones={microphones}
           microphoneAudiences={microphoneAudiences}
-          roleNoteOptions={roleNoteOptions}
+            roleNoteOptions={roleNoteOptions}
+            scheduledPositionOptions={scheduledPositionOptions}
           teamNoteOptions={teamNoteOptions}
           header={
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">

@@ -1,4 +1,5 @@
 import { useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -19,6 +20,12 @@ import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
+import {
+  EntityListFilterPanel,
+  EntityListFilterFooter,
+  EntityListFilterToolbar,
+  type EntityListFilterState,
+} from "../components/EntityListFilters";
 import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import PositionIconPicker from "../PositionIconPicker";
@@ -71,6 +78,9 @@ const TeamManager = ({
   const churchId = context?.churchId || "";
   const [editing, setEditing] = useState<TeamRecord | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [listQuery, setListQuery] = useState("");
+  const [listFilters, setListFilters] = useState<EntityListFilterState>({ teamIds: [], includeArchived: false });
+  const [showFilters, setShowFilters] = useState(false);
   const [deleting, setDeleting] = useState<TeamRecord | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [draft, setDraft] = useState<TeamPayload>({
@@ -105,6 +115,14 @@ const TeamManager = ({
     if (!editing) return [];
     return qualificationAreas.filter((area) => area.teamId === editing.teamId);
   }, [editing, qualificationAreas]);
+
+  const filteredTeams = useMemo(
+    () => teams.filter((team) =>
+      (listFilters.includeArchived || !team.archivedAt) &&
+      (!listQuery.trim() || team.name.toLowerCase().includes(listQuery.trim().toLowerCase())),
+    ),
+    [listFilters.includeArchived, listQuery, teams],
+  );
 
   const reset = () => {
     setEditing(null);
@@ -273,23 +291,43 @@ const TeamManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
-          reset();
-          setShowCreate(true);
+          requestDiscardAction(() => {
+            setShowFilters(false);
+            reset();
+            setShowCreate(true);
+          });
         }}
         canEdit={canEdit}
+        keepCreateActionVisible
         title={editing ? "Edit team" : "Create team"}
         sectionTitle="Teams"
         description="Organize members into scheduling teams."
         createLabel="Create team"
         listToolbar={
-          returnTo && !showCreate ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
-          ) : null
+          <div className="space-y-3">
+            {returnTo && !showCreate ? (
+              <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
+            ) : null}
+            <EntityListFilterToolbar
+              entityLabel="Teams"
+              query={listQuery}
+              onQueryChange={setListQuery}
+              filters={listFilters}
+              onFiltersChange={setListFilters}
+              filtersOpen={showFilters}
+              onFiltersOpenChange={setShowFilters}
+            />
+          </div>
         }
+        asideOpen={showFilters}
+        asideTitle="Filter teams"
+        asideHeaderActions={<Button variant="tertiary" onClick={() => setShowFilters(false)}>Close</Button>}
+        aside={<EntityListFilterPanel entityLabel="teams" filters={listFilters} onFiltersChange={setListFilters} />}
+        asideFooter={<EntityListFilterFooter filters={listFilters} onClear={() => setListFilters({ teamIds: [], includeArchived: false })} onClose={() => setShowFilters(false)} />}
         list={
           <>
-            {teams.length === 0 ? <p className="text-sm text-gray-300">No teams yet.</p> : null}
-            {teams.map((team) => (
+            {filteredTeams.length === 0 ? <p className="text-sm text-gray-300">{teams.length === 0 ? "No teams yet." : "No matches."}</p> : null}
+            {filteredTeams.map((team) => (
               <EntityRow
                 key={team.teamId}
                 title={team.name}

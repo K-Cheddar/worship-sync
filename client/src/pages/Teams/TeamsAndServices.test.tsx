@@ -355,7 +355,7 @@ describe("Teams", () => {
     await waitForTeamsBootstrap();
     await openTeamsSectionsNavIfNeeded(user);
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Plans$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /^Microphones$/i }),
     ).toBeInTheDocument();
@@ -390,7 +390,7 @@ describe("Teams", () => {
     );
     await openTeamsSectionsNavIfNeeded(user);
 
-    await user.click(screen.getByRole("link", { name: /^Plans$/i }));
+    await user.click(screen.getByRole("link", { name: /^Services$/i }));
     expect(
       await screen.findByRole("dialog", { name: /Unsaved changes/i }),
     ).toBeInTheDocument();
@@ -402,10 +402,10 @@ describe("Teams", () => {
       ).not.toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("link", { name: /^Plans$/i }));
+    await user.click(screen.getByRole("link", { name: /^Services$/i }));
     await user.click(await screen.findByRole("button", { name: /Discard changes/i }));
     expect(
-      await screen.findByRole("heading", { name: /^Plans$/i }),
+      await screen.findByRole("heading", { name: /^Services$/i }),
     ).toBeInTheDocument();
   });
 
@@ -848,11 +848,21 @@ describe("Teams", () => {
     renderTeams("/teams-and-services/groups");
     await user.click(await screen.findByRole("button", { name: /Edit Main Team/i }));
 
-    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Edit team" })).getByRole(
+        "button",
+        { name: "Close" },
+      ),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Use microphone assignments/i }));
 
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Edit team" })).getByRole(
+        "button",
+        { name: "Cancel" },
+      ),
+    ).toBeInTheDocument();
   });
 
   it("confirms before leaving a team with unsaved changes", async () => {
@@ -1088,13 +1098,7 @@ describe("Teams", () => {
     expect(averyOption).not.toBeDisabled();
 
     await user.click(averyOption);
-
-    expect(
-      await screen.findByRole("button", { name: /Sunday Vocal, Avery/i }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("button", { name: /Sunday Keys, Empty/i }),
-    ).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /Schedule anyway/i }));
 
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith(
@@ -1107,6 +1111,7 @@ describe("Teams", () => {
           serviceDate: "2026-07-05",
           sourceServiceId: sundayOccurrenceId,
           sourcePositionSlotKey: "position-keys::0",
+          allowOccurrenceConflict: true,
         },
       );
     });
@@ -1121,6 +1126,12 @@ describe("Teams", () => {
         },
       },
     });
+    expect(
+      await screen.findByRole("button", { name: /Sunday Vocal, Avery/i }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Sunday Keys, Empty/i }),
+    ).toBeInTheDocument();
   });
 
   it("confirms before scheduling a member with a blocked-out date", async () => {
@@ -1362,6 +1373,7 @@ describe("Teams", () => {
     expect(screen.getByText(/Move Avery from Vocal to Keys/i)).toBeInTheDocument();
     expect(screen.getByText(/Assign Jordan to Vocal/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply swap/i }));
+    await user.click(await screen.findByRole("button", { name: /Schedule anyway/i }));
 
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(1);
@@ -1376,6 +1388,7 @@ describe("Teams", () => {
         currentMemberId: "member-avery",
         candidateMemberId: "member-jordan",
         serviceDate: "2026-07-05",
+        allowOccurrenceConflict: true,
       },
     );
     expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
@@ -1490,6 +1503,17 @@ describe("Teams", () => {
     ).toHaveValue("Copy of July");
 
     await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+    const conflictDialogPromise = screen.findByRole(
+      "dialog",
+      { name: /Schedule conflict/i },
+      { timeout: 1_000 },
+    );
+    const conflictDialog = await conflictDialogPromise.catch(() => null);
+    if (conflictDialog) {
+      await user.click(
+        within(conflictDialog).getByRole("button", { name: /Save anyway/i }),
+      );
+    }
 
     await waitFor(() => {
       expect(mockCreateTeamSchedule).toHaveBeenCalled();

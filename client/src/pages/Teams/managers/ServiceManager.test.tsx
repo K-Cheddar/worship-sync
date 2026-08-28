@@ -5,6 +5,7 @@ import ServiceManager from "./ServiceManager";
 import { ToastProvider } from "../../../context/toastContext";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import type { TeamPosition, TeamRecord, TeamService } from "../../../api/authTypes";
+import type { ServicePlanTemplate } from "../../../types/servicePlan";
 
 const mockDispatch = jest.fn();
 
@@ -62,6 +63,7 @@ const renderManager = (
   services: TeamService[],
   positions: TeamPosition[] = [],
   teams: TeamRecord[] = [],
+  planTemplates: ServicePlanTemplate[] = [],
 ) =>
   render(
     <MemoryRouter>
@@ -71,6 +73,7 @@ const renderManager = (
             services={services}
             positions={positions}
             teams={teams}
+            planTemplates={planTemplates}
             canEdit
           />
         </TeamsNavigationGuardProvider>
@@ -214,5 +217,38 @@ describe("ServiceManager position requirements", () => {
     await user.click(screen.getByRole("button", { name: "Decrease people needed for Producer" }));
     expect(screen.getByRole("spinbutton", { name: "People needed for Producer" })).toHaveValue(0);
     expect(screen.getByRole("checkbox", { name: "Producer" })).not.toBeChecked();
+  });
+});
+
+describe("ServiceManager default plan template", () => {
+  it("saves the template that should initialize new plans", async () => {
+    const user = userEvent.setup();
+    const template: ServicePlanTemplate = {
+      templateId: "template-standard",
+      churchId: "church-1",
+      serviceId: sundayMorning.serviceId,
+      name: "Standard service",
+      sections: [],
+    };
+    renderManager([sundayMorning], [], [], [template]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    await user.click(
+      screen.getByRole("combobox", { name: /Default plan template/i }),
+    );
+    await user.click(screen.getByRole("option", { name: "Standard service" }));
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+
+    const updates = findActions(mockDispatch.mock.calls, "serviceTimes/updateService");
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          id: sundayMorning.id,
+          changes: expect.objectContaining({
+            defaultPlanTemplateId: template.templateId,
+          }),
+        }),
+      }),
+    );
   });
 });

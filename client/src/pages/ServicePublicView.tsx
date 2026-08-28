@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { BookOpen, ChevronDown, LocateFixed, Mic2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
+import { BookOpen, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import ProfileImagePreview from "../components/ProfileImagePreview/ProfileImagePreview";
@@ -196,7 +196,7 @@ const PublicServingTeamsPanel = ({
 }) => (
   <aside
     className={cn(
-      "rounded-xl border p-3 shadow-lg lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto",
+      "rounded-xl border p-3 shadow-lg lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:overscroll-contain",
       theme === "light" ? "border-slate-200 bg-white" : "border-neutral-700/80 bg-neutral-900/95",
     )}
     aria-label="Microphone assignments"
@@ -290,9 +290,9 @@ const ServicePublicView = ({
   const [clientNow, setClientNow] = useState(() => Date.now());
   const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
   const [selectedRole, setSelectedRole] = useState("");
-  const [collapsedNoteIds, setCollapsedNoteIds] = useState<ReadonlySet<string>>(() => new Set());
   const [isFollowingLive, setIsFollowingLive] = useState(true);
   const [theme, setTheme] = useState<ServicePublicTheme>(readServicePublicTheme);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const followedLiveItemIdRef = useRef<string | null>(null);
   const suppressFollowPauseUntilRef = useRef(0);
   const pointerScrollIntentUntilRef = useRef(0);
@@ -305,6 +305,25 @@ const ServicePublicView = ({
   useEffect(() => {
     persistServicePublicTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement !== null);
+    };
+    handleFullscreenChange();
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    // Use the tracked state as a fallback for browsers that update the
+    // fullscreen UI before exposing fullscreenElement to the click handler.
+    if (isFullscreen || document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    void document.documentElement.requestFullscreen().catch(() => undefined);
+  };
 
   const serverOffsetMs = useMemo(() => snapshot.serverNowMs - Date.now(), [snapshot]);
   const progress = useMemo(
@@ -375,14 +394,6 @@ const ServicePublicView = ({
     };
   }, [currentItemId, isFollowingLive]);
 
-  const toggleNotes = (itemId: string) => {
-    setCollapsedNoteIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
-  };
   const teamLabels = useMemo(() => {
     if (snapshot.service.viewMode === "general") return [];
     return Array.from(new Set(
@@ -625,19 +636,34 @@ const ServicePublicView = ({
                       {formatServiceDate(service.startsAt, service.timezone)} · starts {formatServiceTime(Date.parse(service.startsAt), service.timezone)}
                     </p>
                   </div>
-                  <Button
-                    variant="none"
-                    svg={theme === "dark" ? Sun : Moon}
-                    iconSize="sm"
-                    className={cn(
-                      "shrink-0 rounded-full border p-2",
-                      theme === "light"
-                        ? "border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                        : "border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white",
-                    )}
-                    aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                    onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
-                  />
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      variant="none"
+                      svg={theme === "dark" ? Sun : Moon}
+                      iconSize="sm"
+                      className={cn(
+                        "rounded-full border p-2",
+                        theme === "light"
+                          ? "border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                          : "border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white",
+                      )}
+                      aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                      onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+                    />
+                    <Button
+                      variant="none"
+                      svg={isFullscreen ? Minimize2 : Maximize2}
+                      iconSize="sm"
+                      className={cn(
+                        "rounded-full border p-2",
+                        theme === "light"
+                          ? "border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                          : "border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-white",
+                      )}
+                      aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                      onClick={toggleFullscreen}
+                    />
+                  </div>
                 </div>
 
                 <div className={cn("mt-3 flex flex-wrap items-center gap-2 border-t pt-3", chrome.headerRule)}>
@@ -758,7 +784,6 @@ const ServicePublicView = ({
                         ? visibleMicrophoneAssignmentsForItem(item, selectedTeam, selectedRole)
                         : [];
                       const hasNotes = !isGeneralView && itemHasNotes(item, selectedTeam, selectedRole, selectedRoleTeamName);
-                      const notesExpanded = hasNotes && !collapsedNoteIds.has(item.id);
                       const durationLabel = item.durationSeconds > 0
                         ? formatServicePlanDuration(item)
                         : "";
@@ -780,19 +805,19 @@ const ServicePublicView = ({
                           }
                         >
                           <div className="flex items-baseline gap-2.5 sm:gap-3">
-                            <div className="w-[4.75rem] shrink-0 sm:w-[5.25rem]">
+                            <div className="flex w-[6rem] shrink-0 items-baseline gap-1.5 whitespace-nowrap sm:w-[6.5rem]">
                               <time
                                 className={cn(
-                                  "block text-xs font-medium tabular-nums sm:text-sm",
+                                  "text-xs font-medium tabular-nums sm:text-sm",
                                   isCurrent ? (theme === "light" ? "text-emerald-700" : "text-emerald-300") : chrome.time,
                                 )}
                               >
                                 {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
                               </time>
                               {durationLabel ? (
-                                <p className={cn("mt-0.5 text-[11px] tabular-nums", chrome.duration)}>
+                                <span className={cn("text-[11px] tabular-nums", chrome.duration)}>
                                   {durationLabel}
-                                </p>
+                                </span>
                               ) : null}
                             </div>
                             <div className="min-w-0 flex-1">
@@ -823,23 +848,7 @@ const ServicePublicView = ({
                               <PublicItemContent item={item} theme={theme} />
 
                               {hasNotes ? (
-                                <div className="mt-1">
-                                  <Button
-                                    variant="tertiary"
-                                    svg={ChevronDown}
-                                    iconSize="xs"
-                                    className={cn(
-                                      "h-auto min-h-0 px-0 py-0 text-xs",
-                                      theme === "light" ? "text-slate-500 hover:text-slate-900" : "text-neutral-400 hover:text-neutral-200",
-                                      notesExpanded && "[&_svg]:rotate-180",
-                                    )}
-                                    aria-expanded={notesExpanded}
-                                    onClick={() => toggleNotes(item.id)}
-                                  >
-                                    {selectedTeam || selectedRole ? "Filtered notes" : "Notes"}
-                                  </Button>
-                                  {notesExpanded ? (
-                                    <div className={cn("mt-1.5 space-y-2 border-l pl-2.5", theme === "light" ? "border-slate-300 text-slate-900" : "border-neutral-600/70 text-white")}>
+                                <div className={cn("mt-1.5 space-y-2 border-l pl-2.5", theme === "light" ? "border-slate-300 text-slate-900" : "border-neutral-600/70 text-white")}>
                                       {item.notes.blocks.length ? (
                                         <div>
                                           {visibleAudienceNotes.length || selectedTeam || selectedRole ? (
@@ -885,8 +894,6 @@ const ServicePublicView = ({
                                           </div>
                                         </div>
                                       ) : null}
-                                    </div>
-                                  ) : null}
                                 </div>
                               ) : null}
                             </div>

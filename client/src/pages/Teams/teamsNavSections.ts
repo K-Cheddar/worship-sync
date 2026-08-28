@@ -91,10 +91,10 @@ export const teamsNavSections: TeamsNavSection[] = [
  */
 export const servicesNavSections: TeamsNavSection[] = [
   {
-    path: "/teams-and-services/plans",
-    routePath: "plans",
-    label: "Plans",
-    description: "Pick a date and build or edit its order of service.",
+    path: "/teams-and-services/services",
+    routePath: "services",
+    label: "Services",
+    description: "Open a dated service workspace and build its plan.",
     icon: CalendarRange,
     domain: "services",
   },
@@ -115,9 +115,9 @@ export const servicesNavSections: TeamsNavSection[] = [
     domain: "services",
   },
   {
-    path: "/teams-and-services/service-settings",
-    routePath: "service-settings",
-    label: "Services",
+    path: "/teams-and-services/service-setup",
+    routePath: "service-setup",
+    label: "Service setup",
     description: "Manage service times and required positions.",
     icon: Settings2,
     domain: "services",

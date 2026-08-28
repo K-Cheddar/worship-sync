@@ -13,6 +13,25 @@ export const BOARD_DISPLAY_ALIAS_CHANNEL_NAME = "worshipsync-board-display";
 
 const trimString = (value: string) => value.trim();
 
+/** Returns one visible status entry for each distinct Restream connection issue. */
+export const getRestreamStatusIssues = (
+  connectionIssues: string[] | undefined,
+  lastError: string | undefined,
+): string[] => {
+  const issues = (connectionIssues ?? [])
+    .map((issue) => issue.trim())
+    .filter(Boolean);
+  const normalizedLastError = lastError?.trim() ?? "";
+
+  return Array.from(
+    new Set(
+      normalizedLastError && !issues.includes(normalizedLastError)
+        ? [...issues, normalizedLastError]
+        : issues,
+    ),
+  );
+};
+
 /** Matches server `MAX_BOARD_AUTHOR_LENGTH` for client-side validation. */
 export const MAX_BOARD_AUTHOR_LENGTH = 40;
 

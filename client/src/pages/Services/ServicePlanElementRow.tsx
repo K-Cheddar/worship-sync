@@ -31,6 +31,7 @@ import ServicePlanAssigneeList, { addMicrophoneSlot } from "./ServicePlanAssigne
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import TimePicker from "../../components/TimePicker/TimePicker";
 import {
   formatServicePlanDuration,
@@ -92,6 +93,7 @@ import type {
   ServicePlanSongReference,
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
+import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import {
   getServicePlanElementAssignees,
   getServicePlanElementScriptureRefs,
@@ -114,11 +116,11 @@ export const formatPlanStartTimeDisplay = (startTime: string | undefined): strin
 
 /** Soft field chrome so inline editors sit closer to the row surface. */
 export const SERVICE_PLAN_INLINE_INPUT_CLASS =
-  "h-7 min-h-0 border-0 bg-gray-950/70 px-1 py-0.5 shadow-none placeholder:text-gray-500";
+  "h-7 min-h-0 border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40";
 
 /** Rich text note fields — same blend as inline plan inputs, multi-line height. */
 export const SERVICE_PLAN_INLINE_EDITOR_CLASS =
-  "min-h-7 rounded-md border-0 bg-gray-950/70 px-1 py-0.5 shadow-none focus-visible:ring-0";
+  "min-h-7 rounded-md border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none focus-visible:border-cyan-500/70 focus-visible:ring-1 focus-visible:ring-cyan-500/40";
 
 export const SERVICE_PLAN_NOTE_ICON_CLASS = "text-yellow-300";
 /** Team/role notes — muted orange so they read as team context, not a cyan selection. */
@@ -235,11 +237,11 @@ export const getServicePlanElementSurfaceClassName = ({
 }): string => {
   const zebra =
     toneIndex % 2 === 0
-      ? "bg-gray-900/50"
+      ? "bg-gray-800/35"
       : "bg-transparent";
 
   return cn(
-    "border-b border-gray-800/90",
+    "border-b border-gray-700/80",
     zebra,
     isLive && "bg-emerald-950/30 ring-1 ring-inset ring-emerald-500/35",
   );
@@ -360,11 +362,17 @@ type ItemActionsMenuProps = {
   microphones: ServicePlanMicrophone[];
   assignees: ServicePlanAssignee[];
   canAddNote: boolean;
+  canAddContent: boolean;
   canAddTeamNote: boolean;
   canAddRoleNote: boolean;
   teamNoteOptions: ServicePlanTeamNoteOption[];
   roleNoteOptions: ServicePlanRoleNoteOption[];
+  scheduledPositionIds: string[];
+  scheduledPositionOptions: ServicePlanRoleNoteOption[];
+  onScheduledPositionsChange: (positionIds: string[]) => void;
   onAddNote: () => void;
+  onAddSong: () => void;
+  onAddScripture: () => void;
   onAddTeamNote: (teamId: string) => void;
   onAddRoleNote: (positionId: string) => void;
   onAddMicrophone: (microphoneId: string) => void;
@@ -561,6 +569,56 @@ const TeamNoteAudienceSubmenu = ({
   </div>
 );
 
+const ScheduledRoleSubmenu = ({
+  value,
+  options,
+  onValueChange,
+}: {
+  value: string[];
+  options: ServicePlanRoleNoteOption[];
+  onValueChange: (positionIds: string[]) => void;
+}) => (
+  <div className="max-h-72 w-64 overflow-y-auto p-1">
+    {groupRoleOptionsByTeam(options).map((group) => (
+      <div key={group.teamName} className="py-0.5">
+        <p className="px-2 py-1 text-[11px] font-medium text-gray-400">
+          {group.teamName}
+        </p>
+        {group.options.map((option) => {
+          const selected = value.includes(option.positionId);
+          return (
+            <DropdownMenuItem
+              key={option.positionId}
+              onSelect={(event) => {
+                event.preventDefault();
+                onValueChange(
+                  selected
+                    ? value.filter((id) => id !== option.positionId)
+                    : [...value, option.positionId],
+                );
+              }}
+              className={cn(
+                "gap-2 text-xs",
+                selected && "bg-cyan-950/50 text-cyan-100",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">
+                {roleOptionDisplayLabel(option, options)}
+              </span>
+              {selected ? <Check className="size-3.5 shrink-0 text-cyan-300" aria-hidden /> : null}
+            </DropdownMenuItem>
+          );
+        })}
+      </div>
+    ))}
+    {!options.length ? (
+      <p className="px-2 py-3 text-xs text-gray-400">
+        No active positions available.
+      </p>
+    ) : null}
+  </div>
+);
+
 const roleAudienceLabel = (
   note: ServicePlanTeamNote,
   options: ServicePlanRoleNoteOption[],
@@ -728,11 +786,17 @@ const ItemActionsMenu = ({
   microphones,
   assignees,
   canAddNote,
+  canAddContent,
   canAddTeamNote,
   canAddRoleNote,
   teamNoteOptions,
   roleNoteOptions,
+  scheduledPositionIds,
+  scheduledPositionOptions,
+  onScheduledPositionsChange,
   onAddNote,
+  onAddSong,
+  onAddScripture,
   onAddTeamNote,
   onAddRoleNote,
   onAddMicrophone,
@@ -762,6 +826,24 @@ const ItemActionsMenu = ({
             />
             Note
           </DropdownMenuItem>
+        ) : null}
+        {canAddContent ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Plus className="size-4" aria-hidden />
+              Add content
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="p-1">
+              <DropdownMenuItem onSelect={onAddSong}>
+                <Music className={cn("size-4", SERVICE_PLAN_SONG_ICON_CLASS)} aria-hidden />
+                Song
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onAddScripture}>
+                <BookOpen className={cn("size-4", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} aria-hidden />
+                Scripture
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         ) : null}
         {structureOnly && microphones.length > 0 ? (
           <DropdownMenuSub>
@@ -834,6 +916,20 @@ const ItemActionsMenu = ({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         ) : null}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Users className="size-4 text-cyan-300" aria-hidden />
+            Scheduled roles
+            {scheduledPositionIds.length ? ` (${scheduledPositionIds.length})` : ""}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="p-1">
+            <ScheduledRoleSubmenu
+              value={scheduledPositionIds}
+              options={scheduledPositionOptions}
+              onValueChange={onScheduledPositionsChange}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuSeparator className="my-1 bg-gray-700" />
         <DropdownMenuItem
           className="text-red-300 focus:bg-red-950/50 focus:text-red-100"
@@ -941,11 +1037,15 @@ type ServicePlanElementRowProps = {
   roleNotesFilter?: string;
   teamNoteOptions?: ServicePlanTeamNoteOption[];
   roleNoteOptions?: ServicePlanRoleNoteOption[];
+  scheduledPositionOptions?: ServicePlanRoleNoteOption[];
   /** Church-wide mic catalog. Assignments remain scoped to this plan item. */
   microphones?: ServicePlanMicrophone[];
   /** Church-wide roles that see every assigned microphone. */
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  /** Schedule-derived people; never persisted as plan assignees. */
+  scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
+  onOpenScheduledAssignment?: (row: TeamsAssignmentSummaryRow) => void;
   /**
    * When false, render a compact read-only row (view mode). When true and
    * canEdit, show editable fields — stacked on small screens, columns on md+.
@@ -1016,9 +1116,12 @@ const ServicePlanElementRow = ({
   roleNotesFilter = "",
   teamNoteOptions = [],
   roleNoteOptions = [],
+  scheduledPositionOptions = [],
   microphones = [],
   microphoneAudiences,
   scheduledMicrophoneHolders,
+  scheduledAssignmentRows = [],
+  onOpenScheduledAssignment,
   isEditing = false,
   isSelected = false,
   onSelect,
@@ -1121,6 +1224,26 @@ const ServicePlanElementRow = ({
     .map((assignee) => assignee.name?.trim())
     .filter(Boolean)
     .join(", ");
+  const scheduledPositionIds = element.scheduledPositionIds ??
+    (element.positionId ? [element.positionId] : []);
+  const scheduledPositionLabel = scheduledPositionIds.length
+    ? `${scheduledPositionIds.length} scheduled role${scheduledPositionIds.length === 1 ? "" : "s"}`
+    : "Scheduled roles";
+  const scheduledRows = scheduledAssignmentRows.filter((row) =>
+    scheduledPositionIds.includes(row.positionId),
+  );
+  const effectiveScheduledPositionOptions = scheduledPositionOptions.length
+    ? scheduledPositionOptions
+    : Array.from(
+      new Map(
+        scheduledAssignmentRows.map((row) => [row.positionId, {
+          positionId: row.positionId,
+          roleName: row.positionName,
+          label: row.positionName,
+          teamName: row.teamName,
+        }]),
+      ).values(),
+    );
   const canAddContent = canAddSong || canAddScripture;
   const showLiveControls = isServiceDay;
 
@@ -1224,7 +1347,7 @@ const ServicePlanElementRow = ({
   const hasContentReferences = songRefs.length > 0 || Boolean(scriptureLabel);
   const contentReferenceCount = songRefs.length + scriptureRefs.length;
 
-  const itemActionsMenu = allowEdit ? (
+  const renderItemActionsMenu = () => allowEdit ? (
     <ItemActionsMenu
       itemLabel={itemLabel}
       canEdit={allowEdit}
@@ -1232,11 +1355,23 @@ const ServicePlanElementRow = ({
       microphones={microphones}
       assignees={assignees}
       canAddNote={canAddNote}
+      canAddContent={canAddContent}
       canAddTeamNote={canAddTeamNote}
       canAddRoleNote={canAddRoleNote}
       teamNoteOptions={teamNoteOptions}
       roleNoteOptions={roleNoteOptions}
+      scheduledPositionIds={scheduledPositionIds}
+      scheduledPositionOptions={effectiveScheduledPositionOptions}
+      onScheduledPositionsChange={(ids) => onUpdate({
+        scheduledPositionIds: ids,
+        ...(ids.length === 1 ? { positionId: ids[0] } : { positionId: undefined }),
+      })}
       onAddNote={handleAddNote}
+      onAddSong={() => openSongPicker(false)}
+      onAddScripture={() => {
+        setScriptureEditIndex(null);
+        setScriptureOpen(true);
+      }}
       onAddTeamNote={handleAddTeamNote}
       onAddRoleNote={handleCreateRoleNote}
       onAddMicrophone={(microphoneId) =>
@@ -1971,6 +2106,9 @@ const ServicePlanElementRow = ({
                   if (event.key === "Enter") event.currentTarget.blur();
                 }}
               />
+              <div className="ml-auto shrink-0 md:order-last md:ml-auto">
+                {renderItemActionsMenu()}
+              </div>
             </div>
             <DebouncedInput
               label="Title"
@@ -1982,13 +2120,13 @@ const ServicePlanElementRow = ({
               onChange={(value) =>
                 onUpdate({ title: plainTextToRichText(value) }, "title")
               }
-            />
-          </div>
+              />
+            </div>
 
           <div
             className={cn(
               SERVICE_PLAN_COL.contentView,
-              "min-w-0 self-start py-0.5 max-md:order-4",
+              "min-w-0 self-start py-0.5 max-md:order-4 max-md:hidden",
               !hasContentReferences && !contentAddControl && "max-md:hidden",
             )}
             aria-label="Songs and scripture"
@@ -1998,7 +2136,6 @@ const ServicePlanElementRow = ({
 
           <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:ml-auto max-md:order-5")}>
             {liveControls}
-            {itemActionsMenu}
           </div>
         </div>
       ) : (
@@ -2055,22 +2192,88 @@ const ServicePlanElementRow = ({
       )}
 
       {allowEdit ? (
-        readOnlyAssigneesBlock || (
-          <Button
-            type="button"
-            variant="tertiary"
-            svg={UserRound}
-            iconSize="sm"
-            className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
-            aria-label={`Assignees for ${itemLabel}`}
-            onClick={() => setAssignmentSheetOpen(true)}
-          >
-            {structureOnly ? "Add microphones" : "Assign people & mics"}
-          </Button>
-        )
+        <div className="flex flex-wrap items-center gap-1">
+          <div className="hidden" aria-hidden="true">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="tertiary"
+                className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+                aria-label={`Scheduled roles for ${itemLabel}`}
+              >
+                {scheduledPositionLabel}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-2">
+              <p className="px-2 pb-2 text-xs font-semibold text-gray-100">Scheduled roles</p>
+              <div className="max-h-60 space-y-1 overflow-y-auto">
+                {scheduledPositionOptions.map((option) => {
+                  const checked = scheduledPositionIds.includes(option.positionId);
+                  return (
+                    <Checkbox
+                      key={option.positionId}
+                      checked={checked}
+                      label={`${option.teamName ? `${option.teamName} · ` : ""}${option.roleName || option.label}`}
+                      labelClassName="text-xs"
+                      onCheckedChange={(next) => {
+                        const ids = next
+                          ? [...scheduledPositionIds, option.positionId]
+                          : scheduledPositionIds.filter((id) => id !== option.positionId);
+                        onUpdate({
+                          scheduledPositionIds: Array.from(new Set(ids)),
+                          ...(ids.length === 1 ? { positionId: ids[0] } : { positionId: undefined }),
+                        });
+                      }}
+                    />
+                  );
+                })}
+                {!scheduledPositionOptions.length ? (
+                  <p className="px-2 py-2 text-xs text-gray-400">No active positions available.</p>
+                ) : null}
+              </div>
+            </PopoverContent>
+          </Popover>
+          </div>
+          {readOnlyAssigneesBlock || (
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={UserRound}
+              iconSize="sm"
+              className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+              aria-label={`Assignees for ${itemLabel}`}
+              onClick={() => setAssignmentSheetOpen(true)}
+            >
+              {structureOnly ? "Add microphones" : "Assign people & mics"}
+            </Button>
+          )}
+        </div>
       ) : (
         assigneesBlock
       )}
+      {!structureOnly && scheduledPositionIds.length > 0 ? (
+        <div className="mx-1 mb-1 rounded-md border border-cyan-900/60 bg-cyan-950/20 px-2 py-1.5" aria-label={`Scheduled people for ${itemLabel}`}>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-200/80">Scheduled people</p>
+          {scheduledRows.length > 0 ? (
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+              {scheduledRows.map((row) => (
+                <button
+                  key={`${row.scheduleId || "none"}:${row.columnKey}`}
+                  type="button"
+                  className="text-left text-xs text-gray-100 underline decoration-cyan-500/50 underline-offset-2 hover:text-cyan-100"
+                  onClick={() => onOpenScheduledAssignment?.(row)}
+                  disabled={!onOpenScheduledAssignment || !row.scheduleId}
+                >
+                  {row.memberName || "Not scheduled"} · {row.slotLabel}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-amber-200">Not scheduled</p>
+          )}
+        </div>
+      ) : null}
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}

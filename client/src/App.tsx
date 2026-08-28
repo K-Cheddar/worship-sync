@@ -28,6 +28,7 @@ import TeamsAccessGuard from "./components/TeamsAccessGuard";
 import { lazyRoute } from "./utils/lazyRoute";
 import { ChatProvider } from "./chat/ChatContext";
 import ChatWindowHost from "./chat/ChatWindowHost";
+import { getPageTitle } from "./utils/pageTitles";
 
 /**
  * Route-level code splitting.
@@ -219,6 +220,10 @@ const RouteChunkSplash = () => (
 const AppRoutes = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
+
+  useEffect(() => {
+    document.title = getPageTitle(location.pathname);
+  }, [location.pathname]);
 
   useLayoutEffect(() => {
     const routeNeedsTransparentCanvas = isTransparentDisplayRoute(location.pathname);

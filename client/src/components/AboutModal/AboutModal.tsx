@@ -307,7 +307,7 @@ const AboutModal = ({
             </p>
           )}
         <p className="text-gray-400 text-sm mb-4">
-          Modern worship presentation software
+          From planning to presentation - worship in sync
         </p>
         {!isElectron() &&
           latestVersion &&

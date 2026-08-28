@@ -1,5 +1,13 @@
 import { type ReactNode, useContext, useMemo, useState } from "react";
-import { ArrowLeft, Check, ChevronDown, Clipboard, Pencil, Plus, Undo2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  Clipboard,
+  Pencil,
+  Plus,
+  Undo2,
+} from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
@@ -22,7 +30,10 @@ import type {
   TeamRosterMember,
   TeamService,
 } from "../../../api/authTypes";
-import { generateScheduleOccurrences, filterServicesWithOccurrencesInRange } from "../../../utils/teamScheduleOccurrences";
+import {
+  generateScheduleOccurrences,
+  filterServicesWithOccurrencesInRange,
+} from "../../../utils/teamScheduleOccurrences";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import CreatePanel from "../CreatePanel";
 import { teamsManagerPageRootClassName } from "../teamsStyles";
@@ -138,11 +149,12 @@ const ReviewQueueCollapsibleSection = ({
   </details>
 );
 
-const statusFilterOptions: { value: SubmissionStatusFilter; label: string }[] = [
-  { value: "needs_action", label: "Needs action" },
-  { value: "processed", label: "Processed" },
-  { value: "all", label: "All" },
-];
+const statusFilterOptions: { value: SubmissionStatusFilter; label: string }[] =
+  [
+    { value: "needs_action", label: "Needs action" },
+    { value: "processed", label: "Processed" },
+    { value: "all", label: "All" },
+  ];
 
 const emptyDraft = (): TeamIntakeFormPayload => ({
   name: "",
@@ -184,13 +196,17 @@ const IntakeManager = ({
   const [showEditForm, setShowEditForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastCreatedPublicUrl, setLastCreatedPublicUrl] = useState("");
-  const [selectedMemberBySubmission, setSelectedMemberBySubmission] = useState<Record<string, string>>({});
+  const [selectedMemberBySubmission, setSelectedMemberBySubmission] = useState<
+    Record<string, string>
+  >({});
   const [submissionUpdatingKey, setSubmissionUpdatingKey] = useState("");
   const [bulkLinking, setBulkLinking] = useState(false);
   const [showBulkLinkConfirm, setShowBulkLinkConfirm] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<SubmissionStatusFilter>(
-    "needs_action",
-  );
+  const [expandedSubmissionIds, setExpandedSubmissionIds] = useState<
+    Set<string>
+  >(new Set());
+  const [statusFilter, setStatusFilter] =
+    useState<SubmissionStatusFilter>("needs_action");
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
@@ -303,12 +319,12 @@ const IntakeManager = ({
     () =>
       draft.startDate && draft.endDate
         ? filterServicesWithOccurrencesInRange({
-          // A service remains discoverable after its recurrence ends. Its own
-          // date bounds decide whether it can produce an occurrence in this form.
-          services: services.filter(isActive),
-          startDate: draft.startDate,
-          endDate: draft.endDate,
-        })
+            // A service remains discoverable after its recurrence ends. Its own
+            // date bounds decide whether it can produce an occurrence in this form.
+            services: services.filter(isActive),
+            startDate: draft.startDate,
+            endDate: draft.endDate,
+          })
         : [],
     [draft.endDate, draft.startDate, services],
   );
@@ -324,7 +340,9 @@ const IntakeManager = ({
     );
     return availabilityServiceOptions
       .filter((option) =>
-        option.serviceIds.every((serviceId) => selectedServiceIds.has(serviceId)),
+        option.serviceIds.every((serviceId) =>
+          selectedServiceIds.has(serviceId),
+        ),
       )
       .map((option) => option.id);
   }, [availabilityServiceOptions, draft.availabilityServices]);
@@ -360,20 +378,22 @@ const IntakeManager = ({
     });
 
   const buildPayload = (): TeamIntakeFormPayload => {
-    const serviceIds = draft.availabilityServices.map((service) => service.serviceId);
+    const serviceIds = draft.availabilityServices.map(
+      (service) => service.serviceId,
+    );
     const availabilityOccurrences =
       draft.startDate && draft.endDate
         ? generateScheduleOccurrences({
-          services,
-          serviceIds,
-          startDate: draft.startDate,
-          endDate: draft.endDate,
-        }).map((occurrence) => ({
-          occurrenceId: occurrence.occurrenceId,
-          serviceId: occurrence.serviceId,
-          name: occurrence.name,
-          startsAt: occurrence.startsAt,
-        }))
+            services,
+            serviceIds,
+            startDate: draft.startDate,
+            endDate: draft.endDate,
+          }).map((occurrence) => ({
+            occurrenceId: occurrence.occurrenceId,
+            serviceId: occurrence.serviceId,
+            name: occurrence.name,
+            startsAt: occurrence.startsAt,
+          }))
         : [];
     return {
       ...draft,
@@ -397,7 +417,11 @@ const IntakeManager = ({
     setSaving(true);
     try {
       if (editing) {
-        const response = await updateTeamIntakeForm(churchId, editing.formId, payload);
+        const response = await updateTeamIntakeForm(
+          churchId,
+          editing.formId,
+          payload,
+        );
         onFormSaved(response.form);
         setSelectedForm(response.form);
         setShowEditForm(false);
@@ -409,7 +433,8 @@ const IntakeManager = ({
         onFormSaved(response.form);
         if (response.publicToken) {
           setLastCreatedPublicUrl(
-            response.publicUrl || buildTeamIntakePublicUrl(response.publicToken),
+            response.publicUrl ||
+              buildTeamIntakePublicUrl(response.publicToken),
           );
         }
         showToast(saveToastMessage, "success");
@@ -433,15 +458,17 @@ const IntakeManager = ({
 
   const activeSelectedForm = useMemo(() => {
     if (!selectedForm) return null;
-    return forms.find((form) => form.formId === selectedForm.formId) ?? selectedForm;
+    return (
+      forms.find((form) => form.formId === selectedForm.formId) ?? selectedForm
+    );
   }, [forms, selectedForm]);
 
   const selectedFormSubmissions = useMemo(
     () =>
       activeSelectedForm
         ? newestSubmissions.filter(
-          (submission) => submission.formId === activeSelectedForm.formId,
-        )
+            (submission) => submission.formId === activeSelectedForm.formId,
+          )
         : [],
     [newestSubmissions, activeSelectedForm],
   );
@@ -466,7 +493,10 @@ const IntakeManager = ({
       selectedFormSubmissions
         .filter(intakeSubmissionNeedsAction)
         .flatMap((submission) => {
-          const member = selectIntakeExactMemberMatch(submission, activeMembers);
+          const member = selectIntakeExactMemberMatch(
+            submission,
+            activeMembers,
+          );
           return member ? [{ submission, member }] : [];
         }),
     [selectedFormSubmissions, activeMembers],
@@ -481,12 +511,12 @@ const IntakeManager = ({
         const notes = (submission.notes || "").trim();
         return notes
           ? [
-            {
-              submissionId: submission.submissionId,
-              name: `${submission.firstName} ${submission.lastName}`.trim(),
-              notes,
-            },
-          ]
+              {
+                submissionId: submission.submissionId,
+                name: `${submission.firstName} ${submission.lastName}`.trim(),
+                notes,
+              },
+            ]
           : [];
       }),
     [selectedFormSubmissions],
@@ -496,16 +526,18 @@ const IntakeManager = ({
     () =>
       selectedFormSubmissions.flatMap((submission) => {
         const labels = (submission.blockoutRanges || [])
-          .map((range) => formatPlainDateRangeLabel(range.startDate, range.endDate))
+          .map((range) =>
+            formatPlainDateRangeLabel(range.startDate, range.endDate),
+          )
           .filter(Boolean);
         return labels.length > 0
           ? [
-            {
-              submissionId: submission.submissionId,
-              name: `${submission.firstName} ${submission.lastName}`.trim(),
-              labels,
-            },
-          ]
+              {
+                submissionId: submission.submissionId,
+                name: `${submission.firstName} ${submission.lastName}`.trim(),
+                labels,
+              },
+            ]
           : [];
       }),
     [selectedFormSubmissions],
@@ -558,7 +590,11 @@ const IntakeManager = ({
         response.publicUrl || buildTeamIntakePublicUrl(response.publicToken),
       );
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not create a new intake link.");
+      showApiErrorToast(
+        showToast,
+        error,
+        "Could not create a new intake link.",
+      );
     }
   };
 
@@ -577,19 +613,23 @@ const IntakeManager = ({
     const updatingKey =
       action === "applied"
         ? submissionActionKey(
-          submission.submissionId,
-          createMember ? "create" : "link",
-        )
+            submission.submissionId,
+            createMember ? "create" : "link",
+          )
         : action === "dismissed"
           ? submissionActionKey(submission.submissionId, "dismiss")
           : submissionActionKey(submission.submissionId, "restore");
     setSubmissionUpdatingKey(updatingKey);
     try {
-      const response = await applyTeamIntakeSubmission(churchId, submission.submissionId, {
-        action,
-        memberId,
-        createMember,
-      });
+      const response = await applyTeamIntakeSubmission(
+        churchId,
+        submission.submissionId,
+        {
+          action,
+          memberId,
+          createMember,
+        },
+      );
       onSubmissionSaved(response.submission);
       if (response.member) onMemberSaved(response.member);
       // Reflect roster changes locally so a created/linked member appears on
@@ -598,7 +638,10 @@ const IntakeManager = ({
       // Dismiss hides the row from the default "Needs action" view, so point the
       // admin to where it went and that it can be brought back.
       if (action === "dismissed") {
-        showToast("Submission dismissed. Find it under Processed to restore.", "success");
+        showToast(
+          "Submission dismissed. Find it under Processed to restore.",
+          "success",
+        );
       } else if (action === "new") {
         showToast("Submission restored to Needs action.", "success");
       }
@@ -679,7 +722,9 @@ const IntakeManager = ({
     const blockoutLabels = (submission.blockoutRanges || [])
       .map((range) => formatPlainDateRangeLabel(range.startDate, range.endDate))
       .filter(Boolean);
-    const availabilityEntries = Object.entries(submission.occurrenceAvailability || {});
+    const availabilityEntries = Object.entries(
+      submission.occurrenceAvailability || {},
+    );
     const availableDates = describeOccurrences(
       availabilityEntries
         .filter(([, status]) => status === "available")
@@ -690,195 +735,244 @@ const IntakeManager = ({
         .filter(([, status]) => status === "unavailable")
         .map(([occurrenceId]) => occurrenceId),
     );
-    const submissionName = `${submission.title || ""} ${submission.firstName} ${submission.lastName}`
-      .trim() || "Anonymous response";
+    const submissionName =
+      `${submission.title || ""} ${submission.firstName} ${submission.lastName}`.trim() ||
+      "Anonymous response";
+    const isExpanded = expandedSubmissionIds.has(submission.submissionId);
 
     return (
       <article
         key={submission.submissionId}
-        className="rounded-md border border-gray-700 bg-gray-950/60 p-3"
+        className="rounded-md border border-gray-700 bg-gray-950/60"
       >
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <h3 className="font-semibold">
-              {submissionName}
-            </h3>
-            <p className="text-xs text-gray-400">
-              {submission.status === "applied" && linkedMember
-                ? `${submission.appliedMemberCreated ? "Created" : "Linked to"} ${memberName(linkedMember)}`
-                : submission.status}{" "}
-              | {new Date(submission.submittedAt).toLocaleString()}
-            </p>
-            {suggestedMember && canLinkSubmission ? (
-              <p className="mt-1 text-xs text-emerald-200">
-                Suggested match: {memberName(suggestedMember)}
+        <button
+          type="button"
+          className="flex min-h-0 w-full items-center gap-2 rounded-md p-3 text-left hover:bg-gray-900/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          aria-expanded={isExpanded}
+          aria-label={`${isExpanded ? "Collapse" : "Expand"} submission from ${submissionName}`}
+          onClick={() =>
+            setExpandedSubmissionIds((current) => {
+              const next = new Set(current);
+              if (next.has(submission.submissionId)) {
+                next.delete(submission.submissionId);
+              } else {
+                next.add(submission.submissionId);
+              }
+              return next;
+            })
+          }
+        >
+          <span className="min-w-0 flex-1 truncate font-semibold">
+            {submissionName}
+          </span>
+          <span className="shrink-0 text-xs text-gray-400">
+            {submission.status === "applied" && linkedMember
+              ? `${submission.appliedMemberCreated ? "Created" : "Linked to"} ${memberName(linkedMember)}`
+              : submission.status}
+          </span>
+          <span className="hidden shrink-0 text-xs text-gray-500 sm:inline">
+            {new Date(submission.submittedAt).toLocaleString()}
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+            aria-hidden
+          />
+        </button>
+        {isExpanded ? (
+          <div className="space-y-4 border-t border-gray-700 px-4 pb-4 pt-3">
+            <div>
+              <h3 className="font-semibold">{submissionName}</h3>
+              <p className="text-xs text-gray-400">
+                Submitted {new Date(submission.submittedAt).toLocaleString()}
               </p>
+              {suggestedMember && canLinkSubmission ? (
+                <p className="mt-1 text-xs text-emerald-200">
+                  Suggested match: {memberName(suggestedMember)}
+                </p>
+              ) : null}
+            </div>
+            {submission.email || submission.birthDate ? (
+              <dl className="grid gap-2 text-xs text-gray-300 sm:grid-cols-2">
+                {submission.email ? (
+                  <div>
+                    <dt className="font-semibold text-gray-400">Email</dt>
+                    <dd>{submission.email}</dd>
+                  </div>
+                ) : null}
+                {submission.birthDate ? (
+                  <div>
+                    <dt className="font-semibold text-gray-400">Birthday</dt>
+                    <dd>{formatBirthDate(submission.birthDate)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            ) : null}
+            {submission.servingFrequency || submission.recurringAvailability ? (
+              <ReviewQueueCollapsibleSection
+                title="Scheduling preferences"
+                summary={servingFrequencyLabel(submission.servingFrequency)}
+              >
+                <p className="text-gray-300">
+                  {servingFrequencyLabel(submission.servingFrequency)}. Usually
+                  available:{" "}
+                  {recurringAvailabilityLabel(submission.recurringAvailability)}
+                  .
+                </p>
+              </ReviewQueueCollapsibleSection>
+            ) : null}
+            {requestedPositions.length > 0 ? (
+              <ReviewQueueCollapsibleSection
+                title="Requested positions"
+                summary={`${requestedPositions.length} position${requestedPositions.length === 1 ? "" : "s"}`}
+              >
+                <p className="text-gray-300">{requestedPositions.join(", ")}</p>
+              </ReviewQueueCollapsibleSection>
+            ) : null}
+            {blockoutLabels.length > 0 ? (
+              <ReviewQueueCollapsibleSection
+                title="Blockout dates"
+                summary={`${blockoutLabels.length} range${blockoutLabels.length === 1 ? "" : "s"}`}
+              >
+                <p className="text-gray-300">{blockoutLabels.join("; ")}</p>
+              </ReviewQueueCollapsibleSection>
+            ) : null}
+            {availableDates.length > 0 || unavailableDates.length > 0 ? (
+              <ReviewQueueCollapsibleSection
+                title="Service availability"
+                summary={[
+                  availableDates.length > 0
+                    ? `${availableDates.length} available`
+                    : null,
+                  unavailableDates.length > 0
+                    ? `${unavailableDates.length} unavailable`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              >
+                <div className="space-y-1">
+                  {availableDates.length > 0 ? (
+                    <p className="text-emerald-200">
+                      Available: {availableDates.join(", ")}
+                    </p>
+                  ) : null}
+                  {unavailableDates.length > 0 ? (
+                    <p className="text-gray-400">
+                      Unavailable: {unavailableDates.join(", ")}
+                    </p>
+                  ) : null}
+                </div>
+              </ReviewQueueCollapsibleSection>
+            ) : null}
+            {submission.notes ? (
+              <TextArea
+                label="Notes"
+                value={submission.notes}
+                disabled
+                onChange={() => {}}
+                textareaClassName="mt-3 min-h-16"
+              />
+            ) : null}
+            {canEdit && needsAction ? (
+              <div className="flex flex-wrap items-center gap-2 border-t border-gray-700 pt-3">
+                {canLinkSubmission ? (
+                  <>
+                    <Select
+                      label="Match member"
+                      hideLabel
+                      className="min-w-48"
+                      value={selectedMemberId}
+                      onChange={(memberId) =>
+                        setSelectedMemberBySubmission((current) => ({
+                          ...current,
+                          [submission.submissionId]: String(memberId),
+                        }))
+                      }
+                      options={activeMembers.map((member) => ({
+                        label: memberName(member),
+                        value: member.memberId,
+                      }))}
+                    />
+                    <Button
+                      variant="secondary"
+                      svg={Check}
+                      iconSize="sm"
+                      padding="px-2 py-1"
+                      disabled={!selectedMemberId || isUpdatingThisSubmission}
+                      isLoading={
+                        submissionUpdatingKey ===
+                        submissionActionKey(submission.submissionId, "link")
+                      }
+                      onClick={() =>
+                        void updateSubmission(
+                          submission,
+                          "applied",
+                          selectedMemberId,
+                        )
+                      }
+                    >
+                      Link to member
+                    </Button>
+                    <Button
+                      variant="tertiary"
+                      svg={Plus}
+                      iconSize="sm"
+                      padding="px-2 py-1"
+                      disabled={
+                        isUpdatingThisSubmission ||
+                        !submission.firstName ||
+                        !submission.lastName
+                      }
+                      isLoading={
+                        submissionUpdatingKey ===
+                        submissionActionKey(submission.submissionId, "create")
+                      }
+                      onClick={() =>
+                        void updateSubmission(
+                          submission,
+                          "applied",
+                          undefined,
+                          true,
+                        )
+                      }
+                    >
+                      Create member
+                    </Button>
+                  </>
+                ) : null}
+                <Button
+                  variant="textLink"
+                  padding="px-1 py-0.5"
+                  disabled={isUpdatingThisSubmission}
+                  isLoading={
+                    submissionUpdatingKey ===
+                    submissionActionKey(submission.submissionId, "dismiss")
+                  }
+                  onClick={() => void updateSubmission(submission, "dismissed")}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            ) : null}
+            {canEdit && submission.status === "dismissed" ? (
+              <div className="border-t border-gray-700 pt-3">
+                <Button
+                  variant="secondary"
+                  svg={Undo2}
+                  iconSize="sm"
+                  padding="px-2 py-1"
+                  disabled={isUpdatingThisSubmission}
+                  isLoading={
+                    submissionUpdatingKey ===
+                    submissionActionKey(submission.submissionId, "restore")
+                  }
+                  onClick={() => void updateSubmission(submission, "new")}
+                >
+                  Restore
+                </Button>
+              </div>
             ) : null}
           </div>
-          {canEdit && needsAction ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {canLinkSubmission ? (
-                <>
-                  <Select
-                    label="Match member"
-                    hideLabel
-                    className="min-w-48"
-                    value={selectedMemberId}
-                    onChange={(memberId) =>
-                      setSelectedMemberBySubmission((current) => ({
-                        ...current,
-                        [submission.submissionId]: String(memberId),
-                      }))
-                    }
-                    options={activeMembers.map((member) => ({
-                      label: memberName(member),
-                      value: member.memberId,
-                    }))}
-                  />
-                  <Button
-                    variant="secondary"
-                    svg={Check}
-                    iconSize="sm"
-                    padding="px-2 py-1"
-                    disabled={!selectedMemberId || isUpdatingThisSubmission}
-                    isLoading={
-                      submissionUpdatingKey ===
-                      submissionActionKey(submission.submissionId, "link")
-                    }
-                    onClick={() =>
-                      void updateSubmission(submission, "applied", selectedMemberId)
-                    }
-                  >
-                    Link to member
-                  </Button>
-                  <Button
-                    variant="tertiary"
-                    svg={Plus}
-                    iconSize="sm"
-                    padding="px-2 py-1"
-                    disabled={
-                      isUpdatingThisSubmission ||
-                      !submission.firstName ||
-                      !submission.lastName
-                    }
-                    isLoading={
-                      submissionUpdatingKey ===
-                      submissionActionKey(submission.submissionId, "create")
-                    }
-                    onClick={() =>
-                      void updateSubmission(submission, "applied", undefined, true)
-                    }
-                  >
-                    Create member
-                  </Button>
-                </>
-              ) : null}
-              <Button
-                variant="textLink"
-                padding="px-1 py-0.5"
-                disabled={isUpdatingThisSubmission}
-                isLoading={
-                  submissionUpdatingKey ===
-                  submissionActionKey(submission.submissionId, "dismiss")
-                }
-                onClick={() => void updateSubmission(submission, "dismissed")}
-              >
-                Dismiss
-              </Button>
-            </div>
-          ) : null}
-          {canEdit && submission.status === "dismissed" ? (
-            <Button
-              variant="secondary"
-              svg={Undo2}
-              iconSize="sm"
-              padding="px-2 py-1"
-              disabled={isUpdatingThisSubmission}
-              isLoading={
-                submissionUpdatingKey ===
-                submissionActionKey(submission.submissionId, "restore")
-              }
-              onClick={() => void updateSubmission(submission, "new")}
-            >
-              Restore
-            </Button>
-          ) : null}
-        </div>
-        {submission.email || submission.birthDate ? (
-          <dl className="mt-3 grid gap-2 text-xs text-gray-300 sm:grid-cols-2">
-            {submission.email ? (
-              <div>
-                <dt className="font-semibold text-gray-400">Email</dt>
-                <dd>{submission.email}</dd>
-              </div>
-            ) : null}
-            {submission.birthDate ? (
-              <div>
-                <dt className="font-semibold text-gray-400">Birthday</dt>
-                <dd>{formatBirthDate(submission.birthDate)}</dd>
-              </div>
-            ) : null}
-          </dl>
-        ) : null}
-        {submission.servingFrequency || submission.recurringAvailability ? (
-          <ReviewQueueCollapsibleSection
-            title="Scheduling preferences"
-            summary={servingFrequencyLabel(submission.servingFrequency)}
-          >
-            <p className="text-gray-300">
-              {servingFrequencyLabel(submission.servingFrequency)}. Usually available: {" "}
-              {recurringAvailabilityLabel(submission.recurringAvailability)}.
-            </p>
-          </ReviewQueueCollapsibleSection>
-        ) : null}
-        {requestedPositions.length > 0 ? (
-          <ReviewQueueCollapsibleSection
-            title="Requested positions"
-            summary={`${requestedPositions.length} position${requestedPositions.length === 1 ? "" : "s"}`}
-          >
-            <p className="text-gray-300">{requestedPositions.join(", ")}</p>
-          </ReviewQueueCollapsibleSection>
-        ) : null}
-        {blockoutLabels.length > 0 ? (
-          <ReviewQueueCollapsibleSection
-            title="Blockout dates"
-            summary={`${blockoutLabels.length} range${blockoutLabels.length === 1 ? "" : "s"}`}
-          >
-            <p className="text-gray-300">{blockoutLabels.join("; ")}</p>
-          </ReviewQueueCollapsibleSection>
-        ) : null}
-        {availableDates.length > 0 || unavailableDates.length > 0 ? (
-          <ReviewQueueCollapsibleSection
-            title="Service availability"
-            summary={[
-              availableDates.length > 0 ? `${availableDates.length} available` : null,
-              unavailableDates.length > 0 ? `${unavailableDates.length} unavailable` : null,
-            ]
-              .filter(Boolean)
-              .join(", ")}
-          >
-            <div className="space-y-1">
-              {availableDates.length > 0 ? (
-                <p className="text-emerald-200">
-                  Available: {availableDates.join(", ")}
-                </p>
-              ) : null}
-              {unavailableDates.length > 0 ? (
-                <p className="text-gray-400">
-                  Unavailable: {unavailableDates.join(", ")}
-                </p>
-              ) : null}
-            </div>
-          </ReviewQueueCollapsibleSection>
-        ) : null}
-        {submission.notes ? (
-          <TextArea
-            label="Notes"
-            value={submission.notes}
-            disabled
-            onChange={() => { }}
-            textareaClassName="mt-3 min-h-16"
-          />
         ) : null}
       </article>
     );
@@ -886,7 +980,11 @@ const IntakeManager = ({
 
   const renderEditForm = () => (
     <>
-      <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
+      <Input
+        label="Name"
+        value={draft.name}
+        onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))}
+      />
       {editing ? (
         <p className="px-1 text-sm text-gray-300">
           <span className="font-bold">Submissions: </span>
@@ -915,11 +1013,12 @@ const IntakeManager = ({
           label: field.label,
         }))}
         value={draft.enabledFields || []}
-          onChange={(enabledFields) =>
-            setDraft((current) => ({
-              ...current,
-              enabledFields: enabledFields as TeamIntakeFormPayload["enabledFields"],
-            }))
+        onChange={(enabledFields) =>
+          setDraft((current) => ({
+            ...current,
+            enabledFields:
+              enabledFields as TeamIntakeFormPayload["enabledFields"],
+          }))
         }
         emptyText="No fields selected."
       />
@@ -951,7 +1050,9 @@ const IntakeManager = ({
           setDraft((current) => ({
             ...current,
             availabilityServices: serviceIds.map((serviceId) => {
-              const service = services.find((item) => item.serviceId === serviceId);
+              const service = services.find(
+                (item) => item.serviceId === serviceId,
+              );
               return {
                 serviceId,
                 name: service?.name || "",
@@ -985,7 +1086,10 @@ const IntakeManager = ({
           value={draft.positionsMessage || ""}
           placeholder={DEFAULT_INTAKE_FORM_COPY.positions}
           onChange={(positionsMessage) =>
-            setDraft((d) => ({ ...d, positionsMessage: String(positionsMessage) }))
+            setDraft((d) => ({
+              ...d,
+              positionsMessage: String(positionsMessage),
+            }))
           }
         />
         <Input
@@ -1023,8 +1127,8 @@ const IntakeManager = ({
 
   const renderFilteredSubmissionsEmptyState = () => {
     const filterLabel =
-      statusFilterOptions.find((option) => option.value === statusFilter)?.label ??
-      "this filter";
+      statusFilterOptions.find((option) => option.value === statusFilter)
+        ?.label ?? "this filter";
 
     if (statusFilter === "needs_action") {
       return (
@@ -1085,7 +1189,9 @@ const IntakeManager = ({
         <div className="flex flex-wrap items-center gap-2">
           {/* Hidden on "Processed" so the bulk action only appears when its
               target submissions are visible in the list below. */}
-          {canEdit && exactMatchTargets.length > 0 && statusFilter !== "processed" ? (
+          {canEdit &&
+          exactMatchTargets.length > 0 &&
+          statusFilter !== "processed" ? (
             <Button
               variant="secondary"
               svg={Check}
@@ -1100,14 +1206,40 @@ const IntakeManager = ({
             </Button>
           ) : null}
           {selectedFormSubmissions.length > 0 ? (
-            <Select
-              label="Status"
-              hideLabel
-              className="min-w-40"
-              value={statusFilter}
-              onChange={(value) => setStatusFilter(value as SubmissionStatusFilter)}
-              options={statusFilterOptions}
-            />
+            <>
+              <Button
+                variant="textLink"
+                padding="px-1 py-0.5"
+                onClick={() =>
+                  setExpandedSubmissionIds(
+                    new Set(
+                      filteredSubmissions.map(
+                        ({ submissionId }) => submissionId,
+                      ),
+                    ),
+                  )
+                }
+              >
+                Expand all
+              </Button>
+              <Button
+                variant="textLink"
+                padding="px-1 py-0.5"
+                onClick={() => setExpandedSubmissionIds(new Set())}
+              >
+                Collapse all
+              </Button>
+              <Select
+                label="Status"
+                hideLabel
+                className="min-w-40"
+                value={statusFilter}
+                onChange={(value) =>
+                  setStatusFilter(value as SubmissionStatusFilter)
+                }
+                options={statusFilterOptions}
+              />
+            </>
           ) : null}
         </div>
       </div>
@@ -1270,13 +1402,13 @@ const IntakeManager = ({
                 note={
                   form.active
                     ? [
-                      describeTeamScope(form.teamIds || []),
-                      form.availabilityOccurrences?.length
-                        ? `${form.availabilityOccurrences.length} availability dates`
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")
+                        describeTeamScope(form.teamIds || []),
+                        form.availabilityOccurrences?.length
+                          ? `${form.availabilityOccurrences.length} availability dates`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
                     : undefined
                 }
                 archived={Boolean(form.archivedAt)}

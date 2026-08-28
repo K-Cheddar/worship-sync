@@ -239,6 +239,11 @@ export const cloneSectionsForTemplate = (
         sourceLedByRaw: undefined,
         pushedOutlineListId: undefined,
         pushedOutlineListIds: undefined,
+        // Scheduled role links are reusable template structure, unlike the
+        // dated people assignments above.
+        scheduledPositionIds: element.scheduledPositionIds
+          ? [...element.scheduledPositionIds]
+          : undefined,
       };
       // Kind follows the (now-cleared) attachments.
       return { ...cloned, type: getServicePlanElementType(cloned) };

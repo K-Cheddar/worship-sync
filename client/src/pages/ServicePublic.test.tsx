@@ -1170,8 +1170,7 @@ describe("ServicePublic", () => {
     }
   }, 10000);
 
-  it("shows notes expanded by default and lets operators collapse them", async () => {
-    const user = userEvent.setup();
+  it("shows notes expanded by default", async () => {
     const now = Date.now();
     mockUsePublicServiceFlow.mockReturnValue({
       snapshot: {
@@ -1219,9 +1218,6 @@ describe("ServicePublic", () => {
     expect(screen.getByText("Current cue")).toBeInTheDocument();
     expect(screen.getByText("Later cue")).toBeInTheDocument();
 
-    const noteToggles = screen.getAllByRole("button", { name: /^Notes$/i });
-    expect(noteToggles).toHaveLength(2);
-    await user.click(noteToggles[1]);
-    expect(screen.queryByText("Later cue")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Notes$/i })).not.toBeInTheDocument();
   });
 });
