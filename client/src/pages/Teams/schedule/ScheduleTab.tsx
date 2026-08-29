@@ -1580,6 +1580,51 @@ const ScheduleTab = ({
         if (scheduleMutationSeqRef.current === mutationSeq) {
           onScheduleSaved(previousSchedule);
         }
+        if (
+          memberId &&
+          !allowCrossTeamConflict &&
+          (error as { status?: number })?.status === 409
+        ) {
+          requestCrossTeamConflictConfirmation({
+            memberId,
+            warning: "already scheduled on another team or in another role",
+            onConfirm: () => {
+              const retryMutationSeq = ++scheduleMutationSeqRef.current;
+              onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+              void enqueueAssignmentSave(async () => {
+                try {
+                  await updateTeamScheduleAssignment(
+                    churchId,
+                    selectedSchedule.scheduleId,
+                    {
+                      serviceId,
+                      positionSlotKey: cellKey,
+                      memberId,
+                      serviceDate,
+                      sourceServiceId,
+                      sourcePositionSlotKey,
+                      ...(allowBlockout ? { allowBlockout: true } : {}),
+                      ...(allowRecurringAvailability
+                        ? { allowRecurringAvailability: true }
+                        : {}),
+                      ...assignmentConflictPayload(true),
+                    },
+                  );
+                } catch (retryError) {
+                  if (scheduleMutationSeqRef.current === retryMutationSeq) {
+                    onScheduleSaved(previousSchedule);
+                  }
+                  showApiErrorToast(
+                    showToast,
+                    retryError,
+                    "Could not update this assignment.",
+                  );
+                }
+              });
+            },
+          });
+          return;
+        }
         showApiErrorToast(showToast, error, "Could not update this assignment.");
       }
     });

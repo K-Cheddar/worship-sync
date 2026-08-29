@@ -1768,6 +1768,60 @@ describe("Teams", () => {
     });
   });
 
+  it("offers Schedule anyway when the server detects an assignment conflict", async () => {
+    const user = userEvent.setup();
+    const scheduleWithoutAssignments = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: {},
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        schedules: [scheduleWithoutAssignments],
+      }),
+    );
+    mockUpdateTeamScheduleAssignment
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Schedule conflict"), { status: 409 }),
+      )
+      .mockResolvedValueOnce({
+        success: true,
+        schedule: {
+          ...scheduleWithoutAssignments,
+          assignments: {
+            [sundayOccurrenceId]: {
+              "position-vocal::0": { primaryMemberId: "member-avery" },
+            },
+          },
+        },
+      } satisfies UpdateTeamScheduleAssignmentResponse);
+
+    renderTeams();
+    await openVocalSlot(user);
+    await user.click(await screen.findByRole("option", { name: /^Avery$/i }));
+
+    expect(
+      await screen.findByRole("heading", { name: /Schedule conflict/i }),
+    ).toBeInTheDocument();
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /Schedule anyway/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignment).toHaveBeenLastCalledWith(
+        "church-1",
+        "schedule-july",
+        {
+          serviceId: sundayOccurrenceId,
+          positionSlotKey: "position-vocal::0",
+          memberId: "member-avery",
+          serviceDate: "2026-07-05",
+          allowOccurrenceConflict: true,
+        },
+      );
+    });
+  });
+
   it("creates and assigns a new member when the typed name matches nobody", async () => {
     const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
