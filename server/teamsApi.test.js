@@ -1604,6 +1604,83 @@ test("occurrence conflict checks include same-team roles, different dates, and a
   assert.equal(differentDate.statusCode, 200);
 });
 
+test("assigning a later occurrence ignores the member's earlier role in the same schedule", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("occurrence_conflict_target_date");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship Team",
+    positions: [
+      { name: "Vocal", icon: "mic" },
+      { name: "Keys", icon: "piano" },
+    ],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys"] },
+    ],
+  });
+  const firstOccurrence = {
+    occurrenceId: "group:weekend@2026-08-15",
+    serviceId: "service-sabbath-school",
+    serviceIds: ["service-sabbath-school", "service-worship"],
+    name: "Sabbath School & Worship Experience",
+    startsAt: "2026-08-15T14:00:00.000Z",
+  };
+  const targetOccurrence = {
+    ...firstOccurrence,
+    occurrenceId: "group:weekend@2026-08-29",
+    startsAt: "2026-08-29T14:00:00.000Z",
+  };
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August 2026",
+      teamId,
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      serviceIds: firstOccurrence.serviceIds,
+      occurrences: [firstOccurrence, targetOccurrence],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  const earlierAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: firstOccurrence.occurrenceId,
+        positionSlotKey: `${positionIds.Vocal}::0`,
+        memberId: memberIds.Avery,
+        serviceDate: "2026-08-15",
+      },
+    },
+  );
+  assert.equal(earlierAssignment.statusCode, 200);
+
+  const laterAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: targetOccurrence.occurrenceId,
+        positionSlotKey: `${positionIds.Keys}::0`,
+        memberId: memberIds.Avery,
+        serviceDate: "2026-08-29",
+      },
+    },
+  );
+  assert.equal(laterAssignment.statusCode, 200);
+  assert.equal(
+    getMemberId(
+      laterAssignment.payload.schedule.assignments?.[
+        targetOccurrence.occurrenceId
+      ]?.[`${positionIds.Keys}::0`],
+    ),
+    memberIds.Avery,
+  );
+});
+
 test("schedule assignment swaps update both cells atomically", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("assignment_swap");

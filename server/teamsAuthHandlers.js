@@ -4352,6 +4352,7 @@ export const createTeamsAuthHandlers = ({
     schedules,
     memberIds,
     targetCellKey,
+    targetOccurrenceId,
   }) => {
     const memberIdSet = memberIds?.size
       ? memberIds
@@ -4364,7 +4365,10 @@ export const createTeamsAuthHandlers = ({
         );
     if (memberIdSet.size === 0) return [];
 
-    const occurrences = getScheduleOccurrencesForConflict(schedule);
+    const occurrences = getScheduleOccurrencesForConflict(schedule).filter(
+      (occurrence) =>
+        !targetOccurrenceId || occurrence.occurrenceId === targetOccurrenceId,
+    );
     const conflicts = [];
     for (const currentOccurrence of occurrences) {
       const row = assignments?.[currentOccurrence.occurrenceId] || {};
@@ -4433,6 +4437,7 @@ export const createTeamsAuthHandlers = ({
     memberIds,
     allowCrossTeamConflict,
     targetCellKey,
+    targetOccurrenceId,
   }) => {
     if (allowCrossTeamConflict) return;
     const conflicts = findCrossTeamScheduleAssignmentConflicts({
@@ -4441,6 +4446,7 @@ export const createTeamsAuthHandlers = ({
       schedules,
       memberIds,
       targetCellKey,
+      targetOccurrenceId,
     });
     if (conflicts.length > 0) {
       throw httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
@@ -5038,6 +5044,7 @@ export const createTeamsAuthHandlers = ({
         memberIds: new Set([normalizedMemberId]),
         allowCrossTeamConflict,
         targetCellKey: positionSlotKey,
+        targetOccurrenceId: serviceId,
       });
     }
     return { assignments, guests: resolvedGuest.guests };
@@ -5233,6 +5240,7 @@ export const createTeamsAuthHandlers = ({
           memberIds: new Set([normalizedMemberId]),
           allowCrossTeamConflict,
           targetCellKey: positionSlotKey,
+          targetOccurrenceId: serviceId,
         });
       }
       const update = {
@@ -5362,6 +5370,7 @@ export const createTeamsAuthHandlers = ({
           normalizedCandidateMemberId,
         ]),
         allowCrossTeamConflict,
+        targetOccurrenceId: serviceId,
       });
       await setDoc(
         COLLECTIONS.teamSchedules,
@@ -5477,6 +5486,7 @@ export const createTeamsAuthHandlers = ({
           normalizedCandidateMemberId,
         ]),
         allowCrossTeamConflict,
+        targetOccurrenceId: serviceId,
       });
       const update = {
         assignments,
