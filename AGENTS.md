@@ -84,6 +84,7 @@ Every change should be reviewed for operator clarity and live-use safety:
 - Does the change remain usable on both desktop and mobile when relevant?
 - Does it avoid layout shift, visual jitter, or visible flicker?
 - Where operator-facing UI is affected, do focus order, keyboard access, labels, and contrast remain sufficient for confident use during a live worship service?
+- Every enabled clickable target must use `cursor-pointer`, including text links, chips, icon controls, and custom buttons. Disabled controls should retain the normal disabled cursor behavior.
 
 ### 4. Performance
 
