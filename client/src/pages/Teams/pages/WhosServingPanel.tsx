@@ -9,7 +9,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
-import type { TeamRosterMember } from "../../../api/authTypes";
 import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
 import {
   summarizeNeededPositions,
@@ -37,9 +36,7 @@ export type WhosServingPanelProps = {
   assignmentsStatus?: "ready" | "loading" | "unavailable";
   /** When false, skip the panel title (e.g. a Sheet/tab already provides one). */
   showHeading?: boolean;
-  members?: TeamRosterMember[];
   canEdit?: boolean;
-  onAssign?: (row: TeamsAssignmentSummaryRow, memberId: string | null) => void;
 };
 
 /**
@@ -116,33 +113,6 @@ const ServingMemberName = ({
   </Popover>
   );
 
-const AssignmentSelect = ({
-  row,
-  members,
-  onAssign,
-}: {
-  row: TeamsAssignmentSummaryRow;
-  members: TeamRosterMember[];
-  onAssign: (row: TeamsAssignmentSummaryRow, memberId: string | null) => void;
-}) => (
-  <select
-    className="max-w-32 rounded border border-gray-600 bg-gray-900 px-1 py-0.5 text-xs text-gray-100"
-    aria-label={`Assign ${row.slotLabel}`}
-    value={row.memberName ? members.find((member) =>
-      `${member.firstName} ${member.lastName}`.trim() === row.memberName)?.memberId || "" : ""}
-    onChange={(event) => onAssign(row, event.target.value || null)}
-  >
-    <option value="">Unassigned</option>
-    {members
-      .filter((member) => member.positionIds?.includes(row.positionId))
-      .map((member) => (
-        <option key={member.memberId} value={member.memberId}>
-          {`${member.firstName} ${member.lastName}`.trim()}
-        </option>
-      ))}
-  </select>
-);
-
 /**
  * Read-only roster summary for the selected plan date: which team, which
  * position, who is on it, and what they are holding. Edit opens that team's
@@ -154,9 +124,7 @@ const WhosServingPanel = ({
   microphones = [],
   assignmentsStatus = "ready",
   showHeading = true,
-  members = [],
   canEdit = false,
-  onAssign,
 }: WhosServingPanelProps) => (
   <>
     {showHeading ? (
@@ -181,7 +149,7 @@ const WhosServingPanel = ({
         settings.
       </p>
     ) : (
-      <div className="space-y-3">
+      <div className="columns-1 space-y-3 xl:columns-2 xl:gap-4 xl:space-y-0">
         {assignmentTeams.map((team) => {
           const scheduleId = team.scheduleId;
           const teamHeader = (
@@ -211,7 +179,7 @@ const WhosServingPanel = ({
             return (
               <section
                 key={`${team.teamId}-unscheduled`}
-                className="space-y-1.5"
+                className="mb-3 break-inside-avoid space-y-1.5 rounded-lg border border-gray-700/70 bg-gray-950/35 p-2.5 xl:mb-4"
               >
                 <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
                   {teamHeader}
@@ -240,7 +208,7 @@ const WhosServingPanel = ({
           return (
             <section
               key={`${team.teamId}-${scheduleId}`}
-              className="space-y-1.5"
+              className="mb-3 break-inside-avoid space-y-1.5 rounded-lg border border-gray-700/70 bg-gray-950/35 p-2.5 xl:mb-4"
             >
               <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
                 {teamHeader}
@@ -292,9 +260,6 @@ const WhosServingPanel = ({
                           heldMicrophones={heldMicrophones}
                         />
                         <span className="text-[10px] capitalize text-gray-500">{row.response || "pending"}</span>
-                        {canEdit && onAssign ? (
-                          <AssignmentSelect row={row} members={members} onAssign={onAssign} />
-                        ) : null}
                       </div>
                       {hasMicrophones ? (
                         <span
@@ -316,16 +281,6 @@ const WhosServingPanel = ({
               </ul>
               {team.unfilled.length > 0 ? (
                 <>
-                  {canEdit && onAssign ? (
-                    <ul className="space-y-1.5">
-                      {team.unfilled.map((row) => (
-                        <li key={`${scheduleId}-${row.columnKey}`} className="flex items-center justify-between gap-2 px-1.5 py-1">
-                          <span className="truncate text-xs text-amber-300">{row.slotLabel}</span>
-                          <AssignmentSelect row={row} members={members} onAssign={onAssign} />
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
                   <button
                     type="button"
                     className="flex w-full items-center justify-start gap-1 rounded-md px-1.5 py-1 text-left text-xs font-medium text-amber-300 transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"

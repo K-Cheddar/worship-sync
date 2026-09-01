@@ -48,13 +48,10 @@ const sabbath: TeamService = {
   time: "10:00",
 };
 
-/**
- * The one-time service's date is derived from today rather than hard-coded so
- * it remains visible in the default current-month range as real time passes.
- */
+/** Keep the fixture inside the default current-month range at month boundaries. */
 const oneTimeDate = (() => {
   const date = new Date();
-  date.setDate(date.getDate() + 3);
+  date.setDate(15);
   return date;
 })();
 const oneTimePlainDate = formatPlainDate(oneTimeDate);
@@ -179,7 +176,8 @@ describe("TeamsPlansPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: /^Custom$/i }));
+    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(await screen.findByRole("button", { name: /^Custom$/i }));
 
     expect(screen.getByRole("textbox", { name: "Date range" })).toBeInTheDocument();
     expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
@@ -189,7 +187,6 @@ describe("TeamsPlansPage", () => {
   it("defaults to by-date order with an organize control when multiple services exist", async () => {
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Services" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: /Organize services/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^By date$/i })).toHaveAttribute(
@@ -197,7 +194,7 @@ describe("TeamsPlansPage", () => {
       "true",
     );
     expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /This month/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
       (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
@@ -231,7 +228,7 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /This month/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
       (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
@@ -336,7 +333,7 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("button", { name: /Next plan/i })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: /Back to Services/i }));
-    expect(await screen.findByRole("heading", { name: "Services" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
   });
 
   it("navigates to the previous and next plan for the same service from the header", async () => {

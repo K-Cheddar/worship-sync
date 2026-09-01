@@ -1,6 +1,4 @@
 import { useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
-import { Mic2 } from "lucide-react";
-import Icon from "../../../components/Icon/Icon";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -14,7 +12,6 @@ import { useTeamsPage } from "../TeamsPageContext";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { TeamsMicrophonesListSkeleton } from "../teamsPageSkeletons";
 import {
-  panelHeaderPaddingClassName,
   panelScrollPaddingClassName,
   panelShellClassName,
   teamsManagerPageRootClassName,
@@ -133,6 +130,7 @@ const TeamsMicrophonesPage = () => {
 
   return (
     <div className={teamsManagerPageRootClassName}>
+      <h2 className="sr-only">Microphones</h2>
       <section
         className={cn(
           panelShellClassName,
@@ -140,12 +138,6 @@ const TeamsMicrophonesPage = () => {
           teamsPanelMaxHeightClassName,
         )}
       >
-        <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
-          <h2 className="flex items-center gap-2 text-lg font-semibold">
-            <Icon svg={Mic2} size="md" className="text-violet-300" />
-            Microphones
-          </h2>
-        </div>
         <div
           className={cn(
             "flex min-h-0 flex-1 flex-col",

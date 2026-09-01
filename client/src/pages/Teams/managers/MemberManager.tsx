@@ -1719,6 +1719,26 @@ const MemberManager = ({
                   }
                   selectClassName="w-full"
                 />
+                <Checkbox
+                  label="Team lead"
+                  checked={Boolean(membership.isTeamLead)}
+                  onCheckedChange={(isTeamLead) =>
+                    setDraft((current) => {
+                      const teamMemberships = {
+                        ...(current.teamMemberships || {}),
+                      };
+                      const existing = teamMemberships[team.teamId] || {
+                        teamId: team.teamId,
+                      };
+                      teamMemberships[team.teamId] = {
+                        ...existing,
+                        isTeamLead: Boolean(isTeamLead),
+                      };
+                      return { ...current, teamMemberships };
+                    })
+                  }
+                  labelClassName="mt-2 text-sm"
+                />
               </div>
             );
           })}

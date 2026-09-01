@@ -1,7 +1,9 @@
 import type { TeamService } from "../../api/authTypes";
+import type { ServiceTime } from "../../types";
 import {
   findCurrentServiceOccurrence,
   formatLiveSlideProgress,
+  getOccurrenceServices,
   resolveLiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
 
@@ -89,6 +91,44 @@ describe("findCurrentServiceOccurrence", () => {
     expect(
       findCurrentServiceOccurrence([], Date.parse("2026-07-26T08:00:00.000Z")),
     ).toBeNull();
+  });
+});
+
+describe("getOccurrenceServices", () => {
+  const serviceTimes: ServiceTime[] = [
+    service("morning", "2026-07-26T09:00:00.000Z"),
+    service("evening", "2026-07-26T18:00:00.000Z"),
+    service("midweek", "2026-07-29T19:00:00.000Z"),
+  ];
+
+  it("keeps only the selected occurrence's service timer", () => {
+    expect(
+      getOccurrenceServices(serviceTimes, {
+        occurrenceId: "morning-2026-07-26",
+        serviceId: "morning",
+        name: "Morning",
+        startsAt: "2026-07-26T09:00:00.000Z",
+      }),
+    ).toEqual([serviceTimes[0]]);
+  });
+
+  it("includes every service in a combined occurrence", () => {
+    const timers = getOccurrenceServices(serviceTimes, {
+      occurrenceId: "sunday-2026-07-26",
+      serviceId: "morning",
+      serviceIds: ["morning", "evening"],
+      name: "Sunday services",
+      startsAt: "2026-07-26T09:00:00.000Z",
+    });
+
+    expect(timers.map((serviceTime) => serviceTime.id)).toEqual([
+      "morning",
+      "evening",
+    ]);
+  });
+
+  it("returns no timers until an occurrence is selected", () => {
+    expect(getOccurrenceServices(serviceTimes, null)).toEqual([]);
   });
 });
 

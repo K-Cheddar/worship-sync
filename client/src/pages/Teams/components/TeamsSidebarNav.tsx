@@ -14,6 +14,8 @@ type TeamsSidebarNavProps = {
   className?: string;
   /** Desktop-only: hide labels and section headers and show icons only. */
   collapsed?: boolean;
+  /** Let a parent drawer provide the scroll container. */
+  scrollable?: boolean;
 };
 
 const SectionLinkList = ({
@@ -104,12 +106,22 @@ const TeamsSidebarNav = ({
   onNavigate,
   className,
   collapsed = false,
+  scrollable = true,
 }: TeamsSidebarNavProps) => (
   <nav
-    className={cn("flex min-h-0 flex-1 flex-col", className)}
+    className={cn(
+      "flex flex-col",
+      scrollable && "min-h-0 flex-1",
+      className,
+    )}
     aria-label="Teams and Services sections"
   >
-    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-px scrollbar-variable">
+    <div
+      className={cn(
+        scrollable && "min-h-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-variable",
+        collapsed ? "p-0" : "p-px",
+      )}
+    >
       <SectionGroup
         label="Services"
         sections={servicesNavSections}

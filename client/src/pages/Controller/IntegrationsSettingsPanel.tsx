@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronUp, Plus, RotateCcw, Unplug } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Info, Plus, RotateCcw, Unplug } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useToast } from "../../context/toastContext";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -33,6 +33,7 @@ import IntegrationsCollapsibleCardHeader from "../../components/IntegrationsColl
 import cn from "classnames";
 import { isElectron } from "../../utils/environment";
 import CanvaIntegrationSection from "./CanvaIntegrationSection";
+import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/Popover";
 
 type IntegrationsSettingsPanelProps = {
   churchId: string;
@@ -49,6 +50,34 @@ type PendingRestreamConnect = {
 };
 
 type PendingYouTubeConnect = PendingRestreamConnect;
+
+const IntegrationInfoPopover = ({
+  name,
+  description,
+  children,
+}: {
+  name: string;
+  description: string;
+  children: ReactNode;
+}) => (
+  <Popover>
+    <PopoverTrigger asChild>
+      <Button
+        type="button"
+        variant="none"
+        svg={Info}
+        iconSize="sm"
+        aria-label={`${name} information`}
+        className="max-md:min-h-0 p-1 text-gray-300 hover:text-white"
+      />
+    </PopoverTrigger>
+    <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 text-gray-100">
+      <h4 className="font-semibold">{name}</h4>
+      <p className="mt-1 text-sm text-gray-400">{description}</p>
+      <div className="mt-4 space-y-3">{children}</div>
+    </PopoverContent>
+  </Popover>
+);
 
 const NAME_COLUMNS: { value: NameColumnKey; label: string }[] = [
   { value: "elementType", label: "Element type" },
@@ -1228,16 +1257,18 @@ export const IntegrationsSettingsPanel = ({
         </ul>
       </section>
 
-      <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">Restream</h3>
-            <p className="mt-1 max-w-2xl text-sm text-gray-400">
-              Connect one Restream account for this church. Moderators can then
-              review live comments from the board moderation page.
-            </p>
+      <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 sm:grid-cols-[minmax(7rem,1fr)_minmax(0,1fr)_auto_auto]">
+          <h3 className="text-lg font-semibold">Restream</h3>
+          <div className="col-span-2 grid grid-cols-2 gap-x-3 text-sm sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <div><dt className="text-gray-400">Account</dt><dd className="mt-0.5 truncate font-medium text-gray-100">{restream.accountLabel || "No account"}</dd></div>
+            <div><dt className="text-gray-400">Status</dt><dd className="mt-0.5 font-medium text-gray-100">{restreamConnectionLabel}</dd></div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="col-start-2 row-start-1 sm:col-start-4">
+            <IntegrationInfoPopover
+            name="Restream"
+            description="Connect one Restream account for this church. Moderators can then review live comments from the board moderation page."
+          >
             {restream.enabled ? (
               <Button
                 type="button"
@@ -1261,10 +1292,22 @@ export const IntegrationsSettingsPanel = ({
                 Connect Restream
               </Button>
             )}
+            <dl className="space-y-2 text-sm">
+              <div><dt className="text-gray-400">Last event</dt><dd className="font-medium">{restream.lastEventAt ? new Date(restream.lastEventAt).toLocaleString() : "No messages received yet"}</dd></div>
+              {restream.platformSummary.length ? <div><dt className="text-gray-400">Live sources</dt><dd className="font-medium">{restream.platformSummary.join(" | ")}</dd></div> : null}
+              {restream.sessionStartedAt ? <div><dt className="text-gray-400">Current session started</dt><dd className="font-medium">{new Date(restream.sessionStartedAt).toLocaleString()}</dd></div> : null}
+              {restream.lastError ? <div><dt className="text-amber-200">Connection message</dt><dd className="font-medium text-amber-100">{restream.lastError}</dd></div> : null}
+            </dl>
+            </IntegrationInfoPopover>
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <dl className="hidden">
+          <div><dt className="text-gray-400">Account</dt><dd className="mt-0.5 font-medium text-gray-100">{restream.accountLabel || "No Restream account connected"}</dd></div>
+          <div><dt className="text-gray-400">Status</dt><dd className="mt-0.5 font-medium text-gray-100">{restreamConnectionLabel}</dd></div>
+        </dl>
+
+        <div className="hidden">
           <div className="rounded-lg border border-gray-600 bg-gray-900/60 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
               Connection
@@ -1293,6 +1336,7 @@ export const IntegrationsSettingsPanel = ({
           </div>
         </div>
 
+        <div className="hidden">
         {restream.platformSummary.length ? (
           <p className="mt-3 text-sm text-gray-300">
             Live sources: {restream.platformSummary.join(" | ")}
@@ -1350,19 +1394,21 @@ export const IntegrationsSettingsPanel = ({
         {restream.lastError ? (
           <p className="mt-3 text-sm text-amber-100/90">{restream.lastError}</p>
         ) : null}
+        </div>
       </section>
 
-      <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">YouTube</h3>
-            <p className="mt-1 max-w-2xl text-sm text-gray-400">
-              Connect the church YouTube channel so moderators can post to that
-              channel&apos;s live chat from the board page. Connect the destination
-              channel, not a personal staff account.
-            </p>
+      <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 sm:grid-cols-[minmax(7rem,1fr)_minmax(0,1fr)_auto_auto]">
+          <h3 className="text-lg font-semibold">YouTube</h3>
+          <div className="col-span-2 grid grid-cols-2 gap-x-3 text-sm sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <div><dt className="text-gray-400">Account</dt><dd className="mt-0.5 truncate font-medium text-gray-100">{youtube.accountLabel || "No channel"}</dd></div>
+            <div><dt className="text-gray-400">Status</dt><dd className="mt-0.5 font-medium text-gray-100">{youtubeConnectionLabel}</dd></div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="col-start-2 row-start-1 sm:col-start-4">
+            <IntegrationInfoPopover
+            name="YouTube"
+            description="Connect the church YouTube channel so moderators can post to that channel's live chat from the board page. Connect the destination channel, not a personal staff account."
+          >
             {youtube.enabled ? (
               <Button
                 type="button"
@@ -1387,22 +1433,28 @@ export const IntegrationsSettingsPanel = ({
                 Connect YouTube
               </Button>
             )}
+            <dl className="space-y-2 text-sm">
+              {youtube.lastPostedAt ? <div><dt className="text-gray-400">Last chat post</dt><dd className="font-medium">{new Date(youtube.lastPostedAt).toLocaleString()}</dd></div> : null}
+              {youtube.lastError ? <div><dt className="text-amber-200">Connection message</dt><dd className="font-medium text-amber-100">{youtube.lastError}</dd></div> : null}
+            </dl>
+            </IntegrationInfoPopover>
           </div>
         </div>
-        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+        <dl className="hidden">
+          <div>
+            <dt className="text-gray-400">Account</dt>
+            <dd className="mt-0.5 font-medium text-gray-100">
+              {youtube.accountLabel || "No YouTube channel connected"}
+            </dd>
+          </div>
           <div>
             <dt className="text-gray-400">Status</dt>
             <dd className="mt-0.5 font-medium text-gray-100">
               {youtubeConnectionLabel}
             </dd>
           </div>
-          <div>
-            <dt className="text-gray-400">Channel</dt>
-            <dd className="mt-0.5 font-medium text-gray-100">
-              {youtube.accountLabel || "No YouTube channel connected"}
-            </dd>
-          </div>
         </dl>
+        <div className="hidden">
         {pendingYouTubeConnect ? (
           <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
             <p className="text-sm font-medium text-cyan-100">
@@ -1453,6 +1505,7 @@ export const IntegrationsSettingsPanel = ({
         {youtube.lastError ? (
           <p className="mt-3 text-sm text-amber-100/90">{youtube.lastError}</p>
         ) : null}
+        </div>
       </section>
 
       <CanvaIntegrationSection churchId={churchId} canva={integrations.canva} />

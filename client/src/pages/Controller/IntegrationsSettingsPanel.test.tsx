@@ -165,8 +165,11 @@ describe("IntegrationsSettingsPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Main Restream")).toBeInTheDocument();
-    expect(screen.getByText(/Live sources: YouTube: Main channel/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Main Restream")[0]).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Restream information" }),
+    );
+    expect(screen.getAllByText(/Live sources/i)[0]).toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", { name: /Disconnect Restream/i }),
@@ -192,7 +195,11 @@ describe("IntegrationsSettingsPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Church Live")).toBeInTheDocument();
+    expect(screen.getAllByText("Church Live")[0]).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "YouTube information" }),
+    );
 
     await user.click(
       screen.getByRole("button", { name: /Disconnect YouTube/i }),
@@ -222,6 +229,9 @@ describe("IntegrationsSettingsPanel", () => {
       />,
     );
 
+    await user.click(
+      screen.getByRole("button", { name: "Restream information" }),
+    );
     await user.click(screen.getByRole("button", { name: /Connect Restream/i }));
 
     await waitFor(() => {
@@ -247,6 +257,9 @@ describe("IntegrationsSettingsPanel", () => {
       />,
     );
 
+    await user.click(
+      screen.getByRole("button", { name: "Restream information" }),
+    );
     await user.click(screen.getByRole("button", { name: /Connect Restream/i }));
 
     await waitFor(() => {
@@ -284,6 +297,9 @@ describe("IntegrationsSettingsPanel", () => {
         />,
       );
 
+      await user.click(
+        screen.getByRole("button", { name: "Restream information" }),
+      );
       await user.click(screen.getByRole("button", { name: /Connect Restream/i }));
 
       await waitFor(() => {

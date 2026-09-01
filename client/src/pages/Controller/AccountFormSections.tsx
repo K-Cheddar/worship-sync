@@ -1482,35 +1482,29 @@ export const BrandingForm = memo(function BrandingForm({
   }
 
   return (
-    <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">Branding</h3>
-          <p className="mt-1 max-w-2xl text-sm text-gray-400">
-            Save your church logo, mission, vision, and brand colors for use across controllers.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="tertiary"
-            svg={RotateCcw}
-            iconSize="sm"
-            disabled={!isDirty || isSaving}
-            onClick={resetDraft}
-          >
-            Reset changes
-          </Button>
-          <Button
-            variant="cta"
-            svg={Save}
-            iconSize="sm"
-            isLoading={isSaving}
-            disabled={isSaving || !isDirty}
-            onClick={() => void handleSave()}
-          >
-            {isSaving ? "Saving branding..." : "Save branding"}
-          </Button>
-        </div>
+    <section className="rounded-xl border border-gray-600 bg-gray-900/25 px-4 pb-4 pt-0">
+      <div className="sticky top-0 z-10 -mx-4 mb-4 grid grid-cols-2 gap-2 border-b border-gray-600 bg-gray-900 px-4 py-3">
+        <Button
+          variant="tertiary"
+          svg={RotateCcw}
+          iconSize="sm"
+          className="w-full justify-center"
+          disabled={!isDirty || isSaving}
+          onClick={resetDraft}
+        >
+          Reset changes
+        </Button>
+        <Button
+          variant="cta"
+          svg={Save}
+          iconSize="sm"
+          className="w-full justify-center"
+          isLoading={isSaving}
+          disabled={isSaving || !isDirty}
+          onClick={() => void handleSave()}
+        >
+          {isSaving ? "Saving branding..." : "Save branding"}
+        </Button>
       </div>
 
       <BrandingMissionVisionFields

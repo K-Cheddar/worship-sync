@@ -2,8 +2,8 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
-  CalendarRange,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -21,7 +21,6 @@ import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
   listServicePlans,
-  updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentMicrophones,
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
@@ -76,6 +75,14 @@ import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 
 type RangePreset = PlansRangePreset;
+
+const RANGE_PRESET_OPTIONS: { value: RangePreset; label: string }[] = [
+  { value: "thisMonth", label: "This month" },
+  { value: "nextMonth", label: "Next month" },
+  { value: "thisQuarter", label: "This quarter" },
+  { value: "nextQuarter", label: "Next quarter" },
+  { value: "custom", label: "Custom" },
+];
 
 export const rangeFromPreset = (
   preset: Exclude<RangePreset, "custom">,
@@ -348,6 +355,7 @@ const TeamsPlansPage = () => {
   const [windowStart, setWindowStart] = useState(initialRange.start);
   const [windowEnd, setWindowEnd] = useState(initialRange.end);
   const [rangePreset, setRangePreset] = useState<RangePreset>("thisMonth");
+  const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
     readPlansOrganizeMode,
@@ -440,33 +448,6 @@ const TeamsPlansPage = () => {
       showApiErrorToast(showToast, error, "Could not update team microphones.");
     } finally {
       setSavingMicrophoneSlot(null);
-    }
-  };
-
-  const saveScheduledAssignment = async (
-    row: TeamsAssignmentSummaryRow,
-    memberId: string | null,
-    allowOccurrenceConflict = false,
-  ): Promise<void> => {
-    if (!churchId || !row.scheduleId) return;
-    try {
-      const result = await trackTeamsSave(
-        updateTeamScheduleAssignment(churchId, row.scheduleId, {
-          serviceId: row.occurrenceId,
-          positionSlotKey: row.columnKey,
-          memberId,
-          ...(allowOccurrenceConflict ? { allowOccurrenceConflict: true } : {}),
-        }),
-      );
-      upsertData("schedules", "scheduleId", result.schedule);
-    } catch (error) {
-      if ((error as { status?: number })?.status === 409 && !allowOccurrenceConflict) {
-        if (window.confirm("This person is already assigned during this service. Assign anyway?")) {
-          await saveScheduledAssignment(row, memberId, true);
-          return;
-        }
-      }
-      showApiErrorToast(showToast, error, "Could not update this assignment.");
     }
   };
 
@@ -722,6 +703,14 @@ const TeamsPlansPage = () => {
     setRangePreset(preset);
   };
 
+  const selectRangePreset = (preset: RangePreset) => {
+    if (preset === "custom") {
+      setRangePreset("custom");
+      return;
+    }
+    applyPreset(preset);
+  };
+
   const setCustomRange = ({
     startDate,
     endDate,
@@ -904,6 +893,7 @@ const TeamsPlansPage = () => {
                 },
               }}
               canEdit={canEditPlan}
+              initialEditing
               backLabel="Back to Services"
               onBack={() => {
                 setOpenServingTabOnSelection(false);
@@ -918,11 +908,7 @@ const TeamsPlansPage = () => {
                   microphones={microphones}
                   assignmentsStatus={assignmentsStatus}
                   showHeading={false}
-                  members={pageData.members}
                   canEdit={canEditPlan}
-                  onAssign={(row, memberId) => {
-                    void saveScheduledAssignment(row, memberId);
-                  }}
                 />
               }
             />
@@ -981,18 +967,10 @@ const TeamsPlansPage = () => {
   return (
     <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <div className="shrink-0 space-y-4">
-        <div className="flex items-center gap-2">
-          <Icon svg={CalendarRange} size="md" className="text-orange-300" />
-          <h2 className="text-lg font-semibold">Services</h2>
-        </div>
-        <p className="text-sm text-gray-400">
-          Pick a date to build or edit that service&apos;s order of service.
-        </p>
-
-        <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3">
-          <div className="grid items-end gap-3 md:grid-cols-[minmax(12rem,14rem)_auto_minmax(0,1fr)]">
+        <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-md:p-2">
+          <div className="grid items-end gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_auto_minmax(0,1fr)]">
             {activeServices.length > 1 ? (
-              <div className="min-w-0">
+              <div className="min-w-0 max-md:col-span-2">
                 <span className="block p-1 text-sm font-semibold">Service:</span>
                 <Popover>
                   <PopoverTrigger asChild>
@@ -1040,7 +1018,7 @@ const TeamsPlansPage = () => {
             ) : null}
 
             {showOrganizeToggle ? (
-              <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+              <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5">
                 <span className="px-0.5 text-sm font-semibold">Organize</span>
                 <SegmentedControl
                   ariaLabel="Organize services"
@@ -1052,80 +1030,69 @@ const TeamsPlansPage = () => {
               </div>
             ) : null}
 
-            <div className="min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+            <div className={cn(
+              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5",
+              !showOrganizeToggle && "max-md:col-span-2",
+            )}>
               <div className="flex flex-col gap-1.5">
                 <span className="px-0.5 text-sm font-semibold">Range</span>
-                <div
-                  className="flex flex-wrap gap-1.5"
-                  role="group"
-                  aria-label="Date range presets"
-                >
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    isSelected={rangePreset === "thisMonth"}
-                    className={cn(
-                      "text-xs",
-                      rangePreset === "thisMonth" &&
-                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                    )}
-                    onClick={() => applyPreset("thisMonth")}
-                  >
-                    This month
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    isSelected={rangePreset === "nextMonth"}
-                    className={cn(
-                      "text-xs",
-                      rangePreset === "nextMonth" &&
-                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                    )}
-                    onClick={() => applyPreset("nextMonth")}
-                  >
-                    Next month
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    isSelected={rangePreset === "thisQuarter"}
-                    className={cn(
-                      "text-xs",
-                      rangePreset === "thisQuarter" &&
-                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                    )}
-                    onClick={() => applyPreset("thisQuarter")}
-                  >
-                    This quarter
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    isSelected={rangePreset === "nextQuarter"}
-                    className={cn(
-                      "text-xs",
-                      rangePreset === "nextQuarter" &&
-                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                    )}
-                    onClick={() => applyPreset("nextQuarter")}
-                  >
-                    Next quarter
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    isSelected={rangePreset === "custom"}
-                    className={cn(
-                      "text-xs",
-                      rangePreset === "custom" &&
-                      "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                    )}
-                    onClick={() => setRangePreset("custom")}
-                  >
-                    Custom
-                  </Button>
-                </div>
+                {isDesktop ? (
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Date range presets">
+                    {RANGE_PRESET_OPTIONS.map((option) => (
+                      <Button
+                        key={option.value}
+                        type="button"
+                        variant="tertiary"
+                        isSelected={rangePreset === option.value}
+                        className={cn(
+                          "text-xs",
+                          rangePreset === option.value &&
+                          "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
+                        )}
+                        onClick={() => selectRangePreset(option.value)}
+                      >
+                        {option.label}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <Popover open={rangePopoverOpen} onOpenChange={setRangePopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        aria-label="Date range"
+                        aria-haspopup="dialog"
+                        className="w-full justify-between bg-gray-800/80 text-left text-xs max-md:min-h-0 max-md:px-2 max-md:py-1"
+                      >
+                        <span>{RANGE_PRESET_OPTIONS.find((option) => option.value === rangePreset)?.label}</span>
+                        <ChevronDown className="size-4 text-gray-300" aria-hidden />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-56 border-gray-700 bg-gray-900 p-1.5 text-gray-100">
+                      <div className="flex flex-col gap-1" role="group" aria-label="Date range presets">
+                        {RANGE_PRESET_OPTIONS.map((option) => (
+                          <Button
+                            key={option.value}
+                            type="button"
+                            variant="tertiary"
+                            isSelected={rangePreset === option.value}
+                            className={cn(
+                              "w-full text-left text-sm max-md:min-h-0 max-md:px-2 max-md:py-1.5",
+                              rangePreset === option.value && "bg-cyan-950/40 text-cyan-100",
+                            )}
+                            onClick={() => {
+                              selectRangePreset(option.value);
+                              setRangePopoverOpen(false);
+                            }}
+                          >
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 <p className="px-0.5 text-xs text-gray-400">
                   {formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
                 </p>

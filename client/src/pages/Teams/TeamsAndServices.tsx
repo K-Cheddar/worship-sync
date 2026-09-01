@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronLeft, ChevronRight, ListChecks, PanelLeft, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListChecks, Users } from "lucide-react";
 import {
   Navigate,
   Outlet,
@@ -19,14 +19,9 @@ import Icon from "../../components/Icon/Icon";
 import AppWorkspaceShell from "../../components/AppPageShell/AppWorkspaceShell";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Button from "../../components/Button/Button";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { cn } from "@/utils/cnHelper";
 import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sidebar";
+import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
@@ -103,7 +98,6 @@ const TeamsAndServicesLayout = () => {
   const { loading, toolbarLogoUrl, churchName } = useTeamsPage();
   const location = useLocation();
   useTeamsAbandonedReturnCleanup();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const activeSection = useMemo(
     () =>
@@ -122,27 +116,16 @@ const TeamsAndServicesLayout = () => {
   return (
     <AppWorkspaceShell
       title="Teams and Services"
+      mobileTitle={activeSection.label}
+      centerTitleOnMobile
       icon={Users}
       toolbarLogoUrl={toolbarLogoUrl}
       churchName={churchName}
+      mobileNavigation={
+        (menuItems) => <TeamsMobileNavigation menuItems={menuItems} />
+      }
     >
         <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-2 lg:hidden">
-            <Button
-              variant="secondary"
-              svg={PanelLeft}
-              iconSize="sm"
-              className="max-md:min-h-0"
-              aria-label="Open sections"
-              onClick={() => setMobileNavOpen(true)}
-            >
-              Sections
-            </Button>
-            <p className="truncate text-sm font-semibold text-gray-100">
-              {activeSection.label}
-            </p>
-          </div>
-
           <Sidebar
             className={cn(
               "relative hidden flex-col transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
@@ -180,20 +163,6 @@ const TeamsAndServicesLayout = () => {
             </div>
           </div>
         </section>
-      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <SheetContent
-          side="left"
-          className="flex w-[16rem] max-w-[85vw] flex-col border-gray-700 bg-gray-950/95 p-0"
-          aria-describedby={undefined}
-        >
-          <SheetHeader className="border-gray-700 bg-gray-950/95">
-            <SheetTitle>Sections</SheetTitle>
-          </SheetHeader>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-            <TeamsSidebarNav onNavigate={() => setMobileNavOpen(false)} />
-          </div>
-        </SheetContent>
-      </Sheet>
     </AppWorkspaceShell>
   );
 };

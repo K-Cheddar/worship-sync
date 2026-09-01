@@ -62,7 +62,7 @@ const AccountPeoplePage = () => {
         </p>
         <div className="mt-4 space-y-0">
           {sortedInvites.length > 0 && (
-            <div className="hidden grid-cols-[minmax(8rem,12rem)_minmax(7rem,10rem)_auto_1fr] items-center gap-x-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
+            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
               <span className="justify-self-start">Invite</span>
               <span className="justify-self-start">Access</span>
               <span className="justify-self-start">Info</span>
@@ -101,14 +101,14 @@ const AccountPeoplePage = () => {
               <div
                 key={invite.inviteId}
                 className={cn(
-                  "grid grid-cols-[minmax(8rem,12rem)_minmax(7rem,10rem)_auto_1fr] items-center gap-x-2 px-2 py-1 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3",
+                  "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 px-2 py-1 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3",
                   alternatingAdminListRowBg(inviteIndex),
                 )}
               >
                 <p className="min-w-0 justify-self-start truncate text-sm font-semibold">
                   {invite.email}
                 </p>
-                <div className="min-w-0 justify-self-start text-left">
+                <div className="min-w-0 pr-1 max-md:max-w-[8rem] justify-self-start text-left">
                   <p className="min-w-0 truncate text-sm text-gray-300">
                     {accessLabel}
                   </p>
@@ -207,7 +207,7 @@ const AccountPeoplePage = () => {
         </p>
         <div className="mt-4 space-y-0">
           {sortedMembers.length > 0 && (
-            <div className="hidden grid-cols-[minmax(8rem,12rem)_minmax(7rem,10rem)_auto_1fr] items-center gap-x-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
+            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
               <span className="justify-self-start">Member</span>
               <span className="justify-self-start">Access</span>
               <span className="justify-self-start">Info</span>
@@ -253,7 +253,7 @@ const AccountPeoplePage = () => {
                     : alternatingAdminListRowBg(memberIndex),
                 )}
               >
-                <div className="grid grid-cols-[minmax(8rem,12rem)_minmax(7rem,10rem)_auto_1fr] items-center gap-x-2 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-x-2 sm:grid-cols-[minmax(12rem,14rem)_minmax(10rem,12rem)_auto_1fr] sm:gap-x-3">
                   <p className="flex min-w-0 items-center gap-2 justify-self-start truncate text-sm font-semibold">
                     <span className="truncate">{memberLabel}</span>
                     {isSelf && (
@@ -262,7 +262,7 @@ const AccountPeoplePage = () => {
                       </span>
                     )}
                   </p>
-                  <div className="min-w-0 justify-self-start text-left">
+                  <div className="min-w-0 pr-1 max-md:max-w-[8rem] justify-self-start text-left">
                     <p
                       className={cn(
                         "min-w-0 truncate text-sm",

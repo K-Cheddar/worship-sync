@@ -1,5 +1,6 @@
 import { useContext } from "react";
 import { ChevronDown, Users } from "lucide-react";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import Button from "@/components/Button/Button";
 import Menu from "@/components/Menu/Menu";
 import { cn } from "@/utils/cnHelper";
@@ -95,17 +96,12 @@ const ScheduleBoardView = ({
   buildCellProps,
 }: ScheduleBoardViewProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
+  const isWideLayout = useMediaQuery("(min-width: 1024px)");
   const occurrences = groups.flatMap((group) =>
     group.occurrences.map((occurrence) => ({ occurrence, group })),
   );
 
-  return (
-    // One column on phones; a responsive card grid from md up. `items-start`
-    // keeps a collapsed card compact instead of stretching to a taller expanded
-    // sibling in its row. Top padding leaves room for the absolute "Up next"
-    // badge so the schedule scrollport's overflow does not clip it.
-    <div className="grid grid-cols-1 items-start gap-4 pt-3 md:grid-cols-[repeat(auto-fill,minmax(15rem,1fr))]">
-      {occurrences.map(({ occurrence, group }) => {
+  const renderCard = ({ occurrence, group }: (typeof occurrences)[number]) => {
         const rows = columns.flatMap((column) => {
           const cellProps = buildCellProps(occurrence, column, "");
           if (!cellProps.isSlotEnabled) return [];
@@ -118,16 +114,16 @@ const ScheduleBoardView = ({
         const fill = fillByOccurrence.get(occurrence.occurrenceId);
         const isNextUpcoming =
           occurrence.occurrenceId === nextUpcomingOccurrenceId;
-        return (
-          <section
-            key={occurrence.occurrenceId}
-            className={cn(
-              // Always render the border so colouring the up-next card never
-              // shifts layout.
-              "relative flex flex-col rounded-xl border bg-gray-950/60",
-              isNextUpcoming ? scheduleUpNextBorderClassName : "border-transparent",
-            )}
-          >
+    return (
+      <section
+        key={occurrence.occurrenceId}
+        className={cn(
+          // Always render the border so colouring the up-next card never
+          // shifts layout.
+          "relative mb-4 flex break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
+          isNextUpcoming ? scheduleUpNextBorderClassName : "border-transparent",
+        )}
+      >
             {isNextUpcoming ? (
               <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
                 <ScheduleUpNextBadge />
@@ -233,9 +229,29 @@ const ScheduleBoardView = ({
                 ) : null}
               </div>
             </div>
-          </section>
-        );
-      })}
+      </section>
+    );
+  };
+
+  // Keep the previous row-major reading order (left card, then right card)
+  // while allowing each column to pack cards independently.
+  const cardColumns = [occurrences.filter((_, index) => index % 2 === 0), occurrences.filter((_, index) => index % 2 === 1)];
+
+  return (
+    // One column on smaller screens; explicit columns on wider screens preserve
+    // the old left-to-right card order without stretching cards to row height.
+    <div className="pt-3">
+      {isWideLayout ? (
+        <div className="flex flex-row items-start gap-4">
+          {cardColumns.map((cardColumn, columnIndex) => (
+            <div key={columnIndex} className="flex min-w-0 flex-1 flex-col">
+              {cardColumn.map(renderCard)}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col">{occurrences.map(renderCard)}</div>
+      )}
     </div>
   );
 };
