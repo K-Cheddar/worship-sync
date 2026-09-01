@@ -1,5 +1,5 @@
-import { lazy, Suspense, useContext, useMemo, useState, type ReactNode } from "react";
-import { Building2, ListChecks, LogIn, PanelLeft } from "lucide-react";
+import { lazy, Suspense, useContext, useMemo, type ReactNode } from "react";
+import { Building2, ListChecks, LogIn } from "lucide-react";
 import {
   Navigate,
   Outlet,
@@ -14,12 +14,6 @@ import { useSelector } from "../hooks";
 import type { RootState } from "../store/store";
 import Icon from "../components/Icon/Icon";
 import ErrorBoundary from "../components/ErrorBoundary/ErrorBoundary";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { cn } from "../utils/cnHelper";
 import {
   ACCOUNT_SECTIONS,
@@ -29,8 +23,8 @@ import {
 import { AccountPageProvider, useAccountPage } from "./Account/AccountPageContext";
 import AccountAccessDenied from "./Account/components/AccountAccessDenied";
 import AccountDeleteModalHost from "./Account/components/AccountDeleteModalHost";
-import AccountSectionHeader from "./Account/components/AccountSectionHeader";
 import AccountSidebarNav from "./Account/components/AccountSidebarNav";
+import AccountMobileNavigation from "./Account/components/AccountMobileNavigation";
 import { AccountSectionRouteSkeleton } from "./Account/accountPageSkeletons";
 import Sidebar from "../components/Sidebar/Sidebar";
 
@@ -81,19 +75,13 @@ const AccountIndexRedirect = () => {
 };
 
 const AccountSectionLayout = () => {
-  const location = useLocation();
   const { canManage } = useAccountPage();
-  const activeSection = useMemo(
-    () => getActiveAccountSection(location.pathname),
-    [location.pathname],
-  );
   if (!canManage) {
     return <AccountAccessDenied />;
   }
 
   return (
     <div className="space-y-4 text-white">
-      <AccountSectionHeader section={activeSection} />
       <Outlet />
       <AccountDeleteModalHost />
     </div>
@@ -104,7 +92,6 @@ const AccountShell = () => {
   const location = useLocation();
   const { loginState, churchName } = useContext(GlobalInfoContext) || {};
   const { canManage, toolbarLogoUrl } = useAccountPage();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const isLoggedIn = loginState === "success";
   const churchNameTrimmed = churchName?.trim() ?? "";
   const activeSection = useMemo(
@@ -117,6 +104,8 @@ const AccountShell = () => {
   return (
     <AppWorkspaceShell
       title="Church administration"
+      mobileTitle={activeSection.label}
+      centerTitleOnMobile
       icon={Building2}
       toolbarLogoUrl={toolbarLogoUrl}
       churchName={churchNameTrimmed}
@@ -135,6 +124,11 @@ const AccountShell = () => {
           </Button>
         ) : null
       }
+      mobileNavigation={
+        canManage
+          ? (menuItems) => <AccountMobileNavigation menuItems={menuItems} />
+          : undefined
+      }
     >
         <section
           className={cn(
@@ -144,47 +138,21 @@ const AccountShell = () => {
         >
           {canManage ? (
             <>
-              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 bg-gray-950/70 px-3 py-3 lg:hidden">
-                <Button
-                  variant="secondary"
-                  svg={PanelLeft}
-                  iconSize="sm"
-                  aria-label="Open church administration sections"
-                  onClick={() => setMobileNavOpen(true)}
-                >
-                  Sections
-                </Button>
-                <p className="truncate text-sm font-semibold text-gray-100">
-                  {activeSection.label}
-                </p>
-              </div>
-
               <Sidebar className="hidden lg:block lg:border-r">
                 <AccountSidebarNav />
               </Sidebar>
             </>
           ) : null}
 
-          <div className="scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-3 sm:p-5">
+          <div
+            className={cn(
+              "scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden",
+              activeSection.id === "branding" ? "p-0" : "p-3 sm:p-5",
+            )}
+          >
             <Outlet />
           </div>
         </section>
-      {canManage ? (
-        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-          <SheetContent
-            side="left"
-            className="flex w-[16rem] max-w-[85vw] flex-col border-gray-700 bg-gray-950/95 p-0"
-            aria-describedby={undefined}
-          >
-            <SheetHeader className="border-gray-700 bg-gray-950/95">
-              <SheetTitle>Church administration sections</SheetTitle>
-            </SheetHeader>
-            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4">
-              <AccountSidebarNav onNavigate={() => setMobileNavOpen(false)} />
-            </div>
-          </SheetContent>
-        </Sheet>
-      ) : null}
     </AppWorkspaceShell>
   );
 };
