@@ -7,6 +7,7 @@ import {
   getHumanApiToken,
   getWorkstationToken,
 } from "../utils/authStorage";
+import { requestAuthRecovery } from "../api/authErrorBus";
 import type { ChatContextInfo, ChatMessage, ChatStreamEvent } from "./types";
 import type { ChatImageUpload } from "./types";
 
@@ -31,6 +32,7 @@ const fetchChatJson = async <T>(
   path: string,
   init: Omit<RequestInit, "body"> & { body?: Record<string, unknown> } = {},
   timeoutMs = CHAT_REQUEST_TIMEOUT_MS,
+  allowCsrfRecovery = true,
 ): Promise<T> => {
   const controller = new AbortController();
   const timeoutId = setTimeout(
@@ -52,6 +54,17 @@ const fetchChatJson = async <T>(
       error?: string;
     };
     if (!response.ok) {
+      if (
+        allowCsrfRecovery &&
+        method !== "GET" &&
+        response.status === 403 &&
+        data.error === "Could not verify this request."
+      ) {
+        const recovered = await requestAuthRecovery();
+        if (recovered) {
+          return fetchChatJson(path, init, timeoutMs, false);
+        }
+      }
       throw new Error(data.error || "Could not reach team chat. Try again.");
     }
     return data;

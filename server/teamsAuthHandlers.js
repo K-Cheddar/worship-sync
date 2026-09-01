@@ -2718,6 +2718,7 @@ export const createTeamsAuthHandlers = ({
             teamId,
             ...(roleId ? { roleId } : {}),
             ...(roleLabel ? { roleLabel } : {}),
+            isTeamLead: rawMembership?.isTeamLead === true,
             notes: normalizeLongText(rawMembership?.notes, { max: 500 }),
           },
         ];

@@ -270,6 +270,8 @@ export type TeamMemberMembership = {
   roleId?: string | null;
   /** Snapshot/free-form label used when a role is renamed, archived, or not catalog-backed yet. */
   roleLabel?: string;
+  /** Receives intake submission notifications for this team. */
+  isTeamLead?: boolean;
   notes?: string;
 };
 

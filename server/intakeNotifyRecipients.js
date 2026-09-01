@@ -1,8 +1,8 @@
 /**
  * Pure logic for "who gets emailed when a team intake form is submitted."
  *
- * The recipient pool is *derived* from who can edit the form's teams (computed
- * in authService against the live membership/permission data) — this module
+ * The recipient pool is *derived* from designated leads on the form's teams
+ * (computed in authService against live roster/membership data) — this module
  * never stores a second list of people. Its job is the final filter/dedupe and
  * the digest coalescing decision, which are the easy-to-get-wrong parts.
  */
@@ -21,8 +21,8 @@ export const normalizeIntakeNotificationPreference = (value) =>
   normalizeNotificationPreference(value);
 
 /**
- * Editors are notified unless they have explicitly turned it off. "default"
- * (and anything unrecognized) resolves to on, so new editors are opted in.
+ * Leads are notified unless they have explicitly turned it off. "default"
+ * (and anything unrecognized) resolves to on, so new leads are opted in.
  * @param {unknown} preference
  * @returns {boolean}
  */
@@ -30,11 +30,26 @@ export const isIntakeNotificationEnabled = (preference) =>
   isNotificationEnabled("intakeSubmissions", preference);
 
 /**
- * True when a member can edit at least one of the form's teams — the same rule
- * `requireTeamsEditForTeam` enforces on the live session, evaluated against a
- * stored membership's normalized permissions. Admins and church-wide team
- * editors always qualify; otherwise a per-team "edit" scope on any of the
- * form's teams qualifies.
+ * True when a member is designated as a lead on at least one of the form's
+ * teams. An empty formTeamIds means the form covers every team.
+ * @param {{ teamMemberships?: Record<string, { teamId?: string, isTeamLead?: boolean }>, formTeamIds?: string[] }} params
+ * @returns {boolean}
+ */
+export const isTeamLeadForForm = ({
+  teamMemberships,
+  formTeamIds,
+}) => {
+  const memberships = teamMemberships || {};
+  const teamIds = formTeamIds || [];
+  return Object.values(memberships).some(
+    (membership) =>
+      membership?.isTeamLead === true &&
+      (teamIds.length === 0 || teamIds.includes(membership.teamId)),
+  );
+};
+
+/**
+ * Existing permission rule used by schedule-response notifications.
  * @param {{ role?: string, teamsPermission?: string, teamScopes?: Record<string, string>, formTeamIds?: string[] }} params
  * @returns {boolean}
  */
@@ -97,17 +112,17 @@ export const collectDigestSubmitterNames = (submissions, since) =>
     });
 
 /**
- * Select the addresses to notify from editor candidates carrying their own
- * preference. Drops non-editors, muted editors, and blank emails; dedupes
+ * Select the addresses to notify from lead candidates carrying their own
+ * preference. Drops non-leads, muted leads, and blank emails; dedupes
  * case-insensitively while preserving the first-seen casing for sending.
- * @param {Array<{ email?: string, isEditor?: boolean, preference?: unknown }>} candidates
+ * @param {Array<{ email?: string, isTeamLead?: boolean, preference?: unknown }>} candidates
  * @returns {string[]}
  */
 export const selectIntakeNotifyRecipients = (candidates) => {
   const seen = new Set();
   const recipients = [];
   for (const candidate of candidates || []) {
-    if (!candidate?.isEditor) continue;
+    if (!candidate?.isTeamLead) continue;
     if (!isIntakeNotificationEnabled(candidate.preference)) continue;
     const email = String(candidate.email || "").trim();
     if (!email) continue;

@@ -14,6 +14,11 @@ import {
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import PopOver from "../components/PopOver/PopOver";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../components/ui/Popover";
 import TextArea from "../components/TextArea/TextArea";
 import { cn } from "../utils/cnHelper";
 import {
@@ -188,14 +193,40 @@ const ChatMessageRow = ({
               </Button>
             );
           })}
-          <Button
-            variant="tertiary"
-            svg={SmilePlus}
-            iconSize="xs"
-            className="rounded-full max-md:!min-h-8"
-            aria-label="Add a reaction"
-            onClick={() => setShowReactions((current) => !current)}
-          />
+          <Popover open={showReactions} onOpenChange={setShowReactions}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="tertiary"
+                svg={SmilePlus}
+                iconSize="xs"
+                className="rounded-full max-md:!min-h-8"
+                aria-label="Add a reaction"
+              />
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              side="top"
+              className="z-[10000] w-64 border-gray-700 bg-gray-800 p-2 text-gray-100"
+              aria-label="Reactions"
+            >
+              <div className="grid grid-cols-6 gap-1">
+                {chat.context.reactionEmojis.map((emoji) => (
+                  <Button
+                    key={emoji}
+                    variant="tertiary"
+                    className="px-1.5 py-1 text-base max-md:!min-h-9"
+                    aria-label={`React with ${emoji}`}
+                    onClick={() => {
+                      setShowReactions(false);
+                      void chat.toggleReaction(message.messageId, emoji);
+                    }}
+                  >
+                    {emoji}
+                  </Button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
           {isOwn ? (
             <>
               <Button
@@ -233,27 +264,6 @@ const ChatMessageRow = ({
         </div>
       ) : null}
 
-      {canMutate && showReactions && !message.deletedAt ? (
-        <div
-          className="mt-1 grid max-w-[16rem] grid-cols-6 gap-1 rounded-lg bg-gray-800 p-2"
-          aria-label="Reactions"
-        >
-          {chat.context.reactionEmojis.map((emoji) => (
-            <Button
-              key={emoji}
-              variant="tertiary"
-              className="px-1.5 py-1 text-base max-md:!min-h-9"
-              aria-label={`React with ${emoji}`}
-              onClick={() => {
-                setShowReactions(false);
-                void chat.toggleReaction(message.messageId, emoji);
-              }}
-            >
-              {emoji}
-            </Button>
-          ))}
-        </div>
-      ) : null}
     </article>
   );
 };

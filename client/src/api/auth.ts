@@ -473,9 +473,11 @@ export const deleteSongAudioWithRetry = async (
 export const getAuthBootstrap = async ({
   workstationToken,
   displayToken,
+  authRecovery = true,
 }: {
   workstationToken?: string;
   displayToken?: string;
+  authRecovery?: boolean;
 }) =>
   apiFetch<AuthBootstrap>(
     "api/auth/me",
@@ -484,6 +486,7 @@ export const getAuthBootstrap = async ({
       ...(workstationToken ? { "x-workstation-token": workstationToken } : {}),
       ...(displayToken ? { "x-display-token": displayToken } : {}),
     },
+    { authRecovery, notifyAuthError: authRecovery },
   );
 
 export const createHumanSession = async (

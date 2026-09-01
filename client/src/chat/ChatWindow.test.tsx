@@ -270,6 +270,31 @@ describe("ChatWindow", () => {
     expect(screen.getByText("Second message")).toBeInTheDocument();
   });
 
+  it("opens the reaction picker from a message action", () => {
+    mockedUseChat.mockReturnValue({
+      ...baseChat,
+      messages: [
+        {
+          messageId: "m1",
+          clientMessageId: "client-m1",
+          churchId: "church-1",
+          dayKey: "2026-03-08",
+          authorId: "actor-2",
+          authorName: "Alex",
+          authorSessionKind: "human",
+          text: "React to this",
+          createdAt: Date.parse("2026-03-11T12:00:00.000Z"),
+          reactions: [],
+        },
+      ],
+    });
+
+    render(<ChatWindow />);
+    fireEvent.click(screen.getByRole("button", { name: "Add a reaction" }));
+
+    expect(screen.getByLabelText("Reactions")).toBeInTheDocument();
+  });
+
   it("shows who is typing and updates presence from the composer", () => {
     const updateTypingDraft = jest.fn();
     mockedUseChat.mockReturnValue({

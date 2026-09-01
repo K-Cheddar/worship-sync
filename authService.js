@@ -39,6 +39,7 @@ import {
   collectDigestSubmitterNames,
   decideDigestAction,
   isTeamEditorForForm,
+  isTeamLeadForForm,
   selectIntakeNotifyRecipients,
 } from "./server/intakeNotifyRecipients.js";
 import {
@@ -1489,9 +1490,49 @@ const listTrustedHumanDevicesForChurch = async (churchId) => {
   );
 };
 
-// Editors of a form's teams = exactly the requireTeamsEditForTeam rule, read
-// from a stored membership instead of the live session. The decision itself
-// lives in the pure module (isTeamEditorForForm); this adapts the membership.
+// Addresses to notify for a form's submissions: derived from designated leads
+// on the form's teams, minus anyone who muted intake notifications. Never a
+// stored recipient list, so it follows live roster ownership.
+const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
+  const memberships = (await listMembershipsForChurch(churchId)).filter(
+    (membership) => membership.status === "active",
+  );
+  const rosterMembers = await queryDocs(
+    COLLECTIONS.teamRosterMembers,
+    [{ field: "churchId", value: churchId }],
+    { limit: 5000 },
+  );
+  const leadUserIds = new Set(
+    rosterMembers
+      .filter((member) => !member.archivedAt)
+      .filter((member) =>
+        isTeamLeadForForm({
+          teamMemberships: member.teamMemberships,
+          formTeamIds,
+        }),
+      )
+      .map((member) => member.userId)
+      .filter(Boolean),
+  );
+  const candidates = await Promise.all(
+    memberships.map(async (membership) => {
+      if (!leadUserIds.has(membership.userId)) {
+        return { isTeamLead: false };
+      }
+      const user = await getUserByUid(membership.userId);
+      return {
+        isTeamLead: true,
+        email: user?.primaryEmail || user?.email || "",
+        preference: normalizeMembershipNotifications(membership.notifications)
+          .intakeSubmissions,
+      };
+    }),
+  );
+  return selectIntakeNotifyRecipients(candidates);
+};
+
+// Schedule response notifications still follow the Teams edit-permission
+// model; intake notifications intentionally use designated team leads above.
 const membershipCanEditTeams = (membership, formTeamIds) => {
   const permissions = normalizeMembershipPermissions(
     membership.permissions,
@@ -1503,30 +1544,6 @@ const membershipCanEditTeams = (membership, formTeamIds) => {
     teamScopes: permissions.teamScopes,
     formTeamIds,
   });
-};
-
-// Addresses to notify for a form's submissions: derived from who can edit the
-// form's teams, minus anyone who muted intake notifications. Never a stored
-// recipient list, so it can't drift from actual edit access.
-const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
-  const memberships = (await listMembershipsForChurch(churchId)).filter(
-    (membership) => membership.status === "active",
-  );
-  const candidates = await Promise.all(
-    memberships.map(async (membership) => {
-      if (!membershipCanEditTeams(membership, formTeamIds)) {
-        return { isEditor: false };
-      }
-      const user = await getUserByUid(membership.userId);
-      return {
-        isEditor: true,
-        email: user?.primaryEmail || user?.email || "",
-        preference: normalizeMembershipNotifications(membership.notifications)
-          .intakeSubmissions,
-      };
-    }),
-  );
-  return selectIntakeNotifyRecipients(candidates);
 };
 
 const listInviteAcceptedNotifyRecipients = async (churchId, acceptedUserId) => {

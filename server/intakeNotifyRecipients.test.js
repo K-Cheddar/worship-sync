@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   normalizeIntakeNotificationPreference,
   isIntakeNotificationEnabled,
-  isTeamEditorForForm,
+  isTeamLeadForForm,
   decideDigestAction,
   collectDigestSubmitterNames,
   selectIntakeNotifyRecipients,
@@ -27,48 +27,46 @@ test("normalizeIntakeNotificationPreference falls back to default", () => {
   assert.equal(normalizeIntakeNotificationPreference(""), "default");
 });
 
-test("isIntakeNotificationEnabled opts editors in unless explicitly off", () => {
+test("isIntakeNotificationEnabled opts leads in unless explicitly off", () => {
   assert.equal(isIntakeNotificationEnabled("on"), true);
   assert.equal(isIntakeNotificationEnabled("default"), true);
   assert.equal(isIntakeNotificationEnabled(undefined), true);
   assert.equal(isIntakeNotificationEnabled("off"), false);
 });
 
-test("isTeamEditorForForm: admins and church-wide editors always qualify", () => {
+test("isTeamLeadForForm: a lead on a selected team qualifies", () => {
   assert.equal(
-    isTeamEditorForForm({ role: "admin", teamsPermission: "none", formTeamIds: ["t1"] }),
-    true,
-  );
-  assert.equal(
-    isTeamEditorForForm({ role: "member", teamsPermission: "edit", formTeamIds: ["t1"] }),
-    true,
-  );
-});
-
-test("isTeamEditorForForm: per-team edit scope on any of the form's teams qualifies", () => {
-  assert.equal(
-    isTeamEditorForForm({
-      role: "member",
-      teamsPermission: "none",
-      teamScopes: { t2: "edit" },
-      formTeamIds: ["t1", "t2"],
+    isTeamLeadForForm({
+      teamMemberships: { t1: { teamId: "t1", isTeamLead: true } },
+      formTeamIds: ["t1"],
     }),
     true,
   );
-});
-
-test("isTeamEditorForForm: view-only scope and unrelated teams do not qualify", () => {
   assert.equal(
-    isTeamEditorForForm({
-      role: "member",
-      teamsPermission: "view",
-      teamScopes: { t2: "view", t3: "edit" },
-      formTeamIds: ["t1", "t2"],
+    isTeamLeadForForm({
+      teamMemberships: { t2: { teamId: "t2", isTeamLead: true } },
+      formTeamIds: ["t1"],
     }),
     false,
   );
   assert.equal(
-    isTeamEditorForForm({ role: "member", teamsPermission: "none", formTeamIds: [] }),
+    isTeamLeadForForm({
+      teamMemberships: { t1: { teamId: "t1", isTeamLead: true } },
+      formTeamIds: [],
+    }),
+    true,
+  );
+});
+
+test("isTeamLeadForForm: non-leads do not qualify", () => {
+  assert.equal(
+    isTeamLeadForForm({
+      teamMemberships: {
+        t1: { teamId: "t1", isTeamLead: false },
+        t2: { teamId: "t2" },
+      },
+      formTeamIds: ["t1", "t2"],
+    }),
     false,
   );
 });
@@ -151,20 +149,20 @@ test("collectDigestSubmitterNames: falls back to 'Someone' for blank names and t
   assert.deepEqual(collectDigestSubmitterNames(null, "2026-06-19T10:00:00Z"), []);
 });
 
-test("selectIntakeNotifyRecipients includes opted-in editors only", () => {
+test("selectIntakeNotifyRecipients includes opted-in leads only", () => {
   const recipients = selectIntakeNotifyRecipients([
-    { email: "a@church.org", isEditor: true, preference: "on" },
-    { email: "b@church.org", isEditor: true, preference: "default" },
-    { email: "muted@church.org", isEditor: true, preference: "off" },
-    { email: "viewer@church.org", isEditor: false, preference: "on" },
+    { email: "a@church.org", isTeamLead: true, preference: "on" },
+    { email: "b@church.org", isTeamLead: true, preference: "default" },
+    { email: "muted@church.org", isTeamLead: true, preference: "off" },
+    { email: "viewer@church.org", isTeamLead: false, preference: "on" },
   ]);
   assert.deepEqual(recipients, ["a@church.org", "b@church.org"]);
 });
 
 test("selectIntakeNotifyRecipients dedupes case-insensitively, keeps first casing", () => {
   const recipients = selectIntakeNotifyRecipients([
-    { email: "Lead@Church.org", isEditor: true, preference: "default" },
-    { email: "lead@church.org", isEditor: true, preference: "on" },
+    { email: "Lead@Church.org", isTeamLead: true, preference: "default" },
+    { email: "lead@church.org", isTeamLead: true, preference: "on" },
   ]);
   assert.deepEqual(recipients, ["Lead@Church.org"]);
 });
@@ -173,8 +171,8 @@ test("selectIntakeNotifyRecipients drops blank emails and tolerates bad input", 
   assert.deepEqual(selectIntakeNotifyRecipients(null), []);
   assert.deepEqual(
     selectIntakeNotifyRecipients([
-      { email: "   ", isEditor: true, preference: "on" },
-      { email: undefined, isEditor: true, preference: "on" },
+      { email: "   ", isTeamLead: true, preference: "on" },
+      { email: undefined, isTeamLead: true, preference: "on" },
       null,
     ]),
     [],
