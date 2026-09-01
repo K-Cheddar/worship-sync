@@ -5,6 +5,7 @@ import allDocsReducer, {
   updateAllTimerDocs,
   updateAllBibleDocs,
   upsertItemInAllDocs,
+  removeItemFromAllDocs,
 } from "./allDocsSlice";
 import type { DBItem } from "../types";
 
@@ -97,6 +98,24 @@ describe("allDocsSlice", () => {
       expect(state.allFreeFormDocs).toHaveLength(0);
       expect(state.allTimerDocs).toHaveLength(0);
       expect(state.allBibleDocs).toHaveLength(0);
+    });
+  });
+
+  describe("removeItemFromAllDocs", () => {
+    it("removes only the matching document from its library", () => {
+      const store = createStore();
+      store.dispatch(
+        updateAllSongDocs([
+          makeDoc("song-1", "song"),
+          makeDoc("song-2", "song"),
+        ]),
+      );
+
+      store.dispatch(removeItemFromAllDocs(makeDoc("song-1", "song")));
+
+      expect(store.getState().allDocs.allSongDocs).toEqual([
+        expect.objectContaining({ _id: "song-2" }),
+      ]);
     });
   });
 });

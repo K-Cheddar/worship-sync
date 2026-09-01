@@ -10,6 +10,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
 import generateRandomId from "../../utils/generateRandomId";
 import useDebouncedStringCommit from "../../hooks/useDebouncedStringCommit";
@@ -154,6 +159,26 @@ export const addMicrophoneSlot = (
 ): ServicePlanAssignee[] =>
   addServicePlanAssignee(assignees, { microphoneIds: [microphoneId] });
 
+/** Promote a named person without moving unnamed microphone slots. */
+export const promoteServicePlanAssignee = (
+  assignees: ServicePlanAssignee[],
+  assigneeId: string,
+): ServicePlanAssignee[] => {
+  const selected = assignees.find(
+    (assignee) => assignee.id === assigneeId && !isUnassignedServicePlanAssignee(assignee),
+  );
+  if (!selected) return assignees;
+  const named = assignees.filter((assignee) => !isUnassignedServicePlanAssignee(assignee));
+  if (named[0]?.id === assigneeId) return assignees;
+  const reorderedNamed = [selected, ...named.filter((assignee) => assignee.id !== assigneeId)];
+  let namedIndex = 0;
+  return assignees.map((assignee) =>
+    isUnassignedServicePlanAssignee(assignee)
+      ? assignee
+      : reorderedNamed[namedIndex++],
+  );
+};
+
 type ServicePlanAssigneeListProps = {
   assignees: ServicePlanAssignee[];
   /** True when the operator may edit (canEdit && isEditing on the row). */
@@ -182,10 +207,11 @@ type DebouncedAssigneeNameFieldProps = {
   isHistoryValueRemovable?: (value: string) => boolean;
   label: string;
   placeholder: string;
+  compact?: boolean;
 };
 
 /** Keeps assignee typing inside its chip until the plan-wide update settles. */
-const DebouncedAssigneeNameField = ({
+export const DebouncedAssigneeNameField = ({
   value,
   onCommit,
   historyValues,
@@ -193,6 +219,7 @@ const DebouncedAssigneeNameField = ({
   isHistoryValueRemovable,
   label,
   placeholder,
+  compact = false,
 }: DebouncedAssigneeNameFieldProps) => {
   const draft = useDebouncedStringCommit(value, onCommit);
 
@@ -203,14 +230,18 @@ const DebouncedAssigneeNameField = ({
       placeholder={placeholder}
       multiline={false}
       // Give names room to remain readable before microphone chips wrap.
-      className="min-w-[16rem] flex-1 sm:w-48 sm:min-w-0 sm:flex-none"
+      className={cn(
+        compact ? "min-w-0 flex-1" : "min-w-[16rem] flex-1 sm:w-48 sm:min-w-0 sm:flex-none",
+      )}
       inputClassName={cn(
         SERVICE_PLAN_INLINE_INPUT_CLASS,
-        "max-md:min-h-8 max-md:text-sm",
+        compact && "rounded-none border-0",
+        "max-md:min-h-[32px] max-md:text-sm",
       )}
       value={draft.draftValue}
       onChange={draft.setDraftValue}
       onFieldBlur={draft.flush}
+      onClear={draft.flush}
       historyValues={historyValues}
       onRemoveHistoryValue={onRemoveHistoryValue}
       isHistoryValueRemovable={isHistoryValueRemovable}
@@ -283,7 +314,7 @@ const ServicePlanAssigneeList = ({
           : `Assignees for ${itemLabel}`
       }
     >
-      <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-0.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-0.5 py-0.5">
         {/* Same chrome as Notes: icon + title so chips read as a named group. */}
         <div className="flex shrink-0 items-center gap-1.5">
           <UserRound className="size-3.5 shrink-0 text-gray-300" aria-hidden />
@@ -309,6 +340,10 @@ const ServicePlanAssigneeList = ({
           const label =
             assignee.name?.trim()
             || (structureOnly ? `Slot ${assigneeIndex + 1}` : "Unassigned");
+          const namedAssigneeIndex = assignees
+            .slice(0, assigneeIndex + 1)
+            .filter((candidate) => !isUnassignedServicePlanAssignee(candidate)).length - 1;
+          const isLead = namedAssigneeIndex === 0 && !isUnassigned;
           // Quiet, not an alarm: plenty of people never need a microphone. It
           // only says anything on an item that has a microphone plan at all.
           const showMissingMicrophoneHint =
@@ -321,7 +356,8 @@ const ServicePlanAssigneeList = ({
               <div
                 key={assignee.id}
                 className={cn(
-                  "inline-flex w-full max-w-full flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5 md:w-auto md:gap-1 md:px-1.5 md:py-1",
+                  "inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border px-2 py-1.5 md:w-auto md:gap-1 md:px-1.5 md:py-1",
+                  allowEdit ? "flex-wrap" : "flex-nowrap",
                   isUnassigned
                     ? "border-gray-700/50 bg-gray-900/40"
                     : "border-gray-700/60 bg-gray-950/50",
@@ -361,13 +397,33 @@ const ServicePlanAssigneeList = ({
               ) : (
                 <span
                   className={cn(
-                    "max-w-36 truncate text-xs font-medium",
+                    "min-w-0 text-xs font-medium",
+                    allowEdit
+                      ? "max-w-36 truncate"
+                      : "max-w-full break-words whitespace-normal",
                     isUnassigned ? "text-gray-400" : "text-gray-100",
                   )}
                 >
                   {label}
                 </span>
               )}
+
+              {!structureOnly && !isUnassigned ? (
+                <span className="sr-only">
+                  {isLead ? "Led by" : "Additional assignees"}
+                </span>
+              ) : null}
+              {allowEdit && !structureOnly && !isUnassigned && !isLead ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  padding="px-1 py-0.5"
+                  className="h-6 text-[10px] text-cyan-200"
+                  onClick={() => onChange(promoteServicePlanAssignee(assignees, assignee.id))}
+                >
+                  Make lead
+                </Button>
+              ) : null}
 
               {showMissingMicrophoneHint ? (
                 <span className="shrink-0 text-[10px] text-gray-400">
@@ -378,14 +434,10 @@ const ServicePlanAssigneeList = ({
               {assigneeMicrophones.map((microphone) => {
                 const scheduledHolders =
                   scheduledMicrophoneHolders?.get(microphone.id) || [];
-                const scheduledTitle = scheduledHolders.length
-                  ? `Scheduled to ${scheduledHolders.join(", ")}`
-                  : undefined;
                 return (
                   <span
                     key={microphone.id}
-                    className="inline-flex shrink-0 items-center gap-0.5"
-                    title={scheduledTitle}
+                    className="inline-flex min-w-0 max-w-full items-center gap-0.5"
                   >
                     <ServicePlanMicrophoneChip microphone={microphone}>
                       {allowEdit ? (
@@ -394,7 +446,7 @@ const ServicePlanAssigneeList = ({
                           variant="tertiary"
                           iconSize="xs"
                           padding="p-0"
-                          className="h-6 w-6 max-md:min-h-8 max-md:min-w-8"
+                          className="h-6 w-6 max-md:min-h-[32px] max-md:min-w-8"
                           svg={X}
                           aria-label={`Remove ${microphone.name} from ${label}`}
                           onClick={() =>
@@ -408,15 +460,24 @@ const ServicePlanAssigneeList = ({
                       ) : null}
                     </ServicePlanMicrophoneChip>
                     {scheduledHolders.length ? (
-                      <span
-                        className="inline-flex items-center gap-0.5 text-[10px] text-amber-300"
-                        aria-label={scheduledTitle}
-                      >
-                        <TriangleAlert className="size-3 shrink-0" aria-hidden />
-                        <span className="max-w-28 truncate">
-                          {scheduledHolders.join(", ")}
-                        </span>
-                      </span>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex cursor-pointer items-center rounded p-0.5 text-amber-300 hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+                            aria-label={`Microphone conflict for ${microphone.name}`}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <TriangleAlert className="size-4 shrink-0 max-md:size-5" aria-hidden />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-72 border-amber-700/60 bg-gray-900 p-3 text-gray-100">
+                          <p className="text-xs font-semibold text-amber-200">Microphone conflict</p>
+                          <p className="mt-1 text-xs text-gray-300">
+                            {microphone.name} · {microphone.type} is scheduled to {scheduledHolders.join(", ")}.
+                          </p>
+                        </PopoverContent>
+                      </Popover>
                     ) : null}
                   </span>
                 );
@@ -431,7 +492,7 @@ const ServicePlanAssigneeList = ({
                       svg={Plus}
                       iconSize="xs"
                       padding="px-1 py-0.5"
-                      className="h-7 max-md:min-h-8 max-md:px-2 border border-dashed border-violet-500/40 text-xs text-violet-200"
+                      className="h-7 max-md:min-h-[32px] max-md:px-2 border border-dashed border-violet-500/40 text-xs text-violet-200"
                       aria-haspopup="menu"
                       aria-label={`Add microphone for ${label}`}
                     >
@@ -485,7 +546,7 @@ const ServicePlanAssigneeList = ({
                   variant="tertiary"
                   iconSize="xs"
                   padding="p-0.5"
-                  className="h-7 w-7 shrink-0 max-md:min-h-8 max-md:min-w-8"
+                  className="h-7 w-7 shrink-0 max-md:min-h-[32px] max-md:min-w-8"
                   svg={Trash2}
                   aria-label={
                     isUnassigned

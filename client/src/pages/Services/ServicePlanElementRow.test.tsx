@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DndContext } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -408,11 +408,19 @@ describe("ServicePlanElementRow", () => {
     ).toHaveTextContent("Make live");
   });
 
-  it("hides the Make live text while editing", () => {
+  it("hides Make live while editing", () => {
     renderRow({ isServiceDay: true, isEditing: true });
     expect(
-      screen.getByRole("button", { name: /Make Pastoral Greetings live/i }),
-    ).not.toHaveTextContent("Make live");
+      screen.queryByRole("button", { name: /Make Pastoral Greetings live/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the live badge while editing", () => {
+    renderRow({ isLive: true, isEditing: true });
+
+    expect(
+      screen.queryByLabelText(/Live on schedule: Pastoral Greetings/i),
+    ).not.toBeInTheDocument();
   });
 
   it("minimizes notes to one preview line and expands to the editor", async () => {
@@ -634,13 +642,34 @@ describe("ServicePlanElementRow", () => {
     expect(screen.getByText("Pastoral Greetings")).toBeInTheDocument();
     expect(screen.getAllByText("Pastoral Team").length).toBeGreaterThan(0);
     expect(screen.getByText("10:00 AM")).toBeInTheDocument();
-    expect(screen.getByText("5 min")).toBeInTheDocument();
+    expect(screen.getByText("5m")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Drag to reorder/i })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Add content to Pastoral Greetings/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove note/i })).not.toBeInTheDocument();
+  });
+
+  it("opens the read-only people popover from the lead cell", async () => {
+    const user = userEvent.setup();
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "mic", microphoneIds: ["mic-orange"] },
+          { id: "lead", name: "Pastor John" },
+        ],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /View people and microphones for Pastoral Greetings/i }),
+    );
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Assignees");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Pastor John");
   });
 
   it("opens lyrics from the song badge without removing the song", async () => {
@@ -970,9 +999,11 @@ describe("assignees and their microphones", () => {
 
     // Group header matches Notes chrome so chips are not a loose row.
     expect(screen.getByText("Assignees")).toBeInTheDocument();
-    // Rendered twice by design: the stacked mobile line and the desktop
-    // Assigned column.
-    expect(screen.getAllByText("Pastor John, Sarah Lee").length).toBeGreaterThan(0);
+    // The running-order column is intentionally compact; the full block
+    // beneath the item still exposes both people and their microphones.
+    expect(screen.getAllByText("Pastor John").length).toBeGreaterThan(0);
+    expect(screen.getByText("+1")).toBeInTheDocument();
+    expect(screen.getByText("Sarah Lee")).toBeInTheDocument();
   });
 
   it("reads a legacy single assignee and element microphones", () => {
@@ -1038,6 +1069,32 @@ describe("assignees and their microphones", () => {
     );
   });
 
+  it("clears the lead name without promoting the next assignee", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        assignees: [
+          { id: "lead", name: "Greg Baldeo" },
+          { id: "additional", name: "Abigail" },
+        ],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith({
+        assignees: [
+          { id: "lead", name: "" },
+          { id: "additional", name: "Abigail" },
+        ],
+      });
+    });
+  });
+
   it("offers a microphone to only one person at a time", async () => {
     const user = userEvent.setup();
     renderRow({
@@ -1090,6 +1147,22 @@ describe("assignees and their microphones", () => {
     const lapelOption = screen.getByRole("menuitem", { name: /Lapel 1/i });
     expect(within(lapelOption).queryByText(/Assigned:/i)).not.toBeInTheDocument();
     expect(within(lapelOption).getByText("Lapel")).toBeInTheDocument();
+  });
+
+  it("keeps conflict details in a popover behind the warning icon", async () => {
+    const user = userEvent.setup();
+    renderRow({
+      microphones: [orange],
+      scheduledMicrophoneHolders: new Map([["mic-orange", ["Johnny Mclain"]]]),
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Abigail", microphoneIds: ["mic-orange"] }],
+      },
+    });
+
+    expect(screen.queryByText(/is scheduled to Johnny Mclain/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Microphone conflict for Orange/i }));
+    expect(await screen.findByText(/Orange · Handheld is scheduled to Johnny Mclain/i)).toBeInTheDocument();
   });
 
   it("clears the unassigned slot when its last microphone is removed", async () => {

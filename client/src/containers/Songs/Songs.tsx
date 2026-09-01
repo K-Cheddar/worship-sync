@@ -2,22 +2,27 @@ import { useDispatch, useSelector } from "../../hooks";
 import FilteredItems from "../../components/FilteredItems/FilteredItems";
 import { setSongSearchValue } from "../../store/allItemsSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { selectSongLibrary } from "../../store/songLibrarySelectors";
 
 const Songs = () => {
-  const { list, isAllItemsLoading, songSearchValue } = useSelector(
-    (state) => state.allItems
+  const songSearchValue = useSelector(
+    (state) => state.allItems.songSearchValue,
   );
-  const { allSongDocs } = useSelector((state) => state.allDocs);
+  const {
+    songs: songList,
+    documents: allSongDocs,
+    isLoading,
+  } = useSelector(selectSongLibrary);
   const dispatch = useDispatch();
 
   return (
     <ErrorBoundary>
       <FilteredItems
-        list={list}
+        list={songList}
         type="song"
         heading="Songs"
         label="song"
-        isLoading={isAllItemsLoading}
+        isLoading={isLoading}
         allDocs={allSongDocs}
         searchValue={songSearchValue}
         setSearchValue={(value) => dispatch(setSongSearchValue(value))}

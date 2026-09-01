@@ -82,6 +82,36 @@ describe("ServicePublicView microphone assignments", () => {
     expect(localStorage.getItem("worshipsyncServicePublicTheme")).toBe("light");
   });
 
+  it("restores the selected role-note filter from local storage", () => {
+    localStorage.setItem("worshipsyncServicePublicNotesRole", "lead");
+    render(
+      <ServicePublicView
+        snapshot={{
+          ...detailedSnapshot,
+          roles: [{ positionId: "lead", label: "Lead vocal", teamId: "worship", teamName: "Worship Team" }],
+          service: {
+            ...detailedSnapshot.service,
+            sections: [{
+              ...detailedSnapshot.service.sections[0],
+              items: [{
+                ...detailedSnapshot.service.sections[0].items[0],
+                teamNotes: [{
+                  scope: "role",
+                  positionId: "lead",
+                  label: "Worship Team · Lead vocal",
+                  notes: { blocks: [{ type: "paragraph", spans: [{ text: "Check the monitor mix." }] }] },
+                }],
+              }],
+            }],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Filter role notes/i })).toHaveTextContent("Lead vocal");
+    expect(screen.getByText("Check the monitor mix.")).toBeInTheDocument();
+  });
+
   it("shows scheduled team microphone assignments beside the detailed plan", () => {
     render(<ServicePublicView snapshot={detailedSnapshot} embedded />);
 

@@ -368,6 +368,73 @@ describe("refreshServicePlanFromImport", () => {
     expect(elements[2].sourcePlanningManaged).toBe(true);
   });
 
+  it("adds unfamiliar source sections beside matched neighbors without consuming existing sections", () => {
+    const current = [
+      section("scratch", "Section", [
+        element("together", "Together", { sourcePlanningManaged: false }),
+        element("welcome-video", "Welcome Video", {
+          sourcePlanningManaged: true,
+        }),
+      ]),
+      section("teaching", "Teaching & Mission", [
+        element("mission", "Mission Story", { sourcePlanningManaged: true }),
+      ]),
+      section("response", "Response & Celebration", [
+        element("appeal", "Appeal Song", { sourcePlanningManaged: true }),
+      ]),
+      section("end", "End of Service", [
+        element("stream-end", "End Online Stream", {
+          sourcePlanningManaged: true,
+        }),
+      ]),
+    ];
+    const imported = [
+      section("source-teaching", "Teaching & Mission", [
+        element("source-mission", "Mission Story"),
+      ]),
+      section("source-response", "Response & Celebration", [
+        element("source-appeal", "Appeal Song"),
+      ]),
+      section("source-gathering", "Gathering & Worship", [
+        element("source-song", "Song of Praise"),
+        element("source-welcome", "Welcome"),
+        element("source-reading", "Reading the Word"),
+      ]),
+      section("source-communion", "Communion", [
+        element("source-prayer", "Prayer"),
+      ]),
+      section("source-closing", "Closing", [
+        element("source-stream-end", "End Online Stream"),
+      ]),
+    ];
+
+    const refreshed = refreshServicePlanFromImport(
+      current,
+      imported,
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    expect(refreshed.map((item) => item.name)).toEqual([
+      "Section",
+      "Teaching & Mission",
+      "Response & Celebration",
+      "Gathering & Worship",
+      "Communion",
+      "Closing",
+      "End of Service",
+    ]);
+    expect(
+      refreshed
+        .find((item) => item.id === "scratch")
+        ?.elements.map((item) => richTextToPlainText(item.title)),
+    ).toEqual(["Together", "Welcome Video"]);
+    expect(
+      refreshed
+        .find((item) => item.id === "source-gathering")
+        ?.elements.map((item) => richTextToPlainText(item.title)),
+    ).toEqual(["Song of Praise", "Welcome", "Reading the Word"]);
+  });
+
   it("keeps local role notes when refreshing imported team notes", () => {
     const current = [
       section("section-1", "Worship", [

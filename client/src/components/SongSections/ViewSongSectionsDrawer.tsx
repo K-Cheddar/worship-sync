@@ -3,7 +3,7 @@ import { Pencil, X } from "lucide-react";
 import Drawer from "../Drawer";
 import Button from "../Button/Button";
 import SongArrangementSectionsPanel from "./SongArrangementSectionsPanel";
-import { DBItem, SongAudio } from "../../types";
+import { Arrangment, DBItem, SongAudio, SongMetadata } from "../../types";
 import SongAudioPlayer from "../SongAudioPlayer/SongAudioPlayer";
 import SongLinkPreview from "../SongLinkPreview/SongLinkPreview";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -23,6 +23,7 @@ import {
   ItemDetailsEditorFields,
   type ItemDetailsSavePayload,
 } from "../ItemDetailsModal/ItemDetailsModal";
+import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
 
 type PersistSongPatch = ItemDetailsSavePayload & {
   songAudioPatch?: SongAudio | null;
@@ -58,6 +59,7 @@ const ViewSongSectionsDrawer = ({
   const { churchId, access } = useContext(GlobalInfoContext) || {};
   const [arrangementIndex, setArrangementIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingLyrics, setIsEditingLyrics] = useState(false);
   const previousSongIdRef = useRef<string | null>(null);
   const canEdit = Boolean(db && (access === "full" || access === "music"));
 
@@ -105,6 +107,51 @@ const ViewSongSectionsDrawer = ({
         } else {
           next.songAudio = patch.songAudioPatch;
         }
+      }
+
+      const audited = applyPouchAudit(existing, next, { isNew: false });
+      const result = await db.put(audited);
+      const saved = { ...audited, _rev: result.rev };
+      dispatch(upsertItemInAllDocs(saved));
+      dispatch(
+        upsertItemInAllItemsList({
+          _id: saved._id,
+          name: saved.name,
+          type: saved.type,
+          listId: saved._id,
+          background:
+            typeof saved.background === "string" ? saved.background : "",
+        }),
+      );
+      broadcastItemUpdate(saved);
+    },
+    [db, dispatch, song],
+  );
+
+  const persistSongLyrics = useCallback(
+    async ({
+      arrangements,
+      selectedArrangement,
+      songMetadata,
+    }: {
+      arrangements: Arrangment[];
+      selectedArrangement: number;
+      songMetadata?: SongMetadata;
+    }) => {
+      if (!db || !song) {
+        throw new Error("The song library is not available. Try again.");
+      }
+
+      const existing = (await db.get(song._id)) as DBItem;
+      const next: DBItem = {
+        ...existing,
+        arrangements,
+        selectedArrangement,
+      };
+      if (songMetadata === undefined) {
+        delete next.songMetadata;
+      } else {
+        next.songMetadata = songMetadata;
       }
 
       const audited = applyPouchAudit(existing, next, { isNew: false });
@@ -220,12 +267,20 @@ const ViewSongSectionsDrawer = ({
       title={`Song details — ${song.name}`}
       size="lg"
       position="right"
-      contentClassName="flex min-h-0 flex-col"
+      contentClassName="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
       contentPadding="p-0"
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+      <div className="flex flex-col gap-4 p-4">
         {canEdit && !isEditing ? (
-          <div className="flex shrink-0 justify-end">
+          <div className="flex shrink-0 justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              svg={Pencil}
+              onClick={() => setIsEditingLyrics(true)}
+            >
+              Edit lyrics
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -313,6 +368,7 @@ const ViewSongSectionsDrawer = ({
         <SongArrangementSectionsPanel
           song={song}
           mode="view"
+          scrollMode="page"
           arrangementIndex={arrangementIndex}
           onArrangementIndexChange={setArrangementIndex}
           searchHighlight={searchHighlight}
@@ -324,6 +380,12 @@ const ViewSongSectionsDrawer = ({
           </Button>
         </div>
       </div>
+      <LyricsEditor
+        song={song}
+        isOpen={isEditingLyrics}
+        onClose={() => setIsEditingLyrics(false)}
+        onSaveLyrics={persistSongLyrics}
+      />
     </Drawer>
   );
 };

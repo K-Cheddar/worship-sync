@@ -8,6 +8,7 @@ import type {
   ServicePlanElement,
   ServicePlanSection,
 } from "../../types/servicePlan";
+import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
 
 export type ServicePlanImportChangeKind = "added" | "removed" | "updated";
 
@@ -373,13 +374,25 @@ export const applySelectedServicePlanImportChanges = (
     }];
   });
 
-  nextSections.forEach((nextSection) => {
-    if (currentSectionIds.has(nextSection.id)) return;
+  const currentSectionIdByNextIndex = new Map<number, string>();
+  const newSectionByNextIndex = new Map<number, ServicePlanSection>();
+  nextSections.forEach((nextSection, index) => {
+    if (currentSectionIds.has(nextSection.id)) {
+      currentSectionIdByNextIndex.set(index, nextSection.id);
+      return;
+    }
     const elements = nextSection.elements.filter((element) =>
       Boolean(selectedChangeFor("added", element.id)),
     );
-    if (elements.length) result.push({ ...nextSection, elements });
+    if (elements.length) {
+      newSectionByNextIndex.set(index, { ...nextSection, elements });
+    }
   });
 
-  return result;
+  return insertNewServicePlanSectionRuns(
+    result,
+    nextSections.length,
+    newSectionByNextIndex,
+    currentSectionIdByNextIndex,
+  );
 };

@@ -38,6 +38,35 @@ describe("getVerses", () => {
     expect(result?.verses?.[0]?.text).toBeDefined();
   });
 
+  it("keeps the full first verse when Bible Gateway includes chapter and verse numbers", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      text: async () => `
+        <html><body><div><div class="passage-text">
+          <span class="text 2Cor-2-1">
+            <span class="chapternum mid-paragraph">2&#160;</span>
+            <sup class="versenum mid-paragraph">1&#160;</sup>
+            <sup class="footnote">[a]</sup>
+            But I determined this for myself, that I would not come again to you with sorrow.
+          </span>
+        </div></div></body></html>
+      `,
+    });
+
+    const result = await getVerses({
+      book: "2 Corinthians",
+      chapter: 1,
+      version: "ASV",
+    });
+
+    expect(result?.verses).toEqual([
+      {
+        index: 0,
+        name: "1",
+        text: "But I determined this for myself, that I would not come again to you with sorrow.",
+      },
+    ]);
+  });
+
   it("returns empty verses when passage has no matching spans", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       text: async () =>

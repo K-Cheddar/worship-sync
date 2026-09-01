@@ -12,6 +12,8 @@ export const getSongArrangementLabel = (name: string | undefined, index: number)
 export type SongArrangementSectionsPanelProps = {
   song: DBItem;
   mode: SongSectionLyricCardMode;
+  /** Keeps the section list in the parent page's scroll flow when needed. */
+  scrollMode?: "contained" | "page";
   arrangementIndex: number;
   onArrangementIndexChange: (index: number) => void;
   searchHighlight?: string;
@@ -26,6 +28,7 @@ export type SongArrangementSectionsPanelProps = {
 const SongArrangementSectionsPanel = ({
   song,
   mode,
+  scrollMode = "contained",
   arrangementIndex,
   onArrangementIndexChange,
   searchHighlight,
@@ -52,7 +55,13 @@ const SongArrangementSectionsPanel = ({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+    <div
+      className={
+        scrollMode === "page"
+          ? "flex flex-none flex-col gap-3 overflow-visible"
+          : "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+      }
+    >
       <div className="shrink-0">
         <Select
           id={arrangementSelectId}
@@ -95,7 +104,13 @@ const SongArrangementSectionsPanel = ({
             : "This arrangement does not have any sections."}
         </p>
       ) : (
-        <ul className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-1">
+        <ul
+          className={
+            scrollMode === "page"
+              ? "flex flex-none flex-col gap-3 overflow-visible pb-1"
+              : "scrollbar-variable flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-1"
+          }
+        >
           {arrangementSections.map((section) => (
             <SongSectionLyricCard
               key={section.id}

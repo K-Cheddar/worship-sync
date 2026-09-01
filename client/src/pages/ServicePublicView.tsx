@@ -22,6 +22,10 @@ import {
   readServicePublicNotesTeam,
   writeServicePublicNotesTeam,
 } from "./servicePublicNotesTeam";
+import {
+  readServicePublicNotesRole,
+  writeServicePublicNotesRole,
+} from "./servicePublicNotesRole";
 import { publicPageScrollClassName } from "./Teams/teamsStyles";
 import { normalizeHexColor } from "../utils/richTextColorContrast";
 import {
@@ -289,7 +293,7 @@ const ServicePublicView = ({
 }: ServicePublicViewProps) => {
   const [clientNow, setClientNow] = useState(() => Date.now());
   const [selectedTeam, setSelectedTeam] = useState(() => readServicePublicNotesTeam());
-  const [selectedRole, setSelectedRole] = useState("");
+  const [selectedRole, setSelectedRole] = useState(() => readServicePublicNotesRole());
   const [isFollowingLive, setIsFollowingLive] = useState(true);
   const [theme, setTheme] = useState<ServicePublicTheme>(readServicePublicTheme);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -492,12 +496,18 @@ const ServicePublicView = ({
     if (!selectedRole) return;
     if (roleOptions.some((role) => role.positionId === selectedRole)) return;
     setSelectedRole("");
+    writeServicePublicNotesRole("");
   }, [roleOptions, selectedRole]);
 
   const handleTeamNotesFilterChange = (value: string) => {
     const next = value === "__everyone__" ? "" : value;
     setSelectedTeam(next);
     writeServicePublicNotesTeam(next);
+  };
+
+  const handleRoleNotesFilterChange = (value: string) => {
+    setSelectedRole(value);
+    writeServicePublicNotesRole(value);
   };
 
   const jumpToCurrent = () => {
@@ -702,7 +712,7 @@ const ServicePublicView = ({
                       {showRoleNotesFilter ? (
                         <ServicePlanRolePicker
                           value={selectedRole}
-                          onValueChange={setSelectedRole}
+                          onValueChange={handleRoleNotesFilterChange}
                           options={roleOptions}
                           teamFilterStorageKey="worshipsyncServicePublicRoleTeamFilter"
                           lockedTeamName={selectedTeam || undefined}

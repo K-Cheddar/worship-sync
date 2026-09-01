@@ -145,6 +145,10 @@ import {
   readServicePublicNotesTeam,
   writeServicePublicNotesTeam,
 } from "../servicePublicNotesTeam";
+import {
+  readServicePlanHideNotes,
+  writeServicePlanHideNotes,
+} from "./servicePlanViewPreferences";
 import type {
   TeamRosterMember,
   TeamPosition,
@@ -169,7 +173,6 @@ import {
   cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   replaceMatchingPendingSongReferences,
-  updateElement,
 } from "./servicePlanDraftUtils";
 import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
 import {
@@ -337,6 +340,8 @@ type ServicePlanEditorProps = {
   mobileServingContent?: ReactNode;
   /** Initial workspace tab, used when returning from the mobile serving roster. */
   initialTab?: ServicePlanEditorTab;
+  /** Whether this entry point should open the plan in edit mode. */
+  initialEditing?: boolean;
   /**
    * Lets a surface that picked the occurrence itself — the Controller
    * workspace, which has no Plans list to go back to — offer that switch from
@@ -376,9 +381,10 @@ const ServicePlanEditor = ({
   planNavigation,
   mobileServingContent,
   initialTab = "plan",
+  initialEditing = false,
   occurrenceSwitcher,
 }: ServicePlanEditorProps) => {
-  const { churchId, access } = useContext(GlobalInfoContext) || {};
+  const { churchId, access, churchBranding } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
   const dispatch = useDispatch();
@@ -444,14 +450,14 @@ const ServicePlanEditor = ({
   // Hold a truly newer remote revision until the local acknowledgement lands.
   const pendingRemotePlanRef = useRef<ServicePlan | null>(null);
   // View-only: collapses note chrome so operators can scan structure/timing.
-  const [hideNotes, setHideNotes] = useState(false);
+  const [hideNotes, setHideNotes] = useState(readServicePlanHideNotes);
   // Same preference as the public team view — filter team notes by label.
   const [teamNotesFilter, setTeamNotesFilter] = useState(() =>
     readServicePublicNotesTeam(),
   );
   const [roleNotesFilter, setRoleNotesFilter] = useState("");
   // Compact read layout by default; Edit switches to stacked/editable fields.
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(initialEditing);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Microphones live beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
@@ -590,7 +596,7 @@ const ServicePlanEditor = ({
     defaultTemplateAppliedPlanKeyRef.current = "";
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
-    setIsEditing(false);
+    setIsEditing(initialEditing);
     setShowServiceDetails(false);
     // A different date is a different running order — open on it, not on
     // whichever side tab the previous plan was left on. On first mount, keep
@@ -960,6 +966,12 @@ const ServicePlanEditor = ({
     setTeamNotesFilter("");
     writeServicePublicNotesTeam("");
     setHideNotes(false);
+    writeServicePlanHideNotes(false);
+  };
+
+  const handleHideNotesChange = (checked: boolean) => {
+    setHideNotes(checked);
+    writeServicePlanHideNotes(checked);
   };
 
   const openImportUpdates = () => {
@@ -1073,7 +1085,6 @@ const ServicePlanEditor = ({
 
   const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
     if (!sections) return null;
-    const isFirstElementOverall = sections.every((s) => s.elements.length === 0);
     const existingElementIds = new Set(
       sections.flatMap((section) => section.elements.map((element) => element.id)),
     );
@@ -1082,17 +1093,11 @@ const ServicePlanEditor = ({
       .find((section) => section.id === sectionId)
       ?.elements.find((element) => !existingElementIds.has(element.id));
     if (!newElement) return null;
-    if (isFirstElementOverall) {
-      const anchor = occurrenceLocalTime(occurrence.startsAt, planTimezone);
-      next = applyPlanAnchorStartTime(
-        updateElement(next, sectionId, newElement.id, {
-          startTime: anchor,
-          durationSeconds: 0,
-          durationMinutes: 0,
-        }),
-        anchor,
-      );
-    }
+    const anchor = next
+      .flatMap((section) => section.elements)
+      .find((element) => element.startTime)?.startTime
+      || occurrenceLocalTime(occurrence.startsAt, planTimezone);
+    next = applyPlanAnchorStartTime(next, anchor);
     updateDraftSections(next);
     setSelectedPlanTarget({ sectionId, elementId: newElement.id });
     window.requestAnimationFrame(() => {
@@ -1105,8 +1110,11 @@ const ServicePlanEditor = ({
 
   const handleAddSection = () => {
     if (!sections) return;
-    const next = addSection(sections);
-    const newSection = next.at(-1);
+    const selectedSectionId = selectedPlanTarget?.sectionId;
+    const next = addSection(sections, "New section", selectedSectionId);
+    const newSection = next.find(
+      (section) => !sections.some((existing) => existing.id === section.id),
+    );
     updateDraftSections(next);
     if (!newSection) return;
     setSelectedPlanTarget({ sectionId: newSection.id });
@@ -1729,7 +1737,7 @@ const ServicePlanEditor = ({
                   </DropdownMenuLabel>
                   <DropdownMenuCheckboxItem
                     checked={hideNotes}
-                    onCheckedChange={(checked) => setHideNotes(Boolean(checked))}
+                    onCheckedChange={(checked) => handleHideNotesChange(Boolean(checked))}
                   >
                     Hide notes
                   </DropdownMenuCheckboxItem>
@@ -2029,6 +2037,8 @@ const ServicePlanEditor = ({
             sections={sections}
             canEdit={canEdit}
             isEditing={isEditing}
+            sectionLabelColor={churchBranding?.colors?.[1]?.value}
+            sectionBorderColor={churchBranding?.colors?.[0]?.value}
             onSectionsChange={updateDraftSections}
             selection={selectedPlanTarget}
             onSelectionChange={setSelectedPlanTarget}
@@ -2068,6 +2078,7 @@ const ServicePlanEditor = ({
             teamNotesFilter={teamNotesFilter}
             roleNotesFilter={roleNotesFilter}
             onViewSongLyrics={setViewSongRef}
+            allSongDocs={allSongDocs}
             canCreateLibrarySong={canCreateLibrarySong}
             onCreatePendingSong={openPendingSongCreator}
             resolvedSongRefs={resolvedSongRefs}

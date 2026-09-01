@@ -118,6 +118,11 @@ const ServicePlanLibraryPicker = ({
       title={showCreateSong ? "Create song" : "Add song"}
       size={showCreateSong ? "full" : "2xl"}
       contentPadding="p-4 pt-0"
+      surfaceClassName={
+        showCreateSong
+          ? undefined
+          : "mx-auto w-full max-w-5xl rounded-lg bg-gray-800"
+      }
     >
       <div
         className={

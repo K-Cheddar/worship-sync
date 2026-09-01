@@ -160,6 +160,7 @@ const renderEditor = ({
   positions = [],
   teams = [],
   canEdit = true,
+  initialEditing = false,
   onBack,
   planNavigation,
   occurrenceSwitcher,
@@ -173,6 +174,7 @@ const renderEditor = ({
   positions?: TeamPosition[];
   teams?: TeamRecord[];
   canEdit?: boolean;
+  initialEditing?: boolean;
   onBack?: () => void;
   planNavigation?: {
     onPrevious?: () => void;
@@ -209,6 +211,7 @@ const renderEditor = ({
           positions={positions}
           teams={teams}
           canEdit={canEdit}
+          initialEditing={initialEditing}
           onBack={onBack}
           planNavigation={planNavigation}
           occurrenceSwitcher={occurrenceSwitcher}
@@ -1243,6 +1246,17 @@ describe("ServicePlanEditor", () => {
     ],
   };
 
+  it("opens in edit mode when the entry point requests it", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+    renderEditor({ initialEditing: true });
+
+    expect(await screen.findByRole("button", { name: /^Done$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
+  });
+
   it("undoes and redoes a structural edit, and autosaves the restored plan", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
@@ -1258,9 +1272,8 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
 
-    await user.click(
-      screen.getByRole("button", { name: /Remove section Worship/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
     expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -1291,9 +1304,8 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
-    await user.click(
-      await screen.findByRole("button", { name: /Remove section Word/i }),
-    );
+    await user.click(await screen.findByRole("button", { name: /More tools for Word/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Remove section/i }));
     expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "z", ctrlKey: true });
@@ -1402,9 +1414,8 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
-    await user.click(
-      await screen.findByRole("button", { name: /Remove section Word/i }),
-    );
+    await user.click(await screen.findByRole("button", { name: /More tools for Word/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Remove section/i }));
 
     // Plain inputs carry data-ignore-undo so the browser's own character-level
     // undo still applies inside them; the plan-level step must not also fire.
@@ -1508,9 +1519,8 @@ describe("ServicePlanEditor", () => {
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: /Remove section Worship/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
 
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
@@ -2176,6 +2186,7 @@ describe("ServicePlanEditor", () => {
 
     keepInView.mockClear();
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(await screen.findByRole("button", { name: /^Done$/i }));
     await user.click(await screen.findByRole("button", { name: /Make Message live/i }));
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
@@ -2185,9 +2196,6 @@ describe("ServicePlanEditor", () => {
       );
     });
     // Still editing — do not follow live yet.
-    expect(keepInView).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: /^Done$/i }));
     await waitFor(() => {
       expect(keepInView).toHaveBeenCalledWith(
         expect.objectContaining({

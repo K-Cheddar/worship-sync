@@ -29,6 +29,7 @@ import SectionPreview from "./SectionPreview";
 import AddSongSectionsDrawer from "./AddSongSectionsDrawer";
 import {
   Arrangment,
+  DBItem,
   FormattedLyrics as FormattedLyricsType,
   ItemSlideType,
   SongOrder,
@@ -83,8 +84,24 @@ type UpdateFormattedLyricsOptions = {
   preserveEmptySongOrder?: boolean;
 };
 
-const LyricsEditorPanel = () => {
-  const item = useSelector((state: RootState) => state.undoable.present.item);
+type LyricsEditorPanelProps = {
+  song?: DBItem | null;
+  onClose?: () => void;
+  onSaveLyrics?: (payload: {
+    arrangements: Arrangment[];
+    selectedArrangement: number;
+    songMetadata?: SongMetadata;
+  }) => Promise<void>;
+};
+
+const LyricsEditorPanel = ({
+  song: librarySong = null,
+  onClose: onLibraryClose,
+  onSaveLyrics,
+}: LyricsEditorPanelProps) => {
+  const controllerItem = useSelector((state: RootState) => state.undoable.present.item);
+  const item = librarySong ?? controllerItem;
+  const isLibraryEditor = Boolean(librarySong);
   const { allSongDocs } = useSelector((state: RootState) => state.allDocs);
   const { isAllItemsLoading } = useSelector((state: RootState) => state.allItems);
   const formattedLyricsPerRow = useSelector(
@@ -97,7 +114,6 @@ const LyricsEditorPanel = () => {
   const lyricsDensitySliderValue =
     lyricsDensityMax + lyricsDensityMin - formattedLyricsPerRow;
   const {
-    isEditMode,
     type,
     arrangements,
     selectedArrangement,
@@ -106,6 +122,7 @@ const LyricsEditorPanel = () => {
     pendingRemoteItem,
     songMetadata,
   } = item;
+  const isEditMode = isLibraryEditor ? true : controllerItem.isEditMode;
   const initialLocalArrangementsRef = useRef<Arrangment[] | null>(null);
   if (initialLocalArrangementsRef.current === null) {
     initialLocalArrangementsRef.current = ensureArrangementIds([...arrangements]);
@@ -168,6 +185,7 @@ const LyricsEditorPanel = () => {
     index: null as number | null,
   });
   const [hasArrangementChanges, setHasArrangementChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [localSongMetadata, setLocalSongMetadata] = useState<
     SongMetadata | undefined
   >(songMetadata);
@@ -763,17 +781,27 @@ const LyricsEditorPanel = () => {
     if (hasPendingChanges) {
       setPendingAction(() => () => {
         resetLocalEditorState(arrangements, selectedArrangement, songMetadata);
-        dispatch(setIsEditMode(false));
+        if (isLibraryEditor) {
+          onLibraryClose?.();
+        } else {
+          dispatch(setIsEditMode(false));
+        }
       });
       setShowConfirmModal(true);
     } else {
       resetLocalEditorState(arrangements, selectedArrangement, songMetadata);
-      dispatch(setIsEditMode(false));
+      if (isLibraryEditor) {
+        onLibraryClose?.();
+      } else {
+        dispatch(setIsEditMode(false));
+      }
     }
   }, [
     hasPendingChanges,
     arrangements,
     dispatch,
+    isLibraryEditor,
+    onLibraryClose,
     resetLocalEditorState,
     selectedArrangement,
     songMetadata,
@@ -802,6 +830,7 @@ const LyricsEditorPanel = () => {
   }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
 
   useEffect(() => {
+    if (isLibraryEditor) return;
     if (isEditMode && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
       handleReloadRemote();
       return;
@@ -856,6 +885,7 @@ const LyricsEditorPanel = () => {
     hasPendingChanges,
     hasPendingUpdate,
     itemTypeLabel,
+    isLibraryEditor,
     isEditMode,
     removeToast,
     showToast,
@@ -906,8 +936,7 @@ const LyricsEditorPanel = () => {
 
   const onClose = handleCloseWithConfirmation;
 
-  const save = () => {
-    dispatch(setIsEditMode(false));
+  const save = async () => {
     const _arrangements = [...localArrangements];
 
     _arrangements[localSelectedArrangement] = {
@@ -915,15 +944,34 @@ const LyricsEditorPanel = () => {
       formattedLyrics: [...localFormattedLyrics],
     };
 
-    const _item = formatSong({
+    const formattedItem = formatSong({
       ...item,
       arrangements: _arrangements,
       selectedArrangement: localSelectedArrangement,
     });
 
+    if (isLibraryEditor) {
+      if (!onSaveLyrics) return;
+      setIsSaving(true);
+      try {
+        await onSaveLyrics({
+          arrangements: formattedItem.arrangements,
+          selectedArrangement: localSelectedArrangement,
+          songMetadata: localSongMetadata,
+        });
+        onLibraryClose?.();
+      } catch (error) {
+        console.error("Error saving song lyrics:", error);
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
+    dispatch(setIsEditMode(false));
     dispatch(
       updateArrangements({
-        arrangements: _item.arrangements,
+        arrangements: formattedItem.arrangements,
         selectedArrangement: localSelectedArrangement,
       })
     );
@@ -932,7 +980,12 @@ const LyricsEditorPanel = () => {
 
   return (
     <ErrorBoundary>
-      <div className="absolute left-0 z-30 bg-homepage-canvas lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:pb-6 pb-2">
+      <div
+        className={cn(
+          "bg-homepage-canvas text-white lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:pb-6 pb-2",
+          isLibraryEditor ? "absolute inset-0 z-[70]" : "absolute left-0 z-30",
+        )}
+      >
         <div className="flex h-fit shrink-0 items-center border-b border-white/20 bg-black/60 px-2 gap-2">
           <div className="max-lg:hidden flex shrink-0 items-center gap-1">
             <Button
@@ -1197,7 +1250,8 @@ const LyricsEditorPanel = () => {
                     className="flex-1 justify-center gap-2"
                     svg={Save}
                     iconSize="sm"
-                    onClick={() => save()}
+                    onClick={() => void save()}
+                    disabled={isSaving}
                   >
                     Save
                   </Button>
@@ -1222,7 +1276,8 @@ const LyricsEditorPanel = () => {
               className="text-base gap-2"
               svg={Save}
               iconSize="sm"
-              onClick={() => save()}
+              onClick={() => void save()}
+              disabled={isSaving}
             >
               Save
             </Button>

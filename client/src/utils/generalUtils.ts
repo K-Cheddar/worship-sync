@@ -101,7 +101,10 @@ export const getMatchForString = ({
     } else if (stringWords.some((word) => word === searchTerm)) {
       // whole word match
       const foundIndex = stringWords.findIndex((word) => word === searchTerm);
-      const indexRank = allowPartial ? 0.1 : 1 / (foundIndex + 1);
+      // A whole-word match should always outrank an embedded partial match.
+      // `allowPartial` only controls whether partial matches are permitted;
+      // it should not weaken an exact word match below them.
+      const indexRank = allowPartial ? 1 : 1 / (foundIndex + 1);
 
       // Check if this word was already matched
       if (!matchedWords.has(searchTerm)) {
