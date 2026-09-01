@@ -41,12 +41,17 @@ const Checkbox = ({
   }
 
   return (
-    <div className={cn("flex min-w-0 items-center gap-2", className)}>
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-2 max-md:min-h-8",
+        className,
+      )}
+    >
       {control}
       <Label
         htmlFor={id}
         className={cn(
-          "min-w-0 cursor-pointer font-normal text-gray-100",
+          "min-w-0 flex-1 cursor-pointer font-normal text-gray-100 max-md:min-h-8",
           hideLabel && "sr-only",
           disabled && "cursor-not-allowed opacity-50",
           labelClassName,

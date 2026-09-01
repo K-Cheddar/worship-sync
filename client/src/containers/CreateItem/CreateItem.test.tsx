@@ -15,6 +15,7 @@ import {
   initialCreateItemState,
 } from "../../store/createItemSlice";
 import { allItemsSlice } from "../../store/allItemsSlice";
+import { allDocsSlice } from "../../store/allDocsSlice";
 import { itemListSlice } from "../../store/itemListSlice";
 import { itemSlice } from "../../store/itemSlice";
 import { timersSlice } from "../../store/timersSlice";
@@ -108,9 +109,11 @@ const ItemRouteProbe = () => {
 const createTestStore = ({
   createItem = initialCreateItemState,
   allItemsList = [],
+  allSongDocs = [],
 }: {
   createItem?: ReturnType<typeof createItemSlice.reducer>;
   allItemsList?: ServiceItem[];
+  allSongDocs?: ItemState[];
 } = {}) => {
   const undoableState = createUndoableState();
 
@@ -118,6 +121,7 @@ const createTestStore = ({
     reducer: {
       createItem: createItemSlice.reducer,
       allItems: allItemsSlice.reducer,
+      allDocs: allDocsSlice.reducer,
       itemList: itemListSlice.reducer,
       item: itemSlice.reducer,
       timers: timersSlice.reducer,
@@ -132,6 +136,10 @@ const createTestStore = ({
         list: allItemsList,
         isAllItemsLoading: false,
         isInitialized: true,
+      },
+      allDocs: {
+        ...allDocsSlice.getInitialState(),
+        allSongDocs,
       },
       itemList: itemListSlice.getInitialState(),
       item: itemSlice.getInitialState(),
@@ -510,6 +518,38 @@ describe("CreateItem", () => {
     await waitFor(() => {
       expect(mockedCreateNewSong).toHaveBeenCalled();
     });
+  });
+
+  it("shows an existing song from the document-backed library in embedded create", () => {
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Amazing Grace",
+      },
+      allSongDocs: [
+        createMockItem({
+          _id: "existing-song",
+          name: "Amazing Grace",
+          type: "song",
+        }),
+      ],
+    });
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <CreateItem variant="embedded" />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(
+      screen.getByText(/A song named “Amazing Grace” already exists\./),
+    ).toBeInTheDocument();
   });
 
   it("keeps the draft when navigating to Bible and back without creating", async () => {

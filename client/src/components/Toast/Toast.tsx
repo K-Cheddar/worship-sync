@@ -191,7 +191,10 @@ const Toast: React.FC<ToastProps> = ({
     <div
       role="status"
       className={cn(
-        "relative z-9999 min-w-[300px] max-w-[75vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
+        "relative z-9999 px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900 overflow-hidden",
+        variant === "chat"
+          ? "min-w-0 w-[min(24rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]"
+          : "min-w-[min(300px,calc(100vw-2rem))] max-w-[75vw]",
         config.textColor,
         isVisible && !isExiting && "opacity-100 translate-y-0",
         !isVisible && !isExiting && `opacity-0 ${hiddenOffset}`,
@@ -212,16 +215,28 @@ const Toast: React.FC<ToastProps> = ({
         setIsPaused(false);
       }}
     >
-      <div className="flex items-start gap-3">
-        {variant !== "neutral" && (
+      <div
+        className={cn(
+          "flex items-start gap-3",
+          variant === "chat" && "relative block",
+        )}
+      >
+        {variant !== "neutral" && variant !== "chat" && (
           <Icon
             svg={config.icon}
             size="md"
             color={config.iconColor}
-            className="mt-0.5 shrink-0"
+            className={cn(
+              "mt-0.5 shrink-0",
+            )}
           />
         )}
-        <div className="min-w-0 flex-1">
+        <div
+          className={cn(
+            "min-w-0 flex-1 overflow-hidden",
+            variant === "chat" && "w-full",
+          )}
+        >
           {message && (
             <p className="text-sm text-center font-medium wrap-break-word">
               {message}
@@ -235,7 +250,10 @@ const Toast: React.FC<ToastProps> = ({
             svg={X}
             variant="none"
             padding="p-1"
-            className="w-6"
+            className={cn(
+              "w-6",
+              variant === "chat" && "absolute right-0 top-0",
+            )}
             color="#d4d4d8"
             aria-label="Close toast"
           />

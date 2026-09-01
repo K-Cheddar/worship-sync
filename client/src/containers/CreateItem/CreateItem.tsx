@@ -26,6 +26,7 @@ import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
+import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
@@ -124,6 +125,7 @@ const CreateItem = ({
   const isEmbedded = variant === "embedded";
   const createItemDraft = useSelector((state: RootState) => state.createItem);
   const { list } = useSelector((state: RootState) => state.allItems);
+  const { songs: songLibrary } = useSelector(selectSongLibrary);
 
   const {
     preferences: {
@@ -321,14 +323,19 @@ const CreateItem = ({
 
   const existingItem: ServiceItem | undefined = useMemo(() => {
     if (selectedType !== "bible") {
-      return (list as ServiceItem[]).find(
+      const libraryItems =
+        selectedType === "song"
+          ? songLibrary
+          : (list as ServiceItem[]);
+
+      return libraryItems.find(
         (item) =>
           item.name.toLowerCase().trim() === itemName.toLowerCase().trim() &&
           item.type === selectedType
       );
     }
     return undefined;
-  }, [itemName, list, selectedType]);
+  }, [itemName, list, selectedType, songLibrary]);
 
   const goToItem = (itemId: string, listId: string) => {
     navigate(

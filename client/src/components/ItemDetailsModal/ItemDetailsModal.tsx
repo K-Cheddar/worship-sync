@@ -16,6 +16,7 @@ import {
   parseYouTubeTimestamp,
 } from "../../utils/youtube";
 import SongAudioAttachment from "./SongAudioAttachment";
+import { cn } from "@/utils/cnHelper";
 
 const EMPTY_SONG_LINKS: SongLink[] = [];
 
@@ -77,6 +78,7 @@ export type ItemDetailsSavePayload = {
 
 type ItemDetailsEditorFieldsProps = Omit<ItemDetailsModalProps, "isOpen"> & {
   isOpen: boolean;
+  className?: string;
 };
 
 function modalTitle(type: ItemType): string {
@@ -146,6 +148,7 @@ export function ItemDetailsEditorFields({
   onGetSongAudioUrl,
   onRemoveSongAudio,
   onSave,
+  className,
 }: ItemDetailsEditorFieldsProps) {
   const [localName, setLocalName] = useState(itemName);
   const [artistName, setArtistName] = useState("");
@@ -366,7 +369,7 @@ export function ItemDetailsEditorFields({
   };
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={cn("flex flex-col gap-3", className)}>
       <Input
         label={isSong ? "Song name" : "Item name"}
         value={localName}

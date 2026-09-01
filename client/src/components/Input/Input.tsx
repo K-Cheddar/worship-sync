@@ -200,7 +200,7 @@ const Input = ({
         svg={svg}
         variant="tertiary"
         className={cn(
-          "inline-flex h-7 w-7 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center",
+          "inline-flex h-7 w-7 min-h-0 max-lg:h-[32px] max-lg:min-h-0 shrink-0 items-center justify-center",
           svgClassName,
         )}
         padding={svgPadding}
@@ -230,7 +230,9 @@ const Input = ({
           "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]",
           inputClassName,
           // After inputClassName so px-* from callers cannot collapse clear-button room.
-          hasTrailingAction ? "pr-10" : "pr-2",
+          // Important: callers may include px-* utilities whose generated
+          // CSS order can otherwise override the clear-button padding.
+          hasTrailingAction ? "pr-10 !pr-10" : "pr-2",
         )}
         {...restForInput}
         type={type}

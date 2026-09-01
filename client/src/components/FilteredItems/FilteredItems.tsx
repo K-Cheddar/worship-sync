@@ -37,6 +37,7 @@ import {
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
+import { removeItemFromAllDocs } from "../../store/allDocsSlice";
 import { ref, get, set } from "firebase/database";
 import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
@@ -427,8 +428,9 @@ const FilteredItems = ({
     let deletedDoc: DBItem | undefined;
     if (db) {
       try {
-        deletedDoc = (await db.get(item._id)) as DBItem;
-        await db.remove(deletedDoc);
+        const persistedDoc = await db.get(item._id);
+        deletedDoc = persistedDoc as DBItem;
+        await db.remove(persistedDoc);
       } catch (error) {
         console.error("Error deleting library item:", error);
         return;
@@ -436,6 +438,7 @@ const FilteredItems = ({
     }
 
     dispatch(removeItemFromAllItemsList(item._id));
+    dispatch(removeItemFromAllDocs(item));
     dispatch(removeItemFromListById(item._id));
     dispatch(ActionCreators.clearHistory());
 

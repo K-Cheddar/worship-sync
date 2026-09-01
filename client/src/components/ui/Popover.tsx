@@ -21,6 +21,8 @@ type PopoverContentProps = React.ComponentProps<
   typeof PopoverPrimitive.Content
 > & {
   portal?: boolean;
+  /** Render as ordinary layout content instead of a positioned popover. */
+  staticContent?: boolean;
 };
 
 const PopoverContent = ({
@@ -28,8 +30,12 @@ const PopoverContent = ({
   align = "center",
   sideOffset = 4,
   portal = true,
+  staticContent = false,
   ...props
 }: PopoverContentProps) => {
+  if (staticContent) {
+    return <div className={cn("min-h-0", className)} {...props} />;
+  }
   const content = (
     <PopoverPrimitive.Content
       data-slot="popover-content"

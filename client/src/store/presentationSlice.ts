@@ -1182,7 +1182,6 @@ export const presentationSlice = createSlice({
     },
     clearAll: (state) => {
       state.streamItemContentBlocked = false;
-      state.monitorBoardAliasId = "";
       // set previous info for fading out
       state.prevProjectorInfo.slide = state.projectorInfo.slide;
       state.prevProjectorInfo.name = state.projectorInfo.name;

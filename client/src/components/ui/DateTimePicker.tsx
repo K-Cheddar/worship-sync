@@ -14,6 +14,7 @@ import {
 } from "@/utils/dateTimeValue";
 import Input from "@/components/ui/Input";
 import Label from "@/components/ui/Label";
+import Button from "@/components/ui/Button";
 import {
   Popover,
   PopoverContent,
@@ -34,6 +35,8 @@ type Segment =
   | "hour"
   | "minute"
   | "meridiem";
+
+type PickerStep = "date" | "time";
 
 const SEGMENT_RANGES: Record<Segment, [number, number]> = {
   month: [0, 2],
@@ -116,6 +119,7 @@ const DateTimePicker = ({
   "aria-label": ariaLabel,
 }: DateTimePickerProps) => {
   const [open, setOpen] = React.useState(false);
+  const [pickerStep, setPickerStep] = React.useState<PickerStep>("date");
   const generatedId = React.useId();
   const fieldId = id || generatedId;
   const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -297,6 +301,11 @@ const DateTimePicker = ({
       minute || "00",
       meridiem || "AM",
     );
+    setPickerStep("time");
+  };
+
+  const continueToTime = () => {
+    if (resolvedDate) setPickerStep("time");
   };
 
   const incrementSegment = (segment: Segment, delta: number) => {
@@ -658,7 +667,13 @@ const DateTimePicker = ({
 
   const handleMouseUp = (e: React.MouseEvent<HTMLInputElement>) => {
     const caret = e.currentTarget.selectionStart ?? 0;
-    selectSegment(getSegmentFromPos(caret));
+    const segment = getSegmentFromPos(caret);
+    selectSegment(segment);
+    setPickerStep(
+      segment === "hour" || segment === "minute" || segment === "meridiem"
+        ? "time"
+        : "date",
+    );
   };
 
   const inputValue = formatDateTimeDisplay({
@@ -691,6 +706,7 @@ const DateTimePicker = ({
         onOpenChange={(nextOpen) => {
           if (disabled) return;
           setOpen(nextOpen);
+          if (!nextOpen) setPickerStep("date");
         }}
       >
         <PopoverTrigger asChild>
@@ -727,73 +743,110 @@ const DateTimePicker = ({
             onOpenAutoFocus={(e) => e.preventDefault()}
             portal={portal}
           >
-            <div className="flex gap-0 sm:gap-1">
-              <Calendar
-                mode="single"
-                selected={resolvedDate}
-                month={calendarMonth}
-                onMonthChange={setCalendarMonth}
-                disabled={disabledMatchers.length ? disabledMatchers : undefined}
-                onSelect={handleDateSelect}
-              />
-              <div
-                className="flex gap-1 border-t border-gray-700 p-3 sm:border-t-0 sm:border-l"
-                role="group"
-                aria-label="Time selection lists"
-              >
-                <Listbox
-                  label="Hour"
-                  aria-label="Select hour"
-                  items={HOURS}
-                  value={hour}
-                  onChange={(h) => {
-                    commitDateAndTime(
-                      month || "01",
-                      day || "01",
-                      year || String(new Date().getFullYear()),
-                      h,
-                      minute || "00",
-                      meridiem || "AM",
-                    );
-                    selectSegment("hour");
-                  }}
+            {pickerStep === "date" ? (
+              <>
+                <Calendar
+                  mode="single"
+                  selected={resolvedDate}
+                  month={calendarMonth}
+                  onMonthChange={setCalendarMonth}
+                  disabled={disabledMatchers.length ? disabledMatchers : undefined}
+                  onSelect={handleDateSelect}
                 />
-                <Listbox
-                  label="Minute"
-                  aria-label="Select minutes"
-                  items={ALL_MINUTES}
-                  value={minute}
-                  onChange={(m) => {
-                    commitDateAndTime(
-                      month || "01",
-                      day || "01",
-                      year || String(new Date().getFullYear()),
-                      hour || "12",
-                      m,
-                      meridiem || "AM",
-                    );
-                    selectSegment("minute");
-                  }}
-                />
-                <Listbox
-                  label="AM/PM"
-                  aria-label="Select AM or PM"
-                  items={MERIDIEMS}
-                  value={meridiem}
-                  onChange={(ap) => {
-                    commitDateAndTime(
-                      month || "01",
-                      day || "01",
-                      year || String(new Date().getFullYear()),
-                      hour || "12",
-                      minute || "00",
-                      ap as Meridiem,
-                    );
-                    selectSegment("meridiem");
-                  }}
-                />
-              </div>
-            </div>
+                <div className="border-t border-gray-700 p-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full"
+                    disabled={!resolvedDate}
+                    onClick={continueToTime}
+                  >
+                    Continue to time
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center border-b border-gray-700 p-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-white hover:text-white"
+                    onClick={() => setPickerStep("date")}
+                  >
+                    ← Back to date
+                  </Button>
+                </div>
+                <div
+                  className="flex gap-1 p-3"
+                  role="group"
+                  aria-label="Time selection lists"
+                >
+                  <Listbox
+                    label="Hour"
+                    aria-label="Select hour"
+                    items={HOURS}
+                    value={hour}
+                    onChange={(h) => {
+                      commitDateAndTime(
+                        month || "01",
+                        day || "01",
+                        year || String(new Date().getFullYear()),
+                        h,
+                        minute || "00",
+                        meridiem || "AM",
+                      );
+                      selectSegment("hour");
+                    }}
+                  />
+                  <Listbox
+                    label="Minute"
+                    aria-label="Select minutes"
+                    items={ALL_MINUTES}
+                    value={minute}
+                    onChange={(m) => {
+                      commitDateAndTime(
+                        month || "01",
+                        day || "01",
+                        year || String(new Date().getFullYear()),
+                        hour || "12",
+                        m,
+                        meridiem || "AM",
+                      );
+                      selectSegment("minute");
+                    }}
+                  />
+                  <Listbox
+                    label="AM/PM"
+                    aria-label="Select AM or PM"
+                    items={MERIDIEMS}
+                    value={meridiem}
+                    onChange={(ap) => {
+                      commitDateAndTime(
+                        month || "01",
+                        day || "01",
+                        year || String(new Date().getFullYear()),
+                        hour || "12",
+                        minute || "00",
+                        ap as Meridiem,
+                      );
+                      selectSegment("meridiem");
+                    }}
+                  />
+                </div>
+                <div className="border-t border-gray-700 p-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => setOpen(false)}
+                  >
+                    Done
+                  </Button>
+                </div>
+              </>
+            )}
           </PopoverContent>
         ) : null}
       </Popover>
