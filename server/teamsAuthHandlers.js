@@ -1291,6 +1291,9 @@ export const createTeamsAuthHandlers = ({
       sourceElementTypeRaw:
         normalizeShortText(raw?.sourceElementTypeRaw, { max: 200 }) ||
         undefined,
+      ...(raw?.sourceSongReferenceDismissed === true
+        ? { sourceSongReferenceDismissed: true }
+        : {}),
       pushedOutlineListId:
         normalizeShortText(raw?.pushedOutlineListId, { max: 160 }) || undefined,
       pushedOutlineListIds: Array.from(

@@ -18,6 +18,7 @@ import {
   Music,
   Radio,
   StickyNote,
+  TriangleAlert,
   Trash2,
   UserPlus,
   UserRound,
@@ -110,6 +111,9 @@ import {
 } from "../../types/servicePlan";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
+
+const SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS =
+  "h-full max-h-full w-7 shrink-0 self-center cursor-pointer max-md:min-h-0";
 
 /** Stable DOM id for scrolling the plan list to a live element. */
 export const servicePlanElementDomId = (elementId: string) =>
@@ -1232,9 +1236,10 @@ const ServicePlanElementRow = ({
   // The Controller can recognize a source row as a song before it has a
   // durable library reference. Keep the editor's row in the same pending
   // state so it does not fall back to the generic Add content control.
-  const recognizedUnlinkedSong = !storedSongRefs.length && (
-    /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")
-  );
+  const recognizedUnlinkedSong =
+    !element.sourceSongReferenceDismissed &&
+    !storedSongRefs.length &&
+    /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "");
   const inferredSongRefs = recognizedUnlinkedSong
     ? [{
         kind: "pending" as const,
@@ -1531,6 +1536,9 @@ const ServicePlanElementRow = ({
     onUpdate({
       songRef: undefined,
       songRefs: songRefs.filter((_, currentIndex) => currentIndex !== songIndex),
+      ...(element.sourceElementTypeRaw && songRefs.length === 1
+        ? { sourceSongReferenceDismissed: true }
+        : {}),
     });
   };
 
@@ -1722,8 +1730,13 @@ const ServicePlanElementRow = ({
                 </span>
               ) : null}
               {isSongUnlinked ? (
-                <span className="shrink-0 whitespace-nowrap text-amber-200/90">
-                  · Not in library
+                <span
+                  role="img"
+                  aria-label="Not in library"
+                  title="Not in library"
+                  className="shrink-0 text-amber-200/90"
+                >
+                  <TriangleAlert className="size-3.5" aria-hidden />
                 </span>
               ) : null}
             </>
@@ -1760,7 +1773,7 @@ const ServicePlanElementRow = ({
               key={`${currentSongRef.kind}:${label}:${songIndex}`}
               className={cn(
                 SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-                placement === "summary" && "box-border !h-[32px] !min-h-0 !max-h-[32px] min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                placement === "summary" && "box-border !h-8 !min-h-0 !max-h-8 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
                 isSongUnlinked
                   ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
                   : SERVICE_PLAN_SONG_CHIP_CLASS,
@@ -1791,9 +1804,9 @@ const ServicePlanElementRow = ({
                 <Button
                   type="button"
                   variant="tertiary"
-                  iconSize="xs"
+                  iconSize="sm"
                   padding="p-0"
-                  className="h-4 w-4 max-md:min-h-0"
+                  className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
                   svg={X}
                   aria-label={
                     songIndex === 0 ? "Remove song" : `Remove song ${label}`
@@ -1809,7 +1822,7 @@ const ServicePlanElementRow = ({
             className={cn(
               SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
               SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
-              placement === "summary" && "h-6 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+              placement === "summary" && "h-8 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
             )}
           >
             {allowEdit ? (
@@ -1860,9 +1873,9 @@ const ServicePlanElementRow = ({
               <Button
                 type="button"
                 variant="tertiary"
-                iconSize="xs"
+                iconSize="sm"
                 padding="p-0"
-                className="h-4 w-4 max-md:min-h-0"
+                className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
                 svg={X}
                 aria-label="Remove scripture"
                 onClick={() => onUpdate({
@@ -1922,9 +1935,9 @@ const ServicePlanElementRow = ({
                 <Button
                   type="button"
                   variant="tertiary"
-                  iconSize="xs"
+                  iconSize="sm"
                   padding="p-0"
-                  className="h-4 w-4 max-md:min-h-0"
+                  className={SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS}
                   svg={X}
                   aria-label={`Remove scripture ${additionalScripture.label}`}
                   onClick={() => onUpdate({
@@ -1941,7 +1954,7 @@ const ServicePlanElementRow = ({
 
   const contentSummaryControl = usesContentPanel ? (
     hasContentReferences ? (
-      <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 min-w-0 max-w-full items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
+      <div className="box-border flex !h-8 !max-h-8 !min-h-0 min-w-0 max-w-full items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
         {attachmentChips("summary")}
         {contentReferenceCount > 1 ? null : (
           <Button
@@ -1949,7 +1962,7 @@ const ServicePlanElementRow = ({
             variant="tertiary"
             svg={FilePlus}
             iconSize="sm"
-            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-[32px] max-md:w-11 max-md:text-sm [&_svg]:size-4"
+            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-8 max-md:w-11 max-md:text-sm [&_svg]:size-4"
             aria-label={`Manage content for ${itemLabel}`}
             onClick={(event) => openContent(event.currentTarget)}
           />
@@ -1961,7 +1974,7 @@ const ServicePlanElementRow = ({
         variant="tertiary"
         svg={FilePlus}
         iconSize="sm"
-        className="box-border !h-[32px] !min-h-0 !max-h-[32px] !py-0 w-full justify-start border-0 px-1.5 text-xs font-medium leading-5 text-gray-200 hover:bg-cyan-500/10 hover:text-white max-lg:text-sm [&_svg]:text-cyan-300"
+        className="box-border !h-8 !min-h-0 !max-h-8 !py-0 w-full justify-start border-0 px-1.5 text-xs font-medium leading-5 text-gray-200 hover:bg-cyan-500/10 hover:text-white max-lg:text-sm [&_svg]:text-cyan-300"
         aria-label={`Add content to ${itemLabel}`}
         onClick={(event) => openContent(event.currentTarget)}
       >
@@ -1978,7 +1991,7 @@ const ServicePlanElementRow = ({
               variant="tertiary"
               svg={contentReferenceCount > 1 ? undefined : ChevronDown}
               iconSize="xs"
-              className="h-6 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 py-0 text-xs leading-5 text-gray-300 hover:text-cyan-50 max-md:h-[32px] max-md:text-sm"
+              className="h-6 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 py-0 text-xs leading-5 text-gray-300 hover:text-cyan-50 max-md:h-8 max-md:text-sm"
               aria-label={`Manage content for ${itemLabel}`}
             >
               {contentReferenceCount > 1 ? `+${contentReferenceCount - 1}` : null}

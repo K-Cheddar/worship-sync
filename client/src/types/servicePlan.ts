@@ -192,6 +192,12 @@ export type ServicePlanElement = {
    * operator-created elements and on plans imported before this was stored.
    */
   sourceElementTypeRaw?: string;
+  /**
+   * The source classified this row as a song, but an operator explicitly
+   * removed its inferred attachment. Keep the raw source value for refreshes
+   * and overlay matching without recreating the dismissed song chip.
+   */
+  sourceSongReferenceDismissed?: boolean;
   /** Set once this element has been pushed into the live outline, so a re-push
    * can detect it's already present instead of duplicating it. */
   pushedOutlineListId?: string;

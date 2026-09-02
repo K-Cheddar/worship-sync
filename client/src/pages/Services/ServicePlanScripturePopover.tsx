@@ -28,7 +28,7 @@ const getReferenceText = (book: string, chapter: string, startVerse: string, end
   return `${book} ${chapter}${verseRange}`;
 };
 
-export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-yellow-300";
+export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-violet-300";
 
 type ServicePlanScripturePopoverProps = {
   disabled?: boolean;
