@@ -350,7 +350,9 @@ describe("store module", () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
-    jest.resetModules();
+    // Store imports are isolated by each loader with jest.isolateModules().
+    // Avoid resetting the entire module graph while listener effects settle;
+    // on CI that teardown can exceed Jest's hook timeout.
     jest.clearAllMocks();
     localStorage.clear();
   });
