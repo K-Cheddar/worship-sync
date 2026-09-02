@@ -28,3 +28,27 @@ export const mergeSongLibraryItems = (
 
   return sortNamesInList([...songsById.values()]);
 };
+
+/**
+ * Restores durable song documents that are missing from the lightweight
+ * allItems index. Returns the original array when no repair is needed so
+ * listeners can avoid redundant writes and sync traffic.
+ */
+export const reconcileSongLibraryIndex = (
+  allItems: ServiceItem[],
+  allSongDocs: DBItem[],
+): ServiceItem[] => {
+  const indexedSongIds = new Set(
+    allItems
+      .filter((item) => item.type === "song")
+      .map((item) => item._id),
+  );
+  const missingSongDocs = allSongDocs.filter(
+    (doc) => doc.type === "song" && !indexedSongIds.has(doc._id),
+  );
+
+  if (missingSongDocs.length === 0) return allItems;
+
+  const missingSongItems = missingSongDocs.map(songDocToServiceItem);
+  return sortNamesInList([...allItems, ...missingSongItems]);
+};

@@ -17,12 +17,22 @@ const row = (
 });
 
 describe("toServicePlanningTeamAssignments", () => {
-  it("maps filled slots to team, role, and name", () => {
+  it("maps filled slots to team, role, name, and an available profile image", () => {
     expect(
       toServicePlanningTeamAssignments([
-        row({ teamName: "Band", slotLabel: "Keys", memberName: "Dana Robinson" }),
+        row({
+          teamName: "Band",
+          slotLabel: "Keys",
+          memberName: "Dana Robinson",
+          memberProfileImageUrl: "https://example.com/dana.jpg",
+        }),
       ]),
-    ).toEqual([{ teamName: "Band", role: "Keys", name: "Dana Robinson" }]);
+    ).toEqual([{
+      teamName: "Band",
+      role: "Keys",
+      name: "Dana Robinson",
+      profileImageUrl: "https://example.com/dana.jpg",
+    }]);
   });
 
   it("drops required-but-unfilled slots", () => {

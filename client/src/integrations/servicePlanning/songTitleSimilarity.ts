@@ -77,7 +77,7 @@ const EXTENSION_SIMILARITY = 0.9;
 export const normalizeSongTitleForMatch = (title: string): string => {
   const words = cleanPlanningTitle(title)
     .toLowerCase()
-    .replace(/['‘’]/g, "")
+    .replace(/[\u0027\u2018\u2019]/g, "")
     // Before punctuation becomes a word break, or "10,000 Reasons" splits into
     // a "10" and a "000" that then read as hymnal numbers.
     .replace(/(\d),(?=\d)/g, "$1")

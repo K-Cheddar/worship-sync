@@ -131,6 +131,7 @@ const renderRow = (
     roleNoteOptions?: ServicePlanRoleNoteOption[];
     onUpdate?: jest.Mock;
     onViewSongLyrics?: jest.Mock;
+    onOpenContent?: jest.Mock;
     canCreateLibrarySong?: boolean;
     resolvedSongRef?: ServicePlanSongReference;
     microphones?: ServicePlanMicrophone[];
@@ -165,6 +166,7 @@ const renderRow = (
           teamNoteOptions={overrides.teamNoteOptions}
           roleNoteOptions={overrides.roleNoteOptions}
           onViewSongLyrics={overrides.onViewSongLyrics}
+          onOpenContent={overrides.onOpenContent}
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
           microphones={overrides.microphones}
@@ -413,6 +415,25 @@ describe("ServicePlanElementRow", () => {
     expect(
       screen.queryByRole("button", { name: /Make Pastoral Greetings live/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens the content panel instead of an edit popover when available", async () => {
+    const user = userEvent.setup();
+    const onOpenContent = jest.fn();
+    renderRow({
+      onOpenContent,
+      element: {
+        ...baseElement,
+        scriptureRefs: [
+          { label: "Psalm 100 (NIV)", book: "Psalms", chapter: "100", verseRange: "", version: "NIV" },
+        ],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit scripture Psalm 100 (NIV)" }));
+
+    expect(onOpenContent).toHaveBeenCalledWith(expect.any(HTMLElement));
+    expect(screen.queryByLabelText(/Scripture reference/i)).not.toBeInTheDocument();
   });
 
   it("hides the live badge while editing", () => {
@@ -775,6 +796,19 @@ describe("ServicePlanElementRow", () => {
     expect(
       screen.queryByRole("button", { name: /View song details/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows an unlinked source-classified song as not in the library", () => {
+    renderRow({
+      element: {
+        ...baseElement,
+        type: "free",
+        sourceElementTypeRaw: "Song",
+        title: plainTextToRichText("Shall Not Want (Eb→F)"),
+      },
+    });
+
+    expect(screen.getByText(/Not in library/i)).toBeInTheDocument();
   });
 
   it("shows a song added to the library after the import as linked", async () => {

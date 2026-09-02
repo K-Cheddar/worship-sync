@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Book, BookOpen, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
+import { AlertTriangle, Book, BookOpen, Check, Download, Music, Plus, RefreshCw, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -23,7 +23,7 @@ import {
   useServicePlanningImport,
   overlayPlanHasExecutableChange,
 } from "../../hooks/useServicePlanningImport";
-import type { ItemList, OverlayInfo } from "../../types";
+import type { OverlayInfo } from "../../types";
 import {
   Popover,
   PopoverAnchor,
@@ -36,6 +36,7 @@ import type { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
 import FloatingWindow, { type FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import Spinner from "../../components/Spinner/Spinner";
+import ProfileImagePreview from "../../components/ProfileImagePreview/ProfileImagePreview";
 import {
   Tabs,
   TabsList,
@@ -61,13 +62,7 @@ import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
-import { ControllerInfoContext } from "../../context/controllerInfo";
-import {
-  selectItemList,
-  updateItemLists,
-} from "../../store/itemListsSlice";
-import { createNewItemList } from "../../utils/itemUtil";
-import { setItemListIsLoading } from "../../store/itemListSlice";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   formatControllerServicePlanLabel,
   isControllerServicePlanUpcoming,
@@ -77,7 +72,6 @@ import {
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
-const EMPTY_ITEM_LISTS: ItemList[] = [];
 
 const StatusBadge = ({
   className,
@@ -93,18 +87,14 @@ const StatusBadge = ({
   </span>
 );
 
-const getLineItemBaseBadges = (item: ServicePlanningLineItem, hideNotFound = false) => {
+const getLineItemBaseBadges = (item: ServicePlanningLineItem) => {
   if (item.outlineItemType === "song") {
-    if (!item.matchedLibraryItem && hideNotFound) return [];
+    if (!item.matchedLibraryItem) return [];
     return [
       <StatusBadge
         key="song"
-        className={
-          item.matchedLibraryItem
-            ? "bg-green-900/60 text-green-300"
-            : "bg-red-900/50 text-red-300"
-        }
-        label={item.matchedLibraryItem ? "Song" : "Song not found"}
+        className="bg-green-900/60 text-green-300"
+        label="Song"
       />,
     ];
   }
@@ -281,10 +271,20 @@ const buildAssignmentsByTeam = (preview: ServicePlanningPreview | null) => {
   return teams;
 };
 
+/**
+ * Saved plans preserve a source element type for matching sync rules. That
+ * value can be a generic internal type such as "free", so it must not take
+ * precedence over the operator-facing item title in the Controller.
+ */
+const getLineItemDisplayTitle = (item: ServicePlanningLineItem): string =>
+  (item.outlineItemType === "bible" && item.parsedRef
+    ? getBibleImportDisplayName(item.parsedRef, item.parsedRef.version)
+    : item.title.trim() || item.cleanedTitle.trim() || item.elementType.trim() || "Untitled item");
+
 const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hideOutlineActions?: boolean }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { db } = useContext(ControllerInfoContext) || {};
+  const { churchBranding } = useContext(GlobalInfoContext) || {};
   const { loadPreview } = useServicePlanningImport();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -298,7 +298,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     selectedPlan,
     selectedPlanKey,
     selectPlan,
-    pinSelectedPlan,
     isEnabled: isSavedPlanAccessEnabled,
     isLoading,
     isLoadingPlans,
@@ -319,10 +318,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   );
   const floatingWindowDismissed = useSelector(
     (s: RootState) => s.servicePlanningImport.floatingWindowDismissed,
-  );
-  const currentLists = useSelector(
-    (s: RootState) =>
-      s.undoable?.present?.itemLists?.currentLists ?? EMPTY_ITEM_LISTS,
   );
   const selectedList = useSelector(
     (s: RootState) => s.undoable?.present?.itemLists?.selectedList,
@@ -482,39 +477,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       })),
     [visiblePlans],
   );
-  const outlineOptions = useMemo(
-    () =>
-      currentLists.map((list) => ({
-        value: list._id,
-        label: list.name,
-      })),
-    [currentLists],
-  );
-
-  const handleCreateOutline = useCallback(async () => {
-    const planName = selectedPlan?.name?.trim() || "Service plan";
-    const date = selectedPlan?.date
-      ? new Date(`${selectedPlan.date}T12:00:00`).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-        })
-      : "";
-    try {
-      const newList = await createNewItemList({
-        db,
-        name: `${planName}${date ? ` · ${date}` : ""}`,
-        currentLists,
-      });
-      pinSelectedPlan();
-      dispatch(updateItemLists([...currentLists, newList]));
-      dispatch(setItemListIsLoading(true));
-      dispatch(selectItemList(newList._id));
-      showToast(`Created ${newList.name}`, "success");
-    } catch {
-      showToast("Could not create the outline. Try again.", "error");
-    }
-  }, [currentLists, db, dispatch, pinSelectedPlan, selectedPlan, showToast]);
-
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
   const isSyncActive = isSyncRunning || isSyncStopping;
@@ -539,26 +501,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       ),
       onOverflowSelect: () => handleSync("both"),
       renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync All</>,
-    },
-    {
-      id: "import",
-      label: "Import",
-      disabled: isSyncActive,
-      renderButton: (isMeasure) => isMeasure ? (
-        <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
-      ) : (
-        <Button
-          variant="tertiary"
-          svg={Download}
-          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-          disabled={isSyncActive}
-          onClick={() => setIsImportOpen(true)}
-        >
-          Import
-        </Button>
-      ),
-      onOverflowSelect: () => setIsImportOpen(true),
-      renderOverflowItem: () => <><Download className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Import</>,
     },
     {
       id: "refresh",
@@ -601,6 +543,26 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       onOverflowSelect: () => handleSync("outline"),
       renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
     },
+    {
+      id: "import",
+      label: "Import",
+      disabled: isSyncActive,
+      renderButton: (isMeasure) => isMeasure ? (
+        <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
+      ) : (
+        <Button
+          variant="tertiary"
+          svg={Download}
+          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+          disabled={isSyncActive}
+          onClick={() => setIsImportOpen(true)}
+        >
+          Import
+        </Button>
+      ),
+      onOverflowSelect: () => setIsImportOpen(true),
+      renderOverflowItem: () => <><Download className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Import</>,
+    },
   ], [canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isRefreshing, isSyncActive, isSyncStopping]);
 
 
@@ -625,6 +587,8 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     [preview],
   );
   const hasAssignments = getPreviewTeamAssignments(preview).length > 0;
+  const sectionLabelColor = churchBranding?.colors?.[1]?.value || "#f97316";
+  const sectionBorderColor = churchBranding?.colors?.[0]?.value || "#f97316";
   const syncItemsByLineItemKey = useMemo(() => {
     const grouped = new Map<string, ServicePlanningSyncItem[]>();
     for (const item of sync.syncItems) {
@@ -766,16 +730,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     );
   }
 
-  let outlineBindingMessage: string | null = null;
-  if (selectedList && outlinePlanBinding) {
-    outlineBindingMessage =
-      outlinePlanBinding.planKey === selectedPlanKey
-        ? `Linked to ${outlinePlanBinding.planName}`
-        : `Currently linked to ${outlinePlanBinding.planName}. Syncing the outline will relink it.`;
-  } else if (selectedList && selectedPlan) {
-    outlineBindingMessage = `Syncing will link ${selectedList.name} to this plan.`;
-  }
-
   let emptyPreviewMessage = "Choose a saved plan to review it in the controller.";
   if (isLoading) {
     emptyPreviewMessage = "Loading the selected plan…";
@@ -789,38 +743,6 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
       <div className="flex flex-col gap-2">
         {savedPlanControl}
 
-        <div className="flex items-end gap-2">
-          <Select
-            label="Target outline"
-            className="min-w-0 flex-1"
-            selectClassName="h-8 text-xs"
-            disablePortal
-            value={selectedList?._id || ""}
-            onChange={(outlineId) => {
-              dispatch(setItemListIsLoading(true));
-              dispatch(selectItemList(outlineId));
-            }}
-            disabled={isSyncActive || outlineOptions.length === 0}
-            options={outlineOptions}
-          />
-          <Button
-            type="button"
-            variant="tertiary"
-            svg={Plus}
-            iconSize="sm"
-            className="h-8 shrink-0 text-xs"
-            disabled={isSyncActive || !selectedPlan}
-            onClick={() => void handleCreateOutline()}
-          >
-            New
-          </Button>
-        </div>
-
-        {outlineBindingMessage ? (
-          <p className="text-[11px] text-zinc-400">
-            {outlineBindingMessage}
-          </p>
-        ) : null}
       </div>
     </section>
   );
@@ -935,11 +857,15 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                 {Array.from(lineItemsBySection.entries()).map(([sectionName, items]) => (
                   <div
                     key={sectionName}
-                    className="rounded bg-zinc-950/40"
+                    className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
+                    style={{ borderLeftColor: sectionBorderColor }}
                   >
                     {sectionName && (
-                      <div className="bg-zinc-950/60 px-2 py-1">
-                        <span className="text-xs font-semibold tracking-wide text-white">
+                      <div className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5">
+                        <span
+                          className="text-xs font-semibold tracking-wide"
+                          style={{ color: sectionLabelColor }}
+                        >
                           {sectionName}
                         </span>
                       </div>
@@ -988,15 +914,24 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                           else labelCounts.set(data.label, { label: data.label, className: data.className, count: 1 });
                         }
 
+                        const isSongNotFound =
+                          item.selectedForOutline &&
+                          item.outlineItemType === "song" &&
+                          !item.attachedSongs?.length &&
+                          !item.matchedLibraryItem;
+
                         const badges = [
-                          ...getLineItemBaseBadges(item, hideOutlineActions),
+                          ...getLineItemBaseBadges(item),
                           ...(item.overlayReady && !hasCompletedSync
                             ? [
-                              <StatusBadge
+                              <span
                                 key="overlay-ready"
-                                className="bg-emerald-900/60 text-emerald-300"
-                                label="Overlay ready"
-                              />,
+                                className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-900/60 text-emerald-300"
+                                aria-label="Overlay ready"
+                                title="Overlay ready"
+                              >
+                                <Check size={11} strokeWidth={3} aria-hidden />
+                              </span>,
                             ]
                             : []),
                           ...(isActive && activeSyncData?.type === "active"
@@ -1021,64 +956,65 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                           ),
                         ];
 
-                        const isSongNotFound =
-                          item.selectedForOutline &&
-                          item.outlineItemType === "song" &&
-                          !item.matchedLibraryItem;
+                        const displayTitle = getLineItemDisplayTitle(item);
 
                         return (
                           <li
                             key={`${sectionName}-${item.elementType}-${item.title}-${index}`}
                             ref={isActive ? activeItemRef : undefined}
-                            className="flex flex-col gap-2 px-2 py-1.5"
+                            className="flex flex-col gap-1.5 px-2.5 py-2"
                           >
-                            <div className="flex flex-col gap-2">
-                              <div className="flex gap-2">
-                                <div className="flex min-w-0 items-center gap-1">
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex items-start gap-2">
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5">
                                   {item.outlineItemType === "song" && (
                                     <Music size={11} className="shrink-0" color={iconColorMap.get("song")} />
                                   )}
                                   {item.outlineItemType === "bible" && (
                                     <Book size={11} className="shrink-0" color={iconColorMap.get("bible")} />
                                   )}
-                                  <span className="wrap-break-word text-xs text-zinc-100">
-                                    {item.elementType}
+                                  <span className={cn(
+                                    "wrap-break-word text-xs font-semibold",
+                                    item.outlineItemType === "song"
+                                      ? "text-blue-300"
+                                      : item.outlineItemType === "bible"
+                                        ? "text-yellow-300"
+                                        : "text-zinc-100",
+                                  )}>
+                                    {displayTitle}
                                   </span>
                                 </div>
-                                <div className="flex flex-wrap justify-end gap-1 h-fit">
+                                <div className="flex shrink-0 flex-wrap justify-end gap-1">
                                   {badges}
                                 </div>
                               </div>
 
-                              {(item.title || item.assigneeNames?.length || item.ledBy) && (
-                                <div className="flex gap-2 flex-wrap">
-                                  {item.title && (
-                                    <div className={cn(
-                                      "wrap-break-word text-xs",
-                                      item.outlineItemType === "song"
-                                        ? "font-medium text-blue-300"
-                                        : item.outlineItemType === "bible"
-                                          ? "font-medium text-yellow-300"
-                                          : "text-zinc-300"
-                                    )}>
-                                      {item.outlineItemType === "bible" && item.parsedRef
-                                        ? getBibleImportDisplayName(item.parsedRef, item.parsedRef.version)
-                                        : item.title}
+                              {item.attachedSongs?.length ? (
+                                <div className="flex flex-col gap-1 border-l border-cyan-500/40 pl-2 text-xs text-cyan-200">
+                                  {item.attachedSongs.map((song, index) => (
+                                    <div key={`${song.songId || song.title}-${index}`} className="flex flex-wrap items-center gap-1.5">
+                                      <Music size={11} className="shrink-0 text-cyan-400" aria-hidden />
+                                      <span className="wrap-break-word">{song.title}</span>
+                                      {song.inLibrary ? (
+                                        <Check size={13} className="text-emerald-400" aria-label={`${song.title} is in library`} />
+                                      ) : !hideOutlineActions ? (
+                                        <div className="flex items-center gap-1 rounded border border-dashed border-amber-400/60 px-1.5 py-0.5 text-amber-100">
+                                          <AlertTriangle size={12} aria-hidden />
+                                          <span>Not in library</span>
+                                          <Button variant="primary" svg={Plus} color="#22d3ee" iconSize="xs" className="min-h-0 px-1 py-0.5 text-xs" aria-label={`Create song ${song.title}`} onClick={() => handleCreateClick(song.title)}>Create song</Button>
+                                        </div>
+                                      ) : null}
                                     </div>
-                                  )}
-                                  <div className="flex gap-2">
+                                  ))}
+                                </div>
+                              ) : null}
 
-                                    {(item.assigneeNames?.length || item.ledBy) && item.title && (
-                                      <div className="text-xs font-light text-zinc-400">
-                                        {item.assigneeNames?.length ? "Assigned:" : "Led by:"}
-                                      </div>
-                                    )}
-                                    {(item.assigneeNames?.length || item.ledBy) && (
-                                      <div className="wrap-break-word text-xs text-zinc-300">
-                                        {item.assigneeNames?.join(", ") || item.ledBy}
-                                      </div>
-                                    )}
-                                  </div>
+                              {(item.assigneeNames?.length || item.ledBy) && (
+                                <div className="flex flex-wrap gap-x-1.5 text-xs text-zinc-400">
+                                  <span>{item.assigneeNames?.length ? "Assigned:" : "Led by:"}</span>
+                                  <span className="wrap-break-word text-zinc-300">
+                                    {item.assigneeNames?.join(", ") || item.ledBy}
+                                  </span>
                                 </div>
                               )}
 
@@ -1099,21 +1035,33 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                               ) : null}
 
                               {isSongNotFound && !hideOutlineActions ? (
-                                <Button
-                                  variant="primary"
-                                  svg={Plus}
-                                  color="#22d3ee"
-                                  iconSize="sm"
-                                  className="self-start text-xs"
-                                  aria-label={`Create song ${item.cleanedTitle || cleanPlanningTitle(item.title)}`}
-                                  onClick={() =>
-                                    handleCreateClick(
-                                      item.cleanedTitle || cleanPlanningTitle(item.title),
-                                    )
-                                  }
-                                >
-                                  Create song
-                                </Button>
+                                <div className="flex self-start flex-wrap items-center gap-2 rounded border border-dashed border-amber-400/60 bg-amber-400/5 px-2 py-1 text-xs text-amber-100">
+                                  <div className="flex items-center gap-1.5">
+                                    <AlertTriangle
+                                      size={13}
+                                      className="shrink-0 text-amber-300"
+                                      aria-hidden
+                                    />
+                                    <span className="font-medium text-amber-50">
+                                      Not in library
+                                    </span>
+                                  </div>
+                                  <Button
+                                    variant="primary"
+                                    svg={Plus}
+                                    color="#22d3ee"
+                                    iconSize="xs"
+                                    className="min-h-0 px-1.5 py-0.5 text-xs"
+                                    aria-label={`Create song ${item.cleanedTitle || cleanPlanningTitle(item.title)}`}
+                                    onClick={() =>
+                                      handleCreateClick(
+                                        item.cleanedTitle || cleanPlanningTitle(item.title),
+                                      )
+                                    }
+                                  >
+                                    Create song
+                                  </Button>
+                                </div>
                               ) : null}
                             </div>
                           </li>
@@ -1130,28 +1078,44 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                   <p className="text-zinc-400">No assignments found.</p>
                 ) : null}
                 {Array.from(assignmentsByTeam.entries()).map(([teamName, assignments]) => (
-                  <div key={teamName} className="rounded bg-zinc-950/40">
-                    <div className="bg-zinc-950/60 px-2 py-1">
-                      <span className="text-xs font-semibold tracking-wide text-white">
+                  <section
+                    key={teamName}
+                    className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
+                    style={{ borderLeftColor: sectionBorderColor }}
+                  >
+                    <div className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5">
+                      <h3
+                        className="text-xs font-semibold tracking-wide"
+                        style={{ color: sectionLabelColor }}
+                      >
                         {teamName}
-                      </span>
+                      </h3>
                     </div>
                     <ul className="divide-y divide-zinc-700">
                       {assignments.map((assignment, index) => (
                         <li
                           key={`${teamName}-${assignment.role}-${assignment.name}-${index}`}
-                          className="flex items-start justify-between gap-3 px-2 py-1.5"
+                          className="flex items-center gap-2 px-2.5 py-2"
                         >
-                          <div className="wrap-break-word text-xs text-zinc-300">
-                            {assignment.role}
-                          </div>
-                          <div className="wrap-break-word text-right text-xs text-zinc-100">
-                            {assignment.name}
+                          {assignment.profileImageUrl ? (
+                            <ProfileImagePreview
+                              imageUrl={assignment.profileImageUrl}
+                              memberName={assignment.name}
+                              className="size-7"
+                            />
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-zinc-100">
+                              {assignment.name}
+                            </p>
+                            <p className="truncate text-[11px] text-zinc-400">
+                              {assignment.role}
+                            </p>
                           </div>
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </section>
                 ))}
               </div>
             )}

@@ -89,6 +89,7 @@ import {
 } from "./servicePlanningImportSlice";
 import { generatedCreditsSlice } from "./generatedCreditsSlice";
 import { mergeTimers } from "../utils/timerUtils";
+import { reconcileSongLibraryIndex } from "../utils/songLibrary";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
@@ -1203,7 +1204,7 @@ listenerMiddleware.startListening({
       const db_allItems: DBAllItems = await db.get("allItems");
       db_allItems.items = [...list];
       db_allItems.updatedAt = new Date().toISOString();
-      db.put(db_allItems);
+      await db.put(db_allItems);
 
       // Local machine updates
       safePostMessage({
@@ -2836,6 +2837,32 @@ const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: false,
     }).prepend(listenerMiddleware.middleware),
+});
+
+// Keep the persisted lightweight song index compatible with older clients.
+// Whichever source finishes loading second performs the repair. Later partial
+// updates from another environment are repaired too, then the ordinary
+// allItems listener persists and broadcasts the complete index.
+listenerMiddleware.startListening({
+  predicate: isAnyOf(
+    allDocsSlice.actions.updateAllSongDocs,
+    allItemsSlice.actions.initiateAllItemsList,
+    allItemsSlice.actions.updateAllItemsListFromRemote,
+  ),
+  effect: (_action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    if (!state.allItems.isInitialized) return;
+
+    const repairedItems = reconcileSongLibraryIndex(
+      state.allItems.list,
+      state.allDocs.allSongDocs,
+    );
+    if (repairedItems === state.allItems.list) return;
+
+    listenerApi.dispatch(
+      allItemsSlice.actions.updateAllItemsList(repairedItems),
+    );
+  },
 });
 
 // When a song is created, re-scan the service plan preview for unmatched songs

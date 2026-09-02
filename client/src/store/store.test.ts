@@ -215,6 +215,57 @@ const loadStoreWithItemPersistence = () => {
   };
 };
 
+const loadStoreWithAllItemsPersistence = () => {
+  let storeModule: any;
+  let allItemsSliceModule: any;
+  let allDocsSliceModule: any;
+  const postMessage = jest.fn();
+  const allItemsDoc = {
+    _id: "allItems",
+    _rev: "1-all-items",
+    items: [],
+  };
+  const db = {
+    get: jest.fn().mockResolvedValue({ ...allItemsDoc }),
+    put: jest.fn().mockResolvedValue({
+      ok: true,
+      id: "allItems",
+      rev: "2-all-items",
+    }),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: { postMessage },
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    allItemsSliceModule = require("./allItemsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    allDocsSliceModule = require("./allDocsSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    allItemsSlice: allItemsSliceModule.allItemsSlice,
+    allDocsSlice: allDocsSliceModule.allDocsSlice,
+    db,
+    postMessage,
+  };
+};
+
 const createOverlay = (id: string, name: string) => ({
   id,
   type: "participant" as const,
@@ -302,6 +353,84 @@ describe("store module", () => {
     jest.resetModules();
     jest.clearAllMocks();
     localStorage.clear();
+  });
+
+  it("persists missing durable songs back into the shared allItems index", async () => {
+    jest.useFakeTimers();
+    const { store, allItemsSlice, allDocsSlice, db, postMessage } =
+      loadStoreWithAllItemsPersistence();
+    const timerItem = {
+      _id: "timer-1",
+      name: "Countdown",
+      type: "timer",
+      listId: "",
+      background: "",
+    };
+
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([timerItem]));
+    store.dispatch(
+      allDocsSlice.actions.updateAllSongDocs([
+        createSongDoc({ _id: "song-restored", name: "Restored Song" }),
+      ]),
+    );
+
+    expect(store.getState().allItems.list).toEqual([
+      expect.objectContaining({ _id: "timer-1" }),
+      expect.objectContaining({
+        _id: "song-restored",
+        name: "Restored Song",
+      }),
+    ]);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "allItems",
+        items: expect.arrayContaining([
+          expect.objectContaining({ _id: "song-restored" }),
+        ]),
+      }),
+    );
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "update",
+        data: expect.objectContaining({
+          docs: expect.objectContaining({ _id: "allItems" }),
+        }),
+      }),
+    );
+  });
+
+  it("repairs a partial allItems update received from another environment", async () => {
+    jest.useFakeTimers();
+    const { store, allItemsSlice, allDocsSlice, db } =
+      loadStoreWithAllItemsPersistence();
+    const durableSong = createSongDoc({
+      _id: "song-durable",
+      name: "Durable Song",
+    });
+
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([durableSong]));
+    store.dispatch(allItemsSlice.actions.initiateAllItemsList([]));
+    store.dispatch(allItemsSlice.actions.updateAllItemsListFromRemote([]));
+
+    expect(store.getState().allItems.list).toEqual([
+      expect.objectContaining({
+        _id: "song-durable",
+        name: "Durable Song",
+      }),
+    ]);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [expect.objectContaining({ _id: "song-durable" })],
+      }),
+    );
   });
 
   it("broadcastCreditsUpdate posts docs with hostId when broadcast channel exists", () => {

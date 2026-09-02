@@ -3554,6 +3554,83 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
+  const getServicePlanKeyForOccurrence = (occurrence) => {
+    const date = String(occurrence?.startsAt || "").slice(0, 10);
+    return occurrence?.groupId
+      ? `group:${occurrence.groupId}@${date}`
+      : `${occurrence?.serviceId || ""}@${date}`;
+  };
+
+  /**
+   * A deliberately narrow roster projection for service-plan readers. Unlike
+   * Teams bootstrap, this contains no roster contact, availability, or schedule
+   * data — only people assigned to the requested plan.
+   */
+  const buildServicePlanAssignments = async (churchId, planKey) => {
+    const [members, positions, teams, schedules] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamRosterMembers,
+        "memberId",
+        churchId,
+      ),
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamPositions,
+        "positionId",
+        churchId,
+      ),
+      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamSchedules,
+        "scheduleId",
+        churchId,
+      ),
+    ]);
+    const memberById = new Map(members.map((member) => [member.memberId, member]));
+    const positionById = new Map(
+      positions.map((position) => [position.positionId, position]),
+    );
+    const teamById = new Map(teams.map((team) => [team.teamId, team]));
+
+    return schedules.flatMap((schedule) => {
+      if (schedule.archivedAt) return [];
+      const occurrence = (schedule.occurrences || []).find(
+        (candidate) => getServicePlanKeyForOccurrence(candidate) === planKey,
+      );
+      if (!occurrence) return [];
+      const guestsById = new Map(
+        (schedule.guests || []).map((guest) => [guest.guestId, guest]),
+      );
+      return Object.entries(schedule.assignments?.[occurrence.occurrenceId] || {})
+        .flatMap(([slotKey, cell]) => {
+          const separator = slotKey.lastIndexOf("::");
+          const positionId = separator > 0 ? slotKey.slice(0, separator) : "";
+          const position = positionById.get(positionId);
+          const teamId = position?.teamId || schedule.teamId;
+          const role = position?.name || "Position";
+          // Match the current service workspace: it shows the scheduled primary
+          // for each role, while shadows remain schedule-grid detail.
+          const memberId = assignmentCellMemberIds(cell)[0];
+          if (!memberId) return [];
+          return [memberId].flatMap((memberId) => {
+            const member = memberById.get(memberId);
+            const guest = guestsById.get(memberId);
+            const name = member
+              ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
+              : guest?.name || "";
+            if (!name) return [];
+            return [{
+              teamName: teamById.get(teamId)?.name || "Team",
+              role,
+              name,
+              ...(member?.profileImageUrl
+                ? { profileImageUrl: member.profileImageUrl }
+                : {}),
+            }];
+          });
+        });
+    });
+  };
+
   const isMemberAvailableDuringServiceWeek = (member, service) => {
     const serviceDate = getConcreteTeamServiceDate(service);
     const availability = member.recurringAvailability;
@@ -7946,6 +8023,31 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not load this service plan.",
+        );
+      }
+    },
+
+    async getServicePlanAssignments(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireServicePlansView(req, churchId);
+        const planKey = decodeURIComponent(req.params.planKey);
+        const servicePlan = await getDoc(
+          COLLECTIONS.servicePlans,
+          buildServicePlanDocId(churchId, planKey),
+        );
+        if (!servicePlan || servicePlan.churchId !== churchId) {
+          return res.json({ success: true, assignments: [] });
+        }
+        return res.json({
+          success: true,
+          assignments: await buildServicePlanAssignments(churchId, planKey),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load service plan assignments.",
         );
       }
     },

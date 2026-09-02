@@ -398,6 +398,15 @@ export const buildServicePlanningPreview = ({
         cleanedTitle,
         ledBy: row.ledBy,
         ...(row.assigneeNames?.length ? { assigneeNames: row.assigneeNames } : {}),
+        ...(row.songRefs?.length
+          ? {
+              attachedSongs: row.songRefs.map((song) => ({
+                title: song.songTitle,
+                ...(song.songId ? { songId: song.songId } : {}),
+                inLibrary: true,
+              })),
+            }
+          : {}),
         outlineItemType,
         matchedLibraryItem,
         // One row, one line item: the preview mirrors the source order of

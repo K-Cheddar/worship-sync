@@ -1,5 +1,8 @@
 import type { DBItem, ServiceItem } from "../types";
-import { mergeSongLibraryItems } from "./songLibrary";
+import {
+  mergeSongLibraryItems,
+  reconcileSongLibraryIndex,
+} from "./songLibrary";
 
 const songDoc = (id: string, name: string): DBItem =>
   ({ _id: id, name, type: "song", background: `${id}.jpg` }) as DBItem;
@@ -53,5 +56,43 @@ describe("mergeSongLibraryItems", () => {
         listId: "song-1",
       }),
     ]);
+  });
+});
+
+describe("reconcileSongLibraryIndex", () => {
+  it("adds durable songs missing from a partial index without dropping other items", () => {
+    const timer: ServiceItem = {
+      _id: "timer-1",
+      name: "Countdown",
+      type: "timer",
+      listId: "",
+      background: "",
+    };
+    const indexedSong = songItem("song-1", "Existing Song");
+
+    const repaired = reconcileSongLibraryIndex(
+      [timer, indexedSong],
+      [
+        songDoc("song-1", "Existing Song"),
+        songDoc("song-2", "Restored Song"),
+      ],
+    );
+
+    expect(repaired).toEqual([
+      expect.objectContaining({ _id: "timer-1" }),
+      expect.objectContaining({ _id: "song-1" }),
+      expect.objectContaining({ _id: "song-2", name: "Restored Song" }),
+    ]);
+  });
+
+  it("returns the same array when every durable song is already indexed", () => {
+    const allItems = [songItem("song-1", "Existing Song")];
+
+    expect(
+      reconcileSongLibraryIndex(
+        allItems,
+        [songDoc("song-1", "Existing Song")],
+      ),
+    ).toBe(allItems);
   });
 });

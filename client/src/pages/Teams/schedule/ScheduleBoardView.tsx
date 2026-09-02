@@ -1,6 +1,5 @@
-import { useContext } from "react";
+import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Users } from "lucide-react";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import Button from "@/components/Button/Button";
 import Menu from "@/components/Menu/Menu";
 import { cn } from "@/utils/cnHelper";
@@ -21,6 +20,21 @@ import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
 import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 import { scheduleUpNextBorderClassName } from "./scheduleUtils";
+
+const BOARD_CARD_MIN_WIDTH_PX = 288;
+const BOARD_CARD_GAP_PX = 16;
+
+export const getBoardColumnCount = (availableWidth: number, cardCount: number) =>
+  Math.max(
+    1,
+    Math.min(
+      Math.max(cardCount, 1),
+      Math.floor(
+        (availableWidth + BOARD_CARD_GAP_PX) /
+          (BOARD_CARD_MIN_WIDTH_PX + BOARD_CARD_GAP_PX),
+      ),
+    ),
+  );
 
 /** The per-occurrence cell data ScheduleBoardView consumes from buildGridCellProps. */
 type BoardCellData = {
@@ -96,10 +110,25 @@ const ScheduleBoardView = ({
   buildCellProps,
 }: ScheduleBoardViewProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
-  const isWideLayout = useMediaQuery("(min-width: 1024px)");
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [boardWidth, setBoardWidth] = useState(0);
   const occurrences = groups.flatMap((group) =>
     group.occurrences.map((occurrence) => ({ occurrence, group })),
   );
+  const columnCount = getBoardColumnCount(boardWidth, occurrences.length);
+
+  useLayoutEffect(() => {
+    const board = boardRef.current;
+    if (!board) return;
+    const updateWidth = () => setBoardWidth(board.clientWidth);
+
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(board);
+    return () => observer.disconnect();
+  }, []);
 
   const renderCard = ({ occurrence, group }: (typeof occurrences)[number]) => {
         const rows = columns.flatMap((column) => {
@@ -120,7 +149,7 @@ const ScheduleBoardView = ({
         className={cn(
           // Always render the border so colouring the up-next card never
           // shifts layout.
-          "relative mb-4 flex break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
+          "relative flex break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
           isNextUpcoming ? scheduleUpNextBorderClassName : "border-transparent",
         )}
       >
@@ -233,25 +262,24 @@ const ScheduleBoardView = ({
     );
   };
 
-  // Keep the previous row-major reading order (left card, then right card)
-  // while allowing each column to pack cards independently.
-  const cardColumns = [occurrences.filter((_, index) => index % 2 === 0), occurrences.filter((_, index) => index % 2 === 1)];
+  // Deal cards round-robin so each row stays chronological left-to-right while
+  // columns stack independently instead of inheriting a taller card's row height.
+  const cardColumns = Array.from({ length: columnCount }, () =>
+    [] as (typeof occurrences)[number][],
+  );
+  occurrences.forEach((item, index) => {
+    cardColumns[index % columnCount].push(item);
+  });
 
   return (
-    // One column on smaller screens; explicit columns on wider screens preserve
-    // the old left-to-right card order without stretching cards to row height.
     <div className="pt-3">
-      {isWideLayout ? (
-        <div className="flex flex-row items-start gap-4">
-          {cardColumns.map((cardColumn, columnIndex) => (
-            <div key={columnIndex} className="flex min-w-0 flex-1 flex-col">
-              {cardColumn.map(renderCard)}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-col">{occurrences.map(renderCard)}</div>
-      )}
+      <div ref={boardRef} className="flex items-start gap-4">
+        {cardColumns.map((cardColumn, columnIndex) => (
+          <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-4">
+            {cardColumn.map(renderCard)}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import generateRandomId from "../../utils/generateRandomId";
-import { EMPTY_RICH_TEXT } from "../../types/richText";
+import { EMPTY_RICH_TEXT, richTextToPlainText } from "../../types/richText";
+import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import {
   getServicePlanElementAssignees,
   getServicePlanElementType,
@@ -165,6 +166,10 @@ export const replaceMatchingPendingSongReferences = (
     let sectionChanged = false;
     const elements = section.elements.map((element) => {
       const songRefs = getServicePlanElementSongRefs(element);
+      const hasImplicitSongReference = !songRefs.length && (
+        element.type === "song" ||
+        /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")
+      ) && cleanPlanningTitle(richTextToPlainText(element.title)) === target.title;
       let changed = false;
       const nextSongRefs = songRefs.map((songRef) => {
         const matches =
@@ -175,6 +180,10 @@ export const replaceMatchingPendingSongReferences = (
         changed = true;
         return replacement;
       });
+      if (hasImplicitSongReference) {
+        changed = true;
+        nextSongRefs.push(replacement);
+      }
       if (!changed) return element;
       sectionChanged = true;
       const next = {

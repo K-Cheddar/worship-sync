@@ -50,8 +50,8 @@ type HighlightedPostItem = {
 };
 
 const DEFAULT_BG_COLOR = "#32353beb";
-const DEFAULT_FONT_SIZE = 1.5;
-const DEFAULT_DURATION = 15;
+const DEFAULT_FONT_SIZE = 1.8;
+const DEFAULT_DURATION = 8;
 
 const FIELD_CLASS = "text-sm flex gap-2 items-center w-full";
 const LABEL_CLASS = "w-24";

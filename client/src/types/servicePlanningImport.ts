@@ -26,6 +26,7 @@ export type ServicePlanningLineItem = {
   ledBy: string;
   /** Current Service Plan assignees; imported rows use `ledBy` as a fallback. */
   assigneeNames?: string[];
+  attachedSongs?: Array<{ title: string; songId?: string; inLibrary: boolean }>;
   selectedForOutline: boolean;
   outlineItemType: "song" | "bible" | "none";
   overlayReady: boolean;
@@ -59,6 +60,8 @@ export type ServicePlanningTeamAssignment = {
   teamName: string;
   role: string;
   name: string;
+  /** Schedule roster photo, when the current assignment has one. */
+  profileImageUrl?: string;
 };
 
 export type ServicePlanningPreview = {

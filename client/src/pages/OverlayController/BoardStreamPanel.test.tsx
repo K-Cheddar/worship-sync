@@ -240,8 +240,8 @@ describe("BoardStreamPanel", () => {
         authorHexColor: "#ff0000",
         text: "Restream highlighted",
         backgroundColor: "#32353beb",
-        fontSize: 1.5,
-        duration: 15,
+        fontSize: 1.8,
+        duration: 8,
       }),
     );
   });

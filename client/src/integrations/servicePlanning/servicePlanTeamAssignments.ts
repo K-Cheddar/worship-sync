@@ -23,6 +23,9 @@ export const toServicePlanningTeamAssignments = (
             teamName: row.teamName,
             role: row.slotLabel,
             name: row.memberName,
+            ...(row.memberProfileImageUrl
+              ? { profileImageUrl: row.memberProfileImageUrl }
+              : {}),
           },
         ]
       : [],

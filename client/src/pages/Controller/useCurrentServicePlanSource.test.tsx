@@ -26,7 +26,7 @@ const mockOtherOccurrence = {
 };
 
 const mockGetServicePlan = jest.fn();
-const mockGetTeamsBootstrap = jest.fn();
+const mockGetServicePlanAssignments = jest.fn();
 const mockListServicePlans = jest.fn();
 const mockLoadPlanPreview = jest.fn();
 const mockPersistItemListServicePlanBinding = jest.fn();
@@ -34,7 +34,8 @@ let mockLiveHandler: ((event: unknown) => void) | null = null;
 
 jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
-  getTeamsBootstrap: (...args: unknown[]) => mockGetTeamsBootstrap(...args),
+  getServicePlanAssignments: (...args: unknown[]) =>
+    mockGetServicePlanAssignments(...args),
   listServicePlans: (...args: unknown[]) => mockListServicePlans(...args),
 }));
 
@@ -199,11 +200,9 @@ describe("useCurrentServicePlanSource", () => {
         },
       ],
     });
-    mockGetTeamsBootstrap.mockResolvedValue({
-      schedules: [],
-      positions: [],
-      members: [],
-      teams: [],
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: [{ teamName: "Band", role: "Keys", name: "Dana Robinson" }],
     });
     mockLoadPlanPreview.mockResolvedValue(outlineFixture);
   });
@@ -286,7 +285,7 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
-  it("sources assignments from the Teams schedule rather than the plan", async () => {
+  it("loads the selected plan's scoped assignments", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);
 
@@ -501,7 +500,10 @@ describe("useCurrentServicePlanSource", () => {
       ),
     );
 
-    expect(mockGetTeamsBootstrap).not.toHaveBeenCalled();
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledWith(
+      "church-1",
+      "service-1@2026-08-01",
+    );
     expect(mockLiveHandler).toBeNull();
   });
 
@@ -513,8 +515,10 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockGetServicePlan).not.toHaveBeenCalled();
   });
 
-  it("stays usable when the Teams bootstrap fails, just without assignments", async () => {
-    mockGetTeamsBootstrap.mockRejectedValue(new Error("teams unavailable"));
+  it("stays usable when scoped assignments cannot load", async () => {
+    mockGetServicePlanAssignments.mockRejectedValue(
+      new Error("assignments unavailable"),
+    );
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);
 

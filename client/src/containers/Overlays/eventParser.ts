@@ -30,6 +30,7 @@ export interface EventData {
    * the title, or a resolved song gets re-guessed and can come out different.
    */
   songId?: string;
+  songRefs?: Array<{ songTitle: string; songId?: string }>;
   /**
    * The scripture passages an operator attached to this row in the plan editor,
    * in reading order. Only set on rows built from a saved ServicePlan — a

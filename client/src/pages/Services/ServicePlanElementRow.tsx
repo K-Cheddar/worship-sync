@@ -13,12 +13,13 @@ import {
   Check,
   ChevronDown,
   Ellipsis,
+  FilePlus,
   GripVertical,
   Music,
-  Plus,
   Radio,
   StickyNote,
   Trash2,
+  UserPlus,
   UserRound,
   Users,
   X,
@@ -77,6 +78,7 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import generateRandomId from "../../utils/generateRandomId";
 import { pad2 } from "../../constants";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
+import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import ServicePlanScripturePopover, {
   SERVICE_PLAN_SCRIPTURE_ICON_CLASS,
 } from "./ServicePlanScripturePopover";
@@ -157,20 +159,23 @@ export const SERVICE_PLAN_MAKE_LIVE_ICON_COLOR = "#fca5a5";
 export const SERVICE_PLAN_COL = {
   // On mobile, use the space between columns to widen TIME without taking
   // width from TITLE. Keep the desktop grid unchanged.
-  row: "grid grid-cols-[1.5rem_5rem_3.5rem_minmax(0,1fr)_minmax(2rem,max-content)] gap-x-0.5 gap-y-1 px-1.5 md:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(2rem,max-content)] md:gap-x-1.5 lg:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(2rem,max-content)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)_minmax(2rem,max-content)] md:items-center",
+  row: "grid grid-cols-[1.5rem_5rem_3.5rem_minmax(0,1fr)_minmax(2rem,max-content)] gap-x-0.5 gap-y-1 px-1.5 md:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(2rem,max-content)] md:gap-x-1.5 lg:grid-cols-[1.5rem_4.5rem_max-content_minmax(11rem,1.6fr)_minmax(9rem,1.2fr)_minmax(8rem,1fr)_minmax(2rem,max-content)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)_minmax(2rem,max-content)] md:items-center",
   drag: "w-6 shrink-0",
   /** Wide enough for "10:00 AM" / "07:00 PM" tabular time. */
-  timeView: "w-[5rem] shrink-0",
+  timeView: "w-[5rem] shrink-0 lg:w-[4.5rem] 2xl:w-[5rem]",
   /** Keep the edit and view time columns aligned. */
-  timeEdit: "w-[5rem] shrink-0 md:flex-none",
+  timeEdit: "w-[5rem] shrink-0 md:flex-none lg:w-[4.5rem] 2xl:w-[5rem]",
   /** Wide enough for "10 min" / "99 min" tabular duration. */
-  durationView: "w-14 shrink-0 lg:w-16",
-  durationEdit: "w-full md:w-14 lg:w-16 md:shrink-0 md:flex-none",
+  durationView: "w-14 shrink-0 lg:w-14 2xl:w-16",
+  durationEdit: "w-full md:w-14 lg:w-14 2xl:w-16 md:shrink-0 md:flex-none",
   title: "min-w-0 flex-1",
   /** Keep content compact so title and assignment columns retain room. */
   contentView: "w-full min-w-0 shrink-0 md:w-auto md:flex-none",
   assignedView: "w-full min-w-0 shrink-0 md:w-auto md:flex-none",
   assignedEdit: "w-full min-w-0 md:w-auto md:flex-none",
+  /** View rows without live actions omit the trailing actions column. */
+  viewWithoutActions:
+    "md:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)] lg:grid-cols-[1.5rem_4.5rem_max-content_minmax(11rem,1.6fr)_minmax(9rem,1.2fr)_minmax(8rem,1fr)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)]",
   /** Fixed so the header and rows keep Assigned aligned with live controls. */
   actionsView: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-visible",
   /** Keep only a compact minimum gutter when a row has no live controls. */
@@ -196,6 +201,7 @@ export const ServicePlanElementColumnHeader = ({
     className={cn(
       SERVICE_PLAN_COL.row,
       !isEditing && showActionsColumn && SERVICE_PLAN_COL.mediumViewWithActions,
+      !isEditing && !showActionsColumn && SERVICE_PLAN_COL.viewWithoutActions,
       "border-b border-gray-700/80 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400",
       "sticky top-0 z-10 bg-gray-950/95 max-md:hidden",
     )}
@@ -842,7 +848,7 @@ const ItemActionsMenu = ({
         {canAddContent ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Plus className="size-4" aria-hidden />
+              <FilePlus className="size-4" aria-hidden />
               Add content
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="p-1">
@@ -971,7 +977,7 @@ const AddContentMenu = ({
       <Button
         type="button"
         variant="tertiary"
-        svg={Plus}
+        svg={FilePlus}
         iconSize="sm"
         disabled={!canEdit}
         aria-haspopup="menu"
@@ -1185,7 +1191,7 @@ const ServicePlanElementRow = ({
     setDurationText(formattedDuration);
   }, [formattedDuration]);
   const allowEdit = canEdit && isEditing;
-  const usesContentPanel = allowEdit && isDesktopAssignmentPanel && Boolean(onOpenContent);
+  const usesContentPanel = allowEdit && Boolean(onOpenContent);
   const noteEditorClassName = cn(
     SERVICE_PLAN_INLINE_EDITOR_CLASS,
     !allowEdit && "opacity-100",
@@ -1223,9 +1229,25 @@ const ServicePlanElementRow = ({
   if (!storedSongRefs.length && element.songRef) {
     storedSongRefs.push(element.songRef);
   }
-  const songRefs = resolvedSongRefs?.length ? resolvedSongRefs : (
+  // The Controller can recognize a source row as a song before it has a
+  // durable library reference. Keep the editor's row in the same pending
+  // state so it does not fall back to the generic Add content control.
+  const recognizedUnlinkedSong = !storedSongRefs.length && (
+    /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")
+  );
+  const inferredSongRefs = recognizedUnlinkedSong
+    ? [{
+        kind: "pending" as const,
+        title: cleanPlanningTitle(titleText),
+        lyricsText: "",
+      }]
+    : [];
+  const resolvedOrStoredSongRefs = resolvedSongRefs?.length ? resolvedSongRefs : (
     resolvedSongRef && storedSongRefs.length === 1 ? [resolvedSongRef] : storedSongRefs
   );
+  const songRefs = resolvedOrStoredSongRefs.length
+    ? resolvedOrStoredSongRefs
+    : inferredSongRefs;
   const scriptureRefs = getServicePlanElementScriptureRefs(element);
   const pickerTargetSong =
     songPickerTargetIndex !== null ? songRefs[songPickerTargetIndex] : undefined;
@@ -1334,9 +1356,9 @@ const ServicePlanElementRow = ({
     />
   ) : <p className="px-1 text-xs text-gray-400">No people or microphones assigned.</p>;
   const leadSummaryControl = !structureOnly ? (
-    <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 min-w-0 max-w-full items-center overflow-visible bg-transparent">
+    <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 w-full min-w-0 max-w-full items-center overflow-visible bg-transparent">
       {allowEdit ? (
-        <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
+        <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
           <DebouncedAssigneeNameField
             value={leadInputAssignee?.name || ""}
             onCommit={(name) => {
@@ -1361,9 +1383,9 @@ const ServicePlanElementRow = ({
           <Button
             type="button"
             variant="tertiary"
-            svg={Plus}
+            svg={UserPlus}
             iconSize="sm"
-            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-white/10 hover:text-white max-md:h-[32px] max-md:w-11 [&_svg]:size-4"
+            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-white/10 hover:text-white max-md:h-[32px] [&_svg]:size-4"
             aria-label={`${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
             onClick={(event) => {
               event.stopPropagation();
@@ -1792,8 +1814,10 @@ const ServicePlanElementRow = ({
           >
             {allowEdit ? (
               <ServicePlanScripturePopover
-                open={scriptureEditIndex === 0}
-                onOpenChange={(open) => setScriptureEditIndex(open ? 0 : null)}
+                open={!usesContentPanel && scriptureEditIndex === 0}
+                onOpenChange={(open) => {
+                  if (!usesContentPanel) setScriptureEditIndex(open ? 0 : null);
+                }}
                 initialScriptureRef={scriptureRefs[0]}
                 trigger
                 onSelect={(scriptureRef) => {
@@ -1809,6 +1833,9 @@ const ServicePlanElementRow = ({
                     type="button"
                     className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                     aria-label={`Edit scripture ${scriptureLabel}`}
+                    onClick={(event) => {
+                      if (usesContentPanel) openContent(event.currentTarget);
+                    }}
                   >
                     <Icon
                       svg={BookOpen}
@@ -1855,10 +1882,12 @@ const ServicePlanElementRow = ({
             >
               {allowEdit ? (
                 <ServicePlanScripturePopover
-                  open={scriptureEditIndex === scriptureIndex}
-                  onOpenChange={(open) =>
-                    setScriptureEditIndex(open ? scriptureIndex : null)
-                  }
+                  open={!usesContentPanel && scriptureEditIndex === scriptureIndex}
+                  onOpenChange={(open) => {
+                    if (!usesContentPanel) {
+                      setScriptureEditIndex(open ? scriptureIndex : null);
+                    }
+                  }}
                   initialScriptureRef={additionalScripture}
                   trigger
                   onSelect={(scriptureRef) => {
@@ -1874,6 +1903,9 @@ const ServicePlanElementRow = ({
                       type="button"
                       className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                       aria-label={`Edit scripture ${additionalScripture.label}`}
+                      onClick={(event) => {
+                        if (usesContentPanel) openContent(event.currentTarget);
+                      }}
                     >
                       <Icon svg={BookOpen} size="xs" className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} />
                       <span className="min-w-0 flex-1 truncate">{additionalScripture.label}</span>
@@ -1915,7 +1947,7 @@ const ServicePlanElementRow = ({
           <Button
             type="button"
             variant="tertiary"
-            svg={Plus}
+            svg={FilePlus}
             iconSize="sm"
             className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-[32px] max-md:w-11 max-md:text-sm [&_svg]:size-4"
             aria-label={`Manage content for ${itemLabel}`}
@@ -1927,7 +1959,7 @@ const ServicePlanElementRow = ({
       <Button
         type="button"
         variant="tertiary"
-        svg={Plus}
+        svg={FilePlus}
         iconSize="sm"
         className="box-border !h-[32px] !min-h-0 !max-h-[32px] !py-0 w-full justify-start border-0 px-1.5 text-xs font-medium leading-5 text-gray-200 hover:bg-cyan-500/10 hover:text-white max-lg:text-sm [&_svg]:text-cyan-300"
         aria-label={`Add content to ${itemLabel}`}
@@ -2353,7 +2385,7 @@ const ServicePlanElementRow = ({
             {contentSummaryControl || <span className="flex h-8 items-center text-xs text-gray-500">—</span>}
           </div>
 
-          <div className={cn(SERVICE_PLAN_COL.assignedEdit, "max-md:col-start-4 max-md:col-span-2 max-md:row-start-2")}>
+          <div className={cn(SERVICE_PLAN_COL.assignedEdit, "max-md:[grid-column:4_/-1] max-md:row-start-2 max-md:w-full max-md:self-stretch")}>
             {leadSummaryControl || <span className="text-xs text-gray-500">—</span>}
           </div>
 
@@ -2367,8 +2399,7 @@ const ServicePlanElementRow = ({
           className={cn(
             SERVICE_PLAN_COL.row,
             !allowEdit && hasViewActions && SERVICE_PLAN_COL.mediumViewWithActions,
-            !hasViewActions &&
-              "md:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)]",
+            !hasViewActions && SERVICE_PLAN_COL.viewWithoutActions,
             hasViewActions &&
               "max-md:grid-cols-[0rem_5rem_3.5rem_minmax(0,1fr)_6.5rem]!",
             !hasViewActions && "max-md:grid-cols-[1.5rem_5rem_3.5rem_minmax(0,1fr)]",
@@ -2420,7 +2451,7 @@ const ServicePlanElementRow = ({
               )}
               aria-label="Songs and scripture"
             >
-            {contentSummaryControl || <span className="flex h-8 w-full items-center justify-center text-xs text-gray-500">—</span>}
+            {contentSummaryControl || <span className="flex h-8 w-full items-center justify-start text-xs text-gray-500 max-md:justify-center">—</span>}
             </div>
           ) : null}
           <div className={cn(SERVICE_PLAN_COL.assignedView, "max-md:col-start-4 max-md:row-start-2 max-md:self-center", hasViewActions ? "max-md:col-span-2" : "max-md:col-span-1")}>

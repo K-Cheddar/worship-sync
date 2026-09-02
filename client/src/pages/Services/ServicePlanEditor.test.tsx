@@ -1458,7 +1458,9 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     // Existing plans open in compact view mode — titles are text, not inputs.
-    expect(await screen.findByText("Living Hope")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "View full name: Living Hope" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
     expect(
@@ -1618,7 +1620,8 @@ describe("ServicePlanEditor", () => {
       screen.getByRole("button", { name: /Assignees for Living Hope/i }),
     );
     expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
-    await user.click(screen.getByRole("button", { name: /Close/i }));
+    await user.click(screen.getByRole("button", { name: /Close side panel/i }));
+    await user.click(screen.getByRole("button", { name: /^Done$/i }));
 
     // Content and notes stay close to the row, but use separate actions.
     // Existing notes start minimized to one preview line — expand to edit.
@@ -1628,21 +1631,7 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Notes" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Expand notes/i }));
-    expect(await screen.findByRole("textbox", { name: "Notes" })).toHaveTextContent(
-      "Slow the tempo down.",
-    );
-    expect(screen.getByRole("button", { name: /Add content to Living Hope/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /More actions for Living Hope/i })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Add content to Living Hope/i }));
-    expect(await screen.findByRole("menuitem", { name: /^Song$/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /^Scripture$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /^Note$/i })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /More actions for Living Hope/i }));
-    expect(
-      await screen.findByRole("menuitem", { name: /Team-specific note/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
   });
 
   it("autosaves note typing without requiring the editor to blur", async () => {

@@ -650,6 +650,18 @@ const ServicePlanSectionList = ({
       />
     </div>
   );
+  const panelFooter = (
+    <div className="border-t border-gray-800 p-4">
+      <Button
+        type="button"
+        variant="primary"
+        className="w-full cursor-pointer justify-center"
+        onClick={closeAssignmentPanel}
+      >
+        Done
+      </Button>
+    </div>
+  );
   const panelContent = (
     <>
       {songDetails ? (
@@ -712,7 +724,7 @@ const ServicePlanSectionList = ({
           {header}
           <ServicePlanElementColumnHeader
             isEditing={isEditing}
-            showActionsColumn={canEdit || Boolean(liveRowState.isServiceDay)}
+            showActionsColumn={isEditing || Boolean(liveRowState.isServiceDay)}
             showAssignedColumn={!structureOnly}
           />
 
@@ -812,12 +824,13 @@ const ServicePlanSectionList = ({
         {activePanelElement || songDetails ? (
           <aside
             aria-label={panelAriaLabel}
-            className="hidden min-h-0 w-[min(26rem,32vw)] shrink-0 flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-950/95 xl:flex"
+            className="hidden min-h-0 w-[min(26rem,32vw)] shrink-0 flex-col overflow-hidden rounded-lg border border-gray-500/35 bg-sheet-surface text-neutral-100 shadow-xl xl:flex"
           >
             {panelHeader}
             <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
               {panelContent}
             </div>
+            {panelFooter}
           </aside>
         ) : null}
         <Sheet
@@ -837,16 +850,7 @@ const ServicePlanSectionList = ({
             <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
               {panelContent}
             </div>
-            <div className="border-t border-gray-800 p-4 xl:hidden">
-              <Button
-                type="button"
-                variant="primary"
-                className="w-full cursor-pointer justify-center"
-                onClick={closeAssignmentPanel}
-              >
-                Done
-              </Button>
-            </div>
+            {panelFooter}
           </SheetContent>
         </Sheet>
       </div>

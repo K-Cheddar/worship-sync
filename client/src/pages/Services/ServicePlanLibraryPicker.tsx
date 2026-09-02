@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import FilteredItems from "../../components/FilteredItems/FilteredItems";
 import Modal from "../../components/Modal/Modal";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -50,6 +50,7 @@ const ServicePlanLibraryPicker = ({
 
   const [songQuery, setSongQuery] = useState(initialQuery.trim());
   const [showCreateSong, setShowCreateSong] = useState(startInCreate);
+  const createSongSurfaceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -132,12 +133,16 @@ const ServicePlanLibraryPicker = ({
         }
       >
         {showCreateSong ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            ref={createSongSurfaceRef}
+            className="min-h-0 flex-1 overflow-hidden"
+          >
             <CreateItem
               variant="embedded"
               title=""
               onCancel={() => setShowCreateSong(false)}
               onCreated={handleCreated}
+              drawerPortalContainer={createSongSurfaceRef.current}
             />
           </div>
         ) : (

@@ -1213,6 +1213,10 @@ app.post(
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
 app.get("/api/churches/:churchId/service-plans", authHandlers.listServicePlans);
 app.get(
+  "/api/churches/:churchId/service-plans/:planKey/assignments",
+  authHandlers.getServicePlanAssignments,
+);
+app.get(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.getServicePlan,
 );

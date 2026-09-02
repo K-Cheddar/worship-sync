@@ -24,6 +24,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
 } from "../types/servicePlan";
+import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
   AuthBootstrap,
   ChurchBranding,
@@ -1649,6 +1650,15 @@ export const getServicePlan = async (churchId: string, planKey: string) =>
   }>(`api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`, {
     method: "GET",
   });
+
+export const getServicePlanAssignments = async (
+  churchId: string,
+  planKey: string,
+) =>
+  apiFetch<{ success: boolean; assignments: ServicePlanningTeamAssignment[] }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/assignments`,
+    { method: "GET" },
+  );
 
 export const saveServicePlan = async (
   churchId: string,
