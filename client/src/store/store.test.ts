@@ -384,6 +384,9 @@ describe("store module", () => {
       }),
     ]);
 
+    // Listener effects start asynchronously; let the debounced persistence
+    // listener schedule its fake timer before advancing it.
+    await flushListenerEffects();
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
