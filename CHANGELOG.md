@@ -1,3 +1,20 @@
+# [2.29.0](https://github.com/K-Cheddar/worship-sync/compare/v2.28.0...v2.29.0) (2026-09-02)
+
+
+### Bug Fixes
+
+* Fix scheduling issue ([10c8d43](https://github.com/K-Cheddar/worship-sync/commit/10c8d432d5ac3a695e3338207f1b0855c1b62da7))
+* harden auth recovery and intake notifications ([d58ac3c](https://github.com/K-Cheddar/worship-sync/commit/d58ac3cd2bf61843398d7ed39af5398c0b50e47b))
+
+
+### Features
+
+* complete responsive navigation coverage ([c11df50](https://github.com/K-Cheddar/worship-sync/commit/c11df5004dcd449be9d8f7065d6df5b7f7320679))
+* expand service plan and song library workflows ([a43282f](https://github.com/K-Cheddar/worship-sync/commit/a43282fd97d7eca6d3076baca146b9a3bbfb1d24))
+* expand service planning and team workflows ([18cce78](https://github.com/K-Cheddar/worship-sync/commit/18cce78cdec80300464697690637c901585e14b0))
+* improve lyrics import and Genius fallback ([1a6bec9](https://github.com/K-Cheddar/worship-sync/commit/1a6bec96b5a181b059f0a478b65828cd45ff23df))
+* improve teams and account workflows ([63b910d](https://github.com/K-Cheddar/worship-sync/commit/63b910dda02c0bd8393a32e243888f48199cb41e))
+
 # [2.28.0](https://github.com/K-Cheddar/worship-sync/compare/v2.27.0...v2.28.0) (2026-08-28)
 
 
