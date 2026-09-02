@@ -1,3 +1,10 @@
+# [2.30.0](https://github.com/K-Cheddar/worship-sync/compare/v2.29.0...v2.30.0) (2026-09-02)
+
+
+### Features
+
+* Improve by date layout ([89d7adb](https://github.com/K-Cheddar/worship-sync/commit/89d7adbafb591407a65f77cd4d68d81e7f793f92))
+
 # [2.29.0](https://github.com/K-Cheddar/worship-sync/compare/v2.28.0...v2.29.0) (2026-09-02)
 
 
