@@ -1,6 +1,14 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
-import { FileQuestion, Import, LayoutList, Plus, Check, X } from "lucide-react";
+import {
+  FileQuestion,
+  Import,
+  LayoutList,
+  Plus,
+  Check,
+  X,
+  Loader2,
+} from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -41,7 +49,10 @@ import {
 } from "../../components/LyricsImportQuerySummary/LyricsImportQuerySummary";
 import { LyricsImportLyricsPreview } from "../../components/LyricsImportLyricsPreview/LyricsImportLyricsPreview";
 import ViewExternalLyricsDrawer from "../../components/FilteredItems/ViewExternalLyricsDrawer";
-import { resolveLrclibImport } from "../../api/lrclib";
+import {
+  fetchGeniusLyricsLocally,
+  resolveLrclibImport,
+} from "../../api/lrclib";
 import {
   createSongMetadataFromLrclib,
   getImportableLyricsFromTrack,
@@ -114,6 +125,8 @@ export type CreateItemProps = {
    * Still writes the library song (allItems + allDocs).
    */
   onCreated?: (item: ItemState) => void;
+  /** Parent dialog surface for lyrics drawers opened from the embedded form. */
+  drawerPortalContainer?: HTMLElement | null;
 };
 
 const CreateItem = ({
@@ -121,10 +134,13 @@ const CreateItem = ({
   title,
   onCancel,
   onCreated,
+  drawerPortalContainer,
 }: CreateItemProps = {}) => {
   const isEmbedded = variant === "embedded";
   const createItemDraft = useSelector((state: RootState) => state.createItem);
-  const { list } = useSelector((state: RootState) => state.allItems);
+  const { list, isInitialized: isAllItemsInitialized } = useSelector(
+    (state: RootState) => state.allItems,
+  );
   const { songs: songLibrary } = useSelector(selectSongLibrary);
 
   const {
@@ -158,6 +174,7 @@ const CreateItem = ({
     useState<NormalizedLrclibTrack | null>(null);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const canCreateEmbeddedSong = Boolean(db && isAllItemsInitialized);
 
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -202,7 +219,8 @@ const CreateItem = ({
   };
 
   const showLyricsImportPanel =
-    selectedType === "song" && lyricsImportCandidates.length > 0;
+    selectedType === "song" &&
+    (lyricsImportCandidates.length > 0 || isImportingLyrics);
 
   const dismissLyricsImportPanel = () => {
     updateCreateItemDraft({
@@ -255,8 +273,21 @@ const CreateItem = ({
     setSearchParams({}, { replace: true });
   }, [dispatch, isEmbedded, searchParams, setSearchParams]);
 
-  const applyLrclibImport = (candidate: NormalizedLrclibTrack) => {
-    const lyricsText = getImportableLyricsFromTrack(candidate);
+  const applyLrclibImport = async (candidate: NormalizedLrclibTrack) => {
+    let resolvedCandidate = candidate;
+    if (!getImportableLyricsFromTrack(candidate)) {
+      try {
+        resolvedCandidate = await fetchGeniusLyricsLocally(candidate);
+      } catch {
+        updateCreateItemDraft({
+          lyricsImportError:
+            "Genius did not return lyrics. Try another result or paste the lyrics manually.",
+        });
+        return;
+      }
+    }
+
+    const lyricsText = getImportableLyricsFromTrack(resolvedCandidate);
 
     if (!lyricsText) {
       updateCreateItemDraft({
@@ -268,9 +299,9 @@ const CreateItem = ({
 
     updateCreateItemDraft({
       text: lyricsText,
-      songArtist: candidate.artistName,
-      songAlbum: candidate.albumName || "",
-      songMetadata: createSongMetadataFromLrclib(candidate),
+      songArtist: resolvedCandidate.artistName,
+      songAlbum: resolvedCandidate.albumName || "",
+      songMetadata: createSongMetadataFromLrclib(resolvedCandidate),
       lyricsImportCandidates: [],
       lyricsImportError: "",
     });
@@ -289,6 +320,7 @@ const CreateItem = ({
 
     setIsImportingLyrics(true);
     updateCreateItemDraft({ lyricsImportError: "" });
+    setMobileSongTab("import");
 
     try {
       const result = await resolveLrclibImport({
@@ -298,7 +330,7 @@ const CreateItem = ({
       });
 
       if (result.match) {
-        applyLrclibImport(result.match);
+        await applyLrclibImport(result.match);
         return;
       }
 
@@ -310,7 +342,24 @@ const CreateItem = ({
         return;
       }
 
-      updateCreateItemDraft({ lyricsImportCandidates: result.candidates });
+      const hydratedCandidates = await Promise.all(
+        result.candidates.map(async (candidate) => {
+          if (
+            candidate.source !== "genius" ||
+            getImportableLyricsFromTrack(candidate)
+          ) {
+            return candidate;
+          }
+
+          try {
+            return await fetchGeniusLyricsLocally(candidate);
+          } catch {
+            return candidate;
+          }
+        }),
+      );
+
+      updateCreateItemDraft({ lyricsImportCandidates: hydratedCandidates });
     } catch (error) {
       console.error("LRCLIB import failed:", error);
       updateCreateItemDraft({
@@ -371,8 +420,10 @@ const CreateItem = ({
     // Redux state. The regular Controller creator can still build its local
     // draft before Pouch is ready, but the embedded "Create and attach" path
     // promises a durable library song, so wait for the library connection.
-    if (isEmbedded && !db) {
-      setCreateError("Song library is still connecting. Wait a moment, then try again.");
+    if (isEmbedded && !canCreateEmbeddedSong) {
+      setCreateError(
+        "Song library is still connecting. Wait a moment, then try again.",
+      );
       return;
     }
     setCreateError("");
@@ -502,8 +553,18 @@ const CreateItem = ({
       <p className="text-sm text-neutral-300">
         Select a result below to import into this draft.
       </p>
-      <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-        {lyricsImportCandidates.map((candidate) => {
+      {isImportingLyrics ? (
+        <div
+          className="flex min-h-0 flex-1 items-center justify-center text-sm text-neutral-300"
+          role="status"
+          aria-label="Loading lyrics results"
+        >
+          <Loader2 className="mr-2 size-5 animate-spin" aria-hidden="true" />
+          Searching for lyrics...
+        </div>
+      ) : (
+        <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+          {lyricsImportCandidates.map((candidate) => {
           const lyricsText = getImportableLyricsFromTrack(candidate);
 
           return (
@@ -552,7 +613,7 @@ const CreateItem = ({
                     variant="cta"
                     className="min-w-0 flex-1 justify-center"
                     svg={Import}
-                    onClick={() => applyLrclibImport(candidate)}
+                    onClick={() => void applyLrclibImport(candidate)}
                   >
                     Use Lyrics
                   </Button>
@@ -560,8 +621,9 @@ const CreateItem = ({
               </div>
             </li>
           );
-        })}
-      </ul>
+          })}
+        </ul>
+      )}
     </div>
   );
 
@@ -572,6 +634,7 @@ const CreateItem = ({
         isOpen={Boolean(viewLyricsCandidate)}
         isMobile={isMobile}
         onClose={() => setViewLyricsCandidate(null)}
+        portalContainer={drawerPortalContainer}
       />
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         {isEmbedded && onCancel ? (
@@ -729,7 +792,7 @@ const CreateItem = ({
                     onClick={importLyricsFromLrclib}
                     disabled={!itemName.trim() || isImportingLyrics}
                   >
-                    {isImportingLyrics ? "Importing..." : "Import Lyrics"}
+                    {isImportingLyrics ? "Searching..." : "Import Lyrics"}
                   </Button>
                   <p className="text-xs text-gray-400">
                     Lookup uses your song name, artist, and album. Or paste lyrics below.
@@ -889,7 +952,7 @@ const CreateItem = ({
               </div>
             )}
             <div className="mt-3 flex shrink-0 flex-col gap-2">
-              {isEmbedded && !db ? (
+              {isEmbedded && !canCreateEmbeddedSong ? (
                 <p className="text-sm text-amber-200" role="status">
                   Song library is still connecting.
                 </p>
@@ -904,7 +967,7 @@ const CreateItem = ({
                   !itemName ||
                   (selectedType !== "song" && !!existingItem) ||
                   justCreated ||
-                  (isEmbedded && !db)
+                  (isEmbedded && !canCreateEmbeddedSong)
                 }
                 variant="cta"
                 className="w-full justify-center text-base"

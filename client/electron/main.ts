@@ -894,6 +894,54 @@ ipcMain.handle("open-external-url", async (_event, targetUrl: string) => {
   return true;
 });
 
+ipcMain.handle("fetch-genius-lyrics", async (_event, targetUrl: string) => {
+  const url = new URL(targetUrl);
+  if (url.protocol !== "https:" || url.hostname !== "genius.com") {
+    throw new Error("Only Genius song pages can be fetched locally.");
+  }
+
+  const lyricsWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: WORSHIPSYNC_SESSION_PARTITION,
+    },
+  });
+
+  try {
+    await Promise.race([
+      lyricsWindow.loadURL(url.toString(), {
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Genius page load timed out.")), 10000),
+      ),
+    ]);
+
+    const lyrics = await lyricsWindow.webContents.executeJavaScript(`
+      Array.from(document.querySelectorAll("#lyrics-root [data-lyrics-container='true']"))
+        .map((container) => {
+          const clone = container.cloneNode(true);
+          clone
+            .querySelectorAll("[data-exclude-from-selection='true']")
+            .forEach((excluded) => excluded.remove());
+          clone.querySelectorAll("br").forEach((lineBreak) => {
+            lineBreak.replaceWith(document.createTextNode("\\n"));
+          });
+          return (clone.textContent || "").trim();
+        })
+        .filter(Boolean)
+        .join("\\n")
+    `);
+
+    return { ok: true, status: 200, lyrics };
+  } finally {
+    if (!lyricsWindow.isDestroyed()) lyricsWindow.destroy();
+  }
+});
+
 ipcMain.handle("desktop-auth-listener-ready", () => {
   desktopAuthListenerReady = true;
   if (

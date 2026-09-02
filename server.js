@@ -2769,6 +2769,7 @@ app.get("/api/lrclib/search", async (req, res) => {
     res.json(
       await searchAllLyricsTracks(params, {
         includeGenius: !skipGeniusLyricsImport,
+        includeGeniusLyrics: req.query.localGenius !== "true",
       }),
     );
   } catch (error) {

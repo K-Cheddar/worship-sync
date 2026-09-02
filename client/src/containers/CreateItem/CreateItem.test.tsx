@@ -49,6 +49,7 @@ jest.mock("../../utils/itemUtil", () => {
 
 jest.mock("../../api/lrclib", () => ({
   resolveLrclibImport: jest.fn(),
+  fetchGeniusLyricsLocally: jest.fn(),
 }));
 
 jest.mock("../../utils/generateRandomId");
@@ -110,10 +111,12 @@ const createTestStore = ({
   createItem = initialCreateItemState,
   allItemsList = [],
   allSongDocs = [],
+  isAllItemsInitialized = true,
 }: {
   createItem?: ReturnType<typeof createItemSlice.reducer>;
   allItemsList?: ServiceItem[];
   allSongDocs?: ItemState[];
+  isAllItemsInitialized?: boolean;
 } = {}) => {
   const undoableState = createUndoableState();
 
@@ -135,7 +138,7 @@ const createTestStore = ({
         ...allItemsSlice.getInitialState(),
         list: allItemsList,
         isAllItemsLoading: false,
-        isInitialized: true,
+        isInitialized: isAllItemsInitialized,
       },
       allDocs: {
         ...allDocsSlice.getInitialState(),
@@ -438,6 +441,44 @@ describe("CreateItem", () => {
       expect(screen.getByText("Choose song")).toBeInTheDocument();
     });
 
+    let resolveSecondImport: (
+      value: Awaited<ReturnType<typeof resolveLrclibImport>>,
+    ) => void = () => undefined;
+    const secondImport = new Promise<
+      Awaited<ReturnType<typeof resolveLrclibImport>>
+    >((resolve) => {
+      resolveSecondImport = resolve;
+    });
+    mockedResolveLrclibImport.mockReturnValueOnce(secondImport);
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+
+    expect(
+      screen.getByRole("status", { name: "Loading lyrics results" }),
+    ).toHaveTextContent("Searching for lyrics...");
+    expect(
+      screen.queryByRole("button", { name: "Use Lyrics" }),
+    ).not.toBeInTheDocument();
+
+    resolveSecondImport({
+      match: null,
+      candidates: [
+        {
+          source: "lrclib",
+          lrclibId: 42,
+          trackName: "Owe You Praise",
+          artistName: "Elevation Worship",
+          albumName: "Living Room Sessions",
+          plainLyrics: "Verse 1\nLine one\nLine two\nBridge\nFinal line",
+          syncedLyrics: null,
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Use Lyrics" })).toBeInTheDocument();
+    });
+
     expect(screen.queryByRole("button", { name: "Expand preview" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "View lyrics" }));
@@ -550,6 +591,35 @@ describe("CreateItem", () => {
     expect(
       screen.getByText(/A song named “Amazing Grace” already exists\./),
     ).toBeInTheDocument();
+  });
+
+  it("waits for the shared item index before embedded song creation", () => {
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "New Song",
+      },
+      isAllItemsInitialized: false,
+    });
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <CreateItem variant="embedded" />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Song library is still connecting.",
+    );
+    expect(
+      screen.getByRole("button", { name: /Create and attach/i }),
+    ).toBeDisabled();
   });
 
   it("keeps the draft when navigating to Bible and back without creating", async () => {
