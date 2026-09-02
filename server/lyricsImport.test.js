@@ -88,7 +88,7 @@ test("getGeniusTrack resolves to null when the lyrics page has no lyrics contain
   );
 });
 
-test("getGeniusTrack returns normalized lyrics when Genius search and scrape both succeed", async () => {
+test("getGeniusTrack preserves chart labels while removing the Genius preamble", async () => {
   const service = createLyricsImportService({
     geniusAccessToken: "test-token",
   });
@@ -119,7 +119,7 @@ test("getGeniusTrack returns normalized lyrics when Genius search and scrape bot
       return {
         status: 200,
         data:
-          "<div id=\"lyrics-root\"><div data-lyrics-container='true'>1 Contributor Amazing Grace Lyrics" +
+          "<div id=\"lyrics-root\"><div data-lyrics-container='true'><div data-exclude-from-selection='true'>Song description Read More</div>1 Contributor Amazing Grace Lyrics" +
           "[Verse 1]<br>Amazing grace<br>How sweet the sound</div></div>",
       };
     },
@@ -130,7 +130,58 @@ test("getGeniusTrack returns normalized lyrics when Genius search and scrape bot
       });
 
       assert.equal(track?.source, "genius");
-      assert.equal(track?.plainLyrics, "Amazing grace\nHow sweet the sound");
+      assert.equal(
+        track?.plainLyrics,
+        "[Verse 1]\nAmazing grace\nHow sweet the sound",
+      );
+    },
+  );
+});
+
+test("searchGeniusTracks can return metadata without scraping lyrics", async () => {
+  const service = createLyricsImportService({ geniusAccessToken: "test-token" });
+
+  await withMockedAxiosGet(
+    async (url) => {
+      assert.ok(url.startsWith("https://api.genius.com/search"));
+      return {
+        data: {
+          response: {
+            hits: [
+              {
+                type: "song",
+                result: {
+                  id: 7,
+                  url: "https://genius.com/example-song-lyrics",
+                  title: "Example Song",
+                  primary_artist: { name: "Example Artist" },
+                },
+              },
+            ],
+          },
+        },
+      };
+    },
+    async () => {
+      const tracks = await service.searchGeniusTracks(
+        { track_name: "Example Song", artist_name: "Example Artist" },
+        { fetchLyrics: false },
+      );
+
+      assert.deepEqual(tracks, [
+        {
+          source: "genius",
+          geniusId: 7,
+          geniusUrl: "https://genius.com/example-song-lyrics",
+          trackName: "Example Song",
+          artistName: "Example Artist",
+          albumName: undefined,
+          durationMs: undefined,
+          instrumental: undefined,
+          plainLyrics: null,
+          syncedLyrics: null,
+        },
+      ]);
     },
   );
 });

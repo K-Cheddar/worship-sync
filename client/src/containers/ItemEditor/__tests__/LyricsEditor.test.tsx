@@ -270,6 +270,49 @@ describe("LyricsEditor", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("saves a library song without changing the active presentation item", async () => {
+    const librarySong = {
+      _id: "library-song-1",
+      name: "Library Song",
+      type: "song" as const,
+      selectedArrangement: 0,
+      arrangements: [
+        {
+          id: "arr-1",
+          name: "Master",
+          slides: [],
+          formattedLyrics: [],
+          songOrder: [],
+        },
+      ],
+    };
+    const onSaveLyrics = jest.fn().mockResolvedValue(undefined);
+    const onClose = jest.fn();
+
+    render(
+      <LyricsEditor
+        song={librarySong}
+        isOpen
+        onClose={onClose}
+        onSaveLyrics={onSaveLyrics}
+      />,
+    );
+    await waitForLyricsEditorPanelReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onSaveLyrics).toHaveBeenCalledWith({
+        arrangements: librarySong.arrangements,
+        selectedArrangement: 0,
+        songMetadata: undefined,
+      });
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    expect(mockSetIsEditMode).not.toHaveBeenCalled();
+  });
+
   it("dispatches save actions and updates arrangements using formatted song result", async () => {
     const formattedResult = {
       arrangements: [

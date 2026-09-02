@@ -77,10 +77,10 @@ describe("useMediaQuery", () => {
     );
   });
 
-  it("returns true when matchMedia is not a function (server/test fallback)", () => {
+  it("returns false when matchMedia is not a function (server/test fallback)", () => {
     (window as any).matchMedia = undefined;
 
     const { result } = renderHook(() => useMediaQuery("(max-width: 768px)"));
-    expect(result.current).toBe(true);
+    expect(result.current).toBe(false);
   });
 });

@@ -19,7 +19,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   getServicePlan,
-  getTeamsBootstrap,
+  getServicePlanAssignments,
   listServicePlans,
 } from "../../api/auth";
 import {
@@ -35,15 +35,11 @@ import {
   useTeamsLiveSync,
   type TeamsStreamEvent,
 } from "../Teams/hooks/useTeamsLiveSync";
-import { getOccurrenceAssignmentSummary } from "../Teams/pages/teamsAssignmentsSummary";
-import { toServicePlanningTeamAssignments } from "../../integrations/servicePlanning/servicePlanTeamAssignments";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { toTeamService } from "../Teams/teamsUtils";
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
-import { hydrateOccurrenceSchedules } from "../../utils/hydrateOccurrenceSchedules";
-import type { TeamScheduleOccurrence, TeamsBootstrap } from "../../api/authTypes";
 import type { ServicePlan, ServicePlanSummary } from "../../types/servicePlan";
-import { onlyHydratedSchedules } from "../../api/authTypes";
+import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningImport";
 import {
   chooseControllerServicePlanKey,
   servicePlanToSummary,
@@ -90,7 +86,6 @@ export const useCurrentServicePlanSource = () => {
   const [plansError, setPlansError] = useState<string | null>(null);
   const [plansLoaded, setPlansLoaded] = useState(false);
 
-  const bootstrapRef = useRef<TeamsBootstrap | null>(null);
   const planRef = useRef<ServicePlan | null>(null);
   const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
@@ -121,7 +116,6 @@ export const useCurrentServicePlanSource = () => {
       loginState !== "guest" &&
       isServicePlanningEnabled,
   );
-  const canLoadTeamDetails = Boolean(canViewTeams);
 
   const clearUnavailablePlan = useCallback(
     (planKey: string, allowAutomaticFallback = false) => {
@@ -164,7 +158,6 @@ export const useCurrentServicePlanSource = () => {
       generationRef.current += 1;
       manualSelectionRef.current = false;
       planRef.current = null;
-      bootstrapRef.current = null;
       selectedPlanKeyRef.current = null;
       setSavedPlans([]);
       setPlansLoaded(false);
@@ -263,45 +256,19 @@ export const useCurrentServicePlanSource = () => {
     [occurrences, selectedPlanKey],
   );
 
-  const occurrenceRef = useRef<TeamScheduleOccurrence | null>(occurrence);
-  const servicesRef = useRef(services);
-  useEffect(() => {
-    occurrenceRef.current = occurrence;
-    servicesRef.current = services;
-  }, [occurrence, services]);
-
   const applyPlan = useCallback(
-    async (plan: ServicePlan, shouldApply: () => boolean = () => true) => {
-      const bootstrap = bootstrapRef.current;
-      const targetOccurrence = occurrenceRef.current;
-      let assignments: ReturnType<typeof toServicePlanningTeamAssignments> = [];
-      if (bootstrap && targetOccurrence) {
-        const { schedules } = await hydrateOccurrenceSchedules({
-          churchId,
-          occurrence: targetOccurrence,
-          schedules: bootstrap.schedules || [],
-        });
-        if (!shouldApply()) return;
-        bootstrapRef.current = { ...bootstrap, schedules };
-        assignments = toServicePlanningTeamAssignments(
-          getOccurrenceAssignmentSummary({
-            occurrence: targetOccurrence,
-            schedules: onlyHydratedSchedules(schedules),
-            positions: bootstrap.positions || [],
-            members: bootstrap.members || [],
-            teams: bootstrap.teams || [],
-            services: servicesRef.current,
-          }),
-        );
-      }
-
+    async (
+      plan: ServicePlan,
+      assignments: ServicePlanningTeamAssignment[],
+      shouldApply: () => boolean = () => true,
+    ) => {
       const outline = await loadPlanPreviewRef.current(plan, assignments);
       if (!shouldApply()) return;
       dispatch(
         setServicePlanningPlanOutline({ outline, planKey: plan.planKey }),
       );
     },
-    [churchId, dispatch],
+    [dispatch],
   );
 
   /**
@@ -368,14 +335,14 @@ export const useCurrentServicePlanSource = () => {
 
     const load = async () => {
       try {
-        const [planResult, bootstrap] = await Promise.all([
+        const [planResult, assignmentsResult] = await Promise.all([
           getServicePlan(churchId, selectedPlanKey),
-          canLoadTeamDetails
-            ? getTeamsBootstrap(churchId).catch(() => null)
-            : Promise.resolve(null),
+          getServicePlanAssignments(churchId, selectedPlanKey).catch(() => ({
+            success: false,
+            assignments: [],
+          })),
         ]);
         if (cancelled || generation !== generationRef.current) return;
-        if (bootstrap) bootstrapRef.current = bootstrap;
 
         const plan = planResult.servicePlan;
         planRef.current = plan;
@@ -386,6 +353,7 @@ export const useCurrentServicePlanSource = () => {
         void persistManualPlanBindingRef.current(plan);
         await applyPlan(
           plan,
+          assignmentsResult.assignments,
           () =>
             !cancelled &&
             generation === generationRef.current &&
@@ -406,7 +374,6 @@ export const useCurrentServicePlanSource = () => {
     };
   }, [
     applyPlan,
-    canLoadTeamDetails,
     churchId,
     clearUnavailablePlan,
     dispatch,
@@ -463,16 +430,14 @@ export const useCurrentServicePlanSource = () => {
         return;
       }
 
-      if (
-        canLoadTeamDetails &&
-        (event.type === "schedule-updated" || event.type === "schedule-removed")
-      ) {
+      if (event.type === "schedule-updated" || event.type === "schedule-removed") {
         if (!churchId || !planRef.current) return;
-        void getTeamsBootstrap(churchId)
-          .then((bootstrap) => {
-            bootstrapRef.current = bootstrap;
-            const plan = planRef.current;
-            if (plan) return applyPlan(plan);
+        const plan = planRef.current;
+        void getServicePlanAssignments(churchId, plan.planKey)
+          .then((result) => {
+            if (planRef.current === plan) {
+              return applyPlan(plan, result.assignments);
+            }
           })
           .catch(() => undefined);
         return;
@@ -489,23 +454,36 @@ export const useCurrentServicePlanSource = () => {
       if (event.servicePlan.planKey !== selectedPlanKeyRef.current) return;
       const generation = ++generationRef.current;
       planRef.current = event.servicePlan;
-      void applyPlan(
-        event.servicePlan,
-        () =>
-          generation === generationRef.current &&
-          selectedPlanKeyRef.current === event.servicePlan.planKey,
-      ).finally(() => {
-        if (
-          generation === generationRef.current &&
-          selectedPlanKeyRef.current === event.servicePlan.planKey
-        ) {
-          setIsLoading(false);
-        }
-      });
+      void getServicePlanAssignments(churchId, event.servicePlan.planKey)
+        .then((result) =>
+          applyPlan(
+            event.servicePlan,
+            result.assignments,
+            () =>
+              generation === generationRef.current &&
+              selectedPlanKeyRef.current === event.servicePlan.planKey,
+          ),
+        )
+        .catch(() =>
+          applyPlan(
+            event.servicePlan,
+            [],
+            () =>
+              generation === generationRef.current &&
+              selectedPlanKeyRef.current === event.servicePlan.planKey,
+          ),
+        )
+        .finally(() => {
+          if (
+            generation === generationRef.current &&
+            selectedPlanKeyRef.current === event.servicePlan.planKey
+          ) {
+            setIsLoading(false);
+          }
+        });
     },
     [
       applyPlan,
-      canLoadTeamDetails,
       churchId,
       clearUnavailablePlan,
       isEnabled,
@@ -513,7 +491,7 @@ export const useCurrentServicePlanSource = () => {
   );
 
   useTeamsLiveSync(
-    isEnabled && canLoadTeamDetails ? churchId : null,
+    isEnabled && canViewTeams ? churchId : null,
     handleLiveEvent,
   );
 
@@ -536,8 +514,12 @@ export const useCurrentServicePlanSource = () => {
         return;
       }
       planRef.current = plan;
+      const assignmentsResult = await getServicePlanAssignments(churchId, planKey).catch(
+        () => ({ success: false, assignments: [] }),
+      );
       await applyPlan(
         plan,
+        assignmentsResult.assignments,
         () =>
           generation === generationRef.current &&
           selectedPlanKeyRef.current === planKey,

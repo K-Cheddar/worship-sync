@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type FunctionComponent,
+  type MouseEvent,
   type ReactNode,
   type SVGProps,
 } from "react";
@@ -12,12 +13,13 @@ import {
   Check,
   ChevronDown,
   Ellipsis,
+  FilePlus,
   GripVertical,
   Music,
-  Plus,
   Radio,
   StickyNote,
   Trash2,
+  UserPlus,
   UserRound,
   Users,
   X,
@@ -27,7 +29,11 @@ import { CSS } from "@dnd-kit/utilities";
 import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
-import ServicePlanAssigneeList, { addMicrophoneSlot } from "./ServicePlanAssigneeList";
+import ServicePlanAssigneeList, {
+  addMicrophoneSlot,
+  addServicePlanAssignee,
+  DebouncedAssigneeNameField,
+} from "./ServicePlanAssigneeList";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -57,7 +63,6 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetHeader,
   SheetTitle,
 } from "../../components/ui/sheet";
 import {
@@ -69,9 +74,11 @@ import {
 } from "../../types/richText";
 import { parseTimeCountdown } from "../../components/TimePicker/utils";
 import { cn } from "../../utils/cnHelper";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import generateRandomId from "../../utils/generateRandomId";
 import { pad2 } from "../../constants";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
+import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import ServicePlanScripturePopover, {
   SERVICE_PLAN_SCRIPTURE_ICON_CLASS,
 } from "./ServicePlanScripturePopover";
@@ -96,6 +103,7 @@ import type {
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import {
   getServicePlanElementAssignees,
+  getServicePlanElementLead,
   getServicePlanElementScriptureRefs,
   getServicePlanElementSongRefs,
   getServicePlanRoleNotePositionIds,
@@ -116,7 +124,7 @@ export const formatPlanStartTimeDisplay = (startTime: string | undefined): strin
 
 /** Soft field chrome so inline editors sit closer to the row surface. */
 export const SERVICE_PLAN_INLINE_INPUT_CLASS =
-  "h-7 min-h-0 border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40";
+  "h-7 min-h-0 text-xs leading-5 md:!text-xs border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40 max-lg:!h-[32px] max-lg:!min-h-[32px] max-lg:px-2";
 
 /** Rich text note fields — same blend as inline plan inputs, multi-line height. */
 export const SERVICE_PLAN_INLINE_EDITOR_CLASS =
@@ -149,24 +157,32 @@ export const SERVICE_PLAN_MAKE_LIVE_ICON_COLOR = "#fca5a5";
  * gaps or TIME / LEN / TITLE / ASSIGNED drift apart.
  */
 export const SERVICE_PLAN_COL = {
-  row: "flex items-center gap-1.5 px-1.5",
-  drag: "w-7 shrink-0",
+  // On mobile, use the space between columns to widen TIME without taking
+  // width from TITLE. Keep the desktop grid unchanged.
+  row: "grid grid-cols-[1.5rem_5rem_3.5rem_minmax(0,1fr)_minmax(2rem,max-content)] gap-x-0.5 gap-y-1 px-1.5 md:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(2rem,max-content)] md:gap-x-1.5 lg:grid-cols-[1.5rem_4.5rem_max-content_minmax(11rem,1.6fr)_minmax(9rem,1.2fr)_minmax(8rem,1fr)_minmax(2rem,max-content)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)_minmax(2rem,max-content)] md:items-center",
+  drag: "w-6 shrink-0",
   /** Wide enough for "10:00 AM" / "07:00 PM" tabular time. */
-  timeView: "w-[4.75rem] shrink-0",
+  timeView: "w-[5rem] shrink-0 lg:w-[4.5rem] 2xl:w-[5rem]",
   /** Keep the edit and view time columns aligned. */
-  timeEdit: "md:w-[4.75rem] md:shrink-0 md:flex-none",
+  timeEdit: "w-[5rem] shrink-0 md:flex-none lg:w-[4.5rem] 2xl:w-[5rem]",
   /** Wide enough for "10 min" / "99 min" tabular duration. */
-  durationView: "w-16 shrink-0",
-  durationEdit: "md:w-16 md:shrink-0 md:flex-none",
+  durationView: "w-14 shrink-0 lg:w-14 2xl:w-16",
+  durationEdit: "w-full md:w-14 lg:w-14 2xl:w-16 md:shrink-0 md:flex-none",
   title: "min-w-0 flex-1",
   /** Keep content compact so title and assignment columns retain room. */
-  contentView: "w-full shrink-0 md:w-48 md:flex-none",
-  assignedView: "hidden w-28 shrink-0 md:block lg:w-36",
-  assignedEdit: "md:w-36 md:shrink-0",
+  contentView: "w-full min-w-0 shrink-0 md:w-auto md:flex-none",
+  assignedView: "w-full min-w-0 shrink-0 md:w-auto md:flex-none",
+  assignedEdit: "w-full min-w-0 md:w-auto md:flex-none",
+  /** View rows without live actions omit the trailing actions column. */
+  viewWithoutActions:
+    "md:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.6fr)_minmax(10rem,1.2fr)_minmax(9rem,1fr)] lg:grid-cols-[1.5rem_4.5rem_max-content_minmax(11rem,1.6fr)_minmax(9rem,1.2fr)_minmax(8rem,1fr)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)]",
   /** Fixed so the header and rows keep Assigned aligned with live controls. */
-  actionsView: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
+  actionsView: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-visible",
   /** Keep only a compact minimum gutter when a row has no live controls. */
-  actionsEdit: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-hidden",
+  actionsEdit: "flex w-auto min-w-8 shrink-0 items-center justify-end gap-0.5 overflow-visible",
+  /** Compact read-only layout for medium-width screens with live actions. */
+  mediumViewWithActions:
+    "md:grid-cols-[0rem_5rem_max-content_minmax(7rem,1.4fr)_minmax(8rem,1.4fr)_minmax(8rem,1.1fr)_5.75rem]! lg:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.4fr)_minmax(10rem,1.4fr)_minmax(11rem,1.1fr)_minmax(5.75rem,max-content)] 2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.4fr)_minmax(14rem,1.4fr)_minmax(12rem,1.1fr)_minmax(5.75rem,max-content)]",
 } as const;
 
 /** Shared column header for the compact plan list. */
@@ -184,12 +200,14 @@ export const ServicePlanElementColumnHeader = ({
   <div
     className={cn(
       SERVICE_PLAN_COL.row,
+      !isEditing && showActionsColumn && SERVICE_PLAN_COL.mediumViewWithActions,
+      !isEditing && !showActionsColumn && SERVICE_PLAN_COL.viewWithoutActions,
       "border-b border-gray-700/80 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400",
-      isEditing && "max-md:hidden",
+      "sticky top-0 z-10 bg-gray-950/95 max-md:hidden",
     )}
     aria-hidden
   >
-    {isEditing ? <span className={SERVICE_PLAN_COL.drag} /> : null}
+    <span className={SERVICE_PLAN_COL.drag} />
     <span className={isEditing ? SERVICE_PLAN_COL.timeEdit : SERVICE_PLAN_COL.timeView}>
       Time
     </span>
@@ -198,7 +216,7 @@ export const ServicePlanElementColumnHeader = ({
         isEditing ? SERVICE_PLAN_COL.durationEdit : SERVICE_PLAN_COL.durationView
       }
     >
-      {isEditing ? "Length" : "Len"}
+      Length
     </span>
     <span className={SERVICE_PLAN_COL.title}>Title</span>
     <span className={cn(SERVICE_PLAN_COL.contentView, "max-md:hidden")}>Content</span>
@@ -208,7 +226,7 @@ export const ServicePlanElementColumnHeader = ({
           isEditing ? SERVICE_PLAN_COL.assignedEdit : SERVICE_PLAN_COL.assignedView
         }
       >
-        Assigned
+        Led by
       </span>
     ) : null}
     {isEditing || showActionsColumn ? (
@@ -830,7 +848,7 @@ const ItemActionsMenu = ({
         {canAddContent ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Plus className="size-4" aria-hidden />
+              <FilePlus className="size-4" aria-hidden />
               Add content
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="p-1">
@@ -959,12 +977,14 @@ const AddContentMenu = ({
       <Button
         type="button"
         variant="tertiary"
-        svg={Plus}
+        svg={FilePlus}
         iconSize="sm"
         disabled={!canEdit}
         aria-haspopup="menu"
         aria-label={`Add content to ${itemLabel}`}
         className="max-md:min-h-0 border border-dashed border-gray-600/80 text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
       >
         Add content
       </Button>
@@ -1080,6 +1100,9 @@ type ServicePlanElementRowProps = {
    * directions. Notes, timings, titles and microphones stay.
    */
   structureOnly?: boolean;
+  onOpenAssignment?: (trigger?: HTMLElement) => void;
+  onOpenContent?: (trigger?: HTMLElement) => void;
+  onOpenSongDetails?: (songRef: ServicePlanSongReference) => void;
 };
 
 /**
@@ -1131,6 +1154,9 @@ const ServicePlanElementRow = ({
   resolvedSongRef,
   resolvedSongRefs,
   structureOnly = false,
+  onOpenAssignment,
+  onOpenContent,
+  onOpenSongDetails,
 }: ServicePlanElementRowProps) => {
   const hasNotes = !isRichTextEmpty(element.notes);
   const [notesEditorOpen, setNotesEditorOpen] = useState(hasNotes);
@@ -1146,7 +1172,11 @@ const ServicePlanElementRow = ({
     null,
   );
   const [assignmentSheetOpen, setAssignmentSheetOpen] = useState(false);
+  const [leadPopoverOpen, setLeadPopoverOpen] = useState(false);
+  const isDesktopAssignmentPanel = useMediaQuery("(min-width: 1280px)");
+  const usesDesktopAssignmentPanel = isDesktopAssignmentPanel && Boolean(onOpenAssignment);
   const [contentManagerOpen, setContentManagerOpen] = useState(false);
+  const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
   /** Which unmatched song chip has the suggestion popover open. */
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
     null,
@@ -1154,12 +1184,14 @@ const ServicePlanElementRow = ({
   const [scriptureOpen, setScriptureOpen] = useState(false);
   const [scriptureEditIndex, setScriptureEditIndex] = useState<number | null>(null);
   const formattedDuration = formatServicePlanDuration(element);
+  const formattedDurationDisplay = formattedDuration.replace(/ min$/, "m");
   const [durationText, setDurationText] = useState(formattedDuration);
 
   useEffect(() => {
     setDurationText(formattedDuration);
   }, [formattedDuration]);
   const allowEdit = canEdit && isEditing;
+  const usesContentPanel = allowEdit && Boolean(onOpenContent);
   const noteEditorClassName = cn(
     SERVICE_PLAN_INLINE_EDITOR_CLASS,
     !allowEdit && "opacity-100",
@@ -1194,9 +1226,28 @@ const ServicePlanElementRow = ({
   // What the plan means today: the stored reference, unless a song it couldn't
   // find at import time has since been added to the library.
   const storedSongRefs = getServicePlanElementSongRefs(element);
-  const songRefs = resolvedSongRefs ?? (
+  if (!storedSongRefs.length && element.songRef) {
+    storedSongRefs.push(element.songRef);
+  }
+  // The Controller can recognize a source row as a song before it has a
+  // durable library reference. Keep the editor's row in the same pending
+  // state so it does not fall back to the generic Add content control.
+  const recognizedUnlinkedSong = !storedSongRefs.length && (
+    /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")
+  );
+  const inferredSongRefs = recognizedUnlinkedSong
+    ? [{
+        kind: "pending" as const,
+        title: cleanPlanningTitle(titleText),
+        lyricsText: "",
+      }]
+    : [];
+  const resolvedOrStoredSongRefs = resolvedSongRefs?.length ? resolvedSongRefs : (
     resolvedSongRef && storedSongRefs.length === 1 ? [resolvedSongRef] : storedSongRefs
   );
+  const songRefs = resolvedOrStoredSongRefs.length
+    ? resolvedOrStoredSongRefs
+    : inferredSongRefs;
   const scriptureRefs = getServicePlanElementScriptureRefs(element);
   const pickerTargetSong =
     songPickerTargetIndex !== null ? songRefs[songPickerTargetIndex] : undefined;
@@ -1219,11 +1270,24 @@ const ServicePlanElementRow = ({
   const canAddNote = !hideNotes && !showNotesEditor;
   const canAddTeamNote = !hideNotes && teamNoteOptions.length > 0;
   const canAddRoleNote = !hideNotes && roleNoteOptions.length > 0;
-  /** Every named assignee, for the compact Assigned column. */
-  const assigneeSummary = assignees
-    .map((assignee) => assignee.name?.trim())
-    .filter(Boolean)
-    .join(", ");
+  const leadAssignee = getServicePlanElementLead(element);
+  const namedAssignees = assignees.filter((assignee) => assignee.name?.trim());
+  const [leadInputAssigneeId, setLeadInputAssigneeId] = useState<string | undefined>(
+    leadAssignee?.id,
+  );
+  useEffect(() => {
+    if (leadInputAssigneeId && assignees.some((assignee) => assignee.id === leadInputAssigneeId)) {
+      return;
+    }
+    setLeadInputAssigneeId(leadAssignee?.id);
+  }, [assignees, leadAssignee?.id, leadInputAssigneeId]);
+  const leadInputAssignee = assignees.find(
+    (assignee) => assignee.id === leadInputAssigneeId,
+  );
+  const hasLeadAssignee = Boolean(leadAssignee?.name?.trim());
+  const assigneeSummary = leadAssignee?.name?.trim() ||
+    (assignees.some((assignee) => !assignee.name?.trim()) ? "Unassigned" : "");
+  const additionalAssigneeCount = Math.max(0, namedAssignees.length - 1);
   const scheduledPositionIds = element.scheduledPositionIds ??
     (element.positionId ? [element.positionId] : []);
   const scheduledPositionLabel = scheduledPositionIds.length
@@ -1244,8 +1308,127 @@ const ServicePlanElementRow = ({
         }]),
       ).values(),
     );
+  const hasAssignedMicrophone = assignees.some(
+    (assignee) => (assignee.microphoneIds || []).length > 0,
+  );
+  const hasMicrophoneConflict = assignees.some((assignee) =>
+    (assignee.microphoneIds || []).some(
+      (microphoneId) => (scheduledMicrophoneHolders?.get(microphoneId) || []).length > 0,
+    ),
+  );
+  const hasMissingMicrophone = hasAssignedMicrophone && assignees.some(
+    (assignee) => Boolean(assignee.name?.trim()) && !(assignee.microphoneIds || []).length,
+  );
+  const shouldShowAssigneesBlock = structureOnly
+    ? assignees.length > 0
+    : namedAssignees.length > 1
+      || hasAssignedMicrophone
+      || hasMicrophoneConflict
+      || hasMissingMicrophone
+      || scheduledPositionIds.length > 0
+      || scheduledRows.length > 0;
+  const openAssignment = (trigger?: HTMLElement) => {
+    if (usesDesktopAssignmentPanel && onOpenAssignment) {
+      onOpenAssignment(trigger);
+      return;
+    }
+    setAssignmentSheetOpen(true);
+  };
+  const openContent = (trigger?: HTMLElement) => {
+    if (usesContentPanel && onOpenContent) {
+      onOpenContent(trigger);
+      return;
+    }
+    setContentManagerOpen(true);
+  };
+  const readOnlyLeadDetails = assignees.length > 0 ? (
+    <ServicePlanAssigneeList
+      assignees={assignees}
+      allowEdit={false}
+      microphones={microphones}
+      assignedToHistoryValues={assignedToHistoryValues}
+      onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+      isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+      itemLabel={itemLabel}
+      structureOnly={structureOnly}
+      scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+      onChange={() => undefined}
+    />
+  ) : <p className="px-1 text-xs text-gray-400">No people or microphones assigned.</p>;
+  const leadSummaryControl = !structureOnly ? (
+    <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 w-full min-w-0 max-w-full items-center overflow-visible bg-transparent">
+      {allowEdit ? (
+        <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
+          <DebouncedAssigneeNameField
+            value={leadInputAssignee?.name || ""}
+            onCommit={(name) => {
+              const lead = leadInputAssignee;
+              if (lead) {
+                onUpdate({
+                  assignees: assignees.map((assignee) =>
+                    assignee.id === lead.id ? { ...assignee, name } : assignee,
+                  ),
+                });
+              } else if (name.trim()) {
+                onUpdate({ assignees: addServicePlanAssignee(assignees, { name }) });
+              }
+            }}
+            historyValues={assignedToHistoryValues}
+            onRemoveHistoryValue={onRemoveAssignedToHistoryValue}
+            isHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+            label={`Led by for ${itemLabel}`}
+            placeholder="Led by"
+            compact
+          />
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={UserPlus}
+            iconSize="sm"
+            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-white/10 hover:text-white max-md:h-[32px] [&_svg]:size-4"
+            aria-label={`${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              openAssignment(event.currentTarget);
+            }}
+          >
+            {additionalAssigneeCount > 0 ? additionalAssigneeCount : null}
+          </Button>
+        </div>
+      ) : (
+        <Popover open={leadPopoverOpen} onOpenChange={setLeadPopoverOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1.5 text-left text-xs leading-6 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white max-md:h-[32px] max-md:text-sm max-md:leading-6",
+                hasLeadAssignee
+                  ? "text-gray-100"
+                  : "italic text-gray-500",
+              )}
+              aria-label={`View people and microphones for ${itemLabel}`}
+            >
+              <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-6 translate-y-px">
+                {assigneeSummary || "Unassigned"}
+              </span>
+              {additionalAssigneeCount > 0 ? (
+                <span className="shrink-0 text-gray-400">+{additionalAssigneeCount}</span>
+              ) : null}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 p-2 text-gray-100"
+          >
+            {readOnlyLeadDetails}
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  ) : null;
   const canAddContent = canAddSong || canAddScripture;
-  const showLiveControls = isServiceDay;
+  const showLiveControls = isServiceDay && !isEditing;
+  const hasViewActions = isLive || showLiveControls;
 
   const handleAddNote = () => {
     setNotesEditorOpen(true);
@@ -1319,6 +1502,13 @@ const ServicePlanElementRow = ({
     setSongPickerOpen(true);
   };
 
+  // Let the dropdown finish its close animation before handing focus to the
+  // modal scripture picker. This keeps the two Radix layers from competing
+  // during the same pointer event.
+  const openScripturePicker = () => {
+    window.setTimeout(() => setScriptureOpen(true), 0);
+  };
+
   const closeSongPicker = () => {
     setSongPickerOpen(false);
     setSongPickerStartInCreate(false);
@@ -1370,7 +1560,7 @@ const ServicePlanElementRow = ({
       onAddSong={() => openSongPicker(false)}
       onAddScripture={() => {
         setScriptureEditIndex(null);
-        setScriptureOpen(true);
+        openScripturePicker();
       }}
       onAddTeamNote={handleAddTeamNote}
       onAddRoleNote={handleCreateRoleNote}
@@ -1388,35 +1578,14 @@ const ServicePlanElementRow = ({
       onAddSong={() => openSongPicker(false)}
       onAddScripture={() => {
         setScriptureEditIndex(null);
-        setScriptureOpen(true);
+        openScripturePicker();
       }}
     />
   ) : null;
 
-  const contentAddControl = allowEdit && addContentMenu ? (
-    canAddScripture ? (
-      <ServicePlanScripturePopover
-        open={scriptureOpen}
-        onOpenChange={setScriptureOpen}
-        disabled={!allowEdit}
-        onSelect={(scriptureRef) => onUpdate({
-          // Clearing a legacy singular field is what moves this element onto
-          // the arrays, so whatever it held has to be written across with it.
-          // Dropping `songRef` on its own loses the song of an element that
-          // only ever had the singular field.
-          songRef: undefined,
-          songRefs,
-          scriptureRef: undefined,
-          scriptureRefs: [...scriptureRefs, scriptureRef],
-        })}
-        anchor={<span className="inline-flex">{addContentMenu}</span>}
-      />
-    ) : (
-      addContentMenu
-    )
-  ) : null;
+  const contentAddControl = allowEdit ? addContentMenu : null;
 
-  const liveControls = (
+  const liveControls = !isEditing ? (
     <>
       {isLive ? (
         <span
@@ -1440,7 +1609,8 @@ const ServicePlanElementRow = ({
           type="button"
           variant="tertiary"
           iconSize="sm"
-          className="shrink-0 max-md:min-h-0 max-md:text-[11px]"
+          className="shrink-0 px-1.5 text-xs max-md:min-h-0 max-md:text-sm"
+          gap="gap-0.5"
           svg={Radio}
           color={SERVICE_PLAN_MAKE_LIVE_ICON_COLOR}
           disabled={!canEdit || publicLiveBusy}
@@ -1448,11 +1618,11 @@ const ServicePlanElementRow = ({
           aria-label={`Make ${itemLabel} live`}
           title={`Make ${itemLabel} live`}
         >
-          {isEditing ? null : "Make live"}
+          Make live
         </Button>
       ) : null}
     </>
-  );
+  ) : null;
 
   const firstSongIndex = songRefs.findIndex((songRef) => Boolean(songRefLabel(songRef)));
   const attachmentChips = (placement: "below" | "manager" | "summary" = "below") =>
@@ -1475,8 +1645,11 @@ const ServicePlanElementRow = ({
           const canLinkSong = isSongUnlinked && allowEdit;
           const canCreateMissingSong =
             isSongUnlinked && canCreateLibrarySong && !canLinkSong;
+          const summaryOpensContent =
+            placement === "summary" && contentReferenceCount > 1 && usesContentPanel;
           const songChipInteractive =
-            canLinkSong || canCreateMissingSong || Boolean(onViewSongLyrics);
+            (placement !== "summary" || allowEdit || Boolean(onViewSongLyrics)) &&
+            (summaryOpensContent || canLinkSong || canCreateMissingSong || Boolean(onViewSongLyrics));
           const pendingTitle =
             currentSongRef.kind === "pending" ? currentSongRef.title : "";
 
@@ -1489,7 +1662,11 @@ const ServicePlanElementRow = ({
             openSongPicker(true, songIndex);
           };
 
-          const handleSongChipClick = () => {
+          const handleSongChipClick = (event: MouseEvent<HTMLButtonElement>) => {
+            if (summaryOpensContent) {
+              openContent(event.currentTarget);
+              return;
+            }
             if (canLinkSong) {
               setSongSuggestionsIndex(songIndex);
               return;
@@ -1498,11 +1675,21 @@ const ServicePlanElementRow = ({
               requestCreatePendingSong();
               return;
             }
+            if (
+              currentSongRef.kind === "library"
+              && isDesktopAssignmentPanel
+              && onOpenSongDetails
+            ) {
+              onOpenSongDetails(currentSongRef);
+              return;
+            }
             onViewSongLyrics?.(currentSongRef);
           };
 
           let songChipLabel = `View song details for ${label}`;
-          if (canLinkSong) {
+          if (summaryOpensContent) {
+            songChipLabel = `Manage content for ${itemLabel}`;
+          } else if (canLinkSong) {
             songChipLabel = `Link ${label} to a song in the library`;
           } else if (canCreateMissingSong) {
             songChipLabel = `Create ${label} in the library`;
@@ -1529,6 +1716,11 @@ const ServicePlanElementRow = ({
               >
                 {label}
               </span>
+              {summaryOpensContent ? (
+                <span className="shrink-0 text-xs text-gray-300">
+                  +{contentReferenceCount - 1}
+                </span>
+              ) : null}
               {isSongUnlinked ? (
                 <span className="shrink-0 whitespace-nowrap text-amber-200/90">
                   · Not in library
@@ -1541,7 +1733,7 @@ const ServicePlanElementRow = ({
             <button
               type="button"
               className={cn(
-                "flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left focus-visible:outline-none focus-visible:ring-1",
+                "box-border flex !h-full !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded py-0 text-left focus-visible:outline-none focus-visible:ring-1",
                 isSongUnlinked
                   ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
                   : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
@@ -1568,7 +1760,7 @@ const ServicePlanElementRow = ({
               key={`${currentSongRef.kind}:${label}:${songIndex}`}
               className={cn(
                 SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-                placement === "summary" && "h-6 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                placement === "summary" && "box-border !h-[32px] !min-h-0 !max-h-[32px] min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
                 isSongUnlinked
                   ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
                   : SERVICE_PLAN_SONG_CHIP_CLASS,
@@ -1595,7 +1787,7 @@ const ServicePlanElementRow = ({
               ) : (
                 songChipButton
               )}
-              {allowEdit ? (
+              {allowEdit && !summaryOpensContent ? (
                 <Button
                   type="button"
                   variant="tertiary"
@@ -1622,8 +1814,10 @@ const ServicePlanElementRow = ({
           >
             {allowEdit ? (
               <ServicePlanScripturePopover
-                open={scriptureEditIndex === 0}
-                onOpenChange={(open) => setScriptureEditIndex(open ? 0 : null)}
+                open={!usesContentPanel && scriptureEditIndex === 0}
+                onOpenChange={(open) => {
+                  if (!usesContentPanel) setScriptureEditIndex(open ? 0 : null);
+                }}
                 initialScriptureRef={scriptureRefs[0]}
                 trigger
                 onSelect={(scriptureRef) => {
@@ -1639,6 +1833,9 @@ const ServicePlanElementRow = ({
                     type="button"
                     className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                     aria-label={`Edit scripture ${scriptureLabel}`}
+                    onClick={(event) => {
+                      if (usesContentPanel) openContent(event.currentTarget);
+                    }}
                   >
                     <Icon
                       svg={BookOpen}
@@ -1685,10 +1882,12 @@ const ServicePlanElementRow = ({
             >
               {allowEdit ? (
                 <ServicePlanScripturePopover
-                  open={scriptureEditIndex === scriptureIndex}
-                  onOpenChange={(open) =>
-                    setScriptureEditIndex(open ? scriptureIndex : null)
-                  }
+                  open={!usesContentPanel && scriptureEditIndex === scriptureIndex}
+                  onOpenChange={(open) => {
+                    if (!usesContentPanel) {
+                      setScriptureEditIndex(open ? scriptureIndex : null);
+                    }
+                  }}
                   initialScriptureRef={additionalScripture}
                   trigger
                   onSelect={(scriptureRef) => {
@@ -1704,6 +1903,9 @@ const ServicePlanElementRow = ({
                       type="button"
                       className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                       aria-label={`Edit scripture ${additionalScripture.label}`}
+                      onClick={(event) => {
+                        if (usesContentPanel) openContent(event.currentTarget);
+                      }}
                     >
                       <Icon svg={BookOpen} size="xs" className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} />
                       <span className="min-w-0 flex-1 truncate">{additionalScripture.label}</span>
@@ -1737,34 +1939,83 @@ const ServicePlanElementRow = ({
       </div>
     ) : null;
 
-  const contentSummaryControl = hasContentReferences ? (
-    <div className="flex min-w-0 max-w-full items-center overflow-hidden rounded border border-cyan-500/50 bg-gray-950/30">
+  const contentSummaryControl = usesContentPanel ? (
+    hasContentReferences ? (
+      <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 min-w-0 max-w-full items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
+        {attachmentChips("summary")}
+        {contentReferenceCount > 1 ? null : (
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={FilePlus}
+            iconSize="sm"
+            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-[32px] max-md:w-11 max-md:text-sm [&_svg]:size-4"
+            aria-label={`Manage content for ${itemLabel}`}
+            onClick={(event) => openContent(event.currentTarget)}
+          />
+        )}
+      </div>
+    ) : (
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={FilePlus}
+        iconSize="sm"
+        className="box-border !h-[32px] !min-h-0 !max-h-[32px] !py-0 w-full justify-start border-0 px-1.5 text-xs font-medium leading-5 text-gray-200 hover:bg-cyan-500/10 hover:text-white max-lg:text-sm [&_svg]:text-cyan-300"
+        aria-label={`Add content to ${itemLabel}`}
+        onClick={(event) => openContent(event.currentTarget)}
+      >
+        Add content
+      </Button>
+    )
+  ) : hasContentReferences ? allowEdit ? (
+    <div className="flex min-w-0 max-w-full items-center overflow-hidden bg-transparent">
       {attachmentChips("summary")}
-      {allowEdit || contentReferenceCount > 1 ? (
-        <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
+      <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
           <PopoverTrigger asChild>
             <Button
               type="button"
               variant="tertiary"
               svg={contentReferenceCount > 1 ? undefined : ChevronDown}
               iconSize="xs"
-              className="h-6 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 text-xs text-gray-300 hover:text-cyan-50"
+              className="h-6 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 py-0 text-xs leading-5 text-gray-300 hover:text-cyan-50 max-md:h-[32px] max-md:text-sm"
               aria-label={`Manage content for ${itemLabel}`}
             >
               {contentReferenceCount > 1 ? `+${contentReferenceCount - 1}` : null}
             </Button>
           </PopoverTrigger>
           <PopoverContent
-            align="end"
-            className="w-80 border-gray-700 bg-gray-900 p-2 text-gray-100"
+            align="start"
+            className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
           >
             <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
             {attachmentChips("manager")}
             {contentAddControl ? <div className="px-1 pt-2">{contentAddControl}</div> : null}
           </PopoverContent>
-        </Popover>
-      ) : null}
+      </Popover>
     </div>
+  ) : contentReferenceCount === 1 ? (
+    attachmentChips("summary")
+  ) : (
+    <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
+      <PopoverTrigger asChild>
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex min-w-0 max-w-full cursor-pointer items-center overflow-hidden rounded hover:bg-cyan-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
+          aria-label={`View content for ${itemLabel}`}
+        >
+          {attachmentChips("summary")}
+        </div>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
+      >
+        <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
+        {attachmentChips("manager")}
+      </PopoverContent>
+    </Popover>
   ) : contentAddControl;
 
   const notesBlock = showNotesEditor ? (
@@ -2029,10 +2280,14 @@ const ServicePlanElementRow = ({
       itemLabel={itemLabel}
       structureOnly={structureOnly}
       scheduledMicrophoneHolders={scheduledMicrophoneHolders}
-      onEdit={() => setAssignmentSheetOpen(true)}
+      onEdit={() => openAssignment()}
       onChange={() => undefined}
     />
   ) : null;
+  const visibleAssigneesBlock = shouldShowAssigneesBlock ? assigneesBlock : null;
+  const visibleReadOnlyAssigneesBlock = shouldShowAssigneesBlock
+    ? readOnlyAssigneesBlock
+    : null;
 
   return (
     <div
@@ -2054,7 +2309,7 @@ const ServicePlanElementRow = ({
         <div
           className={cn(
             SERVICE_PLAN_COL.row,
-            "items-start py-2 max-md:flex-wrap md:items-center md:py-1.5",
+            "items-start py-2 pb-1 max-md:flex-wrap md:items-center md:py-1.5 md:pb-1.5",
           )}
         >
           <Button
@@ -2073,13 +2328,13 @@ const ServicePlanElementRow = ({
           />
 
           {/* Mobile: stack timing → title → assignee. Desktop: shared column widths. */}
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5 md:contents">
-            <div className="flex w-full items-center gap-1.5 md:contents">
+          <div className="contents">
+            <div className="contents">
               <TimePicker
                 label="Time"
                 hideLabel
                 labelLayout="inline"
-                className={cn("min-w-0 flex-1", SERVICE_PLAN_COL.timeEdit)}
+                className={cn("min-w-0 flex-1 max-md:col-start-2 max-md:row-start-1 max-md:self-center", SERVICE_PLAN_COL.timeEdit)}
                 inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
                 value={element.startTime || ""}
                 onChange={(value) => value && onStartTimeChange(String(value))}
@@ -2088,7 +2343,7 @@ const ServicePlanElementRow = ({
                 label="Duration"
                 hideLabel
                 placeholder="5 min"
-                className={cn("min-w-0 flex-1", SERVICE_PLAN_COL.durationEdit)}
+                className={cn("min-w-0 max-md:col-start-3 max-md:row-start-1 max-md:self-center", SERVICE_PLAN_COL.durationEdit)}
                 inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
                 value={durationText}
                 onChange={(value) => setDurationText(String(value))}
@@ -2106,15 +2361,12 @@ const ServicePlanElementRow = ({
                   if (event.key === "Enter") event.currentTarget.blur();
                 }}
               />
-              <div className="ml-auto shrink-0 md:order-last md:ml-auto">
-                {renderItemActionsMenu()}
-              </div>
             </div>
             <DebouncedInput
               label="Title"
               hideLabel
               placeholder="Item name"
-              className={cn("w-full", SERVICE_PLAN_COL.title)}
+              className={cn("w-full max-md:col-start-4 max-md:row-start-1 max-md:self-center", SERVICE_PLAN_COL.title)}
               inputClassName={SERVICE_PLAN_INLINE_INPUT_CLASS}
               value={titleText}
               onChange={(value) =>
@@ -2126,15 +2378,19 @@ const ServicePlanElementRow = ({
           <div
             className={cn(
               SERVICE_PLAN_COL.contentView,
-              "min-w-0 self-start py-0.5 max-md:order-4 max-md:hidden",
-              !hasContentReferences && !contentAddControl && "max-md:hidden",
+              "min-w-0 self-start py-0.5 max-md:col-start-1 max-md:col-span-3 max-md:row-start-2 max-md:py-0",
             )}
             aria-label="Songs and scripture"
           >
-            {contentSummaryControl}
+            {contentSummaryControl || <span className="flex h-8 items-center text-xs text-gray-500">—</span>}
           </div>
 
-          <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:ml-auto max-md:order-5")}>
+          <div className={cn(SERVICE_PLAN_COL.assignedEdit, "max-md:[grid-column:4_/-1] max-md:row-start-2 max-md:w-full max-md:self-stretch")}>
+            {leadSummaryControl || <span className="text-xs text-gray-500">—</span>}
+          </div>
+
+          <div className={cn(SERVICE_PLAN_COL.actionsEdit, "max-md:col-start-5 max-md:ml-auto max-md:row-start-1")}>
+            {renderItemActionsMenu()}
             {liveControls}
           </div>
         </div>
@@ -2142,13 +2398,19 @@ const ServicePlanElementRow = ({
         <div
           className={cn(
             SERVICE_PLAN_COL.row,
-            "items-start py-2.5 max-md:flex-wrap md:py-1.5",
+            !allowEdit && hasViewActions && SERVICE_PLAN_COL.mediumViewWithActions,
+            !hasViewActions && SERVICE_PLAN_COL.viewWithoutActions,
+            hasViewActions &&
+              "max-md:grid-cols-[0rem_5rem_3.5rem_minmax(0,1fr)_6.5rem]!",
+            !hasViewActions && "max-md:grid-cols-[1.5rem_5rem_3.5rem_minmax(0,1fr)]",
+            "items-start py-2 pb-1 max-md:flex-wrap md:py-1.5 md:pb-1.5",
           )}
         >
+          <span className={SERVICE_PLAN_COL.drag} aria-hidden="true" />
           <span
             className={cn(
               SERVICE_PLAN_COL.timeView,
-              "whitespace-nowrap text-xs leading-4 tabular-nums text-gray-400",
+              "whitespace-nowrap text-xs leading-5 tabular-nums text-gray-400 max-md:col-start-2 max-md:row-start-1 max-md:self-center max-md:text-sm max-md:leading-6",
             )}
           >
             {formatPlanStartTimeDisplay(element.startTime) || "—"}
@@ -2156,35 +2418,47 @@ const ServicePlanElementRow = ({
           <span
             className={cn(
               SERVICE_PLAN_COL.durationView,
-              "whitespace-nowrap text-xs leading-4 tabular-nums text-gray-400",
+              "whitespace-nowrap text-xs leading-5 tabular-nums text-gray-400 max-md:col-start-3 max-md:row-start-1 max-md:self-center max-md:text-sm max-md:leading-6",
             )}
           >
-            {formattedDuration || "—"}
+            {formattedDurationDisplay || "—"}
           </span>
-          <div className={cn(SERVICE_PLAN_COL.title, "space-y-0.5")}>
-            <p className="truncate text-xs font-medium leading-5 text-gray-50">
-              {titleText.trim() || "Untitled"}
-            </p>
-            {!structureOnly && !isEditing && assigneeSummary ? (
-              <p className="truncate text-[11px] leading-4 text-gray-400 md:hidden">
-                {assigneeSummary}
-              </p>
-            ) : null}
+          <div className={cn(SERVICE_PLAN_COL.title, "space-y-0.5 max-md:col-start-4 max-md:row-start-1 max-md:flex max-md:min-h-[32px] max-md:items-center max-md:self-center max-md:px-1.5")}>
+            <Popover open={titlePopoverOpen} onOpenChange={setTitlePopoverOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="min-w-0 max-w-full cursor-pointer truncate rounded text-left text-xs font-medium leading-5 text-gray-50 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400 max-md:text-sm max-md:leading-6"
+                  aria-label={`View full name: ${titleText.trim() || "Untitled"}`}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {titleText.trim() || "Untitled"}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[min(24rem,calc(100vw-1rem))] border-gray-700 bg-gray-900 p-3 text-sm text-gray-100"
+              >
+                {titleText.trim() || "Untitled"}
+              </PopoverContent>
+            </Popover>
           </div>
           {!allowEdit ? (
             <div
               className={cn(
                 SERVICE_PLAN_COL.contentView,
-                "min-w-0 self-start py-0.5 max-md:order-4",
-                !hasContentReferences && "max-md:hidden",
+                "min-w-0 self-start py-0.5 max-md:col-start-1 max-md:col-span-3 max-md:row-start-2 max-md:self-center max-md:py-0",
               )}
               aria-label="Songs and scripture"
             >
-              {contentSummaryControl}
+            {contentSummaryControl || <span className="flex h-8 w-full items-center justify-start text-xs text-gray-500 max-md:justify-center">—</span>}
             </div>
           ) : null}
-          {canEdit || isLive || showLiveControls ? (
-            <div className={cn(SERVICE_PLAN_COL.actionsView, "self-center max-md:order-5")}>
+          <div className={cn(SERVICE_PLAN_COL.assignedView, "max-md:col-start-4 max-md:row-start-2 max-md:self-center", hasViewActions ? "max-md:col-span-2" : "max-md:col-span-1")}>
+            {leadSummaryControl || <span className="text-xs text-gray-500">—</span>}
+          </div>
+          {hasViewActions ? (
+            <div className={cn(SERVICE_PLAN_COL.actionsView, "self-center max-md:col-start-5 max-md:row-start-1")}>
               {liveControls}
             </div>
           ) : null}
@@ -2235,7 +2509,8 @@ const ServicePlanElementRow = ({
             </PopoverContent>
           </Popover>
           </div>
-          {readOnlyAssigneesBlock || (
+          {visibleReadOnlyAssigneesBlock}
+          {!visibleReadOnlyAssigneesBlock && structureOnly ? (
             <Button
               type="button"
               variant="tertiary"
@@ -2243,14 +2518,14 @@ const ServicePlanElementRow = ({
               iconSize="sm"
               className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
               aria-label={`Assignees for ${itemLabel}`}
-              onClick={() => setAssignmentSheetOpen(true)}
+              onClick={() => openAssignment()}
             >
               {structureOnly ? "Add microphones" : "Assign people & mics"}
             </Button>
-          )}
+          ) : null}
         </div>
       ) : (
-        assigneesBlock
+        visibleAssigneesBlock
       )}
       {!structureOnly && scheduledPositionIds.length > 0 ? (
         <div className="mx-1 mb-1 rounded-md border border-cyan-900/60 bg-cyan-950/20 px-2 py-1.5" aria-label={`Scheduled people for ${itemLabel}`}>
@@ -2277,20 +2552,44 @@ const ServicePlanElementRow = ({
       {notesBlock}
       {teamNotesBlock}
       {roleNotesBlock}
-      {allowEdit ? (
+      {assignmentSheetOpen && !usesDesktopAssignmentPanel ? (
         <Sheet open={assignmentSheetOpen} onOpenChange={setAssignmentSheetOpen}>
           <SheetContent
             side="right"
-            className="flex w-full max-w-md flex-col gap-0 border-gray-700 bg-gray-950 p-0"
+            showClose={false}
+            className="w-full max-w-md gap-0 p-0"
           >
-            <SheetHeader className="border-b border-gray-800">
-              <SheetTitle>Edit assignees</SheetTitle>
-              <SheetDescription className="truncate">
-                {itemLabel}
-              </SheetDescription>
-            </SheetHeader>
+            <SheetDescription className="sr-only">
+              Edit people and microphones for {itemLabel}.
+            </SheetDescription>
+            <div className="flex items-start gap-2 border-b border-gray-800 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="truncate text-sm font-semibold text-gray-100">
+                  {allowEdit ? "Edit people and microphones" : "People and microphones"}
+                </SheetTitle>
+                <p className="truncate text-xs text-gray-400">{itemLabel}</p>
+              </div>
+              <Button
+                type="button"
+                variant="tertiary"
+                iconSize="sm"
+                svg={X}
+                aria-label="Close side panel"
+                onClick={() => setAssignmentSheetOpen(false)}
+              />
+            </div>
             <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
-              {assigneesBlock}
+              {allowEdit ? assigneesBlock : readOnlyAssigneesBlock}
+            </div>
+            <div className="border-t border-gray-800 p-4">
+              <Button
+                type="button"
+                variant="primary"
+                className="w-full cursor-pointer justify-center"
+                onClick={() => setAssignmentSheetOpen(false)}
+              >
+                Done
+              </Button>
             </div>
           </SheetContent>
         </Sheet>
@@ -2314,6 +2613,19 @@ const ServicePlanElementRow = ({
               songRefs: [...songRefs, songRef],
             });
           }}
+        />
+      ) : null}
+      {scriptureOpen ? (
+        <ServicePlanScripturePopover
+          open
+          onOpenChange={setScriptureOpen}
+          disabled={!allowEdit}
+          onSelect={(scriptureRef) => onUpdate({
+            songRef: undefined,
+            songRefs,
+            scriptureRef: undefined,
+            scriptureRefs: [...scriptureRefs, scriptureRef],
+          })}
         />
       ) : null}
     </div>

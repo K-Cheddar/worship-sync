@@ -24,6 +24,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
 } from "../types/servicePlan";
+import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
   AuthBootstrap,
   ChurchBranding,
@@ -473,9 +474,11 @@ export const deleteSongAudioWithRetry = async (
 export const getAuthBootstrap = async ({
   workstationToken,
   displayToken,
+  authRecovery = true,
 }: {
   workstationToken?: string;
   displayToken?: string;
+  authRecovery?: boolean;
 }) =>
   apiFetch<AuthBootstrap>(
     "api/auth/me",
@@ -484,6 +487,7 @@ export const getAuthBootstrap = async ({
       ...(workstationToken ? { "x-workstation-token": workstationToken } : {}),
       ...(displayToken ? { "x-display-token": displayToken } : {}),
     },
+    { authRecovery, notifyAuthError: authRecovery },
   );
 
 export const createHumanSession = async (
@@ -1646,6 +1650,15 @@ export const getServicePlan = async (churchId: string, planKey: string) =>
   }>(`api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}`, {
     method: "GET",
   });
+
+export const getServicePlanAssignments = async (
+  churchId: string,
+  planKey: string,
+) =>
+  apiFetch<{ success: boolean; assignments: ServicePlanningTeamAssignment[] }>(
+    `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/assignments`,
+    { method: "GET" },
+  );
 
 export const saveServicePlan = async (
   churchId: string,

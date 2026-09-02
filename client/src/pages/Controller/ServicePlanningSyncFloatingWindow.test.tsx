@@ -44,7 +44,6 @@ const mockPlanSource = {
   },
   selectedPlanKey: null as string | null,
   selectPlan: jest.fn(),
-  pinSelectedPlan: jest.fn(),
   isEnabled: true,
   isLoading: false,
   isLoadingPlans: false,
@@ -53,13 +52,6 @@ const mockPlanSource = {
   refresh: jest.fn(),
   refreshPlans: jest.fn(),
 };
-
-const mockCreateNewItemList = jest.fn();
-
-jest.mock("../../utils/itemUtil", () => ({
-  ...jest.requireActual("../../utils/itemUtil"),
-  createNewItemList: (...args: unknown[]) => mockCreateNewItemList(...args),
-}));
 
 jest.mock("./useCurrentServicePlanSource", () => ({
   useCurrentServicePlanSource: () => mockPlanSource,
@@ -112,12 +104,6 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
     mockPlanSource.isLoading = false;
-    mockCreateNewItemList.mockResolvedValue({
-      _id: "outline-new",
-      name: "Sabbath Service · Aug 1",
-      items: [],
-      overlays: [],
-    });
   });
 
   it("stays hidden on initial hydration until the user explicitly opens it", () => {
@@ -137,7 +123,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
             sectionName: "Welcome",
             headingName: "Welcome",
             sourceRowIndex: 0,
-            elementType: "Announcement",
+            elementType: "free",
             title: "Church Updates",
             ledBy: "Pastoral Team",
             selectedForOutline: false,
@@ -337,13 +323,13 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByRole("tab", { name: "Plan" })).toBeInTheDocument();
     expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
     expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
-    expect(screen.getByText("Announcement")).toBeInTheDocument();
     expect(screen.getByText("Church Updates")).toBeInTheDocument();
+    expect(screen.queryByText("free")).not.toBeInTheDocument();
     expect(screen.getByText("Assigned:")).toBeInTheDocument();
     expect(screen.getByText("Avery Brown, Blair Clark, Casey Davis")).toBeInTheDocument();
     expect(screen.queryByText("Pastoral Team")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Welcome Song")).toHaveLength(2);
-    expect(screen.getByText("Overlay ready")).toBeInTheDocument();
+    expect(screen.getByText("Welcome Song")).toBeInTheDocument();
+    expect(screen.getByLabelText("Overlay ready")).toBeInTheDocument();
     expect(screen.getByText("Song")).toBeInTheDocument();
   });
 
@@ -381,7 +367,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     renderWindow(store);
 
-    expect(screen.getByText("Announcement")).toBeInTheDocument();
+    expect(screen.getByText("Church Updates")).toBeInTheDocument();
     expect(
       screen.queryByRole("tab", { name: "Assignments" }),
     ).not.toBeInTheDocument();
@@ -474,7 +460,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     const { rerender } = renderWindow(store);
 
-    expect(screen.getByText("Announcement")).toBeInTheDocument();
+    expect(screen.getByText("Church Updates")).toBeInTheDocument();
     expect(screen.getByText("Syncing outline")).toBeInTheDocument();
     expect(screen.getByText("Overlay pending")).toBeInTheDocument();
 
@@ -514,7 +500,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     expect(screen.getByText("Outline added")).toBeInTheDocument();
     expect(screen.getByText("Overlay updated")).toBeInTheDocument();
-    expect(screen.getByText("Announcement")).toBeInTheDocument();
+    expect(screen.getByText("Church Updates")).toBeInTheDocument();
   });
 
   it("shows only overlay change badges when an overlay was updated on the row", () => {
@@ -768,38 +754,6 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(store.getState().servicePlanningImport.sync.mode).toBe("overlays");
   });
 
-  it("pins the selected plan before creating and selecting a new outline", async () => {
-    mockPlanSource.selectedPlanKey = "service-1@2026-08-01";
-    mockPlanSource.selectedPlan = {
-      planKey: "service-1@2026-08-01",
-      serviceId: "service-1",
-      date: "2026-08-01",
-      name: "Sabbath Service",
-    };
-    mockPlanSource.savedPlans = [mockPlanSource.selectedPlan];
-    const store = configureStore({
-      reducer: {
-        servicePlanningImport: servicePlanningImportReducer,
-        undoable: () => ({
-          present: {
-            itemLists: {
-              currentLists: [{ _id: "outline-1", name: "Sunday AM" }],
-              selectedList: { _id: "outline-1", name: "Sunday AM" },
-            },
-            itemList: { isLoading: false },
-          },
-        }),
-      },
-    });
-    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
-
-    renderWindow(store);
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
-
-    await waitFor(() => expect(mockCreateNewItemList).toHaveBeenCalled());
-    expect(mockPlanSource.pinSelectedPlan).toHaveBeenCalledTimes(1);
-  });
-
   it("shows Create song for unmatched outline songs instead of Add to list", () => {
     const store = configureStore({
       reducer: {
@@ -824,6 +778,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
             selectedForOutline: true,
             outlineItemType: "song",
             matchedLibraryItem: null,
+            attachedSongs: [{ title: "New Song Title", inLibrary: false }],
             parsedRef: null,
             overlayReady: false,
             outlineAlreadyPresent: false,
@@ -858,6 +813,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(
       screen.getByRole("button", { name: "Create song New Song Title" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Not in library")).toBeInTheDocument();
+    expect(screen.queryByText("Song not found")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add .* to list/i })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Create song Existing Song/i }),
@@ -897,6 +854,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
             teamName: "Praise Team",
             role: "Alto Singer",
             name: "Mykkah Binns",
+            profileImageUrl: "https://example.com/mykkah.jpg",
           },
           {
             teamName: "Praise Team",
@@ -923,6 +881,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     });
     expect(screen.getByText("Alto Singer")).toBeInTheDocument();
     expect(screen.getByText("Mykkah Binns")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "View profile image of Mykkah Binns" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Worship Leader")).toBeInTheDocument();
     expect(screen.getByText("Kailyn Reid")).toBeInTheDocument();
   });

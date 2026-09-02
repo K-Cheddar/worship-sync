@@ -53,9 +53,9 @@ export const ServicePlanMicrophoneChip = ({
       className={cn(
         // Extra right padding when a remove control is slotted in — otherwise
         // the X sits flush against the pill edge on template/plan edit rows.
-        // shrink-0 + no max-width so name and type stay fully readable; parents
-        // flex-wrap chips onto the next line instead of clipping them.
-        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border py-0.5 text-xs",
+        // The chip may be narrower than its label. Keep the full accessible
+        // name while truncating the visual label inside the available row.
+        "inline-flex min-w-0 max-w-full items-center gap-1 overflow-hidden whitespace-nowrap rounded border py-0.5 text-xs",
         children ? "pl-1.5 pr-2" : "px-1",
         !chromeStyle && (theme === "light"
           ? "border-slate-300 bg-slate-100 text-slate-900"
@@ -69,9 +69,9 @@ export const ServicePlanMicrophoneChip = ({
         color={microphone.color}
         className={cn("size-3.5 shrink-0", iconClassName)}
       />
-      <span>{microphone.name}</span>
+      <span className="min-w-0 truncate">{microphone.name}</span>
       {detailLabel ? (
-        <span className="font-normal opacity-80">· {detailLabel}</span>
+        <span className="min-w-0 truncate font-normal opacity-80">· {detailLabel}</span>
       ) : null}
       {children}
     </span>

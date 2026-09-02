@@ -1,3 +1,4 @@
+import { MessageCircle } from "lucide-react";
 import Button from "../components/Button/Button";
 
 export type ChatReactionNotice = {
@@ -27,10 +28,16 @@ const ChatReactionNotification = ({
       aria-label={`Reaction to your message from ${names.join(", ")}`}
     >
       <div className="flex flex-col gap-0.5">
-        <span className="text-sm font-semibold text-cyan-200">
-          Reaction to your message
-        </span>
-        <span className="text-sm leading-snug text-gray-100">
+        <div className="flex items-center gap-2">
+          <MessageCircle
+            aria-hidden="true"
+            className="size-5 shrink-0 text-cyan-400"
+          />
+          <span className="text-sm font-semibold text-cyan-200">
+            Reaction to your message
+          </span>
+        </div>
+        <span className="block text-sm leading-snug text-gray-100">
           {summary} in team chat
         </span>
       </div>

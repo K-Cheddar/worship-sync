@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   isDev: () => ipcRenderer.invoke("is-dev"),
   openExternalUrl: (url: string) =>
     ipcRenderer.invoke("open-external-url", url),
+  fetchGeniusLyrics: (url: string) =>
+    ipcRenderer.invoke("fetch-genius-lyrics", url),
 
   // Window management - all generic handlers
   openWindow: (windowType: WindowType) =>

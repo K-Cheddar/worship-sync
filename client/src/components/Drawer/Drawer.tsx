@@ -18,6 +18,8 @@ export interface DrawerProps {
   closeOnEscape?: boolean;
   className?: string;
   contentClassName?: string;
+  /** Parent dialog surface for nested drawers; defaults to the controller root. */
+  portalContainer?: HTMLElement | null;
 }
 
 const sizeClasses = {
@@ -65,6 +67,7 @@ const Drawer: React.FC<DrawerProps> = ({
   closeOnEscape = true,
   className,
   contentClassName = "overflow-auto flex-1 min-h-0",
+  portalContainer,
 }) => {
   useEffect(() => {
     if (!isOpen) return;
@@ -93,7 +96,7 @@ const Drawer: React.FC<DrawerProps> = ({
     <Sheet open={isOpen} onOpenChange={handleOpenChange} modal={showBackdrop}>
       <SheetContent
         side={side}
-        container={getControllerElement()}
+        container={portalContainer ?? getControllerElement()}
         showOverlay={showBackdrop}
         showClose={false}
         className={cn("max-w-full max-h-dvh", dimensionClass, className)}

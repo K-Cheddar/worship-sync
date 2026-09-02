@@ -2066,6 +2066,7 @@ describe("presentationSlice", () => {
       const store = createStore({
         presentation: {
           ...presentationSlice.getInitialState(),
+          monitorBoardAliasId: "sunday-discussion",
           projectorInfo: {
             ...presentationSlice.getInitialState().projectorInfo,
             name: "Projector Active",
@@ -2100,6 +2101,7 @@ describe("presentationSlice", () => {
       expect(state.monitorInfo.slide).toBeNull();
       expect(state.streamInfo.slide).toBeNull();
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
+      expect(state.monitorBoardAliasId).toBe("sunday-discussion");
     });
 
     it("updatePresentation updates monitor state and keeps stream slide for free payloads", () => {

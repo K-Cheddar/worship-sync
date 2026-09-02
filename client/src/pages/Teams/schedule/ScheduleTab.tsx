@@ -3818,8 +3818,9 @@ const ScheduleTab = ({
         </div>
       ) : (
         <>
+          <h2 className="sr-only">Schedules</h2>
           <section className={cn(panelShellClassName, "w-full shrink-0")}>
-            <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
+              <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
               {scheduleReturnTo ? (
                 <div className="mb-2">
                   <TeamsReturnBackButton
@@ -3828,13 +3829,7 @@ const ScheduleTab = ({
                   />
                 </div>
               ) : null}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-semibold">Schedules</h2>
-                  <p className="mt-0.5 text-sm text-gray-400">
-                    Assign people to services by position.
-                  </p>
-                </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
                 <div className="flex flex-wrap items-end gap-2">
                   {/* Narrowing the picker to one team is remembered per church,
                       so an operator who only runs Praise Team doesn't scroll
@@ -4815,19 +4810,12 @@ const ScheduleTab = ({
           ) : (
             <section className={panelClassName}>
               <div>
-                <h2 className="flex items-center gap-2 text-lg font-semibold">
-                  <Icon svg={CalendarDays} size="md" className="text-cyan-200" />
-                  Team schedule
-                </h2>
-                <p className="mt-1 text-sm text-gray-400">
-                  Select a date to view and copy that service&apos;s assignments.
-                </p>
-              </div>
-              <div className="mt-4">
+                <div className="mt-0">
                 {/* Assignments for schedules outside the loaded window arrive on
                     demand. Say so rather than dropping to an empty grid, which
                     would read as "nobody is assigned". */}
                 {scheduleWorkspaceEmptyMessage}
+                </div>
               </div>
             </section>
           )}

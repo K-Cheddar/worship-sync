@@ -53,18 +53,15 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
   let currentText = "";
 
   const addVerse = () => {
-    // splitting by an invisible character, not a space
-    const splitText = currentText.split(" ");
-    const filteredSplitText = splitText.filter((item) => item?.trim() !== "");
     verses.push({
       index: verses.length,
       name: (verses.length + 1).toString(), // verse number comes first
-      text: filteredSplitText[1]
+      text: currentText
         .replace(/\[[^\]]{1,2}\]/g, "")
-        .replaceAll(" ", " ") // Replace invisible character
+        .replaceAll(" ", " ") // Replace non-breaking spaces
         .replaceAll("’", "'") // Replace curly apostrophe
         .replaceAll("‘", "'") // Replace curly apostrophe
-        .replace("\n", "") // Remove new line
+        .replace(/\s+/g, " ")
         .trim(),
     });
     currentText = "";
@@ -84,7 +81,11 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
       addVerse();
     }
     currentClass = className;
-    currentText += (versesHtml[i] as HTMLElement).innerText + " ";
+    const verseElement = versesHtml[i].cloneNode(true) as HTMLElement;
+    verseElement
+      .querySelectorAll(".chapternum, .versenum, .footnote")
+      .forEach((element) => element.remove());
+    currentText += verseElement.textContent + " ";
   }
   addVerse();
 

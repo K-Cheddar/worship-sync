@@ -1,5 +1,6 @@
 import generateRandomId from "../../utils/generateRandomId";
-import { EMPTY_RICH_TEXT } from "../../types/richText";
+import { EMPTY_RICH_TEXT, richTextToPlainText } from "../../types/richText";
+import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
 import {
   getServicePlanElementAssignees,
   getServicePlanElementType,
@@ -36,7 +37,20 @@ export const createEmptyServicePlanSections = (): ServicePlanSection[] => [
 export const addSection = (
   sections: ServicePlanSection[],
   name = "New section",
-): ServicePlanSection[] => [...sections, createEmptyServicePlanSection(name)];
+  insertAfterSectionId?: string,
+): ServicePlanSection[] => {
+  const newSection = createEmptyServicePlanSection(name);
+  if (!insertAfterSectionId) return [...sections, newSection];
+  const insertAfterIndex = sections.findIndex(
+    (section) => section.id === insertAfterSectionId,
+  );
+  if (insertAfterIndex === -1) return [...sections, newSection];
+  return [
+    ...sections.slice(0, insertAfterIndex + 1),
+    newSection,
+    ...sections.slice(insertAfterIndex + 1),
+  ];
+};
 
 export const removeSection = (
   sections: ServicePlanSection[],
@@ -152,6 +166,10 @@ export const replaceMatchingPendingSongReferences = (
     let sectionChanged = false;
     const elements = section.elements.map((element) => {
       const songRefs = getServicePlanElementSongRefs(element);
+      const hasImplicitSongReference = !songRefs.length && (
+        element.type === "song" ||
+        /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")
+      ) && cleanPlanningTitle(richTextToPlainText(element.title)) === target.title;
       let changed = false;
       const nextSongRefs = songRefs.map((songRef) => {
         const matches =
@@ -162,6 +180,10 @@ export const replaceMatchingPendingSongReferences = (
         changed = true;
         return replacement;
       });
+      if (hasImplicitSongReference) {
+        changed = true;
+        nextSongRefs.push(replacement);
+      }
       if (!changed) return element;
       sectionChanged = true;
       const next = {
@@ -297,6 +319,36 @@ export const moveElementToSection = (
     if (section.id === toSectionId) {
       return { ...section, elements: [...section.elements, element] };
     }
+    return section;
+  });
+};
+
+/** Move one item to an indexed position, including across sections. */
+export const moveElementToPosition = (
+  sections: ServicePlanSection[],
+  elementId: string,
+  fromSectionId: string,
+  toSectionId: string,
+  targetIndex: number,
+): ServicePlanSection[] => {
+  const source = sections.find((section) => section.id === fromSectionId);
+  const target = sections.find((section) => section.id === toSectionId);
+  const element = source?.elements.find((item) => item.id === elementId);
+  if (!source || !target || !element) return sections;
+  const remaining = source.elements.filter((item) => item.id !== elementId);
+  const targetElements = fromSectionId === toSectionId ? remaining : target.elements;
+  const boundedIndex = Math.max(0, Math.min(targetIndex, targetElements.length));
+  const nextTargetElements = [
+    ...targetElements.slice(0, boundedIndex),
+    element,
+    ...targetElements.slice(boundedIndex),
+  ];
+  return sections.map((section) => {
+    if (section.id === fromSectionId && section.id === toSectionId) {
+      return { ...section, elements: nextTargetElements };
+    }
+    if (section.id === fromSectionId) return { ...section, elements: remaining };
+    if (section.id === toSectionId) return { ...section, elements: nextTargetElements };
     return section;
   });
 };

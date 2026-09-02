@@ -4,7 +4,7 @@ import type {
   TeamScheduleOccurrence,
 } from "../../../api/authTypes";
 import type { ScheduleSlotColumn } from "./scheduleRequirements";
-import ScheduleBoardView from "./ScheduleBoardView";
+import ScheduleBoardView, { getBoardColumnCount } from "./ScheduleBoardView";
 
 const position = (id: string, name: string): TeamPosition => ({
   positionId: id,
@@ -102,6 +102,12 @@ const renderView = (
   );
 
 describe("ScheduleBoardView", () => {
+  it("adds masonry columns only when the board has room for readable cards", () => {
+    expect(getBoardColumnCount(900, 4)).toBe(3);
+    expect(getBoardColumnCount(1_200, 4)).toBe(4);
+    expect(getBoardColumnCount(300, 4)).toBe(1);
+  });
+
   it("renders one card per occurrence with the team name header", () => {
     renderView(["o1", "o2", "o3"]);
     expect(screen.getAllByText("Media Team")).toHaveLength(3);

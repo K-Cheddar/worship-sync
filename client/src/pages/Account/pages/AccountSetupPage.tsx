@@ -1,4 +1,5 @@
 import { Ban, Eye, EyeOff, Info } from "lucide-react";
+import type { ReactElement } from "react";
 import Button from "../../../components/Button/Button";
 import PopOver from "../../../components/PopOver/PopOver";
 import {
@@ -23,10 +24,10 @@ type DeviceDetail = {
 };
 
 const deviceTableHeaderClassName =
-  "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid-cols-[minmax(12rem,auto)_minmax(8rem,auto)_auto_minmax(2rem,1fr)_auto]";
+  "grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_1.5rem] items-center gap-x-2 px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:grid-cols-[minmax(12rem,auto)_minmax(8rem,auto)_auto]";
 
 const deviceTableRowClassName =
-  "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-0 px-2 py-1.5 sm:grid-cols-[minmax(12rem,auto)_minmax(8rem,auto)_auto_minmax(2rem,1fr)_auto]";
+  "grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_1.5rem] items-center gap-x-2 gap-y-0 px-2 py-1.5 sm:grid-cols-[minmax(12rem,auto)_minmax(8rem,auto)_auto]";
 
 const formatDeviceDate = (value?: string | null) => {
   if (!value) return "Unknown";
@@ -37,9 +38,11 @@ const formatDeviceDate = (value?: string | null) => {
 const DeviceDetailsPopover = ({
   title,
   details,
+  action,
 }: {
   title: string;
   details: DeviceDetail[];
+  action?: ReactElement;
 }) => (
   <PopOver
     TriggeringButton={
@@ -47,7 +50,7 @@ const DeviceDetailsPopover = ({
         variant="tertiary"
         svg={Info}
         iconSize="sm"
-        aria-label={`Show details for ${title}`}
+        aria-label={`Show details and actions for ${title}`}
         title="Show device details"
         className="min-h-0 min-w-0 shrink-0 self-center p-1 max-md:min-h-0"
       />
@@ -66,6 +69,7 @@ const DeviceDetailsPopover = ({
           </div>
         ))}
       </dl>
+      {action && <div className="mt-3 border-t border-gray-700 pt-3">{action}</div>}
     </div>
   </PopOver>
 );
@@ -143,9 +147,8 @@ const AccountSetupPage = () => {
           {visibleWorkstations.length > 0 && (
             <div className={deviceTableHeaderClassName}>
               <span>Device</span>
-              <span className="col-span-2 sm:col-span-1 sm:col-start-2">Details</span>
-              <span className="col-start-2 row-start-1 sm:col-start-3">Info</span>
-              <span className="hidden sm:block sm:col-start-5">Actions</span>
+              <span className="sm:col-start-2">Details</span>
+              <span className="col-start-3 sm:col-start-3">Info</span>
             </div>
           )}
           {visibleWorkstations.map((workstation, workstationIndex) => {
@@ -161,15 +164,17 @@ const AccountSetupPage = () => {
                   alternatingAdminListRowBg(workstationIndex),
                 )}
               >
-                <p className="min-w-0 text-sm font-semibold">{workstation.label}</p>
-                <p className="col-span-2 min-w-0 text-sm text-gray-300 sm:col-span-1 sm:col-start-2">
+                <p className="min-w-0 truncate whitespace-nowrap text-sm font-semibold">
+                  {workstation.label}
+                </p>
+                <p className="min-w-0 truncate whitespace-nowrap self-center text-sm text-gray-300 sm:col-start-2">
                   {workstation.appAccess}
                   {workstation.lastOperatorName
                     ? ` | ${workstation.lastOperatorName}`
                     : ""}
                   {workstation.revokedAt ? " | revoked" : ""}
                 </p>
-                <div className="col-start-2 row-start-1 flex items-center justify-end sm:col-start-3">
+                <div className="col-start-3 flex items-center justify-end self-center sm:col-start-3">
                   <DeviceDetailsPopover
                     title={workstation.label}
                     details={[
@@ -182,28 +187,28 @@ const AccountSetupPage = () => {
                         value: workstation.lastOperatorName || "Unknown",
                       },
                     ]}
+                    action={
+                      !workstation.revokedAt ? (
+                        <Button
+                          variant="destructive"
+                          svg={Ban}
+                          iconSize="sm"
+                          className="w-full"
+                          isLoading={isThisRevokeLoading}
+                          disabled={destructiveConfirmRunning}
+                          onClick={() =>
+                            setDestructiveConfirm({
+                              kind: "revokeWorkstation",
+                              device: workstation,
+                            })
+                          }
+                        >
+                          Revoke
+                        </Button>
+                      ) : undefined
+                    }
                   />
                 </div>
-                {!workstation.revokedAt && (
-                  <div className="col-start-3 row-start-1 flex items-center justify-end sm:col-start-5 sm:justify-self-end">
-                    <Button
-                      variant="destructive"
-                      svg={Ban}
-                      iconSize="sm"
-                      className="shrink-0"
-                      isLoading={isThisRevokeLoading}
-                      disabled={destructiveConfirmRunning}
-                      onClick={() =>
-                        setDestructiveConfirm({
-                          kind: "revokeWorkstation",
-                          device: workstation,
-                        })
-                      }
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                )}
               </div>
             );
           })}
@@ -249,9 +254,8 @@ const AccountSetupPage = () => {
           {visibleDisplayDevices.length > 0 && (
             <div className={deviceTableHeaderClassName}>
               <span>Display</span>
-              <span className="col-span-2 sm:col-span-1 sm:col-start-2">Surface</span>
-              <span className="col-start-2 row-start-1 sm:col-start-3">Info</span>
-              <span className="hidden sm:block sm:col-start-5">Actions</span>
+              <span className="sm:col-start-2">Surface</span>
+              <span className="col-start-3 sm:col-start-3">Info</span>
             </div>
           )}
           {visibleDisplayDevices.map((display, displayIndex) => {
@@ -267,12 +271,14 @@ const AccountSetupPage = () => {
                   alternatingAdminListRowBg(displayIndex),
                 )}
               >
-                <p className="min-w-0 text-sm font-semibold">{display.label}</p>
-                <p className="col-span-2 min-w-0 text-sm text-gray-300 sm:col-span-1 sm:col-start-2">
+                <p className="min-w-0 truncate whitespace-nowrap text-sm font-semibold">
+                  {display.label}
+                </p>
+                <p className="min-w-0 truncate whitespace-nowrap self-center text-sm text-gray-300 sm:col-start-2">
                   {formatSurfaceTypeLabel(display.surfaceType)}
                   {display.revokedAt ? " | revoked" : ""}
                 </p>
-                <div className="col-start-2 row-start-1 flex items-center justify-end sm:col-start-3">
+                <div className="col-start-3 flex items-center justify-end self-center sm:col-start-3">
                   <DeviceDetailsPopover
                     title={display.label}
                     details={[
@@ -281,28 +287,28 @@ const AccountSetupPage = () => {
                       { label: "Created", value: formatDeviceDate(display.createdAt) },
                       { label: "Last seen", value: formatDeviceDate(display.lastSeenAt) },
                     ]}
+                    action={
+                      !display.revokedAt ? (
+                        <Button
+                          variant="destructive"
+                          svg={Ban}
+                          iconSize="sm"
+                          className="w-full"
+                          isLoading={isThisRevokeLoading}
+                          disabled={destructiveConfirmRunning}
+                          onClick={() =>
+                            setDestructiveConfirm({
+                              kind: "revokeDisplay",
+                              device: display,
+                            })
+                          }
+                        >
+                          Revoke
+                        </Button>
+                      ) : undefined
+                    }
                   />
                 </div>
-                {!display.revokedAt && (
-                  <div className="col-start-3 row-start-1 flex items-center justify-end sm:col-start-5 sm:justify-self-end">
-                    <Button
-                      variant="destructive"
-                      svg={Ban}
-                      iconSize="sm"
-                      className="shrink-0"
-                      isLoading={isThisRevokeLoading}
-                      disabled={destructiveConfirmRunning}
-                      onClick={() =>
-                        setDestructiveConfirm({
-                          kind: "revokeDisplay",
-                          device: display,
-                        })
-                      }
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                )}
               </div>
             );
           })}
@@ -336,9 +342,8 @@ const AccountSetupPage = () => {
           {visibleTrustedDevices.length > 0 && (
             <div className={deviceTableHeaderClassName}>
               <span>Device</span>
-              <span className="col-span-2 sm:col-span-1 sm:col-start-2">Owner</span>
-              <span className="col-start-2 row-start-1 sm:col-start-3">Info</span>
-              <span className="col-start-3 row-start-1 text-right sm:col-start-5">Actions</span>
+              <span className="sm:col-start-2">Owner</span>
+              <span className="col-start-3 sm:col-start-3">Info</span>
             </div>
           )}
           {visibleTrustedDevices.map((device, trustedIndex) => {
@@ -354,16 +359,16 @@ const AccountSetupPage = () => {
                   alternatingAdminListRowBg(trustedIndex),
                 )}
               >
-                <p className="min-w-0 text-sm font-semibold">
+                <p className="min-w-0 truncate whitespace-nowrap text-sm font-semibold">
                   {formatTrustedDeviceTitle(device)}
                 </p>
-                <div className="col-span-2 min-w-0 sm:col-span-1 sm:col-start-2">
-                  <p className="min-w-0 text-sm text-gray-300">
+                <div className="min-w-0 self-center sm:col-start-2">
+                  <p className="min-w-0 truncate whitespace-nowrap text-sm text-gray-300">
                     {getTrustedDeviceOwnerLabel(device)}
                     {device.revokedAt ? " | revoked" : ""}
                   </p>
                 </div>
-                <div className="col-start-2 row-start-1 flex items-center justify-end sm:col-start-3">
+                <div className="col-start-3 flex items-center justify-end self-center sm:col-start-3">
                   <DeviceDetailsPopover
                     title={formatTrustedDeviceTitle(device)}
                     details={[
@@ -379,28 +384,28 @@ const AccountSetupPage = () => {
                       { label: "Created", value: formatDeviceDate(device.createdAt) },
                       { label: "Last seen", value: formatDeviceDate(device.lastSeenAt) },
                     ]}
+                    action={
+                      !device.revokedAt ? (
+                        <Button
+                          variant="destructive"
+                          svg={Ban}
+                          iconSize="sm"
+                          className="w-full"
+                          isLoading={isThisRevokeLoading}
+                          disabled={destructiveConfirmRunning}
+                          onClick={() =>
+                            setDestructiveConfirm({
+                              kind: "revokeTrusted",
+                              device,
+                            })
+                          }
+                        >
+                          Revoke
+                        </Button>
+                      ) : undefined
+                    }
                   />
                 </div>
-                {!device.revokedAt && (
-                  <div className="col-start-3 row-start-1 flex items-center justify-end sm:col-start-5 sm:justify-self-end">
-                  <Button
-                    variant="destructive"
-                    svg={Ban}
-                    iconSize="sm"
-                    className="shrink-0"
-                    isLoading={isThisRevokeLoading}
-                    disabled={destructiveConfirmRunning}
-                    onClick={() =>
-                      setDestructiveConfirm({
-                        kind: "revokeTrusted",
-                        device,
-                      })
-                    }
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                )}
               </div>
             );
           })}

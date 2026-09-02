@@ -13,6 +13,15 @@ const makeSong = (name: string, id = name): ServiceItem => ({
 });
 
 describe("findServicePlanningSongMatch", () => {
+  it("matches the exact Welcome Here title", () => {
+    const match = findBestServicePlanningSongMatch(
+      "There's a Welcome Here",
+      [makeSong("There's a Welcome Here")],
+    );
+
+    expect(match?._id).toBe("There's a Welcome Here");
+  });
+
   it("matches titles with trailing hymn numbers and keys to bare song titles", () => {
     const match = findBestServicePlanningSongMatch(
       "To God Be the Glory Hymn #341 (F)",

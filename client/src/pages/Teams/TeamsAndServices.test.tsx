@@ -4,6 +4,7 @@ import type { ContextType } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import TeamsAndServices from "./TeamsAndServices";
+import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { createMockGlobalContext } from "../../test/mocks";
@@ -299,10 +300,10 @@ const waitForTeamsBootstrap = async () => {
   await screen.findByRole("heading", { name: /^Schedules$/i }, { timeout: 8000 });
 };
 
-const openTeamsSectionsNavIfNeeded = async (
+const openTeamsNavigationIfNeeded = async (
   user: ReturnType<typeof userEvent.setup>,
 ) => {
-  const openButton = screen.queryByRole("button", { name: /Open sections/i });
+  const openButton = screen.queryByRole("button", { name: /Open menu/i });
   if (openButton) {
     await user.click(openButton);
   }
@@ -353,7 +354,7 @@ describe("Teams", () => {
     renderTeams();
 
     await waitForTeamsBootstrap();
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
     expect(
@@ -364,14 +365,43 @@ describe("Teams", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /^Microphones$/i }));
     expect(
-      await screen.findByRole("heading", { name: /^Microphones$/i }),
+      await screen.findByRole("button", { name: /Edit microphones/i }),
     ).toBeInTheDocument();
     expect(mockGetServicePlanMicrophones).toHaveBeenCalledWith("church-1");
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     await waitForTeamsBootstrap();
+  });
+
+  it("combines app actions and workspace sections in the mobile menu drawer", async () => {
+    const user = userEvent.setup();
+    const onChangelog = jest.fn();
+
+    render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <TeamsMobileNavigation
+            menuItems={[
+              { text: "Home", to: "/" },
+              { text: "Changelog", onClick: onChangelog },
+            ]}
+          />
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Open menu/i }));
+
+    const drawer = screen.getByRole("dialog", { name: /^Menu$/i });
+    expect(within(drawer).getByRole("link", { name: /^Home$/i })).toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+
+    await user.click(within(drawer).getByRole("button", { name: /^Changelog$/i }));
+    expect(onChangelog).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: /^Menu$/i })).not.toBeInTheDocument();
   });
 
   it("confirms before discarding unsaved microphone changes during sidebar navigation", async () => {
@@ -379,7 +409,7 @@ describe("Teams", () => {
     renderTeams("/teams-and-services/microphones");
 
     expect(
-      await screen.findByRole("heading", { name: /^Microphones$/i }),
+      await screen.findByRole("button", { name: /Edit microphones/i }),
     ).toBeInTheDocument();
     // The list is read-only until the operator explicitly enters edit mode.
     await user.click(
@@ -388,7 +418,7 @@ describe("Teams", () => {
     await user.click(
       await screen.findByRole("button", { name: /Add microphone/i }),
     );
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
 
     await user.click(screen.getByRole("link", { name: /^Services$/i }));
     expect(
@@ -413,7 +443,7 @@ describe("Teams", () => {
     renderTeams();
 
     expect(
-      await screen.findByRole("heading", { name: /^Teams and Services$/i }),
+      await screen.findByRole("heading", { name: /Teams and Services/i }),
     ).toBeInTheDocument();
     await waitForTeamsBootstrap();
     expect(
@@ -660,7 +690,7 @@ describe("Teams", () => {
 
     expect(await screen.findByRole("heading", { name: /^Schedules$/i })).toBeInTheDocument();
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
 
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
       "href",
@@ -675,7 +705,7 @@ describe("Teams", () => {
       "/teams/intake",
     );
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Members$/i }));
     expect(
       await screen.findByRole("button", { name: /Create member/i }),
@@ -685,7 +715,7 @@ describe("Teams", () => {
       "page",
     );
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Positions$/i }));
     expect(
       await screen.findByRole("button", { name: /Create position/i }),
@@ -695,7 +725,7 @@ describe("Teams", () => {
       "page",
     );
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Teams$/i }));
     expect(
       await screen.findByRole("button", { name: /Create team/i }),
@@ -705,7 +735,7 @@ describe("Teams", () => {
       "page",
     );
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     expect(
       await screen.findByRole("heading", { name: /^Schedules$/i }),
@@ -722,7 +752,7 @@ describe("Teams", () => {
     renderTeams("/teams-and-services/forms");
 
     expect(
-      await screen.findByRole("heading", { name: /^Teams and Services$/i }),
+      await screen.findByRole("heading", { name: /Teams and Services/i }),
     ).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /This section could not load/i,
@@ -872,7 +902,7 @@ describe("Teams", () => {
     await user.click(await screen.findByRole("button", { name: /Edit Main Team/i }));
     await user.type(screen.getByLabelText(/^Name/i), " updated");
 
-    await openTeamsSectionsNavIfNeeded(user);
+    await openTeamsNavigationIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Members$/i }));
     expect(
       await screen.findByRole("dialog", { name: /Unsaved changes/i }),

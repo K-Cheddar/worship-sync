@@ -713,6 +713,7 @@ export const formatPlainDateRangeLabel = (
 ) => {
   const start = formatPlainDateLabel(startDate);
   const end = formatPlainDateLabel(endDate);
+  if (startDate && startDate === endDate) return start;
   if (start && end) return `${start} – ${end}`;
   return start || end;
 };

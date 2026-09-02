@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, Check, Plus } from "lucide-react";
+import BibleSection from "../../containers/Bible/BibleSection";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -10,12 +11,22 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import { bibleVersions } from "../../utils/bibleVersions";
+import { bibleStructure } from "../../utils/bibleStructure";
 import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
+import { parseBibleSearchReference } from "../../utils/bibleReferenceParser";
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
 import type { ServicePlanScriptureReference } from "../../types/servicePlan";
 
 const DEFAULT_VERSION = "niv";
 const FIELD_LABEL_CLASS = "text-neutral-100";
+
+const getReferenceText = (book: string, chapter: string, startVerse: string, endVerse: string) => {
+  if (!book || !chapter) return "";
+  const verseRange = startVerse
+    ? `:${startVerse}${endVerse && endVerse !== startVerse ? `-${endVerse}` : ""}`
+    : "";
+  return `${book} ${chapter}${verseRange}`;
+};
 
 export const SERVICE_PLAN_SCRIPTURE_ICON_CLASS = "text-yellow-300";
 
@@ -34,6 +45,8 @@ type ServicePlanScripturePopoverProps = {
    * Add menu button.
    */
   anchor?: ReactNode;
+  /** Render inside a parent workspace instead of as a floating card. */
+  inline?: boolean;
 };
 
 /**
@@ -51,6 +64,7 @@ const ServicePlanScripturePopover = ({
   open: openProp,
   onOpenChange,
   anchor,
+  inline = false,
   trigger = false,
 }: ServicePlanScripturePopoverProps) => {
   const isControlled = openProp !== undefined;
@@ -59,6 +73,10 @@ const ServicePlanScripturePopover = ({
   const setOpen = onOpenChange ?? setUncontrolledOpen;
   const [reference, setReference] = useState("");
   const [version, setVersion] = useState(DEFAULT_VERSION);
+  const [bookIndex, setBookIndex] = useState(0);
+  const [chapterIndex, setChapterIndex] = useState(0);
+  const [startVerseIndex, setStartVerseIndex] = useState(0);
+  const [endVerseIndex, setEndVerseIndex] = useState(0);
   const isEditing = Boolean(initialScriptureRef);
 
   useEffect(() => {
@@ -66,6 +84,10 @@ const ServicePlanScripturePopover = ({
     if (!initialScriptureRef) {
       setReference("");
       setVersion(DEFAULT_VERSION);
+      setBookIndex(0);
+      setChapterIndex(0);
+      setStartVerseIndex(0);
+      setEndVerseIndex(0);
       return;
     }
     const verseSuffix = initialScriptureRef.verseRange
@@ -73,12 +95,38 @@ const ServicePlanScripturePopover = ({
       : "";
     setReference(`${initialScriptureRef.book} ${initialScriptureRef.chapter}${verseSuffix}`);
     setVersion(initialScriptureRef.version.toLowerCase());
+    const [start = "", end = start] = initialScriptureRef.verseRange.split("-");
+    const nextBookIndex = bibleStructure.books.findIndex((item) => item.name === initialScriptureRef.book);
+    const nextChapterIndex = bibleStructure.books[nextBookIndex]?.chapters.findIndex((item) => item.name === initialScriptureRef.chapter) ?? 0;
+    setBookIndex(Math.max(0, nextBookIndex));
+    setChapterIndex(Math.max(0, nextChapterIndex));
+    setStartVerseIndex(Math.max(0, Number(start) - 1));
+    setEndVerseIndex(Math.max(0, Number(end) - 1));
   }, [initialScriptureRef, open]);
 
   const parsedReference = useMemo(
     () => (reference.trim() ? parseBibleReference(reference.trim()) : null),
     [reference],
   );
+
+  const syncPickerFromReference = (nextReference: string) => {
+    const nextParsedReference = nextReference.trim()
+      ? parseBibleReference(nextReference.trim())
+      : null;
+    if (!nextParsedReference) return;
+
+    const [start = "", end = start] = nextParsedReference.verseRange.split("-");
+    const nextBookIndex = bibleStructure.books.findIndex((item) => item.name === nextParsedReference.book);
+    const nextChapterIndex = bibleStructure.books[nextBookIndex]?.chapters.findIndex((item) => item.name === nextParsedReference.chapter) ?? -1;
+    if (nextBookIndex === -1 || nextChapterIndex === -1) return;
+    setBookIndex(nextBookIndex);
+    setChapterIndex(nextChapterIndex);
+    setStartVerseIndex(Math.max(0, Number(start) - 1));
+    setEndVerseIndex(Math.max(0, Number(end) - 1));
+    if (nextParsedReference.version) {
+      setVersion(nextParsedReference.version.toLowerCase());
+    }
+  };
 
   // Pasting the whole reference is the fast path — "Psalms 90 (NLT)" should
   // set the version too rather than silently attaching it as the default. The
@@ -89,9 +137,38 @@ const ServicePlanScripturePopover = ({
     if (typedVersion) setVersion(typedVersion);
   }, [typedVersion]);
 
+  const selectedBook = bibleStructure.books[bookIndex];
+  const selectedChapter = selectedBook?.chapters[chapterIndex];
+  const selectedVerses = selectedChapter?.verses || [];
+  const searchValues = useMemo(
+    () => (reference.trim() ? parseBibleSearchReference(reference.trim()) : null),
+    [reference],
+  );
+
   const reset = () => {
     setReference("");
     setVersion(DEFAULT_VERSION);
+    setBookIndex(0);
+    setChapterIndex(0);
+    setStartVerseIndex(0);
+    setEndVerseIndex(0);
+  };
+
+  const updatePickerReference = (
+    nextBookIndex: number,
+    nextChapterIndex: number,
+    nextStartVerseIndex: number,
+    nextEndVerseIndex: number,
+  ) => {
+    const nextBook = bibleStructure.books[nextBookIndex];
+    const nextChapter = nextBook?.chapters[nextChapterIndex];
+    const nextVerses = nextChapter?.verses || [];
+    setReference(getReferenceText(
+      nextBook?.name || "",
+      nextChapter?.name || "",
+      nextVerses[nextStartVerseIndex]?.name || "",
+      nextVerses[nextEndVerseIndex]?.name || "",
+    ));
   };
 
   const handleAttach = () => {
@@ -147,15 +224,31 @@ const ServicePlanScripturePopover = ({
       <PopoverContent
         align="start"
         sideOffset={8}
-        className="w-[min(22rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-3 text-white shadow-xl"
+        portal={!inline}
+        staticContent={inline}
+        className={inline
+          ? "flex h-full min-h-0 w-full flex-1 border-0 bg-transparent p-0 text-white shadow-none"
+          : "w-[min(22rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-3 text-white shadow-xl"}
       >
-        <div className="flex flex-col gap-2 text-left">
+        <div className="flex h-full min-h-0 flex-1 flex-col gap-3 text-left">
+          <Select
+            label="Version"
+            labelClassName={FIELD_LABEL_CLASS}
+            value={version}
+            onChange={setVersion}
+            options={bibleVersions.map((item) => ({ value: item.value, label: item.label }))}
+          />
           <Input
             label="Scripture reference"
             labelClassName={FIELD_LABEL_CLASS}
             placeholder="e.g. John 3:16-18"
             value={reference}
-            onChange={(value) => setReference(String(value))}
+            autoFocus
+            onChange={(value) => {
+              const nextReference = String(value);
+              setReference(nextReference);
+              syncPickerFromReference(nextReference);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && parsedReference) {
                 event.preventDefault();
@@ -163,16 +256,61 @@ const ServicePlanScripturePopover = ({
               }
             }}
           />
-          <Select
-            label="Version"
-            labelClassName={FIELD_LABEL_CLASS}
-            value={version}
-            onChange={setVersion}
-            options={bibleVersions.map((item) => ({
-              value: item.value,
-              label: item.label,
-            }))}
-          />
+          <div
+            className="grid h-72 min-h-0 flex-1 grid-cols-[minmax(0,1.8fr)_repeat(3,minmax(0,1fr))] gap-2 overflow-hidden"
+            aria-label="Browse scripture passage"
+          >
+            <BibleSection
+              initialList={bibleStructure.books}
+              setValue={setBookIndex}
+              onSelect={(nextBookIndex) => {
+                setChapterIndex(0);
+                setStartVerseIndex(0);
+                setEndVerseIndex(0);
+                updatePickerReference(nextBookIndex, 0, 0, 0);
+              }}
+              value={bookIndex}
+              type="book"
+              searchValue={searchValues?.book || ""}
+            />
+            <BibleSection
+              initialList={selectedBook?.chapters || []}
+              setValue={setChapterIndex}
+              onSelect={(nextChapterIndex) => {
+                setStartVerseIndex(0);
+                setEndVerseIndex(0);
+                updatePickerReference(bookIndex, nextChapterIndex, 0, 0);
+              }}
+              value={chapterIndex}
+              type="chapter"
+              searchValue={searchValues?.chapter || ""}
+            />
+            <BibleSection
+              initialList={selectedVerses}
+              setValue={setStartVerseIndex}
+              onSelect={(nextStartVerseIndex) => {
+                const nextEndVerseIndex = Math.max(endVerseIndex, nextStartVerseIndex);
+                setEndVerseIndex(nextEndVerseIndex);
+                updatePickerReference(bookIndex, chapterIndex, nextStartVerseIndex, nextEndVerseIndex);
+              }}
+              value={startVerseIndex}
+              type="verse"
+              label="Start"
+              searchValue={searchValues?.startVerse || ""}
+            />
+            <BibleSection
+              initialList={selectedVerses}
+              setValue={setEndVerseIndex}
+              onSelect={(nextEndVerseIndex) =>
+                updatePickerReference(bookIndex, chapterIndex, startVerseIndex, nextEndVerseIndex)
+              }
+              value={endVerseIndex}
+              type="verse"
+              label="End"
+              min={startVerseIndex}
+              searchValue={searchValues?.endVerse || ""}
+            />
+          </div>
           {reference.trim() && !parsedReference ? (
             <p className="text-sm text-amber-200" role="status">
               That doesn&apos;t look like a scripture reference yet — try

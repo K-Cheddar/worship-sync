@@ -252,6 +252,32 @@ describe("ServicePlanLibraryPicker", () => {
     expect(screen.queryByText(/Songs are loading/i)).not.toBeInTheDocument();
   });
 
+  it("keeps existing document-backed songs when allItems contains only a newly created song", async () => {
+    const partialSongItems = [
+      {
+        _id: "song-new",
+        name: "Brand New Song",
+        type: "song" as const,
+        listId: "",
+        background: "",
+      },
+    ];
+    const store = createPickerStore({ allItemsList: partialSongItems });
+    store.dispatch(
+      allDocsSlice.actions.upsertItemInAllDocs({
+        _id: "song-new",
+        name: "Brand New Song",
+        type: "song",
+      } as never),
+    );
+
+    renderPicker(store);
+
+    expect(await screen.findByText(songTitleMatcher("Living Hope"))).toBeInTheDocument();
+    expect(screen.getByText(songTitleMatcher("Great Are You Lord"))).toBeInTheDocument();
+    expect(screen.getByText(songTitleMatcher("Brand New Song"))).toBeInTheDocument();
+  });
+
   it("shows create chrome under search and hides outline delete", async () => {
     renderPicker();
 

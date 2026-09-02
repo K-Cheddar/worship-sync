@@ -10,6 +10,7 @@ import type {
   ServicePlanSection,
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
+import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -311,12 +312,16 @@ export const refreshServicePlanFromImport = (
     Boolean(item.sourcePlanningManaged) ||
     (!tracksSource && Boolean(options.treatUnmarkedItemsAsSource));
 
+  // A section is a named container, not a reusable slot. Residual order cannot
+  // prove that an unfamiliar incoming section is a renamed existing section:
+  // a newly-added late-service section would otherwise consume the first
+  // unmatched section and inherit its position and local content.
   const sectionPairs = pairByLabelThenOrder(
     currentSections,
     importedSections,
     (section) => section.name,
     canPairByLabel,
-    isSourceOwned,
+    () => false,
   );
   const importedByCurrentIndex = new Map(
     sectionPairs.map(([current, imported]) => [current.index, imported]),
@@ -389,11 +394,25 @@ export const refreshServicePlanFromImport = (
   );
 
   if (options.addMissing) {
-    for (const importedSection of importedSections) {
-      const sourceIndex = importedSections.indexOf(importedSection);
-      if (!pairedImportedSections.has(sourceIndex))
-        refreshed.push(managedImportedSection(importedSection));
-    }
+    const currentSectionIdByImportedIndex = new Map(
+      sectionPairs.map(([current, imported]) => [
+        imported.index,
+        current.value.id,
+      ]),
+    );
+    const newSectionByImportedIndex = new Map(
+      importedSections.flatMap((section, index) =>
+        pairedImportedSections.has(index)
+          ? []
+          : [[index, managedImportedSection(section)] as const],
+      ),
+    );
+    return insertNewServicePlanSectionRuns(
+      refreshed,
+      importedSections.length,
+      newSectionByImportedIndex,
+      currentSectionIdByImportedIndex,
+    );
   }
   return refreshed;
 };

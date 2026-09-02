@@ -288,7 +288,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     return getStringValue(cleanedLyrics) ?? null;
   };
 
-  const extractLyricsFromGeniusHtml = (html, title, removeChorus = true) => {
+  const extractLyricsFromGeniusHtml = (html, title) => {
     if (typeof html !== "string" || !html.trim()) {
       return null;
     }
@@ -302,6 +302,9 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     const lyrics = containers
       .map((_, element) => {
         const clone = $(element).clone();
+        // Genius keeps song descriptions and annotation UI inside the lyrics
+        // container. Those nodes are explicitly marked as non-lyric text.
+        clone.find("[data-exclude-from-selection='true']").remove();
         clone.find("br").replaceWith("\n");
         return clone.text();
       })
@@ -313,11 +316,10 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       return null;
     }
 
-    const normalizedLyrics = removeChorus
-      ? lyrics.replace(/\[[^\]]+\]\n?/g, "")
-      : lyrics;
-
-    return stripGeniusLyricsPreamble(normalizedLyrics, title);
+    // Preserve chart labels such as [Verse 1] and [Chorus]. The client
+    // recognizes these labels and can build an already-arranged song from
+    // them; only the Genius contributor/title preamble is import noise.
+    return stripGeniusLyricsPreamble(lyrics, title);
   };
 
   const fetchGeniusLyrics = async (song, { signal } = {}) => {
@@ -347,11 +349,7 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
       return null;
     }
 
-    const lyrics = extractLyricsFromGeniusHtml(
-      response.data,
-      song?.title,
-      true,
-    );
+    const lyrics = extractLyricsFromGeniusHtml(response.data, song?.title);
 
     if (!lyrics) {
       // A 200 response with no lyrics container usually means Genius served a
@@ -405,7 +403,10 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     });
   };
 
-  const searchGeniusTracks = async (params, { signal } = {}) => {
+  const searchGeniusTracks = async (
+    params,
+    { signal, fetchLyrics = true } = {},
+  ) => {
     const query = buildGeniusQuery(params);
 
     if (!query) return [];
@@ -414,9 +415,11 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
 
     const lyricsResults = await Promise.all(
       songs.slice(0, GENIUS_RESULT_LIMIT).map(async (song) => {
-        const plainLyrics = await fetchGeniusLyrics(song, { signal });
+        const plainLyrics = fetchLyrics
+          ? await fetchGeniusLyrics(song, { signal })
+          : null;
 
-        if (!plainLyrics) {
+        if (!plainLyrics && fetchLyrics) {
           return null;
         }
 
@@ -555,10 +558,22 @@ export const createLyricsImportService = ({ geniusAccessToken } = {}) => {
     );
   };
 
-  const searchAllLyricsTracks = async (params, { includeGenius = true } = {}) => {
+  const searchAllLyricsTracks = async (
+    params,
+    { includeGenius = true, includeGeniusLyrics = true } = {},
+  ) => {
     const providers = [
       ...(includeGenius
-        ? [{ name: "Genius", search: searchGeniusTracks }]
+        ? [
+            {
+              name: "Genius",
+              search: (providerParams, options) =>
+                searchGeniusTracks(providerParams, {
+                  ...options,
+                  fetchLyrics: includeGeniusLyrics,
+                }),
+            },
+          ]
         : []),
       { name: "lyrics.ovh", search: searchLyricsOvhTracks },
       { name: "LRCLIB", search: searchLrclibTracks },

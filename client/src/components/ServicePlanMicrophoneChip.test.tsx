@@ -23,8 +23,9 @@ describe("ServicePlanMicrophoneChip", () => {
     expect(chip.style.backgroundColor).toBe("rgba(249, 115, 22, 0.14)");
     expect(screen.getByText("Orange")).toBeInTheDocument();
     expect(screen.getByText(/Handheld · Jamie/)).toBeInTheDocument();
-    expect(chip).not.toHaveClass("truncate");
-    expect(chip.className).not.toMatch(/max-w-/);
+    expect(chip).toHaveClass("max-w-full");
+    expect(screen.getByText("Orange")).toHaveClass("truncate");
+    expect(screen.getByText(/Handheld · Jamie/)).toHaveClass("truncate");
   });
 
   it("keeps the violet fallback when the microphone has no color", () => {

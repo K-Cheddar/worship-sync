@@ -23,7 +23,7 @@ const CurrentItemRow = ({
     const child = rowRef.current;
     const parent = child?.parentElement;
     if (!isActive || !child || !parent) return;
-    keepElementInView({ child, parent });
+    keepElementInView({ child, parent, shouldScrollToCenter: true });
   }, [isActive]);
 
   return (

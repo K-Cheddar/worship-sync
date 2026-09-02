@@ -26,6 +26,12 @@ const section = (elements: ServicePlanElement[]): ServicePlanSection => ({
   elements,
 });
 
+const namedSection = (
+  id: string,
+  name: string,
+  elements: ServicePlanElement[],
+): ServicePlanSection => ({ id, name, elements });
+
 describe("summarizeServicePlanImport", () => {
   it("keeps changes in the order of items on the service", () => {
     const current = [section([
@@ -220,5 +226,29 @@ describe("summarizeServicePlanImport", () => {
       summary,
       new Set(summary.changes.map(servicePlanImportChangeKey)),
     )).toEqual(next);
+  });
+
+  it("applies a selected new section at its reviewed position", () => {
+    const current = [
+      namedSection("welcome", "Welcome", [element("greeting", "Greeting")]),
+      namedSection("message", "Message", [element("sermon", "Sermon")]),
+    ];
+    const next = [
+      current[0],
+      namedSection("worship", "Worship", [
+        element("song", "Song of Praise", { sourcePlanningManaged: true }),
+      ]),
+      current[1],
+    ];
+    const summary = summarizeServicePlanImport(current, next);
+
+    expect(
+      applySelectedServicePlanImportChanges(
+        current,
+        next,
+        summary,
+        new Set(summary.changes.map(servicePlanImportChangeKey)),
+      ).map((item) => item.id),
+    ).toEqual(["welcome", "worship", "message"]);
   });
 });

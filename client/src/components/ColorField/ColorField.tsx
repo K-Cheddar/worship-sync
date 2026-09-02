@@ -220,10 +220,10 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
 
   return (
     <div className="rounded-md bg-slate-700/30 p-2">
-      <div className="flex items-start gap-4">
+      <div className="flex flex-wrap items-start gap-4">
         <div
           className={cn(
-            "min-w-[220px]",
+            "min-w-[220px] flex-1",
             colors.length > 0 && "border-r border-white/15 pr-4",
           )}
         >
@@ -239,7 +239,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
           />
         </div>
         {colors.length > 0 && (
-          <div className="w-fit pl-1">
+          <div className="w-fit shrink-0 pl-1">
             <ChurchBrandColorSwatches
               colors={colors}
               onSelect={handlePresetSelect}

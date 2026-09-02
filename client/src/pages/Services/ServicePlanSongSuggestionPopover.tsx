@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Music, Plus, Search } from "lucide-react";
+import { Music, Plus, Search, X } from "lucide-react";
 import { Button, ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import {
   Popover,
@@ -66,10 +66,21 @@ const ServicePlanSongSuggestionPopover = ({
         className="w-[min(20rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-2 text-white shadow-xl"
       >
         <div className="flex flex-col gap-2 text-left">
-          <div className="px-1">
+          <div className="flex items-start justify-between gap-2 px-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
               Link a song
             </p>
+            <Button
+              type="button"
+              variant="none"
+              svg={X}
+              iconSize="sm"
+              className="shrink-0 cursor-pointer p-0.5 text-gray-400 hover:text-white"
+              aria-label="Close song linking"
+              onClick={() => onOpenChange(false)}
+            />
+          </div>
+          <div className="px-1">
             <p className="truncate text-sm font-medium" title={planTitle}>
               {planTitle}
             </p>

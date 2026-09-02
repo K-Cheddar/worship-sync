@@ -148,6 +148,29 @@ describe("buildServicePlanSectionsFromImport", () => {
     });
   });
 
+  it("recognizes a keyed song title when its source music marker is missing", () => {
+    const [section] = buildServicePlanSectionsFromImport(
+      {
+        ...data,
+        sections: [{
+          sectionName: "Praise & Worship",
+          rows: [
+            { elementType: "Welcome", title: "How Great Is Our God (E)", ledBy: "" },
+            { elementType: "Song", title: "Marked Song", ledBy: "", songTitle: "Marked Song" },
+          ],
+        }],
+      },
+      songs,
+    );
+
+    expect(section.elements[0].type).toBe("song");
+    expect(section.elements[0].songRef).toEqual({
+      kind: "pending",
+      title: "How Great Is Our God",
+      lyricsText: "",
+    });
+  });
+
   it("matches a marked song against the library on the marked title alone", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {

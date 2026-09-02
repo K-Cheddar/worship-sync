@@ -28,6 +28,18 @@ describe("songSearchUtils", () => {
     expect(result.map((s) => s._id)).toEqual(["m"]);
   });
 
+  it("ranks a whole-word title match above an embedded partial match", () => {
+    const wholeWord = baseSong({ _id: "whole", name: "Owe You Praise" });
+    const embedded = baseSong({ _id: "embedded", name: "Power in the Blood" });
+
+    const result = filterAndSortSongsForSearch(
+      [embedded, wholeWord],
+      "owe",
+    );
+
+    expect(result.map((song) => song._id)).toEqual(["whole", "embedded"]);
+  });
+
   it("finds songs by lyric content across arrangements", () => {
     const withLyric = baseSong({
       _id: "lyric",

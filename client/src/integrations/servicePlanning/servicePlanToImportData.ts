@@ -53,17 +53,7 @@ const elementToRow = (element: ServicePlanElement): EventData => {
       ? element.durationSeconds / 60
       : element.durationMinutes;
 
-  // The song the plan settled on. A library ref is an answer the operator
-  // already gave, so it travels as an id the preview can use directly rather
-  // than a title it would have to guess from again.
-  // The source-preview row model has one song slot. Use the first attachment
-  // there; the Service Plan and live-outline push retain every attachment.
-  const songRef = getServicePlanElementSongRefs(element)[0];
-  const song = songRef
-    ? songRef.kind === "library"
-      ? { songId: songRef.songId, songTitle: songRef.songName }
-      : { songTitle: songRef.title.trim() }
-    : {};
+  const songRefs = getServicePlanElementSongRefs(element);
 
   // Same principle as the song id: the operator already resolved which passages
   // these are, so they travel as parsed references rather than a title the
@@ -81,7 +71,7 @@ const elementToRow = (element: ServicePlanElement): EventData => {
     }),
   );
 
-  return {
+  const base: EventData = {
     elementType: element.sourceElementTypeRaw?.trim() || element.type,
     title,
     ledBy:
@@ -92,8 +82,17 @@ const elementToRow = (element: ServicePlanElement): EventData => {
     ...(typeof durationMinutes === "number" ? { durationMinutes } : {}),
     ...(notes ? { note: notes } : {}),
     ...(teamNotes.length ? { teamNotes } : {}),
-    ...(song.songTitle ? song : {}),
     ...(scriptureRefs.length ? { scriptureRefs } : {}),
+  };
+  const mappedSongs = songRefs.map((songRef) =>
+    songRef.kind === "library"
+      ? { songId: songRef.songId, songTitle: songRef.songName }
+      : { songTitle: songRef.title.trim() },
+  );
+  return {
+    ...base,
+    ...(mappedSongs[0] || {}),
+    ...(mappedSongs.length ? { songRefs: mappedSongs } : {}),
   };
 };
 

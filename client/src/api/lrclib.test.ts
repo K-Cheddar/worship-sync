@@ -1,4 +1,5 @@
 import {
+  fetchGeniusLyricsLocally,
   getLrclibTrack,
   resolveLrclibImport,
   searchLrclibTracks,
@@ -15,6 +16,7 @@ describe("lrclib api", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    delete window.electronAPI;
   });
 
   it("returns an exact match when LRCLIB get succeeds", async () => {
@@ -46,6 +48,32 @@ describe("lrclib api", () => {
       plainLyrics: "Amazing grace",
       syncedLyrics: null,
     });
+  });
+
+  it("preserves Genius chart labels while removing its preamble in Electron", async () => {
+    const fetchGeniusLyrics = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      html: `<div id="lyrics-root"><div data-lyrics-container="true"><div data-exclude-from-selection="true">Song description Read More</div>1 Contributor Example Song Lyrics[Verse 1]<br>Amazing grace<br>How sweet the sound</div></div>`,
+    });
+    window.electronAPI = { fetchGeniusLyrics } as typeof window.electronAPI;
+
+    const result = await fetchGeniusLyricsLocally({
+      source: "genius",
+      geniusId: 7,
+      geniusUrl: "https://genius.com/example-song-lyrics",
+      trackName: "Example Song",
+      artistName: "Example Artist",
+      plainLyrics: null,
+      syncedLyrics: null,
+    });
+
+    expect(fetchGeniusLyrics).toHaveBeenCalledWith(
+      "https://genius.com/example-song-lyrics",
+    );
+    expect(result.plainLyrics).toBe(
+      "[Verse 1]\nAmazing grace\nHow sweet the sound",
+    );
   });
 
   it("accepts Genius-backed exact matches from the shared import endpoint", async () => {

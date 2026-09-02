@@ -51,6 +51,16 @@ export const allDocsSlice = createSlice({
         state[key] = [...arr, doc];
       }
     },
+    removeItemFromAllDocs: (
+      state,
+      action: PayloadAction<{ _id: string; type: string }>,
+    ) => {
+      const key = getDocsKey(action.payload.type);
+      if (!key) return;
+      state[key] = state[key].filter(
+        (doc) => doc._id !== action.payload._id,
+      );
+    },
   },
 });
 
@@ -60,6 +70,7 @@ export const {
   updateAllTimerDocs,
   updateAllBibleDocs,
   upsertItemInAllDocs,
+  removeItemFromAllDocs,
 } = allDocsSlice.actions;
 
 export default allDocsSlice.reducer;

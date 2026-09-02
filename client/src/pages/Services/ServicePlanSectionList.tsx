@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { GripVertical, Trash2 } from "lucide-react";
-import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, GripVertical, MoreHorizontal, Trash2, X } from "lucide-react";
+import { closestCenter, DndContext, DragOverlay, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import {
   arrayMove,
   SortableContext,
@@ -13,11 +13,17 @@ import { Button } from "../../components/Button";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import { cn } from "@/utils/cnHelper";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useSensors } from "../../utils/dndUtils";
+import ServicePlanAssigneeList from "./ServicePlanAssigneeList";
+import ServicePlanContentPanel from "./ServicePlanContentPanel";
+import ServicePlanSongDetailsPanel from "./ServicePlanSongDetailsPanel";
 import ServicePlanElementRow, {
   elementDndId,
   ServicePlanElementColumnHeader,
   SERVICE_PLAN_INLINE_INPUT_CLASS,
+  SERVICE_PLAN_COL,
+  formatPlanStartTimeDisplay,
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
@@ -25,21 +31,33 @@ import {
   removeElement,
   removeSection,
   renameSection,
-  reorderElementsInSection,
+  moveElementToPosition,
   reorderSections,
   updateElement,
 } from "./servicePlanDraftUtils";
 import {
   applyElementDurationSecondsChange,
   applyElementStartTimeChange,
+  applyPlanAnchorStartTime,
 } from "./servicePlanTimingUtils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/DropdownMenu";
+import { Sheet, SheetContent, SheetTitle } from "../../components/ui/sheet";
 import type {
   ServicePlanSection,
   ServicePlanSongReference,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServicePlanAssignee,
 } from "../../types/servicePlan";
+import { getServicePlanElementAssignees, getServicePlanElementLead } from "../../types/servicePlan";
+import { richTextToPlainText } from "../../types/richText";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
+import type { DBItem } from "../../types";
 
 const SECTION_ID_PREFIX = "section:";
 const ELEMENT_ID_PREFIX = "element:";
@@ -119,6 +137,11 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   resolvedSongRefs: ReadonlyMap<string, ServicePlanSongReference[]>;
   /** See ServicePlanSectionListProps.structureOnly. */
   structureOnly?: boolean;
+  sectionLabelColor: string;
+  sectionBorderColor: string;
+  onOpenAssignment: (elementId: string, trigger?: HTMLElement) => void;
+  onOpenContent: (elementId: string, trigger?: HTMLElement) => void;
+  onOpenSongDetails: (songRef: ServicePlanSongReference) => void;
 };
 
 const SortableSectionCard = ({
@@ -162,6 +185,11 @@ const SortableSectionCard = ({
   onCreatePendingSong,
   resolvedSongRefs,
   structureOnly = false,
+  sectionLabelColor,
+  sectionBorderColor,
+  onOpenAssignment,
+  onOpenContent,
+  onOpenSongDetails,
 }: SortableSectionCardProps) => {
   const allowEdit = canEdit && isEditing;
   const {
@@ -188,16 +216,17 @@ const SortableSectionCard = ({
     <section
       id={servicePlanSectionDomId(section.id)}
       ref={setNodeRef}
+      className="overflow-hidden rounded-lg border border-gray-700/80 border-l-2 bg-gray-950/40"
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.6 : undefined,
+        borderLeftColor: sectionBorderColor,
       }}
-      className="overflow-hidden rounded-md border border-gray-700/80 bg-gray-950/40"
     >
       <div
         className={cn(
-          "flex items-center gap-1 bg-gray-800/95 px-1.5 py-1",
+          "flex items-center gap-1 border-b border-gray-700/80 bg-gray-950/95 px-1.5 py-0.5",
           isSelected && "bg-cyan-950/50",
         )}
         onClick={onSelectSection}
@@ -231,38 +260,31 @@ const SortableSectionCard = ({
             className="min-w-0 flex-1"
             inputClassName={cn(
               SERVICE_PLAN_INLINE_INPUT_CLASS,
-              "font-semibold text-gray-100",
+              "h-6 border-gray-800/60 bg-gray-950/80 text-xs font-semibold text-gray-100",
             )}
+            style={{ color: sectionLabelColor }}
           />
         ) : (
-          <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-gray-100">
+          <h3 className="min-w-0 flex-1 truncate px-1 text-xs font-semibold max-md:text-sm" style={{ color: sectionLabelColor }}>
             {section.name.trim() || "Untitled section"}
           </h3>
         )}
         {allowEdit ? (
-          <Button
-            type="button"
-            variant="tertiary"
-            iconSize="sm"
-            className="max-md:min-h-0"
-            svg={Trash2}
-            aria-label={`Remove section ${section.name || ""}`}
-            onClick={onRemove}
-          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="tertiary" iconSize="sm" className="max-md:min-h-0" svg={MoreHorizontal} aria-label={`More tools for ${section.name || "section"}`} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onRemove} className="text-red-200">
+                <Trash2 className="size-4" aria-hidden /> Remove section
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
       </div>
 
       <AnimateCollapse open={isExpanded}>
-        <div className="pb-1">
-          {section.elements.length > 0 ? (
-            <ServicePlanElementColumnHeader
-              isEditing={allowEdit}
-              // Keep the flexible title/content columns aligned with edit mode,
-              // which always reserves the trailing actions gutter.
-              showActionsColumn={canEdit || isServiceDay}
-              showAssignedColumn={false}
-            />
-          ) : null}
+        <div>
           <SortableContext items={elementIds} strategy={verticalListSortingStrategy}>
             <div>
               {section.elements.map((element, elementIndex) => (
@@ -314,6 +336,9 @@ const SortableSectionCard = ({
                   onCreatePendingSong={onCreatePendingSong}
                   resolvedSongRefs={resolvedSongRefs.get(element.id)}
                   structureOnly={structureOnly}
+                  onOpenAssignment={(trigger) => onOpenAssignment(element.id, trigger)}
+                  onOpenContent={(trigger) => onOpenContent(element.id, trigger)}
+                  onOpenSongDetails={onOpenSongDetails}
                 />
               ))}
             </div>
@@ -365,8 +390,14 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   /** Id on the scroll container, so a caller can scroll a row into view. */
   scrollId?: string;
   ariaLabel?: string;
+  sectionLabelColor?: string;
+  sectionBorderColor?: string;
   /** Rendered above the sections, inside the same scroll container. */
   header?: ReactNode;
+  /** Validated church colors; fall back to the WorshipSync palette. */
+  onOpenAssignment?: (elementId: string, trigger?: HTMLElement) => void;
+  onOpenContent?: (elementId: string, trigger?: HTMLElement) => void;
+  allSongDocs?: DBItem[];
 };
 
 /**
@@ -405,15 +436,91 @@ const ServicePlanSectionList = ({
   structureOnly = false,
   scrollId,
   ariaLabel = "Service plan",
+  sectionLabelColor = "#f97316",
+  sectionBorderColor = "#f97316",
   header,
+  onOpenAssignment: onOpenAssignmentProp,
+  onOpenContent: onOpenContentProp,
+  allSongDocs = [],
   ...liveRowState
 }: ServicePlanSectionListProps) => {
   const sensors = useSensors();
+  const isDesktopPanel = useMediaQuery("(min-width: 1280px)");
   const sectionIds = sections.map((section) => sectionDndId(section.id));
   const selectedSectionId = selection?.sectionId || null;
   const selectedElementId = selection?.elementId || null;
+  const [assignmentPanelElementId, setAssignmentPanelElementId] = useState<string | null>(null);
+  const [contentPanelElementId, setContentPanelElementId] = useState<string | null>(null);
+  const [songDetailsRef, setSongDetailsRef] = useState<ServicePlanSongReference | null>(null);
+  const [songDetailsEditing, setSongDetailsEditing] = useState(false);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [dragSections, setDragSections] = useState<ServicePlanSection[] | null>(null);
+  const assignmentPanelTriggerRef = useRef<HTMLElement | null>(null);
+  const assignmentPanelElement = assignmentPanelElementId
+    ? sections.flatMap((section) => section.elements).find(
+        (element) => element.id === assignmentPanelElementId,
+      )
+    : undefined;
+  const contentPanelElement = contentPanelElementId
+    ? sections.flatMap((section) => section.elements).find(
+        (element) => element.id === contentPanelElementId,
+      )
+    : undefined;
+  const assignmentPanelSection = assignmentPanelElement
+    ? sections.find((section) =>
+        section.elements.some((element) => element.id === assignmentPanelElement.id),
+      )
+    : undefined;
+  const closeAssignmentPanel = () => {
+    setAssignmentPanelElementId(null);
+    setContentPanelElementId(null);
+    setSongDetailsRef(null);
+    setSongDetailsEditing(false);
+    assignmentPanelTriggerRef.current?.focus();
+    assignmentPanelTriggerRef.current = null;
+  };
+  const backToContentPanel = () => {
+    setSongDetailsRef(null);
+    setSongDetailsEditing(false);
+  };
+  const openAssignmentPanel = (elementId: string, trigger?: HTMLElement) => {
+    assignmentPanelTriggerRef.current = trigger || null;
+    setContentPanelElementId(null);
+    setSongDetailsRef(null);
+    setSongDetailsEditing(false);
+    setAssignmentPanelElementId(elementId);
+  };
+  const updatePanelAssignees = (nextAssignees: ServicePlanAssignee[], coalesceKey?: string) => {
+    if (!assignmentPanelElement || !assignmentPanelSection) return;
+    onSectionsChange(
+      updateElement(sections, assignmentPanelSection.id, assignmentPanelElement.id, {
+        assignees: nextAssignees,
+      }),
+      coalesceKey && `element:${assignmentPanelElement.id}:${coalesceKey}`,
+    );
+  };
+  const handleOpenAssignment = (elementId: string, trigger?: HTMLElement) => {
+    openAssignmentPanel(elementId, trigger);
+    onOpenAssignmentProp?.(elementId, trigger);
+  };
+  const handleOpenContent = (elementId: string, trigger?: HTMLElement) => {
+    assignmentPanelTriggerRef.current = trigger || null;
+    setAssignmentPanelElementId(null);
+    setSongDetailsRef(null);
+    setSongDetailsEditing(false);
+    setContentPanelElementId(elementId);
+    onOpenContentProp?.(elementId, trigger);
+  };
+  const activePanelElement = assignmentPanelElement || contentPanelElement;
+  const songDetails = songDetailsRef?.kind === "library"
+    ? allSongDocs.find((song) => song._id === songDetailsRef.songId && song.type === "song")
+    : undefined;
 
   const handleDragEnd = (event: DragEndEvent) => {
+    setActiveDragId(null);
+    const previewSections = dragSections;
+    const sectionsAtDrop = previewSections || sections;
+    setDragSections(null);
     const { active, over } = event;
     if (!canEdit || !isEditing || !over || active.id === over.id) return;
     const activeId = String(active.id);
@@ -423,14 +530,16 @@ const ServicePlanSectionList = ({
       activeId.startsWith(SECTION_ID_PREFIX) &&
       overId.startsWith(SECTION_ID_PREFIX)
     ) {
-      const ids = sections.map((section) => sectionDndId(section.id));
+      const ids = sectionsAtDrop.map((section) => sectionDndId(section.id));
       const oldIndex = ids.indexOf(activeId);
       const newIndex = ids.indexOf(overId);
       if (oldIndex === -1 || newIndex === -1) return;
       const reorderedIds = arrayMove(ids, oldIndex, newIndex).map((id) =>
         id.slice(SECTION_ID_PREFIX.length),
       );
-      onSectionsChange(reorderSections(sections, reorderedIds));
+      const next = reorderSections(sectionsAtDrop, reorderedIds);
+      const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
+      onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
       return;
     }
 
@@ -444,39 +553,182 @@ const ServicePlanSectionList = ({
         section.elements.some((element) => element.id === rawActiveId),
       );
       // Cross-section drag reorder isn't supported — use "Move to section" instead.
-      if (!owningSection || !owningSection.elements.some((element) => element.id === rawOverId)) {
-        return;
-      }
-      const ids = owningSection.elements.map((element) => element.id);
-      const oldIndex = ids.indexOf(rawActiveId);
-      const newIndex = ids.indexOf(rawOverId);
-      if (oldIndex === -1 || newIndex === -1) return;
-      onSectionsChange(
-        reorderElementsInSection(
-          sections,
-          owningSection.id,
-          arrayMove(ids, oldIndex, newIndex),
-        ),
+      const destination = sections.find((section) =>
+        section.elements.some((element) => element.id === rawOverId),
       );
+      if (!owningSection || !destination) return;
+      const targetIndex = destination.elements.findIndex((element) => element.id === rawOverId);
+      const next = owningSection.id !== destination.id && previewSections
+        ? previewSections
+        : moveElementToPosition(sections, rawActiveId, owningSection.id, destination.id, targetIndex);
+      const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
+      onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
+      return;
+    }
+
+    if (activeId.startsWith(ELEMENT_ID_PREFIX) && overId.startsWith(SECTION_ID_PREFIX)) {
+      const rawActiveId = activeId.slice(ELEMENT_ID_PREFIX.length);
+      const destinationId = overId.slice(SECTION_ID_PREFIX.length);
+      const owningSection = sections.find((section) => section.elements.some((element) => element.id === rawActiveId));
+      const destination = sections.find((section) => section.id === destinationId);
+      if (!owningSection || !destination) return;
+      const next = owningSection.id !== destination.id && previewSections
+        ? previewSections
+        : moveElementToPosition(sections, rawActiveId, owningSection.id, destination.id, destination.elements.length);
+      const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
+      onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
     }
   };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveDragId(String(event.active.id));
+    setDragSections(sections);
+  };
+
+  const handleDragOver = (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
+    if (!canEdit || !isEditing || !event.over || !String(event.active.id).startsWith(ELEMENT_ID_PREFIX)) return;
+    const activeId = String(event.active.id);
+    const overId = String(event.over.id);
+    const current = dragSections || sections;
+    const source = current.find((section) => section.elements.some((element) => elementDndId(element.id) === activeId));
+    const destination = overId.startsWith(SECTION_ID_PREFIX)
+      ? current.find((section) => sectionDndId(section.id) === overId)
+      : current.find((section) => section.elements.some((element) => elementDndId(element.id) === overId));
+    if (!source || !destination || source.id === destination.id) return;
+    const targetIndex = overId.startsWith(ELEMENT_ID_PREFIX)
+      ? destination.elements.findIndex((element) => elementDndId(element.id) === overId)
+      : destination.elements.length;
+    setDragSections(moveElementToPosition(current, activeId.slice(ELEMENT_ID_PREFIX.length), source.id, destination.id, targetIndex));
+  };
+
+  const activeDragSection = activeDragId?.startsWith(SECTION_ID_PREFIX)
+    ? sections.find((section) => sectionDndId(section.id) === activeDragId)
+    : undefined;
+  const activeDragElement = activeDragId?.startsWith(ELEMENT_ID_PREFIX)
+    ? (dragSections || sections)
+        .flatMap((section) => section.elements)
+        .find((element) => elementDndId(element.id) === activeDragId)
+    : undefined;
+  const activePanelTitle = activePanelElement?.title
+    ? richTextToPlainText(activePanelElement.title).trim()
+    : "";
+
+  const panelAriaLabel = songDetails
+    ? `Song details for ${songDetails.name}`
+    : `${contentPanelElement ? "Content editor" : "Assignment editor"} for ${activePanelTitle || "Untitled item"}`;
+  const panelTitle = songDetails
+    ? (songDetailsEditing ? "Edit song details" : "Song details")
+    : contentPanelElement
+      ? (isEditing ? "Edit content" : "Content details")
+      : (isEditing ? "Edit people and microphones" : "People and microphones");
+  const panelSubtitle = songDetails
+    ? songDetails.name
+    : activePanelTitle || "Untitled item";
+  const panelHeader = (
+    <div className="flex items-start gap-2 border-b border-gray-800 px-4 py-3">
+      {songDetails && contentPanelElement ? (
+        <Button
+          type="button"
+          variant="tertiary"
+          iconSize="sm"
+          svg={ArrowLeft}
+          aria-label="Back to content"
+          onClick={backToContentPanel}
+        />
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-sm font-semibold text-gray-100">{panelTitle}</h2>
+        <p className="truncate text-xs text-gray-400">{panelSubtitle}</p>
+      </div>
+      <Button
+        type="button"
+        variant="tertiary"
+        iconSize="sm"
+        svg={X}
+        aria-label="Close side panel"
+        onClick={closeAssignmentPanel}
+      />
+    </div>
+  );
+  const panelFooter = (
+    <div className="border-t border-gray-800 p-4">
+      <Button
+        type="button"
+        variant="primary"
+        className="w-full cursor-pointer justify-center"
+        onClick={closeAssignmentPanel}
+      >
+        Done
+      </Button>
+    </div>
+  );
+  const panelContent = (
+    <>
+      {songDetails ? (
+        <ServicePlanSongDetailsPanel
+          song={songDetails}
+          canEdit={canEdit}
+          onEditingChange={setSongDetailsEditing}
+        />
+      ) : contentPanelElement ? (
+        <ServicePlanContentPanel
+          element={contentPanelElement}
+          allowEdit={canEdit && isEditing}
+          onUpdate={(changes) => onSectionsChange(updateElement(sections, sections.find((section) => section.elements.some((element) => element.id === contentPanelElement.id))?.id || "", contentPanelElement.id, changes))}
+          onViewSongLyrics={onViewSongLyrics}
+          onOpenSongDetails={(songRef) => {
+            if (songRef.kind !== "library") {
+              onViewSongLyrics?.(songRef);
+              return;
+            }
+            setSongDetailsEditing(false);
+            setSongDetailsRef(songRef);
+          }}
+          onCreatePendingSong={onCreatePendingSong}
+          canCreateLibrarySong={canCreateLibrarySong}
+        />
+      ) : assignmentPanelElement ? (
+        <ServicePlanAssigneeList
+          assignees={getServicePlanElementAssignees(assignmentPanelElement)}
+          allowEdit={canEdit && isEditing}
+          microphones={microphones}
+          assignedToHistoryValues={assignedToHistoryValues}
+          onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+          isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+          itemLabel={richTextToPlainText(assignmentPanelElement.title).trim() || "Untitled item"}
+          structureOnly={structureOnly}
+          scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+          onChange={updatePanelAssignees}
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragCancel={() => setActiveDragId(null)}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-        <div
-          id={scrollId}
-          role="region"
-          aria-label={ariaLabel}
-          className="scrollbar-variable min-h-0 flex-1 space-y-2 overflow-y-auto"
-        >
+      <div className="flex min-h-0 min-w-0 flex-1 gap-3">
+        <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
+          <div
+            id={scrollId}
+            role="region"
+            aria-label={ariaLabel}
+            className="scrollbar-variable min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto"
+          >
           {header}
+          <ServicePlanElementColumnHeader
+            isEditing={isEditing}
+            showActionsColumn={isEditing || Boolean(liveRowState.isServiceDay)}
+            showAssignedColumn={!structureOnly}
+          />
 
-          {sections.map((section) => (
+          {(dragSections || sections).map((section) => (
             <SortableSectionCard
               key={section.id}
               section={section}
@@ -548,13 +800,79 @@ const ServicePlanSectionList = ({
               canCreateLibrarySong={canCreateLibrarySong}
               onCreatePendingSong={onCreatePendingSong}
               resolvedSongRefs={resolvedSongRefs}
-              structureOnly={structureOnly}
+                  structureOnly={structureOnly}
+              sectionLabelColor={sectionLabelColor}
+              sectionBorderColor={sectionBorderColor}
+              onOpenAssignment={handleOpenAssignment}
+              onOpenContent={handleOpenContent}
+              onOpenSongDetails={(songRef) => {
+                if (songRef.kind !== "library") {
+                  onViewSongLyrics?.(songRef);
+                  return;
+                }
+                setContentPanelElementId(null);
+                setAssignmentPanelElementId(null);
+                setSongDetailsEditing(false);
+                setSongDetailsRef(songRef);
+              }}
               {...liveRowState}
             />
           ))}
 
-        </div>
-      </SortableContext>
+          </div>
+        </SortableContext>
+        {activePanelElement || songDetails ? (
+          <aside
+            aria-label={panelAriaLabel}
+            className="hidden min-h-0 w-[min(26rem,32vw)] shrink-0 flex-col overflow-hidden rounded-lg border border-gray-500/35 bg-sheet-surface text-neutral-100 shadow-xl xl:flex"
+          >
+            {panelHeader}
+            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
+              {panelContent}
+            </div>
+            {panelFooter}
+          </aside>
+        ) : null}
+        <Sheet
+          open={!isDesktopPanel && Boolean(activePanelElement || songDetails)}
+          onOpenChange={(open) => {
+            if (!open) closeAssignmentPanel();
+          }}
+        >
+          <SheetContent
+            side="right"
+            showClose={false}
+            className="w-full max-w-md gap-0 p-0 xl:hidden"
+            aria-label={panelAriaLabel}
+          >
+            <SheetTitle className="sr-only">{panelTitle}</SheetTitle>
+            {panelHeader}
+            <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4 [&_.service-plan-assignee-list]:!pl-0 [&_.service-plan-assignee-list>div:first-child]:flex-col [&_.service-plan-assignee-list>div:first-child]:items-stretch [&_.service-plan-assignee-list>div:first-child]:gap-2 [&_.service-plan-assignee-list>div:first-child>div:first-child]:w-full [&_.service-plan-assignee-list>div:first-child>div:last-child]:w-full">
+              {panelContent}
+            </div>
+            {panelFooter}
+          </SheetContent>
+        </Sheet>
+      </div>
+      <DragOverlay dropAnimation={null}>
+        {activeDragSection ? (
+          <div className="rounded-md border border-gray-600 bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-100 shadow-xl">
+            {activeDragSection.name.trim() || "Untitled section"}
+          </div>
+        ) : activeDragElement ? (
+          <div className="min-w-[32rem] rounded-md border border-gray-600 bg-gray-900 px-1.5 py-1.5 text-sm font-medium text-gray-100 shadow-xl">
+            <div className={SERVICE_PLAN_COL.row}>
+              <span className={SERVICE_PLAN_COL.drag} aria-hidden="true" />
+              <span className="whitespace-nowrap text-xs text-gray-400">{formatPlanStartTimeDisplay(activeDragElement.startTime) || "—"}</span>
+              <span className="whitespace-nowrap text-xs text-gray-400">{Math.round((activeDragElement.durationSeconds || 0) / 60)} min</span>
+              <span className="min-w-0 truncate">{richTextToPlainText(activeDragElement.title).trim() || "Untitled item"}</span>
+              <span className="min-w-0 truncate text-xs text-gray-400">{getServicePlanElementLead(activeDragElement)?.name || "Add content"}</span>
+              <span className="min-w-0 truncate text-xs text-gray-400">{getServicePlanElementLead(activeDragElement)?.name || "Led by"}</span>
+              <span />
+            </div>
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 };

@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight, Pencil, Users } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
@@ -9,7 +10,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
-import type { TeamRosterMember } from "../../../api/authTypes";
 import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
 import {
   summarizeNeededPositions,
@@ -37,10 +37,26 @@ export type WhosServingPanelProps = {
   assignmentsStatus?: "ready" | "loading" | "unavailable";
   /** When false, skip the panel title (e.g. a Sheet/tab already provides one). */
   showHeading?: boolean;
-  members?: TeamRosterMember[];
   canEdit?: boolean;
-  onAssign?: (row: TeamsAssignmentSummaryRow, memberId: string | null) => void;
 };
+
+const SERVING_CARD_MIN_WIDTH_PX = 352;
+const SERVING_CARD_GAP_PX = 16;
+
+export const getServingMasonryColumnCount = (
+  availableWidth: number,
+  cardCount: number,
+) =>
+  Math.max(
+    1,
+    Math.min(
+      Math.max(cardCount, 1),
+      Math.floor(
+        (availableWidth + SERVING_CARD_GAP_PX) /
+          (SERVING_CARD_MIN_WIDTH_PX + SERVING_CARD_GAP_PX),
+      ),
+    ),
+  );
 
 /**
  * The microphones this slot holds, skipping ids the catalog no longer has.
@@ -53,9 +69,11 @@ const rowMicrophones = (
 ): ServicePlanMicrophone[] =>
   row.microphoneIds
     .map((microphoneId) =>
-      microphones.find((microphone) => microphone.id === microphoneId))
+      microphones.find((microphone) => microphone.id === microphoneId),
+    )
     .filter((microphone): microphone is ServicePlanMicrophone =>
-      Boolean(microphone));
+      Boolean(microphone),
+    );
 
 /**
  * Dense sidebar names truncate; click opens a compact popover with the full
@@ -114,33 +132,6 @@ const ServingMemberName = ({
       </div>
     </PopoverContent>
   </Popover>
-  );
-
-const AssignmentSelect = ({
-  row,
-  members,
-  onAssign,
-}: {
-  row: TeamsAssignmentSummaryRow;
-  members: TeamRosterMember[];
-  onAssign: (row: TeamsAssignmentSummaryRow, memberId: string | null) => void;
-}) => (
-  <select
-    className="max-w-32 rounded border border-gray-600 bg-gray-900 px-1 py-0.5 text-xs text-gray-100"
-    aria-label={`Assign ${row.slotLabel}`}
-    value={row.memberName ? members.find((member) =>
-      `${member.firstName} ${member.lastName}`.trim() === row.memberName)?.memberId || "" : ""}
-    onChange={(event) => onAssign(row, event.target.value || null)}
-  >
-    <option value="">Unassigned</option>
-    {members
-      .filter((member) => member.positionIds?.includes(row.positionId))
-      .map((member) => (
-        <option key={member.memberId} value={member.memberId}>
-          {`${member.firstName} ${member.lastName}`.trim()}
-        </option>
-      ))}
-  </select>
 );
 
 /**
@@ -154,203 +145,231 @@ const WhosServingPanel = ({
   microphones = [],
   assignmentsStatus = "ready",
   showHeading = true,
-  members = [],
   canEdit = false,
-  onAssign,
-}: WhosServingPanelProps) => (
-  <>
-    {showHeading ? (
-      <div className="flex items-center gap-2">
-        <Icon svg={Users} size="sm" className="text-orange-300" />
-        <h3 className="text-sm font-semibold">People</h3>
-      </div>
-    ) : null}
-    {assignmentsStatus === "ready" ? null : (
-      <p
-        className="rounded-md bg-amber-950/40 px-2 py-1.5 text-[11px] text-amber-100"
-        role="status"
-      >
-        {assignmentsStatus === "loading"
-          ? "Loading who's serving on this date…"
-          : "Who's serving on this date hasn't loaded, so names may be missing. Open the schedule to see it."}
-      </p>
-    )}
-    {assignmentTeams.length === 0 ? (
-      <p className="text-xs text-gray-400">
-        No positions required for this service yet. Add them in Service
-        settings.
-      </p>
-    ) : (
-      <div className="space-y-3">
-        {assignmentTeams.map((team) => {
-          const scheduleId = team.scheduleId;
-          const teamHeader = (
-            <>
-              <div className="min-w-0 flex-1">
-                <h4 className="truncate text-[11px] font-semibold uppercase tracking-wide text-orange-300/90">
-                  {team.teamName}
-                </h4>
-                {/* Only set when this team has more than one schedule
+}: WhosServingPanelProps) => {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelWidth, setPanelWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const updateWidth = () => setPanelWidth(panel.clientWidth);
+
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [assignmentTeams.length]);
+
+  const columnCount = getServingMasonryColumnCount(
+    panelWidth,
+    assignmentTeams.length,
+  );
+  const teamColumns = Array.from(
+    { length: columnCount },
+    () => [] as TeamsAssignmentSummaryTeamGroup[],
+  );
+  assignmentTeams.forEach((team, index) => {
+    teamColumns[index % columnCount].push(team);
+  });
+
+  return (
+    <>
+      {showHeading ? (
+        <div className="flex items-center gap-2">
+          <Icon svg={Users} size="sm" className="text-orange-300" />
+          <h3 className="text-sm font-semibold">People</h3>
+        </div>
+      ) : null}
+      {assignmentsStatus === "ready" ? null : (
+        <p
+          className="rounded-md bg-amber-950/40 px-2 py-1.5 text-[11px] text-amber-100"
+          role="status"
+        >
+          {assignmentsStatus === "loading"
+            ? "Loading who's serving on this date…"
+            : "Who's serving on this date hasn't loaded, so names may be missing. Open the schedule to see it."}
+        </p>
+      )}
+      {assignmentTeams.length === 0 ? (
+        <p className="text-xs text-gray-400">
+          No positions required for this service yet. Add them in Service
+          settings.
+        </p>
+      ) : (
+        <div ref={panelRef} className="flex items-start gap-4">
+          {teamColumns.map((teamColumn, columnIndex) => (
+            <div
+              key={columnIndex}
+              className="flex min-w-0 flex-1 flex-col gap-4"
+            >
+              {teamColumn.map((team) => {
+                const scheduleId = team.scheduleId;
+                const teamHeader = (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="truncate text-[11px] font-semibold uppercase tracking-wide text-orange-300/90">
+                        {team.teamName}
+                      </h4>
+                      {/* Only set when this team has more than one schedule
                     over this date — otherwise the heading repeats with
                     different numbers and reads like a bug. */}
-                {team.scheduleName ? (
-                  <p className="truncate text-[11px] font-normal normal-case text-gray-500">
-                    {team.scheduleName}
-                  </p>
-                ) : null}
-              </div>
-              <ScheduleFillBadge
-                filled={team.filled.length}
-                required={team.filled.length + team.unfilled.length}
-              />
-            </>
-          );
-          // No schedule covers this date for this team, so there is no
-          // grid to open — list what the service needs instead.
-          if (!scheduleId) {
-            return (
-              <section
-                key={`${team.teamId}-unscheduled`}
-                className="space-y-1.5"
-              >
-                <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
-                  {teamHeader}
-                </div>
-                <ul className="space-y-1.5">
-                  {summarizeNeededPositions(team.unfilled).map((need) => (
-                    <li
-                      key={need.positionId}
-                      className="flex items-center justify-between gap-2 px-1.5 text-xs"
-                    >
-                      <span className="truncate text-gray-400">
-                        {need.positionName}
-                      </span>
-                      <span className="shrink-0 tabular-nums text-gray-500">
-                        &times;{need.count}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="px-1.5 text-[11px] text-gray-500">
-                  Not scheduled yet
-                </p>
-              </section>
-            );
-          }
-          return (
-            <section
-              key={`${team.teamId}-${scheduleId}`}
-              className="space-y-1.5"
-            >
-              <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
-                {teamHeader}
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  svg={Pencil}
-                  iconSize="sm"
-                  padding="px-2 py-1"
-                  className="shrink-0 text-xs"
-                  aria-label={`Edit ${team.teamName} schedule`}
-                  onClick={() => onOpenSchedule({ scheduleId })}
-                >
-                  Edit
-                </Button>
-              </div>
-              <ul className="space-y-1.5">
-                {team.filled.map((row) => {
-                  const heldMicrophones = rowMicrophones(row, microphones);
-                  const memberName = row.memberName?.trim() || "Unassigned";
-                  const hasMicrophones = heldMicrophones.length > 0;
-                  return (
-                    <li
-                      key={`${scheduleId}-${row.columnKey}`}
-                      className={
-                        hasMicrophones
-                          // Light chrome groups this person's role, name, and
-                          // mics so adjacent Praise Team rows do not blur together.
-                          ? "flex w-full flex-col gap-1 rounded-md border border-gray-700/70 bg-gray-950/40 px-1.5 py-1.5"
-                          : "flex w-full flex-col gap-1 px-1.5 py-1"
-                      }
-                    >
-                      {/* Position and name share the first line so both stay
-                          readable; mic chips drop to a second line. */}
-                      <div className="flex w-full items-center gap-2">
-                        {hasMicrophones && row.memberProfileImageUrl ? (
-                          <ProfileImagePreview
-                            imageUrl={row.memberProfileImageUrl}
-                            memberName={memberName}
-                          />
-                        ) : null}
-                        <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
-                          {row.slotLabel}
-                        </span>
-                        <ServingMemberName
-                          memberName={memberName}
-                          slotLabel={row.slotLabel}
-                          canNotify={row.canNotify}
-                          heldMicrophones={heldMicrophones}
-                        />
-                        <span className="text-[10px] capitalize text-gray-500">{row.response || "pending"}</span>
-                        {canEdit && onAssign ? (
-                          <AssignmentSelect row={row} members={members} onAssign={onAssign} />
-                        ) : null}
-                      </div>
-                      {hasMicrophones ? (
-                        <span
-                          className="flex flex-wrap items-center gap-1 border-t border-gray-800/80 pt-1"
-                          role="group"
-                          aria-label={`Microphones for ${memberName}`}
-                        >
-                          {heldMicrophones.map((microphone) => (
-                            <ServicePlanMicrophoneChip
-                              key={microphone.id}
-                              microphone={microphone}
-                            />
-                          ))}
-                        </span>
+                      {team.scheduleName ? (
+                        <p className="truncate text-[11px] font-normal normal-case text-gray-500">
+                          {team.scheduleName}
+                        </p>
                       ) : null}
-                    </li>
+                    </div>
+                    <ScheduleFillBadge
+                      filled={team.filled.length}
+                      required={team.filled.length + team.unfilled.length}
+                    />
+                  </>
+                );
+                // No schedule covers this date for this team, so there is no
+                // grid to open — list what the service needs instead.
+                if (!scheduleId) {
+                  return (
+                    <section
+                      key={`${team.teamId}-unscheduled`}
+                      className="space-y-1.5 rounded-lg border border-gray-700/70 bg-gray-950/35 p-2.5"
+                    >
+                      <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
+                        {teamHeader}
+                      </div>
+                      <ul className="space-y-1.5">
+                        {summarizeNeededPositions(team.unfilled).map((need) => (
+                          <li
+                            key={need.positionId}
+                            className="flex items-center justify-between gap-2 px-1.5 text-xs"
+                          >
+                            <span className="truncate text-gray-400">
+                              {need.positionName}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-gray-500">
+                              &times;{need.count}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="px-1.5 text-[11px] text-gray-500">
+                        Not scheduled yet
+                      </p>
+                    </section>
                   );
-                })}
-              </ul>
-              {team.unfilled.length > 0 ? (
-                <>
-                  {canEdit && onAssign ? (
-                    <ul className="space-y-1.5">
-                      {team.unfilled.map((row) => (
-                        <li key={`${scheduleId}-${row.columnKey}`} className="flex items-center justify-between gap-2 px-1.5 py-1">
-                          <span className="truncate text-xs text-amber-300">{row.slotLabel}</span>
-                          <AssignmentSelect row={row} members={members} onAssign={onAssign} />
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-start gap-1 rounded-md px-1.5 py-1 text-left text-xs font-medium text-amber-300 transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
-                    onClick={() =>
-                      onOpenSchedule({
-                        scheduleId,
-                        slot: {
-                          occurrenceId: team.unfilled[0].occurrenceId,
-                          columnKey: team.unfilled[0].columnKey,
-                        },
-                      })
-                    }
-                    aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
+                }
+                return (
+                  <section
+                    key={`${team.teamId}-${scheduleId}`}
+                    className="space-y-1.5 rounded-lg border border-gray-700/70 bg-gray-950/35 p-2.5"
                   >
-                    {team.unfilled.length} unfilled
-                    <Icon svg={ChevronRight} size="xs" />
-                  </button>
-                </>
-              ) : null}
-            </section>
-          );
-        })}
-      </div>
-    )}
-  </>
-);
+                    <div className="flex w-full items-center justify-between gap-2 px-1.5 py-1">
+                      {teamHeader}
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={Pencil}
+                        iconSize="sm"
+                        padding="px-2 py-1"
+                        className="shrink-0 text-xs"
+                        aria-label={`Edit ${team.teamName} schedule`}
+                        onClick={() => onOpenSchedule({ scheduleId })}
+                      >
+                        Edit
+                      </Button>
+                    </div>
+                    <ul className="space-y-1.5">
+                      {team.filled.map((row) => {
+                        const heldMicrophones = rowMicrophones(
+                          row,
+                          microphones,
+                        );
+                        const memberName =
+                          row.memberName?.trim() || "Unassigned";
+                        const hasMicrophones = heldMicrophones.length > 0;
+                        return (
+                          <li
+                            key={`${scheduleId}-${row.columnKey}`}
+                            className={
+                              hasMicrophones
+                                ? // Light chrome groups this person's role, name, and
+                                  // mics so adjacent Praise Team rows do not blur together.
+                                  "flex w-full flex-col gap-1 rounded-md border border-gray-700/70 bg-gray-950/40 px-1.5 py-1.5"
+                                : "flex w-full flex-col gap-1 px-1.5 py-1"
+                            }
+                          >
+                            {/* Position and name share the first line so both stay
+                          readable; mic chips drop to a second line. */}
+                            <div className="flex w-full items-center gap-2">
+                              {hasMicrophones && row.memberProfileImageUrl ? (
+                                <ProfileImagePreview
+                                  imageUrl={row.memberProfileImageUrl}
+                                  memberName={memberName}
+                                />
+                              ) : null}
+                              <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
+                                {row.slotLabel}
+                              </span>
+                              <ServingMemberName
+                                memberName={memberName}
+                                slotLabel={row.slotLabel}
+                                canNotify={row.canNotify}
+                                heldMicrophones={heldMicrophones}
+                              />
+                              <span className="text-[10px] capitalize text-gray-500">
+                                {row.response || "pending"}
+                              </span>
+                            </div>
+                            {hasMicrophones ? (
+                              <span
+                                className="flex flex-wrap items-center gap-1 border-t border-gray-800/80 pt-1"
+                                role="group"
+                                aria-label={`Microphones for ${memberName}`}
+                              >
+                                {heldMicrophones.map((microphone) => (
+                                  <ServicePlanMicrophoneChip
+                                    key={microphone.id}
+                                    microphone={microphone}
+                                  />
+                                ))}
+                              </span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {team.unfilled.length > 0 ? (
+                      <>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-start gap-1 rounded-md px-1.5 py-1 text-left text-xs font-medium text-amber-300 transition-colors hover:bg-gray-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+                          onClick={() =>
+                            onOpenSchedule({
+                              scheduleId,
+                              slot: {
+                                occurrenceId: team.unfilled[0].occurrenceId,
+                                columnKey: team.unfilled[0].columnKey,
+                              },
+                            })
+                          }
+                          aria-label={`Fill ${team.unfilled.length} open ${team.unfilled.length === 1 ? "position" : "positions"} for ${team.teamName}`}
+                        >
+                          {team.unfilled.length} unfilled
+                          <Icon svg={ChevronRight} size="xs" />
+                        </button>
+                      </>
+                    ) : null}
+                  </section>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+};
 
 export default WhosServingPanel;

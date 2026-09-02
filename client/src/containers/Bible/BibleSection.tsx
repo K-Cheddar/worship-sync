@@ -18,6 +18,7 @@ const sortBooksBySearchRelevance = (
 type BibleSectionProps = {
   initialList: bookType[] | chapterType[] | verseType[];
   setValue: (value: number) => void;
+  onSelect?: (value: number) => void;
   value: number;
   type: "book" | string;
   min?: number;
@@ -28,6 +29,7 @@ type BibleSectionProps = {
 const BibleSection = ({
   initialList = [],
   setValue,
+  onSelect,
   value,
   type,
   min,
@@ -112,7 +114,9 @@ const BibleSection = ({
 
   return (
     <div
-      className={"flex flex-col gap-2 h-full"}
+      className={"flex h-full min-h-0 flex-col gap-2"}
+      role="group"
+      aria-label={label || type}
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "ArrowDown") {
@@ -165,7 +169,10 @@ const BibleSection = ({
                 variant="none"
                 truncate
                 id={`bible-section-${label || type}-${index}`}
-                onClick={() => setValue(index)}
+                onClick={() => {
+                  setValue(index);
+                  onSelect?.(index);
+                }}
                 className={`w-full items-center justify-center ${
                   isSelected ? "bg-gray-900" : "hover:bg-gray-500"
                 }`}

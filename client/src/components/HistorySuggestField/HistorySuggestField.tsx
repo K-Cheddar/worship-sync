@@ -82,6 +82,8 @@ export type HistorySuggestFieldProps = {
   "data-ignore-undo"?: string;
   /** Fires when the field loses focus (after internal blur handling for the suggestion popover). */
   onFieldBlur?: () => void;
+  /** Fires after the clear action has set the field value to an empty string. */
+  onClear?: () => void;
   /** Fires when the field gains focus (alongside internal suggestion-popover handling). */
   onFieldFocus?: () => void;
 };
@@ -104,6 +106,7 @@ const HistorySuggestField = ({
   autoResize = true,
   "data-ignore-undo": dataIgnoreUndo,
   onFieldBlur,
+  onClear,
   onFieldFocus,
 }: HistorySuggestFieldProps) => {
   const effectiveHideLabel = hideLabel ?? (multiline ? true : false);
@@ -225,13 +228,14 @@ const HistorySuggestField = ({
 
   const clearValue = useCallback(() => {
     onChange("");
+    onClear?.();
     // Keep the field focused so the suggestion list stays open, then recompute
     // against the now-empty value (shows the full history).
     const field = multiline ? textAreaRef.current : inputRef.current;
     field?.focus();
     setIsFocused(true);
     updateSuggestions("");
-  }, [onChange, updateSuggestions, multiline]);
+  }, [onChange, onClear, updateSuggestions, multiline]);
 
   const commonFieldProps = {
     value,

@@ -91,6 +91,18 @@ describe("ServicePlanSongSuggestionPopover", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("closes from the header close button", async () => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderPopover({
+      title: "Way Maker",
+      songs: ["Amazing Grace"],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Close song linking" }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("says so when the library holds nothing close", () => {
     renderPopover({ title: "Way Maker", songs: ["Amazing Grace"] });
 

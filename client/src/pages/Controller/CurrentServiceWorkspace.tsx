@@ -63,6 +63,7 @@ import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 import {
   formatOccurrenceLabel,
+  getOccurrenceServices,
   resolveLiveSlideProgress,
   type LiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
@@ -464,14 +465,16 @@ const CurrentServiceWorkspace = () => {
     [occurrence?.serviceId, services],
   );
   /**
-   * The header timer is the same "next service" countdown every other surface
-   * shows (stream info, service times, display timers): it honours a service's
-   * override time, holds at zero through the grace window, then rolls to the
-   * next service. Deliberately independent of which occurrence the plan panel
-   * is on — the operator can page back through plans without the clock moving.
+   * The header timer only considers services covered by the selected plan.
+   * It retains the standard override and grace-window behavior within that
+   * selected service scope.
    */
+  const occurrenceServices = useMemo(
+    () => getOccurrenceServices(serviceTimes, occurrence),
+    [occurrence, serviceTimes],
+  );
   const upcomingService = useDisplayedUpcomingService(
-    serviceTimes,
+    occurrenceServices,
     NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
     { keepRecentlyElapsedDuringGrace: true },
   );
@@ -716,98 +719,108 @@ const CurrentServiceWorkspace = () => {
     />
   );
 
-  if (!isDesktop) {
-    return (
-      <WorkspacePage service={headerService} serviceTimeText={serviceTimeText}>
-        <SectionTabs<WorkspaceTab>
-          value={tab}
-          onValueChange={setTab}
-          keepMounted
-          className="flex min-h-0 flex-1 flex-col overflow-hidden"
-          tabBarClassName="shrink-0 rounded-xl bg-transparent"
-          tabsListClassName="shrink-0"
-          triggerClassName="text-xs px-2.5 py-1.5"
-          tabsContentClassName="mt-3 flex min-h-0 flex-1 flex-col space-y-0 overflow-hidden"
-          items={[
-            {
-              value: "plan",
-              label: "Service plan",
-              content: planEditor,
-              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
-            },
-            {
-              value: "displays",
-              label: "Displays",
-              content: (
-                <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                  <DisplaysPreview
-                    columns={2}
-                    progress={liveSlideProgress}
-                    activeItemId={monitorInfo.itemId ?? null}
-                    activeListId={monitorInfo.listId ?? null}
-                  />
-                </section>
-              ),
-              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
-            },
-            {
-              value: "credits",
-              label: "Credits",
-              content: (
-                <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
-                  <CreditsPanel credits={liveCredits} />
-                </section>
-              ),
-              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
-            },
-            {
-              value: "serving",
-              label: "Team",
-              content: (
-                <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-3">
-                  {servingContent}
-                </section>
-              ),
-              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
-            },
-            {
-              value: "chat",
-              label: "Chat",
-              badge:
-                tab !== "chat" ? (
-                  <ChatUnreadBadge count={chatUnreadCount} />
-                ) : null,
-              content: (
-                <CurrentServiceRestreamPanel
-                  churchId={churchId || ""}
-                  youtubeConnected={Boolean(
-                    loginState === "success" &&
-                      churchIntegrations?.youtube?.connected,
-                  )}
-                  youtubeAccountLabel={
-                    churchIntegrations?.youtube?.accountLabel || ""
-                  }
-                  isVisible={tab === "chat"}
-                  onUnreadCountChange={setChatUnreadCount}
-                  showToast={showToast}
-                />
-              ),
-              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
-            },
-          ]}
-        />
-      </WorkspacePage>
-    );
-  }
-
   return (
     <WorkspacePage service={headerService} serviceTimeText={serviceTimeText}>
       <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {planEditor}
+          <div
+            className={
+              isDesktop || tab === "plan"
+                ? "order-2 flex min-h-0 flex-1 flex-col overflow-hidden"
+                : "hidden"
+            }
+          >
+            {planEditor}
+          </div>
+          {!isDesktop ? (
+            <SectionTabs<WorkspaceTab>
+              value={tab}
+              onValueChange={setTab}
+              keepMounted
+              className={
+                tab === "plan"
+                  ? "order-1 shrink-0"
+                  : "order-1 flex min-h-0 flex-1 flex-col overflow-hidden"
+              }
+              tabBarClassName="shrink-0 rounded-xl bg-transparent"
+              tabsListClassName="shrink-0"
+              triggerClassName="text-xs px-2.5 py-1.5"
+              tabsContentClassName={
+                tab === "plan"
+                  ? "hidden"
+                  : "mt-3 flex min-h-0 flex-1 flex-col space-y-0 overflow-hidden"
+              }
+              items={[
+                {
+                  value: "plan",
+                  label: "Service plan",
+                  content: null,
+                },
+                {
+                  value: "displays",
+                  label: "Displays",
+                  content: (
+                    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
+                      <DisplaysPreview
+                        columns={2}
+                        progress={liveSlideProgress}
+                        activeItemId={monitorInfo.itemId ?? null}
+                        activeListId={monitorInfo.listId ?? null}
+                      />
+                    </section>
+                  ),
+                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                },
+                {
+                  value: "credits",
+                  label: "Credits",
+                  content: (
+                    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-2">
+                      <CreditsPanel credits={liveCredits} />
+                    </section>
+                  ),
+                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                },
+                {
+                  value: "serving",
+                  label: "Team",
+                  content: (
+                    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60 p-3">
+                      {servingContent}
+                    </section>
+                  ),
+                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                },
+                {
+                  value: "chat",
+                  label: "Chat",
+                  badge:
+                    tab !== "chat" ? (
+                      <ChatUnreadBadge count={chatUnreadCount} />
+                    ) : null,
+                  content: (
+                    <CurrentServiceRestreamPanel
+                      churchId={churchId || ""}
+                      youtubeConnected={Boolean(
+                        loginState === "success" &&
+                          churchIntegrations?.youtube?.connected,
+                      )}
+                      youtubeAccountLabel={
+                        churchIntegrations?.youtube?.accountLabel || ""
+                      }
+                      isVisible={tab === "chat"}
+                      onUnreadCountChange={setChatUnreadCount}
+                      showToast={showToast}
+                    />
+                  ),
+                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                },
+              ]}
+            />
+          ) : null}
         </section>
 
-        <aside
+        {isDesktop ? <aside
           className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${
             isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
           }`}
@@ -854,7 +867,7 @@ const CurrentServiceWorkspace = () => {
               showToast={showToast}
             />
           ) : null}
-        </aside>
+        </aside> : null}
       </div>
     </WorkspacePage>
   );

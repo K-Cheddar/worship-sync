@@ -35,7 +35,9 @@ const fetchLrclibEndpoint = async (
   query: LrclibImportQuery,
 ): Promise<Response> => {
   return fetch(
-    `${getApiBasePath()}api/lrclib/${endpoint}?${buildSearchParams(query).toString()}`,
+    `${getApiBasePath()}api/lrclib/${endpoint}?${buildSearchParams(query).toString()}${
+      endpoint === "search" && window.electronAPI ? "&localGenius=true" : ""
+    }`,
   );
 };
 
@@ -81,6 +83,66 @@ export const searchLrclibTracks = async (
 
   const data = await response.json();
   return normalizeTrackList(data);
+};
+
+const stripGeniusLyricsPreamble = (lyrics: string, title: string): string => {
+  const titlePattern = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return lyrics
+    .trim()
+    .replace(
+      new RegExp(`^\\d+\\s+Contributors?\\s*${titlePattern}\\s+Lyrics\\s*`, "i"),
+      "",
+    )
+    .replace(/^\d+\s+Contributors?.{0,120}?Lyrics\s*/i, "")
+    .trim();
+};
+
+const extractGeniusLyricsFromHtml = (html: string, title: string): string => {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const containers = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      "#lyrics-root [data-lyrics-container='true']",
+    ),
+  );
+  const lyrics = containers
+    .map((container) => {
+      const clone = container.cloneNode(true) as HTMLElement;
+      clone
+        .querySelectorAll("[data-exclude-from-selection='true']")
+        .forEach((excluded) => excluded.remove());
+      clone.querySelectorAll("br").forEach((lineBreak) => {
+        lineBreak.replaceWith(document.createTextNode("\n"));
+      });
+      return (clone.textContent ?? "").trim();
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  return stripGeniusLyricsPreamble(lyrics, title);
+};
+
+export const fetchGeniusLyricsLocally = async (
+  track: NormalizedLrclibTrack,
+): Promise<NormalizedLrclibTrack> => {
+  if (track.source !== "genius" || !track.geniusUrl || !window.electronAPI) {
+    return track;
+  }
+
+  const response = await window.electronAPI.fetchGeniusLyrics(track.geniusUrl);
+  const plainLyrics = response.ok
+    ? stripGeniusLyricsPreamble(
+      response.lyrics ??
+        extractGeniusLyricsFromHtml(response.html ?? "", track.trackName),
+      track.trackName,
+    )
+    : "";
+
+  if (!plainLyrics) {
+    throw new Error(`Genius returned no lyrics (HTTP ${response.status}).`);
+  }
+
+  return { ...track, plainLyrics };
 };
 
 export const resolveLrclibImport = async (

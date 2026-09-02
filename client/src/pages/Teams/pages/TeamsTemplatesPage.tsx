@@ -1,7 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Copy, LayoutTemplate, Plus } from "lucide-react";
+import { Copy, Plus } from "lucide-react";
 import Button from "../../../components/Button/Button";
-import Icon from "../../../components/Icon/Icon";
 import Input from "../../../components/Input/Input";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -201,6 +200,7 @@ const TeamsTemplatesPage = () => {
 
   return (
     <div className={teamsManagerPageRootClassName}>
+      <h2 className="sr-only">Templates</h2>
       <section
         className={cn(
           panelShellClassName,
@@ -208,25 +208,14 @@ const TeamsTemplatesPage = () => {
           teamsPanelMaxHeightClassName,
         )}
       >
-        <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="flex items-center gap-2 text-lg font-semibold">
-                <Icon svg={LayoutTemplate} size="md" className="text-orange-300" />
-                Templates
-              </h2>
-              <p className="mt-1 text-sm text-gray-400">
-                Reusable orders of service. Templates hold structure, timings,
-                notes and microphones — songs, scripture and assignments stay
-                with each dated plan.
-              </p>
-            </div>
+        <div className={cn("shrink-0 max-md:px-3 max-md:pt-3", panelHeaderPaddingClassName)}>
+          <div className="flex items-center justify-between gap-2">
             {canEdit ? (
               <Button
                 type="button"
                 svg={Plus}
                 iconSize="sm"
-                className="shrink-0"
+                className="shrink-0 max-md:min-h-0 max-md:px-2 max-md:py-1"
                 onClick={() => setEditing(createServicePlanTemplateDraft())}
               >
                 New template
@@ -237,8 +226,8 @@ const TeamsTemplatesPage = () => {
 
         <div
           className={cn(
-            "scrollbar-variable mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto",
-            panelScrollPaddingClassName,
+            "scrollbar-variable mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto sm:mt-4",
+            cn(panelScrollPaddingClassName, "max-md:px-3 max-md:pb-3"),
           )}
         >
           {templates.length > 0 ? (

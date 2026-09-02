@@ -64,6 +64,9 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateAllDocs } from "../../utils/dbUtils";
+import { initiateAllItemsList } from "../../store/allItemsSlice";
+import { sortNamesInList } from "../../utils/sort";
+import type { DBAllItems } from "../../types";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
@@ -145,6 +148,10 @@ import {
   readServicePublicNotesTeam,
   writeServicePublicNotesTeam,
 } from "../servicePublicNotesTeam";
+import {
+  readServicePlanHideNotes,
+  writeServicePlanHideNotes,
+} from "./servicePlanViewPreferences";
 import type {
   TeamRosterMember,
   TeamPosition,
@@ -169,7 +176,6 @@ import {
   cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   replaceMatchingPendingSongReferences,
-  updateElement,
 } from "./servicePlanDraftUtils";
 import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
 import {
@@ -337,6 +343,8 @@ type ServicePlanEditorProps = {
   mobileServingContent?: ReactNode;
   /** Initial workspace tab, used when returning from the mobile serving roster. */
   initialTab?: ServicePlanEditorTab;
+  /** Whether this entry point should open the plan in edit mode. */
+  initialEditing?: boolean;
   /**
    * Lets a surface that picked the occurrence itself — the Controller
    * workspace, which has no Plans list to go back to — offer that switch from
@@ -376,13 +384,17 @@ const ServicePlanEditor = ({
   planNavigation,
   mobileServingContent,
   initialTab = "plan",
+  initialEditing = false,
   occurrenceSwitcher,
 }: ServicePlanEditorProps) => {
-  const { churchId, access } = useContext(GlobalInfoContext) || {};
+  const { churchId, access, churchBranding } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
   const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+  const isAllItemsInitialized = useSelector(
+    (state) => state.allItems?.isInitialized ?? false,
+  );
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [microphoneAudiences, setMicrophoneAudiences] = useState<
@@ -403,6 +415,31 @@ const ServicePlanEditor = ({
     if (!db) return;
     updateAllDocs(dispatch);
   }, [db, dispatch]);
+
+  // Teams/Services can open without the Controller lifecycle. Initialize the
+  // shared lightweight index here too so embedded song creation can safely
+  // persist a complete list for older Controller clients.
+  useEffect(() => {
+    if (!db || isAllItemsInitialized) return;
+    let cancelled = false;
+
+    const initializeAllItems = async () => {
+      try {
+        const allItemsDoc = (await db.get("allItems")) as DBAllItems;
+        if (cancelled) return;
+        dispatch(
+          initiateAllItemsList(sortNamesInList(allItemsDoc.items || [])),
+        );
+      } catch (error) {
+        console.error("Could not initialize the song library index:", error);
+      }
+    };
+
+    initializeAllItems();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, dispatch, isAllItemsInitialized]);
 
   const planKey = getServicePlanKey(occurrence);
   const defaultPlanTemplateId = service.defaultPlanTemplateId?.trim() || "";
@@ -444,14 +481,14 @@ const ServicePlanEditor = ({
   // Hold a truly newer remote revision until the local acknowledgement lands.
   const pendingRemotePlanRef = useRef<ServicePlan | null>(null);
   // View-only: collapses note chrome so operators can scan structure/timing.
-  const [hideNotes, setHideNotes] = useState(false);
+  const [hideNotes, setHideNotes] = useState(readServicePlanHideNotes);
   // Same preference as the public team view — filter team notes by label.
   const [teamNotesFilter, setTeamNotesFilter] = useState(() =>
     readServicePublicNotesTeam(),
   );
   const [roleNotesFilter, setRoleNotesFilter] = useState("");
   // Compact read layout by default; Edit switches to stacked/editable fields.
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(initialEditing);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Microphones live beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
@@ -590,7 +627,7 @@ const ServicePlanEditor = ({
     defaultTemplateAppliedPlanKeyRef.current = "";
     pendingRemotePlanRef.current = null;
     setDraftChangeVersion(0);
-    setIsEditing(false);
+    setIsEditing(initialEditing);
     setShowServiceDetails(false);
     // A different date is a different running order — open on it, not on
     // whichever side tab the previous plan was left on. On first mount, keep
@@ -960,6 +997,12 @@ const ServicePlanEditor = ({
     setTeamNotesFilter("");
     writeServicePublicNotesTeam("");
     setHideNotes(false);
+    writeServicePlanHideNotes(false);
+  };
+
+  const handleHideNotesChange = (checked: boolean) => {
+    setHideNotes(checked);
+    writeServicePlanHideNotes(checked);
   };
 
   const openImportUpdates = () => {
@@ -1073,7 +1116,6 @@ const ServicePlanEditor = ({
 
   const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
     if (!sections) return null;
-    const isFirstElementOverall = sections.every((s) => s.elements.length === 0);
     const existingElementIds = new Set(
       sections.flatMap((section) => section.elements.map((element) => element.id)),
     );
@@ -1082,17 +1124,11 @@ const ServicePlanEditor = ({
       .find((section) => section.id === sectionId)
       ?.elements.find((element) => !existingElementIds.has(element.id));
     if (!newElement) return null;
-    if (isFirstElementOverall) {
-      const anchor = occurrenceLocalTime(occurrence.startsAt, planTimezone);
-      next = applyPlanAnchorStartTime(
-        updateElement(next, sectionId, newElement.id, {
-          startTime: anchor,
-          durationSeconds: 0,
-          durationMinutes: 0,
-        }),
-        anchor,
-      );
-    }
+    const anchor = next
+      .flatMap((section) => section.elements)
+      .find((element) => element.startTime)?.startTime
+      || occurrenceLocalTime(occurrence.startsAt, planTimezone);
+    next = applyPlanAnchorStartTime(next, anchor);
     updateDraftSections(next);
     setSelectedPlanTarget({ sectionId, elementId: newElement.id });
     window.requestAnimationFrame(() => {
@@ -1105,8 +1141,11 @@ const ServicePlanEditor = ({
 
   const handleAddSection = () => {
     if (!sections) return;
-    const next = addSection(sections);
-    const newSection = next.at(-1);
+    const selectedSectionId = selectedPlanTarget?.sectionId;
+    const next = addSection(sections, "New section", selectedSectionId);
+    const newSection = next.find(
+      (section) => !sections.some((existing) => existing.id === section.id),
+    );
     updateDraftSections(next);
     if (!newSection) return;
     setSelectedPlanTarget({ sectionId: newSection.id });
@@ -1729,7 +1768,7 @@ const ServicePlanEditor = ({
                   </DropdownMenuLabel>
                   <DropdownMenuCheckboxItem
                     checked={hideNotes}
-                    onCheckedChange={(checked) => setHideNotes(Boolean(checked))}
+                    onCheckedChange={(checked) => handleHideNotesChange(Boolean(checked))}
                   >
                     Hide notes
                   </DropdownMenuCheckboxItem>
@@ -2029,6 +2068,8 @@ const ServicePlanEditor = ({
             sections={sections}
             canEdit={canEdit}
             isEditing={isEditing}
+            sectionLabelColor={churchBranding?.colors?.[1]?.value}
+            sectionBorderColor={churchBranding?.colors?.[0]?.value}
             onSectionsChange={updateDraftSections}
             selection={selectedPlanTarget}
             onSelectionChange={setSelectedPlanTarget}
@@ -2068,6 +2109,7 @@ const ServicePlanEditor = ({
             teamNotesFilter={teamNotesFilter}
             roleNotesFilter={roleNotesFilter}
             onViewSongLyrics={setViewSongRef}
+            allSongDocs={allSongDocs}
             canCreateLibrarySong={canCreateLibrarySong}
             onCreatePendingSong={openPendingSongCreator}
             resolvedSongRefs={resolvedSongRefs}

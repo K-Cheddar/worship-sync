@@ -1,6 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import WhosServingPanel from "./WhosServingPanel";
+import WhosServingPanel, {
+  getServingMasonryColumnCount,
+} from "./WhosServingPanel";
 import type { TeamsAssignmentSummaryTeamGroup } from "./teamsAssignmentsSummary";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 
@@ -36,6 +38,12 @@ const microphones: ServicePlanMicrophone[] = [
 ];
 
 describe("WhosServingPanel", () => {
+  it("uses every fitting masonry column without creating empty columns", () => {
+    expect(getServingMasonryColumnCount(1_500, 4)).toBe(4);
+    expect(getServingMasonryColumnCount(1_500, 3)).toBe(3);
+    expect(getServingMasonryColumnCount(700, 4)).toBe(1);
+  });
+
   it("opens a popover with the full member name, role, and microphones", async () => {
     const user = userEvent.setup();
     const onOpenSchedule = jest.fn();
@@ -108,10 +116,13 @@ describe("WhosServingPanel", () => {
     const dialog = await screen.findByRole("dialog", {
       name: `${longName} profile image`,
     });
-    expect(within(dialog).getByRole("img", { name: `${longName} profile` }))
-      .toHaveClass("max-h-[calc(100vh-8rem)]", "max-w-[calc(100vw-2rem)]");
+    expect(
+      within(dialog).getByRole("img", { name: `${longName} profile` }),
+    ).toHaveClass("max-h-[calc(100vh-8rem)]", "max-w-[calc(100vw-2rem)]");
 
-    await user.click(within(dialog).getByRole("button", { name: "Close modal" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close modal" }),
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -7,6 +7,7 @@ import {
   buildIntakeAvailabilityServiceOptions,
   filterBlockoutDatesForScheduleRange,
   findBlockoutRangeForDate,
+  formatPlainDateRangeLabel,
   formatShortOccurrenceDate,
   isServiceActive,
   isServicePastEnd,
@@ -39,6 +40,20 @@ describe("formatShortOccurrenceDate", () => {
 
     expect(formatShortOccurrenceDate("2026-07-01T19:00:00")).toBe(
       "Wed, Jul 1, 2026 @ 7:00 PM",
+    );
+  });
+});
+
+describe("formatPlainDateRangeLabel", () => {
+  it("formats a single day once", () => {
+    expect(formatPlainDateRangeLabel("2026-09-06", "2026-09-06")).toBe(
+      "September 06, 2026",
+    );
+  });
+
+  it("formats distinct dates as a range", () => {
+    expect(formatPlainDateRangeLabel("2026-09-06", "2026-09-13")).toBe(
+      "September 06, 2026 – September 13, 2026",
     );
   });
 });

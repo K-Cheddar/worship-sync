@@ -35,6 +35,10 @@ describe("normalizeSongTitleForMatch", () => {
 });
 
 describe("songTitleSimilarity", () => {
+  it("matches straight and typographic apostrophes", () => {
+    expect(isConfidentSongTitleMatch("There's a Welcome Here", "There’s a Welcome Here")).toBe(true);
+  });
+
   const same: Array<[string, string]> = [
     ["Oh How I Love Jesus", "O How I Love Jesus"],
     ["Great Is Your Faithfulness", "Great Is Thy Faithfulness"],

@@ -221,12 +221,20 @@ export const getServicePlanElementType = (
 export const getServicePlanElementSongRefs = (
   element: Pick<ServicePlanElement, "songRef" | "songRefs">,
 ): ServicePlanSongReference[] =>
-  element.songRefs ?? (element.songRef ? [element.songRef] : []);
+  element.songRefs?.length
+    ? element.songRefs
+    : element.songRef
+      ? [element.songRef]
+      : [];
 
 export const getServicePlanElementScriptureRefs = (
   element: Pick<ServicePlanElement, "scriptureRef" | "scriptureRefs">,
 ): ServicePlanScriptureReference[] =>
-  element.scriptureRefs ?? (element.scriptureRef ? [element.scriptureRef] : []);
+  element.scriptureRefs?.length
+    ? element.scriptureRefs
+    : element.scriptureRef
+      ? [element.scriptureRef]
+      : [];
 
 /**
  * Every assignee on an element, in operator order.
@@ -284,6 +292,18 @@ export const getServicePlanElementAssigneeNames = (
   getServicePlanElementAssignees(element)
     .map((assignee) => assignee.name?.trim())
     .filter((name): name is string => Boolean(name));
+
+/** The first named assignee is the presentation lead; microphone-only slots
+ * remain in their original positions and do not affect lead order. */
+export const getServicePlanElementLead = (
+  element: Pick<
+    ServicePlanElement,
+    "assignees" | "assignedName" | "assignedMemberId" | "microphoneAssignments"
+  >,
+): ServicePlanAssignee | undefined =>
+  getServicePlanElementAssignees(element).find(
+    (assignee) => !isUnassignedServicePlanAssignee(assignee),
+  );
 
 /** New role notes use arrays; this retains old one-role notes. */
 export const getServicePlanRoleNotePositionIds = (

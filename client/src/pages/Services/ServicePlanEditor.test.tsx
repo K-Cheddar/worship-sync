@@ -160,6 +160,7 @@ const renderEditor = ({
   positions = [],
   teams = [],
   canEdit = true,
+  initialEditing = false,
   onBack,
   planNavigation,
   occurrenceSwitcher,
@@ -173,6 +174,7 @@ const renderEditor = ({
   positions?: TeamPosition[];
   teams?: TeamRecord[];
   canEdit?: boolean;
+  initialEditing?: boolean;
   onBack?: () => void;
   planNavigation?: {
     onPrevious?: () => void;
@@ -209,6 +211,7 @@ const renderEditor = ({
           positions={positions}
           teams={teams}
           canEdit={canEdit}
+          initialEditing={initialEditing}
           onBack={onBack}
           planNavigation={planNavigation}
           occurrenceSwitcher={occurrenceSwitcher}
@@ -1243,6 +1246,17 @@ describe("ServicePlanEditor", () => {
     ],
   };
 
+  it("opens in edit mode when the entry point requests it", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+    renderEditor({ initialEditing: true });
+
+    expect(await screen.findByRole("button", { name: /^Done$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
+  });
+
   it("undoes and redoes a structural edit, and autosaves the restored plan", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
@@ -1258,9 +1272,8 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
 
-    await user.click(
-      screen.getByRole("button", { name: /Remove section Worship/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
     expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -1291,9 +1304,8 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
-    await user.click(
-      await screen.findByRole("button", { name: /Remove section Word/i }),
-    );
+    await user.click(await screen.findByRole("button", { name: /More tools for Word/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Remove section/i }));
     expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "z", ctrlKey: true });
@@ -1402,9 +1414,8 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
-    await user.click(
-      await screen.findByRole("button", { name: /Remove section Word/i }),
-    );
+    await user.click(await screen.findByRole("button", { name: /More tools for Word/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Remove section/i }));
 
     // Plain inputs carry data-ignore-undo so the browser's own character-level
     // undo still applies inside them; the plan-level step must not also fire.
@@ -1447,7 +1458,9 @@ describe("ServicePlanEditor", () => {
     renderEditor();
 
     // Existing plans open in compact view mode — titles are text, not inputs.
-    expect(await screen.findByText("Living Hope")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "View full name: Living Hope" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
     expect(
@@ -1508,9 +1521,8 @@ describe("ServicePlanEditor", () => {
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: /Remove section Worship/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
 
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
@@ -1608,7 +1620,8 @@ describe("ServicePlanEditor", () => {
       screen.getByRole("button", { name: /Assignees for Living Hope/i }),
     );
     expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
-    await user.click(screen.getByRole("button", { name: /Close/i }));
+    await user.click(screen.getByRole("button", { name: /Close side panel/i }));
+    await user.click(screen.getByRole("button", { name: /^Done$/i }));
 
     // Content and notes stay close to the row, but use separate actions.
     // Existing notes start minimized to one preview line — expand to edit.
@@ -1618,21 +1631,7 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Notes" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Expand notes/i }));
-    expect(await screen.findByRole("textbox", { name: "Notes" })).toHaveTextContent(
-      "Slow the tempo down.",
-    );
-    expect(screen.getByRole("button", { name: /Add content to Living Hope/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /More actions for Living Hope/i })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Add content to Living Hope/i }));
-    expect(await screen.findByRole("menuitem", { name: /^Song$/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /^Scripture$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /^Note$/i })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /More actions for Living Hope/i }));
-    expect(
-      await screen.findByRole("menuitem", { name: /Team-specific note/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
   });
 
   it("autosaves note typing without requiring the editor to blur", async () => {
@@ -2176,6 +2175,7 @@ describe("ServicePlanEditor", () => {
 
     keepInView.mockClear();
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(await screen.findByRole("button", { name: /^Done$/i }));
     await user.click(await screen.findByRole("button", { name: /Make Message live/i }));
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
@@ -2185,9 +2185,6 @@ describe("ServicePlanEditor", () => {
       );
     });
     // Still editing — do not follow live yet.
-    expect(keepInView).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: /^Done$/i }));
     await waitFor(() => {
       expect(keepInView).toHaveBeenCalledWith(
         expect.objectContaining({

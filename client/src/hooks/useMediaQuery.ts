@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 
 /**
  * Subscribes to a CSS media query. When `matchMedia` is unavailable (e.g. some tests),
- * returns `true` so desktop layout is used by default.
+ * returns `false` so callers use the safer narrow-layout fallback.
  */
 export const useMediaQuery = (query: string): boolean => {
   const [matches, setMatches] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return true;
+      return false;
     }
     return window.matchMedia(query).matches;
   });

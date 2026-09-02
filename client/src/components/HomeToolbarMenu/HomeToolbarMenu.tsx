@@ -1,4 +1,4 @@
-import { useContext, useMemo } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { CircleAlert, Home as HomeIcon, Menu as MenuIcon } from "lucide-react";
 import Button from "../Button/Button";
@@ -13,9 +13,14 @@ import type { MenuItemType } from "../../types";
 export type HomeToolbarMenuProps = {
   /** Inserted after optional Home, before Changelog and About */
   extraMenuItems?: MenuItemType[];
+  /** Replaces the dropdown trigger and content on narrow screens. */
+  mobileMenuRenderer?: (menuItems: MenuItemType[]) => ReactNode;
 };
 
-const HomeToolbarMenu = ({ extraMenuItems }: HomeToolbarMenuProps = {}) => {
+const HomeToolbarMenu = ({
+  extraMenuItems,
+  mobileMenuRenderer,
+}: HomeToolbarMenuProps = {}) => {
   const { pathname } = useLocation();
   const hideHomeMenuItem = pathname === "/home";
   const { loginState, exitGuestMode } = useContext(GlobalInfoContext) || {};
@@ -64,25 +69,30 @@ const HomeToolbarMenu = ({ extraMenuItems }: HomeToolbarMenuProps = {}) => {
 
   return (
     <>
-      <Menu
-        menuItems={menuItems}
-        align="start"
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="w-fit"
-            aria-label="Open menu"
-            svg={MenuIcon}
-            iconSize="md"
-            gap="gap-1.5"
-          >
-            Menu
-            {updateReadyVersion ? (
-              <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
-            ) : null}
-          </Button>
-        }
-      />
+      <div className={mobileMenuRenderer ? "hidden sm:block" : undefined}>
+        <Menu
+          menuItems={menuItems}
+          align="start"
+          TriggeringButton={
+            <Button
+              variant="tertiary"
+              className="w-fit max-md:min-h-0 max-md:px-1 max-md:py-0.5"
+              aria-label="Open menu"
+              svg={MenuIcon}
+              iconSize="md"
+              gap="gap-1.5"
+            >
+              Menu
+              {updateReadyVersion ? (
+                <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
+              ) : null}
+            </Button>
+          }
+        />
+      </div>
+      {mobileMenuRenderer ? (
+        <div className="sm:hidden">{mobileMenuRenderer(menuItems)}</div>
+      ) : null}
       {aboutChangelogModals}
     </>
   );

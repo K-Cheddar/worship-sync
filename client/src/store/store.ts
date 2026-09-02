@@ -89,6 +89,7 @@ import {
 } from "./servicePlanningImportSlice";
 import { generatedCreditsSlice } from "./generatedCreditsSlice";
 import { mergeTimers } from "../utils/timerUtils";
+import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
@@ -760,6 +761,8 @@ const undoableReducers = undoable(
 );
 
 const listenerMiddleware = createListenerMiddleware();
+const songLibraryIndexRepairMiddleware =
+  createSongLibraryIndexRepairMiddleware();
 
 // handle item updates
 listenerMiddleware.startListening({
@@ -1203,7 +1206,7 @@ listenerMiddleware.startListening({
       const db_allItems: DBAllItems = await db.get("allItems");
       db_allItems.items = [...list];
       db_allItems.updatedAt = new Date().toISOString();
-      db.put(db_allItems);
+      await db.put(db_allItems);
 
       // Local machine updates
       safePostMessage({
@@ -2835,7 +2838,10 @@ const store = configureStore({
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: false,
-    }).prepend(listenerMiddleware.middleware),
+    }).prepend(
+      songLibraryIndexRepairMiddleware.middleware,
+      listenerMiddleware.middleware,
+    ),
 });
 
 // When a song is created, re-scan the service plan preview for unmatched songs

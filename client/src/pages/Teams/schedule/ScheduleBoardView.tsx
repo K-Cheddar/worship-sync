@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Users } from "lucide-react";
 import Button from "@/components/Button/Button";
 import Menu from "@/components/Menu/Menu";
@@ -20,6 +20,21 @@ import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
 import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
 import { scheduleUpNextBorderClassName } from "./scheduleUtils";
+
+const BOARD_CARD_MIN_WIDTH_PX = 288;
+const BOARD_CARD_GAP_PX = 16;
+
+export const getBoardColumnCount = (availableWidth: number, cardCount: number) =>
+  Math.max(
+    1,
+    Math.min(
+      Math.max(cardCount, 1),
+      Math.floor(
+        (availableWidth + BOARD_CARD_GAP_PX) /
+          (BOARD_CARD_MIN_WIDTH_PX + BOARD_CARD_GAP_PX),
+      ),
+    ),
+  );
 
 /** The per-occurrence cell data ScheduleBoardView consumes from buildGridCellProps. */
 type BoardCellData = {
@@ -95,17 +110,27 @@ const ScheduleBoardView = ({
   buildCellProps,
 }: ScheduleBoardViewProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [boardWidth, setBoardWidth] = useState(0);
   const occurrences = groups.flatMap((group) =>
     group.occurrences.map((occurrence) => ({ occurrence, group })),
   );
+  const columnCount = getBoardColumnCount(boardWidth, occurrences.length);
 
-  return (
-    // One column on phones; a responsive card grid from md up. `items-start`
-    // keeps a collapsed card compact instead of stretching to a taller expanded
-    // sibling in its row. Top padding leaves room for the absolute "Up next"
-    // badge so the schedule scrollport's overflow does not clip it.
-    <div className="grid grid-cols-1 items-start gap-4 pt-3 md:grid-cols-[repeat(auto-fill,minmax(15rem,1fr))]">
-      {occurrences.map(({ occurrence, group }) => {
+  useLayoutEffect(() => {
+    const board = boardRef.current;
+    if (!board) return;
+    const updateWidth = () => setBoardWidth(board.clientWidth);
+
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(board);
+    return () => observer.disconnect();
+  }, []);
+
+  const renderCard = ({ occurrence, group }: (typeof occurrences)[number]) => {
         const rows = columns.flatMap((column) => {
           const cellProps = buildCellProps(occurrence, column, "");
           if (!cellProps.isSlotEnabled) return [];
@@ -118,16 +143,16 @@ const ScheduleBoardView = ({
         const fill = fillByOccurrence.get(occurrence.occurrenceId);
         const isNextUpcoming =
           occurrence.occurrenceId === nextUpcomingOccurrenceId;
-        return (
-          <section
-            key={occurrence.occurrenceId}
-            className={cn(
-              // Always render the border so colouring the up-next card never
-              // shifts layout.
-              "relative flex flex-col rounded-xl border bg-gray-950/60",
-              isNextUpcoming ? scheduleUpNextBorderClassName : "border-transparent",
-            )}
-          >
+    return (
+      <section
+        key={occurrence.occurrenceId}
+        className={cn(
+          // Always render the border so colouring the up-next card never
+          // shifts layout.
+          "relative flex break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
+          isNextUpcoming ? scheduleUpNextBorderClassName : "border-transparent",
+        )}
+      >
             {isNextUpcoming ? (
               <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
                 <ScheduleUpNextBadge />
@@ -233,9 +258,28 @@ const ScheduleBoardView = ({
                 ) : null}
               </div>
             </div>
-          </section>
-        );
-      })}
+      </section>
+    );
+  };
+
+  // Deal cards round-robin so each row stays chronological left-to-right while
+  // columns stack independently instead of inheriting a taller card's row height.
+  const cardColumns = Array.from({ length: columnCount }, () =>
+    [] as (typeof occurrences)[number][],
+  );
+  occurrences.forEach((item, index) => {
+    cardColumns[index % columnCount].push(item);
+  });
+
+  return (
+    <div className="pt-3">
+      <div ref={boardRef} className="flex items-start gap-4">
+        {cardColumns.map((cardColumn, columnIndex) => (
+          <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-4">
+            {cardColumn.map(renderCard)}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import { sendChatMessage, uploadChatImage } from "./api";
 
 const mockIsPackagedElectronRenderer = jest.fn(() => false);
+const mockRequestAuthRecovery = jest.fn();
 
 jest.mock("../utils/environment", () => ({
   getApiBasePath: () => "/",
@@ -11,6 +12,11 @@ jest.mock("../utils/authStorage", () => ({
   getCsrfToken: () => "csrf",
   getHumanApiToken: () => null,
   getWorkstationToken: () => null,
+}));
+
+jest.mock("../api/authErrorBus", () => ({
+  requestAuthRecovery: (...args: unknown[]) =>
+    mockRequestAuthRecovery(...args),
 }));
 
 const createSuccessfulXhr = () => {
@@ -57,7 +63,35 @@ describe("chat image API", () => {
     global.fetch = originalFetch;
     global.XMLHttpRequest = originalXhr;
     mockIsPackagedElectronRenderer.mockReturnValue(false);
+    mockRequestAuthRecovery.mockReset();
     jest.restoreAllMocks();
+  });
+
+  it("refreshes auth and retries a chat mutation after a CSRF rejection", async () => {
+    mockRequestAuthRecovery.mockResolvedValue(true);
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: "Could not verify this request." }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ message: { messageId: "chat_1" } }),
+      });
+
+    await expect(
+      sendChatMessage("church_1", {
+        text: "Hello",
+        clientMessageId: "client_12345678",
+        timeZone: "UTC",
+      }),
+    ).resolves.toEqual({ message: { messageId: "chat_1" } });
+
+    expect(mockRequestAuthRecovery).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("requests a private intent and uploads directly to its signed URL", async () => {

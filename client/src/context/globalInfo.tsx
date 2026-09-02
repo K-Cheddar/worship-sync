@@ -939,6 +939,28 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     const promise = (async () => {
+      if (sessionKind === "workstation") {
+        try {
+          const bootstrap = await getAuthBootstrap({
+            workstationToken: getWorkstationToken(),
+            authRecovery: false,
+          });
+          if (!bootstrap.authenticated) return false;
+          applyBootstrap(bootstrap);
+          setAuthServerStatus("online");
+          setAuthServerRetryCount(0);
+          setAuthError("");
+          return true;
+        } catch (error) {
+          logAuthDiagnostic("error", "auth_api_recovery_workstation_failed", {
+            ...getAuthErrorDetails(error),
+            sessionKind,
+            hasWorkstationToken: Boolean(getWorkstationToken()),
+          });
+          return false;
+        }
+      }
+
       const persistedUser = await waitForHumanAuthUser();
       if (!persistedUser) {
         logAuthDiagnostic("error", "auth_api_recovery_no_firebase_user", {

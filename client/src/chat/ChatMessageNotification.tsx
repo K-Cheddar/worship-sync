@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Send } from "lucide-react";
+import { MessageCircle, Send } from "lucide-react";
 import Button from "../components/Button/Button";
 import TextArea from "../components/TextArea/TextArea";
 import { cn } from "../utils/cnHelper";
@@ -53,17 +53,23 @@ const ChatMessageNotification = ({
 
   return (
     <div
-      className="flex w-full min-w-[16rem] max-w-sm flex-col gap-2 text-left"
+      className="flex w-full min-w-0 max-w-sm flex-col gap-2 text-left"
       role="group"
       aria-label={`Team chat message from ${message.authorName}`}
     >
       <div className="flex flex-col gap-0.5">
-        <span className="text-sm font-semibold text-cyan-200">
-          {message.authorName}
-        </span>
+        <div className="flex items-center gap-2">
+          <MessageCircle
+            aria-hidden="true"
+            className="size-5 shrink-0 text-cyan-400"
+          />
+          <span className="text-sm font-semibold text-cyan-200">
+            {message.authorName}
+          </span>
+        </div>
         <span
           className={cn(
-            "whitespace-pre-wrap break-words text-sm leading-snug text-gray-100",
+            "block whitespace-pre-wrap break-words text-sm leading-snug text-gray-100",
             !isReplying && "line-clamp-3",
           )}
         >
@@ -73,7 +79,7 @@ const ChatMessageNotification = ({
 
       {isReplying ? (
         <div className="flex flex-col gap-2">
-          <div className="flex items-end gap-2">
+          <div className="flex min-w-0 items-end gap-2">
             <TextArea
               label={`Reply to ${message.authorName}`}
               hideLabel
@@ -100,7 +106,7 @@ const ChatMessageNotification = ({
               iconSize="md"
               color="#082f49"
               padding="p-0"
-              className="flex size-10 shrink-0 items-center justify-center rounded-full bg-cyan-400 hover:bg-cyan-300 max-md:!min-h-10 max-md:!min-w-10"
+              className="flex size-10 shrink-0 self-end items-center justify-center rounded-full bg-cyan-400 hover:bg-cyan-300 max-md:!min-h-10 max-md:!min-w-10"
               isLoading={isSending}
               disabled={
                 !draft.trim() ||

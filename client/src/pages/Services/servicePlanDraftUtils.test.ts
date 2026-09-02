@@ -2,6 +2,8 @@ import type {
   ServicePlanSection,
   ServicePlanSongReference,
 } from "../../types/servicePlan";
+import { getServicePlanElementLead } from "../../types/servicePlan";
+import { promoteServicePlanAssignee } from "./ServicePlanAssigneeList";
 import { plainTextToRichText } from "../../types/richText";
 import {
   addElement,
@@ -10,6 +12,7 @@ import {
   cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   moveElementToSection,
+  moveElementToPosition,
   removeElement,
   removeSection,
   replaceMatchingPendingSongReferences,
@@ -37,11 +40,33 @@ describe("createEmptyServicePlanSections", () => {
   });
 });
 
+describe("service-plan lead ordering", () => {
+  it("derives the first named person and keeps microphone slots in place", () => {
+    const assignees = [
+      { id: "mic", microphoneIds: ["orange"] },
+      { id: "one", name: "Alex" },
+      { id: "two", name: "Jordan" },
+    ];
+    expect(getServicePlanElementLead({ assignees })?.name).toBe("Alex");
+    const promoted = promoteServicePlanAssignee(assignees, "two");
+    expect(promoted.map((assignee) => assignee.id)).toEqual(["mic", "two", "one"]);
+  });
+});
+
 describe("addSection / removeSection / renameSection", () => {
   it("appends a new empty section", () => {
     const sections = addSection([section("a")], "Welcome");
     expect(sections.map((s) => s.name)).toEqual(["a", "Welcome"]);
     expect(sections[1].elements).toEqual([]);
+  });
+
+  it("inserts a new section after the selected section", () => {
+    const sections = addSection(
+      [section("a"), section("b"), section("c")],
+      "New section",
+      "b",
+    );
+    expect(sections.map((s) => s.name)).toEqual(["a", "b", "New section", "c"]);
   });
 
   it("removes only the targeted section", () => {
@@ -249,6 +274,26 @@ describe("moveElementToSection", () => {
     const sections = [section("a"), section("b")];
     const result = moveElementToSection(sections, "missing", "a", "b");
     expect(result).toBe(sections);
+  });
+});
+
+describe("moveElementToPosition", () => {
+  it("moves an item into an indexed position across sections", () => {
+    let sections = addElement([section("a"), section("b")], "a", "song");
+    const moved = sections[0].elements[0];
+    sections = addElement(sections, "a", "free");
+    sections = addElement(sections, "b", "announcement");
+    const result = moveElementToPosition(sections, moved.id, "a", "b", 0);
+    expect(result[0].elements.map((element) => element.type)).toEqual(["free"]);
+    expect(result[1].elements[0].id).toBe(moved.id);
+  });
+
+  it("supports empty section targets and clamps the index", () => {
+    const sections = addElement([section("a"), section("empty")], "a", "song");
+    const moved = sections[0].elements[0];
+    const result = moveElementToPosition(sections, moved.id, "a", "empty", 99);
+    expect(result[0].elements).toHaveLength(0);
+    expect(result[1].elements).toEqual([moved]);
   });
 });
 

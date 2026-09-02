@@ -1,5 +1,5 @@
 import type { TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
-import type { Presentation } from "../../types";
+import type { Presentation, ServiceTime } from "../../types";
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
 
 export type LiveSlideProgressSource = Pick<
@@ -157,3 +157,17 @@ export const findCurrentServiceOccurrence = (
     listCurrentServiceOccurrences(services, nowMs),
     nowMs,
   );
+
+/**
+ * Services covered by the occurrence the operator has selected. Combined
+ * occurrences carry every participating service ID; older plain occurrences
+ * only carry their representative `serviceId`.
+ */
+export const getOccurrenceServices = (
+  services: ServiceTime[],
+  occurrence: TeamScheduleOccurrence | null,
+): ServiceTime[] => {
+  if (!occurrence) return [];
+  const serviceIds = new Set(occurrence.serviceIds ?? [occurrence.serviceId]);
+  return services.filter((service) => serviceIds.has(service.id));
+};

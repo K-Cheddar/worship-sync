@@ -1900,6 +1900,67 @@ test("stale schedule assignment swaps leave both cells unchanged", async (t) => 
   assert.equal(getMemberId(assignments[keysSlot]), memberIds.Morgan);
 });
 
+test("service plan assignments expose only the selected plan's serving roster", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_assignments");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Keys", icon: "piano" }],
+    members: [{ firstName: "Avery", lastName: "Stone", positions: ["Keys"] }],
+  });
+  const occurrenceId = "service-sunday@2026-09-05T14:00:00.000Z";
+  const planKey = "service-sunday@2026-09-05";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "September",
+      teamId,
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      serviceIds: ["service-sunday"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-sunday",
+          name: "Sunday Service",
+          startsAt: "2026-09-05T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Keys}::0`,
+      memberId: memberIds.Avery,
+      serviceDate: "2026-09-05",
+    },
+  });
+  await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "service-sunday",
+      date: "2026-09-05",
+      name: "Sunday Service",
+      sections: [],
+    },
+  });
+
+  const result = await callHandler(authHandlers.getServicePlanAssignments, {
+    context,
+    params: { planKey },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.assignments, [
+    { teamName: "Worship", role: "Keys", name: "Avery Stone" },
+  ]);
+});
+
 test("schedule assignment updates broadcast the new schedule over SSE", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("sse_broadcast");

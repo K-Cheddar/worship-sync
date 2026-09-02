@@ -1213,6 +1213,10 @@ app.post(
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
 app.get("/api/churches/:churchId/service-plans", authHandlers.listServicePlans);
 app.get(
+  "/api/churches/:churchId/service-plans/:planKey/assignments",
+  authHandlers.getServicePlanAssignments,
+);
+app.get(
   "/api/churches/:churchId/service-plans/:planKey",
   authHandlers.getServicePlan,
 );
@@ -2769,6 +2773,7 @@ app.get("/api/lrclib/search", async (req, res) => {
     res.json(
       await searchAllLyricsTracks(params, {
         includeGenius: !skipGeniusLyricsImport,
+        includeGeniusLyrics: req.query.localGenius !== "true",
       }),
     );
   } catch (error) {

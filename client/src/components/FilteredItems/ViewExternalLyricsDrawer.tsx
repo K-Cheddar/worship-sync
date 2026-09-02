@@ -16,6 +16,7 @@ type ViewExternalLyricsDrawerProps = {
   isMobile: boolean;
   searchHighlight?: string;
   onClose: () => void;
+  portalContainer?: HTMLElement | null;
 };
 
 const ViewExternalLyricsDrawer = ({
@@ -24,6 +25,7 @@ const ViewExternalLyricsDrawer = ({
   isMobile,
   searchHighlight = "",
   onClose,
+  portalContainer,
 }: ViewExternalLyricsDrawerProps) => {
   if (!candidate) {
     return null;
@@ -40,6 +42,7 @@ const ViewExternalLyricsDrawer = ({
       title={`Lyrics — ${candidate.trackName}`}
       size="xl"
       position={isMobile ? "bottom" : "right"}
+      portalContainer={portalContainer}
       contentClassName="flex min-h-0 flex-col"
       contentPadding="p-0"
     >

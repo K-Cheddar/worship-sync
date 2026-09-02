@@ -46,6 +46,12 @@ export interface ElectronAPI {
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
   openExternalUrl: (url: string) => Promise<boolean>;
+  fetchGeniusLyrics: (url: string) => Promise<{
+    ok: boolean;
+    status: number;
+    lyrics?: string;
+    html?: string;
+  }>;
 
   // Window management - all generic handlers
   openWindow: (windowType: WindowType) => Promise<boolean>;

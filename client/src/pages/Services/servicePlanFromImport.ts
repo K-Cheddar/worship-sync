@@ -50,6 +50,12 @@ const readsAsSong = (text: string): boolean =>
   SONG_WORDS.test(text) ||
   (AMBIGUOUS_SONG_WORDS.test(text) && !NON_SONG_PHRASES.test(text));
 
+/** A planning key is a strong song signal even when the source's music icon
+ * was omitted from this particular row. Keep this narrower than general title
+ * matching so ordinary spoken items are not turned into pending songs. */
+const hasPlanningKeySuffix = (title: string): boolean =>
+  /\s\([A-G][#b]?(?:\s*(?:â†’|->|→)\s*[A-G][#b]?)?\)\s*$/iu.test(title);
+
 /** Best-effort classification of a raw Service Planning row into our broader
  * element type vocabulary — the source's own "element type" column is free
  * text set by whoever built the plan, not a fixed enum, so this is a keyword
@@ -75,11 +81,11 @@ const buildElementFromRow = <T extends { _id: string; name: string }>(
   songs: T[],
   sourceMarksSongs: boolean,
 ): ServicePlanElement => {
-  const type = row.songTitle
+  const type = row.songTitle || hasPlanningKeySuffix(row.title)
     ? "song"
     : guessServicePlanElementType(row.elementType, row.title, {
-      skipSongWords: sourceMarksSongs,
-    });
+        skipSongWords: sourceMarksSongs,
+      });
   const rawTitle = row.title?.trim() || row.elementType?.trim() || "Untitled";
   const ledBy = row.ledBy?.trim();
   const assigneeNames = ledBy ? splitServicePlanningLedByNames(ledBy) : [];
