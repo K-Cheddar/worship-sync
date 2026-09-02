@@ -15,6 +15,7 @@ export type PublicSchedulePosition = {
   name: string;
   groupId?: string;
   archivedAt?: string | null;
+  icon?: string;
 };
 
 const cellHasAssignee = (cell: {
@@ -57,6 +58,7 @@ export const buildPublicScheduleColumns = ({
         positionId: position.positionId,
         slot,
         label: totalSlots > 1 ? `${position.name} ${slot + 1}` : position.name,
+        icon: position.icon,
       });
     }
   });

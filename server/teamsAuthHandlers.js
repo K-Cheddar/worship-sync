@@ -4301,6 +4301,7 @@ export const createTeamsAuthHandlers = ({
       positions: sortPositionsByOrder(referencedPositions).map((position) => ({
         positionId: position.positionId,
         name: position.name,
+        icon: position.icon || "",
         groupId: position.groupId || "",
         archivedAt: position.archivedAt || null,
       })),

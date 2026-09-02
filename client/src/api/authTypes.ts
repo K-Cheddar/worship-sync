@@ -433,6 +433,7 @@ export type TeamSchedulePublicSnapshot = {
   positions: {
     positionId: string;
     name: string;
+    icon: string;
     groupId: string;
     archivedAt: string | null;
   }[];

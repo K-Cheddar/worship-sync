@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { User } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
 import {
   EXPORT_EMPTY_SLOT_LABEL,
@@ -14,6 +15,7 @@ import {
   type ScheduleFocusedCell,
   type ScheduleGridLayout,
 } from "./scheduleUtils";
+import { resolvePositionLucideIcon } from "../lucidePositionIcons";
 
 /**
  * Read-only on-screen rendering of a schedule export model, in any of the three
@@ -52,7 +54,15 @@ const palette = (isBoard: boolean) => ({
   byDatePositionLabel: isBoard
     ? "text-stone-100"
     : "text-gray-700",
-  byDatePositionDivider: isBoard ? "border-stone-600" : "border-gray-200",
+  byDateCard: isBoard
+    ? "border-stone-700 bg-stone-950/90 shadow-lg shadow-black/20"
+    : "border-gray-200 bg-white shadow-sm",
+  byDateHeader: isBoard ? "bg-stone-800/90" : "bg-orange-100",
+  byDateDivider: isBoard ? "border-stone-700" : "border-gray-200",
+  byDateDivide: isBoard ? "divide-stone-700" : "divide-gray-200",
+  byDateIcon: isBoard
+    ? "bg-stone-800 text-amber-200"
+    : "bg-orange-50 text-orange-700",
   emptyPanel: isBoard
     ? "border-stone-700 bg-stone-900/60 text-stone-300"
     : "border-gray-200 bg-gray-50 text-gray-600",
@@ -370,54 +380,84 @@ const TransposeLayout = ({
   );
 };
 
+const ByDatePosition = ({
+  label,
+  icon,
+  cell,
+  p,
+}: {
+  label: string;
+  icon?: string;
+  cell: ScheduleExportCell;
+  p: Palette;
+}) => {
+  const PositionIcon = resolvePositionLucideIcon(icon);
+
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-3 px-3 py-2.5",
+        cell.highlighted && p.cellHighlight,
+      )}
+    >
+      <span
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-lg",
+          p.byDateIcon,
+        )}
+        aria-hidden
+      >
+        {PositionIcon ? <PositionIcon className="size-4" /> : <User className="size-4" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <dt className={cn("text-xs font-medium", p.byDatePositionLabel)}>
+          {label}
+        </dt>
+        <dd className="mt-0.5 min-w-0">
+          <CellContent cell={cell} p={p} />
+        </dd>
+      </div>
+    </div>
+  );
+};
+
 const ByDateLayout = ({ model, p }: { model: ScheduleExportModel; p: Palette }) => (
-  <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
+  <div className="grid grid-cols-[repeat(auto-fit,minmax(18rem,1fr))] items-start gap-4">
     {model.groups.map((group, groupIndex) =>
       group.rows.map((row, rowIndex) => {
         const entries = model.columnLabels
           .map((label, columnIndex) => ({
             label,
             columnKey: model.columnKeys[columnIndex],
+            icon: model.columnIcons?.[columnIndex],
             cell: row.cells[columnIndex],
           }))
           .filter((entry) => entry.cell && entry.cell.state !== "inactive");
         return (
           <div
             key={`${groupIndex}-${rowIndex}`}
-            className={cn("h-fit overflow-hidden rounded-lg border", p.container)}
+            className={cn("h-fit overflow-hidden rounded-xl border", p.byDateCard)}
           >
-            <div className={cn("px-3 py-2 text-sm font-bold", p.serviceBg, p.serviceText)}>
-              {group.serviceName} — {row.rowLabel}
-              {group.timingLabel ? (
-                <span className={cn("ml-2 font-normal", p.serviceTiming)}>
-                  {group.timingLabel}
-                </span>
-              ) : null}
+            <div className={cn("border-b px-3 py-2.5", p.byDateHeader, p.byDateDivider)}>
+              <p className={cn("flex items-center gap-2 text-sm font-bold", p.serviceText)}>
+                <span>{row.rowLabel}</span>
+                {group.timingLabel ? (
+                  <span className={cn("text-xs font-medium", p.serviceTiming)}>
+                    {group.timingLabel}
+                  </span>
+                ) : null}
+              </p>
+              <p className={cn("mt-1 truncate text-xs", p.serviceTiming)}>{group.serviceName}</p>
             </div>
-            <dl className="divide-y border-transparent text-sm">
-              {entries.map((entry, entryIndex) => (
-                <div
+            <dl className={cn("divide-y text-sm", p.byDateDivide)}>
+              {entries.map((entry) => (
+                <ByDatePosition
                   key={entry.columnKey}
-                  className={cn(
-                    "flex items-start gap-4 border-t px-3 py-2",
-                    p.rowBorder,
-                    entryIndex % 2 === 0 ? p.rowEven : p.rowOdd,
-                    entry.cell.highlighted && p.cellHighlight,
-                  )}
-                >
-                  <dt
-                    className={cn(
-                      "min-w-[10.5rem] w-[48%] max-w-[16rem] shrink-0 self-stretch border-r pr-4 font-medium",
-                      p.byDatePositionLabel,
-                      p.byDatePositionDivider,
-                    )}
-                  >
-                    {entry.label}
-                  </dt>
-                  <dd className="min-w-0 flex-1 pl-1">
-                    <CellContent cell={entry.cell} p={p} />
-                  </dd>
-                </div>
+                  label={entry.label}
+                  icon={entry.icon}
+                  cell={entry.cell}
+                  p={p}
+                />
               ))}
             </dl>
           </div>

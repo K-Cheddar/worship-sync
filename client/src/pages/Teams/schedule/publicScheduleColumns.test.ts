@@ -5,7 +5,7 @@ import {
 import type { TeamScheduleAssignments } from "../../../api/authTypes";
 
 const positions = [
-  { positionId: "dir", name: "Director" },
+  { positionId: "dir", name: "Director", icon: "clapperboard" },
   { positionId: "cam", name: "Camera" },
   { positionId: "foh", name: "Front of House" },
 ];
@@ -21,6 +21,7 @@ describe("buildPublicScheduleColumns", () => {
     const { columns } = buildPublicScheduleColumns({ assignments, positions });
     expect(columns.map((column) => column.label)).toEqual(["Director", "Front of House"]);
     expect(columns.map((column) => column.columnKey)).toEqual(["dir::0", "foh::0"]);
+    expect(columns.map((column) => column.icon)).toEqual(["clapperboard", undefined]);
   });
 
   it("expands a position to as many slots as the highest assigned slot, numbered", () => {

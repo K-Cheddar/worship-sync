@@ -2571,6 +2571,11 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     publicRes.payload.positions.map((position) => position.positionId).sort(),
     [directorId, cameraId].sort(),
   );
+  assert.equal(
+    publicRes.payload.positions.find((position) => position.positionId === directorId)
+      .icon,
+    "video",
+  );
 
   // Unknown token is a 404.
   const badRes = createRes();
