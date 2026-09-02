@@ -119,8 +119,8 @@ const ServicePlanContentPanel = ({
         {scriptures.length ? scriptures.map((scripture, index) => (
           <div key={`${scripture.label}:${index}`} className="flex items-center gap-2 rounded-md border border-gray-700 bg-gray-900/70 px-2 py-1.5">
             {allowEdit ? (
-              <Button type="button" variant="tertiary" className="min-w-0 flex-1 cursor-pointer justify-start p-0 text-sm text-gray-100 hover:text-orange-100" onClick={() => setScriptureEditIndex(index)}><Icon svg={BookOpen} size="xs" className="shrink-0 text-orange-300" /><span className="truncate">{scripture.label}</span></Button>
-            ) : <><Icon svg={BookOpen} size="xs" className="shrink-0 text-orange-300" /><span className="truncate text-sm text-gray-100">{scripture.label}</span></>}
+              <Button type="button" variant="tertiary" className="min-w-0 flex-1 cursor-pointer justify-start p-0 text-sm text-gray-100 hover:text-violet-100" onClick={() => setScriptureEditIndex(index)}><Icon svg={BookOpen} size="xs" className="shrink-0 text-violet-300" /><span className="truncate">{scripture.label}</span></Button>
+            ) : <><Icon svg={BookOpen} size="xs" className="shrink-0 text-violet-300" /><span className="truncate text-sm text-gray-100">{scripture.label}</span></>}
             {allowEdit ? <Button type="button" variant="tertiary" iconSize="xs" padding="p-0" className="h-5 w-5" svg={X} aria-label={`Remove scripture ${scripture.label}`} onClick={() => updateScriptures(scriptures.filter((_, current) => current !== index))} /> : null}
           </div>
         )) : <p className="text-sm text-gray-500">No scripture attached.</p>}

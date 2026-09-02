@@ -792,7 +792,7 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    expect(screen.getByText(/Not in library/i)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /View song details/i }),
     ).not.toBeInTheDocument();
@@ -808,7 +808,29 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    expect(screen.getByText(/Not in library/i)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
+  });
+
+  it("removes an inferred source-classified song instead of recreating it", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        sourceElementTypeRaw: "Song",
+        title: plainTextToRichText("Welcome and announcements"),
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Remove song" }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      songRef: undefined,
+      songRefs: [],
+      sourceSongReferenceDismissed: true,
+    });
   });
 
   it("shows a song added to the library after the import as linked", async () => {
@@ -832,7 +854,7 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    expect(screen.queryByText(/Not in library/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Not in library/i })).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /View song details for How Great Is Our God/i }),
     );

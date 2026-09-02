@@ -166,10 +166,12 @@ export const replaceMatchingPendingSongReferences = (
     let sectionChanged = false;
     const elements = section.elements.map((element) => {
       const songRefs = getServicePlanElementSongRefs(element);
-      const hasImplicitSongReference = !songRefs.length && (
-        element.type === "song" ||
-        /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")
-      ) && cleanPlanningTitle(richTextToPlainText(element.title)) === target.title;
+      const hasImplicitSongReference =
+        !element.sourceSongReferenceDismissed &&
+        !songRefs.length &&
+        (element.type === "song" ||
+          /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")) &&
+        cleanPlanningTitle(richTextToPlainText(element.title)) === target.title;
       let changed = false;
       const nextSongRefs = songRefs.map((songRef) => {
         const matches =

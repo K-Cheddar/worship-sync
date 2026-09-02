@@ -141,6 +141,35 @@ describe("replaceMatchingPendingSongReferences", () => {
       lyricsText: "Different lyrics",
     });
   });
+
+  it("does not restore a source-classified song an operator dismissed", () => {
+    const target: ServicePlanSongReference = {
+      kind: "pending",
+      title: "Welcome",
+      lyricsText: "",
+    };
+    const replacement: ServicePlanSongReference = {
+      kind: "library",
+      songId: "song-created",
+      songName: "Welcome",
+    };
+    const sections = [
+      section("service", {
+        elements: [{
+          id: "welcome",
+          type: "free",
+          title: plainTextToRichText("Welcome"),
+          sourceElementTypeRaw: "Song",
+          sourceSongReferenceDismissed: true,
+        }],
+      }),
+    ];
+
+    const result = replaceMatchingPendingSongReferences(sections, target, replacement);
+
+    expect(result[0].elements[0].songRefs).toBeUndefined();
+    expect(result[0].elements[0].sourceSongReferenceDismissed).toBe(true);
+  });
 });
 
 describe("reorderSections", () => {
