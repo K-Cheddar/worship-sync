@@ -1,3 +1,10 @@
+## [2.30.1](https://github.com/K-Cheddar/worship-sync/compare/v2.30.0...v2.30.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* Minor ui fixes for service plans ([824a3ca](https://github.com/K-Cheddar/worship-sync/commit/824a3ca57ab45f9d21fd653f092c24d1eb403e3e))
+
 # [2.30.0](https://github.com/K-Cheddar/worship-sync/compare/v2.29.0...v2.30.0) (2026-09-02)
 
 
