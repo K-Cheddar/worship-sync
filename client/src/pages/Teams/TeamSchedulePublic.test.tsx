@@ -178,8 +178,8 @@ test("scopes by date cards to each service's positions", async () => {
 
   await screen.findByText("Summer Schedule");
 
-  expect(screen.getByText(/Sabbath — /)).toBeInTheDocument();
-  expect(screen.getByText(/Wednesday — /)).toBeInTheDocument();
+  expect(screen.getByText("Sabbath")).toBeInTheDocument();
+  expect(screen.getByText("Wednesday")).toBeInTheDocument();
   expect(screen.getAllByText("Director")).toHaveLength(1);
   expect(screen.getAllByText("Camera")).toHaveLength(1);
   expect(screen.getByText("Jordan")).toBeInTheDocument();

@@ -147,7 +147,8 @@ test("renders empty slots as a dash and highlights a member in the by date layou
 
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
   expect(screen.getByText("Brandon")).toHaveClass("bg-amber-200");
-  expect(screen.getByText("Sabbath — May 9")).toBeInTheDocument();
+  expect(screen.getByText("May 9")).toBeInTheDocument();
+  expect(screen.getAllByText("Sabbath")).toHaveLength(2);
   expect(screen.getByText(EXPORT_EMPTY_SLOT_LABEL)).toBeInTheDocument();
 });
 

@@ -22,6 +22,8 @@ export type ScheduleExportColumn = {
   /** 0-based slot index within the position. */
   slot: number;
   label: string;
+  /** Optional saved Lucide icon name for the position. */
+  icon?: string;
 };
 
 export type ScheduleExportOccurrence = {
@@ -91,6 +93,8 @@ export type ScheduleExportModel = {
   columnLabels: string[];
   /** Parallel to columnLabels — used for row/column focus in grid layouts. */
   columnKeys: string[];
+  /** Parallel to columnLabels — the saved position icon, when set. */
+  columnIcons?: (string | undefined)[];
   groups: ScheduleExportGroup[];
 };
 
@@ -178,6 +182,7 @@ export const buildScheduleExportModel = (
       : "",
     columnLabels: input.columns.map((column) => column.label),
     columnKeys: input.columns.map((column) => column.columnKey),
+    columnIcons: input.columns.map((column) => column.icon),
     groups,
   };
 };

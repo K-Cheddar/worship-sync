@@ -385,7 +385,7 @@ const TeamSchedulePublic = () => {
 
   return (
     <main className={pageShellClassName(theme)}>
-      <div className="mx-auto w-full max-w-6xl space-y-4">
+      <div className="mx-auto w-full max-w-none space-y-4">
         <header className={isDark ? boardHeaderClassName : lightHeaderClassName}>
           <div className="flex items-start justify-between gap-3">
             <p
