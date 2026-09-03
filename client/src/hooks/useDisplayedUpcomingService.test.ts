@@ -2,6 +2,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useDisplayedUpcomingService } from "./useDisplayedUpcomingService";
 import { createServiceTime } from "../test/fixtures";
 import type { ServiceTime } from "../types";
+import { setServerTimeOffset } from "../utils/serverTime";
 
 const futureIso = (msFromNow: number) =>
   new Date(Date.now() + msFromNow).toISOString();
@@ -15,6 +16,7 @@ describe("useDisplayedUpcomingService", () => {
   });
 
   afterEach(() => {
+    act(() => setServerTimeOffset(0));
     jest.useRealTimers();
   });
 
@@ -106,5 +108,25 @@ describe("useDisplayedUpcomingService", () => {
       useDisplayedUpcomingService(services, 0),
     );
     expect(result.current?.service.id).toBe("soon");
+  });
+
+  it("recomputes the upcoming service when the shared clock offset arrives", () => {
+    jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+    const service = createServiceTime({
+      id: "clock-sensitive",
+      name: "Starts soon",
+      reccurence: "one_time",
+      dateTimeISO: "2026-01-01T12:00:30.000Z",
+    });
+    const services = [service];
+    const { result } = renderHook(() =>
+      useDisplayedUpcomingService(services, 0),
+    );
+
+    expect(result.current?.service.id).toBe("clock-sensitive");
+
+    act(() => setServerTimeOffset(60_000));
+
+    expect(result.current).toBeNull();
   });
 });

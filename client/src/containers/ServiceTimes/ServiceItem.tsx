@@ -1,13 +1,13 @@
 import Button from "../../components/Button/Button";
+import Menu from "../../components/Menu/Menu";
 import TimeAdjuster from "./TimeAdjuster";
-import { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
+import { MonthWeekOrdinal, ServiceTime, Weekday, type MenuItemType } from "../../types";
 import { formatOneTime, formatMonthly, formatMultiWeekly, formatWeekly } from "./utils";
-import { SquarePen, Timer, Trash2 } from "lucide-react";
+import { MoreHorizontal, SquarePen, Timer } from "lucide-react";
 
 type Props = {
   service?: ServiceTime;
   onEdit?: (id: string) => void;
-  onDelete?: (id: string) => void;
   onToggleAdjust?: (id: string) => void;
   isAdjusting?: boolean;
 };
@@ -15,11 +15,39 @@ type Props = {
 const ServiceItem = ({
   service,
   onEdit,
-  onDelete,
   onToggleAdjust,
   isAdjusting = false,
 }: Props) => {
   if (!service) return null;
+
+  const menuItems: MenuItemType[] = [
+    ...(onToggleAdjust
+      ? [
+          {
+            element: (
+              <span className="flex items-center gap-2">
+                <Timer className="size-4" aria-hidden />
+                {isAdjusting ? "Hide adjust" : "Adjust"}
+              </span>
+            ),
+            onClick: () => onToggleAdjust(service.id),
+          },
+        ]
+      : []),
+    ...(onEdit
+      ? [
+          {
+            element: (
+              <span className="flex items-center gap-2">
+                <SquarePen className="size-4" aria-hidden />
+                Update
+              </span>
+            ),
+            onClick: () => onEdit(service.id),
+          },
+        ]
+      : []),
+  ];
   return (
     <li
       className="flex min-w-0 flex-col overflow-hidden rounded-md border-y border-r border-l-4 border-white/10 bg-black/25"
@@ -54,35 +82,20 @@ const ServiceItem = ({
               )}
           </div>
         </div>
-        {onEdit && onDelete ? (
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {onToggleAdjust ? (
-              <Button
-                variant={isAdjusting ? "primary" : "secondary"}
-                svg={Timer}
-                iconSize="sm"
-                onClick={() => onToggleAdjust(service.id)}
-                title="Adjust this service's countdown, regardless of whether it's detected as upcoming"
-              >
-                {isAdjusting ? "Hide adjust" : "Adjust"}
-              </Button>
-            ) : null}
-            <Button
-              variant="secondary"
-              svg={SquarePen}
-              iconSize="sm"
-              onClick={() => onEdit(service.id)}
-            >
-              Update
-            </Button>
-            <Button
-              variant="destructive"
-              svg={Trash2}
-              iconSize="sm"
-              onClick={() => onDelete(service.id)}
-            >
-              Delete
-            </Button>
+        {menuItems.length > 0 ? (
+          <div className="flex shrink-0 items-center justify-end">
+            <Menu
+              menuItems={menuItems}
+              TriggeringButton={
+                <Button
+                  variant="tertiary"
+                  svg={MoreHorizontal}
+                  iconSize="sm"
+                  aria-label="More service actions"
+                  title="More service actions"
+                />
+              }
+            />
           </div>
         ) : null}
       </div>

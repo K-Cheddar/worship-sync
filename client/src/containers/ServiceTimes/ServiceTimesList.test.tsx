@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ServiceTimesList from "./ServiceTimesList";
 import { ServiceTime } from "../../types";
 
@@ -41,12 +42,12 @@ describe("ServiceTimesList manual adjust", () => {
   // the auto-detected "Upcoming service" card. If that detection missed
   // (stale/misdetected upcoming service on a given device), the operator had
   // no way to reach the countdown control at all — even after a refresh.
-  it("lets an operator adjust a service's countdown even when it isn't detected as upcoming", () => {
+  it("lets an operator adjust a service's countdown even when it isn't detected as upcoming", async () => {
+    const user = userEvent.setup();
     render(
       <ServiceTimesList
         services={services}
         onEdit={jest.fn()}
-        onDelete={jest.fn()}
         upcomingService={null}
         upcomingServiceTimeText={null}
         canEdit
@@ -55,46 +56,51 @@ describe("ServiceTimesList manual adjust", () => {
 
     expect(screen.queryByText("Adjust countdown")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Adjust" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "More service actions" })[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Adjust" }));
 
     expect(screen.getByText("Adjust countdown")).toBeInTheDocument();
   });
 
-  it("toggles a service's adjuster closed on a second click", () => {
+  it("toggles a service's adjuster closed on a second click", async () => {
+    const user = userEvent.setup();
     render(
       <ServiceTimesList
         services={services}
         onEdit={jest.fn()}
-        onDelete={jest.fn()}
         upcomingService={null}
         upcomingServiceTimeText={null}
         canEdit
       />,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Adjust" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "More service actions" })[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Adjust" }));
     expect(screen.getByText("Adjust countdown")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide adjust" }));
+    await user.click(screen.getAllByRole("button", { name: "More service actions" })[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Hide adjust" }));
     expect(screen.queryByText("Adjust countdown")).not.toBeInTheDocument();
   });
 
-  it("keeps only one service's adjuster open at a time", () => {
+  it("keeps only one service's adjuster open at a time", async () => {
+    const user = userEvent.setup();
     render(
       <ServiceTimesList
         services={services}
         onEdit={jest.fn()}
-        onDelete={jest.fn()}
         upcomingService={null}
         upcomingServiceTimeText={null}
         canEdit
       />,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Adjust" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "More service actions" })[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Adjust" }));
     expect(screen.getAllByText("Adjust countdown")).toHaveLength(1);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Adjust" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "More service actions" })[1]);
+    await user.click(screen.getByRole("menuitem", { name: "Adjust" }));
     expect(screen.getAllByText("Adjust countdown")).toHaveLength(1);
   });
 
@@ -103,7 +109,6 @@ describe("ServiceTimesList manual adjust", () => {
       <ServiceTimesList
         services={services}
         onEdit={jest.fn()}
-        onDelete={jest.fn()}
         upcomingService={null}
         upcomingServiceTimeText={null}
         canEdit={false}
@@ -111,7 +116,26 @@ describe("ServiceTimesList manual adjust", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Adjust" }),
+      screen.queryByRole("button", { name: "More service actions" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("puts row actions in a menu without a delete option", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServiceTimesList
+        services={services}
+        onEdit={jest.fn()}
+        upcomingService={null}
+        upcomingServiceTimeText={null}
+        canEdit
+      />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "More service actions" })[0]);
+
+    expect(screen.getByRole("menuitem", { name: "Adjust" })).toHaveClass("min-h-[2.5rem]");
+    expect(screen.getByRole("menuitem", { name: "Update" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
   });
 });

@@ -9,7 +9,6 @@ import { serverDate } from "../../utils/serverTime";
 type Props = {
   services: ServiceTime[];
   onEdit: (id: string) => void;
-  onDelete: (id: string) => void;
   upcomingService: { service: ServiceTime; nextAt: Date } | null;
   upcomingServiceTimeText: string | null;
   canEdit?: boolean;
@@ -18,7 +17,6 @@ type Props = {
 const ServiceTimesList = ({
   services,
   onEdit,
-  onDelete,
   upcomingService,
   upcomingServiceTimeText,
   canEdit = true,
@@ -54,7 +52,7 @@ const ServiceTimesList = ({
               <p>Upcoming service</p>
               <ServiceItem
                 service={upcomingService.service}
-                {...(canEdit ? { onEdit, onDelete } : {})}
+                {...(canEdit ? { onEdit } : {})}
               />
               <NextServiceLiveCountdown
                 service={upcomingService.service}
@@ -73,7 +71,7 @@ const ServiceTimesList = ({
                   key={s.id}
                   service={s}
                   {...(canEdit
-                    ? { onEdit, onDelete, onToggleAdjust: toggleManualAdjust }
+                    ? { onEdit, onToggleAdjust: toggleManualAdjust }
                     : {})}
                   isAdjusting={manualAdjustId === s.id}
                 />

@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ServiceTime } from "../types";
 import {
   getDisplayedUpcomingService,
   getUpcomingServiceRefreshDelay,
 } from "../utils/serviceTimes";
-import { serverDate } from "../utils/serverTime";
+import {
+  getServerTimeOffset,
+  serverDate,
+  subscribeServerTimeOffset,
+} from "../utils/serverTime";
 
 type UseDisplayedUpcomingServiceOptions = {
   keepRecentlyElapsedDuringGrace?: boolean;
@@ -17,6 +21,11 @@ export const useDisplayedUpcomingService = (
 ) => {
   const keepRecentlyElapsedDuringGrace =
     options.keepRecentlyElapsedDuringGrace ?? false;
+  const serverTimeOffset = useSyncExternalStore(
+    subscribeServerTimeOffset,
+    getServerTimeOffset,
+    getServerTimeOffset,
+  );
   const [upcomingService, setUpcomingService] = useState(() =>
     getDisplayedUpcomingService(services, serverDate(), graceMs, {
       keepRecentlyElapsedDuringGrace,
@@ -51,7 +60,12 @@ export const useDisplayedUpcomingService = (
         window.clearTimeout(timeoutId);
       }
     };
-  }, [services, graceMs, keepRecentlyElapsedDuringGrace]);
+  }, [
+    services,
+    graceMs,
+    keepRecentlyElapsedDuringGrace,
+    serverTimeOffset,
+  ]);
 
   return upcomingService;
 };

@@ -12,12 +12,9 @@ import {
   DBServices,
 } from "../../types";
 import {
-  addService,
-  removeService,
   updateService,
   updateServicesFromRemote,
 } from "../../store/serviceTimesSlice";
-import generateRandomId from "../../utils/generateRandomId";
 import Button from "../../components/Button/Button";
 import ServiceTimesForm from "./ServiceTimesForm";
 import ServiceTimesList from "./ServiceTimesList";
@@ -28,7 +25,6 @@ import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
 import Spinner from "../../components/Spinner/Spinner";
-import { Plus } from "lucide-react";
 import {
   Tabs,
   TabsContent,
@@ -37,7 +33,6 @@ import {
   lineTabsListShellClassName,
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
-import { serverDate } from "../../utils/serverTime";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 /** Service times editor for the overlay controller "Service times" tab only. */
@@ -60,7 +55,12 @@ const ServiceTimes = () => {
   // countdown adjustments are available to operator tiers, independently of
   // the Teams/Services management permissions used by the scheduling pages.
   // A missing context only occurs in isolated embedded/test renders.
-  const canEdit = !isViewOnlyAccess(globalInfo?.access);
+  const canEdit =
+    !isViewOnlyAccess(globalInfo?.access) &&
+    !(
+      globalInfo?.loginState === "success" &&
+      !globalInfo.sharedDataReady
+    );
 
   const editingService = useMemo(
     () => services.find((s) => s.id === editingId) ?? null,
@@ -80,18 +80,8 @@ const ServiceTimes = () => {
 
   const handleSave = useCallback(
     (values: Partial<ServiceTime>) => {
-      if (editingId) {
-        dispatch(updateService({ id: editingId, changes: { ...values } }));
-      } else {
-        dispatch(
-          addService({
-            id: generateRandomId(),
-            timerType: "countdown",
-            createdAt: serverDate().toISOString(),
-            ...values,
-          } as ServiceTime)
-        );
-      }
+      if (!editingId) return;
+      dispatch(updateService({ id: editingId, changes: { ...values } }));
       setIsFormOpen(false);
       setEditingId(null);
       if (isMobile) setMobileTab("services");
@@ -105,12 +95,6 @@ const ServiceTimes = () => {
     if (isMobile) setMobileTab("services");
   }, [isMobile]);
 
-  const startCreate = () => {
-    setEditingId(null);
-    setIsFormOpen(true);
-    if (isMobile) setMobileTab("edit");
-  };
-
   const startEdit = (id: string) => {
     setEditingId(id);
     setIsFormOpen(true);
@@ -119,6 +103,7 @@ const ServiceTimes = () => {
 
   const updateServicesFromExternal = useCallback(
     async (event: CustomEventInit) => {
+      if (globalInfo?.loginState === "success") return;
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -136,7 +121,7 @@ const ServiceTimes = () => {
         console.error(e);
       }
     },
-    [dispatch, services]
+    [dispatch, globalInfo?.loginState, services]
   );
 
   useEffect(() => {
@@ -154,7 +139,6 @@ const ServiceTimes = () => {
     <ServiceTimesList
       services={services}
       onEdit={startEdit}
-      onDelete={(id) => dispatch(removeService(id))}
       upcomingService={upcomingService}
       upcomingServiceTimeText={upcomingServiceTimeText}
       canEdit={canEdit}
@@ -174,7 +158,7 @@ const ServiceTimes = () => {
     <div className="rounded-md border border-white/12 bg-black/30 p-4 text-gray-200">
       <p className="text-sm">
         {canEdit
-          ? "Open the Services tab to add a timer or choose one to edit."
+          ? "Choose a service from the Services tab to edit its timer."
           : "Service editing access is required to change timers."}
       </p>
       {canEdit ? (
@@ -202,9 +186,26 @@ const ServiceTimes = () => {
           <Spinner />
         </div>
       )}
-      <h2 className="shrink-0 text-lg font-semibold tracking-tight text-gray-100">
-        Service times
-      </h2>
+      {globalInfo?.loginState === "guest" ? (
+        <p
+          role="status"
+          className="shrink-0 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100"
+        >
+          Guest mode keeps service-time changes on this device. Sign in or use a
+          paired workstation to sync the stream display.
+        </p>
+      ) : null}
+
+      {globalInfo?.loginState === "success" &&
+      !globalInfo.sharedDataReady ? (
+        <p
+          role="status"
+          className="shrink-0 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100"
+        >
+          Live sync is connecting. Wait until it is ready before changing
+          service times.
+        </p>
+      ) : null}
 
       {isMobile ? (
         <Tabs
@@ -226,17 +227,6 @@ const ServiceTimes = () => {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="services" forceMount className={tabsContentClass}>
-            {canEdit ? (
-              <Button
-                className="w-fit shrink-0"
-                svg={Plus}
-                iconSize="sm"
-                variant="cta"
-                onClick={startCreate}
-              >
-                Add Service Timer
-              </Button>
-            ) : null}
             {listSection}
           </TabsContent>
           <TabsContent value="edit" forceMount className={tabsContentClass}>
@@ -245,19 +235,6 @@ const ServiceTimes = () => {
         </Tabs>
       ) : (
         <>
-          {canEdit ? (
-            <section className="flex shrink-0 gap-2">
-              <Button
-                className="w-fit"
-                svg={Plus}
-                iconSize="sm"
-                onClick={startCreate}
-                variant="cta"
-              >
-                Add Service Timer
-              </Button>
-            </section>
-          ) : null}
           {editorLayout}
           {listSection}
         </>

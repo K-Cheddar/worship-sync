@@ -1933,7 +1933,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           firebaseDb,
           updatePath,
           (snapshot) => {
-            if (!snapshot.exists()) return;
+            if (!snapshot.exists()) {
+              if (key === "serviceTimes") {
+                updateFromRemote({ serviceTimes: [] });
+              }
+              return;
+            }
             const data = snapshot.val();
             updateFromRemote({ [key]: data });
           },
@@ -1958,6 +1963,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     const handleStorage = ({ key, newValue }: StorageEvent) => {
       const onValueKeys = Object.keys(onValueRef.current);
+      if (key === "serviceTimes" && loginState === "success") return;
       if (newValue && onValueKeys.some((e) => e === key)) {
         const value = JSON.parse(newValue);
         updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
@@ -1970,7 +1976,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     };
     storageListenerCleanupRef.current = cleanup;
     return cleanup;
-  }, [updateFromRemote]);
+  }, [loginState, updateFromRemote]);
 
   // Function to refresh both listeners (exposed in context)
   const refreshPresentationListeners = useCallback(() => {

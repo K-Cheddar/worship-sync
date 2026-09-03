@@ -475,50 +475,55 @@ export function getMostRecentTargetTime(
   service: ServiceTime,
   now = serverDate(),
 ): Date | null {
+  let recentOverride: Date | null = null;
   if (service.overrideDateTimeISO) {
     const overrideTime = new Date(service.overrideDateTimeISO);
     if (overrideTime <= now) {
-      return overrideTime;
+      recentOverride = overrideTime;
     }
   }
 
+  let recentScheduled: Date | null = null;
   if (service.reccurence === "one_time") {
-    if (!service.dateTimeISO) return null;
-    const dt = new Date(service.dateTimeISO);
-    return dt <= now ? dt : null;
+    if (service.dateTimeISO) {
+      const dt = new Date(service.dateTimeISO);
+      recentScheduled = dt <= now ? dt : null;
+    }
+  } else if (service.reccurence === "weekly") {
+    if (service.dayOfWeek != null && service.time) {
+      recentScheduled = getPreviousWeekly(
+        now,
+        service.dayOfWeek,
+        service.time,
+        service.startDateISO,
+        service.endDateISO,
+      );
+    }
+  } else if (service.reccurence === "monthly") {
+    if (service.ordinal != null && service.weekday != null && service.time) {
+      recentScheduled = getPreviousMonthly(
+        now,
+        service.ordinal,
+        service.weekday,
+        service.time,
+        service.startDateISO,
+        service.endDateISO,
+      );
+    }
+  } else if (service.reccurence === "multi_weekly") {
+    if (service.daysOfWeek?.length) {
+      recentScheduled = getPreviousMultiWeekly(
+        now,
+        service.daysOfWeek,
+        service.startDateISO,
+        service.endDateISO,
+      );
+    }
   }
-  if (service.reccurence === "weekly") {
-    if (service.dayOfWeek == null || !service.time) return null;
-    return getPreviousWeekly(
-      now,
-      service.dayOfWeek,
-      service.time,
-      service.startDateISO,
-      service.endDateISO,
-    );
-  }
-  if (service.reccurence === "monthly") {
-    if (service.ordinal == null || service.weekday == null || !service.time)
-      return null;
-    return getPreviousMonthly(
-      now,
-      service.ordinal,
-      service.weekday,
-      service.time,
-      service.startDateISO,
-      service.endDateISO,
-    );
-  }
-  if (service.reccurence === "multi_weekly") {
-    if (!service.daysOfWeek?.length) return null;
-    return getPreviousMultiWeekly(
-      now,
-      service.daysOfWeek,
-      service.startDateISO,
-      service.endDateISO,
-    );
-  }
-  return null;
+
+  if (!recentOverride) return recentScheduled;
+  if (!recentScheduled) return recentOverride;
+  return recentOverride > recentScheduled ? recentOverride : recentScheduled;
 }
 
 export function getDisplayedUpcomingService(

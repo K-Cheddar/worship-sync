@@ -2344,7 +2344,7 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByText("Who am I that the highest King")).toBeInTheDocument();
   });
 
-  it("opens stored reference lyrics for a pending song without edit access", async () => {
+  it("opens a status popover for a pending song without edit access", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -2378,19 +2378,20 @@ describe("ServicePlanEditor", () => {
     const user = userEvent.setup();
     renderEditor({ canEdit: false });
 
-    await user.click(await screen.findByRole("tab", { name: "Setlist" }));
-    const setlist = await screen.findByRole("region", { name: "Service setlist" });
-    expect(within(setlist).getByText(/Not in library/i)).toBeInTheDocument();
+    const plan = await screen.findByRole("region", { name: "Service plan" });
+    expect(within(plan).getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
     await user.click(
-      within(setlist).getByRole("button", {
-        name: /View reference lyrics for Appeal Song/i,
+      within(plan).getByRole("button", {
+        name: /View song status for Appeal Song/i,
       }),
     );
-    expect(await screen.findByText("Lyrics — Appeal Song")).toBeInTheDocument();
-    expect(screen.getByText("Come as you are")).toBeInTheDocument();
+    expect(await screen.findByText("Song not found")).toBeInTheDocument();
+    const statusPopover = screen.getByRole("dialog");
+    expect(within(statusPopover).getByText("Appeal Song")).toBeInTheDocument();
+    expect(within(statusPopover).getByText("This song is not in the library.")).toBeInTheDocument();
   });
 
-  it("opens create song for a pending plan song when the operator can create library songs", async () => {
+  it("opens the status popover for a pending plan song in read mode", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -2426,14 +2427,14 @@ describe("ServicePlanEditor", () => {
 
     await user.click(
       await screen.findByRole("button", {
-        name: /Create Appeal Song in the library/i,
+        name: /View song status for Appeal Song/i,
       }),
     );
 
-    const picker = await screen.findByTestId("song-picker");
-    expect(picker).toHaveAttribute("data-start-in-create", "true");
-    expect(picker).toHaveAttribute("data-initial-query", "Appeal Song");
-    expect(picker).toHaveAttribute("data-initial-lyrics", "Come as you are");
+    expect(await screen.findByText("Song not found")).toBeInTheDocument();
+    const statusPopover = screen.getByRole("dialog");
+    expect(within(statusPopover).getByText("Appeal Song")).toBeInTheDocument();
+    expect(within(statusPopover).getByText("This song is not in the library.")).toBeInTheDocument();
     expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
   });
 

@@ -200,7 +200,7 @@ const Input = ({
         svg={svg}
         variant="tertiary"
         className={cn(
-          "inline-flex h-7 w-7 min-h-0 max-lg:h-[32px] max-lg:min-h-0 shrink-0 items-center justify-center",
+          "inline-flex h-7 w-7 min-h-0 max-lg:h-[2rem] max-lg:min-h-0 shrink-0 items-center justify-center",
           svgClassName,
         )}
         padding={svgPadding}

@@ -678,6 +678,29 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
         ])
       )
     );
+
+    mockDispatch.mockClear();
+    onValueCallbacks
+      .get("churches/church-1/data/services")
+      ?.(snapshotFor(null));
+
+    await waitFor(() =>
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: "debouncedUpdateServiceTimes",
+        payload: [],
+      })
+    );
+
+    mockDispatch.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "serviceTimes",
+          newValue: JSON.stringify([{ id: "local-only" }]),
+        }),
+      );
+    });
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 
   it("reattaches presentation listeners after the realtime database reconnects", async () => {

@@ -744,7 +744,7 @@ const CurrentServiceWorkspace = () => {
               }
               tabBarClassName="shrink-0 rounded-xl bg-transparent"
               tabsListClassName="shrink-0"
-              triggerClassName="text-xs px-2.5 py-1.5"
+              triggerClassName="!h-[2rem] !min-h-[2rem] !max-h-[2rem] text-xs px-2.5 py-1.5"
               tabsContentClassName={
                 tab === "plan"
                   ? "hidden"

@@ -227,7 +227,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
             colors.length > 0 && "border-r border-white/15 pr-4",
           )}
         >
-          <div className="[&_.react-colorful]:h-[180px] [&_.react-colorful]:w-full [&_.react-colorful]:rounded-md [&_.react-colorful]:border [&_.react-colorful]:border-white/15 [&_.react-colorful__hue]:mt-2 [&_.react-colorful__alpha]:mt-2">
+          <div className="[&_.react-colorful]:h-[11.25rem] [&_.react-colorful]:w-full [&_.react-colorful]:rounded-md [&_.react-colorful]:border [&_.react-colorful]:border-white/15 [&_.react-colorful__hue]:mt-2 [&_.react-colorful__alpha]:mt-2">
             <PickerComponent color={color} onChange={handlePickerChange} />
           </div>
           <HexColorInput
