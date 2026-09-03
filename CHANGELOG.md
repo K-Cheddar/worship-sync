@@ -1,3 +1,10 @@
+## [2.30.2](https://github.com/K-Cheddar/worship-sync/compare/v2.30.1...v2.30.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* Improve reliability of service times ([dd1744a](https://github.com/K-Cheddar/worship-sync/commit/dd1744a1074a79db4f8bbd5490f69e49bdb0897b))
+
 ## [2.30.1](https://github.com/K-Cheddar/worship-sync/compare/v2.30.0...v2.30.1) (2026-09-02)
 
 
