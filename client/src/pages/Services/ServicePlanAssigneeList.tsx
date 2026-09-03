@@ -236,7 +236,7 @@ export const DebouncedAssigneeNameField = ({
       inputClassName={cn(
         SERVICE_PLAN_INLINE_INPUT_CLASS,
         compact && "rounded-none border-0",
-        "max-md:min-h-[32px] max-md:text-sm",
+        "max-md:min-h-[2rem] max-md:text-sm",
       )}
       value={draft.draftValue}
       onChange={draft.setDraftValue}
@@ -446,7 +446,7 @@ const ServicePlanAssigneeList = ({
                           variant="tertiary"
                           iconSize="xs"
                           padding="p-0"
-                          className="h-6 w-6 max-md:min-h-[32px] max-md:min-w-8"
+                          className="h-6 w-6 max-md:min-h-[2rem] max-md:min-w-8"
                           svg={X}
                           aria-label={`Remove ${microphone.name} from ${label}`}
                           onClick={() =>
@@ -492,7 +492,7 @@ const ServicePlanAssigneeList = ({
                       svg={Plus}
                       iconSize="xs"
                       padding="px-1 py-0.5"
-                      className="h-7 max-md:min-h-[32px] max-md:px-2 border border-dashed border-violet-500/40 text-xs text-violet-200"
+                      className="h-7 max-md:min-h-[2rem] max-md:px-2 border border-dashed border-violet-500/40 text-xs text-violet-200"
                       aria-haspopup="menu"
                       aria-label={`Add microphone for ${label}`}
                     >
@@ -546,7 +546,7 @@ const ServicePlanAssigneeList = ({
                   variant="tertiary"
                   iconSize="xs"
                   padding="p-0.5"
-                  className="h-7 w-7 shrink-0 max-md:min-h-[32px] max-md:min-w-8"
+                  className="h-7 w-7 shrink-0 max-md:min-h-[2rem] max-md:min-w-8"
                   svg={Trash2}
                   aria-label={
                     isUnassigned

@@ -159,7 +159,7 @@ describe("ServiceTimes", () => {
     expect(dbGet).not.toHaveBeenCalled();
   });
 
-  it("offers timer changes without Services edit access", () => {
+  it("does not offer timer creation without Services edit access", () => {
     render(
       <GlobalInfoContext.Provider
         value={{ access: "music", canEditServices: false } as never}
@@ -171,7 +171,57 @@ describe("ServiceTimes", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Add Service Timer" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Add Service Timer" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns that guest changes stay on the current device", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={{ access: "full", loginState: "guest" } as never}
+      >
+        <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
+          <ServiceTimes />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Guest mode keeps service-time changes on this device",
+    );
+  });
+
+  it("prevents authenticated edits until shared data is ready", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={{
+          access: "full",
+          loginState: "success",
+          sharedDataReady: false,
+        } as never}
+      >
+        <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
+          <ServiceTimes />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Live sync is connecting",
+    );
+    expect(screen.queryByRole("button", { name: "Add Service Timer" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("does not render the page-level service times heading", () => {
+    render(
+      <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
+        <ServiceTimes />
+      </ControllerInfoContext.Provider>,
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "Service times" }),
+    ).not.toBeInTheDocument();
   });
 });

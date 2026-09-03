@@ -57,6 +57,7 @@ import {
 } from "../../components/ui/DropdownMenu";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverTrigger,
 } from "../../components/ui/Popover";
@@ -128,7 +129,7 @@ export const formatPlanStartTimeDisplay = (startTime: string | undefined): strin
 
 /** Soft field chrome so inline editors sit closer to the row surface. */
 export const SERVICE_PLAN_INLINE_INPUT_CLASS =
-  "h-7 min-h-0 text-xs leading-5 md:!text-xs border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40 max-lg:!h-[32px] max-lg:!min-h-[32px] max-lg:px-2";
+  "h-7 min-h-0 text-xs leading-5 md:!text-xs border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40 max-lg:!h-[2rem] max-lg:!min-h-[2rem] max-lg:px-2";
 
 /** Rich text note fields — same blend as inline plan inputs, multi-line height. */
 export const SERVICE_PLAN_INLINE_EDITOR_CLASS =
@@ -1081,8 +1082,8 @@ type ServicePlanElementRowProps = {
   /** Opens the shared lyrics viewer for a library song badge. */
   onViewSongLyrics?: (songRef: ServicePlanSongReference) => void;
   /**
-   * Full or music controller access: unmatched ("Not in library") songs open
-   * Create song instead of a lyrics viewer, then attach the new library song.
+   * Full or music controller access: exposes Create song from the edit-mode
+   * song-linking popover for unmatched ("Not in library") songs.
    */
   canCreateLibrarySong?: boolean;
   /** Uses the editor-level creation flow so repeated exact refs stay linked. */
@@ -1185,6 +1186,10 @@ const ServicePlanElementRow = ({
   const [songSuggestionsIndex, setSongSuggestionsIndex] = useState<number | null>(
     null,
   );
+  /** Which unmatched song chip has its read-only status popover open. */
+  const [missingSongInfoIndex, setMissingSongInfoIndex] = useState<number | null>(
+    null,
+  );
   const [scriptureOpen, setScriptureOpen] = useState(false);
   const [scriptureEditIndex, setScriptureEditIndex] = useState<number | null>(null);
   const formattedDuration = formatServicePlanDuration(element);
@@ -1263,8 +1268,7 @@ const ServicePlanElementRow = ({
   const scriptureLabel = scriptureRefs[0]?.label || null;
   // A "pending" ref names a song with no library doc behind it, so there is
   // nothing to project yet — the operator still has to find and link the song.
-  // Outside edit mode, full/music operators create the missing library song
-  // instead of opening a lyrics viewer that has nothing durable to show.
+  // In read mode, show that status without opening an edit flow.
   const showNotesEditor = !hideNotes && (notesEditorOpen || hasNotes);
   const surfaceClassName = getServicePlanElementSurfaceClassName({
     toneIndex,
@@ -1361,9 +1365,9 @@ const ServicePlanElementRow = ({
     />
   ) : <p className="px-1 text-xs text-gray-400">No people or microphones assigned.</p>;
   const leadSummaryControl = !structureOnly ? (
-    <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 w-full min-w-0 max-w-full items-center overflow-visible bg-transparent">
+    <div className="box-border flex !h-[2rem] !max-h-[2rem] !min-h-0 w-full min-w-0 max-w-full items-center overflow-visible bg-transparent">
       {allowEdit ? (
-        <div className="box-border flex !h-[32px] !max-h-[32px] !min-h-0 w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
+        <div className="box-border flex !h-[2rem] !max-h-[2rem] !min-h-0 w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
           <DebouncedAssigneeNameField
             value={leadInputAssignee?.name || ""}
             onCommit={(name) => {
@@ -1390,7 +1394,7 @@ const ServicePlanElementRow = ({
             variant="tertiary"
             svg={UserPlus}
             iconSize="sm"
-            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-white/10 hover:text-white max-md:h-[32px] [&_svg]:size-4"
+            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-white/10 hover:text-white max-md:h-[2rem] [&_svg]:size-4"
             aria-label={`${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
             onClick={(event) => {
               event.stopPropagation();
@@ -1406,7 +1410,7 @@ const ServicePlanElementRow = ({
             <button
               type="button"
               className={cn(
-                "flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1.5 text-left text-xs leading-6 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white max-md:h-[32px] max-md:text-sm max-md:leading-6",
+                "flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1.5 text-left text-xs leading-6 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white max-md:h-[2rem] max-md:text-sm max-md:leading-6",
                 hasLeadAssignee
                   ? "text-gray-100"
                   : "italic text-gray-500",
@@ -1651,13 +1655,12 @@ const ServicePlanElementRow = ({
           if (placement === "summary" && songIndex !== firstSongIndex) return null;
           const isSongUnlinked = currentSongRef.kind === "pending";
           const canLinkSong = isSongUnlinked && allowEdit;
-          const canCreateMissingSong =
-            isSongUnlinked && canCreateLibrarySong && !canLinkSong;
+          const showMissingSongInfo = isSongUnlinked && !allowEdit;
           const summaryOpensContent =
             placement === "summary" && contentReferenceCount > 1 && usesContentPanel;
           const songChipInteractive =
-            (placement !== "summary" || allowEdit || Boolean(onViewSongLyrics)) &&
-            (summaryOpensContent || canLinkSong || canCreateMissingSong || Boolean(onViewSongLyrics));
+            (placement !== "summary" || allowEdit || showMissingSongInfo || Boolean(onViewSongLyrics)) &&
+            (summaryOpensContent || canLinkSong || showMissingSongInfo || Boolean(onViewSongLyrics));
           const pendingTitle =
             currentSongRef.kind === "pending" ? currentSongRef.title : "";
 
@@ -1679,8 +1682,8 @@ const ServicePlanElementRow = ({
               setSongSuggestionsIndex(songIndex);
               return;
             }
-            if (canCreateMissingSong) {
-              requestCreatePendingSong();
+            if (showMissingSongInfo) {
+              setMissingSongInfoIndex(songIndex);
               return;
             }
             if (
@@ -1699,8 +1702,8 @@ const ServicePlanElementRow = ({
             songChipLabel = `Manage content for ${itemLabel}`;
           } else if (canLinkSong) {
             songChipLabel = `Link ${label} to a song in the library`;
-          } else if (canCreateMissingSong) {
-            songChipLabel = `Create ${label} in the library`;
+          } else if (showMissingSongInfo) {
+            songChipLabel = `View song status for ${label}`;
           } else if (isSongUnlinked) {
             songChipLabel = `View reference lyrics for ${label}`;
           }
@@ -1752,10 +1755,16 @@ const ServicePlanElementRow = ({
                   : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
               )}
               aria-haspopup={
-                canLinkSong || canCreateMissingSong ? "dialog" : undefined
+                canLinkSong || showMissingSongInfo
+                  ? "dialog"
+                  : undefined
               }
               aria-expanded={
-                canLinkSong ? songSuggestionsIndex === songIndex : undefined
+                canLinkSong
+                  ? songSuggestionsIndex === songIndex
+                  : showMissingSongInfo
+                    ? missingSongInfoIndex === songIndex
+                    : undefined
               }
               aria-label={songChipLabel}
               // Opens rather than toggles: the chip is the popover's anchor, not its
@@ -1797,6 +1806,33 @@ const ServicePlanElementRow = ({
                   }
                   anchor={songChipButton}
                 />
+              ) : showMissingSongInfo ? (
+                <Popover
+                  open={missingSongInfoIndex === songIndex}
+                  onOpenChange={(open) =>
+                    setMissingSongInfoIndex(open ? songIndex : null)
+                  }
+                >
+                  <PopoverAnchor asChild>{songChipButton}</PopoverAnchor>
+                  <PopoverContent
+                    align="start"
+                    sideOffset={8}
+                    className="w-[min(20rem,calc(100vw-2rem))] border border-gray-700 bg-gray-900 p-3 text-white shadow-xl"
+                  >
+                    <div className="flex flex-col gap-2 text-left">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        Song not found
+                      </p>
+                      <p className="truncate text-sm font-medium" title={label}>
+                        {label}
+                      </p>
+                      <div className="flex items-start gap-1.5 text-sm text-amber-200">
+                        <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+                        <span>This song is not in the library.</span>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
               ) : (
                 songChipButton
               )}
@@ -2436,7 +2472,7 @@ const ServicePlanElementRow = ({
           >
             {formattedDurationDisplay || "—"}
           </span>
-          <div className={cn(SERVICE_PLAN_COL.title, "space-y-0.5 max-md:col-start-4 max-md:row-start-1 max-md:flex max-md:min-h-[32px] max-md:items-center max-md:self-center max-md:px-1.5")}>
+          <div className={cn(SERVICE_PLAN_COL.title, "space-y-0.5 max-md:col-start-4 max-md:row-start-1 max-md:flex max-md:min-h-[2rem] max-md:items-center max-md:self-center max-md:px-1.5")}>
             <Popover open={titlePopoverOpen} onOpenChange={setTitlePopoverOpen}>
               <PopoverTrigger asChild>
                 <button

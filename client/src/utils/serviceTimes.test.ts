@@ -449,6 +449,21 @@ describe("serviceTimes", () => {
       expect(result?.toISOString()).toBe("2026-01-10T09:00:00.000Z");
     });
 
+    it("does not let a stale override hide a newer recurring occurrence", () => {
+      const now = new Date(2026, 0, 10, 10, 5);
+      const service = createService({
+        id: "recurring-with-stale-override",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        overrideDateTimeISO: new Date(2026, 0, 3, 9).toISOString(),
+      });
+
+      const result = getMostRecentTargetTime(service, now);
+
+      expect(result).toEqual(new Date(2026, 0, 10, 10));
+    });
+
     it("schedules the next refresh at the current service start time when a later service exists", () => {
       const now = new Date("2026-01-10T08:30:00.000Z");
       const services: ServiceTime[] = [

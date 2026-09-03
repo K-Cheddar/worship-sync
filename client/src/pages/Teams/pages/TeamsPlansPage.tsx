@@ -1154,7 +1154,7 @@ const TeamsPlansPage = () => {
                   </span>
                   {planStatusLoading ? (
                     <span
-                      className="inline-block h-[22px] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                      className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
                       aria-hidden
                     />
                   ) : (
@@ -1283,7 +1283,7 @@ const TeamsPlansPage = () => {
                         </span>
                         {planStatusLoading ? (
                           <span
-                            className="inline-block h-[22px] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                            className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
                             aria-hidden
                           />
                         ) : (

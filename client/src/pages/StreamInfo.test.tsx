@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import StreamInfo from "./StreamInfo";
 
 const mockDispatch = jest.fn();
@@ -72,7 +72,7 @@ describe("StreamInfo page", () => {
     );
   });
 
-  it("clears expired overrides from shared redux service times", async () => {
+  it("does not mutate expired overrides from a display surface", () => {
     mockState.undoable.present.serviceTimes.list = [
       {
         id: "service-2",
@@ -86,16 +86,6 @@ describe("StreamInfo page", () => {
 
     render(<StreamInfo />);
 
-    await waitFor(() => {
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "serviceTimes/updateService",
-          payload: {
-            id: "service-2",
-            changes: { overrideDateTimeISO: undefined },
-          },
-        }),
-      );
-    });
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 });

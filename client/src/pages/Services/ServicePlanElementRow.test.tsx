@@ -954,7 +954,7 @@ describe("ServicePlanElementRow", () => {
     );
   });
 
-  it("opens stored reference lyrics for unmatched songs without create access", async () => {
+  it("opens a status popover for unmatched songs in read mode", async () => {
     const user = userEvent.setup();
     const onViewSongLyrics = jest.fn();
     const songRef = {
@@ -980,13 +980,16 @@ describe("ServicePlanElementRow", () => {
     ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
-        name: /View reference lyrics for Appeal Song/i,
+        name: /View song status for Appeal Song/i,
       }),
     );
-    expect(onViewSongLyrics).toHaveBeenCalledWith(songRef);
+    expect(screen.getByText("Song not found")).toBeInTheDocument();
+    expect(screen.getAllByText("Appeal Song").length).toBeGreaterThan(1);
+    expect(screen.getByText("This song is not in the library.")).toBeInTheDocument();
+    expect(onViewSongLyrics).not.toHaveBeenCalled();
   });
 
-  it("opens create song for an unmatched badge when the operator can create library songs", async () => {
+  it("opens the status popover instead of create for an unmatched badge in read mode", async () => {
     const user = userEvent.setup();
     const onViewSongLyrics = jest.fn();
 
@@ -1008,21 +1011,13 @@ describe("ServicePlanElementRow", () => {
     });
 
     await user.click(
-      screen.getByRole("button", { name: /Create Appeal Song in the library/i }),
+      screen.getByRole("button", { name: /View song status for Appeal Song/i }),
     );
 
-    expect(screen.getByTestId("song-picker")).toHaveAttribute(
-      "data-start-in-create",
-      "true",
-    );
-    expect(screen.getByTestId("song-picker")).toHaveAttribute(
-      "data-initial-query",
-      "Appeal Song",
-    );
-    expect(screen.getByTestId("song-picker")).toHaveAttribute(
-      "data-initial-lyrics",
-      "Come as you are",
-    );
+    expect(screen.getByText("Song not found")).toBeInTheDocument();
+    expect(screen.getAllByText("Appeal Song").length).toBeGreaterThan(1);
+    expect(screen.getByText("This song is not in the library.")).toBeInTheDocument();
+    expect(screen.queryByTestId("song-picker")).not.toBeInTheDocument();
     expect(onViewSongLyrics).not.toHaveBeenCalled();
   });
 });

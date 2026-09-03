@@ -1,4 +1,9 @@
-import { serverDate, serverNow, setServerTimeOffset } from "./serverTime";
+import {
+  serverDate,
+  serverNow,
+  setServerTimeOffset,
+  subscribeServerTimeOffset,
+} from "./serverTime";
 
 describe("serverTime", () => {
   afterEach(() => {
@@ -38,5 +43,17 @@ describe("serverTime", () => {
     setServerTimeOffset(1_000);
 
     expect(serverNow()).toBe(new Date("2026-05-17T12:00:01.000Z").getTime());
+  });
+
+  it("notifies subscribers only when the offset changes", () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeServerTimeOffset(listener);
+
+    setServerTimeOffset(10_000);
+    setServerTimeOffset(10_000);
+    unsubscribe();
+    setServerTimeOffset(20_000);
+
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });

@@ -82,7 +82,7 @@ export function CommaSeparatedPillsInput({
       </Label>
       <div
         className={cn(
-          "flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-lg border border-gray-600 bg-gray-950 px-2 py-1.5 text-sm text-gray-100",
+          "flex min-h-[2.625rem] flex-wrap items-center gap-1.5 rounded-lg border border-gray-600 bg-gray-950 px-2 py-1.5 text-sm text-gray-100",
           disabled && "cursor-not-allowed opacity-60",
         )}
       >

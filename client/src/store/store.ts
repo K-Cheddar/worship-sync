@@ -37,7 +37,7 @@ import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
-import { ref, set, get } from "firebase/database";
+import { ref, set, get, runTransaction } from "firebase/database";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
@@ -106,6 +106,8 @@ import {
   logFirebaseOperationFailure,
 } from "../utils/firebaseListeners";
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
+import { serverDate } from "../utils/serverTime";
+import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -2089,7 +2091,146 @@ listenerMiddleware.startListening({
   },
 });
 
-// handle updating service times
+const readFirebaseServices = (value: unknown): ServiceTime[] => {
+  if (Array.isArray(value)) return value.filter(Boolean) as ServiceTime[];
+  if (!value || typeof value !== "object") return [];
+
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record.list)) {
+    return record.list.filter(Boolean) as ServiceTime[];
+  }
+  return Object.values(record).filter(
+    (entry): entry is ServiceTime =>
+      Boolean(entry) && typeof (entry as ServiceTime).id === "string",
+  );
+};
+
+const applyServiceTimesAction = (
+  services: ServiceTime[],
+  action: Action,
+  localServices: ServiceTime[],
+): ServiceTime[] => {
+  const timestamp = serverDate().toISOString();
+  if (serviceTimesSlice.actions.addService.match(action)) {
+    if (services.some((service) => service.id === action.payload.id)) {
+      return services;
+    }
+    return sortServicesByScheduleOrder([
+      ...services,
+      { ...action.payload, updatedAt: timestamp },
+    ]);
+  }
+  if (serviceTimesSlice.actions.updateService.match(action)) {
+    return sortServicesByScheduleOrder(
+      services.map((service) => {
+        if (service.id !== action.payload.id) return service;
+        return {
+          ...service,
+          ...action.payload.changes,
+          updatedAt: timestamp,
+        };
+      }),
+    );
+  }
+  if (serviceTimesSlice.actions.removeService.match(action)) {
+    return services.filter((service) => service.id !== action.payload);
+  }
+
+  // Preserve existing undo/redo behavior for the uncommon non-slice action.
+  return sortServicesByScheduleOrder(localServices);
+};
+
+const isLocalServiceTimesChange = (
+  action: Action,
+  currentState: unknown,
+  previousState: unknown,
+) => {
+  const excluded = isAnyOf(
+    serviceTimesSlice.actions.initiateServices,
+    serviceTimesSlice.actions.syncServicesFromRemote,
+    serviceTimesSlice.actions.updateServicesFromRemote,
+    serviceTimesSlice.actions.setIsInitialized,
+  );
+  return (
+    (currentState as RootState).undoable.present.serviceTimes !==
+      (previousState as RootState).undoable.present.serviceTimes &&
+    !excluded(action) &&
+    action.type !== "RESET"
+  );
+};
+
+// Firebase is the authority for shared service times. Each local change is
+// merged atomically and Redux is reconciled from Firebase's committed result.
+listenerMiddleware.startListening({
+  predicate: isLocalServiceTimesChange,
+  effect: async (action, listenerApi) => {
+    // getOriginalState is only available before the first await. Keep the
+    // last confirmed UI state so a failed shared write can be rolled back.
+    const previousServices = (listenerApi.getOriginalState() as RootState)
+      .undoable.present.serviceTimes.list;
+    const localServices = (listenerApi.getState() as RootState).undoable.present
+      .serviceTimes.list;
+    const {
+      db: firebaseDb,
+      churchId,
+      canWriteSharedData,
+      isConnected,
+    } = globalFireDbInfo;
+    if (!canWriteSharedData) return;
+    if (!firebaseDb || !churchId || !isConnected) {
+      listenerApi.dispatch(syncServicesFromRemote(previousServices));
+      notifyPresentationSyncError(
+        "Live sync is not ready. Your change was not saved. Wait for it to connect, then try again.",
+      );
+      return;
+    }
+
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.serviceTimes,
+      ),
+    );
+    try {
+      const result = await runTransaction(
+        ref(firebaseDb, getChurchDataPath(churchId, "services")),
+        (remote) =>
+          cleanObject(
+            applyServiceTimesAction(
+              readFirebaseServices(remote),
+              action,
+              localServices,
+            ),
+          ),
+        { applyLocally: false },
+      );
+      listenerApi.dispatch(
+        syncServicesFromRemote(readFirebaseServices(result.snapshot.val())),
+      );
+    } catch (error) {
+      listenerApi.dispatch(syncServicesFromRemote(previousServices));
+      logFirebaseOperationFailure(
+        "service_times_sync",
+        getChurchDataPath(churchId, "services"),
+        error,
+        {
+          churchId,
+          permissionDenied: isFirebasePermissionDenied(error),
+        },
+      );
+      notifyPresentationSyncError(
+        "Service time was not synced. Your change was not saved. Check your connection, then try again.",
+      );
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.serviceTimes,
+        ),
+      );
+    }
+  },
+});
+
+// handle updating service times in local caches
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const excluded = isAnyOf(
@@ -2158,19 +2299,6 @@ listenerMiddleware.startListening({
             },
           });
         }
-      }
-      if (
-        globalFireDbInfo.db &&
-        globalFireDbInfo.churchId &&
-        globalFireDbInfo.canWriteSharedData
-      ) {
-        set(
-          ref(
-            globalFireDbInfo.db,
-            getChurchDataPath(globalFireDbInfo.churchId, "services"),
-          ),
-          cleanObject(list),
-        );
       }
     } finally {
       listenerApi.dispatch(

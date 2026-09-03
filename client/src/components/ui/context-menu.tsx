@@ -5,6 +5,7 @@ import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
+import { menuItemTouchTargetClassName } from "./menuStyles";
 
 const ContextMenu = ({
   ...props
@@ -56,6 +57,7 @@ const ContextMenuSubTrigger = ({
   <ContextMenuPrimitive.SubTrigger
     data-slot="context-menu-sub-trigger"
     className={cn(
+      menuItemTouchTargetClassName,
       "flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:cursor-not-allowed data-[state=open]:bg-gray-600",
       inset && "pl-8",
       className
@@ -108,6 +110,7 @@ const ContextMenuItem = ({
   <ContextMenuPrimitive.Item
     data-slot="context-menu-item"
     className={cn(
+      menuItemTouchTargetClassName,
       "relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
       inset && "pl-8",
       className
@@ -125,6 +128,7 @@ const ContextMenuCheckboxItem = ({
   <ContextMenuPrimitive.CheckboxItem
     data-slot="context-menu-checkbox-item"
     className={cn(
+      menuItemTouchTargetClassName,
       "relative flex cursor-pointer items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
       className
     )}
@@ -148,6 +152,7 @@ const ContextMenuRadioItem = ({
   <ContextMenuPrimitive.RadioItem
     data-slot="context-menu-radio-item"
     className={cn(
+      menuItemTouchTargetClassName,
       "relative flex cursor-pointer items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
       className
     )}

@@ -45,6 +45,18 @@ const loadStoreWithPresentationSync = (
   let timersSliceModule: any;
   let presentationSyncErrorBusModule: any;
   const setMock = jest.fn();
+  const runTransactionMock = jest.fn(
+    async (
+      _path: unknown,
+      update: (current: unknown) => unknown,
+    ) => {
+      const value = update([]);
+      return {
+        committed: true,
+        snapshot: { val: () => value },
+      };
+    },
+  );
   const refMock = jest.fn((_db: unknown, path: string) => path);
   const globalFireDbInfo = {
     db:
@@ -71,6 +83,7 @@ const loadStoreWithPresentationSync = (
     }));
     jest.doMock("firebase/database", () => ({
       ref: refMock,
+      runTransaction: runTransactionMock,
       set: setMock,
       get: jest.fn(),
     }));
@@ -99,6 +112,7 @@ const loadStoreWithPresentationSync = (
     globalFireDbInfo,
     setMock,
     refMock,
+    runTransactionMock,
   };
 };
 
@@ -2161,7 +2175,13 @@ describe("store module", () => {
 
   it("does not let a view-only display publish timers or service times", async () => {
     jest.useFakeTimers();
-    const { store, serviceTimesSlice, timersSlice, setMock } =
+    const {
+      store,
+      serviceTimesSlice,
+      timersSlice,
+      setMock,
+      runTransactionMock,
+    } =
       loadStoreWithPresentationSync({ canWriteSharedData: false });
 
     store.dispatch(
@@ -2203,8 +2223,196 @@ describe("store module", () => {
     await jest.advanceTimersByTimeAsync(1600);
 
     expect(setMock).not.toHaveBeenCalled();
+    expect(runTransactionMock).not.toHaveBeenCalled();
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
     expect(localStorage.getItem("timerInfo")).toContain("Display Timer");
+  });
+
+  it("merges a service-time update into Firebase without replacing other services", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const {
+      store,
+      serviceTimesSlice,
+      refMock,
+      runTransactionMock,
+    } = loadStoreWithPresentationSync();
+    const remoteServices = [
+      {
+        id: "service-1",
+        name: "Sunday Service",
+        timerType: "countdown",
+        reccurence: "one_time",
+        dateTimeISO: "2026-04-05T12:00:00.000Z",
+      },
+      {
+        id: "service-2",
+        name: "Wednesday Service",
+        timerType: "countdown",
+        reccurence: "one_time",
+        dateTimeISO: "2026-04-08T12:00:00.000Z",
+      },
+    ];
+    let committedServices: any[] = [];
+    runTransactionMock.mockImplementationOnce(
+      async (_path: unknown, update: (current: unknown) => any[]) => {
+        committedServices = update(remoteServices);
+        return {
+          committed: true,
+          snapshot: { val: () => committedServices },
+        };
+      },
+    );
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([remoteServices[0]]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-1",
+        changes: { overrideDateTimeISO: "2026-04-05T12:05:00.000Z" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(refMock).toHaveBeenCalledWith(
+      "firebase-db",
+      "churches/church-main/data/services",
+    );
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(committedServices).toEqual([
+      expect.objectContaining({
+        id: "service-1",
+        overrideDateTimeISO: "2026-04-05T12:05:00.000Z",
+        updatedAt: "2026-04-05T11:58:00.000Z",
+      }),
+      expect.objectContaining({ id: "service-2" }),
+    ]);
+    expect(
+      store.getState().undoable.present.serviceTimes.list,
+    ).toEqual(committedServices);
+  });
+
+  it("rolls back a service-time update while live sync is disconnected", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      serviceTimesSlice,
+      registerPresentationSyncErrorHandler,
+      runTransactionMock,
+    } = loadStoreWithPresentationSync({ realtimeConnected: false });
+    const syncErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(syncErrorHandler);
+    const originalService = {
+      id: "service-1",
+      name: "Sunday Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:00:00.000Z",
+    };
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([originalService]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-1",
+        changes: { overrideDateTimeISO: "2026-04-05T12:05:00.000Z" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(runTransactionMock).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual([
+      originalService,
+    ]);
+    expect(syncErrorHandler).toHaveBeenCalledWith(
+      "Live sync is not ready. Your change was not saved. Wait for it to connect, then try again.",
+    );
+  });
+
+  it("rolls back and reports a rejected service-time update", async () => {
+    jest.useFakeTimers();
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const {
+      store,
+      serviceTimesSlice,
+      registerPresentationSyncErrorHandler,
+      runTransactionMock,
+    } = loadStoreWithPresentationSync();
+    const syncErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(syncErrorHandler);
+    runTransactionMock.mockRejectedValueOnce({ code: "PERMISSION_DENIED" });
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([
+        {
+          id: "service-1",
+          name: "Sunday Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-04-05T12:00:00.000Z",
+        },
+      ]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-1",
+        changes: { overrideDateTimeISO: "2026-04-05T12:05:00.000Z" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual([
+      {
+        id: "service-1",
+        name: "Sunday Service",
+        timerType: "countdown",
+        reccurence: "one_time",
+        dateTimeISO: "2026-04-05T12:00:00.000Z",
+      },
+    ]);
+    expect(syncErrorHandler).toHaveBeenCalledWith(
+      "Service time was not synced. Your change was not saved. Check your connection, then try again.",
+    );
+  });
+
+  it("reconciles to Firebase when another device removed the edited service", async () => {
+    jest.useFakeTimers();
+    const { store, serviceTimesSlice, runTransactionMock } =
+      loadStoreWithPresentationSync();
+    runTransactionMock.mockImplementationOnce(
+      async (_path: unknown, update: (current: unknown) => unknown) => {
+        const value = update([]);
+        return {
+          committed: true,
+          snapshot: { val: () => value },
+        };
+      },
+    );
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([
+        {
+          id: "service-1",
+          name: "Sunday Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-04-05T12:00:00.000Z",
+        },
+      ]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-1",
+        changes: { overrideDateTimeISO: "2026-04-05T12:05:00.000Z" },
+      }),
+    );
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual([]);
   });
 
   it("writes projector, monitor, and stream snapshots to Firebase and localStorage", () => {
