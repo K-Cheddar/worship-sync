@@ -289,13 +289,13 @@ const QualificationManager = ({
   const isSavingCurrent = savingIds.has(currentEditorKey);
   const hasPendingAreaChanges = editing
     ? JSON.stringify(draft) !==
-      JSON.stringify({
-        teamId: editing.teamId,
-        name: editing.name,
-        description: editing.description || "",
-      })
+    JSON.stringify({
+      teamId: editing.teamId,
+      name: editing.name,
+      description: editing.description || "",
+    })
     : JSON.stringify(draft) !==
-      JSON.stringify({ teamId, name: "", description: "" });
+    JSON.stringify({ teamId, name: "", description: "" });
   const savedLevelDrafts = editing
     ? Object.fromEntries(
       levels
@@ -326,7 +326,11 @@ const QualificationManager = ({
     JSON.stringify(levelDrafts) !== JSON.stringify(savedLevelDrafts) ||
     Boolean(newLevelName) ||
     newLevelRank !== defaultNewLevelRank;
-  const hasPendingChanges = hasPendingAreaChanges || hasPendingLevelChanges;
+  // The draft starts empty while the list is displayed, so it can differ from
+  // the default team before an editor has ever been opened. Only an open form
+  // represents work that the operator could discard.
+  const hasPendingChanges =
+    showCreate && (hasPendingAreaChanges || hasPendingLevelChanges);
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const saveLevel = async (levelId?: string) => {
@@ -409,12 +413,7 @@ const QualificationManager = ({
           activeTeams.length === 0 ? (
             returnTo && !showCreate ? (
               <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
-            ) : (
-              <TeamsSectionReturnPrompt
-                message="Create a team first — qualification areas belong to a team."
-                originSection={TEAMS_SECTION_PATHS.qualifications}
-              />
-            )
+            ) : null
           ) : (
             <div className="space-y-3">
               {returnTo && !showCreate ? (
@@ -439,9 +438,9 @@ const QualificationManager = ({
             ) : (
               <>
                 {teamAreas.length === 0 ? (
-                    <p className="text-sm text-gray-300">
-                      No qualification areas match the current filters.
-                    </p>
+                  <p className="text-sm text-gray-300">
+                    No qualification areas match the current filters.
+                  </p>
                 ) : null}
                 {teamAreas.length > 0 && filteredTeamAreas.length === 0 ? (
                   <p className="text-sm text-gray-300">No matches.</p>

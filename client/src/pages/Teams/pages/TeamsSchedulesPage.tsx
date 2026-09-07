@@ -23,6 +23,7 @@ const TeamsSchedulesPage = () => {
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
+    clearScheduleDraft,
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
@@ -95,6 +96,7 @@ const TeamsSchedulesPage = () => {
       }
       onScheduleDraftChanged={updateScheduleDraft}
       onScheduleDraftFlush={flushScheduleDraft}
+      onScheduleDraftClear={clearScheduleDraft}
       trackTeamsSave={trackTeamsSave}
     />
   );

@@ -1,4 +1,5 @@
 import {
+  ADMIN_SCHEDULE_LAYOUTS,
   readTeamScheduleAdminLayout,
   resolveInitialTeamScheduleAdminLayout,
   TEAM_SCHEDULE_ADMIN_LAYOUT_STORAGE_KEY,
@@ -43,6 +44,10 @@ describe("teamScheduleAdminLayout", () => {
     expect(readTeamScheduleAdminLayout()).toBe("board");
   });
 
+  it("puts the card layout first in the selector options", () => {
+    expect(ADMIN_SCHEDULE_LAYOUTS[0]).toBe("board");
+  });
+
   it("ignores stored values the admin no longer offers", () => {
     localStorage.setItem(TEAM_SCHEDULE_ADMIN_LAYOUT_STORAGE_KEY, "byDate");
     expect(readTeamScheduleAdminLayout()).toBeNull();
@@ -60,9 +65,9 @@ describe("teamScheduleAdminLayout", () => {
       expect(resolveInitialTeamScheduleAdminLayout()).toBe("grid");
     });
 
-    it("defaults to the by-position table on wide screens", () => {
+    it("defaults to the card view on wide screens", () => {
       setNarrowScreen(false);
-      expect(resolveInitialTeamScheduleAdminLayout()).toBe("transpose");
+      expect(resolveInitialTeamScheduleAdminLayout()).toBe("board");
     });
 
     it("defaults to the card view on narrow screens", () => {

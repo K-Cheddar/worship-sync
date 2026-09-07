@@ -1,10 +1,13 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Copy, Plus } from "lucide-react";
+import { MoreVertical, Plus } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import DeleteModal from "../../../components/Modal/DeleteModal";
+import Menu from "../../../components/Menu/Menu";
 import Input from "../../../components/Input/Input";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
+  deleteServicePlanTemplate,
   listServicePlanTemplates,
   saveServicePlanTemplate,
 } from "../../../api/auth";
@@ -31,6 +34,7 @@ import {
 } from "../teamsStyles";
 import { cn } from "@/utils/cnHelper";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
+import type { MenuItemType } from "../../../types";
 
 const sortTemplatesByName = (templates: ServicePlanTemplate[]) =>
   [...templates].sort((left, right) =>
@@ -75,6 +79,8 @@ const TeamsTemplatesPage = () => {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<ServicePlanTemplateDraft | null>(null);
   const [duplicatingId, setDuplicatingId] = useState("");
+  const [deletingTemplate, setDeletingTemplate] = useState<ServicePlanTemplate | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const serviceNamesById = useMemo(
     () => new Map(pageData.services.map((service) => [service.serviceId, service.name])),
@@ -149,7 +155,9 @@ const TeamsTemplatesPage = () => {
     });
   }, [search, serviceNamesById, templates]);
 
-  const handleDuplicate = async (template: ServicePlanTemplate) => {
+  const handleDuplicate = async (
+    template: Pick<ServicePlanTemplate, "name" | "serviceId" | "sections">,
+  ) => {
     if (!churchId || duplicatingId) return;
     setDuplicatingId(template.templateId);
     try {
@@ -171,6 +179,21 @@ const TeamsTemplatesPage = () => {
     }
   };
 
+  const handleDelete = async () => {
+    if (!churchId || !deletingTemplate) return;
+    setIsDeleting(true);
+    try {
+      await deleteServicePlanTemplate(churchId, deletingTemplate.templateId);
+      removeTemplate(deletingTemplate.templateId);
+      showToast(`Deleted "${deletingTemplate.name}".`, "success");
+      setDeletingTemplate(null);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not delete this template.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (editing && churchId) {
     return (
       <div className={teamsManagerPageRootClassName}>
@@ -185,6 +208,7 @@ const TeamsTemplatesPage = () => {
           teams={pageData.teams}
           canEdit={canEdit}
           onBack={() => setEditing(null)}
+          onDuplicate={(draft) => void handleDuplicate(draft)}
           // List only. The editor tracks the id and revision of what it is
           // writing against itself — handing the saved record back as a new
           // `template` prop would reset the draft mid-edit.
@@ -276,23 +300,37 @@ const TeamsTemplatesPage = () => {
                 sections: template.sections,
                 revision: template.revision,
               });
+            const menuItems: MenuItemType[] = [
+              {
+                text: "Copy template",
+                onClick: () => void handleDuplicate(template),
+                disabled: Boolean(duplicatingId),
+              },
+              {
+                text: "Delete template",
+                variant: "destructive",
+                onClick: () => setDeletingTemplate(template),
+              },
+            ];
             return (
               <div
                 key={template.templateId}
+                role="button"
+                tabIndex={0}
+                aria-label={canEdit ? `Edit ${displayName}` : `View ${displayName}`}
+                onClick={openTemplate}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openTemplate();
+                  }
+                }}
                 className={cn(
-                  "flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 transition-colors sm:flex-row sm:items-start sm:justify-between",
-                  "cursor-pointer hover:border-gray-600/80 hover:bg-gray-900/60",
+                  "relative flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 pr-12 transition-colors sm:flex-row sm:items-start sm:justify-between",
+                  "cursor-pointer hover:border-gray-600/80 hover:bg-gray-900/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
                 )}
               >
-                <button
-                  type="button"
-                  className={cn(
-                    "min-w-0 flex-1 cursor-pointer rounded-md text-left",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
-                  )}
-                  aria-label={canEdit ? `Edit ${displayName}` : `View ${displayName}`}
-                  onClick={openTemplate}
-                >
+                <div className="min-w-0 flex-1 text-left">
                   <p className="truncate text-sm font-semibold text-gray-100">
                     {displayName}
                   </p>
@@ -315,19 +353,22 @@ const TeamsTemplatesPage = () => {
                       {serviceName ? `Preferred for ${serviceName}` : "Any service"}
                     </span>
                   </div>
-                </button>
+                </div>
                 {canEdit ? (
-                  <div className="flex shrink-0 items-center gap-1 self-start">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      svg={Copy}
-                      iconSize="sm"
-                      className="max-md:min-h-0"
-                      aria-label={`Duplicate ${template.name}`}
-                      disabled={Boolean(duplicatingId)}
-                      isLoading={duplicatingId === template.templateId}
-                      onClick={() => void handleDuplicate(template)}
+                  <div className="absolute right-2 top-2" onClick={(event) => event.stopPropagation()}>
+                    <Menu
+                      menuItems={menuItems}
+                      TriggeringButton={
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          svg={MoreVertical}
+                          iconSize="sm"
+                          className="max-md:min-h-0"
+                          aria-label={`More actions for ${displayName}`}
+                          aria-haspopup="menu"
+                        />
+                      }
                     />
                   </div>
                 ) : null}
@@ -336,6 +377,15 @@ const TeamsTemplatesPage = () => {
           })}
         </div>
       </section>
+      <DeleteModal
+        isOpen={Boolean(deletingTemplate)}
+        onClose={() => setDeletingTemplate(null)}
+        onConfirm={() => void handleDelete()}
+        itemName={deletingTemplate?.name}
+        isConfirming={isDeleting}
+        message="Permanently delete the template"
+        warningMessage="Plans already built from it keep their items. This cannot be undone."
+      />
     </div>
   );
 };

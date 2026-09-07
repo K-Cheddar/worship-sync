@@ -175,7 +175,7 @@ export const calendarDateInTimeZone = (date: Date, timeZone: string): string =>
  * in `timeZone` — used to gate day-of-service controls like Make live.
  */
 export const isOccurrenceOnCalendarDay = (
-  occurrence: TeamScheduleOccurrence,
+  occurrence: Pick<TeamScheduleOccurrence, "startsAt">,
   timeZone: string,
   referenceDate: Date = new Date(),
 ): boolean => {
@@ -186,6 +186,20 @@ export const isOccurrenceOnCalendarDay = (
     calendarDateInTimeZone(referenceDate, timeZone)
   );
 };
+
+/**
+ * Same-day check in the operator's local timezone — used for the schedule/plans
+ * "Today" badge where UI dates already render with the browser locale.
+ */
+export const isOccurrenceToday = (
+  occurrence: Pick<TeamScheduleOccurrence, "startsAt">,
+  referenceDate: Date = new Date(),
+): boolean =>
+  isOccurrenceOnCalendarDay(
+    occurrence,
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    referenceDate,
+  );
 
 /**
  * The occurrence the operator is most likely to work next: the earliest one that
@@ -312,7 +326,10 @@ export const generateScheduleOccurrences = ({
     .map((serviceId) =>
       services.find((service) => service.serviceId === serviceId),
     )
-    .filter(Boolean) as TeamService[];
+    .filter(
+      (service): service is TeamService =>
+        Boolean(service) && !service.archivedAt,
+    );
   const endTime = new Date(end);
   endTime.setHours(23, 59, 59, 999);
   const occurrences: TeamScheduleOccurrence[] = [];

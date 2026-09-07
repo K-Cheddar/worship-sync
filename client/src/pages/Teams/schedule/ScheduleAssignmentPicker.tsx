@@ -37,6 +37,7 @@ import { WantsThisIcon } from "./WantsThisIndicator";
 type MemberAssignmentAction = "replace" | TeamScheduleShadowKind;
 type PickerMenuView =
   | "members"
+  | "occupiedActions"
   | "assignmentActions"
   | "createMember"
   | "createGuest"
@@ -78,6 +79,82 @@ const WarningBadge = ({ label }: { label: string }) => (
 /** Stable empty default so an omitted currentShadows prop doesn't churn renders. */
 const emptyShadows: { memberId: string; kind: TeamScheduleShadowKind; label: string }[] =
   [];
+
+const assignmentActionLabel: Record<MemberAssignmentAction, string> = {
+  replace: "Find a sub",
+  shadow: "Add shadow",
+  reverse_shadow: "Add reverse shadow",
+};
+
+const OccupiedAssignmentActions = ({
+  currentAssigneeLabel,
+  onSelect,
+  onClearAssignment,
+  onMoreOptions,
+}: {
+  currentAssigneeLabel: string;
+  onSelect: (action: MemberAssignmentAction) => void;
+  onClearAssignment?: () => void;
+  onMoreOptions: () => void;
+}) => (
+  <div className="p-1">
+    <div
+      className="border-b border-gray-700 px-2 py-1.5"
+      aria-label={`Current assignee, ${currentAssigneeLabel}`}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-300/90">
+        Current assignee
+      </p>
+      <p className="mt-0.5 wrap-break-word text-sm font-semibold text-white">
+        {currentAssigneeLabel}
+      </p>
+    </div>
+    <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+      What do you want to do?
+    </p>
+    {(Object.keys(assignmentActionLabel) as MemberAssignmentAction[]).map((action) => (
+      <button
+        key={action}
+        type="button"
+        role="menuitem"
+        className="flex w-full cursor-pointer flex-col rounded px-2 py-1.5 text-left text-sm font-medium text-gray-100 hover:bg-gray-800"
+        onMouseDown={(event) => {
+          event.preventDefault();
+          onSelect(action);
+        }}
+      >
+        {assignmentActionLabel[action]}
+      </button>
+    ))}
+    {onClearAssignment ? (
+      <>
+        <div className="my-1 h-px bg-gray-700" role="separator" />
+        <button
+          type="button"
+          role="menuitem"
+          className="flex w-full cursor-pointer rounded px-2 py-1.5 text-left text-sm font-medium text-rose-200 hover:bg-gray-800"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onClearAssignment();
+          }}
+        >
+          Clear assignment
+        </button>
+      </>
+    ) : null}
+    <button
+      type="button"
+      role="menuitem"
+      className="mt-1 flex w-full cursor-pointer rounded px-2 py-1.5 text-left text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-gray-100"
+      onMouseDown={(event) => {
+        event.preventDefault();
+        onMoreOptions();
+      }}
+    >
+      More options
+    </button>
+  </div>
+);
 
 type ScheduleAssignmentPickerProps = {
   open: boolean;
@@ -163,6 +240,8 @@ const ScheduleAssignmentPicker = memo(({
   const anchorProxyRef = useRef<HTMLSpanElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [menuView, setMenuView] = useState<PickerMenuView>("members");
+  const [memberPickerAction, setMemberPickerAction] =
+    useState<MemberAssignmentAction | null>(null);
   // Capture the first collision-aware placement, then freeze it so shorter
   // submenu views (recent guests, create forms) do not flip the popover.
   const [lockedSide, setLockedSide] = useState<PickerPopoverSide | null>(null);
@@ -182,6 +261,8 @@ const ScheduleAssignmentPicker = memo(({
   const [editingGuest, setEditingGuest] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const duplicateFirstNameKeys = duplicateFirstNames || emptyDuplicateFirstNames;
+  const currentAssigneePresent =
+    hasCurrentAssignee ?? Boolean(currentPrimaryMemberId);
 
   const { positionMembers, showCreateOption } = useScheduleMemberPicker({
     members,
@@ -234,6 +315,7 @@ const ScheduleAssignmentPicker = memo(({
   useEffect(() => {
     if (!open) {
       setMenuView("members");
+      setMemberPickerAction(null);
       setLockedSide(null);
       setActiveSubmenuMemberId(null);
       setActiveSwapRecommendation(null);
@@ -246,6 +328,17 @@ const ScheduleAssignmentPicker = memo(({
       return;
     }
   }, [open]);
+
+  const occupiedActionMenuAvailable =
+    Boolean(currentAssigneePresent) &&
+    Boolean(onAssignmentAction) &&
+    Boolean(getAssignmentActionIssues);
+
+  useEffect(() => {
+    if (!open || !occupiedActionMenuAvailable) return;
+    setMenuView("occupiedActions");
+    setMemberPickerAction(null);
+  }, [anchorEl, occupiedActionMenuAvailable, open]);
 
   useLayoutEffect(() => {
     if (!open || !anchorRect || lockedSide) return undefined;
@@ -279,11 +372,12 @@ const ScheduleAssignmentPicker = memo(({
   }, [pendingSubmenu]);
 
   const resetMenuView = useCallback(() => {
-    setMenuView("members");
+    setMenuView(occupiedActionMenuAvailable ? "occupiedActions" : "members");
+    setMemberPickerAction(null);
     setActiveSubmenuMemberId(null);
     setActiveSwapRecommendation(null);
     setEditingGuest(false);
-  }, []);
+  }, [occupiedActionMenuAvailable]);
 
   const runAssignmentAction = (memberId: string, action: MemberAssignmentAction) => {
     onAssignmentAction?.(memberId, action);
@@ -292,7 +386,19 @@ const ScheduleAssignmentPicker = memo(({
 
   const openAssignmentActions = (memberId: string) => {
     setActiveSubmenuMemberId(memberId);
+    setMemberPickerAction(null);
     setMenuView("assignmentActions");
+  };
+
+  const openMemberPickerForAction = (action: MemberAssignmentAction) => {
+    onAssignmentQueryChange("");
+    setMemberPickerAction(action);
+    setMenuView("members");
+  };
+
+  const openMoreOptions = () => {
+    setMemberPickerAction(null);
+    setMenuView("members");
   };
 
   const openCreateMember = () => {
@@ -396,7 +502,14 @@ const ScheduleAssignmentPicker = memo(({
     });
   };
 
-  const selectableRows = positionMembers.filter((row) => row.eligible);
+  const getSelectedActionIssue = (memberId: string) => {
+    if (!memberPickerAction || !getAssignmentActionIssues) return "";
+    const issues = getAssignmentActionIssues(memberId);
+    return issues[memberPickerAction === "replace" ? "replace" : memberPickerAction];
+  };
+  const selectableRows = positionMembers.filter(
+    (row) => row.eligible && !getSelectedActionIssue(row.member.memberId),
+  );
   const trimmedQuery = assignmentQuery.trim();
   const directAssignmentRows = selectableRows.filter((row) => {
     if (!currentPrimaryMemberId || !getAssignmentActionIssues) return true;
@@ -424,8 +537,6 @@ const ScheduleAssignmentPicker = memo(({
     swapRecommendations.length > 0 &&
     Boolean(onApplySwapRecommendation);
 
-  const currentAssigneePresent =
-    hasCurrentAssignee ?? Boolean(currentPrimaryMemberId);
   let guestSubmitLabel = editingGuest
     ? "Save changes"
     : currentAssigneePresent
@@ -464,6 +575,7 @@ const ScheduleAssignmentPicker = memo(({
     !pendingSubmenu;
 
   const showListContent =
+    menuView === "occupiedActions" ||
     menuView === "assignmentActions" ||
     menuView === "createMember" ||
     menuView === "createGuest" ||
@@ -481,6 +593,10 @@ const ScheduleAssignmentPicker = memo(({
   const pickerOpen = open && Boolean(anchorRect);
 
   const handleSelectRow = (memberId: string, usesSubmenu: boolean) => {
+    if (memberPickerAction) {
+      runAssignmentAction(memberId, memberPickerAction);
+      return;
+    }
     if (usesSubmenu) {
       openAssignmentActions(memberId);
       return;
@@ -503,7 +619,7 @@ const ScheduleAssignmentPicker = memo(({
       shouldShowScheduleMemberPositionGroupDivider(rows, index, positionId);
     const key = `${keyPrefix}${row.member.memberId}`;
 
-    if (row.usesSubmenu) {
+    if (row.usesSubmenu && !memberPickerAction) {
       return (
         <div key={key}>
           {showPositionGroupDivider ? (
@@ -553,7 +669,7 @@ const ScheduleAssignmentPicker = memo(({
           )}
           onMouseDown={(event) => {
             event.preventDefault();
-            onSelectMember(row.member.memberId);
+            handleSelectRow(row.member.memberId, false);
           }}
         >
           <span className="min-w-0 flex-1">
@@ -638,7 +754,7 @@ const ScheduleAssignmentPicker = memo(({
           }
         }}
       >
-        <div className="border-b border-gray-800 p-2">
+        {menuView !== "occupiedActions" ? <div className="border-b border-gray-800 p-2">
           <label className="sr-only">{label}</label>
           <div className="relative flex min-w-0 items-stretch">
             <input
@@ -652,7 +768,10 @@ const ScheduleAssignmentPicker = memo(({
               value={assignmentQuery}
               onChange={(event) => {
                 onAssignmentQueryChange(event.target.value);
+                const nextAction =
+                  menuView === "occupiedActions" ? "replace" : memberPickerAction;
                 setMenuView("members");
+                setMemberPickerAction(nextAction);
                 setActiveSubmenuMemberId(null);
                 setActiveSwapRecommendation(null);
               }}
@@ -662,9 +781,16 @@ const ScheduleAssignmentPicker = memo(({
               <Search className="h-4 w-4 text-neutral-400" aria-hidden />
             </div>
           </div>
-        </div>
+        </div> : null}
         <div className="scrollbar-portal max-h-[min(24rem,55dvh)] overflow-x-hidden overflow-y-auto">
-          {pendingSubmenu && menuView === "assignmentActions" ? (
+          {menuView === "occupiedActions" ? (
+            <OccupiedAssignmentActions
+              currentAssigneeLabel={currentAssigneeLabel}
+              onSelect={openMemberPickerForAction}
+              onClearAssignment={onClearAssignment}
+              onMoreOptions={openMoreOptions}
+            />
+          ) : pendingSubmenu && menuView === "assignmentActions" ? (
             <MemberAssignmentSubmenu
               title={pendingSubmenu.title}
               issues={pendingSubmenu.issues}

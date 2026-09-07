@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
@@ -35,6 +35,12 @@ import MultiCheckboxGroup from "../components/MultiCheckboxGroup";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
+import {
+  EntityListFilterFooter,
+  EntityListFilterPanel,
+  EntityListFilterToolbar,
+  type EntityListFilterState,
+} from "../components/EntityListFilters";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import {
   buildServiceTimeUpdate,
@@ -72,6 +78,12 @@ const ServiceManager = ({
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [listQuery, setListQuery] = useState("");
+  const [listFilters, setListFilters] = useState<EntityListFilterState>({
+    teamIds: [],
+    includeArchived: false,
+  });
   const [draft, setDraft] = useState<Partial<ServiceTime>>(createEmptyServiceDraft);
   // Other services this one is combined with (shares one set of schedule cells).
   const [combineWith, setCombineWith] = useState<string[]>([]);
@@ -182,6 +194,16 @@ const ServiceManager = ({
   );
 
   const activePositions = positions.filter(isActive);
+  const filteredServices = useMemo(
+    () =>
+      services.filter(
+        (service) =>
+          (listFilters.includeArchived || !service.archivedAt) &&
+          (!listQuery.trim() ||
+            service.name.toLowerCase().includes(listQuery.trim().toLowerCase())),
+      ),
+    [listFilters.includeArchived, listQuery, services],
+  );
   const eligiblePlanTemplates = planTemplates.filter(
     (template) =>
       !template.serviceId || template.serviceId === editing?.serviceId,
@@ -299,18 +321,60 @@ const ServiceManager = ({
     <CreatePanel
       open={showCreate}
       onOpenCreate={() => {
-        reset();
-        setShowCreate(true);
+        requestDiscardAction(() => {
+          setShowFilters(false);
+          reset();
+          setShowCreate(true);
+        });
       }}
       canEdit={canEdit}
       title={editing ? "Edit service" : "Create service"}
       sectionTitle="Service settings"
       description="Manage service times used for scheduling."
       createLabel="Create service"
+      listToolbar={
+        <EntityListFilterToolbar
+          entityLabel="Services"
+          query={listQuery}
+          onQueryChange={setListQuery}
+          filters={listFilters}
+          onFiltersChange={setListFilters}
+          filtersOpen={showFilters}
+          onFiltersOpenChange={setShowFilters}
+        />
+      }
+      asideOpen={showFilters}
+      asideTitle="Filter services"
+      asideHeaderActions={
+        <Button variant="tertiary" onClick={() => setShowFilters(false)}>
+          Close
+        </Button>
+      }
+      aside={
+        <EntityListFilterPanel
+          entityLabel="services"
+          filters={listFilters}
+          onFiltersChange={setListFilters}
+        />
+      }
+      asideFooter={
+        <EntityListFilterFooter
+          filters={listFilters}
+          onClear={() => setListFilters({ teamIds: [], includeArchived: false })}
+          onClose={() => setShowFilters(false)}
+        />
+      }
       list={
         <>
           {services.length === 0 ? <p className="text-sm text-gray-300">No services yet.</p> : null}
-          {services.map((service) => (
+          {services.length > 0 && filteredServices.length === 0 ? (
+            <p className="text-sm text-gray-300">
+              {!listQuery.trim() && !listFilters.includeArchived
+                ? "Archived services are hidden. Open Filter to show them."
+                : "No matches."}
+            </p>
+          ) : null}
+          {filteredServices.map((service) => (
             <EntityRow
               key={service.serviceId}
               title={service.name}
@@ -330,8 +394,30 @@ const ServiceManager = ({
         editing ? (
           <EntityFormDangerActions
             canEdit={canEdit}
+            archived={Boolean(editing.archivedAt)}
+            archiveLabel="Archive service"
+            restoreLabel="Restore service"
             deleteLabel="Remove service"
             menuLabel="Service actions"
+            onArchive={() => {
+              if (!canEdit) return;
+              dispatch(
+                updateService({
+                  id: editing.id,
+                  changes: { archivedAt: new Date().toISOString() },
+                }),
+              );
+              showToast("Service archived.", "success");
+              reset();
+            }}
+            onRestore={() => {
+              if (!canEdit) return;
+              const restoredService = { ...editing, archivedAt: null };
+              dispatch(updateService({ id: editing.id, changes: { archivedAt: null } }));
+              setEditing(restoredService);
+              setDraft((current) => ({ ...current, archivedAt: null }));
+              showToast("Service restored.", "success");
+            }}
             onDelete={() => {
               if (!canEdit) return;
               const { partnerUpdates } = planServiceGroupCleanupOnDelete({
@@ -354,7 +440,7 @@ const ServiceManager = ({
           pinFooter
           saveLabel="Save service"
           onSave={submit}
-          onCancel={reset}
+          onCancel={() => requestDiscardAction(reset)}
           hasPendingChanges={hasPendingChanges}
           disabled={!canEdit || !canSave}
         />

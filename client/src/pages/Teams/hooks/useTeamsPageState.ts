@@ -373,6 +373,30 @@ export const useTeamsPageState = () => {
     [canEditAnyTeam, persistScheduleDrafts],
   );
 
+  /** Drop a draft key (e.g. clear `"new"` after a successful create). */
+  const clearScheduleDraft = useCallback(
+    (draftKey: string) => {
+      if (!canEditAnyTeam) return;
+      if (!(draftKey in scheduleDraftsRef.current)) {
+        if (draftPersistTimeoutRef.current) {
+          clearTimeout(draftPersistTimeoutRef.current);
+          draftPersistTimeoutRef.current = null;
+        }
+        return;
+      }
+      const nextDrafts = { ...scheduleDraftsRef.current };
+      delete nextDrafts[draftKey];
+      scheduleDraftsRef.current = nextDrafts;
+      setScheduleDrafts(nextDrafts);
+      if (draftPersistTimeoutRef.current) {
+        clearTimeout(draftPersistTimeoutRef.current);
+        draftPersistTimeoutRef.current = null;
+      }
+      persistScheduleDrafts();
+    },
+    [canEditAnyTeam, persistScheduleDrafts],
+  );
+
   // Schedules hydrated on demand this session, kept so a bootstrap refetch (which
   // returns out-of-window schedules as summaries) doesn't blank the open grid.
   const hydratedSchedulesRef = useRef(new Map<string, TeamSchedule>());
@@ -936,6 +960,7 @@ export const useTeamsPageState = () => {
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
+    clearScheduleDraft,
     toolbarLogoUrl,
     churchName,
   };

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -21,6 +21,7 @@ import {
   updateTeamPosition,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
+  updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentSwap,
 } from "../../api/auth";
 import type { TeamSchedulePayload } from "../../api/auth";
@@ -86,6 +87,7 @@ jest.mock("../../api/auth", () => ({
   createTeamPosition: jest.fn(),
   updateTeamPosition: jest.fn(),
   updateTeamScheduleAssignment: jest.fn(),
+  updateTeamScheduleAssignmentMicrophones: jest.fn(),
   updateTeamScheduleAssignmentSwap: jest.fn(),
   archiveTeamPosition: jest.fn(),
   deleteTeamPosition: jest.fn(),
@@ -114,6 +116,9 @@ const mockDeleteTeamPosition = jest.mocked(deleteTeamPosition);
 const mockUpdateTeamScheduleAssignment = jest.mocked(
   updateTeamScheduleAssignment,
 );
+const mockUpdateTeamScheduleAssignmentMicrophones = jest.mocked(
+  updateTeamScheduleAssignmentMicrophones,
+);
 const mockUpdateTeamScheduleAssignmentSwap = jest.mocked(
   updateTeamScheduleAssignmentSwap,
 );
@@ -139,6 +144,9 @@ type DeleteTeamPositionResponse = Awaited<ReturnType<typeof deleteTeamPosition>>
 type UpdateTeamResponse = Awaited<ReturnType<typeof updateTeam>>;
 type UpdateTeamScheduleAssignmentResponse = Awaited<
   ReturnType<typeof updateTeamScheduleAssignment>
+>;
+type UpdateTeamScheduleAssignmentMicrophonesResponse = Awaited<
+  ReturnType<typeof updateTeamScheduleAssignmentMicrophones>
 >;
 type UpdateTeamScheduleResponse = Awaited<ReturnType<typeof updateTeamSchedule>>;
 type UpdateTeamScheduleAssignmentSwapResponse = Awaited<
@@ -449,6 +457,160 @@ describe("Teams", () => {
     expect(
       await screen.findByText(/Create a team, services, and a schedule/i),
     ).toBeInTheDocument();
+  });
+
+  it("assigns a microphone from the selected team's schedule", async () => {
+    const user = userEvent.setup();
+    const microphoneSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      microphoneAssignments: {},
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        teams: scheduleBootstrap.teams.map((team) => ({
+          ...team,
+          usesMicrophoneAssignments: true,
+        })),
+        schedules: [microphoneSchedule],
+      }),
+    );
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [
+        { id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" },
+      ],
+      audiences: [],
+    });
+    mockUpdateTeamScheduleAssignmentMicrophones.mockResolvedValue({
+      success: true,
+      schedule: {
+        ...microphoneSchedule,
+        microphoneAssignments: {
+          [sundayOccurrenceId]: { "position-keys::0": ["mic-lead"] },
+        },
+      },
+    } satisfies UpdateTeamScheduleAssignmentMicrophonesResponse);
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    const microphoneSelect = await screen.findByRole("combobox", {
+      name: /Microphone for Avery \(Keys\)/i,
+    });
+    await user.click(microphoneSelect);
+    await user.click(await screen.findByRole("option", { name: /Lead vocal/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledWith(
+        "church-1",
+        "schedule-july",
+        {
+          serviceId: sundayOccurrenceId,
+          positionSlotKey: "position-keys::0",
+          microphoneIds: ["mic-lead"],
+        },
+      );
+    });
+  });
+
+  it("keeps a newer microphone choice when an earlier save responds", async () => {
+    const user = userEvent.setup();
+    const microphoneSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      microphoneAssignments: {
+        [sundayOccurrenceId]: {
+          "position-vocal::0": ["mic-vocal"],
+          "position-keys::0": ["mic-keys"],
+        },
+      },
+    };
+    const afterKeysCleared: TeamSchedule = {
+      ...microphoneSchedule,
+      microphoneAssignments: {
+        [sundayOccurrenceId]: {
+          "position-vocal::0": ["mic-vocal"],
+        },
+      },
+    };
+    const afterVocalChanged: TeamSchedule = {
+      ...afterKeysCleared,
+      microphoneAssignments: {
+        [sundayOccurrenceId]: {
+          "position-vocal::0": ["mic-lead"],
+        },
+      },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        teams: scheduleBootstrap.teams.map((team) => ({
+          ...team,
+          usesMicrophoneAssignments: true,
+        })),
+        schedules: [microphoneSchedule],
+      }),
+    );
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [
+        { id: "mic-vocal", name: "Vocal mic", type: "Handheld", color: "#22d3ee" },
+        { id: "mic-keys", name: "Keys mic", type: "Handheld", color: "#f59e0b" },
+        { id: "mic-lead", name: "Lead vocal", type: "Lapel", color: "#a855f7" },
+      ],
+      audiences: [],
+    });
+    let resolveFirstSave: (value: UpdateTeamScheduleAssignmentMicrophonesResponse) => void =
+      () => undefined;
+    let resolveSecondSave: (value: UpdateTeamScheduleAssignmentMicrophonesResponse) => void =
+      () => undefined;
+    mockUpdateTeamScheduleAssignmentMicrophones
+      .mockImplementationOnce(
+        () =>
+          new Promise<UpdateTeamScheduleAssignmentMicrophonesResponse>((resolve) => {
+            resolveFirstSave = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<UpdateTeamScheduleAssignmentMicrophonesResponse>((resolve) => {
+            resolveSecondSave = resolve;
+          }),
+      );
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    const keysMicrophone = await screen.findByRole("combobox", {
+      name: /Microphone for Avery \(Keys\)/i,
+    });
+    await user.click(keysMicrophone);
+    await user.click(await screen.findByRole("option", { name: /^No microphone$/i }));
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledTimes(1);
+    });
+
+    const vocalMicrophone = await screen.findByRole("combobox", {
+      name: /Microphone for Unassigned \(Vocal\)/i,
+    });
+    await user.click(vocalMicrophone);
+    await user.click(await screen.findByRole("option", { name: /^Lead vocal$/i }));
+
+    await act(async () => {
+      resolveFirstSave({ success: true, schedule: afterKeysCleared });
+    });
+    await waitFor(() => {
+      expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      screen.getByRole("combobox", {
+        name: /Microphone for Unassigned \(Vocal\)/i,
+      }),
+    ).toHaveTextContent("Lead vocal");
+
+    await act(async () => {
+      resolveSecondSave({ success: true, schedule: afterVocalChanged });
+    });
   });
 
   it("hydrates the remembered schedule after its bootstrap summary arrives", async () => {
@@ -803,6 +965,54 @@ describe("Teams", () => {
     });
   });
 
+  it("sets a default microphone for a mic-enabled position", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse({
+        ...scheduleBootstrap,
+        teams: scheduleBootstrap.teams.map((team) => ({
+          ...team,
+          usesMicrophoneAssignments: true,
+        })),
+      }),
+    );
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [
+        { id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" },
+      ],
+      audiences: [],
+    });
+    mockCreateTeamPosition.mockResolvedValue({
+      success: true,
+      position: {
+        positionId: "position-lead",
+        churchId: "church-1",
+        teamId: "team-main",
+        name: "Lead",
+        defaultMicrophoneId: "mic-lead",
+      },
+    } satisfies CreateTeamPositionResponse);
+
+    renderTeams("/teams-and-services/positions");
+    await user.click(await screen.findByRole("button", { name: /Create position/i }));
+    await user.type(screen.getByLabelText(/^Name/i), "Lead");
+    await user.click(await screen.findByLabelText(/^Default microphone/i));
+    await user.click(await screen.findByRole("option", { name: "Lead vocal" }));
+    await user.click(screen.getByRole("button", { name: /Save position/i }));
+
+    await waitFor(() => {
+      expect(mockCreateTeamPosition).toHaveBeenCalledWith(
+        "church-1",
+        expect.objectContaining({
+          name: "Lead",
+          defaultMicrophoneId: "mic-lead",
+          teamId: "team-main",
+        }),
+      );
+    });
+  });
+
   it("keeps the team editor open after saving so teams can be edited back-to-back", async () => {
     const user = userEvent.setup();
     mockUpdateTeam.mockResolvedValue({
@@ -1128,7 +1338,7 @@ describe("Teams", () => {
     expect(averyOption).not.toBeDisabled();
 
     await user.click(averyOption);
-    await user.click(await screen.findByRole("button", { name: /Schedule anyway/i }));
+    await user.click(await screen.findByRole("button", { name: /Move anyway/i }));
 
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith(
@@ -1403,7 +1613,7 @@ describe("Teams", () => {
     expect(screen.getByText(/Move Avery from Vocal to Keys/i)).toBeInTheDocument();
     expect(screen.getByText(/Assign Jordan to Vocal/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply swap/i }));
-    await user.click(await screen.findByRole("button", { name: /Schedule anyway/i }));
+    await user.click(await screen.findByRole("button", { name: /Move anyway/i }));
 
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(1);
@@ -1608,10 +1818,12 @@ describe("Teams", () => {
               ]}
               activeTeams={scheduleBootstrap.teams as TeamRecord[]}
               schedules={scheduleBootstrap.schedules as TeamSchedule[]}
+              seedSchedules={scheduleBootstrap.schedules as TeamSchedule[]}
               churchId="church-1"
               canEdit
               onDraftChange={jest.fn()}
               onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
               onScheduleSaved={jest.fn()}
               onScheduleRemoved={jest.fn()}
               setSelectedScheduleId={jest.fn()}
@@ -1635,6 +1847,24 @@ describe("Teams", () => {
 
     expect(screen.getByLabelText(/Avery, assigned 1 time on this schedule/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Morgan, assigned 0 times on this schedule/i)).toBeInTheDocument();
+  });
+
+  it("shows last served in the roster and historical count in member details", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    const user = userEvent.setup();
+    renderTeams();
+    await waitForScheduleGrid();
+
+    expect(screen.getByText("Last served July 05, 2026")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show details for Avery" }));
+    expect(
+      within(screen.getByRole("group", { name: /Avery, assigned/i })).getByText(
+        "Served 0 times in the last month",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows last initials when multiple team members share a first name", async () => {

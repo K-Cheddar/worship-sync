@@ -91,11 +91,17 @@ const MyScheduleBlockouts = ({
   const { showToast } = useToast();
   const conflictHeadingId = useId();
   const [open, setOpen] = useState(false);
-  const { ended, current } = useMemo(
+  const { current } = useMemo(
     () => partitionByEnded(blockoutDates),
     [blockoutDates],
   );
-  const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(current);
+  const [showEnded, setShowEnded] = useState(false);
+  const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(blockoutDates);
+  const { ended: draftEnded, current: draftCurrent } = useMemo(
+    () => partitionByEnded(draft),
+    [draft],
+  );
+  const editorRanges = showEnded ? draft : draftCurrent;
   const [saving, setSaving] = useState(false);
   // BlockoutDatesField seeds its rows from `value` once, so re-seeding needs a
   // remount rather than a prop change.
@@ -109,7 +115,7 @@ const MyScheduleBlockouts = ({
    * saving it would push the older dates back over the newer ones with a
    * freshly refreshed write stamp the server has no reason to reject.
    */
-  const [baseline, setBaseline] = useState(() => signRanges(current));
+  const [baseline, setBaseline] = useState(() => signRanges(blockoutDates));
 
   const seedDraft = useCallback((ranges: TeamBlockoutDateRange[]) => {
     setDraft(ranges);
@@ -139,7 +145,7 @@ const MyScheduleBlockouts = ({
   }, [draft, occurrences]);
 
   const draftSignature = signRanges(draft);
-  const currentSignature = signRanges(current);
+  const serverSignature = signRanges(blockoutDates);
   const isDirty = draftSignature !== baseline;
 
   /**
@@ -150,10 +156,10 @@ const MyScheduleBlockouts = ({
    * is how stale dates get written back.
    */
   useEffect(() => {
-    if (currentSignature === baseline) return;
+    if (serverSignature === baseline) return;
     if (draftSignature !== baseline) return;
-    seedDraft(current);
-  }, [baseline, current, currentSignature, draftSignature, seedDraft]);
+    seedDraft(blockoutDates);
+  }, [baseline, blockoutDates, draftSignature, seedDraft, serverSignature]);
 
   // Reported up so a background refresh cannot replace an open edit. Cleared on
   // unmount, or leaving the list view would pin the page as permanently dirty.
@@ -162,7 +168,13 @@ const MyScheduleBlockouts = ({
     return () => onDirtyChange(false);
   }, [isDirty, onDirtyChange]);
 
-  const discard = () => seedDraft(current);
+  const discard = () => seedDraft(blockoutDates);
+
+  const handleDraftChange = (next: TeamBlockoutDateRange[]) => {
+    // When past dates are hidden, preserve them in the draft while applying
+    // edits only to the entries shown in the field.
+    setDraft(showEnded ? next : [...draftEnded, ...next]);
+  };
 
   const save = async () => {
     setSaving(true);
@@ -171,7 +183,7 @@ const MyScheduleBlockouts = ({
       // actionable must not amount to deleting the rest.
       const result = await updateMyBlockoutDates(
         churchId,
-        [...ended, ...draft],
+        draft,
         expectedUpdatedAt,
       );
       const saved = result.member?.blockoutDates || [];
@@ -179,7 +191,7 @@ const MyScheduleBlockouts = ({
       // single day collapsed to one date, a blank row dropped, history past the
       // retention window pruned. Seeding also moves the baseline, so the save
       // leaves the editor clean rather than looking edited again.
-      seedDraft(partitionByEnded(saved).current);
+      seedDraft(saved);
       onSaved(result.member);
       showToast("Time off saved.", "success");
     } catch (error) {
@@ -232,13 +244,34 @@ const MyScheduleBlockouts = ({
           </p>
 
           <BlockoutDatesField
-            key={fieldKey}
+            key={`${fieldKey}-${showEnded ? "all" : "current"}`}
             variant="admin"
             showNotes
             emptyLabel="No upcoming dates added yet."
-            value={draft}
-            onChange={setDraft}
+            value={editorRanges}
+            onChange={handleDraftChange}
           />
+
+          {draftEnded.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-gray-500">
+                {showEnded
+                  ? "Past dates are shown for reference."
+                  : `${draftEnded.length} past ${draftEnded.length === 1 ? "date is" : "dates are"} hidden.`}
+              </p>
+              <Button
+                type="button"
+                variant="tertiary"
+                aria-expanded={showEnded}
+                className="h-auto min-h-0 px-0 py-0 text-xs text-gray-400 underline underline-offset-2 hover:text-gray-200"
+                onClick={() => setShowEnded((current) => !current)}
+              >
+                {showEnded
+                  ? "Hide past dates"
+                  : `Show ${draftEnded.length} past ${draftEnded.length === 1 ? "date" : "dates"}`}
+              </Button>
+            </div>
+          ) : null}
 
           {conflicts.length > 0 ? (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">

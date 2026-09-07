@@ -26,7 +26,7 @@ import {
 import type { TeamSchedulePayload } from "../../api/auth";
 import type { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
-import { parsePlainDate } from "../../utils/plainDate";
+import { formatPlainDate, parsePlainDate } from "../../utils/plainDate";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
 import { emptyData } from "./teamsConstants";
 import { DEFAULT_SERVING_FREQUENCY, resolveMemberMinorStatus } from "./memberPreferences";
@@ -244,7 +244,14 @@ const scrubMemberFromScheduleCounts = (
     schedule.assignmentCounts.byMemberId;
   return {
     ...schedule,
-    assignmentCounts: { ...schedule.assignmentCounts, byMemberId },
+    assignmentCounts: {
+      ...schedule.assignmentCounts,
+      byMemberId,
+      lastAssignmentDateByMemberId: Object.fromEntries(
+        Object.entries(schedule.assignmentCounts.lastAssignmentDateByMemberId || {})
+          .filter(([id]) => id !== memberId),
+      ),
+    },
   };
 };
 
@@ -823,6 +830,114 @@ export const countScheduleAssignmentsForMember = (
   }, 0);
 };
 
+export type MemberServingHistory = {
+  recentAssignmentCount: number;
+  lastServedDate?: string;
+};
+
+const dateOneMonthBefore = (value: string) => {
+  const date = parsePlainDate(value);
+  if (!date) return value;
+  const targetMonth = date.getMonth() - 1;
+  const lastDayOfTargetMonth = new Date(
+    date.getFullYear(),
+    targetMonth + 1,
+    0,
+  ).getDate();
+  return formatPlainDate(
+    new Date(
+      date.getFullYear(),
+      targetMonth,
+      Math.min(date.getDate(), lastDayOfTargetMonth),
+    ),
+  );
+};
+
+const scheduleOccurrenceDate = (
+  schedule: TeamSchedule | TeamScheduleSummary,
+  occurrenceId: string,
+) => {
+  const occurrence = schedule.occurrences?.find(
+    (item) => item.occurrenceId === occurrenceId,
+  );
+  if (occurrence?.startsAt) return occurrence.startsAt.slice(0, 10);
+  const embeddedDate = occurrenceId.match(/(?:^|@)(\d{4}-\d{2}-\d{2})/);
+  return embeddedDate?.[1];
+};
+
+/**
+ * Returns completed assignment history for requested members on one team's
+ * recorded schedules. Each schedule and assignment cell is visited once, so
+ * rendering a roster does not repeat the history scan for every member.
+ * Summaries provide exact counts for schedules that are fully in the past and
+ * carry the latest assigned occurrence date for last-served UI.
+ */
+export const getMemberServingHistories = (
+  teamId: string,
+  memberIds: string[],
+  schedules: (TeamSchedule | TeamScheduleSummary)[],
+  throughDate = formatPlainDate(new Date()),
+): Map<string, MemberServingHistory> => {
+  const histories = new Map<string, MemberServingHistory>(
+    memberIds.map((memberId) => [memberId, { recentAssignmentCount: 0 }]),
+  );
+  const recentStartDate = dateOneMonthBefore(throughDate);
+
+  const recordServedDate = (memberId: string, servedDate: string) => {
+    const history = histories.get(memberId);
+    if (!history) return;
+    if (!history.lastServedDate || servedDate > history.lastServedDate) {
+      history.lastServedDate = servedDate;
+    }
+  };
+
+  schedules
+    .filter((schedule) => schedule.teamId === teamId)
+    .forEach((schedule) => {
+      if (!isHydratedSchedule(schedule)) {
+        const scheduleStart = schedule.startDate || schedule.endDate;
+        const scheduleEnd = schedule.endDate || schedule.startDate;
+        if (
+          schedule.assignmentCounts &&
+          (!scheduleStart || scheduleStart >= recentStartDate) &&
+          (!scheduleEnd || scheduleEnd <= throughDate)
+        ) {
+          Object.entries(schedule.assignmentCounts.byMemberId).forEach(
+            ([memberId, count]) => {
+              const history = histories.get(memberId);
+              if (history) history.recentAssignmentCount += count;
+            },
+          );
+        }
+        Object.entries(
+          schedule.assignmentCounts?.lastAssignmentDateByMemberId || {},
+        ).forEach(([memberId, summaryDate]) => {
+          if (summaryDate <= throughDate) recordServedDate(memberId, summaryDate);
+        });
+        return;
+      }
+
+      Object.entries(schedule.assignments || {}).forEach(
+        ([occurrenceId, row]) => {
+          const occurrenceDate = scheduleOccurrenceDate(schedule, occurrenceId);
+          if (!occurrenceDate || occurrenceDate > throughDate) return;
+          Object.values(row || {}).forEach((cell) => {
+            getCellMemberIds(cell).forEach((memberId) => {
+              const history = histories.get(memberId);
+              if (!history) return;
+              recordServedDate(memberId, occurrenceDate);
+              if (occurrenceDate >= recentStartDate) {
+                history.recentAssignmentCount += 1;
+              }
+            });
+          });
+        },
+      );
+    });
+
+  return histories;
+};
+
 export const scheduleMemberAssignmentCountLabel = (count: number) =>
   `Assigned ${count} ${count === 1 ? "time" : "times"} on this schedule`;
 
@@ -1256,6 +1371,7 @@ export const buildServiceTimeUpdate = (
     defaultPlanTemplateId:
       draft.defaultPlanTemplateId || undefined,
     serviceGroupId: draft.serviceGroupId,
+    archivedAt: existing?.archivedAt || null,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     reccurence: recurrence,

@@ -532,6 +532,35 @@ describe("MySchedule", () => {
       );
     });
 
+    it("lets the member reveal past dates when needed", async () => {
+      const user = userEvent.setup();
+      const over = { startDate: "2000-01-01", endDate: "2000-01-05" };
+      const ahead = { startDate: "2099-10-01", endDate: "2099-10-05" };
+      respond([occurrence()], {
+        memberId: "m1",
+        blockoutDates: [over, ahead],
+      });
+      renderPage();
+
+      await expandTimeOff(user);
+      expect(
+        screen.getByRole("button", { name: "Show 1 past date" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getAllByRole("button", { name: /Remove blockout/i }),
+      ).toHaveLength(1);
+
+      await user.click(
+        screen.getByRole("button", { name: "Show 1 past date" }),
+      );
+      expect(
+        screen.getAllByRole("button", { name: /Remove blockout/i }),
+      ).toHaveLength(2);
+      expect(
+        screen.getByRole("button", { name: "Hide past dates" }),
+      ).toBeInTheDocument();
+    });
+
     // Time off is collapsed by default, so without this the page contradicts
     // itself: the schedule shows you serving and nothing says you are away.
     it("marks a scheduled service the member has blocked out", async () => {

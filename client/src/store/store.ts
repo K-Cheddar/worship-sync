@@ -2174,13 +2174,12 @@ listenerMiddleware.startListening({
       db: firebaseDb,
       churchId,
       canWriteSharedData,
-      isConnected,
     } = globalFireDbInfo;
     if (!canWriteSharedData) return;
-    if (!firebaseDb || !churchId || !isConnected) {
+    if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       notifyPresentationSyncError(
-        "Live sync is not ready. Your change was not saved. Wait for it to connect, then try again.",
+        "Live sync is not ready. Your change was not saved. Wait for it to finish connecting, then try again.",
       );
       return;
     }

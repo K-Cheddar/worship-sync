@@ -21,6 +21,23 @@ export const scheduleGridRightBorderClassName =
 export const scheduleUpNextBorderClassName = "border-orange-400";
 export const scheduleUpNextHeaderHighlightClassName =
   "border-b border-b-orange-400";
+/** Shared today accent — distinct from up-next so same-day (but not next) stands out. */
+export const scheduleTodayBorderClassName = "border-sky-400";
+export const scheduleTodayHeaderHighlightClassName =
+  "border-b border-b-sky-400";
+
+/** Up next wins over Today when both apply; otherwise Today for same-day services. */
+export const scheduleOccurrenceHeaderHighlightClassName = ({
+  isNextUpcoming,
+  isToday,
+}: {
+  isNextUpcoming: boolean;
+  isToday: boolean;
+}) => {
+  if (isNextUpcoming) return scheduleUpNextHeaderHighlightClassName;
+  if (isToday) return scheduleTodayHeaderHighlightClassName;
+  return undefined;
+};
 export const scheduleServiceHeaderTopBorderClassName = "border-t-orange-900/40";
 export const scheduleServiceHeaderBottomBorderClassName =
   "border-b-orange-900/40";
@@ -41,6 +58,9 @@ export const schedulePositionIconCh = 2;
 export const scheduleAssignmentColumnMaxCh = 15;
 export const scheduleAssignmentCellColumnClassName =
   "w-0 max-w-[15ch] min-w-0 overflow-hidden";
+/** Keep italic assignment placeholders from clipping at the end of the label. */
+export const scheduleAssignmentLabelClassName =
+  "min-w-0 flex-1 truncate whitespace-nowrap leading-6 translate-y-px";
 
 export const capScheduleColumnLabelForSizing = (label: string) =>
   label.length > scheduleAssignmentColumnMaxCh

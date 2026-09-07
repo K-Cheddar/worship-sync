@@ -22,6 +22,11 @@ import { isMemberAvailableOnDate } from "../memberPreferences";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
+import ScheduleMicrophoneSelect, {
+  type ScheduleMicrophoneHolder,
+} from "./ScheduleMicrophoneSelect";
+import { scheduleAssignmentLabelClassName } from "./scheduleUtils";
+import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 
 type ScheduleBoardCellProps = {
   occurrenceId: string;
@@ -43,6 +48,13 @@ type ScheduleBoardCellProps = {
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   canEdit: boolean;
+  microphones?: ServicePlanMicrophone[];
+  microphoneIds?: string[];
+  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphonesLoading?: boolean;
+  microphonesUnavailable?: boolean;
+  savingMicrophone?: boolean;
+  onMicrophoneChange?: (microphoneIds: string[]) => void;
 };
 
 /**
@@ -69,6 +81,13 @@ const ScheduleBoardCell = memo(({
   allMembers,
   duplicateFirstNames,
   canEdit,
+  microphones,
+  microphoneIds,
+  microphoneHolders,
+  microphonesLoading = false,
+  microphonesUnavailable = false,
+  savingMicrophone = false,
+  onMicrophoneChange,
 }: ScheduleBoardCellProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
@@ -125,7 +144,12 @@ const ScheduleBoardCell = memo(({
   }, [columnKey, handlersRef, occurrenceId]);
 
   return (
-    <div className="space-y-1">
+    <div
+      className={cn(
+        "space-y-1",
+        microphones && microphoneHolders && onMicrophoneChange && "pb-1.5",
+      )}
+    >
       <button
         type="button"
         data-schedule-cell-trigger
@@ -162,7 +186,7 @@ const ScheduleBoardCell = memo(({
           </span>
           <span
             className={cn(
-              "flex min-w-0 items-center gap-1.5 truncate text-sm font-medium",
+              "flex min-w-0 items-center gap-1.5 text-sm font-medium",
               assignedMember ? "text-white" : "text-gray-500 italic",
             )}
           >
@@ -172,7 +196,9 @@ const ScheduleBoardCell = memo(({
                 memberName={assigneeLabel}
               />
             ) : null}
-            <span className="truncate">{assigneeLabel || "Unassigned"}</span>
+            <span className={scheduleAssignmentLabelClassName}>
+              {assigneeLabel || "Unassigned"}
+            </span>
             {assignedMember?.scheduleGuest ? (
               <span
                 className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200"
@@ -191,6 +217,22 @@ const ScheduleBoardCell = memo(({
           ) : null}
         </span>
       </button>
+      {microphones && microphoneHolders && onMicrophoneChange ? (
+        <div className="pl-11">
+          <ScheduleMicrophoneSelect
+            microphoneIds={microphoneIds}
+            microphones={microphones}
+            holdersByMicrophone={microphoneHolders}
+            slotKey={`${occurrenceId}:${columnKey}`}
+            ariaLabel={`Microphone for ${assigneeLabel || "Unassigned"} (${positionLabel})`}
+            canEdit={canEdit}
+            loading={microphonesLoading}
+            unavailable={microphonesUnavailable}
+            saving={savingMicrophone}
+            onChange={onMicrophoneChange}
+          />
+        </div>
+      ) : null}
       {shadowAssignments.length > 0 ? (
         <div className="flex flex-col gap-1 pl-11">
           {shadowAssignments.map((shadow) => {

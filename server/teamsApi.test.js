@@ -551,6 +551,161 @@ test("team position validation and archive keep archived rows readable", async (
   assert.ok(position?.archivedAt);
 });
 
+test("new schedules seed microphone defaults from their positions", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("position_microphone_defaults");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Worship", memberIds: [], usesMicrophoneAssignments: true },
+  });
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: {
+      microphones: [
+        { id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" },
+      ],
+      audiences: [],
+    },
+  });
+  const position = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Lead", teamId, defaultMicrophoneId: "mic-lead" },
+  });
+  const positionId = position.payload.position.positionId;
+  const occurrenceId = "service-sunday@2026-08-02T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August",
+      teamId,
+      startDate: "2026-08-02",
+      endDate: "2026-08-02",
+      serviceIds: ["service-sunday"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-sunday",
+          name: "Sunday",
+          startsAt: "2026-08-02T10:00:00.000Z",
+          positionRequirements: [{ positionId, count: 1 }],
+        },
+      ],
+    },
+  });
+
+  assert.equal(schedule.statusCode, 200);
+  assert.deepEqual(
+    schedule.payload.schedule.microphoneAssignments,
+    { [occurrenceId]: { [`${positionId}::0`]: ["mic-lead"] } },
+  );
+});
+
+test("concurrent microphone slot saves retain both changes", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("concurrent_microphone_saves");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Worship", memberIds: [], usesMicrophoneAssignments: true },
+  });
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: {
+      microphones: [
+        { id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" },
+        { id: "mic-keys", name: "Keys", type: "Handheld", color: "#f59e0b" },
+      ],
+      audiences: [],
+    },
+  });
+  const lead = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Lead", teamId },
+  });
+  const keys = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Keys", teamId },
+  });
+  const leadPositionId = lead.payload.position.positionId;
+  const keysPositionId = keys.payload.position.positionId;
+  const occurrenceId = "service-sunday@2026-08-09T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August",
+      teamId,
+      startDate: "2026-08-09",
+      endDate: "2026-08-09",
+      serviceIds: ["service-sunday"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-sunday",
+          name: "Sunday",
+          startsAt: "2026-08-09T10:00:00.000Z",
+          positionRequirements: [
+            { positionId: leadPositionId, count: 1 },
+            { positionId: keysPositionId, count: 1 },
+          ],
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  const saves = await Promise.all([
+    callHandler(authHandlers.updateTeamScheduleAssignmentMicrophones, {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${leadPositionId}::0`,
+        microphoneIds: ["mic-lead"],
+      },
+    }),
+    callHandler(authHandlers.updateTeamScheduleAssignmentMicrophones, {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${keysPositionId}::0`,
+        microphoneIds: ["mic-keys"],
+      },
+    }),
+  ]);
+
+  assert.equal(saves.every((save) => save.statusCode === 200), true);
+  assert.ok(
+    saves.some((save) =>
+      Object.keys(save.payload.schedule.microphoneAssignments[occurrenceId] || {}).length === 2,
+    ),
+  );
+  const savedWithBothSlots = saves.find(
+    (save) =>
+      Object.keys(save.payload.schedule.microphoneAssignments[occurrenceId] || {}).length === 2,
+  );
+  assert.deepEqual(
+    savedWithBothSlots.payload.schedule.microphoneAssignments,
+    {
+      [occurrenceId]: {
+        [`${leadPositionId}::0`]: ["mic-lead"],
+        [`${keysPositionId}::0`]: ["mic-keys"],
+      },
+    },
+  );
+});
+
 test("a position's qualification area must belong to the same team", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("qualification_area_scope");
@@ -3664,7 +3819,7 @@ test("a dismissed intake submission can be restored to the active queue", async 
   ]);
 });
 
-test("linking intake merges overlapping blockout dates instead of duplicating", async (t) => {
+test("linking intake replaces blockouts within the form period", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("intake_merge_blockouts");
   const worship = await seedTeam(context, {
@@ -3676,7 +3831,9 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
         lastName: "Lee",
         positions: ["Vocal"],
         blockoutDates: [
-          { startDate: "2026-06-22", endDate: "2026-06-27", notes: "Vacation" },
+          { startDate: "2026-08-25", endDate: "2026-09-05", notes: "Vacation" },
+          { startDate: "2026-09-01", endDate: "2026-09-30", notes: "Old intake" },
+          { startDate: "2026-10-04", endDate: "2026-10-08", notes: "Holiday" },
         ],
       },
     ],
@@ -3687,8 +3844,8 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
     context,
     body: {
       name: "Fall volunteers",
-      startDate: "2026-06-01",
-      endDate: "2026-06-30",
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
       teamIds: [worship.teamId],
       active: true,
     },
@@ -3707,11 +3864,8 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
         lastName: "Lee",
         email: "sam.lee@example.com",
         positionIds: [worship.positionIds.Vocal],
-        // A single day already inside the member's existing range, plus a
-        // duplicate of that range — both should collapse into one entry.
         blockoutRanges: [
-          { startDate: "2026-06-23", endDate: "2026-06-23" },
-          { startDate: "2026-06-22", endDate: "2026-06-27" },
+          { startDate: "2026-09-05", endDate: "2026-09-26" },
         ],
       },
     },
@@ -3733,27 +3887,24 @@ test("linking intake merges overlapping blockout dates instead of duplicating", 
   });
   assert.equal(applyRes.statusCode, 200);
 
-  // The single date and the duplicate range are all covered by 6/22–6/27, so
-  // the member keeps exactly one blockout entry with both notes preserved.
-  assert.equal(applyRes.payload.member.blockoutDates.length, 1);
-  const [range] = applyRes.payload.member.blockoutDates;
-  assert.equal(range.startDate, "2026-06-22");
-  assert.equal(range.endDate, "2026-06-27");
-  assert.match(range.notes, /Vacation/);
-  assert.match(range.notes, /From intake form/);
+  // The response replaces the old September blockout, while dates outside the form
+  // period remain intact.
+  assert.deepEqual(applyRes.payload.member.blockoutDates, [
+    { startDate: "2026-08-25", endDate: "2026-08-31", notes: "Vacation" },
+    { startDate: "2026-09-05", endDate: "2026-09-26", notes: "From intake form" },
+    { startDate: "2026-10-04", endDate: "2026-10-08", notes: "Holiday" },
+  ]);
 
-  // Re-applying the same submission must not stack duplicate notes or entries.
+  // Re-applying the same submission must not stack duplicate ranges.
   const reapply = await callHandler(authHandlers.updateTeamIntakeSubmission, {
     context,
     params: { submissionId: submission.submissionId },
     body: { action: "applied", memberId },
   });
   assert.equal(reapply.statusCode, 200);
-  assert.equal(reapply.payload.member.blockoutDates.length, 1);
-  assert.equal(
-    reapply.payload.member.blockoutDates[0].notes.match(/From intake form/g)
-      .length,
-    1,
+  assert.deepEqual(
+    reapply.payload.member.blockoutDates,
+    applyRes.payload.member.blockoutDates,
   );
 });
 
@@ -5006,6 +5157,11 @@ test("teams bootstrap summarizes schedules outside the hydration window", async 
   assert.equal(summaryDistant.assignmentsOmitted, true);
   assert.equal(summaryDistant.assignments, undefined);
   assert.equal(summaryDistant.microphoneAssignments, undefined);
+  assert.equal(summaryDistant.assignmentCounts.byMemberId[memberId], 1);
+  assert.equal(
+    summaryDistant.assignmentCounts.lastAssignmentDateByMemberId[memberId],
+    isoDateMonthsFromNow(12),
+  );
   // The fields the picker and occurrence matching rely on must survive.
   assert.equal(summaryDistant.name, "Next year");
   assert.equal(summaryDistant.teamId, team.teamId);

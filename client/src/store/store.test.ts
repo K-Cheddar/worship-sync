@@ -2293,7 +2293,7 @@ describe("store module", () => {
     ).toEqual(committedServices);
   });
 
-  it("rolls back a service-time update while live sync is disconnected", async () => {
+  it("attempts a service-time update when the connection monitor is disconnected", async () => {
     jest.useFakeTimers();
     const {
       store,
@@ -2301,6 +2301,55 @@ describe("store module", () => {
       registerPresentationSyncErrorHandler,
       runTransactionMock,
     } = loadStoreWithPresentationSync({ realtimeConnected: false });
+    const syncErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(syncErrorHandler);
+    const originalService = {
+      id: "service-1",
+      name: "Sunday Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:00:00.000Z",
+    };
+    runTransactionMock.mockImplementationOnce(
+      async (_path: unknown, update: (current: unknown) => unknown) => {
+        const value = update([originalService]);
+        return {
+          committed: true,
+          snapshot: { val: () => value },
+        };
+      },
+    );
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([originalService]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-1",
+        changes: { overrideDateTimeISO: "2026-04-05T12:05:00.000Z" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual([
+      expect.objectContaining({
+        ...originalService,
+        overrideDateTimeISO: "2026-04-05T12:05:00.000Z",
+      }),
+    ]);
+    expect(syncErrorHandler).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a service-time update before Firebase is initialized", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      serviceTimesSlice,
+      registerPresentationSyncErrorHandler,
+      runTransactionMock,
+    } = loadStoreWithPresentationSync({ firebaseReady: false });
     const syncErrorHandler = jest.fn();
     registerPresentationSyncErrorHandler(syncErrorHandler);
     const originalService = {
@@ -2328,7 +2377,7 @@ describe("store module", () => {
       originalService,
     ]);
     expect(syncErrorHandler).toHaveBeenCalledWith(
-      "Live sync is not ready. Your change was not saved. Wait for it to connect, then try again.",
+      "Live sync is not ready. Your change was not saved. Wait for it to finish connecting, then try again.",
     );
   });
 

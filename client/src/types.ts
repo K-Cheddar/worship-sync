@@ -509,6 +509,8 @@ export type ServiceTime = {
   // the same date they merge into one schedule occurrence with a single shared set
   // of assignment cells (e.g. back-to-back 9am + 11am Sunday services).
   serviceGroupId?: string;
+  /** Archived services stay in history but are unavailable for future scheduling. */
+  archivedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };

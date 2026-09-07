@@ -38,22 +38,27 @@ import { cn } from "@/utils/cnHelper";
 import {
   findNextUpcomingOccurrenceId,
   formatOccurrenceRowLabel,
+  isOccurrenceToday,
   formatOccurrenceTiming,
-  filterServicesWithOccurrencesInRange,
   generateScheduleOccurrences,
-  getDefaultScheduleRange,
   getOccurrenceDate,
   getSharedOccurrenceTiming,
   occurrenceIdsMatch,
 } from "@/utils/teamScheduleOccurrences";
 import {
+  getCreateScheduleDefaultRange,
+  getCreateScheduleDefaultServiceIds,
+} from "./scheduleCreateDefaults";
+import {
   createTeamRosterMember,
   getTeamScheduleDetail,
   sendTeamSchedule,
   getTeamSchedulePublicLink,
+  getServicePlanMicrophones,
   updateTeam,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
+  updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentSwap,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
@@ -104,6 +109,7 @@ import {
   type TeamScheduleOccurrence,
   type TeamScheduleShadowKind,
 } from "../../../api/authTypes";
+import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { resolvePositionLucideIcon } from "../lucidePositionIcons";
@@ -130,6 +136,7 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import {
   buildTeamSchedulePublicUrl,
   countScheduleAssignmentsForMember,
+  getMemberServingHistories,
   getCellMemberIds,
   getCellPrimaryMemberId,
   getCellShadowAssignments,
@@ -141,6 +148,7 @@ import {
   serializeAssignmentCell,
   serviceDateBlockedOut,
   shadowKindLabel,
+  type MemberServingHistory,
 } from "../teamsUtils";
 import { buildScheduleReturnTo } from "../teamsReturnNavigation";
 import {
@@ -163,6 +171,7 @@ import {
   type OccurrenceFill,
   type ScheduleSlotColumn,
 } from "./scheduleRequirements";
+import ScheduleTodayBadge from "./ScheduleTodayBadge";
 import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
 import ScheduleGridCell from "./ScheduleGridCell";
 import ScheduleBoardView from "./ScheduleBoardView";
@@ -189,6 +198,7 @@ import {
 } from "./scheduleConflicts";
 import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
+import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
 import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
 import {
   cellsMatch,
@@ -218,7 +228,7 @@ import {
   scheduleGridLeftBorderClassName,
   scheduleGridRightBorderClassName,
   scheduleGridTopBorderClassName,
-  scheduleUpNextHeaderHighlightClassName,
+  scheduleOccurrenceHeaderHighlightClassName,
   schedulePositionColumnClassName,
   scheduleStickyPositionColumnClassName,
   scheduleStickyPositionLabelClassName,
@@ -255,6 +265,7 @@ type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
 type PendingCrossTeamConflict = {
   memberId: string;
   warning: string;
+  isMove?: boolean;
   onConfirm: () => void;
   onCancel?: () => void;
 };
@@ -262,6 +273,7 @@ type PendingCrossTeamConflict = {
 type PendingAvailabilityConfirmation = {
   memberId: string;
   kind: "blockout" | "recurringAvailability";
+  isMove?: boolean;
   onConfirm: () => void;
 };
 
@@ -280,6 +292,7 @@ const ScheduleTab = ({
   onTeamSaved,
   onScheduleDraftChanged,
   onScheduleDraftFlush,
+  onScheduleDraftClear,
   trackTeamsSave,
 }: {
   data: TeamsData;
@@ -297,6 +310,8 @@ const ScheduleTab = ({
   onTeamSaved: (team: TeamRecord, replaceId?: string) => void;
   onScheduleDraftChanged: (draftKey: string, draft: TeamSchedulePayload) => void;
   onScheduleDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;
+  /** Clears a draft key after a successful create so New schedule starts fresh. */
+  onScheduleDraftClear: (draftKey: string) => void;
   // Registers an in-flight schedule save with the page so inbound sync stays
   // gated until it settles (prevents a poll/SSE from reverting pending edits).
   trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
@@ -306,17 +321,6 @@ const ScheduleTab = ({
   const churchId = context?.churchId || "";
   const churchName = context?.churchName || "";
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
-  const defaultRange = useMemo(getDefaultScheduleRange, []);
-  const defaultTeamId = activeTeams[0]?.teamId || "";
-  const defaultServiceIds = useMemo(
-    () =>
-      filterServicesWithOccurrencesInRange({
-        services: data.services.filter(isActive),
-        startDate: defaultRange.startDate,
-        endDate: defaultRange.endDate,
-      }).map((service) => service.serviceId),
-    [data.services, defaultRange],
-  );
   const schedules = data.schedules;
   // The picker lists every schedule (summaries included); the grid needs the
   // hydrated record. `selectedScheduleRecord` backs the header and the picker so
@@ -387,6 +391,39 @@ const ScheduleTab = ({
       writeScheduleTeamFilter(churchId, teamId || ALL_TEAMS_SCHEDULE_FILTER);
     },
     [churchId],
+  );
+
+  // Create-form defaults: prefer the schedule team filter, else first editable
+  // active team, else first active team. Range/services follow that team.
+  const defaultTeamId = useMemo(() => {
+    if (
+      scheduleTeamFilter &&
+      activeTeams.some((team) => team.teamId === scheduleTeamFilter)
+    ) {
+      return scheduleTeamFilter;
+    }
+    const firstEditable = activeTeams.find((team) =>
+      editableTeamIds?.has(team.teamId),
+    );
+    return firstEditable?.teamId || activeTeams[0]?.teamId || "";
+  }, [activeTeams, editableTeamIds, scheduleTeamFilter]);
+  const defaultRange = useMemo(
+    () =>
+      getCreateScheduleDefaultRange({
+        teamId: defaultTeamId,
+        schedules: data.schedules,
+      }),
+    [data.schedules, defaultTeamId],
+  );
+  const defaultServiceIds = useMemo(
+    () =>
+      getCreateScheduleDefaultServiceIds({
+        teamId: defaultTeamId,
+        schedules: data.schedules,
+        services: data.services,
+        range: defaultRange,
+      }),
+    [data.schedules, data.services, defaultRange, defaultTeamId],
   );
 
   const scheduleTeamFilterOptions = useMemo(
@@ -488,6 +525,13 @@ const ScheduleTab = ({
   // Export/share actions live in a toolbar overflow menu; the PDF preview modal is
   // rendered headless and opened from that menu item.
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [microphoneCatalogStatus, setMicrophoneCatalogStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(
+    null,
+  );
   const undoShortcut = useMemo(() => {
     const isMac =
       typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -591,6 +635,29 @@ const ScheduleTab = ({
       teamPositionIds,
     ],
   );
+  // Load the catalog only for a schedule whose team uses microphones. The
+  // selectors live alongside each role, so the list must be ready in the grid.
+  useEffect(() => {
+    if (!selectedTeam?.usesMicrophoneAssignments || !churchId) {
+      setMicrophones([]);
+      setMicrophoneCatalogStatus("idle");
+      return undefined;
+    }
+    let cancelled = false;
+    setMicrophoneCatalogStatus("loading");
+    getServicePlanMicrophones(churchId)
+      .then((result) => {
+        if (cancelled) return;
+        setMicrophones(result.microphones);
+        setMicrophoneCatalogStatus("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setMicrophoneCatalogStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId, selectedTeam?.usesMicrophoneAssignments]);
   const teamMembers = useMemo(() => {
     if (!selectedTeam) return [] as TeamRosterMember[];
     const membersById = new Map(
@@ -615,6 +682,14 @@ const ScheduleTab = ({
     });
     return counts;
   }, [activeTeamMembers, selectedSchedule?.assignments]);
+  const memberServingHistory = useMemo<Map<string, MemberServingHistory>>(() => {
+    if (!selectedTeam) return new Map<string, MemberServingHistory>();
+    return getMemberServingHistories(
+      selectedTeam.teamId,
+      activeTeamMembers.map((member) => member.memberId),
+      data.schedules,
+    );
+  }, [activeTeamMembers, data.schedules, selectedTeam]);
   const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
@@ -828,10 +903,17 @@ const ScheduleTab = ({
     ({
       memberId,
       warning,
+      isMove,
       onConfirm,
       onCancel,
     }: PendingCrossTeamConflict) => {
-      setPendingCrossTeamConflict({ memberId, warning, onConfirm, onCancel });
+      setPendingCrossTeamConflict({
+        memberId,
+        warning,
+        isMove,
+        onConfirm,
+        onCancel,
+      });
     },
     [],
   );
@@ -1416,6 +1498,7 @@ const ScheduleTab = ({
         setPendingAvailabilityConfirmation({
           memberId,
           kind: "blockout",
+          isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
           onConfirm: () =>
             void commitAssignment({
               serviceId,
@@ -1437,6 +1520,7 @@ const ScheduleTab = ({
         setPendingAvailabilityConfirmation({
           memberId,
           kind: "recurringAvailability",
+          isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
           onConfirm: () =>
             void commitAssignment({
               serviceId,
@@ -1453,8 +1537,8 @@ const ScheduleTab = ({
       }
       const blockingIssue =
         (allowBlockout && issue === "Blocked out") ||
-        (allowRecurringAvailability &&
-          issue === "Unavailable this week of the month")
+          (allowRecurringAvailability &&
+            issue === "Unavailable this week of the month")
           ? ""
           : issue;
       if (blockingIssue) {
@@ -1466,6 +1550,7 @@ const ScheduleTab = ({
         requestCrossTeamConflictConfirmation({
           memberId,
           warning: conflictWarning,
+          isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
           onConfirm: () =>
             void commitAssignment({
               serviceId,
@@ -1588,6 +1673,7 @@ const ScheduleTab = ({
           requestCrossTeamConflictConfirmation({
             memberId,
             warning: "already scheduled on another team or in another role",
+            isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
             onConfirm: () => {
               const retryMutationSeq = ++scheduleMutationSeqRef.current;
               onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
@@ -1645,7 +1731,7 @@ const ScheduleTab = ({
     const previousSchedule = selectedSchedule;
     const before =
       previousSchedule.assignments?.[activeSlot.occurrenceId]?.[
-        activeSlot.columnKey
+      activeSlot.columnKey
       ] ?? "";
     try {
       const response = await enqueueAssignmentSave(() =>
@@ -1659,7 +1745,7 @@ const ScheduleTab = ({
       );
       const after =
         response.schedule.assignments?.[activeSlot.occurrenceId]?.[
-          activeSlot.columnKey
+        activeSlot.columnKey
         ] ?? "";
       onScheduleSaved(response.schedule);
       recordAssignmentChange(`assign ${guest.name} to ${column.label}`, [
@@ -1913,8 +1999,8 @@ const ScheduleTab = ({
       }
       const blockingIssue =
         (allowBlockout && issue === "Blocked out") ||
-        (allowRecurringAvailability &&
-          issue === "Unavailable this week of the month")
+          (allowRecurringAvailability &&
+            issue === "Unavailable this week of the month")
           ? ""
           : issue;
       if (blockingIssue) {
@@ -3207,6 +3293,7 @@ const ScheduleTab = ({
           ? plan.candidateMemberId
           : plan.currentMemberId,
         warning: conflictWarning,
+        isMove: true,
         onConfirm: () =>
           void commitActiveSlotSwapRecommendation(recommendation, true),
       });
@@ -3411,15 +3498,142 @@ const ScheduleTab = ({
     [scheduleOccurrences],
   );
 
+  const microphoneHoldersByOccurrence = useMemo(() => {
+    const holdersByOccurrence = new Map<
+      string,
+      Map<string, ScheduleMicrophoneHolder[]>
+    >();
+    if (!selectedSchedule || !selectedTeam?.usesMicrophoneAssignments) {
+      return holdersByOccurrence;
+    }
+    scheduleOccurrences.forEach((occurrence) => {
+      const requirements = requirementsByOccurrence.get(occurrence.occurrenceId);
+      const additionalSlots = new Set(
+        selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId] || [],
+      );
+      const holdersByMicrophone = new Map<string, ScheduleMicrophoneHolder[]>();
+      scheduleColumns.forEach((column) => {
+        const isSlotEnabled =
+          column.slot < getRequiredCount(requirements, column.positionId) ||
+          additionalSlots.has(column.columnKey);
+        if (!isSlotEnabled) return;
+        const memberId = getCellPrimaryMemberId(
+          selectedSchedule.assignments?.[occurrence.occurrenceId]?.[column.columnKey],
+        );
+        const member = scheduleDisplayMembers.find((item) => item.memberId === memberId);
+        const label = member
+          ? scheduleMemberName(member, duplicateScheduleFirstNames)
+          : column.label;
+        const slotKey = `${occurrence.occurrenceId}:${column.columnKey}`;
+        const microphoneIds =
+          selectedSchedule.microphoneAssignments?.[occurrence.occurrenceId]?.[
+          column.columnKey
+          ] || [];
+        microphoneIds.forEach((microphoneId) => {
+          const holders = holdersByMicrophone.get(microphoneId) || [];
+          holders.push({ slotKey, label });
+          holdersByMicrophone.set(microphoneId, holders);
+        });
+      });
+      holdersByOccurrence.set(occurrence.occurrenceId, holdersByMicrophone);
+    });
+    return holdersByOccurrence;
+  }, [
+    duplicateScheduleFirstNames,
+    requirementsByOccurrence,
+    scheduleColumns,
+    scheduleDisplayMembers,
+    scheduleOccurrences,
+    selectedSchedule,
+    selectedTeam?.usesMicrophoneAssignments,
+  ]);
+
+  const saveMicrophoneAssignment = useCallback(
+    async (
+      { occurrenceId, columnKey }: { occurrenceId: string; columnKey: string },
+      microphoneIds: string[],
+    ) => {
+      if (!canEdit || !churchId || !selectedSchedule) return;
+      const previousSchedule = selectedSchedule;
+      const assignments = { ...(selectedSchedule.microphoneAssignments || {}) };
+      const occurrenceAssignments = { ...(assignments[occurrenceId] || {}) };
+      if (microphoneIds.length) occurrenceAssignments[columnKey] = microphoneIds;
+      else delete occurrenceAssignments[columnKey];
+      if (Object.keys(occurrenceAssignments).length) {
+        assignments[occurrenceId] = occurrenceAssignments;
+      } else {
+        delete assignments[occurrenceId];
+      }
+
+      const mutationSeq = ++scheduleMutationSeqRef.current;
+      setSavingMicrophoneSlot(`${selectedSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
+      onScheduleSaved({ ...selectedSchedule, microphoneAssignments: assignments });
+      try {
+        const response = await enqueueAssignmentSave(() =>
+          updateTeamScheduleAssignmentMicrophones(churchId, selectedSchedule.scheduleId, {
+            serviceId: occurrenceId,
+            positionSlotKey: columnKey,
+            microphoneIds,
+          }),
+        );
+        // A prior response contains a whole schedule snapshot. Do not let it
+        // replace a newer optimistic microphone choice made while it was in
+        // flight; the queued request will persist that newer choice next.
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(response.schedule);
+        }
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not update microphone assignments.");
+      } finally {
+        setSavingMicrophoneSlot(null);
+      }
+    },
+    [
+      canEdit,
+      churchId,
+      enqueueAssignmentSave,
+      onScheduleSaved,
+      selectedSchedule,
+      showToast,
+    ],
+  );
+
   // Grid occurrence headers are sticky (positioned), so the badge anchors to the
   // header cell. Absolute so it never adds row/column height; it straddles the
-  // cell's top edge like the board's card ribbon.
-  const renderUpNext = (occurrenceId: string) =>
-    occurrenceId === nextUpcomingOccurrenceId ? (
-      <span className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
-        <ScheduleUpNextBadge />
-      </span>
-    ) : null;
+  // cell's top edge like the board's card ribbon. Up next takes precedence over
+  // Today when an occurrence is both.
+  const renderOccurrenceMarker = (occurrence: {
+    occurrenceId: string;
+    startsAt: string;
+  }) => {
+    if (occurrence.occurrenceId === nextUpcomingOccurrenceId) {
+      return (
+        <span className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
+          <ScheduleUpNextBadge />
+        </span>
+      );
+    }
+    if (isOccurrenceToday(occurrence)) {
+      return (
+        <span className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
+          <ScheduleTodayBadge />
+        </span>
+      );
+    }
+    return null;
+  };
+
+  const occurrenceHeaderHighlightClassName = (occurrence: {
+    occurrenceId: string;
+    startsAt: string;
+  }) =>
+    scheduleOccurrenceHeaderHighlightClassName({
+      isNextUpcoming: occurrence.occurrenceId === nextUpcomingOccurrenceId,
+      isToday: isOccurrenceToday(occurrence),
+    });
 
   // Board accordion state lives here so the header's expand-all/collapse-all
   // controls and the per-card chevrons stay in sync. Default expanded on desktop
@@ -3749,7 +3963,7 @@ const ScheduleTab = ({
         assignmentCell,
         assignmentResponse:
           selectedSchedule?.responses?.[occurrence.occurrenceId]?.[
-            column.columnKey
+          column.columnKey
           ],
         isMemberHighlighted: getCellMemberIds(assignmentCell).some((memberId) =>
           highlightedMemberIdSet.has(memberId),
@@ -3759,6 +3973,27 @@ const ScheduleTab = ({
         allMembers: scheduleDisplayMembers,
         duplicateFirstNames: duplicateScheduleFirstNames,
         canEdit,
+        microphones: selectedTeam?.usesMicrophoneAssignments ? microphones : undefined,
+        microphoneIds:
+          selectedSchedule?.microphoneAssignments?.[occurrence.occurrenceId]?.[
+          column.columnKey
+          ],
+        microphoneHolders: selectedTeam?.usesMicrophoneAssignments
+          ? microphoneHoldersByOccurrence.get(occurrence.occurrenceId)
+          : undefined,
+        microphonesLoading: microphoneCatalogStatus === "loading",
+        microphonesUnavailable: microphoneCatalogStatus === "error",
+        savingMicrophone:
+          savingMicrophoneSlot ===
+          `${selectedSchedule?.scheduleId}:${occurrence.occurrenceId}:${column.columnKey}`,
+        onMicrophoneChange: selectedTeam?.usesMicrophoneAssignments
+          ? (microphoneIds: string[]) => {
+            void saveMicrophoneAssignment(
+              { occurrenceId: occurrence.occurrenceId, columnKey: column.columnKey },
+              microphoneIds,
+            );
+          }
+          : undefined,
       };
     },
     [
@@ -3769,8 +4004,14 @@ const ScheduleTab = ({
       duplicateScheduleFirstNames,
       highlightedMemberIdSet,
       justFilledCellKeys,
+      microphoneCatalogStatus,
+      microphoneHoldersByOccurrence,
+      microphones,
       requirementsByOccurrence,
+      saveMicrophoneAssignment,
+      savingMicrophoneSlot,
       selectedSchedule,
+      selectedTeam?.usesMicrophoneAssignments,
     ],
   );
 
@@ -3786,10 +4027,12 @@ const ScheduleTab = ({
       services={data.services}
       activeTeams={activeTeams}
       schedules={onlyHydratedSchedules(data.schedules)}
+      seedSchedules={data.schedules}
       churchId={churchId}
       canEdit={canEdit}
       onDraftChange={onScheduleDraftChanged}
       onDraftFlush={onScheduleDraftFlush}
+      onDraftClear={onScheduleDraftClear}
       onScheduleSaved={onScheduleSaved}
       onScheduleRemoved={onScheduleRemoved}
       setSelectedScheduleId={setSelectedScheduleId}
@@ -3820,7 +4063,7 @@ const ScheduleTab = ({
         <>
           <h2 className="sr-only">Schedules</h2>
           <section className={cn(panelShellClassName, "w-full shrink-0")}>
-              <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
+            <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
               {scheduleReturnTo ? (
                 <div className="mb-2">
                   <TeamsReturnBackButton
@@ -4077,7 +4320,6 @@ const ScheduleTab = ({
                         />
                       </>
                     ) : null}
-
                     {/* Infrequent schedule actions, including auto-fill.
                         On narrow viewports, Organize and Layout live here too. */}
                     <Menu
@@ -4376,8 +4618,7 @@ const ScheduleTab = ({
                                         scheduleGridLeftBorderClassName,
                                         schedulePositionColumnClassName,
                                         scheduleCellPaddingClassName,
-                                        nextUpcomingOccurrenceId === occurrence.occurrenceId &&
-                                        scheduleUpNextHeaderHighlightClassName,
+                                        occurrenceHeaderHighlightClassName(occurrence),
                                         getAxisHighlightClassName(occurrence.occurrenceId, undefined, {
                                           surface: "header",
                                         }),
@@ -4385,7 +4626,7 @@ const ScheduleTab = ({
                                     >
                                       {/* Keep "Add position" in the date header — not a fake assignment
                                           row — so the position grid stays clean. */}
-                                      {renderUpNext(occurrence.occurrenceId)}
+                                      {renderOccurrenceMarker(occurrence)}
                                       <div className="flex flex-col items-start gap-1">
                                         <ScheduleOccurrenceDateButton
                                           label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
@@ -4397,8 +4638,7 @@ const ScheduleTab = ({
                                     </th>
                                   ))}
                                 </tr>
-                              </thead>
-                              <tbody>
+                              </thead>                              <tbody>
                                 {scheduleColumns.map((column, columnIndex) => {
                                   const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                   const rowTone = scheduleRowTone(columnIndex);
@@ -4513,9 +4753,7 @@ const ScheduleTab = ({
                                             scheduleDateColumnClassName,
                                             scheduleCellPaddingClassName,
                                             stickyTone,
-                                            nextUpcomingOccurrenceId ===
-                                            occurrence.occurrenceId &&
-                                            scheduleUpNextHeaderHighlightClassName,
+                                            occurrenceHeaderHighlightClassName(occurrence),
                                             getAxisHighlightClassName(
                                               occurrence.occurrenceId,
                                               undefined,
@@ -4523,7 +4761,7 @@ const ScheduleTab = ({
                                             ),
                                           )}
                                         >
-                                          {renderUpNext(occurrence.occurrenceId)}
+                                          {renderOccurrenceMarker(occurrence)}
                                           <div className="flex flex-col items-start gap-1">
                                             <span className="text-xs font-semibold text-white">
                                               {group.serviceName}
@@ -4544,8 +4782,7 @@ const ScheduleTab = ({
                                               occurrence.occurrenceId,
                                             )}
                                           </div>
-                                        </th>
-                                        {scheduleColumns.map((column) => (
+                                        </th>                                        {scheduleColumns.map((column) => (
                                           <ScheduleGridCell
                                             key={scheduleGridCellKey(
                                               occurrence.occurrenceId,
@@ -4631,9 +4868,9 @@ const ScheduleTab = ({
                                                       scheduleDateColumnClassName,
                                                       scheduleCellPaddingClassName,
                                                       stickyTone,
-                                                      nextUpcomingOccurrenceId ===
-                                                      occurrence.occurrenceId &&
-                                                      scheduleUpNextHeaderHighlightClassName,
+                                                      occurrenceHeaderHighlightClassName(
+                                                        occurrence,
+                                                      ),
                                                       getAxisHighlightClassName(
                                                         occurrence.occurrenceId,
                                                         undefined,
@@ -4644,9 +4881,7 @@ const ScheduleTab = ({
                                                       ),
                                                     )}
                                                   >
-                                                    {renderUpNext(
-                                                      occurrence.occurrenceId,
-                                                    )}
+                                                    {renderOccurrenceMarker(occurrence)}
                                                     <div className="flex flex-col items-start gap-1">
                                                       <ScheduleOccurrenceDateButton
                                                         label={formatOccurrenceRowLabel(
@@ -4664,8 +4899,7 @@ const ScheduleTab = ({
                                                         occurrence.occurrenceId,
                                                       )}
                                                     </div>
-                                                  </th>
-                                                  {scheduleColumns.map((column) => (
+                                                  </th>                                                  {scheduleColumns.map((column) => (
                                                     <ScheduleGridCell
                                                       key={scheduleGridCellKey(
                                                         occurrence.occurrenceId,
@@ -4758,6 +4992,7 @@ const ScheduleTab = ({
                     scheduleStartDate={scheduleDateBounds.startDate}
                     scheduleEndDate={scheduleDateBounds.endDate}
                     scheduleAssignmentCounts={scheduleAssignmentCounts}
+                    memberServingHistory={memberServingHistory}
                     recommendationStats={activeSlotRecommendationStats}
                     duplicateFirstNames={duplicateScheduleFirstNames}
                     highlightedMemberIdSet={highlightedMemberIdSet}
@@ -4811,10 +5046,10 @@ const ScheduleTab = ({
             <section className={panelClassName}>
               <div>
                 <div className="mt-0">
-                {/* Assignments for schedules outside the loaded window arrive on
+                  {/* Assignments for schedules outside the loaded window arrive on
                     demand. Say so rather than dropping to an empty grid, which
                     would read as "nobody is assigned". */}
-                {scheduleWorkspaceEmptyMessage}
+                  {scheduleWorkspaceEmptyMessage}
                 </div>
               </div>
             </section>
@@ -4944,7 +5179,9 @@ const ScheduleTab = ({
                 pending?.onConfirm();
               }}
             >
-              Schedule anyway
+              {pendingAvailabilityConfirmation?.isMove
+                ? "Move anyway"
+                : "Schedule anyway"}
             </Button>
           </div>
         </div>
@@ -4985,7 +5222,9 @@ const ScheduleTab = ({
                 pending?.onConfirm();
               }}
             >
-              Schedule anyway
+              {pendingCrossTeamConflict?.isMove
+                ? "Move anyway"
+                : "Schedule anyway"}
             </Button>
           </div>
         </div>

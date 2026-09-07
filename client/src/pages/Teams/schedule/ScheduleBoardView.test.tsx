@@ -171,4 +171,15 @@ describe("ScheduleBoardView", () => {
     renderView(["o1", "o2"], { nextUpcomingOccurrenceId: "o2" });
     expect(screen.getAllByText(/Up next/i)).toHaveLength(1);
   });
+
+  it("marks a same-day service that is not up next with Today", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-12T12:00:00"));
+
+    renderView(["o1", "o2"], { nextUpcomingOccurrenceId: "o2" });
+    expect(screen.getAllByText(/^Today$/i)).toHaveLength(1);
+    expect(screen.getAllByText(/Up next/i)).toHaveLength(1);
+
+    jest.useRealTimers();
+  });
 });

@@ -8,6 +8,7 @@ import { createMockGlobalContext } from "../../../test/mocks";
 import {
   listServicePlanTemplates,
   saveServicePlanTemplate,
+  deleteServicePlanTemplate,
 } from "../../../api/auth";
 import { plainTextToRichText } from "../../../types/richText";
 import type { TeamService } from "../../../api/authTypes";
@@ -62,6 +63,7 @@ jest.mock("../TeamsPageContext", () => ({
 
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockSaveServicePlanTemplate = jest.mocked(saveServicePlanTemplate);
+const mockDeleteServicePlanTemplate = jest.mocked(deleteServicePlanTemplate);
 
 const template = (
   overrides: Partial<ServicePlanTemplate> = {},
@@ -116,6 +118,7 @@ beforeEach(() => {
     success: true,
     template: template({ templateId: "template-2", name: "Copy of Standard Sabbath" }),
   });
+  mockDeleteServicePlanTemplate.mockResolvedValue({ success: true });
 });
 
 describe("nextTemplateCopyName", () => {
@@ -221,8 +224,11 @@ describe("TeamsTemplatesPage", () => {
     renderPage();
 
     await user.click(
-      await screen.findByRole("button", { name: "Duplicate Standard Sabbath" }),
+      await screen.findByRole("button", {
+        name: "More actions for Standard Sabbath",
+      }),
     );
+    await user.click(screen.getByRole("menuitem", { name: "Copy template" }));
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled());
     const [, body] = mockSaveServicePlanTemplate.mock.calls[0];
@@ -233,6 +239,43 @@ describe("TeamsTemplatesPage", () => {
     // would reach into the template it came from.
     expect(body.sections[0].id).not.toBe("section-1");
     expect(body.sections[0].elements[0].id).not.toBe("element-1");
+  });
+
+  it("deletes a template from its action menu after confirmation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "More actions for Standard Sabbath",
+      }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Delete template" }));
+    await user.click(screen.getByRole("button", { name: "Delete Forever" }));
+
+    await waitFor(() =>
+      expect(mockDeleteServicePlanTemplate).toHaveBeenCalledWith(
+        "church-1",
+        "template-1",
+      ),
+    );
+    expect(screen.queryByText("Standard Sabbath")).not.toBeInTheDocument();
+  });
+
+  it("copies the current template from the open editor actions menu", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Edit Standard Sabbath" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Template actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy template" }));
+
+    await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled());
+    const [, body] = mockSaveServicePlanTemplate.mock.calls[0];
+    expect(body.name).toBe("Copy of Standard Sabbath");
+    expect(body.sections[0].id).not.toBe("section-1");
   });
 
   it("filters the list by name", async () => {

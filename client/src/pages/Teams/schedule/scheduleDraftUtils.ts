@@ -412,11 +412,18 @@ export type ScheduleEditFormProps = {
   defaultRange: { startDate: string; endDate: string };
   services: TeamService[];
   activeTeams: TeamRecord[];
+  /** Hydrated schedules used for assignment conflict checks on save. */
   schedules: TeamSchedule[];
+  /**
+   * All schedules (summaries included) used to seed create defaults when the
+   * operator changes team — date window and last-schedule services.
+   */
+  seedSchedules: TeamSchedule[];
   churchId: string;
   canEdit: boolean;
   onDraftChange: (draftKey: string, draft: TeamSchedulePayload) => void;
   onDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;
+  onDraftClear: (draftKey: string) => void;
   onScheduleSaved: (schedule: TeamSchedule, replaceId?: string) => void;
   onScheduleRemoved: (scheduleId: string) => void;
   setSelectedScheduleId: (scheduleId: string) => void;
