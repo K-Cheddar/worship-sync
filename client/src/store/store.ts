@@ -88,6 +88,7 @@ import {
   refreshPreviewSongMatches,
 } from "./servicePlanningImportSlice";
 import { generatedCreditsSlice } from "./generatedCreditsSlice";
+import { displayOutputsSlice } from "./displayOutputsSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
@@ -2976,6 +2977,7 @@ const combinedReducers = combineReducers({
   autosaveIndicator: autosaveIndicatorSlice.reducer,
   servicePlanningImport: servicePlanningImportSlice.reducer,
   generatedCredits: generatedCreditsSlice.reducer,
+  displayOutputs: displayOutputsSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {
