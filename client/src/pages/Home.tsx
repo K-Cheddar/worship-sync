@@ -3,9 +3,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   Building2,
@@ -173,12 +176,45 @@ const obsDisplays: CardLink[] = [
 ];
 
 const HomeLinkCard = ({ title, description, to, icon }: CardLink) => {
+  const navigate = useNavigate();
+  const navigationTimeoutRef = useRef<number | null>(null);
+  const [isPending, setIsPending] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (navigationTimeoutRef.current !== null) {
+        window.clearTimeout(navigationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    // Let the shared Button preserve its existing behavior for modified and
+    // non-primary clicks. A zero-delay handoff gives the pending state one
+    // paint before the lazy route replaces the home screen.
+    if (event.defaultPrevented || event.button !== 0) return;
+
+    event.preventDefault();
+    setIsPending(true);
+    navigationTimeoutRef.current = window.setTimeout(() => {
+      navigationTimeoutRef.current = null;
+      navigate(to);
+    }, 0);
+  };
+
   return (
     <Button
       variant="none"
       to={to}
       component="link"
-      className="h-full w-full flex-col items-start gap-3 rounded-2xl border border-gray-600 border-l-4 border-l-orange-400 bg-gray-900 p-5 text-left hover:border-gray-500 hover:border-l-orange-300 hover:bg-gray-800"
+      aria-busy={isPending}
+      isLoading={isPending}
+      onClick={handleClick}
+      className={`h-full w-full flex-col items-start gap-3 rounded-2xl border border-gray-600 border-l-4 border-l-orange-400 bg-gray-900 p-5 text-left hover:border-gray-500 hover:border-l-orange-300 hover:bg-gray-800 ${
+        isPending
+          ? "border-orange-300 border-l-orange-200 bg-gray-800 ring-2 ring-orange-400/40"
+          : ""
+      }`}
       wrap
     >
       <span className="flex w-full items-start gap-3">

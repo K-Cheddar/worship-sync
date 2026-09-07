@@ -39,10 +39,9 @@ const TimePickerFieldLayout = ({
       htmlFor={fieldId}
       className={cn(
         isCompactLightLabel
-          ? "text-xs font-medium text-white"
+          ? "text-xs font-medium text-white p-0"
           : "p-1 text-sm font-semibold",
-        !isInlineLabel && "block",
-        isCompactLightLabel && "p-0",
+        isInlineLabel && "shrink-0 py-0 pl-0 pr-0",
         hideLabel && "sr-only",
         labelClassName,
       )}

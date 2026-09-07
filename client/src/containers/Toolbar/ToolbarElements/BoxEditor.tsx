@@ -594,7 +594,7 @@ const BoxEditor = ({
 
   return (
     <div className={`flex gap-2 items-center ${className || ""}`}>
-      <div className="max-lg:hidden flex gap-2 items-center flex-wrap py-1">
+      <div className="max-lg:hidden flex gap-2 items-center flex-wrap">
         {controls}
       </div>
       <PopOver

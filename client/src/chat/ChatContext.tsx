@@ -58,6 +58,9 @@ type ChatContextValue = {
   retry: () => void;
   connectionStatus: ChatConnectionStatus;
   unreadCount: number;
+  markReadThrough: (createdAt: number) => void;
+  draftsByDay: Record<string, string>;
+  setDraftForDay: (dayKey: string, draft: string) => void;
   typingUsers: ChatTyper[];
   updateTypingDraft: (hasText: boolean) => void;
   sendMessage: (text: string, image?: File) => Promise<boolean>;
@@ -121,6 +124,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [connectionStatus, setConnectionStatus] =
     useState<ChatConnectionStatus>("idle");
   const [lastReadAt, setLastReadAt] = useState(0);
+  const [draftsByDay, setDraftsByDay] = useState<Record<string, string>>({});
   const [retrySequence, setRetrySequence] = useState(0);
   const [typingUsers, setTypingUsers] = useState<ChatTyper[]>([]);
   const requestIdRef = useRef(0);
@@ -157,6 +161,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     pendingSendRef.current = null;
     setImageUploadProgress(null);
+    setDraftsByDay({});
   }, [churchId]);
 
   const postTypingState = useCallback(
@@ -216,6 +221,16 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     stopTyping();
     setIsOpen(false);
   }, [stopTyping]);
+
+  const setDraftForDay = useCallback((dayKey: string, draft: string) => {
+    setDraftsByDay((current) => {
+      if (current[dayKey] === draft) return current;
+      if (draft) return { ...current, [dayKey]: draft };
+      const next = { ...current };
+      delete next[dayKey];
+      return next;
+    });
+  }, []);
 
   useEffect(
     () => () => {
@@ -713,15 +728,6 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     ).length
     : 0;
 
-  useEffect(() => {
-    if (!isOpen || !context || selectedDayKey !== context.todayKey) return;
-    const latest = todayMessages.at(-1)?.createdAt || Date.now();
-    if (latest <= lastReadAt) return;
-    const readKey = `worshipsync-chat-read:${churchId}:${context.actorId}`;
-    localStorage.setItem(readKey, String(latest));
-    setLastReadAt(latest);
-  }, [churchId, context, isOpen, lastReadAt, selectedDayKey, todayMessages]);
-
   const markReadThrough = useCallback(
     (createdAt: number) => {
       if (!churchId || !context || !createdAt) return;
@@ -898,6 +904,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       },
       connectionStatus,
       unreadCount,
+      markReadThrough,
+      draftsByDay,
+      setDraftForDay,
       typingUsers:
         context && selectedDayKey === context.todayKey ? typingUsers : [],
       updateTypingDraft,
@@ -910,6 +919,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       connectionStatus,
       closeChat,
       context,
+      draftsByDay,
       eligible,
       error,
       hasMoreByDay,
@@ -918,10 +928,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       isSending,
       imageUploadProgress,
       loadDay,
+      markReadThrough,
       messagesByDay,
       openChat,
       selectedDayKey,
       selectDay,
+      setDraftForDay,
       sendMessage,
       editMessage,
       removeMessage,

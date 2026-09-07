@@ -281,7 +281,7 @@ const HistorySuggestField = ({
       }}
     >
       <PopoverAnchor asChild>
-        <div ref={anchorRef} className="relative flex flex-col gap-1">
+        <div ref={anchorRef} className="relative flex w-full min-w-0 flex-col gap-1">
           {multiline ? (
             <TextArea
               ref={textAreaRef}
@@ -356,27 +356,27 @@ const HistorySuggestField = ({
                 <span className="text-white">{s}</span>
                 {onRemoveHistoryValue &&
                   (!isHistoryValueRemovable || isHistoryValueRemovable(s)) && (
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    svg={X}
-                    className="text-xs text-red-400 hover:text-red-200 min-w-0"
-                    padding="p-0"
-                    aria-label={`Remove "${s}" from history`}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onRemoveHistoryValue(s);
-                      const removedIndex = suggestions.indexOf(s);
-                      setSuggestions((prev) => prev.filter((x) => x !== s));
-                      setActiveSuggestionIndex((prev) => {
-                        if (prev == null) return null;
-                        if (removedIndex === prev) return null;
-                        return removedIndex < prev ? prev - 1 : prev;
-                      });
-                    }}
-                  />
-                )}
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={X}
+                      className="text-xs text-red-400 hover:text-red-200 min-w-0"
+                      padding="p-0"
+                      aria-label={`Remove "${s}" from history`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onRemoveHistoryValue(s);
+                        const removedIndex = suggestions.indexOf(s);
+                        setSuggestions((prev) => prev.filter((x) => x !== s));
+                        setActiveSuggestionIndex((prev) => {
+                          if (prev == null) return null;
+                          if (removedIndex === prev) return null;
+                          return removedIndex < prev ? prev - 1 : prev;
+                        });
+                      }}
+                    />
+                  )}
               </div>
             </li>
           ))}

@@ -59,12 +59,8 @@ describe("LyricSectionTools", () => {
       />,
     );
 
-    fireEvent.change(
-      screen.getByRole("combobox", { name: /add empty section/i }),
-      {
-        target: { value: "Bridge" },
-      },
-    );
+    fireEvent.click(screen.getByRole("button", { name: /add empty section/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Bridge" }));
 
     expect(onAddEmptySection).toHaveBeenCalledWith("Bridge");
   });
@@ -131,7 +127,9 @@ describe("LyricSectionTools", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /add from lyrics/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /add lyric sections/i }),
+    );
 
     fireEvent.change(screen.getByLabelText(/^lyrics:/i), {
       target: { value: "Praises (Only You)\nMore lines" },

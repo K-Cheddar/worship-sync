@@ -48,4 +48,43 @@ describe("SongAudioPlayer", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Sign in again.");
   });
+
+  it("expands compact mode into full-width native controls after play", async () => {
+    const onGetUrl = jest.fn().mockResolvedValue("https://audio.example/signed");
+    const play = jest
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+
+    render(
+      <SongAudioPlayer
+        audio={audio}
+        onGetUrl={onGetUrl}
+        compact
+        showFileDetails={false}
+        showDownload={false}
+        className="border-0 bg-transparent p-0"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Play rehearsal.mp3")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+
+    const playerGroup = await screen.findByRole("group", {
+      name: "Reference audio for rehearsal.mp3",
+    });
+    expect(playerGroup.className).toMatch(/basis-full/);
+    const player = screen.getByLabelText("Play rehearsal.mp3");
+    expect(player).toHaveAttribute("src", "https://audio.example/signed");
+    expect(player).toHaveAttribute("controls");
+    expect(player.className).toMatch(/h-11/);
+    expect(screen.queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(play).toHaveBeenCalled();
+    });
+
+    play.mockRestore();
+  });
 });

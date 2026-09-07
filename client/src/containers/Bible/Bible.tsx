@@ -906,16 +906,17 @@ const Bible = () => {
             </p>
           </div>
         )}
-        <div className="flex gap-4 items-end flex-wrap">
+        <div className="flex min-w-0 gap-4 items-center flex-wrap">
           <Select
             value={version}
             onChange={(val) => dispatch(setVersion(val))}
             label="Version"
-            className="max-lg:w-full flex justify-center"
+            className="shrink-0 max-lg:w-full flex justify-center"
+            selectClassName="w-72 max-lg:w-full"
             hideLabel
             options={bibleVersions}
           />
-          <div className="flex gap-2 items-center">
+          <div className="flex min-w-0 flex-1 gap-2 items-center">
             <Input
               svg={search ? X : undefined}
               svgAction={() => handleSearch("")}
@@ -929,7 +930,7 @@ const Bible = () => {
                 }
               }}
               label="Search"
-              className="max-lg:w-full flex justify-center gap-2 items-center"
+              className="min-w-0 flex-1 max-lg:w-full flex justify-center gap-2 items-center"
               placeholder="Gen 3:15"
               svgPadding="max-lg:p-1 lg:p-0"
             />

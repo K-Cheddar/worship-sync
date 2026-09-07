@@ -223,7 +223,7 @@ const Input = ({
     <span className={inputWrapClassName}>
       <UIInput
         className={cn(
-          "peer py-1 pl-2 shadow-none",
+          "peer py-0 pl-2 shadow-none",
           inputTextSize,
           inputWidth,
           hideSpinButtons &&

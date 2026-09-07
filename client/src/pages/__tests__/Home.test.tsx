@@ -156,6 +156,31 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
+  it("shows a pending state on a home card before navigation completes", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const overlayLink = screen.getByRole("link", {
+      name: /Overlay Controller/i,
+    });
+    expect(overlayLink).toHaveAttribute("aria-busy", "false");
+
+    await user.click(overlayLink);
+
+    expect(overlayLink).toHaveAttribute("aria-busy", "true");
+    expect(overlayLink).toHaveClass("ring-2", "ring-orange-400/40");
+  });
+
   it("offers install app and desktop download from the menu when both are available", async () => {
     const user = userEvent.setup();
     const installPwa = jest.fn().mockResolvedValue(undefined);

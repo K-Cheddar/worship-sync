@@ -101,7 +101,7 @@ const Modal = ({
                   "bg-gray-800",
                   size === "full"
                     ? "h-full rounded-none"
-                    : "w-fit max-w-full rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
+                    : "rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
                 )
             )}
           >

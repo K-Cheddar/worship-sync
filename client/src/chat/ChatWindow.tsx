@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { UIEvent } from "react";
+import {
+  ArrowDown,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -48,6 +57,17 @@ const typingLabel = (names: string[]) => {
   return "Several teammates are typing";
 };
 
+const getDateParts = (
+  formatter: Intl.DateTimeFormat,
+  timestamp: number,
+) => {
+  const parts = formatter.formatToParts(new Date(timestamp));
+  return parts.reduce<Record<string, string>>((values, part) => {
+    if (part.type !== "literal") values[part.type] = part.value;
+    return values;
+  }, {});
+};
+
 const ChatMessageRow = ({
   message,
   canMutate,
@@ -63,6 +83,7 @@ const ChatMessageRow = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.text);
   const [showReactions, setShowReactions] = useState(false);
+  const [showMessageActions, setShowMessageActions] = useState(false);
   if (!chat?.context) return null;
 
   const isOwn = message.authorId === chat.context.actorId;
@@ -199,7 +220,7 @@ const ChatMessageRow = ({
                 variant="tertiary"
                 svg={SmilePlus}
                 iconSize="xs"
-                className="rounded-full max-md:!min-h-8"
+                className="rounded-full max-md:!min-h-8 max-md:!min-w-8"
                 aria-label="Add a reaction"
               />
             </PopoverTrigger>
@@ -228,24 +249,56 @@ const ChatMessageRow = ({
             </PopoverContent>
           </Popover>
           {isOwn ? (
-            <>
-              <Button
-                variant="tertiary"
-                svg={Pencil}
-                iconSize="xs"
-                className="rounded-full max-md:!min-h-8"
-                aria-label="Edit message"
-                onClick={() => setIsEditing(true)}
-              />
-              <Button
-                variant="tertiary"
-                svg={Trash2}
-                iconSize="xs"
-                className="rounded-full max-md:!min-h-8"
-                aria-label="Remove message"
-                onClick={() => void chat.removeMessage(message.messageId)}
-              />
-            </>
+            <Popover
+              open={showMessageActions}
+              onOpenChange={setShowMessageActions}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  variant="tertiary"
+                  svg={MoreVertical}
+                  iconSize="xs"
+                  className="rounded-full max-md:!min-h-8 max-md:!min-w-8"
+                  aria-label="Message actions"
+                />
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                side="top"
+                className="z-[10000] w-40 border-gray-700 bg-gray-800 p-1 text-gray-100"
+                aria-label="Message actions"
+              >
+                <div className="flex flex-col gap-0.5">
+                  <Button
+                    variant="tertiary"
+                    svg={Pencil}
+                    iconSize="xs"
+                    className="w-full justify-start text-xs max-md:!min-h-8"
+                    aria-label="Edit message"
+                    onClick={() => {
+                      setShowMessageActions(false);
+                      setIsEditing(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="tertiary"
+                    svg={Trash2}
+                    iconSize="xs"
+                    color="#f87171"
+                    className="w-full justify-start text-xs text-red-300 max-md:!min-h-8"
+                    aria-label="Remove message"
+                    onClick={() => {
+                      setShowMessageActions(false);
+                      void chat.removeMessage(message.messageId);
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
           ) : null}
         </div>
       ) : null}
@@ -270,16 +323,25 @@ const ChatMessageRow = ({
 
 const ChatWindow = () => {
   const chat = useChat();
-  const [draft, setDraft] = useState("");
   const [showComposerEmojis, setShowComposerEmojis] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [draft, setDraft] = useState(() =>
+    chat?.draftsByDay[chat.selectedDayKey] || "",
+  );
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [selectedImageUrl, setSelectedImageUrl] = useState("");
   const [imageError, setImageError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const latestMessageIdRef = useRef<string | undefined>(undefined);
+  const previousSelectedDayRef = useRef<string | undefined>(undefined);
+  const isNearBottomRef = useRef(true);
+  const messageDayRefs = useRef(new Map<string, HTMLDivElement>());
   const imageInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const updateTypingDraft = chat?.updateTypingDraft;
+  const [showNewMessages, setShowNewMessages] = useState(false);
+  const [visibleMessageDay, setVisibleMessageDay] = useState("");
 
   const isCurrentWeek = Boolean(
     chat?.context && chat.selectedDayKey === chat.context.todayKey,
@@ -301,12 +363,58 @@ const ChatWindow = () => {
         chat.selectedDayKey,
         chat.context.todayKey,
         chat.context.timeZone,
-      )
+        )
+      : "";
+  const typingStatusLabel =
+    isCurrentWeek && chat?.typingUsers.length
+      ? typingLabel(chat.typingUsers.map((typer) => typer.name))
       : "";
 
   useEffect(() => {
-    if (isCurrentWeek) endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [chat?.messages.length, chat?.typingUsers.length, isCurrentWeek]);
+    setDraft(chat?.draftsByDay[chat.selectedDayKey] || "");
+  }, [chat?.draftsByDay, chat?.selectedDayKey]);
+
+  useEffect(() => {
+    const latestMessageId = chat?.messages.at(-1)?.messageId;
+    const latestMessageChanged = latestMessageId !== latestMessageIdRef.current;
+    const selectedDayChanged =
+      chat?.selectedDayKey !== previousSelectedDayRef.current;
+    latestMessageIdRef.current = latestMessageId;
+    previousSelectedDayRef.current = chat?.selectedDayKey;
+
+    if (!isCurrentWeek || (!latestMessageChanged && !selectedDayChanged)) return;
+    if (selectedDayChanged || isNearBottomRef.current) {
+      endRef.current?.scrollIntoView({ block: "nearest" });
+    } else {
+      setShowNewMessages(true);
+    }
+  }, [chat?.messages, isCurrentWeek, chat?.selectedDayKey]);
+
+  useEffect(() => {
+    if (!isCurrentWeek || !isNearBottomRef.current) return;
+    const latestMessage = chat?.messages.at(-1);
+    if (latestMessage) chat.markReadThrough(latestMessage.createdAt);
+  }, [chat, chat?.messages, chat?.markReadThrough, isCurrentWeek]);
+
+  const handleMessagesScroll = (event: UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight <= 48;
+    isNearBottomRef.current = isNearBottom;
+    if (isNearBottom) {
+      setShowNewMessages(false);
+      const latestMessage = chat?.messages.at(-1);
+      if (latestMessage) chat.markReadThrough(latestMessage.createdAt);
+    }
+    updateVisibleMessageDay();
+  };
+
+  const scrollToLatest = () => {
+    isNearBottomRef.current = true;
+    setShowNewMessages(false);
+    const latestMessage = chat?.messages.at(-1);
+    if (latestMessage) chat.markReadThrough(latestMessage.createdAt);
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
 
   useEffect(
     () => () => {
@@ -346,6 +454,58 @@ const ChatWindow = () => {
     };
   }, [showComposerEmojis]);
 
+  const messageTimeZone = chat?.context?.timeZone || "UTC";
+  const messageDayFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        timeZone: messageTimeZone,
+      }),
+    [messageTimeZone],
+  );
+  const messageDayKeyFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        timeZone: messageTimeZone,
+      }),
+    [messageTimeZone],
+  );
+
+  const updateVisibleMessageDay = useCallback(() => {
+    const container = messagesContainerRef.current;
+    const firstMessage = chat?.messages[0];
+    if (!container || !firstMessage) {
+      setVisibleMessageDay("");
+      return;
+    }
+
+    const containerTop = container.getBoundingClientRect().top;
+    let activeMessage = firstMessage;
+    for (const message of chat.messages) {
+      const dateParts = getDateParts(messageDayKeyFormatter, message.createdAt);
+      const dateKey = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+      const separator = messageDayRefs.current.get(dateKey);
+      if (!separator || separator.getBoundingClientRect().top > containerTop + 40) {
+        break;
+      }
+      activeMessage = message;
+    }
+
+    setVisibleMessageDay(
+      messageDayFormatter.format(new Date(activeMessage.createdAt)),
+    );
+  }, [chat?.messages, messageDayFormatter, messageDayKeyFormatter]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(updateVisibleMessageDay);
+    return () => cancelAnimationFrame(frame);
+  }, [chat?.messages, updateVisibleMessageDay]);
+
   if (!chat?.context) {
     const blockingError = chat?.error
       ? operatorFacingError(chat.error, false)
@@ -368,6 +528,7 @@ const ChatWindow = () => {
     const sent = await chat.sendMessage(draft, selectedImage || undefined);
     if (sent) {
       setDraft("");
+      chat.setDraftForDay(chat.selectedDayKey, "");
       setSelectedImage(null);
       setImageError("");
       setShowComposerEmojis(false);
@@ -390,6 +551,7 @@ const ChatWindow = () => {
 
   const updateDraft = (value: string) => {
     setDraft(value);
+    chat.setDraftForDay(chat.selectedDayKey, value);
     chat.updateTypingDraft(Boolean(value.trim()));
   };
 
@@ -405,11 +567,28 @@ const ChatWindow = () => {
   return (
     <div className="flex h-full min-h-0 flex-col bg-gray-900 text-white">
       <div className="flex shrink-0 items-center gap-2 border-b border-gray-700 px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-white">{dayLabel}</p>
-          <p className="truncate text-[11px] text-gray-400">
-            {isCurrentWeek ? "Team messages" : "History · read-only"}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <p className="shrink-0 truncate text-sm font-medium text-white">
+            {dayLabel}
           </p>
+          {typingStatusLabel ? (
+            <div
+              className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-cyan-300"
+              role="status"
+              aria-label={typingStatusLabel}
+            >
+              <span className="truncate">{typingStatusLabel}</span>
+              <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
+                <span className="size-1 animate-pulse rounded-full bg-cyan-300" />
+                <span className="size-1 animate-pulse rounded-full bg-cyan-300 [animation-delay:150ms]" />
+                <span className="size-1 animate-pulse rounded-full bg-cyan-300 [animation-delay:300ms]" />
+              </span>
+            </div>
+          ) : !isCurrentWeek ? (
+            <span className="truncate text-[11px] text-gray-400">
+              History · read-only
+            </span>
+          ) : null}
         </div>
         <span
           className={cn(
@@ -522,11 +701,20 @@ const ChatWindow = () => {
       ) : null}
 
       <div
-        className="scrollbar-variable flex min-h-0 flex-1 flex-col overflow-y-auto bg-gray-900 px-3 py-2"
+        ref={messagesContainerRef}
+        onScroll={handleMessagesScroll}
+        className="scrollbar-variable relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-gray-900 px-3 py-2"
         role="log"
         aria-label="Team chat messages"
         aria-live="polite"
       >
+        {visibleMessageDay ? (
+          <div className="pointer-events-none sticky top-2 z-20 flex justify-center">
+            <span className="rounded-full bg-gray-700/95 px-3 py-1 text-[11px] font-medium text-gray-200 shadow-lg ring-1 ring-gray-600/80">
+              {visibleMessageDay}
+            </span>
+          </div>
+        ) : null}
         {chat.hasMore ? (
           <Button
             variant="tertiary"
@@ -546,40 +734,75 @@ const ChatWindow = () => {
         ) : null}
         {chat.messages.map((message, index) => {
           const group = getChatMessageGroupPosition(chat.messages, index);
+          const currentDateParts = getDateParts(
+            messageDayKeyFormatter,
+            message.createdAt,
+          );
+          const currentDateKey = `${currentDateParts.year}-${currentDateParts.month}-${currentDateParts.day}`;
+          const previousDateParts =
+            index > 0
+              ? getDateParts(
+                messageDayKeyFormatter,
+                chat.messages[index - 1].createdAt,
+              )
+              : null;
+          const previousDateKey = previousDateParts
+            ? `${previousDateParts.year}-${previousDateParts.month}-${previousDateParts.day}`
+            : "";
+          const showDaySeparator = currentDateKey !== previousDateKey;
+
           return (
-            <ChatMessageRow
-              key={message.messageId}
-              message={message}
-              canMutate={isCurrentWeek}
-              startsGroup={group.startsGroup}
-              endsGroup={group.endsGroup}
-            />
+            <Fragment key={message.messageId}>
+              {showDaySeparator ? (
+                <div
+                  className="my-3 flex items-center gap-2 px-2"
+                  role="separator"
+                  ref={(element) => {
+                    if (element) {
+                      messageDayRefs.current.set(currentDateKey, element);
+                    } else {
+                      messageDayRefs.current.delete(currentDateKey);
+                    }
+                  }}
+                  aria-label={messageDayFormatter.format(
+                    new Date(message.createdAt),
+                  )}
+                >
+                  <div className="h-px flex-1 bg-gray-700" />
+                  <span className="text-[11px] font-medium text-gray-400">
+                    {messageDayFormatter.format(new Date(message.createdAt))}
+                  </span>
+                  <div className="h-px flex-1 bg-gray-700" />
+                </div>
+              ) : null}
+              <ChatMessageRow
+                message={message}
+                canMutate={isCurrentWeek}
+                startsGroup={group.startsGroup}
+                endsGroup={group.endsGroup}
+              />
+            </Fragment>
           );
         })}
         <div ref={endRef} />
+        {showNewMessages ? (
+          <div className="sticky bottom-2 z-10 flex justify-center">
+            <Button
+              variant="secondary"
+              svg={ArrowDown}
+              iconSize="sm"
+              className="text-xs shadow-lg"
+              onClick={scrollToLatest}
+            >
+              New messages
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="shrink-0 border-t border-gray-700 bg-gray-800 p-2">
         {isCurrentWeek ? (
           <div ref={composerRef}>
-            {chat.typingUsers.length ? (
-              <div
-                className="mb-1.5 flex min-h-5 items-center gap-1.5 px-2 text-xs text-cyan-300"
-                role="status"
-                aria-label={typingLabel(
-                  chat.typingUsers.map((typer) => typer.name),
-                )}
-              >
-                <span>
-                  {typingLabel(chat.typingUsers.map((typer) => typer.name))}
-                </span>
-                <span className="flex items-center gap-0.5" aria-hidden="true">
-                  <span className="size-1 animate-pulse rounded-full bg-cyan-300" />
-                  <span className="size-1 animate-pulse rounded-full bg-cyan-300 [animation-delay:150ms]" />
-                  <span className="size-1 animate-pulse rounded-full bg-cyan-300 [animation-delay:300ms]" />
-                </span>
-              </div>
-            ) : null}
             {selectedImage && selectedImageUrl ? (
               <div className="mb-2 flex items-center gap-2 rounded-lg bg-gray-900 p-2">
                 <img
@@ -691,7 +914,7 @@ const ChatWindow = () => {
                   autoResize
                   rows={1}
                   className="min-w-0 flex-1"
-                  textareaClassName="max-h-28 min-h-0 border-0 bg-transparent px-2 py-2.5 leading-5 shadow-none focus-visible:ring-0"
+                  textareaClassName="max-h-28 min-h-0 overflow-y-auto border-0 bg-transparent px-2 py-2.5 leading-5 shadow-none focus-visible:ring-0"
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
