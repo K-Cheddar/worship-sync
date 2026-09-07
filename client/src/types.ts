@@ -913,6 +913,14 @@ export type DBAllItems = {
   docType?: DocType;
 };
 
+export type CanvaMediaSource = {
+  designId: string;
+  designTitle: string;
+  revision: number;
+  format: "png" | "mp4";
+  pageNumbers: number[];
+};
+
 export type MediaType = {
   path: string;
   createdAt: string;
@@ -935,6 +943,8 @@ export type MediaType = {
   muxAssetId?: string;
   /** Stable identity for an asset copied from Canva. */
   canvaImportKey?: string;
+  /** Source metadata used to check and refresh Canva imports. */
+  canvaSource?: CanvaMediaSource;
   /** App media library folder; root / unset = null */
   folderId?: string | null;
 };

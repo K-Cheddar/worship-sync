@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Folder } from "lucide-react";
+import { ExternalLink, Folder } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import { DBMedia, MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -44,6 +44,7 @@ import {
   buildMediaActionRouteFlags,
   buildMediaLibraryBarActions,
 } from "./mediaLibraryActions";
+import { getCanvaMediaSource } from "./canvaMediaSource";
 import {
   formatMediaDimensionsLine,
   mediaLibraryDisplayName,
@@ -79,11 +80,13 @@ export type MediaLibraryVariant = "default" | "panel";
 export type UseMediaLibraryControllerArgs = {
   variant?: MediaLibraryVariant;
   pageMode?: MediaLibraryPageMode;
+  onManageCanvaSource?: (media: MediaType) => void;
 };
 
 export function useMediaLibraryController({
   variant = "default",
   pageMode = "default",
+  onManageCanvaSource,
 }: UseMediaLibraryControllerArgs = {}) {
   const dispatch = useDispatch();
   const location = useLocation();
@@ -551,8 +554,8 @@ export function useMediaLibraryController({
   );
 
   const mediaBarActions = useMemo(
-    () =>
-      buildMediaLibraryBarActions({
+    () => {
+      const actions = buildMediaLibraryBarActions({
         flags: routeFlags,
         db,
         isLoading: Boolean(isLoading),
@@ -582,7 +585,21 @@ export function useMediaLibraryController({
             : undefined,
         notify: notifyMediaAction,
         onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
-      }),
+      });
+      if (
+        selectedMediaIds.size === 1 &&
+        getCanvaMediaSource(selectedMedia) &&
+        onManageCanvaSource
+      ) {
+        actions.push({
+          id: "manage-canva-source",
+          label: "Manage Canva source",
+          icon: <ExternalLink className="size-4" />,
+          onClick: () => onManageCanvaSource(selectedMedia),
+        });
+      }
+      return actions;
+    },
     [
       routeFlags,
       db,
@@ -599,6 +616,7 @@ export function useMediaLibraryController({
       handleCreateCustomItemFromMedia,
       notifyMediaAction,
       triggerSlideBackgroundFeedback,
+      onManageCanvaSource,
     ],
   );
 
@@ -1021,6 +1039,7 @@ export function useMediaLibraryController({
     duration,
     is_audio,
     canvaImportKey,
+    canvaSource,
   }: mediaInfoType) => {
     if (isGuestSession) {
       notifyMediaAction(
@@ -1071,6 +1090,7 @@ export function useMediaLibraryController({
       source: "cloudinary",
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
+      ...(canvaSource ? { canvaSource } : {}),
     };
 
     dispatch(addItemToMediaList(newMedia));
@@ -1083,6 +1103,7 @@ export function useMediaLibraryController({
     thumbnailUrl,
     name,
     canvaImportKey,
+    canvaSource,
   }: MuxUploadResult) => {
     if (isGuestSession) {
       notifyMediaAction(
@@ -1119,10 +1140,71 @@ export function useMediaLibraryController({
       muxAssetId: assetId,
       folderId: uploadTargetFolderId,
       ...(canvaImportKey ? { canvaImportKey } : {}),
+      ...(canvaSource ? { canvaSource } : {}),
     };
 
     dispatch(addItemToMediaList(newMedia));
   };
+
+  const refreshCanvaImage = useCallback(
+    (info: mediaInfoType, mediaId: string) => {
+      const current = list.find((mediaItem) => mediaItem.id === mediaId);
+      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      const thumbnail =
+        cloud?.image(info.public_id).resize(fill().width(250)).toURL() ||
+        info.thumbnail_url ||
+        info.secure_url;
+      dispatch(
+        updateMediaItemFields({
+          id: mediaId,
+          patch: {
+            updatedAt: new Date().toISOString(),
+            format: info.format,
+            height: info.height,
+            width: info.width,
+            publicId: info.public_id,
+            type: "image",
+            background: info.secure_url,
+            thumbnail,
+            placeholderImage: "",
+            source: "cloudinary",
+            canvaImportKey: info.canvaImportKey,
+            canvaSource: info.canvaSource,
+          },
+        }),
+      );
+    },
+    [cloud, dispatch, list],
+  );
+
+  const refreshCanvaVideo = useCallback(
+    (info: MuxUploadResult, mediaId: string) => {
+      const current = list.find((mediaItem) => mediaItem.id === mediaId);
+      if (!current || !info.canvaImportKey || !info.canvaSource) return;
+      dispatch(
+        updateMediaItemFields({
+          id: mediaId,
+          patch: {
+            updatedAt: new Date().toISOString(),
+            format: "m3u8",
+            height: current.height || 1920,
+            width: current.width || 1080,
+            publicId: info.playbackId,
+            type: "video",
+            background: info.playbackUrl,
+            thumbnail: info.thumbnailUrl,
+            placeholderImage: info.thumbnailUrl,
+            source: "mux",
+            muxPlaybackId: info.playbackId,
+            muxAssetId: info.assetId,
+            canvaImportKey: info.canvaImportKey,
+            canvaSource: info.canvaSource,
+          },
+        }),
+      );
+    },
+    [dispatch, list],
+  );
 
   const requestMediaUpload = useCallback(() => {
     if (isGuestSession) {
@@ -1218,6 +1300,8 @@ export function useMediaLibraryController({
     requestMediaUpload,
     addNewBackground,
     addMuxVideo,
+    refreshCanvaImage,
+    refreshCanvaVideo,
     handleUploadActiveChange,
     isMediaLoading,
     hasMediaLoadError,

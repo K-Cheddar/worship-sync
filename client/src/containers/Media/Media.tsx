@@ -35,7 +35,7 @@ import MediaModal from "./MediaModal";
 import MediaProviderRetryModal from "./MediaProviderRetryModal";
 import MediaLibraryGrid from "./MediaLibraryGrid";
 import { useMediaLibraryController } from "./useMediaLibraryController";
-import type { MediaFolder } from "../../types";
+import type { MediaFolder, MediaType } from "../../types";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import {
   DropdownMenu,
@@ -56,7 +56,19 @@ type MediaProps = {
 
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
-  const c = useMediaLibraryController({ variant, pageMode });
+  const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
+  const [canvaSourceMedia, setCanvaSourceMedia] = useState<MediaType | null>(
+    null,
+  );
+  const openCanva = useCallback((sourceMedia?: MediaType) => {
+    setCanvaSourceMedia(sourceMedia || null);
+    setIsCanvaImportOpen(true);
+  }, []);
+  const c = useMediaLibraryController({
+    variant,
+    pageMode,
+    onManageCanvaSource: openCanva,
+  });
   const { showAll, navigateToFolder } = c;
 
   const selectedCount = c.selectedMediaIds.size;
@@ -65,7 +77,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
-  const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
 
   const handleNewFolderCreated = useCallback(
     (nf: MediaFolder) => {
@@ -157,7 +168,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={c.isGuestSession || c.isMediaReadOnly}
-                  onSelect={() => setIsCanvaImportOpen(true)}
+                  onSelect={() => openCanva()}
                 >
                   <ImageUp /> Import from Canva
                 </DropdownMenuItem>
@@ -386,15 +397,21 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaUploadInputRef={c.mediaUploadInputRef}
           uploadProgress={c.uploadProgress}
           onAddMediaClick={c.requestMediaUpload}
-          onImportFromCanva={() => setIsCanvaImportOpen(true)}
+          onImportFromCanva={openCanva}
           mediaUploadDisabled={c.isGuestSession || c.isMediaReadOnly}
         />
         <CanvaImportSheet
           open={isCanvaImportOpen}
-          onOpenChange={setIsCanvaImportOpen}
+          onOpenChange={(open) => {
+            setIsCanvaImportOpen(open);
+            if (!open) setCanvaSourceMedia(null);
+          }}
           onImageComplete={c.addNewBackground}
           onVideoComplete={c.addMuxVideo}
+          onImageRefresh={c.refreshCanvaImage}
+          onVideoRefresh={c.refreshCanvaVideo}
           existingMedia={c.list}
+          sourceMedia={canvaSourceMedia}
         />
         {selectedCount === 1 && c.mediaRenameOpen ? (
           <FloatingWindow

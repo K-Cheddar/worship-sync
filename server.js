@@ -1931,6 +1931,19 @@ app.get("/api/churches/:churchId/canva/designs", async (req, res) => {
   }
 });
 
+app.get("/api/churches/:churchId/canva/designs/:designId", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.getDesign({
+        churchId: req.params.churchId,
+        designId: req.params.designId,
+      }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error loading Canva design:", error);
+  }
+});
+
 app.post(
   "/api/churches/:churchId/canva/imports",
   requireMutationCsrf,

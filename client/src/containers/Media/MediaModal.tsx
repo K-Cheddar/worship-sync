@@ -25,6 +25,7 @@ import {
   Folder,
   ZoomIn,
   ZoomOut,
+  ExternalLink,
 } from "lucide-react";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -64,6 +65,7 @@ import {
   buildMediaActionRouteFlags,
   buildMediaLibraryBarActions,
 } from "./mediaLibraryActions";
+import { getCanvaMediaSource } from "./canvaMediaSource";
 import { formatMediaDimensionsLine, summarizeMultiSelectMetadata } from "./mediaLibraryMeta";
 import {
   MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
@@ -162,7 +164,7 @@ type MediaModalProps = {
   uploadProgress?: { isUploading: boolean; progress: number };
   /** When set, Add Media uses this instead of opening the ref directly (e.g. guest guard + toast). */
   onAddMediaClick?: () => void;
-  onImportFromCanva?: () => void;
+  onImportFromCanva?: (sourceMedia?: MediaType) => void;
   /** When true, Add Media shows the guest-mode tooltip (upload still routes through `onAddMediaClick`). */
   mediaUploadDisabled?: boolean;
 };
@@ -277,7 +279,7 @@ const MediaModal = ({
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={mediaUploadDisabled || !onImportFromCanva}
-          onSelect={onImportFromCanva}
+          onSelect={() => onImportFromCanva?.()}
         >
           <ImageUp /> Import from Canva
         </DropdownMenuItem>
@@ -561,8 +563,8 @@ const MediaModal = ({
   );
 
   const mediaBarActions = useMemo(
-    () =>
-      buildMediaLibraryBarActions({
+    () => {
+      const actions = buildMediaLibraryBarActions({
         flags: routeFlags,
         db,
         isLoading: Boolean(isLoading),
@@ -580,7 +582,21 @@ const MediaModal = ({
         itemSlideContext,
         notify: notifyMediaAction,
         onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
-      }),
+      });
+      if (
+        modalSelectedMediaIds.size === 1 &&
+        getCanvaMediaSource(modalSelectedMedia) &&
+        onImportFromCanva
+      ) {
+        actions.push({
+          id: "manage-canva-source",
+          label: "Manage Canva source",
+          icon: <ExternalLink className="size-4" />,
+          onClick: () => onImportFromCanva(modalSelectedMedia),
+        });
+      }
+      return actions;
+    },
     [
       routeFlags,
       db,
@@ -596,6 +612,7 @@ const MediaModal = ({
       itemSlideContext,
       notifyMediaAction,
       triggerSlideBackgroundFeedback,
+      onImportFromCanva,
     ],
   );
 
