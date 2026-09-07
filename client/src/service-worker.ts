@@ -88,21 +88,13 @@ registerRoute(
   })
 );
 
-// Auto-update: skip waiting immediately when new service worker is installed
-self.addEventListener("install", () => {
-  self.skipWaiting();
-});
-
-// Clean old precache caches from previous SW versions (registers its own activate listener)
+// Remove old precache caches only after an operator-approved update activates
+// this worker. The current app remains on its matching worker/cache until then.
 cleanupOutdatedCaches();
 
-// Auto-update: claim clients immediately when service worker activates
-self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
-});
-
-// This allows the web app to trigger skipWaiting via
-// registration.waiting.postMessage({type: 'SKIP_WAITING'})
+// An explicit refresh can activate a waiting worker at a safe point. Do not
+// skip waiting or claim clients automatically: mixing a live app shell with a
+// new cache can strand an unloaded lazy route after a deploy.
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();

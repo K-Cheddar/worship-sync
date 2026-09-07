@@ -73,10 +73,22 @@ import {
   createChatImageFinalizeGuard,
   createChatImageUploadGuard,
 } from "./server/chatImageUploadGuard.js";
+import { resolveMinimumSupportedWebVersion } from "./server/webUpdatePolicy.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
 dotenv.config();
+
+const minimumSupportedWebVersion = resolveMinimumSupportedWebVersion(
+  process.env.MIN_SUPPORTED_WEB_VERSION,
+  packageJson.version,
+);
+
+if (process.env.MIN_SUPPORTED_WEB_VERSION && !minimumSupportedWebVersion) {
+  console.error(
+    "Ignoring invalid MIN_SUPPORTED_WEB_VERSION; it must be a released version at or below this deployment.",
+  );
+}
 // Validate required environment variables
 const requiredEnvVars = [
   "AZURE_TENANT_ID",
@@ -2633,7 +2645,10 @@ app.get("/api/hello", (req, res) => {
 });
 
 app.get("/api/version", (req, res) => {
-  res.json({ version: packageJson.version });
+  res.json({
+    version: packageJson.version,
+    minSupportedWebVersion: minimumSupportedWebVersion,
+  });
 });
 
 app.post("/api/log", (req, res) => {

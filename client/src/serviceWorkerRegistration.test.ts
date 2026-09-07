@@ -40,7 +40,7 @@ describe("checkForUpdate", () => {
     });
   });
 
-  it("activates a waiting worker and reloads when control changes", async () => {
+  it("activates a waiting worker and reloads at the explicit refresh point", async () => {
     const registration = new MockServiceWorkerRegistration();
     const waitingWorker = new MockServiceWorker("installed");
     registration.waiting = waitingWorker as unknown as ServiceWorker;
@@ -62,7 +62,8 @@ describe("checkForUpdate", () => {
       type: "SKIP_WAITING",
     });
 
-    serviceWorkerContainer.dispatchEvent(new Event("controllerchange"));
+    waitingWorker.state = "activated";
+    waitingWorker.dispatchEvent(new Event("statechange"));
 
     await expect(updatePromise).resolves.toBe("updated");
   });
@@ -93,6 +94,10 @@ describe("checkForUpdate", () => {
     const registration = new MockServiceWorkerRegistration();
     const installingWorker = new MockServiceWorker("installing");
     const waitingWorker = new MockServiceWorker("installed");
+    waitingWorker.postMessage.mockImplementation(() => {
+      waitingWorker.state = "activated";
+      waitingWorker.dispatchEvent(new Event("statechange"));
+    });
     registration.installing = installingWorker as unknown as ServiceWorker;
 
     registration.update.mockImplementation(async () => {
@@ -111,16 +116,13 @@ describe("checkForUpdate", () => {
       value: serviceWorkerContainer,
     });
 
-    const updatePromise = serviceWorkerRegistration.checkForUpdate();
-    await Promise.resolve();
+    await expect(serviceWorkerRegistration.checkForUpdate()).resolves.toBe(
+      "updated",
+    );
 
     expect(waitingWorker.postMessage).toHaveBeenCalledWith({
       type: "SKIP_WAITING",
     });
-
-    serviceWorkerContainer.dispatchEvent(new Event("controllerchange"));
-
-    await expect(updatePromise).resolves.toBe("updated");
   });
 
   it("returns restartRequired when an update is found but does not take control", async () => {

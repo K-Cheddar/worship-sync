@@ -29,6 +29,7 @@ import { lazyRoute } from "./utils/lazyRoute";
 import { ChatProvider } from "./chat/ChatContext";
 import ChatWindowHost from "./chat/ChatWindowHost";
 import { getPageTitle } from "./utils/pageTitles";
+import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
 
 /**
  * Route-level code splitting.
@@ -254,9 +255,13 @@ const AppRoutes = () => {
   );
 
   return (
-    <ErrorBoundary>
-      <Suspense fallback={chunkFallback}>
-        <Routes>
+    <>
+      <WebUpdateCoordinator
+        isTransparentRoute={isTransparentDisplayRoute(location.pathname)}
+      />
+      <ErrorBoundary>
+        <Suspense fallback={chunkFallback}>
+          <Routes>
           <Route element={<ControllerContextWrapper />}>
             <Route path="/" element={<AppEntry />} />
             <Route
@@ -464,9 +469,10 @@ const AppRoutes = () => {
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </ErrorBoundary>
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
+    </>
   );
 };
 

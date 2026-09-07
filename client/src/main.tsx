@@ -44,24 +44,9 @@ root.render(
   </React.StrictMode>
 );
 
-// Register service worker
-serviceWorkerRegistration.register({
-  onUpdate: (registration) => {
-    // New SW is installed; it will activate soon (skipWaiting in SW).
-    // Reload once this page is controlled by the new SW so we run new code.
-    const onControllerChange = () => {
-      navigator.serviceWorker.removeEventListener(
-        "controllerchange",
-        onControllerChange
-      );
-      window.location.reload();
-    };
-    navigator.serviceWorker.addEventListener(
-      "controllerchange",
-      onControllerChange
-    );
-  },
-});
+// Register the worker without taking over an active operator session. A
+// downloaded update waits for the in-app safe-refresh flow.
+serviceWorkerRegistration.register();
 
 // If you want to start measuring performance in your app, pass a function
 // to log results (for example: reportWebVitals(console.log))

@@ -183,17 +183,32 @@ export const cacheChangelog = (version: string, changelog: string): void => {
 
 export const getBuildTimeVersion = () => versionInfo.version || "1.0.0";
 
+export type ServerVersionInfo = {
+  version: string;
+  minSupportedWebVersion: string | null;
+};
+
 /**
- * Fetch the app version from the server (single source of truth for deployed version).
+ * Fetch the deployed version and optional emergency minimum web version.
  * Returns null if the request fails (e.g. offline, CORS).
  */
-export const getServerVersion = async (): Promise<string | null> => {
+export const getServerVersionInfo = async (): Promise<ServerVersionInfo | null> => {
   try {
-    const response = await fetch(`${getApiBasePath()}api/version`);
+    const response = await fetch(`${getApiBasePath()}api/version`, {
+      cache: "no-store",
+    });
     if (!response.ok) return null;
-    const data = (await response.json()) as { version?: string };
-    return data.version ?? null;
+    const data = (await response.json()) as Partial<ServerVersionInfo>;
+    if (!data.version) return null;
+    return {
+      version: data.version,
+      minSupportedWebVersion: data.minSupportedWebVersion ?? null,
+    };
   } catch {
     return null;
   }
 };
+
+/** Backward-compatible shortcut for callers that only need the deployed version. */
+export const getServerVersion = async (): Promise<string | null> =>
+  (await getServerVersionInfo())?.version ?? null;
