@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronDown,
+  Copy,
   LayoutTemplate,
   MoreHorizontal,
   Pencil,
@@ -54,6 +55,7 @@ import {
   addElement,
   addSection,
   createEmptyServicePlanSections,
+  resolveServicePlanAddTarget,
 } from "./servicePlanDraftUtils";
 import {
   collectServicePlanRoleNoteOptions,
@@ -136,6 +138,7 @@ type ServicePlanTemplateEditorProps = {
    * reset the draft out from under the operator.
    */
   onSaved: (template: ServicePlanTemplate) => void;
+  onDuplicate?: (template: ServicePlanTemplateDraft) => void;
   onDeleted?: (templateId: string) => void;
 };
 
@@ -168,6 +171,7 @@ const ServicePlanTemplateEditor = ({
   onBack,
   backLabel = "Back to Templates",
   onSaved,
+  onDuplicate,
   onDeleted,
 }: ServicePlanTemplateEditorProps) => {
   const { showToast } = useToast();
@@ -178,7 +182,12 @@ const ServicePlanTemplateEditor = ({
   const [sections, setSections] = useState<ServicePlanSection[]>(
     template.sections,
   );
-  const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(null);
+  const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(
+    () =>
+      isNew && template.sections.length === 1
+        ? { sectionId: template.sections[0].id }
+        : null,
+  );
   // A new template opens ready to build; an existing one opens as a readable
   // outline, matching how the plan editor behaves.
   const [isEditing, setIsEditing] = useState(isNew && canEdit);
@@ -436,9 +445,7 @@ const ServicePlanTemplateEditor = ({
 
   const anchorStartTime = sections[0]?.elements?.[0]?.startTime || "";
   const itemCount = countServicePlanTemplateItems(sections);
-  const selectedPlanSection = sections.find(
-    (section) => section.id === selectedPlanTarget?.sectionId,
-  );
+  const planAddTarget = resolveServicePlanAddTarget(sections, selectedPlanTarget);
   const scheduledPositionOptions = useMemo<ServicePlanRoleNoteOption[]>(
     () => positions
       .filter((position) => !position.archivedAt)
@@ -610,6 +617,21 @@ const ServicePlanTemplateEditor = ({
                 {canEdit && savedTemplateId ? (
                   <>
                     <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                    {onDuplicate ? (
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          onDuplicate({
+                            templateId: savedTemplateId,
+                            name,
+                            serviceId: serviceId || undefined,
+                            sections,
+                          })
+                        }
+                      >
+                        <Copy aria-hidden />
+                        Copy template
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem
                       variant="destructive"
                       onSelect={() => setConfirmDelete(true)}
@@ -638,8 +660,8 @@ const ServicePlanTemplateEditor = ({
           hideNotes={hideNotes}
           microphones={microphones}
           microphoneAudiences={microphoneAudiences}
-            roleNoteOptions={roleNoteOptions}
-            scheduledPositionOptions={scheduledPositionOptions}
+          roleNoteOptions={roleNoteOptions}
+          scheduledPositionOptions={scheduledPositionOptions}
           teamNoteOptions={teamNoteOptions}
           header={
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
@@ -715,7 +737,7 @@ const ServicePlanTemplateEditor = ({
           </Sheet>
         ) : null}
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2">
           {canEdit && isEditing ? (
             <>
               <Button
@@ -724,10 +746,12 @@ const ServicePlanTemplateEditor = ({
                 svg={Plus}
                 iconSize="sm"
                 className="max-md:min-h-0"
-                disabled={!selectedPlanSection}
                 onClick={() =>
-                  selectedPlanSection
-                  && handleAddElement(selectedPlanSection.id, selectedPlanTarget?.elementId)
+                  planAddTarget &&
+                  handleAddElement(
+                    planAddTarget.sectionId,
+                    planAddTarget.insertAfterElementId,
+                  )
                 }
               >
                 Add item

@@ -11,6 +11,7 @@ import {
   cloneSectionsForTemplate,
   cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
+  resolveServicePlanAddTarget,
   moveElementToSection,
   moveElementToPosition,
   removeElement,
@@ -40,6 +41,40 @@ describe("createEmptyServicePlanSections", () => {
   });
 });
 
+describe("resolveServicePlanAddTarget", () => {
+  it("uses the selected section when it still exists", () => {
+    expect(
+      resolveServicePlanAddTarget([section("a"), section("b")], {
+        sectionId: "b",
+        elementId: "el-1",
+      }),
+    ).toEqual({ sectionId: "b", insertAfterElementId: "el-1" });
+  });
+
+  it("falls back to the last section when nothing is selected", () => {
+    expect(
+      resolveServicePlanAddTarget([section("a"), section("b")], null),
+    ).toEqual({
+      sectionId: "b",
+    });
+    expect(resolveServicePlanAddTarget([section("only")], null)).toEqual({
+      sectionId: "only",
+    });
+  });
+
+  it("falls back to the last section when the selection is stale", () => {
+    expect(
+      resolveServicePlanAddTarget([section("a"), section("b")], {
+        sectionId: "gone",
+      }),
+    ).toEqual({ sectionId: "b" });
+  });
+
+  it("returns null when there are no sections", () => {
+    expect(resolveServicePlanAddTarget([], null)).toBeNull();
+  });
+});
+
 describe("service-plan lead ordering", () => {
   it("derives the first named person and keeps microphone slots in place", () => {
     const assignees = [
@@ -49,7 +84,11 @@ describe("service-plan lead ordering", () => {
     ];
     expect(getServicePlanElementLead({ assignees })?.name).toBe("Alex");
     const promoted = promoteServicePlanAssignee(assignees, "two");
-    expect(promoted.map((assignee) => assignee.id)).toEqual(["mic", "two", "one"]);
+    expect(promoted.map((assignee) => assignee.id)).toEqual([
+      "mic",
+      "two",
+      "one",
+    ]);
   });
 });
 
@@ -155,17 +194,23 @@ describe("replaceMatchingPendingSongReferences", () => {
     };
     const sections = [
       section("service", {
-        elements: [{
-          id: "welcome",
-          type: "free",
-          title: plainTextToRichText("Welcome"),
-          sourceElementTypeRaw: "Song",
-          sourceSongReferenceDismissed: true,
-        }],
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            sourceElementTypeRaw: "Song",
+            sourceSongReferenceDismissed: true,
+          },
+        ],
       }),
     ];
 
-    const result = replaceMatchingPendingSongReferences(sections, target, replacement);
+    const result = replaceMatchingPendingSongReferences(
+      sections,
+      target,
+      replacement,
+    );
 
     expect(result[0].elements[0].songRefs).toBeUndefined();
     expect(result[0].elements[0].sourceSongReferenceDismissed).toBe(true);
@@ -182,11 +227,10 @@ describe("reorderSections", () => {
   });
 
   it("drops ids that no longer match a section", () => {
-    const sections = reorderSections([section("a"), section("b")], [
-      "b",
-      "missing",
-      "a",
-    ]);
+    const sections = reorderSections(
+      [section("a"), section("b")],
+      ["b", "missing", "a"],
+    );
     expect(sections.map((s) => s.id)).toEqual(["b", "a"]);
   });
 });
@@ -276,7 +320,11 @@ describe("reorderElementsInSection", () => {
 
 describe("moveElementToSection", () => {
   it("moves an element from one section to another, appended at the end", () => {
-    let sections = addElement([section("a"), section("b", { elements: [] })], "a", "song");
+    let sections = addElement(
+      [section("a"), section("b", { elements: [] })],
+      "a",
+      "song",
+    );
     sections = addElement(sections, "b", "announcement");
     const movedElement = sections[0].elements[0];
 
@@ -351,7 +399,11 @@ describe("cloneSectionsForTemplate", () => {
     let sections = addElement([section("a")], "a");
     const elementId = sections[0].elements[0].id;
     sections = updateElement(sections, "a", elementId, {
-      songRef: { kind: "library", songId: "song-1", songName: "Great Are You Lord" },
+      songRef: {
+        kind: "library",
+        songId: "song-1",
+        songName: "Great Are You Lord",
+      },
       assignees: [{ id: "assignee-1", name: "Jamie", memberId: "member-1" }],
       sourceLedByRaw: "Jamie",
       pushedOutlineListId: "list-item-1",

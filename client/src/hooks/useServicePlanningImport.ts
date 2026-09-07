@@ -297,10 +297,17 @@ export const useServicePlanningImport = () => {
             );
             if (template) {
               const newId = generateRandomId();
+              const { templatesByType, defaultTemplateIdsByType } =
+                store.getState().undoable.present.overlayTemplates;
               const built = buildClonedParticipantOverlay(
                 template,
                 cand.patch,
                 newId,
+                getConfiguredDefaultFormatting(
+                  "participant",
+                  templatesByType,
+                  defaultTemplateIdsByType,
+                ),
               );
               dispatch(
                 addExistingOverlayToList({
@@ -781,10 +788,17 @@ export const useServicePlanningImport = () => {
           setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
         );
         const newId = generateRandomId();
+        const { templatesByType, defaultTemplateIdsByType } =
+          store.getState().undoable.present.overlayTemplates;
         const built = buildClonedParticipantOverlay(
           template,
           step.patch,
           newId,
+          getConfiguredDefaultFormatting(
+            "participant",
+            templatesByType,
+            defaultTemplateIdsByType,
+          ),
         );
         await persistNewParticipantOverlayClone(
           db,

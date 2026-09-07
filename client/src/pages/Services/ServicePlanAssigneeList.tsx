@@ -231,12 +231,13 @@ export const DebouncedAssigneeNameField = ({
       multiline={false}
       // Give names room to remain readable before microphone chips wrap.
       className={cn(
-        compact ? "min-w-0 flex-1" : "min-w-[16rem] flex-1 sm:w-48 sm:min-w-0 sm:flex-none",
+        compact
+          ? "min-w-0 w-full flex-1"
+          : "min-w-[16rem] flex-1 sm:w-48 sm:min-w-0 sm:flex-none",
       )}
       inputClassName={cn(
         SERVICE_PLAN_INLINE_INPUT_CLASS,
-        compact && "rounded-none border-0",
-        "max-md:min-h-[2rem] max-md:text-sm",
+        compact && "h-full! max-h-full! min-h-0! rounded-none border-0 max-md:min-h-[2rem]!",
       )}
       value={draft.draftValue}
       onChange={draft.setDraftValue}
@@ -352,17 +353,17 @@ const ServicePlanAssigneeList = ({
             && itemHasMicrophones
             && !(assignee.microphoneIds || []).length;
 
-            return (
-              <div
-                key={assignee.id}
-                className={cn(
-                  "inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border px-2 py-1.5 md:w-auto md:gap-1 md:px-1.5 md:py-1",
-                  allowEdit ? "flex-wrap" : "flex-nowrap",
-                  isUnassigned
-                    ? "border-gray-700/50 bg-gray-900/40"
-                    : "border-gray-700/60 bg-gray-950/50",
-                )}
-              >
+          return (
+            <div
+              key={assignee.id}
+              className={cn(
+                "inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border px-2 py-1.5 md:w-auto md:gap-1 md:px-1.5 md:py-1",
+                allowEdit ? "flex-wrap" : "flex-nowrap",
+                isUnassigned
+                  ? "border-gray-700/50 bg-gray-900/40"
+                  : "border-gray-700/60 bg-gray-950/50",
+              )}
+            >
               <UserRound
                 className="size-3.5 shrink-0 text-gray-400"
                 aria-hidden
@@ -558,8 +559,8 @@ const ServicePlanAssigneeList = ({
                   }
                 />
               ) : null}
-              </div>
-            );
+            </div>
+          );
         })}
 
         {canAddPerson ? (

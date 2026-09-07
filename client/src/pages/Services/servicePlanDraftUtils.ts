@@ -34,6 +34,38 @@ export const createEmptyServicePlanSections = (): ServicePlanSection[] => [
   createEmptyServicePlanSection("Service"),
 ];
 
+/**
+ * Where the plan-level "Add item" control should insert.
+ * Prefer the operator's selection; otherwise append to the last section so the
+ * control stays usable without an extra pick.
+ */
+export type ServicePlanAddTarget = {
+  sectionId: string;
+  /** Present only when a specific item in that section is selected. */
+  insertAfterElementId?: string;
+};
+
+export const resolveServicePlanAddTarget = (
+  sections: ServicePlanSection[],
+  selection: { sectionId: string; elementId?: string } | null | undefined,
+): ServicePlanAddTarget | null => {
+  if (sections.length === 0) return null;
+  if (selection?.sectionId) {
+    const selected = sections.find(
+      (section) => section.id === selection.sectionId,
+    );
+    if (selected) {
+      return {
+        sectionId: selected.id,
+        ...(selection.elementId
+          ? { insertAfterElementId: selection.elementId }
+          : {}),
+      };
+    }
+  }
+  return { sectionId: sections[sections.length - 1].id };
+};
+
 export const addSection = (
   sections: ServicePlanSection[],
   name = "New section",
@@ -90,7 +122,9 @@ export const addElement = (
           elements: (() => {
             const nextElement = createEmptyServicePlanElement(type);
             const insertAfterIndex = insertAfterElementId
-              ? section.elements.findIndex((element) => element.id === insertAfterElementId)
+              ? section.elements.findIndex(
+                  (element) => element.id === insertAfterElementId,
+                )
               : -1;
             if (insertAfterIndex === -1) {
               return [...section.elements, nextElement];
@@ -170,7 +204,9 @@ export const replaceMatchingPendingSongReferences = (
         !element.sourceSongReferenceDismissed &&
         !songRefs.length &&
         (element.type === "song" ||
-          /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "")) &&
+          /\b(song|hymn|chorus|anthem)\b/i.test(
+            element.sourceElementTypeRaw || "",
+          )) &&
         cleanPlanningTitle(richTextToPlainText(element.title)) === target.title;
       let changed = false;
       const nextSongRefs = songRefs.map((songRef) => {
@@ -338,8 +374,12 @@ export const moveElementToPosition = (
   const element = source?.elements.find((item) => item.id === elementId);
   if (!source || !target || !element) return sections;
   const remaining = source.elements.filter((item) => item.id !== elementId);
-  const targetElements = fromSectionId === toSectionId ? remaining : target.elements;
-  const boundedIndex = Math.max(0, Math.min(targetIndex, targetElements.length));
+  const targetElements =
+    fromSectionId === toSectionId ? remaining : target.elements;
+  const boundedIndex = Math.max(
+    0,
+    Math.min(targetIndex, targetElements.length),
+  );
   const nextTargetElements = [
     ...targetElements.slice(0, boundedIndex),
     element,
@@ -349,8 +389,10 @@ export const moveElementToPosition = (
     if (section.id === fromSectionId && section.id === toSectionId) {
       return { ...section, elements: nextTargetElements };
     }
-    if (section.id === fromSectionId) return { ...section, elements: remaining };
-    if (section.id === toSectionId) return { ...section, elements: nextTargetElements };
+    if (section.id === fromSectionId)
+      return { ...section, elements: remaining };
+    if (section.id === toSectionId)
+      return { ...section, elements: nextTargetElements };
     return section;
   });
 };

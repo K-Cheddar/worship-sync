@@ -114,7 +114,7 @@ import {
 export const elementDndId = (elementId: string) => `element:${elementId}`;
 
 const SERVICE_PLAN_REMOVE_ATTACHMENT_BUTTON_CLASS =
-  "h-full max-h-full w-7 shrink-0 self-center cursor-pointer max-md:min-h-0";
+  "h-full max-h-full w-7 shrink-0 cursor-pointer items-center justify-center border-0 leading-none max-md:min-h-0";
 
 /** Stable DOM id for scrolling the plan list to a live element. */
 export const servicePlanElementDomId = (elementId: string) =>
@@ -127,9 +127,16 @@ export const formatPlanStartTimeDisplay = (startTime: string | undefined): strin
   return `${pad2(parsed.hour)}:${parsed.minute} ${parsed.meridiem}`;
 };
 
-/** Soft field chrome so inline editors sit closer to the row surface. */
+/** Soft field chrome so inline editors sit closer to the row surface.
+ * Heights use fixed rem below `lg` so fluid `--spacing` does not shrink tap
+ * targets. Type matches view-mode rows: `text-xs`, then `text-sm` on mobile. */
 export const SERVICE_PLAN_INLINE_INPUT_CLASS =
-  "h-7 min-h-0 text-xs leading-5 md:!text-xs border border-gray-800/60 bg-gray-950/80 px-1 py-0.5 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40 max-lg:!h-[2rem] max-lg:!min-h-[2rem] max-lg:px-2";
+  "box-border h-7 min-h-0 text-xs! max-md:text-sm! font-normal leading-5 max-md:leading-6 border border-gray-800/60 bg-gray-950/80 px-1.5 py-0 shadow-none placeholder:text-gray-500 focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/40 max-lg:h-[2rem]! max-lg:min-h-[2rem]! max-lg:max-h-[2rem]! max-lg:px-2";
+
+/** Shared height for content / led-by controls — fixed rem, not fluid `h-8`.
+ * `leading-none` so nested flex labels/icons center in the fixed height. */
+export const SERVICE_PLAN_SECONDARY_CONTROL_CLASS =
+  "box-border h-[2rem]! max-h-[2rem]! min-h-0! text-xs max-md:text-sm font-normal leading-none";
 
 /** Rich text note fields — same blend as inline plan inputs, multi-line height. */
 export const SERVICE_PLAN_INLINE_EDITOR_CLASS =
@@ -987,7 +994,10 @@ const AddContentMenu = ({
         disabled={!canEdit}
         aria-haspopup="menu"
         aria-label={`Add content to ${itemLabel}`}
-        className="max-md:min-h-0 border border-dashed border-gray-600/80 text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+        className={cn(
+          SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+          "border border-dashed border-gray-600/80 px-1.5 text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50",
+        )}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
       >
@@ -1247,10 +1257,10 @@ const ServicePlanElementRow = ({
     /\b(song|hymn|chorus|anthem)\b/i.test(element.sourceElementTypeRaw || "");
   const inferredSongRefs = recognizedUnlinkedSong
     ? [{
-        kind: "pending" as const,
-        title: cleanPlanningTitle(titleText),
-        lyricsText: "",
-      }]
+      kind: "pending" as const,
+      title: cleanPlanningTitle(titleText),
+      lyricsText: "",
+    }]
     : [];
   const resolvedOrStoredSongRefs = resolvedSongRefs?.length ? resolvedSongRefs : (
     resolvedSongRef && storedSongRefs.length === 1 ? [resolvedSongRef] : storedSongRefs
@@ -1331,11 +1341,11 @@ const ServicePlanElementRow = ({
   const shouldShowAssigneesBlock = structureOnly
     ? assignees.length > 0
     : namedAssignees.length > 1
-      || hasAssignedMicrophone
-      || hasMicrophoneConflict
-      || hasMissingMicrophone
-      || scheduledPositionIds.length > 0
-      || scheduledRows.length > 0;
+    || hasAssignedMicrophone
+    || hasMicrophoneConflict
+    || hasMissingMicrophone
+    || scheduledPositionIds.length > 0
+    || scheduledRows.length > 0;
   const openAssignment = (trigger?: HTMLElement) => {
     if (usesDesktopAssignmentPanel && onOpenAssignment) {
       onOpenAssignment(trigger);
@@ -1365,36 +1375,40 @@ const ServicePlanElementRow = ({
     />
   ) : <p className="px-1 text-xs text-gray-400">No people or microphones assigned.</p>;
   const leadSummaryControl = !structureOnly ? (
-    <div className="box-border flex !h-[2rem] !max-h-[2rem] !min-h-0 w-full min-w-0 max-w-full items-center overflow-visible bg-transparent">
+    <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 max-w-full items-center overflow-visible bg-transparent")}>
       {allowEdit ? (
-        <div className="box-border flex !h-[2rem] !max-h-[2rem] !min-h-0 w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
-          <DebouncedAssigneeNameField
-            value={leadInputAssignee?.name || ""}
-            onCommit={(name) => {
-              const lead = leadInputAssignee;
-              if (lead) {
-                onUpdate({
-                  assignees: assignees.map((assignee) =>
-                    assignee.id === lead.id ? { ...assignee, name } : assignee,
-                  ),
-                });
-              } else if (name.trim()) {
-                onUpdate({ assignees: addServicePlanAssignee(assignees, { name }) });
-              }
-            }}
-            historyValues={assignedToHistoryValues}
-            onRemoveHistoryValue={onRemoveAssignedToHistoryValue}
-            isHistoryValueRemovable={isAssignedToHistoryValueRemovable}
-            label={`Led by for ${itemLabel}`}
-            placeholder="Led by"
-            compact
-          />
+        <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
+          {/* HistorySuggestField's flex-1 sits under PopoverAnchor, so wrap so the
+              name field claims column width and the add button stays icon-sized. */}
+          <div className="min-w-0 flex-1">
+            <DebouncedAssigneeNameField
+              value={leadInputAssignee?.name || ""}
+              onCommit={(name) => {
+                const lead = leadInputAssignee;
+                if (lead) {
+                  onUpdate({
+                    assignees: assignees.map((assignee) =>
+                      assignee.id === lead.id ? { ...assignee, name } : assignee,
+                    ),
+                  });
+                } else if (name.trim()) {
+                  onUpdate({ assignees: addServicePlanAssignee(assignees, { name }) });
+                }
+              }}
+              historyValues={assignedToHistoryValues}
+              onRemoveHistoryValue={onRemoveAssignedToHistoryValue}
+              isHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+              label={`Led by for ${itemLabel}`}
+              placeholder="Led by"
+              compact
+            />
+          </div>
           <Button
             type="button"
             variant="tertiary"
             svg={UserPlus}
             iconSize="sm"
-            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-white/10 hover:text-white max-md:h-[2rem] [&_svg]:size-4"
+            className="h-full max-h-full min-h-0 w-9 flex-none shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs font-normal text-gray-300 hover:bg-white/10 hover:text-white [&_svg]:size-4"
             aria-label={`${shouldShowAssigneesBlock ? "Add people and microphones" : "Assignees"} for ${itemLabel}`}
             onClick={(event) => {
               event.stopPropagation();
@@ -1410,14 +1424,15 @@ const ServicePlanElementRow = ({
             <button
               type="button"
               className={cn(
-                "flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1.5 text-left text-xs leading-6 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white max-md:h-[2rem] max-md:text-sm max-md:leading-6",
+                SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+                "flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1.5 text-left hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white",
                 hasLeadAssignee
                   ? "text-gray-100"
                   : "italic text-gray-500",
               )}
               aria-label={`View people and microphones for ${itemLabel}`}
             >
-              <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-6 translate-y-px">
+              <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-none">
                 {assigneeSummary || "Unassigned"}
               </span>
               {additionalAssigneeCount > 0 ? (
@@ -1720,11 +1735,7 @@ const ServicePlanElementRow = ({
                     : SERVICE_PLAN_SONG_ICON_CLASS,
                 )}
               />
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate",
-                )}
-              >
+              <span className="min-w-0 flex-1 truncate leading-none">
                 {label}
               </span>
               {summaryOpensContent ? (
@@ -1749,7 +1760,7 @@ const ServicePlanElementRow = ({
             <button
               type="button"
               className={cn(
-                "box-border flex !h-full !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded py-0 text-left focus-visible:outline-none focus-visible:ring-1",
+                "box-border flex !h-full !min-h-0 min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded py-0 text-left leading-none focus-visible:outline-none focus-visible:ring-1",
                 isSongUnlinked
                   ? "hover:bg-amber-400/10 focus-visible:ring-amber-300"
                   : "hover:bg-cyan-500/10 focus-visible:ring-cyan-400",
@@ -1782,7 +1793,10 @@ const ServicePlanElementRow = ({
               key={`${currentSongRef.kind}:${label}:${songIndex}`}
               className={cn(
                 SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
-                placement === "summary" && "box-border !h-8 !min-h-0 !max-h-8 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                placement === "summary" && cn(
+                  SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+                  "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+                ),
                 isSongUnlinked
                   ? SERVICE_PLAN_UNLINKED_SONG_CHIP_CLASS
                   : SERVICE_PLAN_SONG_CHIP_CLASS,
@@ -1858,7 +1872,10 @@ const ServicePlanElementRow = ({
             className={cn(
               SERVICE_PLAN_ATTACHMENT_CHIP_CLASS,
               SERVICE_PLAN_SCRIPTURE_CHIP_CLASS,
-              placement === "summary" && "h-8 min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+              placement === "summary" && cn(
+                SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+                "min-w-0 flex-1 rounded-none border-0 bg-gray-950/70",
+              ),
             )}
           >
             {allowEdit ? (
@@ -1880,7 +1897,7 @@ const ServicePlanElementRow = ({
                 anchor={(
                   <button
                     type="button"
-                    className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                    className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                     aria-label={`Edit scripture ${scriptureLabel}`}
                     onClick={(event) => {
                       if (usesContentPanel) openContent(event.currentTarget);
@@ -1891,7 +1908,7 @@ const ServicePlanElementRow = ({
                       size="xs"
                       className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                     />
-                    <span className="min-w-0 flex-1 truncate">{scriptureLabel}</span>
+                    <span className="min-w-0 flex-1 truncate leading-none">{scriptureLabel}</span>
                   </button>
                 )}
               />
@@ -1902,7 +1919,7 @@ const ServicePlanElementRow = ({
                   size="xs"
                   className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                 />
-                <span className="min-w-0 flex-1 truncate">{scriptureLabel}</span>
+                <span className="min-w-0 flex-1 truncate leading-none">{scriptureLabel}</span>
               </>
             )}
             {allowEdit ? (
@@ -1950,21 +1967,21 @@ const ServicePlanElementRow = ({
                   anchor={(
                     <button
                       type="button"
-                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
+                      className="flex h-full min-w-0 flex-1 cursor-pointer items-center justify-start gap-0.5 overflow-hidden rounded text-left leading-none hover:bg-orange-500/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-300"
                       aria-label={`Edit scripture ${additionalScripture.label}`}
                       onClick={(event) => {
                         if (usesContentPanel) openContent(event.currentTarget);
                       }}
                     >
                       <Icon svg={BookOpen} size="xs" className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)} />
-                      <span className="min-w-0 flex-1 truncate">{additionalScripture.label}</span>
+                      <span className="min-w-0 flex-1 truncate leading-none">{additionalScripture.label}</span>
                     </button>
                   )}
                 />
               ) : (
                 <>
                   <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
-                  <span className="min-w-0 flex-1 truncate">{additionalScripture.label}</span>
+                  <span className="min-w-0 flex-1 truncate leading-none">{additionalScripture.label}</span>
                 </>
               )}
               {allowEdit ? (
@@ -1990,7 +2007,7 @@ const ServicePlanElementRow = ({
 
   const contentSummaryControl = usesContentPanel ? (
     hasContentReferences ? (
-      <div className="box-border flex !h-8 !max-h-8 !min-h-0 min-w-0 max-w-full items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70">
+      <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex min-w-0 max-w-full items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
         {attachmentChips("summary")}
         {contentReferenceCount > 1 ? null : (
           <Button
@@ -1998,7 +2015,7 @@ const ServicePlanElementRow = ({
             variant="tertiary"
             svg={FilePlus}
             iconSize="sm"
-            className="h-6 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 max-md:h-8 max-md:w-11 max-md:text-sm [&_svg]:size-4"
+            className="h-full max-h-full min-h-0 w-9 shrink-0 justify-center rounded-none border-l border-gray-800/70 border-y-0 border-r-0 px-0 py-0 text-xs font-normal text-gray-300 hover:bg-cyan-500/10 hover:text-cyan-50 [&_svg]:size-4"
             aria-label={`Manage content for ${itemLabel}`}
             onClick={(event) => openContent(event.currentTarget)}
           />
@@ -2010,7 +2027,10 @@ const ServicePlanElementRow = ({
         variant="tertiary"
         svg={FilePlus}
         iconSize="sm"
-        className="box-border !h-8 !min-h-0 !max-h-8 !py-0 w-full justify-start border-0 px-1.5 text-xs font-medium leading-5 text-gray-200 hover:bg-cyan-500/10 hover:text-white max-lg:text-sm [&_svg]:text-cyan-300"
+        className={cn(
+          SERVICE_PLAN_SECONDARY_CONTROL_CLASS,
+          "py-0! w-full justify-start border-0 px-1.5 text-gray-200 hover:bg-cyan-500/10 hover:text-white [&_svg]:text-cyan-300",
+        )}
         aria-label={`Add content to ${itemLabel}`}
         onClick={(event) => openContent(event.currentTarget)}
       >
@@ -2018,29 +2038,29 @@ const ServicePlanElementRow = ({
       </Button>
     )
   ) : hasContentReferences ? allowEdit ? (
-    <div className="flex min-w-0 max-w-full items-center overflow-hidden bg-transparent">
+    <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex min-w-0 max-w-full items-center overflow-hidden bg-transparent")}>
       {attachmentChips("summary")}
       <Popover open={contentManagerOpen} onOpenChange={setContentManagerOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="tertiary"
-              svg={contentReferenceCount > 1 ? undefined : ChevronDown}
-              iconSize="xs"
-              className="h-6 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 py-0 text-xs leading-5 text-gray-300 hover:text-cyan-50 max-md:h-8 max-md:text-sm"
-              aria-label={`Manage content for ${itemLabel}`}
-            >
-              {contentReferenceCount > 1 ? `+${contentReferenceCount - 1}` : null}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={contentReferenceCount > 1 ? undefined : ChevronDown}
+            iconSize="xs"
+            className="h-full max-h-full min-h-0 min-w-8 shrink-0 justify-start gap-0.5 rounded-none border-0 px-2 py-0 text-xs font-normal leading-none text-gray-300 hover:text-cyan-50"
+            aria-label={`Manage content for ${itemLabel}`}
           >
-            <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
-            {attachmentChips("manager")}
-            {contentAddControl ? <div className="px-1 pt-2">{contentAddControl}</div> : null}
-          </PopoverContent>
+            {contentReferenceCount > 1 ? `+${contentReferenceCount - 1}` : null}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-max max-w-[calc(100vw-1rem)] border-gray-700 bg-gray-900 p-2 text-gray-100"
+        >
+          <p className="px-1 pb-2 text-xs font-medium text-gray-300">Content</p>
+          {attachmentChips("manager")}
+          {contentAddControl ? <div className="px-1 pt-2">{contentAddControl}</div> : null}
+        </PopoverContent>
       </Popover>
     </div>
   ) : contentReferenceCount === 1 ? (
@@ -2421,17 +2441,17 @@ const ServicePlanElementRow = ({
               onChange={(value) =>
                 onUpdate({ title: plainTextToRichText(value) }, "title")
               }
-              />
-            </div>
+            />
+          </div>
 
           <div
             className={cn(
               SERVICE_PLAN_COL.contentView,
-              "min-w-0 self-start py-0.5 max-md:col-start-1 max-md:col-span-3 max-md:row-start-2 max-md:py-0",
+              "min-w-0 self-center max-md:col-start-1 max-md:col-span-3 max-md:row-start-2",
             )}
             aria-label="Songs and scripture"
           >
-            {contentSummaryControl || <span className="flex h-8 items-center text-xs text-gray-500">—</span>}
+            {contentSummaryControl || <span className="flex h-[2rem] items-center text-xs text-gray-500">—</span>}
           </div>
 
           <div className={cn(SERVICE_PLAN_COL.assignedEdit, "max-md:[grid-column:4_/-1] max-md:row-start-2 max-md:w-full max-md:self-stretch")}>
@@ -2450,7 +2470,7 @@ const ServicePlanElementRow = ({
             !allowEdit && hasViewActions && SERVICE_PLAN_COL.mediumViewWithActions,
             !hasViewActions && SERVICE_PLAN_COL.viewWithoutActions,
             hasViewActions &&
-              "max-md:grid-cols-[0rem_5rem_3.5rem_minmax(0,1fr)_6.5rem]!",
+            "max-md:grid-cols-[0rem_5rem_3.5rem_minmax(0,1fr)_6.5rem]!",
             !hasViewActions && "max-md:grid-cols-[1.5rem_5rem_3.5rem_minmax(0,1fr)]",
             "items-start py-2 pb-1 max-md:flex-wrap md:py-1.5 md:pb-1.5",
           )}
@@ -2496,11 +2516,11 @@ const ServicePlanElementRow = ({
             <div
               className={cn(
                 SERVICE_PLAN_COL.contentView,
-                "min-w-0 self-start py-0.5 max-md:col-start-1 max-md:col-span-3 max-md:row-start-2 max-md:self-center max-md:py-0",
+                "min-w-0 self-center max-md:col-start-1 max-md:col-span-3 max-md:row-start-2",
               )}
               aria-label="Songs and scripture"
             >
-            {contentSummaryControl || <span className="flex h-8 w-full items-center justify-start text-xs text-gray-500 max-md:justify-center">—</span>}
+              {contentSummaryControl || <span className="flex h-[2rem] w-full items-center justify-start text-xs text-gray-500 max-md:justify-center">—</span>}
             </div>
           ) : null}
           <div className={cn(SERVICE_PLAN_COL.assignedView, "max-md:col-start-4 max-md:row-start-2 max-md:self-center", hasViewActions ? "max-md:col-span-2" : "max-md:col-span-1")}>
@@ -2517,46 +2537,46 @@ const ServicePlanElementRow = ({
       {allowEdit ? (
         <div className="flex flex-wrap items-center gap-1">
           <div className="hidden" aria-hidden="true">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="tertiary"
-                className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
-                aria-label={`Scheduled roles for ${itemLabel}`}
-              >
-                {scheduledPositionLabel}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-72 p-2">
-              <p className="px-2 pb-2 text-xs font-semibold text-gray-100">Scheduled roles</p>
-              <div className="max-h-60 space-y-1 overflow-y-auto">
-                {scheduledPositionOptions.map((option) => {
-                  const checked = scheduledPositionIds.includes(option.positionId);
-                  return (
-                    <Checkbox
-                      key={option.positionId}
-                      checked={checked}
-                      label={`${option.teamName ? `${option.teamName} · ` : ""}${option.roleName || option.label}`}
-                      labelClassName="text-xs"
-                      onCheckedChange={(next) => {
-                        const ids = next
-                          ? [...scheduledPositionIds, option.positionId]
-                          : scheduledPositionIds.filter((id) => id !== option.positionId);
-                        onUpdate({
-                          scheduledPositionIds: Array.from(new Set(ids)),
-                          ...(ids.length === 1 ? { positionId: ids[0] } : { positionId: undefined }),
-                        });
-                      }}
-                    />
-                  );
-                })}
-                {!scheduledPositionOptions.length ? (
-                  <p className="px-2 py-2 text-xs text-gray-400">No active positions available.</p>
-                ) : null}
-              </div>
-            </PopoverContent>
-          </Popover>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  className="mx-1 mb-1 border border-dashed border-gray-600/80 px-1.5 py-1 text-left text-xs text-gray-300 hover:border-cyan-500/50 hover:text-cyan-50"
+                  aria-label={`Scheduled roles for ${itemLabel}`}
+                >
+                  {scheduledPositionLabel}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-72 p-2">
+                <p className="px-2 pb-2 text-xs font-semibold text-gray-100">Scheduled roles</p>
+                <div className="max-h-60 space-y-1 overflow-y-auto">
+                  {scheduledPositionOptions.map((option) => {
+                    const checked = scheduledPositionIds.includes(option.positionId);
+                    return (
+                      <Checkbox
+                        key={option.positionId}
+                        checked={checked}
+                        label={`${option.teamName ? `${option.teamName} · ` : ""}${option.roleName || option.label}`}
+                        labelClassName="text-xs"
+                        onCheckedChange={(next) => {
+                          const ids = next
+                            ? [...scheduledPositionIds, option.positionId]
+                            : scheduledPositionIds.filter((id) => id !== option.positionId);
+                          onUpdate({
+                            scheduledPositionIds: Array.from(new Set(ids)),
+                            ...(ids.length === 1 ? { positionId: ids[0] } : { positionId: undefined }),
+                          });
+                        }}
+                      />
+                    );
+                  })}
+                  {!scheduledPositionOptions.length ? (
+                    <p className="px-2 py-2 text-xs text-gray-400">No active positions available.</p>
+                  ) : null}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
           {visibleReadOnlyAssigneesBlock}
           {!visibleReadOnlyAssigneesBlock && structureOnly ? (

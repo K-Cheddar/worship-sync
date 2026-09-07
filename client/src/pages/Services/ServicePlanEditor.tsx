@@ -176,6 +176,7 @@ import {
   cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   replaceMatchingPendingSongReferences,
+  resolveServicePlanAddTarget,
 } from "./servicePlanDraftUtils";
 import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
 import {
@@ -977,10 +978,14 @@ const ServicePlanEditor = ({
   };
 
   const startFromScratch = () => {
+    const nextSections = createEmptyServicePlanSections();
     updateDraft({
-      sections: createEmptyServicePlanSections(),
+      sections: nextSections,
       planName: occurrence.name || service.name || "",
     });
+    // Sole starter section is the only place items can go — select it so the
+    // footer Add item control is immediately usable without an extra click.
+    setSelectedPlanTarget({ sectionId: nextSections[0].id });
     setIsEditing(true);
   };
 
@@ -2151,16 +2156,16 @@ const ServicePlanEditor = ({
   );
 
   /**
-   * Add section plus the plan's save state. It sits below the tabs rather than
-   * inside the running order, so a failed or conflicted save is never hidden
-   * behind the Microphones tab.
+   * Add section plus the plan's save state. It stays in the footer chrome
+   * (not inside the running order) so edit ↔ view does not shift the list,
+   * and a failed or conflicted save is never hidden behind another tab.
    */
-  const selectedPlanSection = sections?.find(
-    (section) => section.id === selectedPlanTarget?.sectionId,
-  );
+  const planAddTarget = sections
+    ? resolveServicePlanAddTarget(sections, selectedPlanTarget)
+    : null;
   const planToolbar =
     hasSections && sections ? (
-      <div className="flex shrink-0 flex-wrap gap-2">
+      <div className="flex min-h-9 shrink-0 flex-wrap gap-2">
         {canEdit && isEditing && activeTab === "plan" ? (
           <>
             <Button
@@ -2169,10 +2174,12 @@ const ServicePlanEditor = ({
               svg={Plus}
               iconSize="sm"
               className="max-md:min-h-0"
-              disabled={!selectedPlanSection}
               onClick={() =>
-                selectedPlanSection
-                && handleAddElement(selectedPlanSection.id, selectedPlanTarget?.elementId)
+                planAddTarget &&
+                handleAddElement(
+                  planAddTarget.sectionId,
+                  planAddTarget.insertAfterElementId,
+                )
               }
             >
               Add item

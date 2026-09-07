@@ -123,10 +123,17 @@ export const useServicePlanningSync = () => {
             );
             if (template) {
               const newId = generateRandomId();
+              const { templatesByType, defaultTemplateIdsByType } =
+                store.getState().undoable.present.overlayTemplates;
               const built = buildClonedParticipantOverlay(
                 template,
                 cand.patch,
                 newId,
+                getConfiguredDefaultFormatting(
+                  "participant",
+                  templatesByType,
+                  defaultTemplateIdsByType,
+                ),
               );
               dispatch(
                 addExistingOverlayToList({

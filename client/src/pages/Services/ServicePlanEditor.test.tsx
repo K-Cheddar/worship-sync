@@ -1114,8 +1114,7 @@ describe("ServicePlanEditor", () => {
     await user.click(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
-    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     // Microphones hang off a person now, so an item starts with nobody on it.
     // Assignment editing opens in a side sheet to keep the plan list stable.
     await user.click(
@@ -1162,9 +1161,8 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
-    // Seeded with one default section already; choose it before adding.
-    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    // Seeded with one default section; Add item targets it without an extra pick.
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.type(screen.getByLabelText(/^Title/i), "Great Are You Lord");
 
     await waitFor(() => {
@@ -1189,8 +1187,7 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
-    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.click(screen.getByRole("button", { name: /^Add item$/i }));
 
     // fireEvent.change (not userEvent.clear/type) — number inputs behave
@@ -1558,6 +1555,7 @@ describe("ServicePlanEditor", () => {
     expect(
       screen.queryByRole("button", { name: /Start from scratch/i }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Add item$/i })).toBeEnabled();
     expect(
       screen.getByRole("button", { name: /Add section/i }),
     ).toBeInTheDocument();
