@@ -311,6 +311,8 @@ export type TeamPosition = {
    * on a schedule, not as a hard eligibility gate.
    */
   qualificationAreaId?: string;
+  /** Default church microphone for new schedule slots in this position. */
+  defaultMicrophoneId?: string | null;
   archivedAt?: string | null;
 };
 
@@ -473,6 +475,8 @@ export type TeamScheduleSummary = {
   assignmentCounts?: {
     byMemberId: Record<string, number>;
     byPositionId: Record<string, number>;
+    /** Latest occurrence date assigned to each member in this schedule. */
+    lastAssignmentDateByMemberId?: Record<string, string>;
   };
 };
 

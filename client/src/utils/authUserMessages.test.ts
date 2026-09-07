@@ -1,5 +1,6 @@
 import {
   AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
   AUTH_SIGN_IN_AGAIN_MESSAGE,
   getAuthBootstrapLoadingDescription,
   getDesktopSignInErrorMessage,
@@ -60,12 +61,15 @@ describe("authUserMessages", () => {
       ).toContain("does not match");
     });
 
-    it("maps expired and locked codes to sign in again", () => {
+    it("maps expired codes to a resend action", () => {
       expect(
         getVerifyEmailCodeErrorMessage(
-          new Error("This sign-in code has expired. Try signing in again."),
+          new Error("This code has expired. Request a new code to continue."),
         ),
-      ).toBe(AUTH_SIGN_IN_AGAIN_MESSAGE);
+      ).toBe(AUTH_EMAIL_CODE_EXPIRED_MESSAGE);
+    });
+
+    it("keeps locked and invalid sign-in states distinct from expiration", () => {
       expect(
         getVerifyEmailCodeErrorMessage(
           new Error(

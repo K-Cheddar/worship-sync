@@ -16,6 +16,7 @@ export class MediaCacheManager {
   private cacheDir: string;
   private cacheIndexPath: string;
   private cacheIndex: Map<string, MediaCacheEntry>;
+  private inFlightDownloads = new Map<string, Promise<string | null>>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -156,6 +157,28 @@ export class MediaCacheManager {
    * For Mux videos, converts any URL format to MP4 static rendition for download.
    */
   async downloadMedia(url: string): Promise<string | null> {
+    const cacheKey = this.getCacheKey(url);
+    if (!cacheKey) {
+      return this.downloadMediaInternal(url);
+    }
+
+    const inFlightDownload = this.inFlightDownloads.get(cacheKey);
+    if (inFlightDownload) {
+      return inFlightDownload;
+    }
+
+    const downloadPromise = this.downloadMediaInternal(url);
+    this.inFlightDownloads.set(cacheKey, downloadPromise);
+    try {
+      return await downloadPromise;
+    } finally {
+      if (this.inFlightDownloads.get(cacheKey) === downloadPromise) {
+        this.inFlightDownloads.delete(cacheKey);
+      }
+    }
+  }
+
+  private async downloadMediaInternal(url: string): Promise<string | null> {
     try {
       // Normalize to cache key (returns null for non-cacheable URLs like non-Mux HLS)
       const cacheKey = this.getCacheKey(url);

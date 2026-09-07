@@ -11,7 +11,7 @@ jest.mock("electron", () => ({
   },
 }));
 
-describe("MediaCacheManager cleanupUnusedMedia", () => {
+describe("MediaCacheManager", () => {
   let tempRoot: string;
 
   beforeEach(() => {
@@ -43,5 +43,46 @@ describe("MediaCacheManager cleanupUnusedMedia", () => {
     expect(manager.getAllCachedUrls()).toEqual([
       "https://cdn.example.com/busy.mp4",
     ]);
+  });
+
+  it("shares one download for simultaneous requests for the same Mux asset", async () => {
+    const manager = new MediaCacheManager();
+    const muxHlsUrl = "https://stream.mux.com/playback-id/master.m3u8";
+    const cachedPath = join(tempRoot, "media-cache", "playback-id.mp4");
+    let resolveDownload: (path: string | null) => void = () => undefined;
+    const pendingDownload = new Promise<string | null>((resolve) => {
+      resolveDownload = resolve;
+    });
+    const downloadMediaInternal = jest.fn(() => pendingDownload);
+    manager["downloadMediaInternal"] = downloadMediaInternal;
+
+    const firstRequest = manager.downloadMedia(muxHlsUrl);
+    const secondRequest = manager.downloadMedia(muxHlsUrl);
+
+    expect(downloadMediaInternal).toHaveBeenCalledTimes(1);
+
+    resolveDownload(cachedPath);
+
+    await expect(firstRequest).resolves.toBe(cachedPath);
+    await expect(secondRequest).resolves.toBe(cachedPath);
+    expect(manager["inFlightDownloads"].size).toBe(0);
+  });
+
+  it("shares a download between equivalent Mux URL formats", async () => {
+    const manager = new MediaCacheManager();
+    const muxHlsUrl = "https://stream.mux.com/playback-id/master.m3u8";
+    const muxMp4Url = "https://stream.mux.com/playback-id/highest.mp4";
+    const cachedPath = join(tempRoot, "media-cache", "playback-id.mp4");
+    const downloadMediaInternal = jest.fn(() => Promise.resolve(cachedPath));
+    manager["downloadMediaInternal"] = downloadMediaInternal;
+
+    const [fromHls, fromMp4] = await Promise.all([
+      manager.downloadMedia(muxHlsUrl),
+      manager.downloadMedia(muxMp4Url),
+    ]);
+
+    expect(downloadMediaInternal).toHaveBeenCalledTimes(1);
+    expect(fromHls).toBe(cachedPath);
+    expect(fromMp4).toBe(cachedPath);
   });
 });

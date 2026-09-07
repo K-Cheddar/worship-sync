@@ -28,6 +28,7 @@ import {
   sanitizePairingForClient,
   sanitizeWorkstationDeviceForClient,
 } from "./server/authResponseSanitize.js";
+import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
 import {
@@ -95,7 +96,7 @@ const INVITE_TTL_MS = Number(
   process.env.AUTH_INVITE_TTL_MS || 7 * 24 * 60 * 60 * 1000,
 );
 const DESKTOP_AUTH_TTL_MS = Number(
-  process.env.AUTH_DESKTOP_AUTH_TTL_MS || 15 * 60 * 1000,
+  process.env.AUTH_DESKTOP_AUTH_TTL_MS || 30 * 60 * 1000,
 );
 const DESKTOP_AUTH_EXCHANGE_TTL_MS = Number(
   process.env.AUTH_DESKTOP_AUTH_EXCHANGE_TTL_MS || 5 * 60 * 1000,
@@ -2545,6 +2546,11 @@ const createChurchWithRootAdmin = async ({
   churchName,
 }) => {
   const churchId = createId("church");
+  // Content libraries replicate from CouchDB `worship-sync-<key>`. Create that
+  // DB before the church membership so a new church is never left pointing at
+  // a missing remote (controller hangs on "Songs are loading...").
+  await ensureWorshipSyncContentDatabase(churchId);
+
   const church = {
     churchId,
     name: churchName,
@@ -4021,8 +4027,7 @@ const scheduleIntakeSubmissionDigest = async (
 // minutes, an unacceptable one at 24 hours. Longer digests need durable
 // scheduling first.
 const RESPONSE_DIGEST_WINDOW_MS =
-  Number(process.env.AUTH_SCHEDULE_RESPONSE_DIGEST_WINDOW_MS) ||
-  20 * 60 * 1000;
+  Number(process.env.AUTH_SCHEDULE_RESPONSE_DIGEST_WINDOW_MS) || 20 * 60 * 1000;
 const responseDigestTimers = new Map();
 const responseDigestInFlight = new Set();
 
@@ -5259,7 +5264,10 @@ export const authHandlers = {
       }
       if (new Date(challenge.expiresAt).getTime() < Date.now()) {
         await deleteDoc(COLLECTIONS.emailCodeChallenges, pendingAuthId);
-        throw httpError(400, "Please sign in again.");
+        throw httpError(
+          400,
+          "This code has expired. Request a new code to continue.",
+        );
       }
       if (challenge.lockedAt) {
         throw httpError(400, "Please sign in again.");

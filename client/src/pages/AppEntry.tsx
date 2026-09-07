@@ -1,11 +1,12 @@
 import { useContext, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { ArrowLeft, KeyRound, UserRound } from "lucide-react";
+import { ArrowLeft, Building2, KeyRound, UserRound } from "lucide-react";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
 import { getStoredServerSessionHint } from "../utils/authStorage";
+import { isCreateChurchUiEnabled } from "../utils/devFeatures";
 import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
 
 type SetupStep = "start" | "link";
@@ -289,6 +290,26 @@ const AppEntry = () => {
                       Test as guest
                     </Button>
                   </div>
+                  {isCreateChurchUiEnabled() ? (
+                    <div className="flex min-w-0 flex-col gap-2 sm:col-span-2">
+                      <Button
+                        component="link"
+                        to="/login?createChurch=1"
+                        variant="secondary"
+                        svg={Building2}
+                        iconSize="sm"
+                        gap="gap-2"
+                        className="w-full justify-center"
+                        state={nextState}
+                        disabled={isServerBackedModeDisabled}
+                      >
+                        Create church
+                      </Button>
+                      {isServerBackedModeDisabled ? (
+                        <p className="text-sm text-yellow-100/90">Connection required</p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </section>
             </>

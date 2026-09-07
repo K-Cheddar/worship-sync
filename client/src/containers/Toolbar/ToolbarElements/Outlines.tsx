@@ -31,6 +31,8 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { cn } from "../../../utils/cnHelper";
 import { toolbarTabClassName } from "./ToolbarButton";
 import OutlinesPickerSkeleton from "./OutlinesPickerSkeleton";
+import { loadOrCreateItemListsDoc } from "../../../utils/controllerBootstrapDocs";
+import { useToast } from "../../../context/toastContext";
 
 /** Shared popover chrome (matches service outlines left column). */
 const OUTLINE_POPOVER_CONTENT =
@@ -60,6 +62,7 @@ const Services = ({
 
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
+  const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
   const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
 
@@ -90,12 +93,12 @@ const Services = ({
     const getItemLists = async () => {
       if (!db) return;
       try {
-        const response: ItemLists | undefined = await db?.get("ItemLists");
-        const _itemLists = response?.itemLists || [];
-        const _activeList = response?.activeList;
+        const response = await loadOrCreateItemListsDoc(db);
+        const _itemLists = response.itemLists || [];
+        const _activeList = response.activeList;
         if (!itemListsReady) {
           dispatch(initiateItemLists(_itemLists));
-          if (_activeList) {
+          if (_activeList?._id) {
             dispatch(setInitialItemList(_activeList._id));
           }
         } else {
@@ -103,11 +106,18 @@ const Services = ({
         }
       } catch (e) {
         console.error(e);
+        if (!itemListsReady) {
+          dispatch(initiateItemLists([]));
+          showToast(
+            "Could not load service outlines. Reload the page before editing outlines.",
+            "error",
+          );
+        }
       }
     };
 
-    getItemLists();
-  }, [db, dispatch, itemListsReady]);
+    void getItemLists();
+  }, [db, dispatch, itemListsReady, showToast]);
 
   const updateItemListsFromExternal = useCallback(
     async (event: CustomEventInit) => {

@@ -8,8 +8,12 @@ type PouchDocumentError = {
 };
 
 const isPouchNotFound = (error: unknown) => {
-  const pouchError = error as PouchDocumentError;
-  return pouchError?.status === 404 || pouchError?.name === "not_found";
+  const pouchError = error as { status?: number | string; name?: string };
+  return (
+    pouchError?.status === 404 ||
+    pouchError?.status === "404" ||
+    pouchError?.name === "not_found"
+  );
 };
 
 const isPouchConflict = (error: unknown) => {

@@ -740,6 +740,7 @@ export type TeamPositionPayload = {
   icon?: string;
   groupId?: string;
   qualificationAreaId?: string;
+  defaultMicrophoneId?: string;
   teamId: string;
 };
 

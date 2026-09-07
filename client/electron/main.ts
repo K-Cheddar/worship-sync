@@ -1448,15 +1448,18 @@ ipcMain.handle("sync-media-cache", async (_event, videoUrls: string[]) => {
   }
   try {
     // Normalize URLs to cache keys so cleanup matches the same keys used by downloadMedia
-    const usedUrls = new Set<string>();
+    const urlsByCacheKey = new Map<string, string>();
     for (const url of videoUrls) {
       const cacheKey = mediaCacheManager.getCacheKey(url);
-      if (cacheKey) usedUrls.add(cacheKey);
+      if (cacheKey && !urlsByCacheKey.has(cacheKey)) {
+        urlsByCacheKey.set(cacheKey, url);
+      }
     }
+    const usedUrls = new Set(urlsByCacheKey.keys());
     let downloaded = 0;
 
     // Download all videos
-    for (const url of videoUrls) {
+    for (const url of urlsByCacheKey.values()) {
       const localPath = mediaCacheManager.getLocalPath(url);
       if (!localPath) {
         try {

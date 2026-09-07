@@ -12,7 +12,41 @@ const Harness = () => {
   );
 };
 
+const FilledHarness = () => {
+  const [code, setCode] = useState("635690");
+  return (
+    <>
+      <VerificationCodeInput value={code} onChange={setCode} />
+      <span data-testid="code-value">{code}</span>
+    </>
+  );
+};
+
 describe("VerificationCodeInput", () => {
+  it("replaces only the focused digit in a filled code", () => {
+    render(<FilledHarness />);
+
+    const first = screen.getByLabelText("Digit 1 of 6");
+    fireEvent.focus(first);
+    fireEvent.change(first, { target: { value: "7" } });
+
+    expect(screen.getByTestId("code-value")).toHaveTextContent("735690");
+    expect(screen.getByLabelText("Digit 1 of 6")).toHaveValue("7");
+    expect(screen.getByLabelText("Digit 2 of 6")).toHaveValue("3");
+    expect(screen.getByLabelText("Digit 6 of 6")).toHaveValue("0");
+  });
+
+  it("advances when replacing a digit with the same digit", () => {
+    render(<FilledHarness />);
+
+    const first = screen.getByLabelText("Digit 1 of 6");
+    fireEvent.focus(first);
+    fireEvent.keyDown(first, { key: "6" });
+
+    expect(screen.getByTestId("code-value")).toHaveTextContent("635690");
+    expect(screen.getByLabelText("Digit 2 of 6")).toHaveFocus();
+  });
+
   it("fills all slots when the first field receives a full 6-digit string (e.g. mobile OTP suggestion)", () => {
     render(<Harness />);
 

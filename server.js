@@ -45,6 +45,7 @@ import {
   validateBoardPostTextUpdate,
 } from "./server/boardService.js";
 import { getChurchIntegrationsPath } from "./server/churchIntegrations.js";
+import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import {
   createRestreamService,
   normalizeRestreamPostedAtMs,
@@ -89,6 +90,7 @@ if (process.env.MIN_SUPPORTED_WEB_VERSION && !minimumSupportedWebVersion) {
     "Ignoring invalid MIN_SUPPORTED_WEB_VERSION; it must be a released version at or below this deployment.",
   );
 }
+
 // Validate required environment variables
 const requiredEnvVars = [
   "AZURE_TENANT_ID",
@@ -3005,6 +3007,24 @@ app.delete("/api/mux/asset/:assetId", async (req, res) => {
 
 app.get("/api/getDbSession", async (req, res) => {
   try {
+    // New churches need an empty CouchDB content DB before the client can
+    // finish initial replication. Ensure it here so already-created churches
+    // without a remote DB recover on the next controller open.
+    try {
+      const bootstrap = await resolveRequestBootstrap(req);
+      const contentDatabaseKey = String(bootstrap?.database || "").trim();
+      if (contentDatabaseKey) {
+        await ensureWorshipSyncContentDatabase(contentDatabaseKey);
+      }
+    } catch (provisionError) {
+      console.error(
+        "Error ensuring church content database:",
+        provisionError?.message || provisionError,
+      );
+      // Still establish the CouchDB cookie below; replication may retry once
+      // the DB exists. Creation failure is logged for ops.
+    }
+
     const couchURL = `https://${process.env.COUCHDB_HOST}/_session`;
 
     const loginResp = await axios({

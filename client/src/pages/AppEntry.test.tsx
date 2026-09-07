@@ -4,9 +4,38 @@ import AppEntry from "./AppEntry";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 
+jest.mock("../utils/devFeatures", () => ({
+  isCreateChurchUiEnabled: () => true,
+}));
+
 describe("AppEntry", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it("shows a create-church option that opens the login create flow", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={
+          createMockGlobalContext({
+            loginState: "idle",
+            sessionKind: null,
+            authServerStatus: "online",
+          }) as any
+        }
+      >
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes>
+            <Route path="/" element={<AppEntry />} />
+          </Routes>
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("link", { name: /Create church/i })).toHaveAttribute(
+      "href",
+      "/login?createChurch=1",
+    );
   });
 
   it("shows an offline server notice while keeping the guest demo available", () => {
@@ -39,7 +68,7 @@ describe("AppEntry", () => {
     const guestDemo = screen.getByRole("button", { name: /Test as guest/i });
     expect(guestDemo).toBeInTheDocument();
     expect(guestDemo).not.toBeDisabled();
-    expect(screen.getAllByText("Connection required")).toHaveLength(2);
+    expect(screen.getAllByText("Connection required")).toHaveLength(3);
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
