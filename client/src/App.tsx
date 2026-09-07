@@ -103,6 +103,8 @@ const WorkstationOperator = lazyRoute(
 const InviteAccept = lazyRoute(() => import("./pages/InviteAccept"));
 const PasswordReset = lazyRoute(() => import("./pages/PasswordReset"));
 const RecoveryConfirm = lazyRoute(() => import("./pages/RecoveryConfirm"));
+const PrivacyPolicy = lazyRoute(() => import("./pages/Legal/PrivacyPolicy"));
+const TermsOfService = lazyRoute(() => import("./pages/Legal/TermsOfService"));
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -299,6 +301,8 @@ const AppRoutes = () => {
               }
             />
             <Route path="/login" element={<Login />} />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/terms" element={<TermsOfService />} />
             <Route
               path="/login/desktop-sso-complete"
               element={<DesktopSsoComplete />}

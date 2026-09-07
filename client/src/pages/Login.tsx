@@ -1796,6 +1796,27 @@ const Login = () => {
           </form>
         )}
       </div>
+      <footer className="mt-6 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-gray-300">
+        <Button
+          component="link"
+          to="/privacy"
+          variant="none"
+          className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+        >
+          Privacy Policy
+        </Button>
+        <span aria-hidden className="text-gray-600">
+          ·
+        </span>
+        <Button
+          component="link"
+          to="/terms"
+          variant="none"
+          className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+        >
+          Terms of Service
+        </Button>
+      </footer>
     </AuthScreenMain>
   );
 };
