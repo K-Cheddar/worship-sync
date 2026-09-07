@@ -85,6 +85,7 @@ import {
 import {
   useRestreamSession,
 } from "../boards/useRestreamSession";
+import { useYouTubeConnectionStatus } from "../boards/useYouTubeConnectionStatus";
 
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
@@ -245,6 +246,18 @@ export const BoardControllerContent = () => {
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
   );
   const restreamSession = useRestreamSession(churchId || "");
+  const youtubeConnection = useYouTubeConnectionStatus(
+    churchId || "",
+    Boolean(loginState === "success" && churchIntegrations?.youtube?.connected),
+    churchIntegrations?.youtube?.accountLabel || "",
+    {
+      reconcile: Boolean(
+        restreamSession.session?.enabled ||
+        restreamSession.session?.connected ||
+        restreamSession.messages.length > 0,
+      ),
+    },
+  );
   const { reload: reloadRestreamSession } = restreamSession;
   const [currentBoardHighlightedCount, setCurrentBoardHighlightedCount] =
     useState(0);
@@ -741,7 +754,7 @@ export const BoardControllerContent = () => {
   const showYouTubeChatComposer =
     showBoardDiscussionComposer &&
     Boolean(churchId) &&
-    Boolean(churchIntegrations?.youtube?.connected);
+    youtubeConnection.connected;
 
   let boardSyncEmptyTitle = "Connecting discussion board data…";
   let boardSyncEmptyDescription = "Loading the latest posts from the server.";
@@ -807,7 +820,8 @@ export const BoardControllerContent = () => {
       ) : null}
       {!restreamSession.isLoading &&
         !restreamSession.error &&
-        !restreamSession.session?.enabled ? (
+        !restreamSession.session?.enabled &&
+        restreamSession.messages.length === 0 ? (
         <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-3 text-sm">
           <p className="font-semibold">Restream is not connected.</p>
           <p className="mt-1 text-gray-300">
@@ -829,7 +843,8 @@ export const BoardControllerContent = () => {
     Boolean(restreamSession.error) ||
     (!restreamSession.isLoading &&
       !restreamSession.error &&
-      !restreamSession.session?.enabled);
+      !restreamSession.session?.enabled &&
+      restreamSession.messages.length === 0);
 
   const liveActivityContent = (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1005,7 +1020,7 @@ export const BoardControllerContent = () => {
           {showYouTubeChatComposer ? (
             <BoardYouTubeChatComposer
               churchId={churchId || ""}
-              accountLabel={churchIntegrations?.youtube?.accountLabel || ""}
+              accountLabel={youtubeConnection.accountLabel}
             />
           ) : null}
           {showBoardDiscussionComposer ? (

@@ -325,8 +325,8 @@ const PreviewPanel = ({
         >
           <CurrentServiceRestreamPanel
             churchId={churchId}
-            youtubeConnected={youtubeConnected}
-            youtubeAccountLabel={youtubeAccountLabel}
+            firebaseYoutubeConnected={youtubeConnected}
+            firebaseYoutubeAccountLabel={youtubeAccountLabel}
             isVisible={value === "chat"}
             onUnreadCountChange={onChatUnreadCountChange}
             showToast={showToast}
@@ -801,11 +801,11 @@ const CurrentServiceWorkspace = () => {
                   content: (
                     <CurrentServiceRestreamPanel
                       churchId={churchId || ""}
-                      youtubeConnected={Boolean(
+                      firebaseYoutubeConnected={Boolean(
                         loginState === "success" &&
-                          churchIntegrations?.youtube?.connected,
+                        churchIntegrations?.youtube?.connected,
                       )}
-                      youtubeAccountLabel={
+                      firebaseYoutubeAccountLabel={
                         churchIntegrations?.youtube?.accountLabel || ""
                       }
                       isVisible={tab === "chat"}
@@ -821,9 +821,8 @@ const CurrentServiceWorkspace = () => {
         </section>
 
         {isDesktop ? <aside
-          className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${
-            isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
-          }`}
+          className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
+            }`}
           aria-label="Workspace preview"
         >
           <Button
@@ -857,7 +856,8 @@ const CurrentServiceWorkspace = () => {
               onOpenSchedule={openSchedule}
               churchId={churchId || ""}
               youtubeConnected={Boolean(
-                loginState === "success" && churchIntegrations?.youtube?.connected,
+                loginState === "success" &&
+                churchIntegrations?.youtube?.connected,
               )}
               youtubeAccountLabel={
                 churchIntegrations?.youtube?.accountLabel || ""

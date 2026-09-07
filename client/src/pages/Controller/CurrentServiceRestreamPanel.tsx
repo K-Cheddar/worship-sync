@@ -7,14 +7,16 @@ import {
 } from "../../boards/BoardRestreamTabContent";
 import { BoardYouTubeChatComposer } from "../../boards/BoardYouTubeChatComposer";
 import { useRestreamSession } from "../../boards/useRestreamSession";
+import { useYouTubeConnectionStatus } from "../../boards/useYouTubeConnectionStatus";
 import { useStickToBottomScroll } from "../../hooks/useStickToBottomScroll";
 import { getRestreamStatusIssues } from "../../boards/boardUtils";
 import type { RestreamMessage, RestreamSession } from "../../types";
 
 type CurrentServiceRestreamPanelProps = {
   churchId: string;
-  youtubeConnected: boolean;
-  youtubeAccountLabel?: string;
+  /** Firebase integrations mirror; may be stale if the RTDB listener failed. */
+  firebaseYoutubeConnected: boolean;
+  firebaseYoutubeAccountLabel?: string;
   isVisible?: boolean;
   onUnreadCountChange?: (count: number) => void;
   showToast: (message: string, variant: "success" | "error") => void;
@@ -113,10 +115,15 @@ const getConnectionLabel = (
   session: RestreamSession | null,
   isLoading: boolean,
   isOffline: boolean,
+  hasMessages = false,
 ) => {
   if (isOffline) return "Offline";
   if (isLoading) return "Loading";
-  if (!session?.enabled) return "Not connected";
+  // Hide the "never linked" label when chat is already on screen; trailing
+  // reload should refresh enabled/connected without forcing a green badge.
+  if (!session?.enabled) {
+    return hasMessages ? "Disconnected" : "Not connected";
+  }
   if (session.connected) return "Connected";
 
   switch (session.connectionState) {
@@ -147,13 +154,26 @@ const getConnectionTone = (label: string) => {
 
 const CurrentServiceRestreamPanel = ({
   churchId,
-  youtubeConnected,
-  youtubeAccountLabel = "",
+  firebaseYoutubeConnected,
+  firebaseYoutubeAccountLabel = "",
   isVisible = false,
   onUnreadCountChange,
   showToast,
 }: CurrentServiceRestreamPanelProps) => {
   const restream = useRestreamSession(churchId);
+  const shouldReconcileYouTube = Boolean(
+    restream.session?.enabled ||
+    restream.session?.connected ||
+    restream.messages.length > 0,
+  );
+  const youtubeConnection = useYouTubeConnectionStatus(
+    churchId,
+    firebaseYoutubeConnected,
+    firebaseYoutubeAccountLabel,
+    { reconcile: shouldReconcileYouTube },
+  );
+  const youtubeConnected = youtubeConnection.connected;
+  const youtubeAccountLabel = youtubeConnection.accountLabel;
   const restreamStatusIssues = getRestreamStatusIssues(
     restream.session?.connectionIssues,
     restream.session?.lastError,
@@ -276,16 +296,24 @@ const CurrentServiceRestreamPanel = ({
     // Jump to latest when opening the Chat tab; hidden panels lose scroll layout.
     resetKey: `${restream.session?.sessionId ?? churchId}:${isVisible ? "open" : "closed"}`,
   });
+  const hasMessages = messages.length > 0;
   const connectionLabel = getConnectionLabel(
     restream.session,
     restream.isLoading,
     restream.isOffline,
+    hasMessages,
   );
+  const showRestreamNotConnected =
+    !restream.isLoading &&
+    !restream.error &&
+    restream.oauthConfigured &&
+    !restream.session?.enabled &&
+    !hasMessages;
   const showEmptyFeed =
     !restream.isLoading &&
     !restream.error &&
     Boolean(restream.session?.enabled) &&
-    messages.length === 0;
+    !hasMessages;
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900/60">
@@ -374,10 +402,7 @@ const CurrentServiceRestreamPanel = ({
             </div>
           ) : null}
 
-          {!restream.isLoading &&
-            !restream.error &&
-            restream.oauthConfigured &&
-            !restream.session?.enabled ? (
+          {showRestreamNotConnected ? (
             <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-4 text-sm">
               <p className="font-semibold">Restream is not connected.</p>
               <p className="mt-1 text-gray-300">

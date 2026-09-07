@@ -193,6 +193,10 @@ function getPresenceSurface(pathname: string): "controller" | "display" | null {
 
 const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
 const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
+/** After fast retries fail, re-subscribe on this interval before considering another remint. */
+const CHURCH_INTEGRATIONS_LISTEN_RECOVERY_MS = 30_000;
+/** Remint shared auth only every N slow recoveries (~3 minutes at 30s listen retries). */
+const CHURCH_INTEGRATIONS_REMINT_EVERY_N_RECOVERIES = 6;
 
 const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
   Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
@@ -433,6 +437,8 @@ type GlobalInfoContextType = {
   churchBrandingStatus: ChurchBrandingStatus;
   churchIntegrations: ChurchIntegrations;
   churchIntegrationsStatus: ChurchIntegrationsStatus;
+  /** Re-auth shared RTDB and resubscribe integrations (e.g. after OAuth connect). */
+  refreshChurchIntegrationsSync: () => void;
   role: string;
   authError: string;
   clearAuthError: () => void;
@@ -627,6 +633,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
+  const churchIntegrationsHasLiveSnapshotRef = useRef(false);
+  const churchIntegrationsSlowRecoveryAttemptRef = useRef(0);
   const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
@@ -2141,8 +2149,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     churchBrandingListenGeneration,
   ]);
 
+  const refreshChurchIntegrationsSync = useCallback(() => {
+    churchIntegrationsPermissionRetryRef.current = 0;
+    churchIntegrationsRemintAttemptsRef.current = 0;
+    setSharedDataTokenRemintNonce((n) => n + 1);
+  }, []);
+
   useEffect(() => {
     if (loginState !== "success" || !churchId) {
+      churchIntegrationsHasLiveSnapshotRef.current = false;
       setChurchIntegrations(createDefaultChurchIntegrations());
       setChurchIntegrationsStatus("ready");
       return;
@@ -2172,6 +2187,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       (snapshot) => {
         churchIntegrationsPermissionRetryRef.current = 0;
         churchIntegrationsRemintAttemptsRef.current = 0;
+        churchIntegrationsSlowRecoveryAttemptRef.current = 0;
+        churchIntegrationsHasLiveSnapshotRef.current = true;
         setChurchIntegrations(
           snapshot.exists()
             ? normalizeChurchIntegrations(snapshot.val())
@@ -2202,8 +2219,26 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
         console.error("Could not subscribe to church integrations:", error);
-        setChurchIntegrations(createDefaultChurchIntegrations());
+        // Do not wipe a previously good snapshot to defaults — that shows a long
+        // false "Not connected" while Restream/YouTube may still be live via API.
+        if (!churchIntegrationsHasLiveSnapshotRef.current) {
+          setChurchIntegrations(createDefaultChurchIntegrations());
+        }
         setChurchIntegrationsStatus("ready");
+        churchIntegrationsPermissionRetryRef.current = 0;
+        churchIntegrationsSlowRecoveryAttemptRef.current += 1;
+        const recoveryAttempt = churchIntegrationsSlowRecoveryAttemptRef.current;
+        const shouldRemint =
+          recoveryAttempt % CHURCH_INTEGRATIONS_REMINT_EVERY_N_RECOVERIES === 0;
+        permissionDeniedRetryTimeout = setTimeout(() => {
+          if (cancelled) return;
+          if (shouldRemint) {
+            churchIntegrationsRemintAttemptsRef.current = 0;
+            setSharedDataTokenRemintNonce((n) => n + 1);
+            return;
+          }
+          setChurchIntegrationsListenGeneration((g) => g + 1);
+        }, CHURCH_INTEGRATIONS_LISTEN_RECOVERY_MS);
       },
     );
 
@@ -2861,6 +2896,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       churchIntegrations,
       churchIntegrationsStatus,
+      refreshChurchIntegrationsSync,
       role,
       authError,
       clearAuthError,
@@ -2924,6 +2960,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       churchIntegrations,
       churchIntegrationsStatus,
+      refreshChurchIntegrationsSync,
       role,
       authError,
       clearAuthError,

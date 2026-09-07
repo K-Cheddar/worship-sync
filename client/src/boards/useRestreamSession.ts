@@ -34,6 +34,7 @@ export const useRestreamSession = (
   const mountedRef = useRef(true);
   const hasLoadedOnceRef = useRef(false);
   const loadInFlightRef = useRef(false);
+  const loadQueuedRef = useRef(false);
 
   const feedState = useMemo((): RestreamFeedState => {
     if (!churchId || isLoading) return "pending";
@@ -50,8 +51,12 @@ export const useRestreamSession = (
       hasLoadedOnceRef.current = false;
       return;
     }
-    if (loadInFlightRef.current) return;
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return;
+    }
     loadInFlightRef.current = true;
+    loadQueuedRef.current = false;
 
     if (!hasLoadedOnceRef.current) {
       setIsLoading(true);
@@ -79,6 +84,12 @@ export const useRestreamSession = (
       loadInFlightRef.current = false;
       if (mountedRef.current) {
         setIsLoading(false);
+      }
+      if (mountedRef.current && loadQueuedRef.current) {
+        loadQueuedRef.current = false;
+        queueMicrotask(() => {
+          void load();
+        });
       }
     }
   }, [churchId]);

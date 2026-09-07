@@ -311,6 +311,12 @@ const ContextProbe = () => {
       <div data-testid="branding-mission">
         {context.churchBranding.mission || "none"}
       </div>
+      <div data-testid="integrations-status">
+        {context.churchIntegrationsStatus}
+      </div>
+      <div data-testid="youtube-connected">
+        {context.churchIntegrations.youtube.connected ? "yes" : "no"}
+      </div>
       <div data-testid="path">{location.pathname}</div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
@@ -847,6 +853,75 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(screen.getByTestId("branding-status")).toHaveTextContent("ready"),
     );
     expect(screen.getByTestId("branding-mission")).toHaveTextContent("none");
+  });
+
+  it("keeps a live YouTube connection after integrations listen failure and retries later", async () => {
+    jest.useFakeTimers();
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    const integrationsPath = "churches/church-1/data/integrations";
+
+    await waitFor(() =>
+      expect(onValueCallbacks.has(integrationsPath)).toBe(true),
+    );
+
+    act(() => {
+      onValueCallbacks.get(integrationsPath)?.(
+        snapshotFor({
+          youtube: {
+            enabled: true,
+            connected: true,
+            accountLabel: "Church Live",
+            lastError: "",
+          },
+        }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("youtube-connected")).toHaveTextContent("yes"),
+    );
+
+    const listenCallsBeforeFailure = onValueMock.mock.calls.filter(
+      ([target]) => target.path === integrationsPath,
+    ).length;
+    const tokenCallsBeforeFailure = (authApi.getSharedDataToken as jest.Mock)
+      .mock.calls.length;
+
+    act(() => {
+      onValueErrorCallbacks
+        .get(integrationsPath)
+        ?.(new Error("listener failed"));
+    });
+
+    expect(screen.getByTestId("youtube-connected")).toHaveTextContent("yes");
+    expect(screen.getByTestId("integrations-status")).toHaveTextContent(
+      "ready",
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(30_000);
+    });
+
+    await waitFor(() =>
+      expect(
+        onValueMock.mock.calls.filter(
+          ([target]) => target.path === integrationsPath,
+        ).length,
+      ).toBeGreaterThan(listenCallsBeforeFailure),
+    );
+    // First slow recovery is listen-only; remint waits for later recoveries.
+    expect((authApi.getSharedDataToken as jest.Mock).mock.calls.length).toBe(
+      tokenCallsBeforeFailure,
+    );
+
+    jest.useRealTimers();
   });
 
   it("routes legacy stream subkeys from storage and Firebase to the current debounced actions", async () => {
