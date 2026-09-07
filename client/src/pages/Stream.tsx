@@ -1,18 +1,23 @@
 import { useSelector } from "../hooks";
+import { selectOutputSlot } from "../store/presentationSlice";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useWakeLock } from "../hooks/useWakeLock";
 
 const Stream = () => {
-  const streamInfo = useSelector((state) => state.presentation.streamInfo);
-  const prevStreamInfo = useSelector((state) => state.presentation.prevStreamInfo);
+  const streamInfo = useSelector(
+    (state) => selectOutputSlot(state, "stream", "stream").info,
+  );
+  const prevStreamInfo = useSelector(
+    (state) => selectOutputSlot(state, "stream", "stream").prevInfo,
+  );
   const streamItemContentBlocked = useSelector(
-    (state) => state.presentation.streamItemContentBlocked
+    (state) => selectOutputSlot(state, "stream", "stream").itemContentBlocked,
   );
   const streamTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === streamInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === streamInfo.timerId),
   );
   const prevStreamTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === prevStreamInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === prevStreamInfo.timerId),
   );
 
   useWakeLock();

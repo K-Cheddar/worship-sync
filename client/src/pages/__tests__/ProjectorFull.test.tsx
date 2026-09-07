@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import ProjectorFull from "../ProjectorFull";
-import { presentationSlice } from "../../store/presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  presentationSlice,
+  toLegacyPresentationShape,
+} from "../../store/presentationSlice";
 import { timersSlice } from "../../store/timersSlice";
 
 const mockUseCloseOnEscape = jest.fn();
@@ -37,20 +41,20 @@ describe("ProjectorFull page", () => {
   });
 
   it("wires projector state with video playback and registers Escape close", () => {
-    const base = presentationSlice.getInitialState();
+    const base = toLegacyPresentationShape(presentationSlice.getInitialState());
     const store = configureStore({
       reducer: {
         presentation: presentationSlice.reducer,
         timers: timersSlice.reducer,
       },
       preloadedState: {
-        presentation: {
+        presentation: fromLegacyPresentationShape({
           ...base,
           projectorInfo: {
             ...base.projectorInfo,
             displayType: "projector",
           },
-        },
+        }),
         timers: timersSlice.getInitialState(),
       },
     });

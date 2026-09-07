@@ -14,6 +14,8 @@ export type ServiceItem = {
   name: string;
   _id: string;
   background?: string;
+  localImage?: LocalImageAssetReference;
+  localVideoFile?: LocalVideoFileReference;
   listId: string;
   type:
     | "song"
@@ -104,6 +106,8 @@ export type ItemSlideType = {
   name: string;
   id: string;
   boxes: Box[];
+  mediaSource?: SlideMediaSource;
+  videoBackgroundSendMode?: VideoBackgroundSendMode;
   /** Pre-calculated boxes for monitor "current" band (50% height). Set when slide is formatted. */
   monitorCurrentBandBoxes?: Box[];
   /** Pre-calculated boxes for monitor "next" band (30% height). Set when slide is formatted. */
@@ -242,6 +246,8 @@ export type ShouldSendTo = {
   projector: boolean;
   monitor: boolean;
   stream: boolean;
+  /** Displays this item sends to. Empty/absent = built-in of each enabled surface. */
+  outputIds?: string[];
 };
 
 export type ItemProperties = {
@@ -350,6 +356,8 @@ export type Presentation = {
   imageOverlayInfo?: OverlayInfo;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   boardPostStreamInfo?: BoardPostStreamInfo;
+  localVideoInput?: LocalVideoInputPresentation;
+  videoPlayback?: VideoBackgroundPlaybackCue;
 };
 
 export type BoardPostStreamInfo = {
@@ -913,6 +921,158 @@ export type DBAllItems = {
   docType?: DocType;
 };
 
+export type LocalVideoCaptureKind = "device" | "screen" | "window";
+
+export type LocalVideoInputMediaSource = {
+  kind: "local-video-input";
+  /** Stable logical source id saved with the item; never a browser deviceId. */
+  sourceId: string;
+  label: string;
+  captureKind?: LocalVideoCaptureKind;
+  fit?: "contain" | "cover";
+  /** Outputs that normally carry programme audio may play the locally bound input. */
+  audioEnabled?: boolean;
+  /** Workstation that holds the hardware binding. */
+  ownerDeviceId?: string;
+  ownerLabel?: string;
+};
+
+export type LocalVideoInputMediaSource = {
+  kind: "local-video-input";
+  /** Stable logical source id saved with the item; never a browser deviceId. */
+  sourceId: string;
+  label: string;
+  captureKind?: LocalVideoCaptureKind;
+  fit?: "contain" | "cover";
+  /** Outputs that normally carry programme audio may play the locally bound input. */
+  audioEnabled?: boolean;
+  /** Workstation that holds the hardware binding. */
+  ownerDeviceId?: string;
+  ownerLabel?: string;
+};
+
+export type SlideMediaSource = LocalVideoInputMediaSource;
+
+/** Durable metadata for a video file whose bytes remain on one workstation. */
+export type LocalVideoFileReference = {
+  id: string;
+  contentRevision?: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fileName: string;
+  contentType: string;
+  storagePolicy: LocalAssetStoragePolicy;
+  /** Local video files follow the same programme-audio default as USB inputs. */
+  audioEnabled?: boolean;
+  /** Optional portable copy attached after a background/cloud upload. */
+  cloudUrl?: string;
+  cloudMediaId?: string;
+};
+
+export type LocalVideoFileReference = {
+  id: string;
+  contentRevision?: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fileName: string;
+  contentType: string;
+  storagePolicy: LocalAssetStoragePolicy;
+  /** Local video files follow the same programme-audio default as USB inputs. */
+  audioEnabled?: boolean;
+  /** Optional portable copy attached after a background/cloud upload. */
+  cloudUrl?: string;
+  cloudMediaId?: string;
+};
+
+export type LocalVideoInputPresentation = {
+  /** Resolves to a hardware device id only in the owning browser profile. */
+  sourceId: string;
+  deviceLabel: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  /** Lets every surface word status copy for hardware inputs vs. desktop shares. */
+  captureKind?: LocalVideoCaptureKind;
+  fit?: "contain" | "cover";
+  audioEnabled?: boolean;
+};
+
+export type VideoBackgroundSendMode = "restart" | "continue";
+
+export type VideoBackgroundPlaybackCue = {
+  /** Stable identity of the file/HLS video this cue belongs to. */
+  mediaKey: string;
+  /** Playhead at `atServerMs`. */
+  positionSeconds: number;
+  paused: boolean;
+  atServerMs: number;
+  /** Bumped on every send so live players can re-apply the same position. */
+  generation: number;
+  /**
+   * When false and the same video is already playing, keep the live playhead
+   * (lyric advances). When true, seek to the cue — restart, first send, or
+   * the operator changed preview playback since the last send.
+   */
+  applySeek: boolean;
+};
+
+export type VideoBackgroundPlaybackCue = {
+  /** Stable identity of the file/HLS video this cue belongs to. */
+  mediaKey: string;
+  /** Playhead at `atServerMs`. */
+  positionSeconds: number;
+  paused: boolean;
+  atServerMs: number;
+  /** Bumped on every send so live players can re-apply the same position. */
+  generation: number;
+  /**
+   * When false and the same video is already playing, keep the live playhead
+   * (lyric advances). When true, seek to the cue — restart, first send, or
+   * the operator changed preview playback since the last send.
+   */
+  applySeek: boolean;
+};
+
+export type LocalAssetStoragePolicy = "local-only" | "local-and-cloud";
+
+/**
+ * Safe metadata for a device-owned image. The image bytes and original file
+ * path never enter persisted outline documents or synchronized presentation
+ * state.
+ */
+export type LocalImageAssetReference = {
+  id: string;
+  /** Stable revision of the local bytes; changes on relink, not cloud attach. */
+  contentRevision?: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fileName: string;
+  contentType: string;
+  storagePolicy: LocalAssetStoragePolicy;
+  /** Present after the optional background upload completes. */
+  cloudUrl?: string;
+  cloudMediaId?: string;
+};
+
+export type LocalImageAssetReference = {
+  id: string;
+  /** Stable revision of the local bytes; changes on relink, not cloud attach. */
+  contentRevision?: string;
+  ownerDeviceId: string;
+  ownerLabel: string;
+  fileName: string;
+  contentType: string;
+  storagePolicy: LocalAssetStoragePolicy;
+  /** Present after the optional background upload completes. */
+  cloudUrl?: string;
+  cloudMediaId?: string;
+};
+
+export type MediaCloudUploadRequest = {
+  requestedAt: string;
+  requestedByDeviceId: string;
+  requestedByLabel: string;
+};
+
 export type CanvaMediaSource = {
   designId: string;
   designTitle: string;
@@ -938,7 +1098,10 @@ export type MediaType = {
   frameRate?: number;
   hasAudio?: boolean;
   duration?: number;
-  source?: "cloudinary" | "mux";
+  source?: "cloudinary" | "mux" | "local";
+  localImage?: LocalImageAssetReference;
+  localVideoFile?: LocalVideoFileReference;
+  localVideoInput?: LocalVideoInputMediaSource;
   muxPlaybackId?: string;
   muxAssetId?: string;
   /** Stable identity for an asset copied from Canva. */
@@ -947,6 +1110,7 @@ export type MediaType = {
   canvaSource?: CanvaMediaSource;
   /** App media library folder; root / unset = null */
   folderId?: string | null;
+  cloudUploadRequest?: MediaCloudUploadRequest | null;
 };
 
 export type MediaFolder = {

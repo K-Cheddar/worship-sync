@@ -3,7 +3,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import Overlay from "./Overlay";
-import { presentationSlice } from "../../store/presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  presentationSlice,
+  toLegacyPresentationShape,
+} from "../../store/presentationSlice";
 import { overlaysSlice } from "../../store/overlaysSlice";
 
 jest.mock("@dnd-kit/sortable", () => ({
@@ -27,11 +31,11 @@ const createStore = (presentationOverrides = {}) =>
       overlays: overlaysSlice.reducer,
     },
     preloadedState: {
-      presentation: {
-        ...presentationSlice.getInitialState(),
+      presentation: fromLegacyPresentationShape({
+        ...toLegacyPresentationShape(presentationSlice.getInitialState()),
         isStreamTransmitting: true,
         ...presentationOverrides,
-      },
+      }),
       overlays: overlaysSlice.getInitialState(),
     },
   });
@@ -75,10 +79,10 @@ describe("Overlay send", () => {
     await user.click(screen.getByRole("button", { name: /Send/i }));
 
     expect(
-      store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo?.name,
     ).toBe("Alex");
     expect(
-      store.getState().presentation.streamInfo.participantOverlayInfo?.title,
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo?.title,
     ).toBe("Host");
   });
 
@@ -111,7 +115,7 @@ describe("Overlay send", () => {
     expect(screen.getByRole("button", { name: /Send/i })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: /Send/i }));
     expect(
-      store.getState().presentation.streamInfo.participantOverlayInfo?.name,
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo?.name,
     ).toBe("");
   });
 
@@ -143,7 +147,7 @@ describe("Overlay send", () => {
 
     await user.click(screen.getByRole("button", { name: /Send/i }));
     expect(
-      store.getState().presentation.streamInfo.stbOverlayInfo?.heading,
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.stbOverlayInfo?.heading,
     ).toBe("Welcome");
   });
 });

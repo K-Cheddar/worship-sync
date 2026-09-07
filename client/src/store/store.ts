@@ -11,6 +11,7 @@ import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
   setMonitorBoardAliasIdFromRemote,
+  toLegacyPresentationShape,
   updateBibleDisplayInfoFromRemote,
   updateMonitor,
   updateMonitorFromRemote,
@@ -392,7 +393,7 @@ const createPresentationUpdate = (state: RootState) => {
     streamInfo,
     streamItemContentBlocked,
     monitorBoardAliasId,
-  } = state.presentation;
+  } = toLegacyPresentationShape(state.presentation);
   return {
     projectorInfo,
     monitorInfo,
@@ -424,7 +425,7 @@ const persistPresentationUpdateLocally = (
   state: RootState,
   presentationUpdate: PresentationUpdate,
 ) => {
-  const { streamInfo } = state.presentation;
+  const { streamInfo } = toLegacyPresentationShape(state.presentation);
 
   localStorage.setItem(
     "projectorInfo",
@@ -482,7 +483,7 @@ type PresentationWrite = {
 };
 
 const getActiveOverlayLanes = (state: RootState) => {
-  const { streamInfo } = state.presentation;
+  const { streamInfo } = toLegacyPresentationShape(state.presentation);
   return [
     hasParticipantOverlayData(streamInfo.participantOverlayInfo)
       ? "participant"
@@ -530,6 +531,9 @@ export const writePresentationSnapshotToFirebase = async (
   const presentationUpdate = createPresentationUpdate(state);
   persistPresentationUpdateLocally(state, presentationUpdate);
   const activeOverlayLanes = getActiveOverlayLanes(state);
+  const { isStreamTransmitting } = toLegacyPresentationShape(
+    state.presentation,
+  );
   const churchId = globalFireDbInfo.churchId;
   if (!globalFireDbInfo.canWriteSharedData) return true;
   if (
@@ -548,7 +552,7 @@ export const writePresentationSnapshotToFirebase = async (
           churchId: churchId || null,
           realtimeConnected: globalFireDbInfo.isConnected === true,
           triggerAction,
-          streamTransmitting: state.presentation.isStreamTransmitting,
+          streamTransmitting: isStreamTransmitting,
           activeOverlayLanes,
         }),
       );
@@ -559,7 +563,7 @@ export const writePresentationSnapshotToFirebase = async (
     churchId,
     presentationUpdate,
     triggerAction,
-    streamTransmitting: state.presentation.isStreamTransmitting,
+    streamTransmitting: isStreamTransmitting,
     activeOverlayLanes,
   });
 };
@@ -1439,7 +1443,7 @@ listenerMiddleware.startListening({
     if (!timersSlice.actions.tickTimers.match(action)) return false;
     const curr = currentState as RootState;
     const prev = previousState as RootState;
-    const { monitorInfo } = curr.presentation;
+    const { monitorInfo } = toLegacyPresentationShape(curr.presentation);
     if (!isMonitorShowingTimerCountdownSlide(monitorInfo)) return false;
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return false;
@@ -1463,7 +1467,7 @@ listenerMiddleware.startListening({
   },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
-    const { monitorInfo } = state.presentation;
+    const { monitorInfo } = toLegacyPresentationShape(state.presentation);
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return;
     const currentItem = state.undoable.present.item;
@@ -2355,6 +2359,10 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateBoardPostStreamInfoFromRemote,
       presentationSlice.actions.setStreamItemContentBlockedFromRemote,
       presentationSlice.actions.setMonitorBoardAliasIdFromRemote,
+      // Registry bookkeeping, not a send: reconciling slots against the display
+      // output list must not republish the whole presentation snapshot.
+      presentationSlice.actions.syncOutputSlots,
+      presentationSlice.actions.updateOutputsFromRemote,
     );
     return (
       (currentState as RootState).presentation !==
@@ -2380,8 +2388,12 @@ listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (!presentationSlice.actions.toggleStreamTransmitting.match(action))
       return false;
-    const curr = (currentState as RootState).presentation;
-    const prev = (previousState as RootState).presentation;
+    const curr = toLegacyPresentationShape(
+      (currentState as RootState).presentation,
+    );
+    const prev = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
   effect: async (action, listenerApi) => {
@@ -2396,8 +2408,12 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (!presentationSlice.actions.setTransmitToAll.match(action)) return false;
-    const curr = (currentState as RootState).presentation;
-    const prev = (previousState as RootState).presentation;
+    const curr = toLegacyPresentationShape(
+      (currentState as RootState).presentation,
+    );
+    const prev = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
   effect: async (action, listenerApi) => {
@@ -2412,7 +2428,9 @@ listenerMiddleware.startListening({
 // handle updating from remote projector
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as Presentation;
     return (
       action.type === "debouncedUpdateProjector" &&
@@ -2438,7 +2456,9 @@ listenerMiddleware.startListening({
 // handle updating from remote monitor
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as Presentation;
     return (
       action.type === "debouncedUpdateMonitor" &&
@@ -2464,7 +2484,9 @@ listenerMiddleware.startListening({
 // handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as Presentation;
     return (
       action.type === "debouncedUpdateStream" &&
@@ -2491,7 +2513,9 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateBibleDisplayInfo") return false;
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as BibleDisplayInfo;
     const currentBible = state.streamInfo.bibleDisplayInfo;
     return !!(
@@ -2517,7 +2541,9 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateParticipantOverlayInfo") return false;
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     const currentParticipant = state.streamInfo.participantOverlayInfo;
     return shouldApplyIncomingOverlayPayload(
@@ -2541,7 +2567,9 @@ listenerMiddleware.startListening({
 // handle updating from remote stb overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateStbOverlayInfo" &&
@@ -2567,7 +2595,9 @@ listenerMiddleware.startListening({
 // handle updating from remote qr code overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateQrCodeOverlayInfo" &&
@@ -2593,7 +2623,9 @@ listenerMiddleware.startListening({
 // handle updating from remote image overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateImageOverlayInfo" &&
@@ -2619,7 +2651,9 @@ listenerMiddleware.startListening({
 // handle updating from remote formatted text display info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as FormattedTextDisplayInfo;
     return (
       action.type === "debouncedUpdateFormattedTextDisplayInfo" &&
@@ -2648,7 +2682,9 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState) => {
     if (action.type !== "debouncedUpdateBoardPostStreamInfo") return false;
-    const state = (currentState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (currentState as RootState).presentation,
+    );
     const info = action.payload as BoardPostStreamInfo;
     if (!info.time && info.transitionSequence == null) return false;
     const current = state.streamInfo.boardPostStreamInfo;

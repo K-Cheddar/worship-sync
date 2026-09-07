@@ -2,6 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Media from "../Media";
+import { fromLegacyPresentationShape } from "../../../store/presentationSlice";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 
 const mockDispatch = jest.fn();
@@ -282,10 +283,10 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
   return {
     ...base,
     ...overrides,
-    presentation: {
+    presentation: fromLegacyPresentationShape({
       ...base.presentation,
       ...((overrides as any).presentation || {}),
-    },
+    } as never),
     allItems: {
       ...base.allItems,
       ...((overrides as any).allItems || {}),

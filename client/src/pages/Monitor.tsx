@@ -1,4 +1,5 @@
 import { useSelector, useSyncMonitorSettings } from "../hooks";
+import { selectOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
 import { useContext, useEffect, useCallback, useState } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -8,9 +9,11 @@ import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { useWakeLock } from "../hooks/useWakeLock";
 
 const Monitor = () => {
-  const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
+  const monitorInfo = useSelector(
+    (state) => selectOutputSlot(state, "monitor", "monitor").info,
+  );
   const prevMonitorInfo = useSelector(
-    (state) => state.presentation.prevMonitorInfo
+    (state) => selectOutputSlot(state, "monitor", "monitor").prevInfo,
   );
 
   const { firebaseDb, churchId, sharedDataReady } =
@@ -19,10 +22,10 @@ const Monitor = () => {
   useSyncMonitorSettings(firebaseDb, churchId, !!sharedDataReady);
 
   const monitorTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === monitorInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === monitorInfo.timerId),
   );
   const prevMonitorTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === prevMonitorInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === prevMonitorInfo.timerId),
   );
 
   useWakeLock();
@@ -39,10 +42,10 @@ const Monitor = () => {
   // When the controller swaps the monitor to a discussion board, show the board
   // here with the clock/timer band composited on top so a countdown stays visible.
   const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
+    (state) => selectOutputSlot(state, "monitor", "monitor").boardAliasId,
   );
   const [viewportHeight, setViewportHeight] = useState(() =>
-    typeof window !== "undefined" ? window.innerHeight : REFERENCE_HEIGHT
+    typeof window !== "undefined" ? window.innerHeight : REFERENCE_HEIGHT,
   );
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);

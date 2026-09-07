@@ -1,8 +1,11 @@
 import { ComponentProps, memo } from "react";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
+import { selectOutputSlot } from "../../store/presentationSlice";
 
-type PresentationQuickLinks = ComponentProps<typeof PresentationPreview>["quickLinks"];
+type PresentationQuickLinks = ComponentProps<
+  typeof PresentationPreview
+>["quickLinks"];
 
 type StreamPresentationPreviewProps = {
   quickLinks: PresentationQuickLinks;
@@ -26,20 +29,24 @@ const StreamPresentationPreview = memo(
     variant,
     showFocusedStreamControls,
   }: StreamPresentationPreviewProps) => {
-    const info = useSelector((state) => state.presentation.streamInfo);
-    const prevInfo = useSelector((state) => state.presentation.prevStreamInfo);
+    const info = useSelector(
+      (state) => selectOutputSlot(state, "stream", "stream").info,
+    );
+    const prevInfo = useSelector(
+      (state) => selectOutputSlot(state, "stream", "stream").prevInfo,
+    );
     const isTransmitting = useSelector(
-      (state) => state.presentation.isStreamTransmitting
+      (state) => selectOutputSlot(state, "stream", "stream").isTransmitting,
     );
     const streamItemContentBlocked = useSelector(
-      (state) => state.presentation.streamItemContentBlocked
+      (state) => selectOutputSlot(state, "stream", "stream").itemContentBlocked,
     );
     const timers = useSelector((state) => state.timers.timers);
     const timerInfo = useSelector((state) =>
-      state.timers.timers.find((timer) => timer.id === info.timerId)
+      state.timers.timers.find((timer) => timer.id === info.timerId),
     );
     const prevTimerInfo = useSelector((state) =>
-      state.timers.timers.find((timer) => timer.id === prevInfo.timerId)
+      state.timers.timers.find((timer) => timer.id === prevInfo.timerId),
     );
 
     return (
@@ -55,14 +62,17 @@ const StreamPresentationPreview = memo(
         quickLinks={variant === "overlayStreamFocus" ? [] : quickLinks}
         hideQuickLinks={readOnly || variant === "overlayStreamFocus"}
         hideHeader={variant === "overlayStreamFocus"}
-        minimalHeader={readOnly || (variant === "overlayStreamFocus" && showFocusedStreamControls)}
+        minimalHeader={
+          readOnly ||
+          (variant === "overlayStreamFocus" && showFocusedStreamControls)
+        }
         isMobile={isMobile}
         streamItemContentBlocked={streamItemContentBlocked}
         previewScale={previewScale}
         fillWidth={fillWidth}
       />
     );
-  }
+  },
 );
 
 export default StreamPresentationPreview;

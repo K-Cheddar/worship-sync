@@ -2,8 +2,11 @@ import { ComponentProps, memo } from "react";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import ScaledBoardPreview from "../../boards/ScaledBoardPreview";
 import { useSelector } from "../../hooks";
+import { selectOutputSlot } from "../../store/presentationSlice";
 
-type PresentationQuickLinks = ComponentProps<typeof PresentationPreview>["quickLinks"];
+type PresentationQuickLinks = ComponentProps<
+  typeof PresentationPreview
+>["quickLinks"];
 
 type MonitorPresentationPreviewProps = {
   quickLinks: PresentationQuickLinks;
@@ -23,22 +26,26 @@ const MonitorPresentationPreview = memo(
     readOnly = false,
     toggleIsTransmitting,
   }: MonitorPresentationPreviewProps) => {
-    const info = useSelector((state) => state.presentation.monitorInfo);
-    const prevInfo = useSelector((state) => state.presentation.prevMonitorInfo);
+    const info = useSelector(
+      (state) => selectOutputSlot(state, "monitor", "monitor").info,
+    );
+    const prevInfo = useSelector(
+      (state) => selectOutputSlot(state, "monitor", "monitor").prevInfo,
+    );
     const isTransmitting = useSelector(
-      (state) => state.presentation.isMonitorTransmitting
+      (state) => selectOutputSlot(state, "monitor", "monitor").isTransmitting,
     );
     const timers = useSelector((state) => state.timers.timers);
     const timerInfo = useSelector((state) =>
-      state.timers.timers.find((timer) => timer.id === info.timerId)
+      state.timers.timers.find((timer) => timer.id === info.timerId),
     );
     const prevTimerInfo = useSelector((state) =>
-      state.timers.timers.find((timer) => timer.id === prevInfo.timerId)
+      state.timers.timers.find((timer) => timer.id === prevInfo.timerId),
     );
     // When the monitor is swapped to a discussion board, the preview should show
     // the board too so it matches what's actually on the monitor.
     const monitorBoardAliasId = useSelector(
-      (state) => state.presentation.monitorBoardAliasId
+      (state) => selectOutputSlot(state, "monitor", "monitor").boardAliasId,
     );
 
     return (
@@ -65,7 +72,7 @@ const MonitorPresentationPreview = memo(
         }
       />
     );
-  }
+  },
 );
 
 export default MonitorPresentationPreview;

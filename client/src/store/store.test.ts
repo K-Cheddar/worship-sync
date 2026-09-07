@@ -3,6 +3,10 @@ const flushListenerEffects = async () => {
   await Promise.resolve();
 };
 
+// Pure selectors/helpers from the slot-based presentation slice (no store side effects).
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { toLegacyPresentationShape } = require("./presentationSlice");
+
 const waitForListenerDelay = async (ms = 30) => {
   await new Promise((resolve) => setTimeout(resolve, ms));
   await flushListenerEffects();
@@ -1686,7 +1690,7 @@ describe("store module", () => {
     const timerState = store
       .getState()
       .timers.timers.find((timer: any) => timer.id === "timer-1");
-    const monitorInfo = store.getState().presentation.monitorInfo;
+    const monitorInfo = toLegacyPresentationShape(store.getState().presentation).monitorInfo;
     expect(timerState).toEqual(
       expect.objectContaining({
         remainingTime: 0,
@@ -2718,7 +2722,7 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.projectorInfo.name).toBe(
+    expect(toLegacyPresentationShape(store.getState().presentation).projectorInfo.name).toBe(
       "Existing Projector",
     );
 
@@ -2729,7 +2733,7 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.projectorInfo.name).toBe(
+    expect(toLegacyPresentationShape(store.getState().presentation).projectorInfo.name).toBe(
       "New Projector",
     );
   });
@@ -2754,7 +2758,7 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.monitorInfo.name).toBe(
+    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.name).toBe(
       "Existing Monitor",
     );
 
@@ -2766,8 +2770,8 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.monitorInfo.name).toBe("New Monitor");
-    expect(store.getState().presentation.monitorInfo.nextSlide).toEqual(
+    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.name).toBe("New Monitor");
+    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.nextSlide).toEqual(
       createScreenSlide("monitor-next-new", "next-new"),
     );
   });
@@ -2790,7 +2794,7 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.streamInfo.name).toBe(
+    expect(toLegacyPresentationShape(store.getState().presentation).streamInfo.name).toBe(
       "Existing Stream",
     );
 
@@ -2801,7 +2805,7 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(store.getState().presentation.streamInfo.name).toBe("New Stream");
+    expect(toLegacyPresentationShape(store.getState().presentation).streamInfo.name).toBe("New Stream");
   });
 
   it("applies remote service-time updates to shared redux state", async () => {
@@ -2861,10 +2865,10 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const bible = store.getState().presentation.streamInfo.bibleDisplayInfo;
+    const bible = toLegacyPresentationShape(store.getState().presentation).streamInfo.bibleDisplayInfo;
     expect(bible?.title).toBe("John 3:16");
     expect(bible?.text).toBe("For God so loved");
-    expect(store.getState().presentation.streamInfo.type).toBe("bible");
+    expect(toLegacyPresentationShape(store.getState().presentation).streamInfo.type).toBe("bible");
   });
 
   it("ignores a live remote participant overlay when the local slot only has a newer empty placeholder", async () => {
@@ -2895,7 +2899,7 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     const participant =
-      store.getState().presentation.streamInfo.participantOverlayInfo;
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo;
     expect(participant?.name ?? "").toBe("");
     expect(participant?.title ?? "").toBe("");
     expect(participant?.time).toBe(1001);
@@ -2918,7 +2922,7 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     const participant =
-      store.getState().presentation.streamInfo.participantOverlayInfo;
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p1");
     expect(participant?.name).toBe("Alex");
     expect(participant?.title).toBe("Host");
@@ -2950,7 +2954,7 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     const participant =
-      store.getState().presentation.streamInfo.participantOverlayInfo;
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p-new");
     expect(participant?.name).toBe("New Host");
     expect(participant?.time).toBe(999);

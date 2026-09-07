@@ -9,6 +9,7 @@ import {
   setMonitorTimerFontSize,
   setMonitorTimerId,
 } from "../../store/preferencesSlice";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
@@ -35,7 +36,7 @@ const onValueMock = jest.fn(
 );
 
 const mockState = {
-  presentation: {
+  presentation: fromLegacyPresentationShape({
     monitorInfo: {
       displayType: "monitor",
       name: "Current Monitor",
@@ -49,7 +50,7 @@ const mockState = {
       timerId: "timer-2",
     },
     monitorBoardAliasId: "",
-  },
+  } as never),
   timers: {
     timers: [
       { id: "timer-1", name: "Current Timer" },
@@ -127,7 +128,7 @@ describe("Monitor page", () => {
     onValueMock.mockClear();
     fullscreenPresentationProps = null;
     monitorBoardViewProps = null;
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
     Object.defineProperty(window.navigator, "wakeLock", {
       configurable: true,
       value: { request: jest.fn().mockResolvedValue(undefined) },
@@ -292,10 +293,10 @@ describe("Monitor page", () => {
     );
 
     expect(fullscreenPresentationProps.displayInfo).toEqual(
-      mockState.presentation.monitorInfo
+      mockState.presentation.outputs.monitor.info
     );
     expect(fullscreenPresentationProps.prevDisplayInfo).toEqual(
-      mockState.presentation.prevMonitorInfo
+      mockState.presentation.outputs.monitor.prevInfo
     );
     expect(fullscreenPresentationProps.timerInfo).toEqual(
       mockState.timers.timers[0]
@@ -306,7 +307,7 @@ describe("Monitor page", () => {
   });
 
   it("renders the discussion board view (not the presentation) when board mode is on", () => {
-    mockState.presentation.monitorBoardAliasId = "board-alias-1";
+    mockState.presentation.outputs.monitor.boardAliasId = "board-alias-1";
 
     render(
       <GlobalInfoContext.Provider value={{} as any}>

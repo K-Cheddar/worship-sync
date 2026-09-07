@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import TransmitHandler from "./TransmitHandler";
-import { presentationSlice } from "../../store/presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  presentationSlice,
+  toLegacyPresentationShape,
+} from "../../store/presentationSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import { timersSlice } from "../../store/timersSlice";
 import userEvent from "@testing-library/user-event";
@@ -156,7 +160,7 @@ describe("TransmitHandler", () => {
 
   it("Clear Overlays dispatches clearStreamOverlaysOnly and keeps slide content", async () => {
     const user = userEvent.setup();
-    const base = presentationSlice.getInitialState();
+    const base = toLegacyPresentationShape(presentationSlice.getInitialState());
     const store = configureStore({
       reducer: {
         presentation: presentationSlice.reducer,
@@ -170,7 +174,7 @@ describe("TransmitHandler", () => {
         ) => state,
       },
       preloadedState: {
-        presentation: {
+        presentation: fromLegacyPresentationShape({
           ...base,
           isStreamTransmitting: true,
           streamInfo: {
@@ -189,7 +193,7 @@ describe("TransmitHandler", () => {
               time: 1,
             },
           },
-        },
+        }),
         timers: timersSlice.getInitialState(),
         undoable: {
           present: {
@@ -214,7 +218,7 @@ describe("TransmitHandler", () => {
 
     await user.click(screen.getByRole("button", { name: "Clear Overlays" }));
 
-    const state = store.getState().presentation;
+    const state = toLegacyPresentationShape(store.getState().presentation);
     expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
     expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Ann");
     expect(state.streamInfo.slide?.boxes?.[0]?.words).toBe("Lyrics");
@@ -234,8 +238,10 @@ describe("TransmitHandler", () => {
       </Provider>,
     );
 
-    expect(store.getState().presentation.streamItemContentBlocked).toBe(false);
+    expect(toLegacyPresentationShape(store.getState().presentation)
+      .streamItemContentBlocked).toBe(false);
     await user.click(screen.getByText("Hide Content:"));
-    expect(store.getState().presentation.streamItemContentBlocked).toBe(true);
+    expect(toLegacyPresentationShape(store.getState().presentation)
+      .streamItemContentBlocked).toBe(true);
   });
 });

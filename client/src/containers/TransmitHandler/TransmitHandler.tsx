@@ -1,13 +1,8 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
 import {
+  selectOutputSlot,
   setTransmitToAll,
   clearStreamOverlaysOnly,
   setStreamItemContentBlocked,
@@ -73,16 +68,16 @@ const TransmitHandler = ({
   maxQuickLinks,
 }: TransmitHandlerProps) => {
   const isMonitorTransmitting = useSelector(
-    (state) => state.presentation.isMonitorTransmitting
+    (state) => selectOutputSlot(state, "monitor", "monitor").isTransmitting,
   );
   const isProjectorTransmitting = useSelector(
-    (state) => state.presentation.isProjectorTransmitting
+    (state) => selectOutputSlot(state, "projector", "projector").isTransmitting,
   );
   const isStreamTransmitting = useSelector(
-    (state) => state.presentation.isStreamTransmitting
+    (state) => selectOutputSlot(state, "stream", "stream").isTransmitting,
   );
   const streamItemContentBlocked = useSelector(
-    (state) => state.presentation.streamItemContentBlocked
+    (state) => selectOutputSlot(state, "stream", "stream").itemContentBlocked,
   );
   const [isTransmitting, setIsTransmitting] = useState(false);
 
@@ -91,19 +86,19 @@ const TransmitHandler = ({
   const dispatch = useDispatch();
 
   const isMediaExpanded = useSelector(
-    (state) => state.undoable.present.preferences.isMediaExpanded
+    (state) => state.undoable.present.preferences.isMediaExpanded,
   );
   const quickLinks = useSelector(
-    (state) => state.undoable.present.preferences.quickLinks
+    (state) => state.undoable.present.preferences.quickLinks,
   );
   const defaultQuickLinks = useSelector(
-    (state) => state.undoable.present.preferences.defaultQuickLinks
+    (state) => state.undoable.present.preferences.defaultQuickLinks,
   );
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
   const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
+    (state) => selectOutputSlot(state, "monitor", "monitor").boardAliasId,
   );
   const [isBoardSectionOpen, setIsBoardSectionOpen] = useState(false);
 
@@ -131,12 +126,14 @@ const TransmitHandler = ({
   const showBulkControls =
     !readOnly && showProjector && showMonitor && showStream;
   const showFocusedStreamControls =
-    !readOnly && showStream && (showStreamOverlayOnlyToggle || showClearStreamOverlaysButton);
+    !readOnly &&
+    showStream &&
+    (showStreamOverlayOnlyToggle || showClearStreamOverlaysButton);
 
   useEffect(() => {
     if (!showBulkControls) return;
     setIsTransmitting(
-      isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting
+      isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting,
     );
   }, [
     showBulkControls,
@@ -175,11 +172,13 @@ const TransmitHandler = ({
 
   const allQuickLinks = useMemo(
     () => [...defaultQuickLinks, ...quickLinks],
-    [defaultQuickLinks, quickLinks]
+    [defaultQuickLinks, quickLinks],
   );
 
   const projectorQuickLinks = useMemo(() => {
-    const list = allQuickLinks.filter((link) => link.displayType === "projector");
+    const list = allQuickLinks.filter(
+      (link) => link.displayType === "projector",
+    );
     return maxQuickLinks === undefined ? list : list.slice(0, maxQuickLinks);
   }, [allQuickLinks, maxQuickLinks]);
 
@@ -194,7 +193,9 @@ const TransmitHandler = ({
   }, [allQuickLinks, maxQuickLinks]);
 
   const overlayStreamQuickLinksBelowPreview = useMemo(() => {
-    const actionable = streamQuickLinks.filter((link) => link.action !== "clear");
+    const actionable = streamQuickLinks.filter(
+      (link) => link.action !== "clear",
+    );
     return actionable.slice(0, OVERLAY_STREAM_QUICK_LINKS_VISIBLE);
   }, [streamQuickLinks]);
 
@@ -203,14 +204,16 @@ const TransmitHandler = ({
       <div
         className={cn(
           "transition-all relative flex flex-col min-h-0",
-          !readOnly && isMediaExpanded ? "h-0 z-0 opacity-0 flex-none" : "flex-1 opacity-100"
+          !readOnly && isMediaExpanded
+            ? "h-0 z-0 opacity-0 flex-none"
+            : "flex-1 opacity-100",
         )}
         data-is-media-expanded={isMediaExpanded}
       >
         <section
           className={cn(
             "flex flex-col gap-2 w-full mx-auto h-full p-2",
-            variant === "overlayStreamFocus" && "gap-3"
+            variant === "overlayStreamFocus" && "gap-3",
           )}
         >
           {showBulkControls && (
@@ -240,7 +243,7 @@ const TransmitHandler = ({
                 "rounded-md border border-white/12 bg-black/30 px-3 py-3",
                 variant === "overlayStreamFocus"
                   ? "flex flex-col gap-4"
-                  : "flex items-center gap-3"
+                  : "flex items-center gap-3",
               )}
             >
               {variant === "overlayStreamFocus" && (
@@ -267,7 +270,8 @@ const TransmitHandler = ({
                   />
                 </div>
               )}
-              {(showStreamOverlayOnlyToggle || showClearStreamOverlaysButton) && (
+              {(showStreamOverlayOnlyToggle ||
+                showClearStreamOverlaysButton) && (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {showStreamOverlayOnlyToggle && (
                     <Toggle
@@ -298,7 +302,7 @@ const TransmitHandler = ({
               "scrollbar-variable overflow-y-auto flex-1 min-h-0 gap-2",
               columns === 2
                 ? "grid grid-cols-2 content-start"
-                : "flex flex-col"
+                : "flex flex-col",
             )}
           >
             {showProjector && (
@@ -330,16 +334,18 @@ const TransmitHandler = ({
                     "flex w-full cursor-pointer items-center justify-between gap-2 bg-black/25 px-2 py-1 text-xs font-semibold transition-colors",
                     isBoardSectionOpen && "border-b border-white/10",
                     "hover:bg-black/40 active:bg-black/50",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500/60"
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500/60",
                   )}
                   aria-expanded={isBoardSectionOpen}
                   aria-controls="discussion-board-panel"
                 >
-                  <span className="truncate min-w-0 text-left">Discussion Board</span>
+                  <span className="truncate min-w-0 text-left">
+                    Discussion Board
+                  </span>
                   <ChevronDown
                     className={cn(
                       "size-3.5 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none",
-                      isBoardSectionOpen ? "rotate-180" : "rotate-0"
+                      isBoardSectionOpen ? "rotate-180" : "rotate-0",
                     )}
                     aria-hidden
                   />
@@ -348,7 +354,7 @@ const TransmitHandler = ({
                   id="discussion-board-panel"
                   className={cn(
                     "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-                    isBoardSectionOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                    isBoardSectionOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
                   )}
                 >
                   <div

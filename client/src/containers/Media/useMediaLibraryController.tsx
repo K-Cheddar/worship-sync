@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ExternalLink, Folder } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
@@ -58,7 +65,10 @@ import {
 } from "./mediaLibraryOrangeFolderIcon";
 import { useLocation, useNavigate } from "react-router-dom";
 import { RootState } from "../../store/store";
-import { updateProjector } from "../../store/presentationSlice";
+import {
+  selectOutputSlot,
+  updateProjector,
+} from "../../store/presentationSlice";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
@@ -101,8 +111,9 @@ export function useMediaLibraryController({
     [showToast],
   );
 
-  const slideBackgroundFeedbackTimeoutRef =
-    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slideBackgroundFeedbackTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const [slideBackgroundFeedbackId, setSlideBackgroundFeedbackId] = useState<
     string | null
   >(null);
@@ -127,8 +138,13 @@ export function useMediaLibraryController({
     [],
   );
 
-  const { db, cloud, isMobile, updater, isGuestSession = false } =
-    useContext(ControllerInfoContext) || {};
+  const {
+    db,
+    cloud,
+    isMobile,
+    updater,
+    isGuestSession = false,
+  } = useContext(ControllerInfoContext) || {};
 
   const {
     list,
@@ -142,8 +158,9 @@ export function useMediaLibraryController({
   const itemSlideContext = useMemo(() => {
     if (!location.pathname.includes("item")) return undefined;
     const arrangement = item.arrangements[item.selectedArrangement];
-    const slides =
-      arrangement?.slides?.length ? arrangement.slides : item.slides;
+    const slides = arrangement?.slides?.length
+      ? arrangement.slides
+      : item.slides;
     return {
       itemType: item.type,
       slides,
@@ -160,7 +177,7 @@ export function useMediaLibraryController({
     location.pathname,
   ]);
   const { selectedOverlay } = useSelector(
-    (state: RootState) => state.undoable.present.overlay
+    (state: RootState) => state.undoable.present.overlay,
   );
 
   const {
@@ -177,23 +194,22 @@ export function useMediaLibraryController({
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const isProjectorTransmitting = useSelector(
-    (state: RootState) => state.presentation.isProjectorTransmitting,
+    (state: RootState) =>
+      selectOutputSlot(state, "projector", "projector").isTransmitting,
   );
   const { list: allItemsList } = useSelector(
     (state: RootState) => state.allItems,
   );
 
-  const routeKey = getMediaRouteKey(
-    location.pathname,
-    pageMode,
-    item.type,
-  );
+  const routeKey = getMediaRouteKey(location.pathname, pageMode, item.type);
   const selectedLibraryFilter =
     mediaRouteFolders[routeKey] === undefined
       ? null
       : mediaRouteFolders[routeKey]!;
 
-  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">(
+    "all",
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
@@ -206,11 +222,16 @@ export function useMediaLibraryController({
   /** Fullscreen Media modal only; panel grid shows names only while searching. */
   const [showName, setShowName] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
+  const [uploadProgress, setUploadProgress] = useState<{
+    isUploading: boolean;
+    progress: number;
+  }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLElement>(null);
   const mediaGridRef = useRef<VirtualMediaGridHandle>(null);
-  const uploadPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const uploadPollingIntervalRef = useRef<ReturnType<
+    typeof setInterval
+  > | null>(null);
   const lastBrowseFolderIdRef = useRef<string>(MEDIA_LIBRARY_ROOT_VIEW);
   const [folderRenameOpen, setFolderRenameOpen] = useState(false);
   const [mediaRenameOpen, setMediaRenameOpen] = useState(false);
@@ -241,7 +262,8 @@ export function useMediaLibraryController({
   const showAll = selectedLibraryFilter === null;
   const showNamesInPanelGrid = searchTerm.trim().length > 0;
   const parentForBrowseChildren =
-    selectedLibraryFilter === null || selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter === null ||
+    selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
       ? null
       : selectedLibraryFilter;
   const childFolders = useMemo(
@@ -249,13 +271,11 @@ export function useMediaLibraryController({
     [parentForBrowseChildren, folders],
   );
   const selectedRealFolder =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? folders.find((f) => f.id === selectedLibraryFilter)
       : undefined;
   const canGoUp = Boolean(
-    selectedLibraryFilter &&
-    selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
   );
 
   const filteredList = useMemo(() => {
@@ -325,7 +345,7 @@ export function useMediaLibraryController({
     setSelectedMedia(mediaItem);
     setSelectedMediaIds(new Set([mediaItem.id]));
     setPreviewMedia(mediaItem);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusMediaId]);
 
   // After folder navigation re-filters the list, scroll the focused tile into view.
@@ -395,9 +415,7 @@ export function useMediaLibraryController({
 
   const handleGoUp = useCallback(() => {
     if (!selectedRealFolder) return;
-    navigateToFolder(
-      selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
-    );
+    navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
   }, [navigateToFolder, selectedRealFolder]);
 
   /** Fullscreen modal keeps selection in MediaModal; copy into parent before bulk delete. */
@@ -416,8 +434,7 @@ export function useMediaLibraryController({
   }, [isMobile, dispatch]);
 
   const uploadTargetFolderId =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? selectedLibraryFilter
       : null;
 
@@ -473,10 +490,7 @@ export function useMediaLibraryController({
         name: displayName,
       }),
     );
-    showToast(
-      `Sent "${truncatedMediaToastLabel(m)}" to projector.`,
-      "success",
-    );
+    showToast(`Sent "${truncatedMediaToastLabel(m)}" to projector.`, "success");
   }, [
     selectedMedia,
     isProjectorTransmitting,
@@ -553,72 +567,69 @@ export function useMediaLibraryController({
     ],
   );
 
-  const mediaBarActions = useMemo(
-    () => {
-      const actions = buildMediaLibraryBarActions({
-        flags: routeFlags,
-        db,
-        isLoading: Boolean(isLoading),
-        selectedPreference,
-        selectedQuickLink,
-        selectedOverlay,
-        primaryMedia: selectedMedia,
-        hasMultipleSelection: selectedMediaIds.size > 1,
-        selectedCount: selectedMediaIds.size,
-        dispatch,
-        onDeleteSingle: () => {
-          setMediaToDelete(selectedMedia);
-          setShowDeleteModal(true);
-        },
-        onDeleteMultiple: () => {
-          setIsDeletingMultiple(true);
-          setShowDeleteModal(true);
-        },
-        itemSlideContext,
-        controllerFromSelectedMedia:
-          selectedMediaIds.size === 1
-            ? {
+  const mediaBarActions = useMemo(() => {
+    const actions = buildMediaLibraryBarActions({
+      flags: routeFlags,
+      db,
+      isLoading: Boolean(isLoading),
+      selectedPreference,
+      selectedQuickLink,
+      selectedOverlay,
+      primaryMedia: selectedMedia,
+      hasMultipleSelection: selectedMediaIds.size > 1,
+      selectedCount: selectedMediaIds.size,
+      dispatch,
+      onDeleteSingle: () => {
+        setMediaToDelete(selectedMedia);
+        setShowDeleteModal(true);
+      },
+      onDeleteMultiple: () => {
+        setIsDeletingMultiple(true);
+        setShowDeleteModal(true);
+      },
+      itemSlideContext,
+      controllerFromSelectedMedia:
+        selectedMediaIds.size === 1
+          ? {
               isProjectorTransmitting,
               onSendToProjector: handleSendSelectedMediaToProjector,
               onCreateCustomItem: handleCreateCustomItemFromMedia,
             }
-            : undefined,
-        notify: notifyMediaAction,
-        onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
+          : undefined,
+      notify: notifyMediaAction,
+      onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
+    });
+    if (
+      selectedMediaIds.size === 1 &&
+      getCanvaMediaSource(selectedMedia) &&
+      onManageCanvaSource
+    ) {
+      actions.push({
+        id: "manage-canva-source",
+        label: "Manage Canva source",
+        icon: <ExternalLink className="size-4" />,
+        onClick: () => onManageCanvaSource(selectedMedia),
       });
-      if (
-        selectedMediaIds.size === 1 &&
-        getCanvaMediaSource(selectedMedia) &&
-        onManageCanvaSource
-      ) {
-        actions.push({
-          id: "manage-canva-source",
-          label: "Manage Canva source",
-          icon: <ExternalLink className="size-4" />,
-          onClick: () => onManageCanvaSource(selectedMedia),
-        });
-      }
-      return actions;
-    },
-    [
-      routeFlags,
-      db,
-      isLoading,
-      selectedPreference,
-      selectedQuickLink,
-      selectedOverlay,
-      selectedMedia,
-      selectedMediaIds.size,
-      dispatch,
-      itemSlideContext,
-      isProjectorTransmitting,
-      handleSendSelectedMediaToProjector,
-      handleCreateCustomItemFromMedia,
-      notifyMediaAction,
-      triggerSlideBackgroundFeedback,
-      onManageCanvaSource,
-    ],
-  );
+    }
+    return actions;
+  }, [
+    routeFlags,
+    db,
+    isLoading,
+    selectedPreference,
+    selectedQuickLink,
+    selectedOverlay,
+    selectedMedia,
+    selectedMediaIds.size,
+    dispatch,
+    itemSlideContext,
+    isProjectorTransmitting,
+    handleSendSelectedMediaToProjector,
+    handleCreateCustomItemFromMedia,
+    notifyMediaAction,
+    triggerSlideBackgroundFeedback,
+    onManageCanvaSource,
+  ]);
 
   const actionBarDetails = useMemo(() => {
     /** Matches single-item title so browse / folder / selection headers don’t shift layout. */
@@ -707,8 +718,7 @@ export function useMediaLibraryController({
   ]);
 
   const parentForNewFolder =
-    selectedLibraryFilter &&
-      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+    selectedLibraryFilter && selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
       ? selectedLibraryFilter
       : null;
 
@@ -778,9 +788,7 @@ export function useMediaLibraryController({
     (folderId: string) => {
       const target = folders.find((f) => f.id === folderId);
       const fallback =
-        target?.parentId == null
-          ? MEDIA_LIBRARY_ROOT_VIEW
-          : target.parentId;
+        target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
         mediaRouteFolders,
         new Set([folderId]),
@@ -794,11 +802,13 @@ export function useMediaLibraryController({
       }
       const next = deleteFolderKeepContents(folderId, folders, list);
       dispatch(setMediaListAndFolders(next));
-      void flushMediaLibraryDocToPouch(db, next.list, next.folders).then((r) => {
-        if (!r.ok) {
-          alertMediaLibraryFlushFailed(r.error, "folder");
-        }
-      });
+      void flushMediaLibraryDocToPouch(db, next.list, next.folders).then(
+        (r) => {
+          if (!r.ok) {
+            alertMediaLibraryFlushFailed(r.error, "folder");
+          }
+        },
+      );
     },
     [db, dispatch, folders, list, mediaRouteFolders],
   );
@@ -832,9 +842,7 @@ export function useMediaLibraryController({
       const target = folders.find((f) => f.id === folderId);
       const subtree = collectSubtreeFolderIds(folderId, folders);
       const fallback =
-        target?.parentId == null
-          ? MEDIA_LIBRARY_ROOT_VIEW
-          : target.parentId;
+        target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
         mediaRouteFolders,
         subtree,
@@ -921,12 +929,11 @@ export function useMediaLibraryController({
             dispatch(syncMediaFromRemote(normalized));
           }
         }
-
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   useEffect(() => {
@@ -990,7 +997,6 @@ export function useMediaLibraryController({
     setIsDeletingMultiple(false);
   };
 
-
   const handleDeleteAll = async () => {
     if (!db || selectedMediaIds.size === 0) return;
 
@@ -999,9 +1005,7 @@ export function useMediaLibraryController({
     try {
       const result = await removeMediaRowsAfterSweep(itemsToDelete);
       if (result.phase !== "ok") return;
-      const updatedList = list.filter(
-        (item) => !selectedMediaIds.has(item.id),
-      );
+      const updatedList = list.filter((item) => !selectedMediaIds.has(item.id));
       dispatch(setMediaListAndFolders({ list: updatedList, folders }));
       const flushResult = await flushMediaLibraryDocToPouch(
         db,

@@ -1,19 +1,22 @@
 import { useSelector } from "../hooks";
+import { selectOutputSlot } from "../store/presentationSlice";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useCallback } from "react";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { useWakeLock } from "../hooks/useWakeLock";
 
 const ProjectorFull = () => {
-  const projectorInfo = useSelector((state) => state.presentation.projectorInfo);
+  const projectorInfo = useSelector(
+    (state) => selectOutputSlot(state, "projector", "projector").info,
+  );
   const prevProjectorInfo = useSelector(
-    (state) => state.presentation.prevProjectorInfo
+    (state) => selectOutputSlot(state, "projector", "projector").prevInfo,
   );
   const projectorTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === projectorInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === projectorInfo.timerId),
   );
   const prevProjectorTimer = useSelector((state) =>
-    state.timers.timers.find((timer) => timer.id === prevProjectorInfo.timerId)
+    state.timers.timers.find((timer) => timer.id === prevProjectorInfo.timerId),
   );
 
   useWakeLock();

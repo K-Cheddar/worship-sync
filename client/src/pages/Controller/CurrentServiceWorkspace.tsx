@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ListChecks } from "lucide-react";
 import { onValue, ref } from "firebase/database";
@@ -57,6 +64,7 @@ import {
 } from "../Teams/teamsReturnNavigation";
 import { toTeamService } from "../Teams/teamsUtils";
 import { initiateLiveCredits } from "../../store/creditsSlice";
+import { selectOutputSlot } from "../../store/presentationSlice";
 import { getChurchDataPath } from "../../utils/firebasePaths";
 import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
@@ -268,7 +276,10 @@ const PreviewPanel = ({
             className={lineTabsListShellClassName}
             aria-label="Workspace preview"
           >
-            <TabsTrigger value="displays" className={lineTabsTriggerSmClassName}>
+            <TabsTrigger
+              value="displays"
+              className={lineTabsTriggerSmClassName}
+            >
               Displays
             </TabsTrigger>
             <TabsTrigger value="credits" className={lineTabsTriggerSmClassName}>
@@ -356,10 +367,18 @@ const CurrentServiceWorkspace = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const serviceTimes = useSelector((state) => state.undoable.present.serviceTimes.list);
-  const liveCredits = useSelector((state) => state.undoable.present.credits.liveCredits);
-  const projectorInfo = useSelector((state) => state.presentation.projectorInfo);
-  const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
+  const serviceTimes = useSelector(
+    (state) => state.undoable.present.serviceTimes.list,
+  );
+  const liveCredits = useSelector(
+    (state) => state.undoable.present.credits.liveCredits,
+  );
+  const projectorInfo = useSelector(
+    (state) => selectOutputSlot(state, "projector", "projector").info,
+  );
+  const monitorInfo = useSelector(
+    (state) => selectOutputSlot(state, "monitor", "monitor").info,
+  );
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [tab, setTab] = useState<WorkspaceTab>("plan");
   const [isPreviewPanelOpen, setIsPreviewPanelOpen] = useState(true);
@@ -378,9 +397,9 @@ const CurrentServiceWorkspace = () => {
   >([]);
   const [assignmentsIncomplete, setAssignmentsIncomplete] = useState(false);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
-  const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(
-    null,
-  );
+  const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<
+    string | null
+  >(null);
 
   const liveSlideProgress = useMemo(
     () => resolveLiveSlideProgress(projectorInfo, monitorInfo),
@@ -449,7 +468,10 @@ const CurrentServiceWorkspace = () => {
   useEffect(() => {
     if (!firebaseDb || loginState === "guest") return;
     return onValue(
-      ref(firebaseDb, getChurchDataPath(churchId || "", "credits", "publishedList")),
+      ref(
+        firebaseDb,
+        getChurchDataPath(churchId || "", "credits", "publishedList"),
+      ),
       (snapshot) => {
         const data = snapshot.val();
         dispatch(initiateLiveCredits(Array.isArray(data) ? data : []));
@@ -457,11 +479,17 @@ const CurrentServiceWorkspace = () => {
     );
   }, [churchId, dispatch, firebaseDb, loginState]);
 
-  const services = useMemo(() => serviceTimes.map(toTeamService), [serviceTimes]);
+  const services = useMemo(
+    () => serviceTimes.map(toTeamService),
+    [serviceTimes],
+  );
   const { occurrences, occurrence, selectOccurrence } =
     useCurrentServiceOccurrence(services);
   const service = useMemo(
-    () => services.find((candidate) => candidate.serviceId === occurrence?.serviceId) || null,
+    () =>
+      services.find(
+        (candidate) => candidate.serviceId === occurrence?.serviceId,
+      ) || null,
     [occurrence?.serviceId, services],
   );
   /**
@@ -601,7 +629,11 @@ const CurrentServiceWorkspace = () => {
           ),
         );
       } catch (error) {
-        showApiErrorToast(showToast, error, "Could not update team microphones.");
+        showApiErrorToast(
+          showToast,
+          error,
+          "Could not update team microphones.",
+        );
       } finally {
         setSavingMicrophoneSlot(null);
         dispatch(
@@ -648,9 +680,7 @@ const CurrentServiceWorkspace = () => {
   );
 
   const desktopPreviewTab: PreviewTab =
-    tab === "credits" || tab === "serving" || tab === "chat"
-      ? tab
-      : "displays";
+    tab === "credits" || tab === "serving" || tab === "chat" ? tab : "displays";
 
   if (!canViewTeams) {
     return (
@@ -769,7 +799,8 @@ const CurrentServiceWorkspace = () => {
                       />
                     </section>
                   ),
-                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                  contentClassName:
+                    "flex min-h-0 flex-1 flex-col overflow-hidden",
                 },
                 {
                   value: "credits",
@@ -779,7 +810,8 @@ const CurrentServiceWorkspace = () => {
                       <CreditsPanel credits={liveCredits} />
                     </section>
                   ),
-                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                  contentClassName:
+                    "flex min-h-0 flex-1 flex-col overflow-hidden",
                 },
                 {
                   value: "serving",
@@ -789,7 +821,8 @@ const CurrentServiceWorkspace = () => {
                       {servingContent}
                     </section>
                   ),
-                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                  contentClassName:
+                    "flex min-h-0 flex-1 flex-col overflow-hidden",
                 },
                 {
                   value: "chat",
@@ -813,61 +846,67 @@ const CurrentServiceWorkspace = () => {
                       showToast={showToast}
                     />
                   ),
-                  contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                  contentClassName:
+                    "flex min-h-0 flex-1 flex-col overflow-hidden",
                 },
               ]}
             />
           ) : null}
         </section>
 
-        {isDesktop ? <aside
-          className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
+        {isDesktop ? (
+          <aside
+            className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${
+              isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
             }`}
-          aria-label="Workspace preview"
-        >
-          <Button
-            type="button"
-            variant="tertiary"
-            padding="p-0"
-            className="absolute left-0 top-1/2 z-20 flex size-8 min-h-0 shrink-0 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-gray-700 bg-gray-950 shadow-sm"
-            aria-expanded={isPreviewPanelOpen}
-            aria-label={
-              isPreviewPanelOpen ? "Hide workspace preview" : "Show workspace preview"
-            }
-            onClick={() => setIsPreviewPanelOpen((open) => !open)}
+            aria-label="Workspace preview"
           >
-            {isPreviewPanelOpen ? (
-              <ChevronRight className="size-4 shrink-0" aria-hidden />
-            ) : (
-              <ChevronLeft className="size-4 shrink-0" aria-hidden />
-            )}
-          </Button>
-          {isPreviewPanelOpen ? (
-            <PreviewPanel
-              credits={liveCredits}
-              value={desktopPreviewTab}
-              onValueChange={setTab}
-              progress={liveSlideProgress}
-              activeItemId={monitorInfo.itemId ?? null}
-              activeListId={monitorInfo.listId ?? null}
-              assignmentTeams={assignmentTeams}
-              microphones={microphones}
-              assignmentsStatus={assignmentsStatus}
-              onOpenSchedule={openSchedule}
-              churchId={churchId || ""}
-              youtubeConnected={Boolean(
-                loginState === "success" &&
-                churchIntegrations?.youtube?.connected,
-              )}
-              youtubeAccountLabel={
-                churchIntegrations?.youtube?.accountLabel || ""
+            <Button
+              type="button"
+              variant="tertiary"
+              padding="p-0"
+              className="absolute left-0 top-1/2 z-20 flex size-8 min-h-0 shrink-0 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-gray-700 bg-gray-950 shadow-sm"
+              aria-expanded={isPreviewPanelOpen}
+              aria-label={
+                isPreviewPanelOpen
+                  ? "Hide workspace preview"
+                  : "Show workspace preview"
               }
-              chatUnreadCount={chatUnreadCount}
-              onChatUnreadCountChange={setChatUnreadCount}
-              showToast={showToast}
-            />
-          ) : null}
-        </aside> : null}
+              onClick={() => setIsPreviewPanelOpen((open) => !open)}
+            >
+              {isPreviewPanelOpen ? (
+                <ChevronRight className="size-4 shrink-0" aria-hidden />
+              ) : (
+                <ChevronLeft className="size-4 shrink-0" aria-hidden />
+              )}
+            </Button>
+            {isPreviewPanelOpen ? (
+              <PreviewPanel
+                credits={liveCredits}
+                value={desktopPreviewTab}
+                onValueChange={setTab}
+                progress={liveSlideProgress}
+                activeItemId={monitorInfo.itemId ?? null}
+                activeListId={monitorInfo.listId ?? null}
+                assignmentTeams={assignmentTeams}
+                microphones={microphones}
+                assignmentsStatus={assignmentsStatus}
+                onOpenSchedule={openSchedule}
+                churchId={churchId || ""}
+                youtubeConnected={Boolean(
+                  loginState === "success" &&
+                  churchIntegrations?.youtube?.connected,
+                )}
+                youtubeAccountLabel={
+                  churchIntegrations?.youtube?.accountLabel || ""
+                }
+                chatUnreadCount={chatUnreadCount}
+                onChatUnreadCountChange={setChatUnreadCount}
+                showToast={showToast}
+              />
+            ) : null}
+          </aside>
+        ) : null}
       </div>
     </WorkspacePage>
   );

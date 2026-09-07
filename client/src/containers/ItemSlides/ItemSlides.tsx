@@ -19,6 +19,7 @@ import {
 } from "../../store/preferencesSlice";
 import { useDispatch, useSelector } from "../../hooks";
 import {
+  selectOutputSlot,
   updateBibleDisplayInfo,
   updateFormattedTextDisplayInfo,
   updateMonitor,
@@ -90,8 +91,15 @@ const ItemSlides = () => {
   const showBackgroundTargetActionBar =
     mobileBackgroundTargetSelectMode || backgroundTargetSlideIds.length > 0;
 
-  const { projectorInfo, monitorInfo, streamInfo } = useSelector(
-    (state: RootState) => state.presentation
+  const projectorInfo = useSelector(
+    (state: RootState) =>
+      selectOutputSlot(state, "projector", "projector").info,
+  );
+  const monitorInfo = useSelector(
+    (state: RootState) => selectOutputSlot(state, "monitor", "monitor").info,
+  );
+  const streamInfo = useSelector(
+    (state: RootState) => selectOutputSlot(state, "stream", "stream").info,
   );
 
   const timers = useSelector((state: RootState) => state.timers.timers);
@@ -168,8 +176,7 @@ const ItemSlides = () => {
   const slidesGridColsMin = 1;
   const slidesGridColsMax = isTimerLike ? 3 : 7;
   /** Slider is inverted so moving right = zoom in (fewer columns, larger thumbnails). */
-  const slideZoomSliderValue =
-    slidesGridColsMax + slidesGridColsMin - size;
+  const slideZoomSliderValue = slidesGridColsMax + slidesGridColsMin - size;
 
   const sizeConfig: SizeConfig = useMemo(() => {
     const configs: Record<number, SizeConfig> = {
@@ -280,7 +287,7 @@ const ItemSlides = () => {
       const text = index > 0 ? slideText || "" : "";
       return { title, text };
     },
-    [slides]
+    [slides],
   );
 
   const selectSlide = useCallback(
@@ -302,7 +309,7 @@ const ItemSlides = () => {
             updateBibleDisplayInfo({
               title,
               text,
-            })
+            }),
           );
         } else {
           dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
@@ -321,13 +328,13 @@ const ItemSlides = () => {
               isBold: slide.formattedTextDisplayInfo?.isBold || false,
               isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
               align: slide.formattedTextDisplayInfo?.align || "left",
-            })
+            }),
           );
         } else {
           dispatch(
             updateFormattedTextDisplayInfo({
               text: "",
-            })
+            }),
           );
         }
 
@@ -340,7 +347,7 @@ const ItemSlides = () => {
               timerId: timerInfo?.id,
               slideIndex: index,
               slideCount: slides.length,
-            })
+            }),
           );
         }
       }
@@ -354,7 +361,7 @@ const ItemSlides = () => {
             timerId: timerInfo?.id,
             slideIndex: index,
             slideCount: slides.length,
-          })
+          }),
         );
       }
 
@@ -374,24 +381,23 @@ const ItemSlides = () => {
           (type === "song" || type === "bible" || type === "free") &&
           monitorShowNextSlide &&
           index + 1 < slides.length &&
-          (slide?.boxes ?? []).every(
-            (box, i) => i === 0 || box.height <= 55
-          );
+          (slide?.boxes ?? []).every((box, i) => i === 0 || box.height <= 55);
         const nextSlideSlide = canShowNextSlide
-          ? monitorReadySlides[index + 1] ?? slides[index + 1]
+          ? (monitorReadySlides[index + 1] ?? slides[index + 1])
           : null;
         const nextSlideForMonitor = nextSlideSlide
           ? {
-            ...nextSlideSlide,
-            boxes: nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
-          }
+              ...nextSlideSlide,
+              boxes:
+                nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
+            }
           : undefined;
         // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
         const slideForMonitor = {
           ...monitorSlide,
           boxes:
             nextSlideForMonitor != null
-              ? monitorSlide.monitorCurrentBandBoxes ?? monitorSlide.boxes
+              ? (monitorSlide.monitorCurrentBandBoxes ?? monitorSlide.boxes)
               : monitorSlide.boxes,
         };
         dispatch(
@@ -408,9 +414,9 @@ const ItemSlides = () => {
             transitionDirection,
             bibleInfoBox:
               type === "bible" && nextSlideForMonitor
-                ? slide.boxes?.[2] ?? null
+                ? (slide.boxes?.[2] ?? null)
                 : undefined,
-          })
+          }),
         );
       }
     },
@@ -428,7 +434,7 @@ const ItemSlides = () => {
       _id,
       listId,
       monitorReadySlides,
-    ]
+    ],
   );
 
   const enterBackgroundTargetSelectModeFromSlide = useCallback(
@@ -559,7 +565,7 @@ const ItemSlides = () => {
         updateTimer({
           id: timerInfo.id,
           timerInfo: { ...timerInfo, status: "stopped" },
-        })
+        }),
       );
       selectSlide(1);
     }
@@ -630,7 +636,9 @@ const ItemSlides = () => {
     const parentElement = document.getElementById("item-slides-container");
     if (!parentElement) return;
     const runScroll = () => {
-      const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
+      const slideElement = document.getElementById(
+        `item-slide-${selectedSlide}`,
+      );
       if (slideElement && parentElement) {
         keepElementInView({
           child: slideElement,
@@ -720,7 +728,7 @@ const ItemSlides = () => {
 
     // Find all slides in the same section
     const sectionSlides = slides.filter((slide) =>
-      slide.name.includes(`Section ${sectionNum}`)
+      slide.name.includes(`Section ${sectionNum}`),
     );
 
     // Find the target position
@@ -737,12 +745,12 @@ const ItemSlides = () => {
       if (targetSectionNum !== sectionNum) {
         // Find the boundaries of the target section
         const targetSectionStart = slides.findIndex((slide) =>
-          slide.name.includes(`Section ${targetSectionNum}`)
+          slide.name.includes(`Section ${targetSectionNum}`),
         );
         const targetSectionEnd = slides.findIndex(
           (slide, index) =>
             index > targetSectionStart &&
-            !slide.name.includes(`Section ${targetSectionNum}`)
+            !slide.name.includes(`Section ${targetSectionNum}`),
         );
 
         // If target is within another section, adjust the target index to be before or after that section
@@ -765,7 +773,7 @@ const ItemSlides = () => {
 
     // Get the indices of the first and last slides in the section
     const firstSectionIndex = slides.findIndex((slide) =>
-      slide.name.includes(`Section ${sectionNum}`)
+      slide.name.includes(`Section ${sectionNum}`),
     );
 
     // Remove all slides in the section

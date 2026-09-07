@@ -13,7 +13,10 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Input from "../../components/Input/Input";
 import ColorField from "../../components/ColorField/ColorField";
 import { useDispatch, useSelector } from "../../hooks";
-import { updateBoardPostStreamInfo } from "../../store/presentationSlice";
+import {
+  selectOutputSlot,
+  updateBoardPostStreamInfo,
+} from "../../store/presentationSlice";
 import { useBoardData } from "../../boards/useBoardData";
 import { useBoardEventStream } from "../../boards/useBoardEventStream";
 import { useRestreamSession } from "../../boards/useRestreamSession";
@@ -182,7 +185,7 @@ const BoardStreamPanel = ({
 }: BoardStreamPanelProps) => {
   const dispatch = useDispatch();
   const isStreamTransmitting = useSelector(
-    (state) => state.presentation.isStreamTransmitting,
+    (state) => selectOutputSlot(state, "stream", "stream").isTransmitting,
   );
 
   const { churchId } = useContext(GlobalInfoContext) ?? {};

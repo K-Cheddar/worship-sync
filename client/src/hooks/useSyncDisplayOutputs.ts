@@ -3,6 +3,12 @@ import { type Database } from "firebase/database";
 import { useDispatch, useSelector } from "./reduxHooks";
 import { useFirebaseValueWithRetry } from "./useFirebaseValueWithRetry";
 import { setDisplayOutputsFromRemote } from "../store/displayOutputsSlice";
+import { syncOutputSlots } from "../store/presentationSlice";
+import {
+  PushOutputType,
+  isPushOutputType,
+  normalizeDisplayOutputs,
+} from "../utils/displayOutputs";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import type { RootState } from "../store/store";
 
@@ -14,9 +20,6 @@ import type { RootState } from "../store/store";
  * transmit toggles to show. The node is absent for churches that predate the
  * registry — `setDisplayOutputsFromRemote` normalizes that to the built-ins, so
  * a missing node degrades to today's behavior rather than an empty controller.
- *
- * Phase 0: registry only. Presentation `syncOutputSlots` lands in Phase 1 once
- * `presentation.outputs` exists.
  */
 export const useSyncDisplayOutputs = (
   firebaseDb: Database | null | undefined,
@@ -44,6 +47,15 @@ export const useSyncDisplayOutputs = (
   const handleDisplayOutputs = useCallback(
     (data: unknown) => {
       dispatch(setDisplayOutputsFromRemote(data));
+      // Presentation state is keyed by output id, so every push output needs a
+      // slot before content can be sent to it.
+      const pushOutputs = normalizeDisplayOutputs(data)
+        .filter((output) => isPushOutputType(output.type))
+        .map((output) => ({
+          id: output.id,
+          type: output.type as PushOutputType,
+        }));
+      dispatch(syncOutputSlots(pushOutputs));
     },
     [dispatch],
   );

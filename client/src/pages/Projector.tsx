@@ -1,11 +1,14 @@
 import { useSelector } from "../hooks";
+import { selectOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
 import { useWakeLock } from "../hooks/useWakeLock";
 
 const Projector = () => {
-  const projectorInfo = useSelector((state) => state.presentation.projectorInfo);
+  const projectorInfo = useSelector(
+    (state) => selectOutputSlot(state, "projector", "projector").info,
+  );
   const prevProjectorInfo = useSelector(
-    (state) => state.presentation.prevProjectorInfo,
+    (state) => selectOutputSlot(state, "projector", "projector").prevInfo,
   );
   const projectorTimer = useSelector((state) =>
     state.timers.timers.find((timer) => timer.id === projectorInfo.timerId),

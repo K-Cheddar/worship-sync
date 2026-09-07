@@ -14,6 +14,7 @@ import {
   updateOverlayInList,
   updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
+import { selectOutputSlot } from "../../store/presentationSlice";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Overlay from "./Overlay";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
@@ -89,8 +90,9 @@ const Overlays = ({
     (state: RootState) => state.undoable.present.overlay,
   );
 
-  const { isStreamTransmitting } = useSelector(
-    (state: RootState) => state.presentation,
+  const isStreamTransmitting = useSelector(
+    (state: RootState) =>
+      selectOutputSlot(state, "stream", "stream").isTransmitting,
   );
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.itemList,
@@ -591,12 +593,12 @@ const Overlays = ({
               </section>
               {detailTarget
                 ? isDetailActive &&
-                createPortal(
-                  <div className="absolute inset-0 z-10 overflow-y-auto p-2">
-                    {overlayEditor}
-                  </div>,
-                  detailTarget,
-                )
+                  createPortal(
+                    <div className="absolute inset-0 z-10 overflow-y-auto p-2">
+                      {overlayEditor}
+                    </div>,
+                    detailTarget,
+                  )
                 : overlayEditor}
             </div>
           </div>

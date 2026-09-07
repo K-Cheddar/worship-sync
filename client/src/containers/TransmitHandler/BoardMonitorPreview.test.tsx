@@ -2,12 +2,13 @@ import { type ComponentProps } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BoardMonitorPreview from "./BoardMonitorPreview";
-import { setMonitorBoardAliasId } from "../../store/presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  setDisplayBoardAliasId,
+} from "../../store/presentationSlice";
 
 const mockState = {
-  presentation: {
-    monitorBoardAliasId: "",
-  },
+  presentation: fromLegacyPresentationShape({ monitorBoardAliasId: "" }),
 };
 
 let scaledBoardPreviewProps: { aliasId: string } | null = null;
@@ -58,12 +59,12 @@ describe("BoardMonitorPreview", () => {
     dispatch.mockClear();
     changeFontScale.mockClear();
     fontScaleHook.mockClear();
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
     localStorage.clear();
   });
 
   it("mirrors the board that is live on the monitor, even when it differs from the local board", () => {
-    mockState.presentation.monitorBoardAliasId = "monitor-board";
+    mockState.presentation.outputs.monitor.boardAliasId = "monitor-board";
 
     renderPreview();
 
@@ -72,7 +73,7 @@ describe("BoardMonitorPreview", () => {
   });
 
   it("previews the resolved board to put up when nothing is on the monitor", () => {
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
 
     renderPreview();
 
@@ -80,7 +81,7 @@ describe("BoardMonitorPreview", () => {
   });
 
   it("opens no board connection while collapsed", () => {
-    mockState.presentation.monitorBoardAliasId = "monitor-board";
+    mockState.presentation.outputs.monitor.boardAliasId = "monitor-board";
 
     renderPreview({ isOpen: false });
 
@@ -121,7 +122,7 @@ describe("BoardMonitorPreview", () => {
   });
 
   it("disables the toggle when there is no board to put up and none is live", () => {
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
 
     renderPreview({ aliasId: "" });
 
@@ -132,7 +133,7 @@ describe("BoardMonitorPreview", () => {
     // Regression: the seeded board alias vanished mid-service (deleted/deselected,
     // or a cross-tab storage/focus sync zeroed it) while a board was still live on
     // the monitor. The "off" switch must stay enabled so the board can be removed.
-    mockState.presentation.monitorBoardAliasId = "monitor-board";
+    mockState.presentation.outputs.monitor.boardAliasId = "monitor-board";
 
     renderPreview({ aliasId: "" });
 
@@ -141,11 +142,11 @@ describe("BoardMonitorPreview", () => {
 
     await userEvent.click(toggle);
 
-    expect(dispatch).toHaveBeenCalledWith(setMonitorBoardAliasId(""));
+    expect(dispatch).toHaveBeenCalledWith(setDisplayBoardAliasId({ aliasId: "" }));
   });
 
   it("remembers the resolved board for this device when turned on", async () => {
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
 
     renderPreview({ aliasId: "resolved-board" });
 
@@ -153,7 +154,7 @@ describe("BoardMonitorPreview", () => {
 
     // Turning it on both puts it on the monitor and seeds this device's storage.
     expect(dispatch).toHaveBeenCalledWith(
-      setMonitorBoardAliasId("resolved-board"),
+      setDisplayBoardAliasId({ aliasId: "resolved-board" }),
     );
     expect(localStorage.getItem("worshipsyncBoardDisplayAliasId")).toBe(
       "resolved-board",
@@ -161,7 +162,7 @@ describe("BoardMonitorPreview", () => {
   });
 
   it("targets the live monitor board for the font-size control", () => {
-    mockState.presentation.monitorBoardAliasId = "monitor-board";
+    mockState.presentation.outputs.monitor.boardAliasId = "monitor-board";
 
     renderPreview();
 
@@ -191,7 +192,7 @@ describe("BoardMonitorPreview", () => {
   });
 
   it("disables the font-size control when there is no board to size", () => {
-    mockState.presentation.monitorBoardAliasId = "";
+    mockState.presentation.outputs.monitor.boardAliasId = "";
 
     renderPreview({ aliasId: "" });
 

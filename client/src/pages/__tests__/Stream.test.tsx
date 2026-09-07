@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import Stream from "../Stream";
-import { presentationSlice } from "../../store/presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  presentationSlice,
+  toLegacyPresentationShape,
+} from "../../store/presentationSlice";
 import { timersSlice } from "../../store/timersSlice";
 
 jest.mock("../../hooks/useWakeLock", () => ({
@@ -30,14 +34,14 @@ jest.mock("../../components/DisplayWindow/DisplayWindow", () => ({
 }));
 
 const createStore = () => {
-  const base = presentationSlice.getInitialState();
+  const base = toLegacyPresentationShape(presentationSlice.getInitialState());
   return configureStore({
     reducer: {
       presentation: presentationSlice.reducer,
       timers: timersSlice.reducer,
     },
     preloadedState: {
-      presentation: {
+      presentation: fromLegacyPresentationShape({
         ...base,
         streamItemContentBlocked: true,
         streamInfo: {
@@ -55,7 +59,7 @@ const createStore = () => {
             time: 1,
           },
         },
-      },
+      }),
       timers: timersSlice.getInitialState(),
     },
   });

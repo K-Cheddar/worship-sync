@@ -2,9 +2,10 @@ import { render, screen } from "@testing-library/react";
 import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
 import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 
 const mockState = {
-  presentation: {
+  presentation: fromLegacyPresentationShape({
     projectorInfo: {
       name: "Proj Song",
       displayType: "projector",
@@ -32,7 +33,7 @@ const mockState = {
     prevStreamInfo: { name: "", timerId: null, slide: null },
     isStreamTransmitting: true,
     streamItemContentBlocked: true,
-  },
+  } as never),
   timers: { timers: [] },
 };
 
@@ -70,8 +71,8 @@ describe("TransmitHandler surface previews", () => {
   beforeEach(() => {
     lastPreviewProps = null;
     toggle.mockReset();
-    mockState.presentation.monitorBoardAliasId = "";
-    mockState.presentation.streamItemContentBlocked = true;
+    mockState.presentation.outputs.monitor.boardAliasId = "";
+    mockState.presentation.outputs.stream.itemContentBlocked = true;
   });
 
   it("wires projector Redux state into PresentationPreview", () => {
@@ -86,7 +87,7 @@ describe("TransmitHandler surface previews", () => {
       "data-transmitting",
       "true",
     );
-    expect(lastPreviewProps?.info).toEqual(mockState.presentation.projectorInfo);
+    expect(lastPreviewProps?.info).toEqual(mockState.presentation.outputs.projector.info);
     expect(lastPreviewProps?.name).toBe("Projector");
   });
 
@@ -103,7 +104,7 @@ describe("TransmitHandler surface previews", () => {
     expect(preview).toHaveAttribute("data-transmitting", "false");
     expect(preview).toHaveAttribute("data-show-monitor-clock", "true");
     expect(preview).toHaveAttribute("data-hide-quick-links", "true");
-    expect(lastPreviewProps?.info).toEqual(mockState.presentation.monitorInfo);
+    expect(lastPreviewProps?.info).toEqual(mockState.presentation.outputs.monitor.info);
   });
 
   it("wires stream overlay-only blocked flag and hides quick links in overlay focus", () => {
@@ -120,6 +121,6 @@ describe("TransmitHandler surface previews", () => {
     expect(preview).toHaveAttribute("data-transmitting", "true");
     expect(preview).toHaveAttribute("data-item-blocked", "true");
     expect(preview).toHaveAttribute("data-hide-quick-links", "true");
-    expect(lastPreviewProps?.info).toEqual(mockState.presentation.streamInfo);
+    expect(lastPreviewProps?.info).toEqual(mockState.presentation.outputs.stream.info);
   });
 });

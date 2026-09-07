@@ -6,7 +6,10 @@ import { setStoredBoardDisplayAliasId } from "../../boards/boardUtils";
 import { useBoardPresentationFontScale } from "../../boards/useBoardPresentationFontScale";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
-import { setMonitorBoardAliasId } from "../../store/presentationSlice";
+import {
+  selectOutputSlot,
+  setDisplayBoardAliasId,
+} from "../../store/presentationSlice";
 import { cn } from "../../utils/cnHelper";
 
 type BoardMonitorPreviewProps = {
@@ -44,7 +47,7 @@ const BoardMonitorPreview = ({
 }: BoardMonitorPreviewProps) => {
   const dispatch = useDispatch();
   const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
+    (state) => selectOutputSlot(state, "monitor", "monitor").boardAliasId,
   );
   const isShowingOnMonitor = monitorBoardAliasId !== "";
 
@@ -60,7 +63,7 @@ const BoardMonitorPreview = ({
   // here instead of opening the board controller. Idle while collapsed.
   const { fontScale, changeFontScale } = useBoardPresentationFontScale(
     targetAliasId,
-    { enabled: isOpen }
+    { enabled: isOpen },
   );
 
   const handleToggle = useCallback(
@@ -71,9 +74,11 @@ const BoardMonitorPreview = ({
       if (next && aliasId) {
         setStoredBoardDisplayAliasId(aliasId);
       }
-      dispatch(setMonitorBoardAliasId(next ? aliasId : ""));
+      dispatch(
+        setDisplayBoardAliasId({ aliasId: next ? aliasId : "" }),
+      );
     },
-    [dispatch, aliasId]
+    [dispatch, aliasId],
   );
 
   // Match PresentationPreview so the board tile is the same footprint as
