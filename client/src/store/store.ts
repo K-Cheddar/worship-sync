@@ -122,7 +122,10 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 }
 
 export function broadcastItemUpdate(doc: DBItem) {
-  safePostMessage({ type: "update", data: { docs: doc, hostId: globalHostId } });
+  safePostMessage({
+    type: "update",
+    data: { docs: doc, hostId: globalHostId },
+  });
 }
 
 const cleanObject = (obj: Object) =>
@@ -495,10 +498,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
   if (!firebaseDb || !globalFireDbInfo.churchId) return false;
   if (globalFireDbInfo.churchId !== write.churchId) return false;
 
-  const presentationPath = getChurchDataPath(
-    write.churchId,
-    "presentation",
-  );
+  const presentationPath = getChurchDataPath(write.churchId, "presentation");
   try {
     await Promise.resolve(
       set(
@@ -1078,33 +1078,62 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    let state = listenerApi.getState() as RootState;
-    if (itemListsSlice.actions.selectItemList.match(action)) {
-      state = listenerApi.getOriginalState() as RootState;
-    } else {
+    const dbAtStart = db;
+
+    if (!itemListsSlice.actions.selectItemList.match(action)) {
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
     }
 
-    listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
+    // Always read post-debounce state so we never persist a closed-over
+    // pre-delay snapshot after remote hydrate or a newer local edit.
+    const present = (listenerApi.getState() as RootState).undoable.present;
+    const { list, hasPendingUpdate, isInitialized } = present.itemList;
+    const { selectedList } = present.itemLists;
 
-    // update ItemList
-    const { list } = state.undoable.present.itemList;
-    const { selectedList } = state.undoable.present.itemLists;
-    if (!db || !selectedList) return;
-    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
-    db_itemList.items = [...list];
-    db_itemList.updatedAt = new Date().toISOString();
-    db.put(db_itemList);
+    if (
+      !dbAtStart ||
+      db !== dbAtStart ||
+      !isInitialized ||
+      !hasPendingUpdate ||
+      !selectedList
+    ) {
+      return;
+    }
 
-    // Local machine updates
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_itemList,
-        hostId: globalHostId,
-      },
-    });
+    try {
+      const db_itemList: DBItemListDetails = await dbAtStart.get(
+        selectedList._id,
+      );
+
+      // A newer local edit or remote hydrate may have landed while awaiting get.
+      const latest = (listenerApi.getState() as RootState).undoable.present
+        .itemList;
+      if (!latest.hasPendingUpdate || latest.list !== list) {
+        return;
+      }
+
+      db_itemList.items = [...list];
+      db_itemList.updatedAt = new Date().toISOString();
+      const result = await dbAtStart.put(db_itemList);
+
+      // Only clear dirty after a successful write so failed puts can retry.
+      const afterPut = (listenerApi.getState() as RootState).undoable.present
+        .itemList;
+      if (afterPut.list === list && afterPut.hasPendingUpdate) {
+        listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
+      }
+
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: { ...db_itemList, _rev: result.rev },
+          hostId: globalHostId,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to persist item list outline:", error);
+    }
   },
 });
 
@@ -1717,9 +1746,9 @@ listenerMiddleware.startListening({
         const currentMedia = (listenerApi.getState() as RootState).media;
         return Boolean(
           dbAtStart &&
-            db === dbAtStart &&
-            currentMedia.isInitialized &&
-            currentMedia === mediaAtStart,
+          db === dbAtStart &&
+          currentMedia.isInitialized &&
+          currentMedia === mediaAtStart,
         );
       };
       if (!dbAtStart || !mediaSaveIsCurrent()) return;
@@ -2170,11 +2199,7 @@ listenerMiddleware.startListening({
       .undoable.present.serviceTimes.list;
     const localServices = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes.list;
-    const {
-      db: firebaseDb,
-      churchId,
-      canWriteSharedData,
-    } = globalFireDbInfo;
+    const { db: firebaseDb, churchId, canWriteSharedData } = globalFireDbInfo;
     if (!canWriteSharedData) return;
     if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));

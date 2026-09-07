@@ -6,13 +6,14 @@ import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import { ChurchLogoImg } from "../ChurchLogoImg";
 import { cn } from "../../utils/cnHelper";
 import type { MenuItemType } from "../../types";
+import type { ChurchToolbarLogoUrls } from "../../utils/churchBranding";
 
 type AppWorkspaceShellProps = {
   title: string;
   mobileTitle?: string;
   centerTitleOnMobile?: boolean;
   icon: LucideIcon;
-  toolbarLogoUrl?: string | null;
+  toolbarLogos?: ChurchToolbarLogoUrls | null;
   churchName?: string | null;
   scrollbarWidth?: number;
   toolbarActions?: ReactNode;
@@ -27,13 +28,19 @@ const AppWorkspaceShell = ({
   mobileTitle,
   centerTitleOnMobile = false,
   icon,
-  toolbarLogoUrl,
+  toolbarLogos,
   churchName,
   scrollbarWidth,
   toolbarActions,
   mobileNavigation,
   children,
 }: AppWorkspaceShellProps) => {
+  const logoAlt = churchName ? `${churchName} logo` : "Church logo";
+  const compactLogoUrl = toolbarLogos?.compact?.trim() || "";
+  const expandedLogoUrl = toolbarLogos?.expanded?.trim() || compactLogoUrl;
+  const hasDistinctExpandedLogo =
+    Boolean(compactLogoUrl) && compactLogoUrl !== expandedLogoUrl;
+
   return (
     <main
       className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white"
@@ -53,12 +60,29 @@ const AppWorkspaceShell = ({
             </h1>
           </div>
           <div className="hidden max-w-[min(26rem,calc(100vw-10rem))] justify-center justify-self-center px-1 sm:flex">
-            {toolbarLogoUrl ? (
-              <ChurchLogoImg
-                src={toolbarLogoUrl}
-                alt={churchName ? `${churchName} logo` : "Church logo"}
-                variant="account-header"
-              />
+            {compactLogoUrl ? (
+              hasDistinctExpandedLogo ? (
+                <>
+                  <ChurchLogoImg
+                    src={compactLogoUrl}
+                    alt={logoAlt}
+                    variant="account-header"
+                    className="lg:hidden"
+                  />
+                  <ChurchLogoImg
+                    src={expandedLogoUrl}
+                    alt={logoAlt}
+                    variant="account-header"
+                    className="hidden lg:block"
+                  />
+                </>
+              ) : (
+                <ChurchLogoImg
+                  src={compactLogoUrl}
+                  alt={logoAlt}
+                  variant="account-header"
+                />
+              )
             ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end justify-self-end gap-4">

@@ -581,69 +581,79 @@ const ServicePlanMicrophoneManager = ({
         {microphonesContent}
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-800 pt-3">
-        <Button
-          type="button"
-          variant="secondary"
-          svg={Eye}
-          aria-label={
-            hasUnsavedVisibilityChanges
-              ? "Mic note visibility (unsaved changes)"
-              : "Mic note visibility"
-          }
-          onClick={() => setVisibilityOpen(true)}
-        >
-          Mic note visibility
-          {hasUnsavedVisibilityChanges ? (
-            <span className="ml-1 size-1.5 rounded-full bg-amber-400" aria-hidden />
-          ) : null}
-        </Button>
-        {!isEditing && !disabled ? (
+      <div className="flex shrink-0 flex-col gap-2 border-t border-gray-800 pt-3">
+        {isEditing && hasIncompleteMicrophone ? (
+          <p className="text-xs text-amber-200" role="status">
+            Complete each microphone&apos;s name and type before saving.
+          </p>
+        ) : null}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <Button
             type="button"
-            svg={Pencil}
-            className="ml-auto"
-            onClick={onStartEditing}
+            variant="tertiary"
+            svg={Eye}
+            className="self-start"
+            aria-label={
+              hasUnsavedVisibilityChanges
+                ? "Mic note visibility (unsaved changes)"
+                : "Mic note visibility"
+            }
+            onClick={() => setVisibilityOpen(true)}
           >
-            Edit microphones
-          </Button>
-        ) : null}
-        {isEditing ? (
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              svg={Plus}
-              disabled={isLocked || draft.length >= MAX_SERVICE_PLAN_MICROPHONES}
-              onClick={() => setDraft((current) => [...current, createMicrophone()])}
-            >
-              Add microphone
-            </Button>
-            {hasIncompleteMicrophone ? (
-              <p className="basis-full text-xs text-amber-200" role="status">
-                Complete each microphone&apos;s name and type before saving.
-              </p>
+            Mic note visibility
+            {hasUnsavedVisibilityChanges ? (
+              <span className="ml-1 size-1.5 rounded-full bg-amber-400" aria-hidden />
             ) : null}
+          </Button>
+          {!isEditing && !disabled ? (
             <Button
               type="button"
-              variant="secondary"
-              svg={X}
-              disabled={saving}
-              onClick={cancelEditing}
+              svg={Pencil}
+              className="self-end sm:self-auto"
+              aria-label="Edit microphones"
+              onClick={onStartEditing}
             >
-              Cancel
+              Edit
             </Button>
-            <Button
-              type="button"
-              svg={Save}
-              className="ml-auto"
-              disabled={isLocked || hasIncompleteMicrophone}
-              onClick={() => void saveMicrophones()}
-            >
-              {saving && isEditing ? "Saving…" : "Save microphones"}
-            </Button>
-          </>
-        ) : null}
+          ) : null}
+          {isEditing ? (
+            <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                svg={Plus}
+                disabled={isLocked || draft.length >= MAX_SERVICE_PLAN_MICROPHONES}
+                aria-label="Add microphone"
+                onClick={() => setDraft((current) => [...current, createMicrophone()])}
+              >
+                Add
+              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={X}
+                  disabled={saving}
+                  onClick={cancelEditing}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="cta"
+                  svg={Save}
+                  disabled={isLocked || hasIncompleteMicrophone}
+                  aria-label={
+                    saving && isEditing ? "Saving microphones" : "Save microphones"
+                  }
+                  onClick={() => void saveMicrophones()}
+                >
+                  {saving && isEditing ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <Sheet open={visibilityOpen} onOpenChange={setVisibilityOpen}>
@@ -672,10 +682,10 @@ const ServicePlanMicrophoneManager = ({
               </Button>
             ) : null}
             {isEditingVisibility ? (
-              <>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="tertiary"
                   svg={X}
                   disabled={saving}
                   onClick={cancelVisibilityEditing}
@@ -684,14 +694,14 @@ const ServicePlanMicrophoneManager = ({
                 </Button>
                 <Button
                   type="button"
+                  variant="cta"
                   svg={Save}
-                  className="ml-auto"
                   disabled={isVisibilityLocked}
                   onClick={() => void saveVisibility()}
                 >
                   {saving && isEditingVisibility ? "Saving…" : "Save visibility"}
                 </Button>
-              </>
+              </div>
             ) : null}
           </div>
         </SheetContent>

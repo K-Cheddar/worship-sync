@@ -968,20 +968,25 @@ const BrandingLogoSlotsSection = memo(function BrandingLogoSlotsSection({
 
             <div className="mt-4 flex flex-col gap-3">
               {previewUrl ? (
-                <div className="relative overflow-hidden rounded-lg border border-gray-600 bg-white/95 p-3">
-                  <img
-                    src={previewUrl}
-                    alt={config.title}
-                    className="mx-auto max-h-28 w-auto max-w-full object-contain"
-                  />
+                <div className="relative rounded-lg border border-gray-600 bg-white/95 p-3">
+                  <div className="overflow-hidden">
+                    <img
+                      src={previewUrl}
+                      alt={config.title}
+                      className="mx-auto max-h-28 w-auto max-w-full object-contain"
+                    />
+                  </div>
                   <Button
                     type="button"
                     variant="tertiary"
                     svg={X}
-                    iconSize="xs"
+                    iconSize="md"
+                    position="absolute"
+                    padding="p-0"
+                    gap="gap-0"
                     aria-label={`Remove ${config.title}`}
                     title={`Remove ${config.title}`}
-                    className="absolute top-2 right-2 h-8 w-8 min-h-0 shrink-0 rounded-full border border-gray-600/80 bg-gray-900/80 p-0 text-gray-100 hover:bg-gray-800/90"
+                    className="top-2 right-2 h-8 w-8 min-h-0 max-md:min-h-0 max-md:w-8 items-center justify-center rounded-full border border-gray-600/80 bg-gray-900/80 text-gray-100 hover:bg-gray-800/90"
                     onClick={() => onRemoveLogo(slot)}
                   />
                 </div>

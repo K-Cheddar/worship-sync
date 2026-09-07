@@ -223,11 +223,29 @@ export const getChurchBrandColorLabel = (
 export const serializeChurchBranding = (branding: ChurchBranding) =>
   JSON.stringify(branding);
 
+export type ChurchToolbarLogoUrls = {
+  /** Square-preferring mark for compact chrome (sm–md). */
+  compact: string;
+  /** Wide-preferring mark for large chrome (lg+). */
+  expanded: string;
+};
+
+/**
+ * Resolve toolbar logos by viewport role.
+ * Compact prefers square; expanded prefers wide. Each falls back to the other.
+ */
+export const resolveChurchToolbarLogoUrls = (
+  branding: ChurchBranding | null | undefined,
+): ChurchToolbarLogoUrls | null => {
+  const square = branding?.logos?.square?.url?.trim() || "";
+  const wide = branding?.logos?.wide?.url?.trim() || "";
+  const compact = square || wide;
+  const expanded = wide || square;
+  if (!compact) return null;
+  return { compact, expanded };
+};
+
 /** Prefer square logo for compact chrome; fall back to wide. */
 export const resolveChurchToolbarLogoUrl = (
   branding: ChurchBranding | null | undefined,
-): string => {
-  const square = branding?.logos?.square?.url?.trim();
-  const wide = branding?.logos?.wide?.url?.trim();
-  return square || wide || "";
-};
+): string => resolveChurchToolbarLogoUrls(branding)?.compact || "";

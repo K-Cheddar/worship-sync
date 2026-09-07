@@ -46,10 +46,7 @@ const loadStoreWithPresentationSync = (
   let presentationSyncErrorBusModule: any;
   const setMock = jest.fn();
   const runTransactionMock = jest.fn(
-    async (
-      _path: unknown,
-      update: (current: unknown) => unknown,
-    ) => {
+    async (_path: unknown, update: (current: unknown) => unknown) => {
       const value = update([]);
       return {
         committed: true,
@@ -185,8 +182,7 @@ const loadStoreWithOverlayTemplatePersistence = () => {
 
   return {
     store: storeModule.default,
-    overlayTemplatesSlice:
-      overlayTemplatesSliceModule.overlayTemplatesSlice,
+    overlayTemplatesSlice: overlayTemplatesSliceModule.overlayTemplatesSlice,
     db,
   };
 };
@@ -1909,17 +1905,14 @@ describe("store module", () => {
       "firebase-db",
       "churches/church-main/data/timers",
     );
-    expect(setMock).toHaveBeenCalledWith(
-      "churches/church-main/data/timers",
-      [
-        expect.objectContaining({
-          id: "timer-1",
-          hostId: "host-123",
-          status: "running",
-          time: 100,
-        }),
-      ],
-    );
+    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+      expect.objectContaining({
+        id: "timer-1",
+        hostId: "host-123",
+        status: "running",
+        time: 100,
+      }),
+    ]);
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
   });
 
@@ -2181,8 +2174,7 @@ describe("store module", () => {
       timersSlice,
       setMock,
       runTransactionMock,
-    } =
-      loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
 
     store.dispatch(
       serviceTimesSlice.actions.initiateServices([
@@ -2230,12 +2222,8 @@ describe("store module", () => {
 
   it("merges a service-time update into Firebase without replacing other services", async () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
-    const {
-      store,
-      serviceTimesSlice,
-      refMock,
-      runTransactionMock,
-    } = loadStoreWithPresentationSync();
+    const { store, serviceTimesSlice, refMock, runTransactionMock } =
+      loadStoreWithPresentationSync();
     const remoteServices = [
       {
         id: "service-1",
@@ -2288,9 +2276,9 @@ describe("store module", () => {
       }),
       expect.objectContaining({ id: "service-2" }),
     ]);
-    expect(
-      store.getState().undoable.present.serviceTimes.list,
-    ).toEqual(committedServices);
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(
+      committedServices,
+    );
   });
 
   it("attempts a service-time update when the connection monitor is disconnected", async () => {
@@ -2625,9 +2613,7 @@ describe("store module", () => {
     expect(setMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "[firebase diagnostic]",
-      expect.stringContaining(
-        '"event":"presentation_sync_write_unavailable"',
-      ),
+      expect.stringContaining('"event":"presentation_sync_write_unavailable"'),
     );
     expect(deliveryErrorHandler).toHaveBeenCalledWith(
       "Overlay update was not sent. Check your connection and try again.",
@@ -2853,7 +2839,9 @@ describe("store module", () => {
         name: "Remote Service",
       }),
     ]);
-    expect(store.getState().undoable.present.serviceTimes.isInitialized).toBe(true);
+    expect(store.getState().undoable.present.serviceTimes.isInitialized).toBe(
+      true,
+    );
     expect(localStorage.getItem("serviceTimes")).toContain("Remote Service");
   });
 
@@ -2896,11 +2884,18 @@ describe("store module", () => {
 
     store.dispatch({
       type: "debouncedUpdateParticipantOverlayInfo",
-      payload: { id: "p1", name: "Alex", title: "Host", time: 1000, transitionSequence: 10 },
+      payload: {
+        id: "p1",
+        name: "Alex",
+        title: "Host",
+        time: 1000,
+        transitionSequence: 10,
+      },
     });
     await waitForListenerDelay();
 
-    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    const participant =
+      store.getState().presentation.streamInfo.participantOverlayInfo;
     expect(participant?.name ?? "").toBe("");
     expect(participant?.title ?? "").toBe("");
     expect(participant?.time).toBe(1001);
@@ -2912,11 +2907,18 @@ describe("store module", () => {
 
     store.dispatch({
       type: "debouncedUpdateParticipantOverlayInfo",
-      payload: { id: "p1", name: "Alex", title: "Host", time: 1000, transitionSequence: 10 },
+      payload: {
+        id: "p1",
+        name: "Alex",
+        title: "Host",
+        time: 1000,
+        transitionSequence: 10,
+      },
     });
     await waitForListenerDelay();
 
-    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    const participant =
+      store.getState().presentation.streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p1");
     expect(participant?.name).toBe("Alex");
     expect(participant?.title).toBe("Host");
@@ -2947,10 +2949,184 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    const participant =
+      store.getState().presentation.streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p-new");
     expect(participant?.name).toBe("New Host");
     expect(participant?.time).toBe(999);
     expect(participant?.transitionSequence).toBe(11);
+  });
+});
+
+const loadStoreWithItemListPersistence = () => {
+  let storeModule: any;
+  let itemListSliceModule: any;
+  let itemListsSliceModule: any;
+  const postMessage = jest.fn();
+  const db = {
+    get: jest.fn(),
+    put: jest
+      .fn()
+      .mockResolvedValue({ ok: true, id: "outline-a", rev: "2-saved" }),
+  };
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: db,
+      globalBroadcastRef: { postMessage },
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: undefined, database: undefined },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    itemListSliceModule = require("./itemListSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    itemListsSliceModule = require("./itemListsSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    itemListSlice: itemListSliceModule.itemListSlice,
+    itemListsSlice: itemListsSliceModule.itemListsSlice,
+    db,
+    postMessage,
+  };
+};
+
+describe("item list outline persistence", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createServiceItem } = require("../test/fixtures");
+
+  const hydrateOutline = (
+    store: any,
+    itemListSlice: any,
+    itemListsSlice: any,
+  ) => {
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.initiateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ]),
+    );
+  };
+
+  it("persists the post-debounce outline list onto the latest document rev", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db, postMessage } =
+      loadStoreWithItemListPersistence();
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "5-newer",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1"],
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "outline-a",
+        _rev: "5-newer",
+        overlays: ["overlay-1"],
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "Added" }),
+        ]),
+      }),
+    );
+    expect(postMessage).toHaveBeenCalled();
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("discards a delayed outline save after a remote hydrate during debounce", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Stale Local", _id: "old", listId: "lo" }),
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemListFromRemote([
+        createServiceItem({
+          name: "Remote Current",
+          _id: "r1",
+          listId: "lr",
+        }),
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.itemList.list[0].name).toBe(
+      "Remote Current",
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("still persists after selection changes during debounce", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: [],
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.setActiveItemInList("l2"));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "Added" }),
+        ]),
+      }),
+    );
   });
 });

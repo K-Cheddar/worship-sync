@@ -60,6 +60,11 @@ import {
   getCreateScheduleDefaultServiceIds,
   resolveScheduleNameForSave,
 } from "./scheduleCreateDefaults";
+import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
+import {
+  buildSectionReturnTo,
+  TEAMS_SECTION_PATHS,
+} from "../teamsReturnNavigation";
 
 const ScheduleEditForm = ({
   draftKey,
@@ -494,19 +499,37 @@ const ScheduleEditForm = ({
                   : undefined
               }
             />
-            <Select
-              className={inputStackClassName}
-              label="Team"
-              value={draft.teamId}
-              onChange={(teamId) => {
-                if (selectedSchedule) {
-                  setDraft((current) => ({ ...current, teamId }));
-                  return;
-                }
-                applyTeamCreateDefaults(teamId);
-              }}
-              options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
-            />
+            <div className={inputStackClassName}>
+              <Select
+                label="Team"
+                value={draft.teamId}
+                onChange={(teamId) => {
+                  if (selectedSchedule) {
+                    setDraft((current) => ({ ...current, teamId }));
+                    return;
+                  }
+                  applyTeamCreateDefaults(teamId);
+                }}
+                options={activeTeams.map((team) => ({
+                  label: team.name,
+                  value: team.teamId,
+                }))}
+                disabled={!canEdit || activeTeams.length === 0}
+              />
+              {activeTeams.length === 0 ? (
+                <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                  No teams yet.{" "}
+                  <TeamsCrossSectionLink
+                    to={TEAMS_SECTION_PATHS.groups}
+                    returnTo={buildSectionReturnTo(TEAMS_SECTION_PATHS.schedules)}
+                    className="cursor-pointer"
+                  >
+                    Create a team
+                  </TeamsCrossSectionLink>{" "}
+                  to start scheduling.
+                </p>
+              ) : null}
+            </div>
             <TextArea
               className="lg:col-span-2"
               label="Description"

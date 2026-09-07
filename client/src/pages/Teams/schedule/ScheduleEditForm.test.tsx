@@ -213,4 +213,49 @@ describe("ScheduleEditForm", () => {
     expect(onDraftClear).toHaveBeenCalledWith("new");
     expect(onCancel).toHaveBeenCalled();
   });
+
+  it("points operators to create a team when none exist", () => {
+    const service: TeamService = {
+      serviceId: "service-sunday",
+      churchId: "church-1",
+      name: "Sunday",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+    };
+
+    render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              draftKey="new"
+              selectedSchedule={null}
+              defaultTeamId=""
+              defaultServiceIds={[service.serviceId]}
+              defaultRange={{ startDate: "2026-10-01", endDate: "2026-10-31" }}
+              services={[service]}
+              activeTeams={[]}
+              schedules={[]}
+              seedSchedules={[]}
+              churchId="church-1"
+              canEdit
+              onDraftChange={jest.fn()}
+              onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
+              onScheduleSaved={jest.fn()}
+              onScheduleRemoved={jest.fn()}
+              setSelectedScheduleId={jest.fn()}
+              onCancel={jest.fn()}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/No teams yet/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Create a team/i }),
+    ).toHaveAttribute("href", "/teams-and-services/groups");
+  });
 });
