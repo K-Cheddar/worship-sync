@@ -225,6 +225,7 @@ const captureAsPrev = (slot: OutputSlot, shown: Presentation) => {
   slot.prevInfo.localVideoInput = shown.localVideoInput;
   if (slot.type === "monitor") {
     slot.prevInfo.itemId = shown.itemId;
+    slot.prevInfo.listId = shown.listId;
     slot.prevInfo.nextSlide = shown.nextSlide ?? null;
   }
 };
@@ -964,6 +965,7 @@ export const presentationSlice = createSlice({
         monitor.prevInfo.time = monitor.info.time;
         monitor.prevInfo.timerId = monitor.info.timerId;
         monitor.prevInfo.itemId = monitor.info.itemId;
+        monitor.prevInfo.listId = monitor.info.listId;
         monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
         monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
 
@@ -972,6 +974,7 @@ export const presentationSlice = createSlice({
         monitor.info.type = action.payload.type;
         monitor.info.timerId = action.payload.timerId;
         monitor.info.itemId = action.payload.itemId;
+        monitor.info.listId = action.payload.listId;
         monitor.info.slideIndex = action.payload.slideIndex;
         monitor.info.slideCount = action.payload.slideCount;
         monitor.info.time = serverNow();
@@ -1185,6 +1188,7 @@ export const presentationSlice = createSlice({
       slot.prevInfo.localVideoInput = slot.info.localVideoInput;
       if (slot.type === "monitor") {
         slot.prevInfo.itemId = slot.info.itemId;
+        slot.prevInfo.listId = slot.info.listId;
         slot.prevInfo.nextSlide = slot.info.nextSlide ?? null;
       }
       slot.info = { ...createInfo(slot.type), time: t };
@@ -1875,6 +1879,7 @@ export const presentationSlice = createSlice({
         monitor.prevInfo.time = monitor.info.time;
         monitor.prevInfo.timerId = monitor.info.timerId;
         monitor.prevInfo.itemId = monitor.info.itemId;
+        monitor.prevInfo.listId = monitor.info.listId;
         monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
         monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
 
@@ -1995,6 +2000,7 @@ export const presentationSlice = createSlice({
         monitor.prevInfo.time = monitor.info.time;
         monitor.prevInfo.timerId = monitor.info.timerId;
         monitor.prevInfo.itemId = monitor.info.itemId;
+        monitor.prevInfo.listId = monitor.info.listId;
         monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
 
         monitor.info = {
@@ -2114,6 +2120,7 @@ export const presentationSlice = createSlice({
               slot.prevInfo.localVideoInput = slot.info.localVideoInput;
               if (slot.type === "monitor") {
                 slot.prevInfo.itemId = slot.info.itemId;
+                slot.prevInfo.listId = slot.info.listId;
                 slot.prevInfo.nextSlide = slot.info.nextSlide ?? null;
               }
             }
@@ -2284,6 +2291,7 @@ export const presentationSlice = createSlice({
           monitor.prevInfo.time = monitor.info.time;
           monitor.prevInfo.timerId = monitor.info.timerId;
           monitor.prevInfo.itemId = monitor.info.itemId;
+          monitor.prevInfo.listId = monitor.info.listId;
           monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
           monitor.prevInfo.bibleInfoBox = monitor.info.bibleInfoBox;
           monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
@@ -2293,6 +2301,7 @@ export const presentationSlice = createSlice({
           monitor.info.type = action.payload.type;
           monitor.info.timerId = action.payload.timerId;
           monitor.info.itemId = action.payload.itemId;
+          monitor.info.listId = action.payload.listId;
           monitor.info.slideIndex = action.payload.slideIndex;
           monitor.info.slideCount = action.payload.slideCount;
           monitor.info.time = serverNow();
@@ -2322,6 +2331,7 @@ export const presentationSlice = createSlice({
           monitor.prevInfo.time = monitor.info.time;
           monitor.prevInfo.timerId = monitor.info.timerId;
           monitor.prevInfo.itemId = monitor.info.itemId;
+          monitor.prevInfo.listId = monitor.info.listId;
           monitor.prevInfo.nextSlide = monitor.info.nextSlide ?? null;
           monitor.prevInfo.bibleInfoBox = monitor.info.bibleInfoBox;
           monitor.prevInfo.localVideoInput = monitor.info.localVideoInput;
@@ -2333,6 +2343,7 @@ export const presentationSlice = createSlice({
         monitor.info.time = action.payload.time;
         monitor.info.timerId = action.payload.timerId;
         monitor.info.itemId = action.payload.itemId;
+        monitor.info.listId = action.payload.listId;
         monitor.info.slideIndex = action.payload.slideIndex;
         monitor.info.slideCount = action.payload.slideCount;
         monitor.info.nextSlide =

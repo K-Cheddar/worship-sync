@@ -12,6 +12,8 @@ import {
   setStreamItemContentBlockedFromRemote,
   setMonitorBoardAliasIdFromRemote,
   toLegacyPresentationShape,
+  omitOverlayLanes,
+  STREAM_OVERLAY_LANES,
   updateBibleDisplayInfoFromRemote,
   updateMonitor,
   updateMonitorFromRemote,
@@ -38,7 +40,7 @@ import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
-import { ref, set, get, runTransaction } from "firebase/database";
+import { ref, set, get, runTransaction, update } from "firebase/database";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
@@ -90,6 +92,7 @@ import {
 } from "./servicePlanningImportSlice";
 import { generatedCreditsSlice } from "./generatedCreditsSlice";
 import { displayOutputsSlice } from "./displayOutputsSlice";
+import { controllerProfilesSlice } from "./controllerProfilesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
@@ -97,6 +100,10 @@ import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
+import {
+  isBuiltInOutputId,
+  supportsBoardTakeover,
+} from "../utils/displayOutputs";
 import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
@@ -386,18 +393,92 @@ const getOverlaySelectionForUndoRedo = (
   return targetOverlay || null;
 };
 
+/**
+ * Serialize outputs created after the registry for `presentation/outputs`.
+ *
+ * Built-ins are excluded: their state still travels in the flat legacy keys so
+ * clients on older builds stay live, and writing both would double-apply on
+ * receipt.
+ */
+const buildRemoteOutputs = (state: RootState) => {
+  const knownOutputIds = new Set(
+    (state.displayOutputs?.list ?? []).map((output) => output.id),
+  );
+  const outputs: Record<string, unknown> = {};
+  for (const slot of Object.values(state.presentation.outputs)) {
+    if (isBuiltInOutputId(slot.id)) continue;
+    if (!knownOutputIds.has(slot.id)) continue;
+    outputs[`${slot.id}/type`] = slot.type;
+    outputs[`${slot.id}/info`] = omitOverlayLanes(slot.info);
+    if (slot.type === "stream") {
+      for (const lane of STREAM_OVERLAY_LANES) {
+        const value = slot.info[lane];
+        if (value !== undefined) outputs[`${slot.id}/${lane}`] = value;
+      }
+      outputs[`${slot.id}/itemContentBlocked`] = slot.itemContentBlocked;
+      outputs[`${slot.id}/itemContentBlockedTime`] =
+        slot.itemContentBlockedTime ?? 0;
+    }
+    if (supportsBoardTakeover(slot.type)) {
+      outputs[`${slot.id}/boardAliasId`] = slot.boardAliasId;
+    }
+    outputs[`${slot.id}/followingOutputId`] = slot.followingOutputId ?? "";
+  }
+  return outputs;
+};
+
+/**
+ * Last value this client published, per top-level key, keyed by scope.
+ *
+ * Reset when the church changes: a different church's node has never been
+ * written by this client, so everything must go out again.
+ */
+const lastPublished = new Map<string, Map<string, string>>();
+let lastPublishedChurchId: string | null = null;
+
+/** The subset of `payload` whose serialized value differs from our last write. */
+const onlyChangedSincePublish = (
+  scope: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (lastPublishedChurchId !== globalFireDbInfo.churchId) {
+    lastPublished.clear();
+    lastPublishedChurchId = globalFireDbInfo.churchId ?? null;
+  }
+  const seen = lastPublished.get(scope) ?? new Map<string, string>();
+  lastPublished.set(scope, seen);
+
+  const changed: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    const serialized = JSON.stringify(value ?? null);
+    if (seen.get(key) === serialized) continue;
+    seen.set(key, serialized);
+    changed[key] = value;
+  }
+  return changed;
+};
+
+/** Forget what we published, so the next write republishes in full. */
+export const resetPublishedPresentationCache = () => {
+  lastPublished.clear();
+  lastPublishedChurchId = null;
+};
+
 const createPresentationUpdate = (state: RootState) => {
   const {
     projectorInfo,
     monitorInfo,
     streamInfo,
     streamItemContentBlocked,
+    streamItemContentBlockedTime,
     monitorBoardAliasId,
+    projectorBoardAliasId,
   } = toLegacyPresentationShape(state.presentation);
   return {
     projectorInfo,
     monitorInfo,
     monitorBoardAliasId,
+    projectorBoardAliasId,
     streamInfo: {
       displayType: streamInfo.displayType,
       time: streamInfo.time,
@@ -407,8 +488,11 @@ const createPresentationUpdate = (state: RootState) => {
       type: streamInfo.type,
       slideIndex: streamInfo.slideIndex,
       slideCount: streamInfo.slideCount,
+      localVideoInput: streamInfo.localVideoInput,
+      videoPlayback: streamInfo.videoPlayback,
     },
     stream_itemContentBlocked: streamItemContentBlocked,
+    stream_itemContentBlockedTime: streamItemContentBlockedTime,
     stream_bibleInfo: streamInfo.bibleDisplayInfo,
     stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
     stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
@@ -416,6 +500,7 @@ const createPresentationUpdate = (state: RootState) => {
     stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
     stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
     stream_boardPostStreamInfo: streamInfo.boardPostStreamInfo,
+    outputs: buildRemoteOutputs(state),
   };
 };
 
@@ -472,6 +557,7 @@ const persistPresentationUpdateLocally = (
     "stream_itemContentBlocked",
     JSON.stringify(presentationUpdate.stream_itemContentBlocked),
   );
+  localStorage.setItem("outputs", JSON.stringify(presentationUpdate.outputs));
 };
 
 type PresentationWrite = {
@@ -501,13 +587,33 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
   if (globalFireDbInfo.churchId !== write.churchId) return false;
 
   const presentationPath = getChurchDataPath(write.churchId, "presentation");
+  const { outputs: remoteOutputs, ...legacyUpdate } = write.presentationUpdate;
   try {
-    await Promise.resolve(
-      set(
-        ref(firebaseDb, presentationPath),
-        cleanObject(write.presentationUpdate),
-      ),
+    const changedLegacy = onlyChangedSincePublish(
+      "legacy",
+      cleanObject(legacyUpdate) as Record<string, unknown>,
     );
+    if (Object.keys(changedLegacy).length > 0) {
+      await Promise.resolve(
+        update(ref(firebaseDb, presentationPath), changedLegacy),
+      );
+    }
+
+    const changedOutputs = onlyChangedSincePublish(
+      "outputs",
+      cleanObject(remoteOutputs) as Record<string, unknown>,
+    );
+    if (Object.keys(changedOutputs).length > 0) {
+      await Promise.resolve(
+        update(
+          ref(
+            firebaseDb,
+            getChurchDataPath(write.churchId, "presentation", "outputs"),
+          ),
+          changedOutputs,
+        ),
+      );
+    }
   } catch (error) {
     const permissionDenied = isFirebasePermissionDenied(error);
     logFirebaseOperationFailure("presentation_sync", presentationPath, error, {
@@ -521,6 +627,23 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
     throw error;
   }
   return true;
+};
+
+/** Clear a removed output's synced presentation state. */
+export const clearRemoteOutputState = async (outputId: string) => {
+  if (!globalFireDbInfo.db || !globalFireDbInfo.churchId || !outputId) return;
+  await set(
+    ref(
+      globalFireDbInfo.db,
+      getChurchDataPath(
+        globalFireDbInfo.churchId,
+        "presentation",
+        "outputs",
+        outputId,
+      ),
+    ),
+    null,
+  );
 };
 
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
@@ -3014,6 +3137,7 @@ const combinedReducers = combineReducers({
   servicePlanningImport: servicePlanningImportSlice.reducer,
   generatedCredits: generatedCreditsSlice.reducer,
   displayOutputs: displayOutputsSlice.reducer,
+  controllerProfiles: controllerProfilesSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

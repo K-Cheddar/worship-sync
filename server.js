@@ -1355,6 +1355,10 @@ app.get(
   authHandlers.listDisplayDevices,
 );
 app.post(
+  "/api/churches/:churchId/display-devices/:deviceId/settings",
+  authHandlers.updateDisplayDeviceSettings,
+);
+app.post(
   "/api/churches/:churchId/display-devices/:deviceId/revoke",
   authHandlers.revokeDisplayDevice,
 );

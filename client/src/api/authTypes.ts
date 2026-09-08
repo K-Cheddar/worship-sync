@@ -676,6 +676,10 @@ export type DisplayDeviceClient = {
   churchId: string;
   label: string;
   surfaceType?: string;
+  /** Display output this screen renders; absent falls back to the built-in. */
+  outputId?: string | null;
+  /** Per-screen setting overrides applied on top of the display defaults. */
+  settings?: Record<string, unknown> | null;
   status: string;
   createdAt: string;
   lastSeenAt?: string;

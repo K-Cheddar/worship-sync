@@ -14,6 +14,7 @@ import { ToastProvider } from "./context/toastContext";
 import TimerManager from "./components/TimerManager/TimerManager";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
 import DisplayOutputsSync from "./components/DisplayOutputsSync/DisplayOutputsSync";
+import ControllerProfilesSync from "./components/ControllerProfilesSync/ControllerProfilesSync";
 import { Suspense, useContext, useEffect, useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
@@ -55,6 +56,9 @@ const CurrentServiceWorkspace = lazyRoute(
 const OverlayController = lazyRoute(
   () => import("./pages/OverlayController/OverlayController"),
 );
+const AuxController = lazyRoute(
+  () => import("./pages/AuxController/AuxController"),
+);
 const Projector = lazyRoute(() => import("./pages/Projector"));
 const ProjectorFull = lazyRoute(() => import("./pages/ProjectorFull"));
 const Monitor = lazyRoute(() => import("./pages/Monitor"));
@@ -68,6 +72,9 @@ const BoardController = lazyRoute(() => import("./pages/BoardController"));
 const BoardDisplay = lazyRoute(() => import("./pages/BoardDisplay"));
 const BoardPage = lazyRoute(() => import("./pages/BoardPage"));
 const BoardPresent = lazyRoute(() => import("./pages/BoardPresent"));
+const LocalVideoCaptureHost = lazyRoute(
+  () => import("./pages/LocalVideoCaptureHost"),
+);
 
 // Planning / people
 const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
@@ -301,6 +308,14 @@ const AppRoutes = () => {
                   </AuthGate>
                 }
               />
+              <Route
+                path="/aux-controller/:profileId/*"
+                element={
+                  <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
+                    <AuxController />
+                  </AuthGate>
+                }
+              />
               <Route path="/login" element={<Login />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />
               <Route path="/terms" element={<TermsOfService />} />
@@ -473,6 +488,10 @@ const AppRoutes = () => {
                 </AuthGate>
               }
             />
+            <Route
+              path="/local-video-capture-host"
+              element={<LocalVideoCaptureHost />}
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
@@ -494,21 +513,31 @@ const App: React.FC = () => {
       window.history.replaceState({}, document.title, url.toString());
     }
   }, []);
+  const isElectronCaptureHost =
+    Boolean(window.__ELECTRON__) &&
+    window.location.hash.startsWith("#/local-video-capture-host");
   return (
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
-          <FloatingWindowZIndexProvider>
-            <ToastProvider>
-              <ChatProvider>
-                <RoutePersistence />
-                <DisplayOutputsSync />
-                <TimerManager />
-                <AppRoutes />
-                <ChatWindowHost />
-              </ChatProvider>
-            </ToastProvider>
-          </FloatingWindowZIndexProvider>
+          {isElectronCaptureHost ? (
+            <Suspense fallback={null}>
+              <LocalVideoCaptureHost />
+            </Suspense>
+          ) : (
+            <FloatingWindowZIndexProvider>
+              <ToastProvider>
+                <ChatProvider>
+                  <RoutePersistence />
+                  <DisplayOutputsSync />
+                  <ControllerProfilesSync />
+                  <TimerManager />
+                  <AppRoutes />
+                  <ChatWindowHost />
+                </ChatProvider>
+              </ToastProvider>
+            </FloatingWindowZIndexProvider>
+          )}
         </GlobalInfoProvider>
       </Router>
     </Provider>

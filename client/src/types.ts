@@ -937,38 +937,9 @@ export type LocalVideoInputMediaSource = {
   ownerLabel?: string;
 };
 
-export type LocalVideoInputMediaSource = {
-  kind: "local-video-input";
-  /** Stable logical source id saved with the item; never a browser deviceId. */
-  sourceId: string;
-  label: string;
-  captureKind?: LocalVideoCaptureKind;
-  fit?: "contain" | "cover";
-  /** Outputs that normally carry programme audio may play the locally bound input. */
-  audioEnabled?: boolean;
-  /** Workstation that holds the hardware binding. */
-  ownerDeviceId?: string;
-  ownerLabel?: string;
-};
-
 export type SlideMediaSource = LocalVideoInputMediaSource;
 
 /** Durable metadata for a video file whose bytes remain on one workstation. */
-export type LocalVideoFileReference = {
-  id: string;
-  contentRevision?: string;
-  ownerDeviceId: string;
-  ownerLabel: string;
-  fileName: string;
-  contentType: string;
-  storagePolicy: LocalAssetStoragePolicy;
-  /** Local video files follow the same programme-audio default as USB inputs. */
-  audioEnabled?: boolean;
-  /** Optional portable copy attached after a background/cloud upload. */
-  cloudUrl?: string;
-  cloudMediaId?: string;
-};
-
 export type LocalVideoFileReference = {
   id: string;
   contentRevision?: string;
@@ -1015,23 +986,6 @@ export type VideoBackgroundPlaybackCue = {
   applySeek: boolean;
 };
 
-export type VideoBackgroundPlaybackCue = {
-  /** Stable identity of the file/HLS video this cue belongs to. */
-  mediaKey: string;
-  /** Playhead at `atServerMs`. */
-  positionSeconds: number;
-  paused: boolean;
-  atServerMs: number;
-  /** Bumped on every send so live players can re-apply the same position. */
-  generation: number;
-  /**
-   * When false and the same video is already playing, keep the live playhead
-   * (lyric advances). When true, seek to the cue — restart, first send, or
-   * the operator changed preview playback since the last send.
-   */
-  applySeek: boolean;
-};
-
 export type LocalAssetStoragePolicy = "local-only" | "local-and-cloud";
 
 /**
@@ -1039,20 +993,6 @@ export type LocalAssetStoragePolicy = "local-only" | "local-and-cloud";
  * path never enter persisted outline documents or synchronized presentation
  * state.
  */
-export type LocalImageAssetReference = {
-  id: string;
-  /** Stable revision of the local bytes; changes on relink, not cloud attach. */
-  contentRevision?: string;
-  ownerDeviceId: string;
-  ownerLabel: string;
-  fileName: string;
-  contentType: string;
-  storagePolicy: LocalAssetStoragePolicy;
-  /** Present after the optional background upload completes. */
-  cloudUrl?: string;
-  cloudMediaId?: string;
-};
-
 export type LocalImageAssetReference = {
   id: string;
   /** Stable revision of the local bytes; changes on relink, not cloud attach. */
