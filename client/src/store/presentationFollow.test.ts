@@ -294,6 +294,19 @@ describe("follow state syncs between clients", () => {
     expect(selectOutputFollowing(wrap(state), "out_lobby")).toBe("");
   });
 
+  it("rejects a remote follow when the slot already has followers", () => {
+    let state = baseState();
+    state = follow(state, "out_cafe", "out_lobby");
+    state = reducer(
+      state,
+      updateOutputsFromRemote({
+        out_lobby: { type: "projector", followingOutputId: "projector" },
+      }),
+    ) as PresentationState;
+    expect(selectOutputFollowing(wrap(state), "out_lobby")).toBe("");
+    expect(selectOutputFollowing(wrap(state), "out_cafe")).toBe("out_lobby");
+  });
+
   it("rejects a remote self-follow", () => {
     let state = baseState();
     state = reducer(

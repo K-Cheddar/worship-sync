@@ -1254,7 +1254,8 @@ const DESKTOP_CAPTURE_THUMBNAIL_SIZE = { width: 320, height: 180 };
  */
 ipcMain.handle(
   "get-desktop-capture-sources",
-  async (_event, options?: { withThumbnails?: boolean }) => {
+  async (event, options?: { withThumbnails?: boolean }) => {
+    assertControllerIpcSender(event.sender);
     const withThumbnails = options?.withThumbnails === true;
     const sources = await desktopCapturer.getSources({
       types: ["screen", "window"],

@@ -2182,10 +2182,14 @@ export const presentationSlice = createSlice({
             }
           } else if (next !== slot.id) {
             const source = state.outputs[next];
+            const hasFollowers = Object.values(state.outputs).some(
+              (other) => other.followingOutputId === slot.id,
+            );
             if (
               source &&
               source.type === slot.type &&
-              !source.followingOutputId
+              !source.followingOutputId &&
+              !hasFollowers
             ) {
               slot.followingOutputId = next;
             }
