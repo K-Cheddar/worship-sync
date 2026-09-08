@@ -5,12 +5,13 @@ import {
 } from "../hooks/useOutputForSurface";
 import { selectResolvedOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
-import { useContext, useCallback } from "react";
+import { useContext, useCallback, useEffect } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
 import DisplayBoardTakeover from "../components/DisplayWindow/DisplayBoardTakeover";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { useResolvedDisplaySettings } from "../hooks/useResolvedDisplaySettings";
+import { clearHideProjectorCursorStyle } from "../hooks/useHideProjectorCursor";
 
 const Monitor = () => {
   const output = useOutputForSurface("monitor");
@@ -18,6 +19,12 @@ const Monitor = () => {
   // A monitor bolted above the stage has nobody to click "go fullscreen", so a
   // screen marked headless renders bare output instead of the gate.
   const { isHeadless } = useResolvedDisplaySettings(output.id);
+
+  // Projector routes inject cursor:none into document; clear any leftover if this
+  // window previously showed projector output or navigated in-place.
+  useEffect(() => {
+    clearHideProjectorCursorStyle();
+  }, []);
   const monitorInfo = useSelector(
     (state) => selectResolvedOutputSlot(state, output.id, "monitor").info,
   );

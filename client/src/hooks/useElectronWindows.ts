@@ -54,9 +54,12 @@ export const useElectronWindows = () => {
 
   // Generic window management functions
   const openWindow = useCallback(
-    async (windowType: WindowType) => {
+    async (
+      windowType: WindowType,
+      surface?: "projector" | "monitor" | "stream",
+    ) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.openWindow(windowType);
+        const result = await window.electronAPI.openWindow(windowType, surface);
         await refreshWindowStates();
         return result;
       }

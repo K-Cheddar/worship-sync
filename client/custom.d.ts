@@ -62,7 +62,11 @@ interface ElectronAPI {
   openExternalUrl: (url: string) => Promise<boolean>;
 
   // Window management - all generic handlers
-  openWindow: (windowType: WindowType) => Promise<boolean>;
+  /** `surface` names the render profile when opening an output window. */
+  openWindow: (
+    windowType: WindowType,
+    surface?: "projector" | "monitor" | "stream",
+  ) => Promise<boolean>;
   closeWindow: (windowType: WindowType) => Promise<boolean>;
   focusWindow: (windowType: WindowType) => Promise<boolean>;
   toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;
