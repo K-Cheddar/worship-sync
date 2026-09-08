@@ -102,20 +102,32 @@ describe("generateScheduleOccurrences", () => {
     ]);
   });
 
-  it("does not generate occurrences for archived services", () => {
-    const occurrences = generateScheduleOccurrences({
-      services: [
-        service({
-          serviceId: "retired",
-          archivedAt: "2026-09-04T12:00:00.000Z",
-        }),
-      ],
-      serviceIds: ["retired"],
-      startDate: "2026-07-01",
-      endDate: "2026-07-31",
+  it("keeps historical occurrences for archived services and skips dates after archive", () => {
+    const archivedService = service({
+      serviceId: "retired",
+      dayOfWeek: 0,
+      // After the July 12 service local time in every timezone; before July 19.
+      archivedAt: "2026-07-13T00:00:00.000Z",
     });
 
-    expect(occurrences).toEqual([]);
+    const historical = generateScheduleOccurrences({
+      services: [archivedService],
+      serviceIds: ["retired"],
+      startDate: "2026-07-01",
+      endDate: "2026-07-12",
+    });
+    expect(historical.map(getOccurrenceDate)).toEqual([
+      "2026-07-05",
+      "2026-07-12",
+    ]);
+
+    const future = generateScheduleOccurrences({
+      services: [archivedService],
+      serviceIds: ["retired"],
+      startDate: "2026-07-13",
+      endDate: "2026-07-31",
+    });
+    expect(future).toEqual([]);
   });
 
   it("snapshots standalone service position requirements onto each occurrence", () => {

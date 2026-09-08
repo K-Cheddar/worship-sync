@@ -322,14 +322,13 @@ export const generateScheduleOccurrences = ({
   const end = parsePlainDate(endDate);
   if (!start || !end || start > end) return [];
 
+  // Keep archived services so historical occurrences can still be resolved
+  // (e.g. reopening a saved plan). Future dates after archivedAt are skipped below.
   const selectedServices = serviceIds
     .map((serviceId) =>
       services.find((service) => service.serviceId === serviceId),
     )
-    .filter(
-      (service): service is TeamService =>
-        Boolean(service) && !service.archivedAt,
-    );
+    .filter((service): service is TeamService => Boolean(service));
   const endTime = new Date(end);
   endTime.setHours(23, 59, 59, 999);
   const occurrences: TeamScheduleOccurrence[] = [];
@@ -342,10 +341,20 @@ export const generateScheduleOccurrences = ({
       ? parsePlainDate(service.endDateISO)
       : null;
     if (serviceEnd) serviceEnd.setHours(23, 59, 59, 999);
+    const archivedAt = service.archivedAt
+      ? new Date(service.archivedAt)
+      : null;
     const withinServiceBounds = (date: Date) => {
       if (serviceStart && date < serviceStart) return false;
       if (serviceEnd && date > serviceEnd) return false;
       return true;
+    };
+    const pushOccurrence = (startsAt: Date) => {
+      // Archived services remain in history but are unavailable after archive.
+      if (archivedAt && !Number.isNaN(archivedAt.getTime()) && startsAt > archivedAt) {
+        return;
+      }
+      occurrences.push(toOccurrence(service, startsAt));
     };
 
     if (service.reccurence === "one_time") {
@@ -353,7 +362,7 @@ export const generateScheduleOccurrences = ({
         ? new Date(service.dateTimeISO)
         : null;
       if (startsAt && startsAt >= start && startsAt <= endTime) {
-        occurrences.push(toOccurrence(service, startsAt));
+        pushOccurrence(startsAt);
       }
       continue;
     }
@@ -367,9 +376,7 @@ export const generateScheduleOccurrences = ({
       ) {
         if (cursor.getDay() !== service.dayOfWeek) continue;
         if (!withinServiceBounds(cursor)) continue;
-        occurrences.push(
-          toOccurrence(service, setDateTime(cursor, service.time)),
-        );
+        pushOccurrence(setDateTime(cursor, service.time));
       }
       continue;
     }
@@ -383,10 +390,7 @@ export const generateScheduleOccurrences = ({
       ) {
         if (!withinServiceBounds(cursor)) continue;
         const day = days.find((item) => item.day === cursor.getDay());
-        if (day)
-          occurrences.push(
-            toOccurrence(service, setDateTime(cursor, day.time)),
-          );
+        if (day) pushOccurrence(setDateTime(cursor, day.time));
       }
       continue;
     }
@@ -412,9 +416,7 @@ export const generateScheduleOccurrences = ({
           !withinServiceBounds(occurrenceDate)
         )
           continue;
-        occurrences.push(
-          toOccurrence(service, setDateTime(occurrenceDate, service.time)),
-        );
+        pushOccurrence(setDateTime(occurrenceDate, service.time));
       }
     }
   }
