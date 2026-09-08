@@ -91,6 +91,7 @@ const BirthDateField = ({
             type="number"
             min={1}
             max={new Date().getFullYear()}
+            allowEmptyOnBlur
             value={draft.year ? String(draft.year) : ""}
             onChange={(year) => update("year", String(year))}
             aria-invalid={Boolean(errorText)}

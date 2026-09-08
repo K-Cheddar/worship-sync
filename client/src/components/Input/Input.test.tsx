@@ -16,6 +16,16 @@ describe("coerceNumberInputOnBlur", () => {
     expect(coerceNumberInputOnBlur("99", 1, 10)).toBe(10);
     expect(coerceNumberInputOnBlur("4", 1, 10)).toBe(4);
   });
+
+  it("keeps empty when allowEmpty is set", () => {
+    expect(coerceNumberInputOnBlur("", 1, undefined, { allowEmpty: true })).toBe(
+      "",
+    );
+    expect(
+      coerceNumberInputOnBlur("   ", 1, 10, { allowEmpty: true }),
+    ).toBe("");
+    expect(coerceNumberInputOnBlur("0", 1, 10, { allowEmpty: true })).toBe(1);
+  });
 });
 
 const NumberField = ({

@@ -55,6 +55,11 @@ export type InputProps = Omit<HTMLProps<HTMLInputElement>, "onChange" | "value">
   numericArrowStep?: number;
   /** When the value does not parse as a number, arrow keys start from this base (with `numericArrowStep`). */
   numericArrowEmptyBase?: number;
+  /**
+   * When true, an empty number field stays empty on blur instead of becoming
+   * 0 or min. Use for optional fields (e.g. birth year).
+   */
+  allowEmptyOnBlur?: boolean;
 };
 
 function stepForArrowIncrement(
@@ -78,8 +83,10 @@ export function coerceNumberInputOnBlur(
   raw: string | number,
   minVal?: number,
   maxVal?: number,
-): number {
+  options?: { allowEmpty?: boolean },
+): number | "" {
   const trimmed = typeof raw === "number" ? String(raw) : String(raw ?? "").trim();
+  if (trimmed === "" && options?.allowEmpty) return "";
   const parsed = trimmed === "" ? NaN : Number(trimmed);
   let n = Number.isFinite(parsed) ? parsed : 0;
   if (minVal !== undefined) n = Math.max(minVal, n);
@@ -121,6 +128,7 @@ const Input = ({
   errorText,
   numericArrowStep,
   numericArrowEmptyBase,
+  allowEmptyOnBlur = false,
   min,
   max,
   step,
@@ -163,9 +171,10 @@ const Input = ({
   const handleBlur = (e: FocusEvent<HTMLInputElement>) => {
     if (isNumberType) {
       const raw = numberDraft !== null ? numberDraft : numberInputDisplayValue(value);
-      const coerced = coerceNumberInputOnBlur(raw, minVal, maxVal);
+      const coerced = coerceNumberInputOnBlur(raw, minVal, maxVal, {
+        allowEmpty: allowEmptyOnBlur,
+      });
       setNumberDraft(null);
-      // Always publish a finite number so parents never keep "" / NaN after blur.
       onChange(coerced);
     }
     onBlurProp?.(e);
