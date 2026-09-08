@@ -28,8 +28,10 @@ let mockState: {
   timers: { timers: any[] };
 };
 
+let mockPathname = "/controller/item/item-id/list-id";
+
 jest.mock("react-router-dom", () => ({
-  useLocation: () => ({ pathname: "/controller/item" }),
+  useLocation: () => ({ pathname: mockPathname }),
 }));
 
 jest.mock("../../../hooks", () => ({
@@ -107,6 +109,7 @@ describe("SlideEditTools", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockPathname = "/controller/item/item-id/list-id";
     mockState = {
       undoable: {
         present: {
@@ -128,6 +131,15 @@ describe("SlideEditTools", () => {
 
     expect(
       screen.getByRole("button", { name: "Remove Blank Lines" })
+    ).toBeInTheDocument();
+  });
+
+  it("renders tools on an auxiliary controller item route", () => {
+    mockPathname = "/aux-controller/ctrl_lobby/item/abc/list-1";
+    render(<SlideEditTools />);
+
+    expect(
+      screen.getByRole("button", { name: "Remove Blank Lines" }),
     ).toBeInTheDocument();
   });
 

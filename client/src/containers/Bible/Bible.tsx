@@ -48,6 +48,7 @@ import {
   selectOutputSlot,
   updateBibleDisplayInfo,
   updatePresentation,
+
 } from "../../store/presentationSlice";
 import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
@@ -69,6 +70,7 @@ import {
 } from "../../components/ui/Popover";
 import cn from "classnames";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { useControllerBasePath } from "../../context/activeController";
 
 const BULK_BIBLE_IMPORT_STORAGE_PREFIX = "worshipSync_bibleBulkImport_";
 const BULK_BIBLE_IMPORT_ACTIVE_ID_KEY = "worshipSync_bibleBulkImport_activeId";
@@ -84,6 +86,7 @@ const Bible = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const [searchParams] = useSearchParams();
 
   const {
@@ -218,7 +221,7 @@ const Bible = () => {
       );
       if (activeId) {
         navigate(
-          `/controller/bible?bulkImport=review&id=${encodeURIComponent(activeId)}`,
+          `${controllerBasePath}/bible?bulkImport=review&id=${encodeURIComponent(activeId)}`,
           { replace: true },
         );
       } else {
@@ -230,6 +233,7 @@ const Bible = () => {
   }, [
     bulkImportId,
     bulkImportMode,
+    controllerBasePath,
     loadBulkReviewFromStorage,
     navigate,
     searchParams,
@@ -483,7 +487,7 @@ const Bible = () => {
       setBulkRowMessages({});
       setBulkImportOpen(false);
       navigate(
-        `/controller/bible?bulkImport=review&id=${encodeURIComponent(id)}`,
+        `${controllerBasePath}/bible?bulkImport=review&id=${encodeURIComponent(id)}`,
       );
     } finally {
       setIsBulkImporting(false);
@@ -492,7 +496,7 @@ const Bible = () => {
 
   const handleBackFromBulkReview = () => {
     clearActiveBulkBibleImport();
-    navigate("/controller/bible");
+    navigate(`${controllerBasePath}/bible`);
   };
 
   const toggleBulkRowSelection = (rowId: string) => {
@@ -570,7 +574,7 @@ const Bible = () => {
       dispatch(resetCreateItem());
       setIsAddingBulkRows(false);
       clearActiveBulkBibleImport();
-      navigate("/controller/bible");
+      navigate(`${controllerBasePath}/bible`);
     }
   };
 
@@ -579,9 +583,8 @@ const Bible = () => {
 
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
-    const sendItemName = `${bookName} ${chapterName}:${
-      verseToUse.name
-    } ${version.toUpperCase()}`;
+    const sendItemName = `${bookName} ${chapterName}:${verseToUse.name
+      } ${version.toUpperCase()}`;
     const _item = createItemFromProps({
       name: sendItemName,
       type: "bible",

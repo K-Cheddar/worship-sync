@@ -42,7 +42,10 @@ import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import SendTargets from "../../components/SendTargets/SendTargets";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
-import { useActiveControllerProfile } from "../../context/activeController";
+import {
+  useActiveControllerProfile,
+  useControllerBasePath,
+} from "../../context/activeController";
 import { buildShouldSendToForController } from "../../utils/sendTargets";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -185,6 +188,7 @@ const CreateItem = ({
   const canCreateEmbeddedSong = Boolean(db && isAllItemsInitialized);
 
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const dispatch = useDispatch();
 
   const {
@@ -396,7 +400,7 @@ const CreateItem = ({
 
   const goToItem = (itemId: string, listId: string) => {
     navigate(
-      `/controller/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
+      `${controllerBasePath}/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
         encodeURI(listId)
       )}`
     );
@@ -492,7 +496,7 @@ const CreateItem = ({
 
     if (selectedType === "bible") {
       dispatch(setCreateItem(createItemDraft));
-      navigate(`/controller/bible?name=${encodeURI(itemName)}`);
+      navigate(`${controllerBasePath}/bible?name=${encodeURI(itemName)}`);
       return;
     }
 

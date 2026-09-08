@@ -31,6 +31,8 @@ import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
+import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { useControllerBasePath } from "../../context/activeController";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
@@ -46,15 +48,10 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
-/** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
-const getControllerItemPath = (item: Pick<ServiceItemType, "_id" | "listId">) =>
-  `/controller/item/${window.btoa(encodeURI(item._id))}/${window.btoa(
-    encodeURI(item.listId)
-  )}`;
-
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const {
     list: serviceItems,
     isLoading,
@@ -135,6 +132,15 @@ const ServiceItems = () => {
     setAnchorListId(null);
     setMultiSelectMode(false);
   }, [selectedList?._id]);
+
+  // Cyan outline selection is local (selectedListIds). Redux selectedItemListId can
+  // change from the continuous slide rail / song keyboard nav — keep single-select
+  // chrome in sync so operators see the blue treatment, not only the white insert point.
+  useEffect(() => {
+    if (!selectedItemListId || multiSelectMode) return;
+    setSelectedListIds(new Set([selectedItemListId]));
+    setAnchorListId(selectedItemListId);
+  }, [selectedItemListId, multiSelectMode]);
 
   const hiddenListIds = useMemo(() => {
     const hidden = new Set<string>();
@@ -344,7 +350,7 @@ const ServiceItems = () => {
         setSelectedListIds(new Set([nextItem.listId]));
         setAnchorListId(nextItem.listId);
         dispatch(setActiveItemInList(nextItem.listId));
-        navigate(getControllerItemPath(nextItem));
+        navigate(getControllerItemPath(nextItem, controllerBasePath));
         return;
       }
       const nextHeadingIdx = findNextHeadingIndex(currentIndex);
@@ -367,7 +373,7 @@ const ServiceItems = () => {
         setSelectedListIds(new Set([prevItem.listId]));
         setAnchorListId(prevItem.listId);
         dispatch(setActiveItemInList(prevItem.listId));
-        navigate(getControllerItemPath(prevItem));
+        navigate(getControllerItemPath(prevItem, controllerBasePath));
         return;
       }
       const prevHeadingIdx = findPrevHeadingIndex(currentIndex);
@@ -691,7 +697,7 @@ const ServiceItems = () => {
         </span>
       ),
     })),
-  [actionBarItems, getActionHandler, getActionIcon, openHeadingRenameWindow]);
+    [actionBarItems, getActionHandler, getActionIcon, openHeadingRenameWindow]);
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -874,7 +880,7 @@ const ServiceItems = () => {
             ) : (
               <LeftPanelButton
                 isSelected={false}
-                to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(encodeURI(item.listId))}`}
+                to={getControllerItemPath(item, controllerBasePath)}
                 title={item.name}
                 subtitle={arrangementSubtitlesByItemId.get(item._id)}
                 type={item.type}

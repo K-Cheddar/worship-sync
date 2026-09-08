@@ -1,5 +1,12 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Link, Route, Routes, useParams } from "react-router-dom";
+import { useContext, useEffect, useRef, useState } from "react";
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router-dom";
 import cn from "classnames";
 import { ArrowRightFromLine, ArrowLeftFromLine } from "lucide-react";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
@@ -11,15 +18,16 @@ import FreeForms from "../../containers/FreeForms/FreeForms";
 import Timers from "../../containers/Timers/Timers";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import Item from "../Controller/Item";
+import Preferences from "../Controller/Preferences";
+import QuickLinks from "../Controller/QuickLinks";
+import Displays from "../Controller/Displays";
 import Media from "../../containers/Media/Media";
 import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 import Button from "../../components/Button/Button";
-import MirrorDisplayTile from "../../components/MirrorDisplay/MirrorDisplayTile";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { setIsEditMode } from "../../store/itemSlice";
-import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import { selectControllerProfiles } from "../../store/controllerProfilesSlice";
 import { useControllerPageLifecycle } from "../Controller/useControllerPageLifecycle";
 import {
@@ -29,24 +37,21 @@ import {
 } from "../../context/activeController";
 import {
   findControllerProfile,
-  getControllerOutputs,
   isKnownControllerProfile,
 } from "../../utils/controllerProfiles";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 
 /**
- * A slim presentation controller for one auxiliary audience screen.
+ * Presentation controller for one auxiliary audience screen.
  *
- * It is deliberately not the main controller with pieces hidden. The operator
- * here is driving a second room-facing display with its own content: they need
- * their outline, their slides, their one display, and a way to join the main
- * screen. Songs, Bible, timers, and overlays belong to the service being run in
- * the sanctuary, and putting them here would suggest this controller drives that
- * service too.
+ * Same outline, slides, tools, and display settings as the main controller,
+ * scoped to this controller's outputs and route. Overlays and service planning
+ * stay on the main / stream surfaces.
  */
 const AuxControllerBody = () => {
   const dispatch = useDispatch();
+  const location = useLocation();
   const { layoutRef } = useControllerPageLifecycle();
   const { profile, profiles } = useControllerProfileRegistry();
   const controllerBasePath = useControllerBasePath();
@@ -60,38 +65,17 @@ const AuxControllerBody = () => {
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth,
   );
-  const displayOutputs = useSelector(selectDisplayOutputs);
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
-  /** This controller's own displays, and every other screen of the same kind. */
-  const ownedOutputs = useMemo(
-    () => getControllerOutputs(profile, displayOutputs),
-    [profile, displayOutputs],
-  );
-  const mirrorSourceIdsByOutput = useMemo(() => {
-    const ownedIds = new Set(ownedOutputs.map((output) => output.id));
-    return ownedOutputs.reduce<Record<string, string[]>>((acc, output) => {
-      acc[output.id] = displayOutputs
-        .filter(
-          (candidate) =>
-            candidate.enabled &&
-            candidate.type === output.type &&
-            !ownedIds.has(candidate.id),
-        )
-        .map((candidate) => candidate.id);
-      return acc;
-    }, {});
-  }, [ownedOutputs, displayOutputs]);
-
-  // This controller never edits items in place; editing belongs to the main
-  // controller, where the library and its arrangements live.
   useEffect(() => {
-    dispatch(setIsEditMode(false));
-  }, [dispatch]);
+    if (!/\/item\//.test(location.pathname)) {
+      dispatch(setIsEditMode(false));
+    }
+  }, [location.pathname, dispatch]);
 
   const handleElementClick = (element: React.MouseEvent) => {
     if (
@@ -158,20 +142,6 @@ const AuxControllerBody = () => {
             a display yet. Your outline and slides are available.
           </p>
         )}
-        {canDrive && ownedOutputs.length > 0 && (
-          <div className="flex flex-col gap-2 border-b-2 border-gray-500 px-3 py-2">
-            {ownedOutputs.map((output) => (
-              <MirrorDisplayTile
-                key={output.id}
-                outputId={output.id}
-                sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
-              />
-            ))}
-          </div>
-        )}
-        {/* Same nested item route as the main controller, under this
-            controller's own path. Outline links are relative, so they resolve
-            here rather than navigating the operator onto /controller. */}
         <Routes>
           <Route
             path="/"
@@ -187,6 +157,13 @@ const AuxControllerBody = () => {
           <Route path="songs" element={<Songs />} />
           <Route path="bible" element={<Bible />} />
           <Route path="timers" element={<Timers />} />
+          <Route path="preferences" element={<Preferences />} />
+          <Route path="quick-links" element={<QuickLinks />} />
+          <Route path="displays" element={<Displays />} />
+          <Route
+            path="monitor-settings"
+            element={<Navigate to={`${controllerBasePath}/displays`} replace />}
+          />
         </Routes>
       </div>
 

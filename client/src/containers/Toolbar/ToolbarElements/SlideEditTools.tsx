@@ -491,7 +491,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     [currentFontPx]
   );
 
-  if (!location.pathname.includes("controller/item") || !slide) {
+  // Main `/controller/item/...` and aux `/aux-controller/:id/item/...`.
+  if (!/\/item\//.test(location.pathname) || !slide) {
     return null;
   }
 
