@@ -81,7 +81,12 @@ export const listCurrentServiceOccurrences = (
   services: TeamService[],
   nowMs = Date.now(),
 ): TeamScheduleOccurrence[] => {
-  if (services.length === 0) return [];
+  // Archived services stay available for historical plan reopen via
+  // generateScheduleOccurrences, but the live controller picker should only
+  // offer active services — otherwise a recently archived plan reappears in
+  // the 2-day lookback and can be auto-selected.
+  const activeServices = services.filter((service) => !service.archivedAt);
+  if (activeServices.length === 0) return [];
   const startDate = new Date(nowMs - CURRENT_SERVICE_LOOKBACK_DAYS * DAY_MS)
     .toISOString()
     .slice(0, 10);
@@ -89,8 +94,8 @@ export const listCurrentServiceOccurrences = (
     .toISOString()
     .slice(0, 10);
   return generateScheduleOccurrences({
-    services,
-    serviceIds: services.map((service) => service.serviceId),
+    services: activeServices,
+    serviceIds: activeServices.map((service) => service.serviceId),
     startDate,
     endDate,
   })

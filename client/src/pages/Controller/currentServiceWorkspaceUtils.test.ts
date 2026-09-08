@@ -4,6 +4,7 @@ import {
   findCurrentServiceOccurrence,
   formatLiveSlideProgress,
   getOccurrenceServices,
+  listCurrentServiceOccurrences,
   resolveLiveSlideProgress,
 } from "./currentServiceWorkspaceUtils";
 
@@ -91,6 +92,27 @@ describe("findCurrentServiceOccurrence", () => {
     expect(
       findCurrentServiceOccurrence([], Date.parse("2026-07-26T08:00:00.000Z")),
     ).toBeNull();
+  });
+});
+
+describe("listCurrentServiceOccurrences", () => {
+  it("excludes archived services from the live picker window", () => {
+    const occurrences = listCurrentServiceOccurrences(
+      [
+        {
+          ...service("active", "2026-07-26T10:00:00.000Z"),
+        },
+        {
+          ...service("archived", "2026-07-26T09:00:00.000Z"),
+          archivedAt: "2026-07-20T00:00:00.000Z",
+        },
+      ],
+      Date.parse("2026-07-26T11:00:00.000Z"),
+    );
+
+    expect(occurrences.map((occurrence) => occurrence.serviceId)).toEqual([
+      "active",
+    ]);
   });
 });
 
