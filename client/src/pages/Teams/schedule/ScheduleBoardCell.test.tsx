@@ -59,6 +59,9 @@ describe("ScheduleBoardCell", () => {
 
   it("shows an unassigned placeholder when the slot is empty", () => {
     renderCell({ assignmentCell: undefined });
+    // Behavior change: assert shared assignment-label classes, not presence alone.
+    // The previous toBeInTheDocument() check is obsolete now that empty slots use
+    // the same muted label styling as assigned names for scanability.
     expect(screen.getByText("Unassigned")).toHaveClass(
       ...scheduleAssignmentLabelClassName.split(" "),
     );
