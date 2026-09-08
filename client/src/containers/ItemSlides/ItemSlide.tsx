@@ -7,8 +7,12 @@ import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
 import { memo, useEffect, useRef } from "react";
+import { Video } from "lucide-react";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
+
+/** Stable empty list: a fresh [] re-renders every slide on any action. */
+const EMPTY_SLIDE_IDS: string[] = [];
 
 type ItemSlideProps = {
   slide: ItemSlideType;
@@ -37,6 +41,8 @@ type ItemSlideProps = {
     index: number,
     options?: { skipNextClick?: boolean },
   ) => void;
+  /** Override the default `item-slide-${index}` DOM id for multi-item rails. */
+  slideDomId?: string;
 };
 
 const ItemSlide = ({
@@ -58,10 +64,11 @@ const ItemSlide = ({
   isBackgroundTargetSelected = false,
   onSlideGridClick,
   onEnterBackgroundTargetSelectMode,
+  slideDomId,
 }: ItemSlideProps) => {
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
-      state.undoable.present.item.backgroundTargetSlideIds ?? [],
+      state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
   );
   const mobileBackgroundTargetSelectMode = useSelector(
     (state: RootState) =>
@@ -164,7 +171,7 @@ const ItemSlide = ({
         !(isSelected || isBackgroundTargetSelected) && "border-transparent",
         isInDraggedSection && "z-10"
       )}
-      id={`item-slide-${index}`}
+      id={slideDomId ?? `item-slide-${index}`}
     >
       <div
         className="relative"
@@ -286,6 +293,14 @@ const ItemSlide = ({
               : undefined
           }
         />
+        {slide.mediaSource?.kind === "local-video-input" ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-6 flex flex-col items-center justify-center gap-1 bg-black/55 text-white">
+            <Video className="size-6" aria-hidden />
+            <span className="max-w-[90%] truncate text-[10px] font-medium">
+              {slide.mediaSource.label}
+            </span>
+          </div>
+        ) : null}
       </div>
     </li>
   );
