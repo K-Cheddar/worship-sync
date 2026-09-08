@@ -2161,7 +2161,15 @@ export const presentationSlice = createSlice({
           slot.type === "stream" &&
           typeof data.itemContentBlocked === "boolean"
         ) {
-          slot.itemContentBlocked = data.itemContentBlocked;
+          // Same stamp gate as the built-in stream legacy key: dual controllers
+          // can republish a stale Hide Content flag; ignore older stamps.
+          if (shouldApplyBlockedFromRemote(slot, data.itemContentBlockedTime)) {
+            applyStreamOverlayOnlyToggle(
+              slot,
+              data.itemContentBlocked,
+              data.itemContentBlockedTime,
+            );
+          }
         }
         if (
           supportsBoardTakeover(slot.type) &&

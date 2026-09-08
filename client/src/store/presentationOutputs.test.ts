@@ -218,7 +218,9 @@ describe("clearOutput", () => {
 
   it("leaves a monitor's board override off after clearing", () => {
     const store = withExtraOutputs();
-    store.dispatch(presentationSlice.actions.setDisplayBoardAliasId({ aliasId: "youth" }));
+    store.dispatch(
+      presentationSlice.actions.setDisplayBoardAliasId({ aliasId: "youth" }),
+    );
     expect(outputs(store).monitor.boardAliasId).toBe("youth");
 
     store.dispatch(clearOutput("monitor"));
@@ -345,10 +347,39 @@ describe("updateOutputsFromRemote", () => {
     const store = withExtraOutputs();
     store.dispatch(
       updateOutputsFromRemote({
-        out_foyer_stream: { type: "stream", itemContentBlocked: true },
+        out_foyer_stream: {
+          type: "stream",
+          itemContentBlocked: true,
+          itemContentBlockedTime: 200,
+        },
       }),
     );
     expect(outputs(store).out_foyer_stream.itemContentBlocked).toBe(true);
+    expect(outputs(store).out_foyer_stream.itemContentBlockedTime).toBe(200);
+  });
+
+  it("rejects a stale Hide Content flag on named streams", () => {
+    const store = withExtraOutputs();
+    store.dispatch(
+      updateOutputsFromRemote({
+        out_foyer_stream: {
+          type: "stream",
+          itemContentBlocked: true,
+          itemContentBlockedTime: 200,
+        },
+      }),
+    );
+    store.dispatch(
+      updateOutputsFromRemote({
+        out_foyer_stream: {
+          type: "stream",
+          itemContentBlocked: false,
+          itemContentBlockedTime: 100,
+        },
+      }),
+    );
+    expect(outputs(store).out_foyer_stream.itemContentBlocked).toBe(true);
+    expect(outputs(store).out_foyer_stream.itemContentBlockedTime).toBe(200);
   });
 
   it("does not sync transmit state, which stays a local controller decision", () => {

@@ -599,16 +599,15 @@ const ServiceItems = () => {
 
   const actionBarItems = useMemo((): ActionBarItem[] => {
     const items: ActionBarItem[] = [];
+    if (showBulkDeleteMenu) {
+      items.push({
+        id: "delete-selected",
+        label: `Delete selected (${selectedListIds.size})`,
+        destructive: true,
+      });
+    }
     if (multiSelectMode) {
       items.push({ id: "done", label: "Done" });
-    }
-    if (selectedList && access === "full") {
-      items.push({
-        id: "add-heading",
-        label: "Add heading",
-        disabled: isAddingHeading,
-        isLoading: isAddingHeading,
-      });
     }
     if (selectedHeading) {
       items.push({
@@ -619,13 +618,6 @@ const ServiceItems = () => {
         id: "delete-heading",
         label: "Delete heading",
         destructive: true,
-      })
-    }
-    if (showBulkDeleteMenu) {
-      items.push({
-        id: "delete-selected",
-        label: `Delete selected (${selectedListIds.size})`,
-        destructive: true,
       });
     }
 
@@ -633,6 +625,15 @@ const ServiceItems = () => {
       id: "open-service-plan",
       label: "Service plan",
     });
+
+    if (selectedList && access === "full") {
+      items.push({
+        id: "add-heading",
+        label: "Add heading",
+        disabled: isAddingHeading,
+        isLoading: isAddingHeading,
+      });
+    }
 
     return items;
   }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode]);

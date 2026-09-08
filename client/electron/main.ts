@@ -1252,10 +1252,26 @@ const DESKTOP_CAPTURE_THUMBNAIL_SIZE = { width: 320, height: 180 };
  * only rendered for the picker, so background re-resolution of a saved share
  * stays cheap during live use.
  */
+/**
+ * Desktop capture listing is used by the controller picker and by the hidden
+ * capture host when re-resolving a saved screen/window share after handoff.
+ */
+const assertDesktopCaptureIpcSender = (sender: WebContents): void => {
+  if (
+    isTrustedControllerIpcSender(sender, mainWindow) ||
+    isTrustedControllerIpcSender(sender, localVideoCaptureHost)
+  ) {
+    return;
+  }
+  throw new Error(
+    "This action is only available from the controller or capture host window.",
+  );
+};
+
 ipcMain.handle(
   "get-desktop-capture-sources",
   async (event, options?: { withThumbnails?: boolean }) => {
-    assertControllerIpcSender(event.sender);
+    assertDesktopCaptureIpcSender(event.sender);
     const withThumbnails = options?.withThumbnails === true;
     const sources = await desktopCapturer.getSources({
       types: ["screen", "window"],

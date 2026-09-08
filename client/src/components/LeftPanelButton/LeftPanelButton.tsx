@@ -110,7 +110,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           {image && !isActive && (
             <img
               src={resolvedImage ?? image}
-              className="w-14 max-w-[30%] shrink-0"
+              className="w-12 max-w-[20%] shrink-0"
               alt={title}
             />
           )}

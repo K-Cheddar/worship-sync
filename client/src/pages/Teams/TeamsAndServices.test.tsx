@@ -351,6 +351,18 @@ const openVocalSlot = async (
 
 describe("Teams", () => {
   jest.setTimeout(15000);
+
+  // Warm the lazy route chunks used by these tests so the first visit does not
+  // sit in Suspense while findBy polls — under CI load that race can hang until
+  // the suite timeout instead of failing cleanly.
+  beforeAll(async () => {
+    await Promise.all([
+      import("./pages/TeamsMicrophonesPage"),
+      import("./pages/TeamsPlansPage"),
+      import("./pages/TeamsSchedulesPage"),
+    ]);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     originalMatchMedia = window.matchMedia;
@@ -391,7 +403,11 @@ describe("Teams", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /^Microphones$/i }));
     expect(
-      await screen.findByRole("button", { name: /Edit microphones/i }),
+      await screen.findByRole(
+        "button",
+        { name: /Edit microphones/i },
+        { timeout: 8_000 },
+      ),
     ).toBeInTheDocument();
     expect(mockGetServicePlanMicrophones).toHaveBeenCalledWith("church-1");
 
@@ -430,40 +446,48 @@ describe("Teams", () => {
     expect(screen.queryByRole("dialog", { name: /^Menu$/i })).not.toBeInTheDocument();
   });
 
-  it("confirms before discarding unsaved microphone changes during sidebar navigation", async () => {
-    const user = userEvent.setup();
-    renderTeams("/teams-and-services/microphones");
+  it(
+    "confirms before discarding unsaved microphone changes during sidebar navigation",
+    async () => {
+      const user = userEvent.setup({ delay: null });
+      renderTeams("/teams-and-services/microphones");
 
-    expect(
-      await screen.findByRole("button", { name: /Edit microphones/i }),
-    ).toBeInTheDocument();
-    // The list is read-only until the operator explicitly enters edit mode.
-    await user.click(
-      await screen.findByRole("button", { name: /Edit microphones/i }),
-    );
-    await user.click(
-      await screen.findByRole("button", { name: /Add microphone/i }),
-    );
-    await openTeamsNavigationIfNeeded(user);
+      // Bootstrap must finish and the microphones outlet must mount before edit
+      // controls exist; give CI enough time without relying on the suite default.
+      const editMicrophones = await screen.findByRole(
+        "button",
+        { name: /Edit microphones/i },
+        { timeout: 8_000 },
+      );
+      // The list is read-only until the operator explicitly enters edit mode.
+      await user.click(editMicrophones);
+      await user.click(
+        await screen.findByRole("button", { name: /Add microphone/i }),
+      );
+      await openTeamsNavigationIfNeeded(user);
 
-    await user.click(screen.getByRole("link", { name: /^Services$/i }));
-    expect(
-      await screen.findByRole("dialog", { name: /Unsaved changes/i }),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^Stay$/i }));
-    await waitFor(() => {
+      await user.click(screen.getByRole("link", { name: /^Services$/i }));
       expect(
-        screen.queryByRole("dialog", { name: /Unsaved changes/i }),
-      ).not.toBeInTheDocument();
-    });
+        await screen.findByRole("dialog", { name: /Unsaved changes/i }),
+      ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: /^Services$/i }));
-    await user.click(await screen.findByRole("button", { name: /Discard changes/i }));
-    expect(
-      await screen.findByRole("heading", { name: /^Services$/i }),
-    ).toBeInTheDocument();
-  });
+      await user.click(screen.getByRole("button", { name: /^Stay$/i }));
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("dialog", { name: /Unsaved changes/i }),
+        ).not.toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole("link", { name: /^Services$/i }));
+      await user.click(
+        await screen.findByRole("button", { name: /Discard changes/i }),
+      );
+      expect(
+        await screen.findByRole("heading", { name: /^Services$/i }),
+      ).toBeInTheDocument();
+    },
+    30_000,
+  );
 
   it("renders the empty schedule state after bootstrap loads", async () => {
     renderTeams();

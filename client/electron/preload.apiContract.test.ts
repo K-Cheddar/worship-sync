@@ -25,6 +25,7 @@ describe("electron preload API contract", () => {
       "deleteLocalAsset",
       "getDesktopCaptureSources",
       "openExternalUrl",
+      "fetchGeniusLyrics",
       "saveLastRoute",
       "getLastRoute",
     ];
