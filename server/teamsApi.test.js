@@ -720,6 +720,101 @@ test("concurrent microphone slot saves retain both changes", async (t) => {
   });
 });
 
+test("clearing a microphone assignment removes the slot", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("clear_microphone_assignment");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Worship", memberIds: [], usesMicrophoneAssignments: true },
+  });
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: {
+      microphones: [
+        {
+          id: "mic-lead",
+          name: "Lead vocal",
+          type: "Handheld",
+          color: "#22d3ee",
+        },
+      ],
+      audiences: [],
+    },
+  });
+  const lead = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Lead", teamId },
+  });
+  const leadPositionId = lead.payload.position.positionId;
+  const occurrenceId = "service-sunday@2026-08-16T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August",
+      teamId,
+      startDate: "2026-08-16",
+      endDate: "2026-08-16",
+      serviceIds: ["service-sunday"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-sunday",
+          name: "Sunday",
+          startsAt: "2026-08-16T10:00:00.000Z",
+          positionRequirements: [{ positionId: leadPositionId, count: 1 }],
+        },
+      ],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  const slotKey = `${leadPositionId}::0`;
+
+  const assigned = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentMicrophones,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: slotKey,
+        microphoneIds: ["mic-lead"],
+      },
+    },
+  );
+  assert.equal(assigned.statusCode, 200);
+  assert.deepEqual(assigned.payload.schedule.microphoneAssignments, {
+    [occurrenceId]: { [slotKey]: ["mic-lead"] },
+  });
+
+  const cleared = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentMicrophones,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: slotKey,
+        microphoneIds: [],
+      },
+    },
+  );
+  assert.equal(cleared.statusCode, 200);
+  assert.deepEqual(cleared.payload.schedule.microphoneAssignments, {});
+
+  const reloaded = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(reloaded.statusCode, 200);
+  assert.deepEqual(reloaded.payload.schedule.microphoneAssignments, {});
+});
+
 test("a position's qualification area must belong to the same team", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("qualification_area_scope");

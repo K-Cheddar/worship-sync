@@ -169,6 +169,9 @@ const AccountSetupPage = () => {
                 </p>
                 <p className="min-w-0 truncate whitespace-nowrap self-center text-sm text-gray-300 sm:col-start-2">
                   {workstation.appAccess}
+                  {workstation.serviceWorkspaceAccess
+                    ? " | service workspace"
+                    : ""}
                   {workstation.lastOperatorName
                     ? ` | ${workstation.lastOperatorName}`
                     : ""}
@@ -179,6 +182,12 @@ const AccountSetupPage = () => {
                     title={workstation.label}
                     details={[
                       { label: "Access", value: workstation.appAccess },
+                      {
+                        label: "Service workspace",
+                        value: workstation.serviceWorkspaceAccess
+                          ? "On"
+                          : "Off",
+                      },
                       { label: "Status", value: workstation.status || "Unknown" },
                       { label: "Created", value: formatDeviceDate(workstation.createdAt) },
                       { label: "Last seen", value: formatDeviceDate(workstation.lastSeenAt) },

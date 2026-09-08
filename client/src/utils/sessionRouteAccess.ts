@@ -14,7 +14,7 @@ type SessionKind = "human" | "workstation" | "display" | null | undefined;
 type Access = "full" | "music" | "view" | "member" | null | undefined;
 type TeamsPermission = "none" | "view" | "edit" | null | undefined;
 type TeamScopedPermission = "view" | "edit";
-type ServicesPermission = "none" | "edit" | null | undefined;
+type ServicesPermission = "none" | "view" | "edit" | null | undefined;
 
 type RouteSessionContext = {
   loginState?: LoginState;
@@ -107,6 +107,9 @@ const WORKSTATION_ALLOWED_EXACT = new Set([
   ...WORKSTATION_DISPLAY_SURFACE_EXACT,
 ]);
 
+/** Live service plan workspace — Teams viewers (human or booth workstation). */
+const CURRENT_SERVICE_PATH = "/current-service";
+
 /**
  * Display-linked sessions: allowed output URLs after pairing.
  *
@@ -190,7 +193,8 @@ export const isRouteAllowedForSession = (
       ) &&
       !(
         hasTeamsViewAccess(context) &&
-        matchesAllowedRoute(pathname, new Set(), TEAMS_ALLOWED_PREFIXES)
+        (pathname === CURRENT_SERVICE_PATH ||
+          matchesAllowedRoute(pathname, new Set(), TEAMS_ALLOWED_PREFIXES))
       )
     ) {
       return false;
@@ -205,6 +209,12 @@ export const isRouteAllowedForSession = (
   }
 
   if (context.sessionKind === "workstation") {
+    if (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) {
+      // Booth workstations only — default pairing has services:view / teams:none.
+      return !(
+        isViewOnlyAccess(context.access) && VIEW_BLOCKED_EXACT.has(pathname)
+      );
+    }
     if (
       !matchesAllowedRoute(
         pathname,

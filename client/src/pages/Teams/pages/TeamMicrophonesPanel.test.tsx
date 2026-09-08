@@ -106,6 +106,36 @@ describe("TeamMicrophonesPanel", () => {
     expect(within(lead).queryByText(/Assigned:/i)).not.toBeInTheDocument();
   });
 
+  it("reports an empty microphone list when No microphone is chosen", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+
+    render(
+      <TeamMicrophonesPanel
+        canEdit
+        microphones={microphones}
+        onChange={onChange}
+        rows={[
+          baseRow({
+            microphoneIds: ["mic-lead"],
+          }),
+        ]}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("combobox", {
+        name: /Microphone for Johnny Mclain \(Lead\)/i,
+      }),
+    );
+    await user.click(await screen.findByRole("option", { name: /^No microphone$/i }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ columnKey: "pos-lead::0" }),
+      [],
+    );
+  });
+
   it("shows church-list guidance when there are no rows and no microphones", () => {
     render(
       <TeamMicrophonesPanel

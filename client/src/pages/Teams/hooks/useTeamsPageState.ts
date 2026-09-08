@@ -405,12 +405,19 @@ export const useTeamsPageState = () => {
    * Re-applies retained hydration over a freshly fetched schedule list. Fresh
    * summary fields win — only the assignment maps, which the summary omits, are
    * carried over.
+   *
+   * Retained maps must track local saves (including clears). Otherwise a
+   * bootstrap summary after clearing a microphone / assignment resurrects the
+   * pre-clear map from this ref and the clear never sticks.
    */
   const withRetainedHydration = useCallback(
     (schedules: (TeamSchedule | TeamScheduleSummary)[]) => {
       if (hydratedSchedulesRef.current.size === 0) return schedules;
       return schedules.map((schedule) => {
-        if (isHydratedSchedule(schedule)) return schedule;
+        if (isHydratedSchedule(schedule)) {
+          hydratedSchedulesRef.current.set(schedule.scheduleId, schedule);
+          return schedule;
+        }
         const retained = hydratedSchedulesRef.current.get(schedule.scheduleId);
         if (!retained) return schedule;
         const { assignmentsOmitted: _omitted, ...freshSummary } = schedule;
@@ -519,6 +526,18 @@ export const useTeamsPageState = () => {
       item: TeamsData[K][number],
       replaceId?: string,
     ) => {
+      if (key === "schedules") {
+        const schedule = item as TeamSchedule | TeamScheduleSummary;
+        if (replaceId) {
+          hydratedSchedulesRef.current.delete(replaceId);
+        }
+        // Keep retained maps in lockstep with local saves. A later bootstrap
+        // summary reuses this ref for assignment/mic maps; a stale entry would
+        // resurrect a microphone (or person) the operator just cleared.
+        if (isHydratedSchedule(schedule)) {
+          hydratedSchedulesRef.current.set(schedule.scheduleId, schedule);
+        }
+      }
       updateDataLocal((current) => {
         const list = current[key];
         return {
@@ -540,6 +559,9 @@ export const useTeamsPageState = () => {
 
   const removeData = useCallback(
     <K extends keyof TeamsData>(key: K, _idField: string, id: string) => {
+      if (key === "schedules") {
+        hydratedSchedulesRef.current.delete(id);
+      }
       updateDataLocal((current) =>
         applyTeamEntityDeletionLocally(current, key as TeamsDataKey, id),
       );

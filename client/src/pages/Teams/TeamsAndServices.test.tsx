@@ -655,6 +655,120 @@ describe("Teams", () => {
     });
   });
 
+  it("keeps a cleared microphone cleared after a bootstrap summary refresh", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      const microphoneSchedule: TeamSchedule = {
+        ...scheduleBootstrap.schedules[0],
+        microphoneAssignments: {
+          [sundayOccurrenceId]: {
+            "position-keys::0": ["mic-lead"],
+          },
+        },
+      };
+      const afterCleared: TeamSchedule = {
+        ...microphoneSchedule,
+        microphoneAssignments: {},
+        updatedAt: "2026-07-05T12:00:00.000Z",
+      };
+      const {
+        assignments: _assignments,
+        microphoneAssignments: _mics,
+        additionalPositionSlots: _slots,
+        ...summaryBase
+      } = afterCleared;
+      const summaryRefresh = {
+        ...scheduleBootstrap,
+        teams: scheduleBootstrap.teams.map((team) => ({
+          ...team,
+          usesMicrophoneAssignments: true,
+        })),
+        schedules: [
+          {
+            ...summaryBase,
+            assignmentsOmitted: true,
+          },
+        ],
+      };
+      mockGetTeamsBootstrap.mockResolvedValue(
+        asTeamsBootstrapResponse({
+          ...scheduleBootstrap,
+          teams: scheduleBootstrap.teams.map((team) => ({
+            ...team,
+            usesMicrophoneAssignments: true,
+          })),
+          schedules: [microphoneSchedule],
+        }),
+      );
+      mockGetServicePlanMicrophones.mockResolvedValue({
+        success: true,
+        microphones: [
+          {
+            id: "mic-lead",
+            name: "Lead vocal",
+            type: "Handheld",
+            color: "#22d3ee",
+          },
+        ],
+        audiences: [],
+      });
+      mockUpdateTeamScheduleAssignmentMicrophones.mockResolvedValue({
+        success: true,
+        schedule: afterCleared,
+      } satisfies UpdateTeamScheduleAssignmentMicrophonesResponse);
+
+      renderTeams();
+      await waitForScheduleGrid();
+
+      const microphoneSelect = await screen.findByRole("combobox", {
+        name: /Microphone for Avery \(Keys\)/i,
+      });
+      await user.click(microphoneSelect);
+      await user.click(
+        await screen.findByRole("option", { name: /^No microphone$/i }),
+      );
+
+      await waitFor(() => {
+        expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledWith(
+          "church-1",
+          "schedule-july",
+          {
+            serviceId: sundayOccurrenceId,
+            positionSlotKey: "position-keys::0",
+            microphoneIds: [],
+          },
+        );
+      });
+      expect(
+        screen.getByRole("combobox", {
+          name: /Microphone for Avery \(Keys\)/i,
+        }),
+      ).toHaveTextContent("No microphone");
+
+      // A later bootstrap often returns this schedule as a summary (maps omitted).
+      // Retained hydration must reuse the cleared maps from the local save — not
+      // the pre-clear snapshot that was retained when the grid first opened.
+      mockGetTeamsBootstrap.mockResolvedValue(
+        asTeamsBootstrapResponse(summaryRefresh),
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(3500);
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await waitFor(() => {
+        expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+      });
+      expect(
+        screen.getByRole("combobox", {
+          name: /Microphone for Avery \(Keys\)/i,
+        }),
+      ).toHaveTextContent("No microphone");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("hydrates the remembered schedule after its bootstrap summary arrives", async () => {
     const { assignments: _assignments, ...summaryBase } = scheduleBootstrap.schedules[0];
     const scheduleId = "schedule-june";

@@ -1899,6 +1899,7 @@ const redeemWorkstationPairingFirestore = async (
       label: pairing.label,
       appAccess: pairing.appAccess,
       platformType: platformTypeFromBody || pairing.platformType || "web",
+      serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess),
       status: "active",
       credentialHash: hashValue(credential),
       createdAt: nowIso(),
@@ -1949,6 +1950,7 @@ const redeemWorkstationPairingMemory = async (token, platformTypeFromBody) => {
     label: pairing.label,
     appAccess: pairing.appAccess,
     platformType: platformTypeFromBody || pairing.platformType || "web",
+    serviceWorkspaceAccess: Boolean(pairing.serviceWorkspaceAccess),
     status: "active",
     credentialHash: hashValue(credential),
     createdAt: nowIso(),
@@ -2205,6 +2207,47 @@ const buildHumanBootstrap = ({
   },
 });
 
+/**
+ * Booth / Current Service Workspace grant on a paired workstation.
+ * When true: Services edit + Teams view (roster in the workspace) + mic
+ * assignment writes. When false/absent: legacy plan view only, no roster.
+ */
+const hasWorkstationServiceWorkspaceAccess = (workstationOrBootstrap) => {
+  if (!workstationOrBootstrap || typeof workstationOrBootstrap !== "object") {
+    return false;
+  }
+  if (workstationOrBootstrap.serviceWorkspaceAccess === true) {
+    return true;
+  }
+  const permissions = workstationOrBootstrap.permissions;
+  return (
+    permissions?.services === "edit" &&
+    (permissions?.teams === "view" || permissions?.teams === "edit")
+  );
+};
+
+const buildWorkstationPermissions = (workstation) => {
+  if (hasWorkstationServiceWorkspaceAccess(workstation)) {
+    return { teams: "view", services: "edit", teamScopes: {} };
+  }
+  // Default: see saved Service Plans only. No Teams roster (member PII).
+  return { teams: "none", services: "view", teamScopes: {} };
+};
+
+/** Stable actor id for audit fields (human uid or workstation:<deviceId>). */
+export const getSessionActorUid = (bootstrap) => {
+  if (bootstrap?.user?.uid) return bootstrap.user.uid;
+  const deviceId = bootstrap?.device?.deviceId;
+  if (
+    bootstrap?.sessionKind === SESSION_KIND_WORKSTATION &&
+    typeof deviceId === "string" &&
+    deviceId
+  ) {
+    return `workstation:${deviceId}`;
+  }
+  return null;
+};
+
 const buildWorkstationBootstrap = ({ req, church, workstation }) => ({
   authenticated: true,
   sessionKind: SESSION_KIND_WORKSTATION,
@@ -2217,16 +2260,15 @@ const buildWorkstationBootstrap = ({ req, church, workstation }) => ({
   uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
   role: null,
   appAccess: workstation.appAccess,
-  // View-only for every appAccess tier for now: a paired workstation can see
-  // saved Service Plans, never edit them, regardless of "full"/"music"/"view"
-  // appAccess — see requireServicePlansViewSession. `teams` stays "none" so
-  // this does not also open the Teams roster (member PII) to a workstation.
-  permissions: { teams: "none", services: "view", teamScopes: {} },
+  // appAccess still controls presentation surfaces. Service/Teams permissions
+  // come from serviceWorkspaceAccess on the device (see pairing).
+  permissions: buildWorkstationPermissions(workstation),
   user: null,
   device: {
     deviceId: workstation.deviceId,
     label: workstation.label,
     operatorName: workstation.lastOperatorName || null,
+    serviceWorkspaceAccess: hasWorkstationServiceWorkspaceAccess(workstation),
     surfaceType: null,
   },
 });
@@ -3563,16 +3605,35 @@ const requireAdminSession = async (req, churchId) => {
   return bootstrap;
 };
 
-export const requireTeamsViewSession = async (req, churchId) => {
-  const bootstrap = await requireHumanSession(req);
+const hasTeamsViewPermission = (bootstrap) => {
   const teamsPermission = bootstrap.permissions?.teams || "none";
+  return (
+    bootstrap.role === "admin" ||
+    teamsPermission === "view" ||
+    teamsPermission === "edit" ||
+    bootstrap.permissions?.services === "edit" ||
+    hasAnyTeamScope(bootstrap.permissions)
+  );
+};
+
+export const requireTeamsViewSession = async (req, churchId) => {
+  const bootstrap = await resolveRequestBootstrap(req);
   if (
-    bootstrap.churchId !== churchId ||
-    (bootstrap.role !== "admin" &&
-      teamsPermission !== "view" &&
-      teamsPermission !== "edit" &&
-      bootstrap.permissions?.services !== "edit" &&
-      !hasAnyTeamScope(bootstrap.permissions))
+    !bootstrap ||
+    (bootstrap.sessionKind !== SESSION_KIND_HUMAN &&
+      bootstrap.sessionKind !== SESSION_KIND_WORKSTATION)
+  ) {
+    throw httpError(401, "Authentication required");
+  }
+  // Humans with Teams/Services view grants, or booth workstations
+  // (serviceWorkspaceAccess → teams view + services edit). Default
+  // workstations stay out — roster endpoints carry member PII.
+  if (bootstrap.churchId !== churchId || !hasTeamsViewPermission(bootstrap)) {
+    throw httpError(403, "Teams access required");
+  }
+  if (
+    bootstrap.sessionKind === SESSION_KIND_WORKSTATION &&
+    !hasWorkstationServiceWorkspaceAccess(bootstrap)
   ) {
     throw httpError(403, "Teams access required");
   }
@@ -3580,10 +3641,9 @@ export const requireTeamsViewSession = async (req, churchId) => {
 };
 
 // Deliberately narrower than requireTeamsViewSession: also admits a paired
-// workstation (see buildWorkstationBootstrap's view-only `services`
-// permission), but only for reading saved Service Plans. Never use this for
-// roster/schedule endpoints — those carry member PII (email, DOB, minor
-// flag) that a shared workstation must not receive.
+// workstation with view-only `services` (default pairing), but only for
+// reading saved Service Plans. Prefer requireTeamsViewSession for
+// roster/schedule endpoints — those carry member PII.
 export const requireServicePlansViewSession = async (req, churchId) => {
   const bootstrap = await resolveRequestBootstrap(req);
   if (
@@ -3621,12 +3681,27 @@ const requireTeamsEditSession = async (req, churchId) => {
 };
 
 const requireServicesEditSession = async (req, churchId) => {
-  const bootstrap = await requireHumanSession(req);
+  const bootstrap = await resolveRequestBootstrap(req);
+  if (
+    !bootstrap ||
+    (bootstrap.sessionKind !== SESSION_KIND_HUMAN &&
+      bootstrap.sessionKind !== SESSION_KIND_WORKSTATION)
+  ) {
+    throw httpError(401, "Authentication required");
+  }
   if (
     bootstrap.churchId !== churchId ||
     (bootstrap.role !== "admin" &&
       bootstrap.permissions?.teams !== "edit" &&
       bootstrap.permissions?.services !== "edit")
+  ) {
+    throw httpError(403, "Services edit access required");
+  }
+  // Workstations only get Services edit via the booth grant, never via
+  // appAccess alone.
+  if (
+    bootstrap.sessionKind === SESSION_KIND_WORKSTATION &&
+    !hasWorkstationServiceWorkspaceAccess(bootstrap)
   ) {
     throw httpError(403, "Services edit access required");
   }
@@ -3640,6 +3715,39 @@ const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
     (bootstrap.role !== "admin" &&
       bootstrap.permissions?.teams !== "edit" &&
       !hasTeamScope(bootstrap.permissions, teamId, "edit"))
+  ) {
+    throw httpError(403, "Teams edit access required");
+  }
+  return bootstrap;
+};
+
+/**
+ * Day-level mic chips on Current Service Workspace (and schedule grids).
+ * Humans need Teams edit for the owning team. Booth workstations may write
+ * this one nested map without full Teams edit.
+ */
+const requireScheduleMicrophoneEditSession = async (req, churchId, teamId) => {
+  const bootstrap = await resolveRequestBootstrap(req);
+  if (
+    !bootstrap ||
+    (bootstrap.sessionKind !== SESSION_KIND_HUMAN &&
+      bootstrap.sessionKind !== SESSION_KIND_WORKSTATION)
+  ) {
+    throw httpError(401, "Authentication required");
+  }
+  if (bootstrap.churchId !== churchId) {
+    throw httpError(403, "Teams edit access required");
+  }
+  if (bootstrap.sessionKind === SESSION_KIND_WORKSTATION) {
+    if (!hasWorkstationServiceWorkspaceAccess(bootstrap)) {
+      throw httpError(403, "Teams edit access required");
+    }
+    return bootstrap;
+  }
+  if (
+    bootstrap.role !== "admin" &&
+    bootstrap.permissions?.teams !== "edit" &&
+    !hasTeamScope(bootstrap.permissions, teamId, "edit")
   ) {
     throw httpError(403, "Teams edit access required");
   }
@@ -4351,7 +4459,9 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
+  requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  getSessionActorUid,
   requireFirestore,
   setDoc,
   updateDocFields,
@@ -6521,6 +6631,7 @@ export const authHandlers = {
       const label = String(req.body?.label || "").trim();
       const appAccess = req.body?.appAccess || "view";
       const platformType = req.body?.platformType || "electron";
+      const serviceWorkspaceAccess = Boolean(req.body?.serviceWorkspaceAccess);
       if (!label) {
         throw httpError(400, "A workstation label is required.");
       }
@@ -6532,6 +6643,7 @@ export const authHandlers = {
         label,
         appAccess,
         platformType,
+        serviceWorkspaceAccess,
         tokenHash: hashValue(rawToken),
         status: "pending",
         expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),

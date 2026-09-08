@@ -38,6 +38,7 @@ import { selectDisplayOutputs } from "../store/displayOutputsSlice";
 import {
   findControllerProfile,
   getAuxControllerProfiles,
+  getControllerProfileDescription,
   OVERLAY_CONTROLLER_ID,
   PRESENTATION_CONTROLLER_ID,
 } from "../utils/controllerProfiles";
@@ -54,15 +55,12 @@ type CardLink = {
   icon: LucideIcon;
 };
 
-const primaryControllerTemplates: Omit<CardLink, "title">[] = [
+const primaryControllerTemplates: Omit<CardLink, "title" | "description">[] = [
   {
-    description:
-      "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.",
     to: "/controller",
     icon: Presentation,
   },
   {
-    description: "Manage overlays, service timers, credits, and lower thirds for the stream.",
     to: "/overlay-controller",
     icon: Layers,
   },
@@ -73,7 +71,7 @@ const currentPlanLink: CardLink = {
   description:
     "Open the live workspace for the current service, with service plan and display previews together.",
   to: "/current-service",
-  icon: CalendarClock,
+  icon: LayoutDashboard,
 };
 
 /** The only surface a `member` gets: their own assignments, nothing else. */
@@ -334,15 +332,31 @@ const Welcome = () => {
    */
   const isMemberAccess = isMemberOnlyAccess(access);
   const primaryControllers = useMemo((): CardLink[] => {
-    const presentationName =
-      findControllerProfile(controllerProfiles, PRESENTATION_CONTROLLER_ID)
-        ?.name || "Presentation";
-    const overlayName =
-      findControllerProfile(controllerProfiles, OVERLAY_CONTROLLER_ID)?.name ||
-      "Overlays";
+    const presentation =
+      findControllerProfile(controllerProfiles, PRESENTATION_CONTROLLER_ID);
+    const overlay =
+      findControllerProfile(controllerProfiles, OVERLAY_CONTROLLER_ID);
     return [
-      { ...primaryControllerTemplates[0], title: presentationName },
-      { ...primaryControllerTemplates[1], title: overlayName },
+      {
+        ...primaryControllerTemplates[0],
+        title: presentation?.name || "Presentation",
+        description: getControllerProfileDescription(
+          presentation ?? {
+            type: "presentation",
+            description: "",
+          },
+        ),
+      },
+      {
+        ...primaryControllerTemplates[1],
+        title: overlay?.name || "Overlays",
+        description: getControllerProfileDescription(
+          overlay ?? {
+            type: "overlay",
+            description: "",
+          },
+        ),
+      },
     ];
   }, [controllerProfiles]);
   const visiblePrimaryControllers = isMemberAccess
@@ -354,8 +368,7 @@ const Welcome = () => {
     (): CardLink[] =>
       getAuxControllerProfiles(controllerProfiles).map((profile) => ({
         title: profile.name,
-        description:
-          "Drive this screen with its own outline and content, or mirror another display.",
+        description: getControllerProfileDescription(profile),
         to: `/aux-controller/${profile.id}`,
         icon: Projector,
       })),
@@ -365,13 +378,10 @@ const Welcome = () => {
     isMemberAccess || isMusicAccess ? [] : auxControllerLinks;
   const visibleControllerLinks = isMemberAccess
     ? []
-    : canViewTeams
-      ? [
-        ...visiblePrimaryControllers,
-        ...visibleAuxControllers,
-        currentPlanLink,
-      ]
-      : [...visiblePrimaryControllers, ...visibleAuxControllers];
+    : [...visiblePrimaryControllers, ...visibleAuxControllers];
+  /** Live service plan workspace — not a controller surface; sits with My schedule. */
+  const showServiceWorkspace = !isMemberAccess && Boolean(canViewTeams);
+  const showMySchedule = isLoggedIn && isHumanSession;
   const visibleSecondaryControllers = isMemberAccess
     ? []
     : isMusicAccess
@@ -518,15 +528,17 @@ const Welcome = () => {
           </section>
         )}
 
-        {/* Shown to everyone signed in, not just the schedule-only tier: leaders
-            and operators are usually on a roster too, and scanning the full
-            grid for their own name is the problem this page removes. Its own
-            section because it is personal — Controllers is service-operation
-            surfaces, and Church administration is neither. */}
-        {isLoggedIn && isHumanSession && (
+        {/* Personal schedule and the live service workspace sit together —
+            neither belongs under Controllers (operator surfaces) nor Church
+            administration. My schedule is human-session only; workstations
+            still get Service Workspace when they can view teams. */}
+        {(showMySchedule || showServiceWorkspace) && (
           <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="grid gap-4 md:grid-cols-2">
-              <HomeLinkCard {...mySchedulelink} />
+              {showMySchedule ? <HomeLinkCard {...mySchedulelink} /> : null}
+              {showServiceWorkspace ? (
+                <HomeLinkCard {...currentPlanLink} />
+              ) : null}
             </div>
           </section>
         )}

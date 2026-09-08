@@ -33,10 +33,7 @@ import {
   hasAddedBlockoutRanges,
   newBlockoutConflictEntries,
 } from "./blockoutConflicts.js";
-import {
-  createNotificationLedger,
-  deliveryKey,
-} from "./notificationLedger.js";
+import { createNotificationLedger, deliveryKey } from "./notificationLedger.js";
 import {
   isNotificationEnabled,
   normalizeNotificationPreferences,
@@ -123,7 +120,9 @@ export const createTeamsAuthHandlers = ({
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
+  requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  getSessionActorUid = (bootstrap) => bootstrap?.user?.uid || null,
   requireFirestore,
   setDoc,
   updateDocFields,
@@ -145,12 +144,22 @@ export const createTeamsAuthHandlers = ({
   // workstation, but only for reading saved Service Plans (no roster PII).
   const requireServicePlansView =
     requireServicePlansViewSession || requireTeamsView;
+  const requireScheduleMicrophoneEdit =
+    requireScheduleMicrophoneEditSession || requireTeamsEditForTeam;
+  const sessionActorUid = (bootstrap) => {
+    const uid = getSessionActorUid(bootstrap);
+    if (!uid) {
+      throw httpError(403, "Authentication required");
+    }
+    return uid;
+  };
   // The in-memory store used by local development and tests has no
   // transactions. Serialize microphone-map writes there so it retains the
   // same no-lost-update guarantee as Firestore transactions.
   const inMemoryMicrophoneSaveQueues = new Map();
   const enqueueInMemoryMicrophoneSave = (scheduleId, task) => {
-    const previous = inMemoryMicrophoneSaveQueues.get(scheduleId) || Promise.resolve();
+    const previous =
+      inMemoryMicrophoneSaveQueues.get(scheduleId) || Promise.resolve();
     const run = previous.then(task, task);
     const settled = run.then(
       () => undefined,
@@ -287,7 +296,8 @@ export const createTeamsAuthHandlers = ({
   /** Local date/time for an occurrence, as the reader would say it aloud. */
   const formatAssignmentWhen = (startsAt) => {
     const parsed = startsAt ? new Date(startsAt) : null;
-    if (!parsed || Number.isNaN(parsed.getTime())) return "Date to be confirmed";
+    if (!parsed || Number.isNaN(parsed.getTime()))
+      return "Date to be confirmed";
     return parsed.toLocaleString("en-US", {
       weekday: "long",
       month: "short",
@@ -612,13 +622,15 @@ export const createTeamsAuthHandlers = ({
    */
   const listMemberSlotKeys = (schedule, memberId) => {
     const slots = [];
-    Object.entries(schedule.assignments || {}).forEach(([occurrenceId, row]) => {
-      Object.entries(row || {}).forEach(([cellKey, cell]) => {
-        if (readCellHolderId(cell) === memberId) {
-          slots.push({ occurrenceId, cellKey });
-        }
-      });
-    });
+    Object.entries(schedule.assignments || {}).forEach(
+      ([occurrenceId, row]) => {
+        Object.entries(row || {}).forEach(([cellKey, cell]) => {
+          if (readCellHolderId(cell) === memberId) {
+            slots.push({ occurrenceId, cellKey });
+          }
+        });
+      },
+    );
     return slots;
   };
 
@@ -698,26 +710,28 @@ export const createTeamsAuthHandlers = ({
       positions.map((row) => [row.positionId, row.name]),
     );
     const slots = [];
-    Object.entries(schedule.assignments || {}).forEach(([occurrenceId, row]) => {
-      Object.entries(row || {}).forEach(([cellKey, cell]) => {
-        if (readCellHolderId(cell) !== memberId) return;
-        const occurrence = (schedule.occurrences || []).find(
-          (item) => item?.occurrenceId === occurrenceId,
-        );
-        slots.push({
-          occurrenceId,
-          cellKey,
-          serviceName: occurrence?.name || "Service",
-          startsAt: occurrence?.startsAt || "",
-          positionName:
-            positionNameById.get(String(cellKey).split("::")[0]) || "",
-          ...readAssignmentResponse(
-            schedule.responses?.[occurrenceId]?.[cellKey],
-            memberId,
-          ),
+    Object.entries(schedule.assignments || {}).forEach(
+      ([occurrenceId, row]) => {
+        Object.entries(row || {}).forEach(([cellKey, cell]) => {
+          if (readCellHolderId(cell) !== memberId) return;
+          const occurrence = (schedule.occurrences || []).find(
+            (item) => item?.occurrenceId === occurrenceId,
+          );
+          slots.push({
+            occurrenceId,
+            cellKey,
+            serviceName: occurrence?.name || "Service",
+            startsAt: occurrence?.startsAt || "",
+            positionName:
+              positionNameById.get(String(cellKey).split("::")[0]) || "",
+            ...readAssignmentResponse(
+              schedule.responses?.[occurrenceId]?.[cellKey],
+              memberId,
+            ),
+          });
         });
-      });
-    });
+      },
+    );
     return slots.sort((a, b) =>
       String(a.startsAt).localeCompare(String(b.startsAt)),
     );
@@ -835,11 +849,19 @@ export const createTeamsAuthHandlers = ({
     }
     const month = Number(value.month);
     const day = Number(value.day);
-    const year = value.year === undefined || value.year === null || value.year === ""
-      ? undefined
-      : Number(value.year);
+    const year =
+      value.year === undefined || value.year === null || value.year === ""
+        ? undefined
+        : Number(value.year);
     const currentYear = new Date().getUTCFullYear();
-    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) {
+    if (
+      !Number.isInteger(month) ||
+      month < 1 ||
+      month > 12 ||
+      !Number.isInteger(day) ||
+      day < 1 ||
+      day > 31
+    ) {
       throw httpError(400, `${fieldLabel} must include a valid month and day.`);
     }
     const validationYear = year === undefined ? 2000 : year;
@@ -880,7 +902,10 @@ export const createTeamsAuthHandlers = ({
     } catch {
       throw httpError(400, `${fieldLabel} must be a valid URL.`);
     }
-    if (parsed.protocol !== "https:" || parsed.hostname !== "res.cloudinary.com") {
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "res.cloudinary.com"
+    ) {
       throw httpError(400, `${fieldLabel} must be hosted by Cloudinary.`);
     }
     return normalized;
@@ -1782,31 +1807,32 @@ export const createTeamsAuthHandlers = ({
 
   const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
     const isGeneralView = viewMode === "general";
-    const [church, brandingChrome, positions, teams, schedules] = await Promise.all([
-      getDoc(COLLECTIONS.churches, plan.churchId),
-      readChurchPublicBrandingChrome(plan.churchId),
-      isGeneralView
-        ? Promise.resolve([])
-        : listTeamCollectionForChurch(
-            COLLECTIONS.teamPositions,
-            "positionId",
-            plan.churchId,
-          ),
-      isGeneralView
-        ? Promise.resolve([])
-        : listTeamCollectionForChurch(
-            COLLECTIONS.teams,
-            "teamId",
-            plan.churchId,
-          ),
-      isGeneralView
-        ? Promise.resolve([])
-        : listTeamCollectionForChurch(
-            COLLECTIONS.teamSchedules,
-            "scheduleId",
-            plan.churchId,
-          ),
-    ]);
+    const [church, brandingChrome, positions, teams, schedules] =
+      await Promise.all([
+        getDoc(COLLECTIONS.churches, plan.churchId),
+        readChurchPublicBrandingChrome(plan.churchId),
+        isGeneralView
+          ? Promise.resolve([])
+          : listTeamCollectionForChurch(
+              COLLECTIONS.teamPositions,
+              "positionId",
+              plan.churchId,
+            ),
+        isGeneralView
+          ? Promise.resolve([])
+          : listTeamCollectionForChurch(
+              COLLECTIONS.teams,
+              "teamId",
+              plan.churchId,
+            ),
+        isGeneralView
+          ? Promise.resolve([])
+          : listTeamCollectionForChurch(
+              COLLECTIONS.teamSchedules,
+              "scheduleId",
+              plan.churchId,
+            ),
+      ]);
     const memberIds = isGeneralView
       ? []
       : publicServingMemberIdsForPlan({
@@ -1871,9 +1897,12 @@ export const createTeamsAuthHandlers = ({
       (Array.isArray(occurrences) ? occurrences : [])
         .map((occurrence) => {
           const startsAt = String(occurrence?.startsAt || "").trim();
-          const serviceIds = (Array.isArray(occurrence?.serviceIds) && occurrence.serviceIds.length
-            ? occurrence.serviceIds
-            : [occurrence?.serviceId])
+          const serviceIds = (
+            Array.isArray(occurrence?.serviceIds) &&
+            occurrence.serviceIds.length
+              ? occurrence.serviceIds
+              : [occurrence?.serviceId]
+          )
             .map((serviceId) => String(serviceId || "").trim())
             .filter(Boolean);
           return startsAt && serviceIds.length
@@ -1903,7 +1932,8 @@ export const createTeamsAuthHandlers = ({
             .map((serviceId) => String(serviceId || "").trim())
             .filter(Boolean);
           return planServiceIds.some((serviceId) =>
-            occurrenceKeys.has(`${planStartsAt}\u0000${serviceId}`));
+            occurrenceKeys.has(`${planStartsAt}\u0000${serviceId}`),
+          );
         })
         .map((plan) => emitPublicServicePlanUpdated(plan, revision)),
     );
@@ -2023,31 +2053,31 @@ export const createTeamsAuthHandlers = ({
     startDate,
     endDate,
   }) => {
-    const preserved = (Array.isArray(existingRanges) ? existingRanges : []).flatMap(
-      (range) => {
-        if (!range?.startDate) return [];
-        const rangeEnd = range.endDate || range.startDate;
-        if (rangeEnd < startDate || range.startDate > endDate) {
-          return [{ ...range, endDate: rangeEnd }];
-        }
+    const preserved = (
+      Array.isArray(existingRanges) ? existingRanges : []
+    ).flatMap((range) => {
+      if (!range?.startDate) return [];
+      const rangeEnd = range.endDate || range.startDate;
+      if (rangeEnd < startDate || range.startDate > endDate) {
+        return [{ ...range, endDate: rangeEnd }];
+      }
 
-        const outside = [];
-        if (range.startDate < startDate) {
-          outside.push({
-            ...range,
-            endDate: shiftPlainDate(startDate, -1),
-          });
-        }
-        if (rangeEnd > endDate) {
-          outside.push({
-            ...range,
-            startDate: shiftPlainDate(endDate, 1),
-            endDate: rangeEnd,
-          });
-        }
-        return outside;
-      },
-    );
+      const outside = [];
+      if (range.startDate < startDate) {
+        outside.push({
+          ...range,
+          endDate: shiftPlainDate(startDate, -1),
+        });
+      }
+      if (rangeEnd > endDate) {
+        outside.push({
+          ...range,
+          startDate: shiftPlainDate(endDate, 1),
+          endDate: rangeEnd,
+        });
+      }
+      return outside;
+    });
 
     return mergeBlockoutDateRanges([
       ...preserved,
@@ -2555,7 +2585,10 @@ export const createTeamsAuthHandlers = ({
     return {
       ...summary,
       assignmentsOmitted: true,
-      assignmentCounts: buildScheduleAssignmentCounts(assignments, schedule.occurrences),
+      assignmentCounts: buildScheduleAssignmentCounts(
+        assignments,
+        schedule.occurrences,
+      ),
     };
   };
 
@@ -2899,8 +2932,13 @@ export const createTeamsAuthHandlers = ({
     if (!lastName) {
       throw httpError(400, "Last name is required.");
     }
-    const hasBirthDate = Object.prototype.hasOwnProperty.call(body || {}, "birthDate");
-    const birthDate = hasBirthDate ? normalizeBirthDate(body?.birthDate) : undefined;
+    const hasBirthDate = Object.prototype.hasOwnProperty.call(
+      body || {},
+      "birthDate",
+    );
+    const birthDate = hasBirthDate
+      ? normalizeBirthDate(body?.birthDate)
+      : undefined;
     const isMinor =
       isMinorFromBirthDate(birthDate) ??
       normalizeManualMinorStatus(body?.isMinor);
@@ -2929,7 +2967,9 @@ export const createTeamsAuthHandlers = ({
         "Profile image",
       );
     }
-    if (Object.prototype.hasOwnProperty.call(body || {}, "profileImagePublicId")) {
+    if (
+      Object.prototype.hasOwnProperty.call(body || {}, "profileImagePublicId")
+    ) {
       payload.profileImagePublicId = normalizeShortText(
         body?.profileImagePublicId,
         { max: 512 },
@@ -3052,7 +3092,10 @@ export const createTeamsAuthHandlers = ({
         ).map((microphone) => String(microphone?.id || "").trim()),
       );
       if (!knownMicrophoneIds.has(defaultMicrophoneId)) {
-        throw httpError(400, "Default microphone is not in this church's list.");
+        throw httpError(
+          400,
+          "Default microphone is not in this church's list.",
+        );
       }
     }
     return {
@@ -3240,7 +3283,11 @@ export const createTeamsAuthHandlers = ({
     return slots;
   };
 
-  const validateTeamSchedulePayload = async (body, churchId, existing = null) => {
+  const validateTeamSchedulePayload = async (
+    body,
+    churchId,
+    existing = null,
+  ) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Schedule name is required.");
@@ -3669,9 +3716,14 @@ export const createTeamsAuthHandlers = ({
    * choices, including deliberate clears, remain the operator's decision.
    */
   const applyPositionDefaultMicrophones = async ({ churchId, payload }) => {
-    const team = await assertTeamEntityInChurch("team", payload.teamId, churchId, {
-      label: "Team",
-    });
+    const team = await assertTeamEntityInChurch(
+      "team",
+      payload.teamId,
+      churchId,
+      {
+        label: "Team",
+      },
+    );
     if (!team.usesMicrophoneAssignments) return payload;
 
     const [positions, church] = await Promise.all([
@@ -3717,7 +3769,8 @@ export const createTeamsAuthHandlers = ({
           if (!row[slotKey]) row[slotKey] = [microphoneId];
         }
       });
-      if (Object.keys(row).length) microphoneAssignments[occurrence.occurrenceId] = row;
+      if (Object.keys(row).length)
+        microphoneAssignments[occurrence.occurrenceId] = row;
     }
     return { ...payload, microphoneAssignments };
   };
@@ -3753,7 +3806,9 @@ export const createTeamsAuthHandlers = ({
         churchId,
       ),
     ]);
-    const memberById = new Map(members.map((member) => [member.memberId, member]));
+    const memberById = new Map(
+      members.map((member) => [member.memberId, member]),
+    );
     const positionById = new Map(
       positions.map((position) => [position.positionId, position]),
     );
@@ -3768,34 +3823,37 @@ export const createTeamsAuthHandlers = ({
       const guestsById = new Map(
         (schedule.guests || []).map((guest) => [guest.guestId, guest]),
       );
-      return Object.entries(schedule.assignments?.[occurrence.occurrenceId] || {})
-        .flatMap(([slotKey, cell]) => {
-          const separator = slotKey.lastIndexOf("::");
-          const positionId = separator > 0 ? slotKey.slice(0, separator) : "";
-          const position = positionById.get(positionId);
-          const teamId = position?.teamId || schedule.teamId;
-          const role = position?.name || "Position";
-          // Match the current service workspace: it shows the scheduled primary
-          // for each role, while shadows remain schedule-grid detail.
-          const memberId = assignmentCellMemberIds(cell)[0];
-          if (!memberId) return [];
-          return [memberId].flatMap((memberId) => {
-            const member = memberById.get(memberId);
-            const guest = guestsById.get(memberId);
-            const name = member
-              ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
-              : guest?.name || "";
-            if (!name) return [];
-            return [{
+      return Object.entries(
+        schedule.assignments?.[occurrence.occurrenceId] || {},
+      ).flatMap(([slotKey, cell]) => {
+        const separator = slotKey.lastIndexOf("::");
+        const positionId = separator > 0 ? slotKey.slice(0, separator) : "";
+        const position = positionById.get(positionId);
+        const teamId = position?.teamId || schedule.teamId;
+        const role = position?.name || "Position";
+        // Match the current service workspace: it shows the scheduled primary
+        // for each role, while shadows remain schedule-grid detail.
+        const memberId = assignmentCellMemberIds(cell)[0];
+        if (!memberId) return [];
+        return [memberId].flatMap((memberId) => {
+          const member = memberById.get(memberId);
+          const guest = guestsById.get(memberId);
+          const name = member
+            ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
+            : guest?.name || "";
+          if (!name) return [];
+          return [
+            {
               teamName: teamById.get(teamId)?.name || "Team",
               role,
               name,
               ...(member?.profileImageUrl
                 ? { profileImageUrl: member.profileImageUrl }
                 : {}),
-            }];
-          });
+            },
+          ];
         });
+      });
     });
   };
 
@@ -3850,7 +3908,11 @@ export const createTeamsAuthHandlers = ({
     return [...byId.values()].slice(0, MAX_TEAM_SCHEDULE_GUESTS);
   };
 
-  const resolveTeamScheduleGuestAssignment = ({ schedule, guest, memberId }) => {
+  const resolveTeamScheduleGuestAssignment = ({
+    schedule,
+    guest,
+    memberId,
+  }) => {
     const guests = normalizeTeamScheduleGuests(schedule?.guests);
     if (guest == null) {
       const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
@@ -3894,7 +3956,9 @@ export const createTeamsAuthHandlers = ({
       if (guests.length >= MAX_TEAM_SCHEDULE_GUESTS) {
         const assignedIds = new Set(
           Object.values(schedule?.assignments || {}).flatMap((row) =>
-            Object.values(row || {}).flatMap(getScheduleAssignmentCellMemberIds),
+            Object.values(row || {}).flatMap(
+              getScheduleAssignmentCellMemberIds,
+            ),
           ),
         );
         const unusedIndex = guests.findIndex(
@@ -4016,7 +4080,9 @@ export const createTeamsAuthHandlers = ({
     if (!Array.isArray(value)) {
       throw httpError(400, "Form fields must be a list.");
     }
-    return [...new Set(value.filter((field) => TEAM_INTAKE_FIELD_IDS.has(field)))];
+    return [
+      ...new Set(value.filter((field) => TEAM_INTAKE_FIELD_IDS.has(field))),
+    ];
   };
 
   const validateTeamIntakeFormPayload = (body, existing = null) => {
@@ -4070,9 +4136,7 @@ export const createTeamsAuthHandlers = ({
       enabledFields,
       active: Boolean(body?.active ?? existing?.active),
       // Every selected member-detail field is required on the public form.
-      requireEmail:
-        enabledFields.includes("email") &&
-        true,
+      requireEmail: enabledFields.includes("email") && true,
       welcomeMessage: normalizeMessage("welcomeMessage"),
       positionsMessage: normalizeMessage("positionsMessage"),
       availabilityMessage: normalizeMessage("availabilityMessage"),
@@ -4158,21 +4222,24 @@ export const createTeamsAuthHandlers = ({
     const scopedTeamIds = new Set(form.teamIds || []);
     const positionIds = enabledFields.has("positions")
       ? await assertTeamEntityIdsInChurch(
-        "position",
-        body?.positionIds,
-        form.churchId,
-        {
-          label: "Position",
-          assertEntity: (position) => {
-            if (scopedTeamIds.size > 0 && !scopedTeamIds.has(position.teamId)) {
-              throw httpError(
-                400,
-                "One or more selected positions are not available on this form.",
-              );
-            }
+          "position",
+          body?.positionIds,
+          form.churchId,
+          {
+            label: "Position",
+            assertEntity: (position) => {
+              if (
+                scopedTeamIds.size > 0 &&
+                !scopedTeamIds.has(position.teamId)
+              ) {
+                throw httpError(
+                  400,
+                  "One or more selected positions are not available on this form.",
+                );
+              }
+            },
           },
-        },
-      )
+        )
       : [];
     const occurrenceIds = new Set(
       (form.availabilityOccurrences || []).map(
@@ -4202,23 +4269,23 @@ export const createTeamsAuthHandlers = ({
       occurrenceAvailability,
       blockoutRanges: enabledFields.has("blockoutDates")
         ? normalizeIntakeBlockoutRanges(
-          body?.blockoutRanges,
-          form.startDate,
-          form.endDate,
-        )
+            body?.blockoutRanges,
+            form.startDate,
+            form.endDate,
+          )
         : [],
       notes: enabledFields.has("notes")
         ? normalizeLongText(body?.notes, { max: 2000 })
         : "",
       ...(enabledFields.has("schedulingPreferences")
         ? {
-          servingFrequency: normalizeTeamMemberServingFrequency(
-            body?.servingFrequency,
-          ),
-          recurringAvailability: normalizeTeamMemberRecurringAvailability(
-            body?.recurringAvailability,
-          ),
-        }
+            servingFrequency: normalizeTeamMemberServingFrequency(
+              body?.servingFrequency,
+            ),
+            recurringAvailability: normalizeTeamMemberRecurringAvailability(
+              body?.recurringAvailability,
+            ),
+          }
         : {}),
     };
   };
@@ -4473,19 +4540,21 @@ export const createTeamsAuthHandlers = ({
         groupId: position.groupId || "",
         archivedAt: position.archivedAt || null,
       })),
-      members: assignedMembers.map((member) => ({
-        memberId: member.memberId,
-        name: scheduleMemberPublicName(member, duplicateFirstNames),
-      })).concat(
-        assignedGuests.map((guest) => ({
-          memberId: guest.guestId,
-          name: scheduleMemberPublicName(
-            scheduleGuestPublicNameParts(guest),
-            duplicateFirstNames,
-          ),
-          guest: true,
-        })),
-      ),
+      members: assignedMembers
+        .map((member) => ({
+          memberId: member.memberId,
+          name: scheduleMemberPublicName(member, duplicateFirstNames),
+        }))
+        .concat(
+          assignedGuests.map((guest) => ({
+            memberId: guest.guestId,
+            name: scheduleMemberPublicName(
+              scheduleGuestPublicNameParts(guest),
+              duplicateFirstNames,
+            ),
+            guest: true,
+          })),
+        ),
     };
   };
 
@@ -4519,7 +4588,8 @@ export const createTeamsAuthHandlers = ({
   // Canonical name for all occurrence conflicts. Keep the old field accepted
   // through this release so older clients can still acknowledge warnings.
   const normalizeAllowOccurrenceConflict = (body) =>
-    body?.allowOccurrenceConflict === true || body?.allowCrossTeamConflict === true;
+    body?.allowOccurrenceConflict === true ||
+    body?.allowCrossTeamConflict === true;
   const normalizeAllowBlockout = (value) => value === true;
   const normalizeAllowRecurringAvailability = (value) => value === true;
 
@@ -4632,10 +4702,8 @@ export const createTeamsAuthHandlers = ({
         // Bulk validation does not know which cell is being edited and keeps
         // the historical cross-team-only behavior. Direct assignment writes
         // provide the target cell, allowing same-schedule role conflicts too.
-        if (
-          otherSchedule.scheduleId === schedule.scheduleId &&
-          !targetCellKey
-        ) continue;
+        if (otherSchedule.scheduleId === schedule.scheduleId && !targetCellKey)
+          continue;
         const otherOccurrence = getScheduleOccurrencesForConflict(
           otherSchedule,
         ).find((candidate) =>
@@ -5066,7 +5134,9 @@ export const createTeamsAuthHandlers = ({
     if (isMemberBlockedOutForService(member, { date: serviceDate || "" })) {
       throw httpError(400, "That member is unavailable for this service.");
     }
-    if (!isMemberAvailableDuringServiceWeek(member, { date: serviceDate || "" })) {
+    if (
+      !isMemberAvailableDuringServiceWeek(member, { date: serviceDate || "" })
+    ) {
       throw httpError(
         400,
         "That member is unavailable during this week of the month.",
@@ -6431,7 +6501,10 @@ export const createTeamsAuthHandlers = ({
           firstName: String(member?.firstName || member?.name || "")
             .trim()
             .split(/\s+/)[0],
-          assignments: await listMemberAssignmentsOnSchedule(schedule, memberId),
+          assignments: await listMemberAssignmentsOnSchedule(
+            schedule,
+            memberId,
+          ),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -6507,7 +6580,10 @@ export const createTeamsAuthHandlers = ({
           success: true,
           response,
           applied,
-          assignments: await listMemberAssignmentsOnSchedule(schedule, memberId),
+          assignments: await listMemberAssignmentsOnSchedule(
+            schedule,
+            memberId,
+          ),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save your response.");
@@ -7781,7 +7857,12 @@ export const createTeamsAuthHandlers = ({
         // New schedules without an explicit mic plan start from position
         // defaults. Copies and intentional client-provided allocations retain
         // their own per-date choices unchanged.
-        if (!Object.prototype.hasOwnProperty.call(req.body || {}, "microphoneAssignments")) {
+        if (
+          !Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "microphoneAssignments",
+          )
+        ) {
           payload = await applyPositionDefaultMicrophones({
             churchId: req.params.churchId,
             payload,
@@ -8235,6 +8316,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8258,7 +8340,7 @@ export const createTeamsAuthHandlers = ({
               existing: current,
               payload,
               docId,
-              adminUid: admin.user.uid,
+              adminUid: actorUid,
               now,
             });
             transaction.set(ref, nextPlan, { merge: Boolean(current) });
@@ -8270,7 +8352,7 @@ export const createTeamsAuthHandlers = ({
             existing,
             payload,
             docId,
-            adminUid: admin.user.uid,
+            adminUid: actorUid,
             now,
           });
           await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, {
@@ -8337,6 +8419,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
         const payload = validateServicePlanTemplatePayload(req.body);
         const requestedId = normalizeShortText(req.body?.templateId, {
           max: 200,
@@ -8367,9 +8450,9 @@ export const createTeamsAuthHandlers = ({
           churchId,
           revision: getServicePlanRevision(current) + 1,
           updatedAt: now,
-          updatedByUid: admin.user.uid,
+          updatedByUid: actorUid,
           createdAt: current?.createdAt || now,
-          createdByUid: current?.createdByUid || admin.user.uid,
+          createdByUid: current?.createdByUid || actorUid,
         });
 
         const db = requireFirestore();
@@ -8552,6 +8635,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
         const microphones = (
           Array.isArray(req.body?.microphones) ? req.body.microphones : []
         )
@@ -8574,7 +8658,7 @@ export const createTeamsAuthHandlers = ({
             servicePlanMicrophones: microphones,
             servicePlanMicrophoneAudiences: audiences,
             updatedAt: nowIso(),
-            updatedByUid: admin.user.uid,
+            updatedByUid: actorUid,
           },
           { merge: true },
         );
@@ -8593,6 +8677,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8606,11 +8691,11 @@ export const createTeamsAuthHandlers = ({
           );
         }
         const { publicLinkToken, publicGeneralLinkToken } =
-          await ensureServicePlanPublicTokens(existing, admin.user.uid, docId);
+          await ensureServicePlanPublicTokens(existing, actorUid, docId);
         const {
           teamToken: currentTeamToken,
           generalToken: currentGeneralToken,
-        } = await ensureChurchCurrentServiceTokens(churchId, admin.user.uid);
+        } = await ensureChurchCurrentServiceTokens(churchId, actorUid);
         const now = nowIso();
         const nextPlan = {
           ...existing,
@@ -8621,7 +8706,7 @@ export const createTeamsAuthHandlers = ({
           published: true,
           publicLive: normalizePublicLiveState(existing.publicLive, existing),
           updatedAt: now,
-          updatedByUid: admin.user.uid,
+          updatedByUid: actorUid,
         };
         await setDoc(COLLECTIONS.servicePlans, docId, nextPlan, {
           merge: true,
@@ -8658,6 +8743,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8668,7 +8754,7 @@ export const createTeamsAuthHandlers = ({
         await setDoc(
           COLLECTIONS.servicePlans,
           docId,
-          { published: false, updatedAt: now, updatedByUid: admin.user.uid },
+          { published: false, updatedAt: now, updatedByUid: actorUid },
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8697,6 +8783,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
         const planKey = decodeURIComponent(req.params.planKey);
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8714,7 +8801,7 @@ export const createTeamsAuthHandlers = ({
         await setDoc(
           COLLECTIONS.servicePlans,
           docId,
-          { publicLive, updatedAt: now, updatedByUid: admin.user.uid },
+          { publicLive, updatedAt: now, updatedByUid: actorUid },
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
@@ -8860,9 +8947,10 @@ export const createTeamsAuthHandlers = ({
           const formCollectsBlockouts =
             formBelongsToChurch &&
             Boolean(intakeForm.startDate && intakeForm.endDate) &&
-            normalizeTeamIntakeFields(undefined, intakeForm.enabledFields).includes(
-              "blockoutDates",
-            );
+            normalizeTeamIntakeFields(
+              undefined,
+              intakeForm.enabledFields,
+            ).includes("blockoutDates");
           const blockoutDates = mergeBlockoutDateRanges(
             (submission.blockoutRanges || []).map((range) => ({
               startDate: range.startDate,
@@ -8885,10 +8973,9 @@ export const createTeamsAuthHandlers = ({
           // requested positions, plus the teams the form explicitly collects
           // for. An all-teams form (empty teamIds) intentionally adds no extra
           // teams beyond the requested-position ones — we never mass-add.
-          const formTeamIds =
-            formBelongsToChurch
-              ? normalizeIdArray(intakeForm.teamIds)
-              : [];
+          const formTeamIds = formBelongsToChurch
+            ? normalizeIdArray(intakeForm.teamIds)
+            : [];
           const addedTeamIds = new Set();
           const trackTeams = (ids) =>
             (ids || []).forEach((id) => addedTeamIds.add(id));
@@ -8902,10 +8989,8 @@ export const createTeamsAuthHandlers = ({
                 lastName: submission.lastName,
                 email: normalizeMemberEmail(submission.email),
                 birthDate: normalizeBirthDate(submission.birthDate),
-                isMinor:
-                  isMinorFromBirthDate(submission.birthDate) ?? false,
-                servingFrequency:
-                  submission.servingFrequency || "as_needed",
+                isMinor: isMinorFromBirthDate(submission.birthDate) ?? false,
+                servingFrequency: submission.servingFrequency || "as_needed",
                 recurringAvailability:
                   submission.recurringAvailability ||
                   normalizeTeamMemberRecurringAvailability(null),
@@ -8995,11 +9080,11 @@ export const createTeamsAuthHandlers = ({
                   : {}),
                 ...(!member.birthDate && submittedBirthDate
                   ? {
-                    birthDate: submittedBirthDate,
-                    isMinor:
-                      isMinorFromBirthDate(submittedBirthDate) ??
-                      Boolean(member.isMinor),
-                  }
+                      birthDate: submittedBirthDate,
+                      isMinor:
+                        isMinorFromBirthDate(submittedBirthDate) ??
+                        Boolean(member.isMinor),
+                    }
                   : {}),
                 ...(submission.servingFrequency
                   ? { servingFrequency: submission.servingFrequency }
@@ -9171,11 +9256,12 @@ export const createTeamsAuthHandlers = ({
           churchId,
           { label: "Schedule", active: false },
         );
-        const admin = await requireTeamsEditForTeam(
+        const admin = await requireScheduleMicrophoneEdit(
           req,
           churchId,
           schedule.teamId,
         );
+        const actorUid = sessionActorUid(admin);
         const team = await assertTeamEntityInChurch(
           "team",
           schedule.teamId,
@@ -9259,12 +9345,13 @@ export const createTeamsAuthHandlers = ({
           const row = { ...(microphoneAssignments[occurrenceId] || {}) };
           if (microphoneIds.length) row[slotKey] = microphoneIds;
           else delete row[slotKey];
-          if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
+          if (Object.keys(row).length)
+            microphoneAssignments[occurrenceId] = row;
           else delete microphoneAssignments[occurrenceId];
           return {
             microphoneAssignments,
             updatedAt: nowIso(),
-            updatedByUid: admin.user.uid,
+            updatedByUid: actorUid,
           };
         };
         const db = requireFirestore();
@@ -9302,9 +9389,14 @@ export const createTeamsAuthHandlers = ({
                 { label: "Schedule", active: false },
               );
               const update = applyMicrophoneAssignment(currentSchedule);
-              await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
-                merge: true,
-              });
+              await setDoc(
+                COLLECTIONS.teamSchedules,
+                schedule.scheduleId,
+                update,
+                {
+                  merge: true,
+                },
+              );
               return { ...currentSchedule, ...update };
             },
           );
@@ -9607,7 +9699,8 @@ export const createTeamsAuthHandlers = ({
         await emitPublicPlansForScheduleOccurrence({
           churchId: req.params.churchId,
           occurrence: (schedule.occurrences || []).find(
-            (item) => item.occurrenceId === String(req.body?.serviceId || "").trim(),
+            (item) =>
+              item.occurrenceId === String(req.body?.serviceId || "").trim(),
           ),
           revision: schedule.updatedAt || nowIso(),
         });
