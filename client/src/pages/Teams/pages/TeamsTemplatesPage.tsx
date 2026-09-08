@@ -156,7 +156,10 @@ const TeamsTemplatesPage = () => {
   }, [search, serviceNamesById, templates]);
 
   const handleDuplicate = async (
-    template: Pick<ServicePlanTemplate, "name" | "serviceId" | "sections">,
+    template: Pick<
+      ServicePlanTemplate,
+      "templateId" | "name" | "serviceId" | "sections"
+    >,
   ) => {
     if (!churchId || duplicatingId) return;
     setDuplicatingId(template.templateId);
