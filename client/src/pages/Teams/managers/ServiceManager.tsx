@@ -204,6 +204,10 @@ const ServiceManager = ({
       ),
     [listFilters.includeArchived, listQuery, services],
   );
+  const emptyFilterMessage =
+    !listQuery.trim() && !listFilters.includeArchived
+      ? "Archived services are hidden. Open Filter to show them."
+      : "No matches.";
   const eligiblePlanTemplates = planTemplates.filter(
     (template) =>
       !template.serviceId || template.serviceId === editing?.serviceId,
@@ -368,11 +372,7 @@ const ServiceManager = ({
         <>
           {services.length === 0 ? <p className="text-sm text-gray-300">No services yet.</p> : null}
           {services.length > 0 && filteredServices.length === 0 ? (
-            <p className="text-sm text-gray-300">
-              {!listQuery.trim() && !listFilters.includeArchived
-                ? "Archived services are hidden. Open Filter to show them."
-                : "No matches."}
-            </p>
+            <p className="text-sm text-gray-300">{emptyFilterMessage}</p>
           ) : null}
           {filteredServices.map((service) => (
             <EntityRow
