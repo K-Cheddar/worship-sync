@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import type { Box } from "../../../types";
 import MonitorView from "../MonitorView";
 
@@ -37,6 +37,19 @@ jest.mock("../DisplayTimer", () => ({
 jest.mock("../VerseDisplay", () => ({
   __esModule: true,
   default: ({ words }: { words: string }) => <div>{words}</div>,
+}));
+
+jest.mock("../../../hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: (url?: string) => url,
+}));
+
+jest.mock("../../../hooks/useLocalImageUrl", () => ({
+  useLocalImageUrl: () => ({
+    isLocalImage: false,
+    isOwner: false,
+    status: "not-local",
+    url: undefined,
+  }),
 }));
 
 const baseBox: Box = {
@@ -98,5 +111,71 @@ describe("MonitorView", () => {
     );
 
     consoleErrorSpy.mockRestore();
+  });
+
+  describe("background in the next-slide band layout", () => {
+    const renderBandLayout = (showBackground: boolean) =>
+      render(
+        <MonitorView
+          boxes={[{ ...baseBox, background: "https://example.com/bg.jpg" }]}
+          prevBoxes={[]}
+          nextBoxes={[{ ...baseBox, id: "next-box", words: "Next words" }]}
+          prevNextBoxes={[]}
+          showNextSlide
+          showBackground={showBackground}
+          shouldAnimate={false}
+          effectiveWidth={50}
+          scaleFactor={1}
+          effectiveShowClock={false}
+          effectiveShowTimer={false}
+          clockFontSize={16}
+          timerFontSize={16}
+        />,
+      );
+
+    it("shows the slide background behind the bands when the display asks for one", () => {
+      renderBandLayout(true);
+
+      expect(screen.getByTestId("monitor-band-background")).toBeInTheDocument();
+      expect(screen.getByAltText("")).toHaveAttribute(
+        "src",
+        "https://example.com/bg.jpg",
+      );
+    });
+
+    it("leaves the bands on black when the display turns the background off", () => {
+      renderBandLayout(false);
+
+      expect(
+        screen.queryByTestId("monitor-band-background"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders live media in a full-frame lane instead of the current band", () => {
+      render(
+        <MonitorView
+          boxes={[baseBox]}
+          prevBoxes={[]}
+          nextBoxes={[{ ...baseBox, id: "next-box", words: "Next words" }]}
+          prevNextBoxes={[]}
+          showNextSlide
+          showBackground={false}
+          shouldAnimate={false}
+          effectiveWidth={50}
+          scaleFactor={1}
+          effectiveShowClock={false}
+          effectiveShowTimer={false}
+          clockFontSize={16}
+          timerFontSize={16}
+          currentMediaLayer={<div data-testid="local-video-layer" />}
+        />,
+      );
+
+      const mediaLane = screen.getByTestId("monitor-full-frame-media-layer");
+      expect(mediaLane).toHaveClass("absolute", "inset-0");
+      expect(
+        within(mediaLane).getByTestId("local-video-layer"),
+      ).toBeInTheDocument();
+    });
   });
 });
