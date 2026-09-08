@@ -387,10 +387,13 @@ const ItemSlides = () => {
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const isTimerLike = type === "timer" || type === "service-time";
-  const size = isTimerLike ? Math.min(_size, 3) : _size;
+  // Timer/service-time items use a tighter zoom range in single-item mode.
+  // Continuous mode shows mixed item types, so keep the shared preference stable.
+  const applyTimerLikeZoom = isTimerLike && !isCollapsedContinuous;
+  const size = applyTimerLikeZoom ? Math.min(_size, 3) : _size;
 
   const slidesGridColsMin = 1;
-  const slidesGridColsMax = isTimerLike ? 3 : 7;
+  const slidesGridColsMax = applyTimerLikeZoom ? 3 : 7;
   /** Slider is inverted so moving right = zoom in (fewer columns, larger thumbnails). */
   const slideZoomSliderValue = slidesGridColsMax + slidesGridColsMin - size;
 

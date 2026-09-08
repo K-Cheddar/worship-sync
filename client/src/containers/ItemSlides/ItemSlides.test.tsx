@@ -74,7 +74,9 @@ jest.mock("../../utils/generalUtils", () => ({
 
 jest.mock("./OutlineItemSlidesScroller", () => ({
   __esModule: true,
-  default: () => <div data-testid="outline-scroller" />,
+  default: ({ cols }: { cols: number }) => (
+    <div data-testid="outline-scroller" data-cols={cols} />
+  ),
 }));
 
 const mockNeighborDocs = new Map<string, unknown>();
@@ -421,5 +423,54 @@ describe("ItemSlides", () => {
     expect(screen.getByLabelText("Slide thumbnail zoom")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+  });
+
+  it("does not clamp continuous-mode zoom when a service-time item is selected", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+    mockState.undoable.present.preferences.slidesPerRow = 5;
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      type: "service-time",
+      name: "11 AM Countdown",
+      _id: "service-time-countdown",
+      listId: "row-service-time",
+    };
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByTestId("outline-scroller")).toHaveAttribute(
+      "data-cols",
+      "5",
+    );
+    expect(screen.getByRole("slider")).toHaveAttribute("aria-valuemax", "7");
+  });
+
+  it("still clamps zoom for timer-like items in single-item mode", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = true;
+    mockState.undoable.present.preferences.slidesPerRow = 5;
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      type: "service-time",
+      name: "11 AM Countdown",
+      _id: "service-time-countdown",
+      listId: "row-service-time",
+    };
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("list")).toHaveClass("grid-cols-3");
+    expect(screen.getByRole("slider")).toHaveAttribute("aria-valuemax", "3");
   });
 });
