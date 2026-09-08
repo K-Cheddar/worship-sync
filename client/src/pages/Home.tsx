@@ -44,6 +44,9 @@ import { getBrowserFamily } from "../utils/browserFamily";
 import { getAppOs, isMobileBrowser } from "../utils/platform";
 import { getPwaInstallGuidance } from "../utils/pwaInstallGuidance";
 import { isMemberOnlyAccess, isViewOnlyAccess } from "../utils/accessTiers";
+import { useSelector } from "../hooks";
+import { selectControllerProfiles } from "../store/controllerProfilesSlice";
+import { getAuxControllerProfiles } from "../utils/controllerProfiles";
 import {
   fetchLatestLinuxInstallerUrl,
   fetchLatestMacInstallerUrl,
@@ -364,6 +367,7 @@ const DesktopDownloadHelp = ({
 const Welcome = () => {
   const { loginState, role, access, canViewTeams, sessionKind } =
     useContext(GlobalInfoContext) || {};
+  const controllerProfiles = useSelector(selectControllerProfiles);
   const isLoggedIn = loginState === "success";
   const isHumanSession = sessionKind === "human";
   const isAdmin = role === "admin";
@@ -383,11 +387,28 @@ const Welcome = () => {
     : isMusicAccess
       ? primaryControllers.filter((link) => link.to === "/controller")
       : primaryControllers;
+  const auxControllerLinks = useMemo(
+    (): CardLink[] =>
+      getAuxControllerProfiles(controllerProfiles).map((profile) => ({
+        title: profile.name,
+        description:
+          "Drive this screen with its own outline and content, or mirror another display.",
+        to: `/aux-controller/${profile.id}`,
+        icon: Projector,
+      })),
+    [controllerProfiles],
+  );
+  const visibleAuxControllers =
+    isMemberAccess || isMusicAccess ? [] : auxControllerLinks;
   const visibleControllerLinks = isMemberAccess
     ? []
     : canViewTeams
-      ? [...visiblePrimaryControllers, currentPlanLink]
-      : visiblePrimaryControllers;
+      ? [
+          ...visiblePrimaryControllers,
+          ...visibleAuxControllers,
+          currentPlanLink,
+        ]
+      : [...visiblePrimaryControllers, ...visibleAuxControllers];
   const visibleSecondaryControllers = isMemberAccess
     ? []
     : isMusicAccess
