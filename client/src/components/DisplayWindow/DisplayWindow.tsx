@@ -1157,12 +1157,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       }
     }, [desiredVideoUrl, activeVideoUrl]);
 
-    // Hide placeholder immediately when using a locally-cached video
-    useEffect(() => {
-      if (resolvedVideoUrl?.startsWith("media-cache://")) {
-        setIsWindowVideoLoaded(true);
-      }
-    }, [resolvedVideoUrl]);
+    // Do not treat media-cache:// as loaded on URL alone. Cached files still
+    // need decode + cue seek before a frame exists; dropping the poster early
+    // leaves a black stage between clips on Electron.
 
     // Overlay activity hides lyrics/Bible/formatted text only. Hide Content
     // still hides and mutes local video so operators can drop the camera.

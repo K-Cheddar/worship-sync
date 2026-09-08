@@ -199,7 +199,7 @@ describe("HLSVideoPlayer", () => {
     expect(video.getAttribute("preload")).toBe("auto");
   });
 
-  it("forwards loaded-data and error callbacks to the video element", () => {
+  it("notifies paint-ready after metadata and a current frame are available", () => {
     const onLoadedData = jest.fn();
     const onError = jest.fn();
 
@@ -211,12 +211,62 @@ describe("HLSVideoPlayer", () => {
       />,
     );
 
-    const video = screen.getByTestId("hls-video-player");
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    // Native loadeddata alone is not enough; outputs wait until the player has
+    // synced (and finished any cue seek) so the poster is not dropped early.
     fireEvent.loadedData(video);
-    fireEvent.error(video);
+    expect(onLoadedData).not.toHaveBeenCalled();
+
+    Object.defineProperty(video, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+    fireEvent.loadedMetadata(video);
 
     expect(onLoadedData).toHaveBeenCalled();
+    fireEvent.error(video);
     expect(onError).toHaveBeenCalled();
+  });
+
+  it("waits for seeked before paint-ready when a cue seek is in flight", () => {
+    const onLoadedData = jest.fn();
+    Object.defineProperty(HTMLMediaElement.prototype, "duration", {
+      configurable: true,
+      get: () => 40,
+    });
+
+    render(
+      <HLSPlayer
+        src="media-cache://clip.mp4"
+        onLoadedData={onLoadedData}
+        playback={{
+          mediaKey: "remote:video-1",
+          positionSeconds: 12,
+          paused: false,
+          atServerMs: 1_000_000,
+          generation: 1,
+          applySeek: true,
+        }}
+      />,
+    );
+
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    let seeking = true;
+    Object.defineProperty(video, "seeking", {
+      configurable: true,
+      get: () => seeking,
+    });
+    Object.defineProperty(video, "readyState", {
+      configurable: true,
+      get: () => 2,
+    });
+
+    fireEvent.loadedMetadata(video);
+    expect(onLoadedData).not.toHaveBeenCalled();
+
+    seeking = false;
+    fireEvent.seeked(video);
+    expect(onLoadedData).toHaveBeenCalledTimes(1);
   });
 
   it("seeks and pauses when a playback cue is present on metadata load", () => {

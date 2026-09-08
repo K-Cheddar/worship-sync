@@ -76,11 +76,20 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
 
 jest.mock("../DisplayBox", () => ({
   __esModule: true,
-  default: ({ box, isPrev }: { box: Box; isPrev?: boolean }) => (
+  default: ({
+    box,
+    isPrev,
+    isWindowVideoLoaded,
+  }: {
+    box: Box;
+    isPrev?: boolean;
+    isWindowVideoLoaded?: boolean;
+  }) => (
     <div
       data-testid={isPrev ? "display-box-prev" : "display-box"}
       data-box-id={box.id}
       data-words={box.words || ""}
+      data-video-loaded={isWindowVideoLoaded ? "true" : "false"}
     />
   ),
 }));
@@ -410,11 +419,21 @@ jest.mock("../DisplayStreamFormattedText", () => ({
 }));
 jest.mock("../HLSVideoPlayer", () => ({
   __esModule: true,
-  default: ({ src, originalSrc }: { src: string; originalSrc: string }) => (
-    <div
+  default: ({
+    src,
+    originalSrc,
+    onLoadedData,
+  }: {
+    src: string;
+    originalSrc: string;
+    onLoadedData?: () => void;
+  }) => (
+    <button
+      type="button"
       data-testid="window-hls-player"
       data-src={src}
       data-original-src={originalSrc}
+      onClick={() => onLoadedData?.()}
     />
   ),
 }));
@@ -508,6 +527,7 @@ describe("DisplayWindow core paths", () => {
     jest.clearAllMocks();
     mockLocalVideoViewInstanceCounter = 0;
     setServerTimeOffset(0);
+    mockUseCachedVideoUrl.mockImplementation((url?: string) => url);
     mockUseSelector.mockImplementation((selector) => selector(baseState));
   });
 
@@ -2045,5 +2065,50 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
 
     expect(await screen.findByTestId("window-hls-player")).toBeInTheDocument();
+  });
+
+  it("keeps the video poster up for media-cache URLs until the player is paint-ready", async () => {
+    mockUseCachedVideoUrl.mockImplementation(
+      (url?: string) =>
+        url ? `media-cache://${encodeURIComponent(url)}` : undefined,
+    );
+
+    const videoBox: Box = {
+      ...baseBox,
+      id: "video-box",
+      mediaInfo: {
+        id: "m1",
+        type: "video",
+        background: "https://cdn.example.com/clip.mp4",
+        placeholderImage: "https://cdn.example.com/clip.jpg",
+      } as NonNullable<Box["mediaInfo"]>,
+    };
+
+    render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[videoBox]}
+        shouldPlayVideo
+      />,
+    );
+
+    const player = await screen.findByTestId("window-hls-player");
+    expect(player).toHaveAttribute(
+      "data-src",
+      "media-cache://https%3A%2F%2Fcdn.example.com%2Fclip.mp4",
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-video-loaded",
+      "false",
+    );
+
+    act(() => {
+      player.click();
+    });
+
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-video-loaded",
+      "true",
+    );
   });
 });

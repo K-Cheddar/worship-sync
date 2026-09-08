@@ -20,6 +20,24 @@ jest.mock("../../api/auth", () => ({
   uploadSongAudio: jest.fn(),
 }));
 
+jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
+  __esModule: true,
+  default: ({
+    isOpen,
+    onClose,
+  }: {
+    isOpen?: boolean;
+    onClose?: () => void;
+  }) =>
+    isOpen ? (
+      <div role="dialog" aria-label="Lyrics editor">
+        <button type="button" onClick={onClose}>
+          Close lyrics editor
+        </button>
+      </div>
+    ) : null,
+}));
+
 const mockDeleteSongAudio = jest.mocked(deleteSongAudioWithRetry);
 const mockUploadSongAudio = jest.mocked(uploadSongAudio);
 
@@ -121,6 +139,28 @@ describe("ViewSongSectionsDrawer", () => {
     );
     expect(screen.getByText("Lyrics and arrangements")).toBeInTheDocument();
     expect(screen.getByText("Verse 1")).toBeInTheDocument();
+  });
+
+  it("hides the song details sheet while the lyrics editor is open", () => {
+    renderDrawer();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit lyrics" }));
+
+    expect(
+      screen.queryByRole("heading", { name: "Song details — Living Hope" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Lyrics editor" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close lyrics editor" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Song details — Living Hope" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Lyrics editor" }),
+    ).not.toBeInTheDocument();
   });
 
   it("saves the same song details available from the controller editor", async () => {
