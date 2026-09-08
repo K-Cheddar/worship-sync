@@ -86,6 +86,7 @@ const WorkstationPair = ({
             getDisplayPairingDestination(
               returnPath,
               response.device?.surfaceType,
+              response.device?.outputId,
             ),
             { replace: true },
           );

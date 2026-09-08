@@ -2004,6 +2004,7 @@ const redeemDisplayPairingFirestore = async (token) => {
       churchId: pairing.churchId,
       label: pairing.label,
       surfaceType: pairing.surfaceType,
+      outputId: pairing.outputId ?? null,
       status: "active",
       credentialHash: hashValue(credential),
       createdAt: nowIso(),
@@ -2049,6 +2050,7 @@ const redeemDisplayPairingMemory = async (token) => {
     churchId: pairing.churchId,
     label: pairing.label,
     surfaceType: pairing.surfaceType,
+    outputId: pairing.outputId ?? null,
     status: "active",
     credentialHash: hashValue(credential),
     createdAt: nowIso(),
@@ -2247,6 +2249,8 @@ const buildDisplayBootstrap = ({ church, display }) => ({
     label: display.label,
     operatorName: null,
     surfaceType: display.surfaceType,
+    outputId: display.outputId ?? null,
+    settings: display.settings ?? null,
   },
 });
 
@@ -6789,6 +6793,13 @@ export const authHandlers = {
       });
       const label = String(req.body?.label || "").trim();
       const surfaceType = req.body?.surfaceType || "display";
+      // Display output this screen renders. Optional: a screen paired without
+      // one falls back to the built-in surface for its type on the client.
+      const rawOutputId = String(req.body?.outputId || "").trim();
+      if (rawOutputId && !/^[A-Za-z0-9_-]{1,64}$/.test(rawOutputId)) {
+        throw httpError(400, "That display output is not valid.");
+      }
+      const outputId = rawOutputId || null;
       if (!label) {
         throw httpError(400, "A display label is required.");
       }
@@ -6799,6 +6810,7 @@ export const authHandlers = {
         churchId: req.params.churchId,
         label,
         surfaceType,
+        outputId,
         tokenHash: hashValue(rawToken),
         status: "pending",
         expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),

@@ -122,6 +122,10 @@ export type AuthBootstrap = {
     label: string | null;
     operatorName: string | null;
     surfaceType: string | null;
+    /** Display output this screen renders; null falls back to the built-in. */
+    outputId?: string | null;
+    /** Per-screen setting overrides for this paired display. */
+    settings?: Record<string, unknown> | null;
   } | null;
   errorMessage?: string;
 };

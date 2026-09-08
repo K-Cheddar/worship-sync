@@ -11,7 +11,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "full",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -21,7 +21,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "view",
-      })
+      }),
     ).toBe(false);
   });
 
@@ -31,7 +31,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "music",
-      })
+      }),
     ).toBe(false);
   });
 
@@ -41,7 +41,7 @@ describe("sessionRouteAccess", () => {
         sessionKind: "human",
         loginState: "success",
         access: "full",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -52,7 +52,7 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         access: "view",
         permissions: { teams: "view" },
-      })
+      }),
     ).toBe(true);
   });
 
@@ -86,16 +86,16 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         access: "full",
         permissions: { teams: "none" },
-      })
+      }),
     ).toBe(false);
   });
 
-  it("blocks account for guest sessions and falls back to controller", () => {
+  it("blocks account for guest sessions and falls back to home", () => {
     expect(
       getAllowedRouteOrDefault("/account", {
         loginState: "guest",
-      })
-    ).toBe("/controller");
+      }),
+    ).toBe("/home");
   });
 
   it("allows projector for workstation sessions with full access", () => {
@@ -105,7 +105,7 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         operatorName: "Alex",
         access: "full",
-      })
+      }),
     ).toBe("/projector");
   });
 
@@ -116,7 +116,7 @@ describe("sessionRouteAccess", () => {
         loginState: "success",
         operatorName: "",
         access: "full",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -126,8 +126,36 @@ describe("sessionRouteAccess", () => {
         sessionKind: "display",
         loginState: "success",
         displaySurfaceType: "monitor",
-      })
+      }),
     ).toBe("/monitor");
+  });
+
+  it("binds displayOutputId onto the display home route", () => {
+    expect(
+      getDefaultRouteForSession({
+        sessionKind: "display",
+        loginState: "success",
+        displaySurfaceType: "monitor",
+        displayOutputId: "out_lobby",
+      }),
+    ).toBe("/monitor?output=out_lobby");
+  });
+
+  it("allows aux-controller paths for human and workstation sessions", () => {
+    expect(
+      isRouteAllowedForSession("/aux-controller/abc", {
+        sessionKind: "human",
+        access: "full",
+      }),
+    ).toBe(true);
+    expect(
+      isRouteAllowedForSession("/aux-controller/abc", {
+        sessionKind: "workstation",
+        loginState: "success",
+        operatorName: "Alex",
+        access: "full",
+      }),
+    ).toBe(true);
   });
 
   it("blocks empty pathname", () => {
@@ -144,7 +172,9 @@ describe("sessionRouteAccess", () => {
 
   it("allows /controller prefix for guest sessions", () => {
     expect(
-      isRouteAllowedForSession("/controller/preferences", { loginState: "guest" }),
+      isRouteAllowedForSession("/controller/preferences", {
+        loginState: "guest",
+      }),
     ).toBe(true);
   });
 
@@ -195,15 +225,16 @@ describe("sessionRouteAccess", () => {
     expect(getDefaultRouteForSession({})).toBe("/");
   });
 
-  it("getDefaultRouteForSession returns /controller for guest", () => {
-    expect(getDefaultRouteForSession({ loginState: "guest" })).toBe(
-      "/controller",
-    );
+  it("getDefaultRouteForSession returns /home for guest", () => {
+    expect(getDefaultRouteForSession({ loginState: "guest" })).toBe("/home");
   });
 
   it("getDefaultRouteForSession returns /workstation/operator when workstation has no operator name", () => {
     expect(
-      getDefaultRouteForSession({ sessionKind: "workstation", operatorName: "" }),
+      getDefaultRouteForSession({
+        sessionKind: "workstation",
+        operatorName: "",
+      }),
     ).toBe("/workstation/operator");
   });
 
@@ -218,13 +249,13 @@ describe("sessionRouteAccess", () => {
 
   it("getAllowedRouteOrDefault returns default when to is null", () => {
     expect(getAllowedRouteOrDefault(null, { loginState: "guest" })).toBe(
-      "/controller",
+      "/home",
     );
   });
 
   it("getAllowedRouteOrDefault returns default when to is /", () => {
     expect(getAllowedRouteOrDefault("/", { loginState: "guest" })).toBe(
-      "/controller",
+      "/home",
     );
   });
 
@@ -246,7 +277,11 @@ describe("sessionRouteAccess", () => {
 });
 
 describe("schedule-only member routing", () => {
-  const member = { loginState: "success", sessionKind: "human", access: "member" } as const;
+  const member = {
+    loginState: "success",
+    sessionKind: "human",
+    access: "member",
+  } as const;
 
   it("allows only the member surfaces", () => {
     expect(isRouteAllowedForSession("/my-schedule", member)).toBe(true);
@@ -271,7 +306,11 @@ describe("schedule-only member routing", () => {
   });
 
   it("leaves view access unchanged", () => {
-    const viewer = { loginState: "success", sessionKind: "human", access: "view" } as const;
+    const viewer = {
+      loginState: "success",
+      sessionKind: "human",
+      access: "view",
+    } as const;
     expect(isRouteAllowedForSession("/controller", viewer)).toBe(true);
   });
 });

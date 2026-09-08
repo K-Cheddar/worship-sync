@@ -66,6 +66,8 @@ import {
   serializeChurchBranding,
 } from "../../utils/churchBranding";
 import { cn } from "@/utils/cnHelper";
+import { useSelector } from "../../hooks";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 
 const CLOUDINARY_CLOUD_NAME = "portable-media";
 const CLOUDINARY_UNSIGNED_UPLOAD_PRESET = "bpqu4ma5";
@@ -248,12 +250,12 @@ const displaySurfaceOptions: {
   value: DisplaySurfaceOption;
   label: string;
 }[] = [
-    { value: "projector", label: "Projector (full frame)" },
-    { value: "projector-display", label: "Projector (display output)" },
-    { value: "monitor", label: "Monitor" },
-    { value: "stream", label: "Stream" },
-    { value: "stream-info", label: "Stream info" },
-    { value: "credits", label: "Credits" },
+    { value: "projector", label: "Full-frame projector" },
+    { value: "projector-display", label: "Projector with controls" },
+    { value: "monitor", label: "Monitor layout" },
+    { value: "stream", label: "Stream layout" },
+    { value: "stream-info", label: "Stream info layout" },
+    { value: "credits", label: "Credits layout" },
   ];
 
 export const ACCOUNT_CONTROL_INPUT_CLASSNAME = "h-9 max-md:min-h-14";
@@ -710,6 +712,17 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
   const { showToast } = useToast();
   const { showApiError } = useApiErrorToast();
   const [displayLabel, setDisplayLabel] = useState("");
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const displayOutputOptions = useMemo(
+    () => [
+      { value: "", label: "Built-in for this page type" },
+      ...displayOutputs
+        .filter((output) => output.enabled)
+        .map((output) => ({ value: output.id, label: output.name })),
+    ],
+    [displayOutputs],
+  );
+  const [displayOutputId, setDisplayOutputId] = useState("");
   const [displaySurface, setDisplaySurface] =
     useState<DisplaySurfaceOption>("projector");
   const [labelError, setLabelError] = useState("");
@@ -735,13 +748,11 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
       const response = await createDisplayPairing(churchId, {
         label,
         surfaceType: displaySurface,
+        outputId: displayOutputId || undefined,
       });
       const token = response.pairing.token;
       if (!token) {
-        showToast(
-          "Link code was not returned. Try again.",
-          "error",
-        );
+        showToast("Link code was not returned. Try again.", "error");
         return;
       }
       setDisplayLabel("");
@@ -758,11 +769,19 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, displayLabel, displaySurface, onGenerated, showApiError, showToast]);
+  }, [
+    churchId,
+    displayLabel,
+    displayOutputId,
+    displaySurface,
+    onGenerated,
+    showApiError,
+    showToast,
+  ]);
 
   return (
     <>
-      <div className="mt-4 flex flex-row flex-wrap items-end gap-3">
+      <div className="mt-4 flex flex-row flex-wrap items-start gap-3">
         <Input
           className="min-w-0 flex-1"
           id="display-label"
@@ -775,19 +794,38 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
             setLabelError("");
           }}
         />
-        <Select
-          className="min-w-48"
-          id="display-surface"
-          label="Surface"
-          value={displaySurface}
-          options={displaySurfaceOptions}
-          selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-          onChange={(value) => {
-            setDisplaySurface(value as DisplaySurfaceOption);
-          }}
-        />
+        <div className="flex min-w-48 flex-col gap-1">
+          <Select
+            className="min-w-48"
+            id="display-surface"
+            label="Page type"
+            value={displaySurface}
+            options={displaySurfaceOptions}
+            selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+            onChange={(value) => {
+              setDisplaySurface(value as DisplaySurfaceOption);
+            }}
+          />
+          <p className="px-1 text-xs text-gray-400">
+            How this machine shows content.
+          </p>
+        </div>
+        <div className="flex min-w-48 flex-col gap-1">
+          <Select
+            className="min-w-48"
+            id="display-output"
+            label="Content output"
+            value={displayOutputId}
+            options={displayOutputOptions}
+            selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+            onChange={setDisplayOutputId}
+          />
+          <p className="px-1 text-xs text-gray-400">
+            Which live feed this screen follows.
+          </p>
+        </div>
         <Button
-          className="w-full shrink-0 justify-center sm:w-auto"
+          className="mt-7 w-full shrink-0 justify-center sm:w-auto"
           variant="cta"
           svg={KeyRound}
           iconSize="sm"

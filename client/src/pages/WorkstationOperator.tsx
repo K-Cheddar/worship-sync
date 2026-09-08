@@ -90,6 +90,7 @@ const WorkstationOperator = () => {
         access: context.access,
         operatorName: operatorName.trim(),
         displaySurfaceType: context.device?.surfaceType,
+        displayOutputId: context.device?.outputId,
       };
       const requestedTo = getAuthRedirectToFromState(location.state);
       const requestedPathOnly = requestedTo?.includes("?")

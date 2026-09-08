@@ -28,9 +28,13 @@ type RouteSessionContext = {
   } | null;
   operatorName?: string | null;
   displaySurfaceType?: string | null;
+  displayOutputId?: string | null;
 };
 
-const GUEST_ALLOWED_PREFIXES = ["/controller"];
+// Auxiliary controllers are dynamic routes ("/aux-controller/<id>"), so they
+// are matched by prefix rather than listed. They sit at the same access level as
+// the overlay controller: an operator surface, closed to schedule-only members.
+const GUEST_ALLOWED_PREFIXES = ["/controller", "/aux-controller"];
 const GUEST_ALLOWED_EXACT = new Set([
   "/home",
   "/overlay-controller",
@@ -51,7 +55,7 @@ const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule"]);
 export const isMemberAllowedPath = (pathname: string): boolean =>
   MEMBER_ALLOWED_EXACT.has(pathname);
 
-const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account"];
+const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account", "/aux-controller"];
 const HUMAN_ALLOWED_EXACT = new Set([
   "/home",
   // Reachable by everyone, not only schedule-only members: an admin who is also
@@ -77,7 +81,7 @@ const HUMAN_ALLOWED_EXACT = new Set([
 // access-blocked before it can redirect.
 const TEAMS_ALLOWED_PREFIXES = ["/teams", "/teams-and-services"];
 
-const WORKSTATION_ALLOWED_PREFIXES = ["/controller"];
+const WORKSTATION_ALLOWED_PREFIXES = ["/controller", "/aux-controller"];
 
 /** Output / audience surfaces a workstation may open before an operator name is set. */
 export const WORKSTATION_DISPLAY_SURFACE_EXACT = new Set([
@@ -231,7 +235,7 @@ export const getDefaultRouteForSession = (
   context: RouteSessionContext,
 ): string => {
   if (context.loginState === "guest") {
-    return "/controller";
+    return "/home";
   }
   if (context.sessionKind === "human") {
     return "/home";
@@ -242,7 +246,10 @@ export const getDefaultRouteForSession = (
       : "/workstation/operator";
   }
   if (context.sessionKind === "display") {
-    return getDisplayHomePath(context.displaySurfaceType || undefined);
+    return getDisplayHomePath(
+      context.displaySurfaceType || undefined,
+      context.displayOutputId || undefined,
+    );
   }
   return "/";
 };
