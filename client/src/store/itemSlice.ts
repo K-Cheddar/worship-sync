@@ -24,6 +24,11 @@ import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
 import { mapSlidesUpdateBox0ById } from "../utils/slideBackgroundSubset";
+import {
+  attachCloudCopyToLocalImageItem,
+  updateLocalImageReferenceInItem,
+  type LocalImageReferencePatch,
+} from "../utils/localImageAssets";
 import type { AppDispatch, RootState } from "./store";
 
 const defaultShouldSendTo: ShouldSendTo = {
@@ -245,6 +250,55 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+    },
+    attachCloudCopyToLocalImageInActiveItem: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        mediaId: string;
+        url: string;
+      }>,
+    ) => {
+      if (state._id !== action.payload.itemId) return;
+      const patched = attachCloudCopyToLocalImageItem(
+        state,
+        action.payload.assetId,
+        { mediaId: action.payload.mediaId, url: action.payload.url },
+      );
+      state.slides = patched.slides;
+      state.arrangements = patched.arrangements;
+      if (state.baseItem) {
+        state.baseItem = attachCloudCopyToLocalImageItem(
+          state.baseItem,
+          action.payload.assetId,
+          { mediaId: action.payload.mediaId, url: action.payload.url },
+        );
+      }
+    },
+    updateLocalImageReferenceInActiveItem: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        patch: LocalImageReferencePatch;
+      }>,
+    ) => {
+      if (state._id !== action.payload.itemId) return;
+      const patched = updateLocalImageReferenceInItem(
+        state,
+        action.payload.assetId,
+        action.payload.patch,
+      );
+      state.slides = patched.slides;
+      state.arrangements = patched.arrangements;
+      if (state.baseItem) {
+        state.baseItem = updateLocalImageReferenceInItem(
+          state.baseItem,
+          action.payload.assetId,
+          action.payload.patch,
+        );
+      }
     },
     setIsEditMode: (state, action: PayloadAction<boolean>) => {
       state.isEditMode = action.payload;
@@ -859,6 +913,8 @@ export const {
   _updateArrangements,
   clearTransientState,
   setActiveItem,
+  attachCloudCopyToLocalImageInActiveItem,
+  updateLocalImageReferenceInActiveItem,
   setItemIsLoading,
   setSectionLoading,
   setItemFormatting,

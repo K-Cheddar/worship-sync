@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import type { LocalImageReferencePatch } from "../utils/localImageAssets";
 
 type ItemListState = {
   list: ServiceItem[];
@@ -61,6 +62,50 @@ export const itemListSlice = createSlice({
       // Drop any in-flight local dirty flag so a delayed autosave cannot
       // republish a pre-hydrate snapshot after remote sync.
       state.hasPendingUpdate = false;
+    },
+    attachCloudCopyToLocalImageInItemList: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        mediaId: string;
+        url: string;
+      }>,
+    ) => {
+      state.list.forEach((item) => {
+        if (
+          item._id === action.payload.itemId &&
+          item.localImage?.id === action.payload.assetId
+        ) {
+          item.localImage.storagePolicy = "local-and-cloud";
+          item.localImage.cloudMediaId = action.payload.mediaId;
+          item.localImage.cloudUrl = action.payload.url;
+        }
+      });
+      state.hasPendingUpdate = true;
+    },
+    updateLocalImageReferenceInItemList: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        patch: LocalImageReferencePatch;
+      }>,
+    ) => {
+      state.list.forEach((item) => {
+        if (
+          item._id === action.payload.itemId &&
+          item.localImage?.id === action.payload.assetId &&
+          action.payload.patch.reference
+        ) {
+          item.localImage = {
+            ...item.localImage,
+            ...action.payload.patch.reference,
+            id: action.payload.assetId,
+          };
+        }
+      });
+      state.hasPendingUpdate = true;
     },
     removeItemFromList: (state, action: PayloadAction<string>) => {
       const idx = state.list.findIndex(
@@ -167,6 +212,8 @@ export const {
   setHasPendingUpdate,
   addToInitialItems,
   forceUpdate,
+  attachCloudCopyToLocalImageInItemList,
+  updateLocalImageReferenceInItemList,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;
