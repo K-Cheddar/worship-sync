@@ -519,7 +519,7 @@ const Login = () => {
   }, [mode, pendingAuthId, verificationEmail, isAuthServerOnline]);
 
   const guestDestination =
-    getAuthRedirectPathnameFromState(location.state) ?? "/controller";
+    getAuthRedirectPathnameFromState(location.state) ?? "/home";
 
   const clearPendingDesktopAuth = useCallback(() => {
     setPendingDesktopAuth(null);

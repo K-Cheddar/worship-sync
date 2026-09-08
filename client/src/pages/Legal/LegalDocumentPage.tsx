@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import WorshipSyncImage from "../../assets/WorshipSyncImage.png";
+import HomeToolbarMenu from "../../components/HomeToolbarMenu/HomeToolbarMenu";
 
 type LegalDocumentPageProps = {
   title: string;
@@ -9,8 +10,12 @@ type LegalDocumentPageProps = {
 };
 
 /**
- * Public legal document shell (privacy, terms). No auth chrome — reachable
- * without a session so store listings and sign-up flows can deep-link here.
+ * Public legal document shell (privacy, terms). Reachable without a session so
+ * store listings and sign-up flows can deep-link here. Includes the same app
+ * menu as other public screens (login, invite, etc.).
+ *
+ * Uses its own scroll shell instead of AuthScreenMain: legal copy is tall, and
+ * AuthScreenMain’s short-card vertical centering is a poor fit for long docs.
  */
 const LegalDocumentPage = ({
   title,
@@ -20,6 +25,9 @@ const LegalDocumentPage = ({
   return (
     <main className="h-dvh overflow-y-auto overscroll-y-contain bg-homepage-canvas text-white">
       <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 px-4 py-8">
+        <div className="flex w-full justify-start">
+          <HomeToolbarMenu />
+        </div>
         <header className="flex flex-col items-center gap-4 border-b border-gray-700 pb-6 text-center">
           <Link
             to="/"

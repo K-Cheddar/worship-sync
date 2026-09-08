@@ -3,6 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import PrivacyPolicy from "./PrivacyPolicy";
 import TermsOfService from "./TermsOfService";
 
+jest.mock("../../components/HomeToolbarMenu/HomeToolbarMenu", () => () => (
+  <button type="button" aria-label="Open menu">
+    Menu
+  </button>
+));
+
 describe("Legal pages", () => {
   it("renders the privacy policy with a link to terms", () => {
     render(
@@ -11,6 +17,9 @@ describe("Legal pages", () => {
       </MemoryRouter>,
     );
 
+    expect(
+      screen.getByRole("button", { name: "Open menu" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /Privacy Policy/i }),
     ).toBeInTheDocument();
@@ -27,6 +36,9 @@ describe("Legal pages", () => {
       </MemoryRouter>,
     );
 
+    expect(
+      screen.getByRole("button", { name: "Open menu" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /Terms of Service/i }),
     ).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import { useContext, useMemo, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import { CircleAlert, Home as HomeIcon, Menu as MenuIcon } from "lucide-react";
+import { CircleAlert, Home as HomeIcon, LogOut, Menu as MenuIcon } from "lucide-react";
 import Button from "../Button/Button";
 import Icon from "../Icon/Icon";
 import Menu from "../Menu/Menu";
@@ -37,21 +37,33 @@ const HomeToolbarMenu = ({
       element: (
         <div className="flex items-center gap-2 max-md:min-h-12">
           <Icon svg={HomeIcon} color="#d1d5dc" />
-          {isGuest ? "Return to start" : "Home"}
+          Home
         </div>
       ),
-      ...(isGuest
-        ? {
-          onClick: () => {
-            void exitGuestMode?.();
-          },
-        }
-        : { to: "/" }),
+      to: isGuest ? "/home" : "/",
+    };
+  }, [isGuest]);
+
+  const exitDemoMenuItem = useMemo((): MenuItemType | null => {
+    if (!isGuest) {
+      return null;
+    }
+    return {
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={LogOut} color="#d1d5dc" />
+          Return to start
+        </div>
+      ),
+      onClick: () => {
+        void exitGuestMode?.();
+      },
     };
   }, [exitGuestMode, isGuest]);
 
   const menuItems = useMemo(() => {
     const trailing = [
+      ...(exitDemoMenuItem ? [exitDemoMenuItem] : []),
       ...(extraMenuItems ?? []),
       ...aboutChangelogMenuItems,
       interfaceZoomMenuItem,
@@ -62,6 +74,7 @@ const HomeToolbarMenu = ({
     return [homeMenuItem, ...trailing];
   }, [
     aboutChangelogMenuItems,
+    exitDemoMenuItem,
     extraMenuItems,
     hideHomeMenuItem,
     homeMenuItem,
