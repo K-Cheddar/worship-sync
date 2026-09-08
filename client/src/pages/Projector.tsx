@@ -2,7 +2,6 @@ import { useSelector } from "../hooks";
 import { useOutputForSurface } from "../hooks/useOutputForSurface";
 import { selectResolvedOutputSlot } from "../store/presentationSlice";
 import FullscreenPresentation from "../containers/FullscreenPresentation";
-import ProjectorFull from "./ProjectorFull";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { useHideProjectorCursor } from "../hooks/useHideProjectorCursor";
 import { useResolvedDisplaySettings } from "../hooks/useResolvedDisplaySettings";
@@ -37,10 +36,10 @@ const Projector = () => {
   );
 
   useWakeLock();
-  // Board takeover is output-only on an already-linked projector. Headless and
-  // /projector-full hide the cursor from ProjectorFull; chromeed windowed mode
-  // keeps it so the operator can still use the fullscreen control.
-  useHideProjectorCursor(Boolean(boardAliasId));
+  // Board takeover is output-only on an already-linked projector. Headless mode
+  // still hides the cursor once content is up; chromeed windowed mode keeps it
+  // so the operator can use the fullscreen control.
+  useHideProjectorCursor(Boolean(boardAliasId) || isHeadless);
 
   // A board sent to this projector replaces its presentation content, the same
   // swap the monitor does.
@@ -48,11 +47,10 @@ const Projector = () => {
     return <DisplayBoardTakeover aliasId={boardAliasId} outputId={output.id} />;
   }
 
-  if (isHeadless) return <ProjectorFull />;
-
   return (
     <FullscreenPresentation
       outputId={output.id}
+      isHeadless={isHeadless}
       displayInfo={projectorInfo}
       prevDisplayInfo={prevProjectorInfo}
       timerInfo={projectorTimer}

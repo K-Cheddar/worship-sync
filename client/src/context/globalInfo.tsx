@@ -769,6 +769,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_boardPostStreamInfo: Unsubscribe | undefined;
     stream_itemContentBlocked: Unsubscribe | undefined;
     monitorBoardAliasId: Unsubscribe | undefined;
+    projectorBoardAliasId: Unsubscribe | undefined;
+    outputs: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
     serviceTimes: Unsubscribe | undefined;
   }>({
@@ -784,6 +786,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_boardPostStreamInfo: undefined,
     stream_itemContentBlocked: undefined,
     monitorBoardAliasId: undefined,
+    projectorBoardAliasId: undefined,
+    outputs: undefined,
     timerInfo: undefined,
     serviceTimes: undefined,
   });
@@ -1304,6 +1308,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.streamInfo,
           updateAction: "debouncedUpdateStream",
         },
+        // Outputs created after the display registry. Built-ins keep travelling
+        // in the flat keys above so older clients stay live during rollout.
+        outputs: {
+          info: data.outputs,
+          updateAction: "debouncedUpdateOutputs",
+        },
         stream_bibleInfo: {
           info: data.stream_bibleInfo,
           updateAction: "debouncedUpdateBibleDisplayInfo",
@@ -1340,6 +1350,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.monitorBoardAliasId,
           updateAction: "debouncedUpdateMonitorBoardAliasId",
         },
+        projectorBoardAliasId: {
+          info: data.projectorBoardAliasId,
+          updateAction: "debouncedUpdateProjectorBoardAliasId",
+        },
         timerInfo: {
           info: data.timerInfo,
           updateAction: "debouncedUpdateTimerInfo",
@@ -1360,7 +1374,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         // mode off) — for those, skip only when the value is truly absent.
         const propagateWhenFalsy =
           _key === "stream_itemContentBlocked" ||
-          _key === "monitorBoardAliasId";
+          _key === "monitorBoardAliasId" ||
+          _key === "projectorBoardAliasId";
         if (propagateWhenFalsy ? info === undefined : !info) continue;
         const payload =
           _key === "stream_itemContentBlocked" ? Boolean(info) : info;

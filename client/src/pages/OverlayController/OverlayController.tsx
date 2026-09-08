@@ -20,6 +20,8 @@ import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSync
 import OverlaysAndPostsWorkspace from "./OverlaysAndPostsWorkspace";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { ActiveControllerProvider } from "../../context/activeController";
+import { OVERLAY_CONTROLLER_ID } from "../../utils/controllerProfiles";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -72,143 +74,145 @@ const OverlayController = () => {
   };
 
   return (
-    <ControllerPageShell
-      user={user}
-      churchName={churchName}
-      dbProgress={dbProgress}
-      connectionStatus={connectionStatus}
-      scrollbarWidth={scrollbarWidth}
-      toolbarVariant="overlay"
-      onRootClick={handleElementClick}
-      layoutRef={layoutRef}
-    >
-      {/*
+    <ActiveControllerProvider profileId={OVERLAY_CONTROLLER_ID}>
+      <ControllerPageShell
+        user={user}
+        churchName={churchName}
+        dbProgress={dbProgress}
+        connectionStatus={connectionStatus}
+        scrollbarWidth={scrollbarWidth}
+        toolbarVariant="overlay"
+        onRootClick={handleElementClick}
+        layoutRef={layoutRef}
+      >
+        {/*
         Stacked absolute layers share one box.
         Do not use `hidden` (display:none) on the inactive panel: descendants are not laid out,
         so credits TextArea autoResize (scrollHeight) stays ~0 until focus forces a reflow.
         Inactive panel: opacity-0 + pointer-events-none + z-0; active: z-10 + opacity-100.
       */}
-      <div className="relative flex flex-3 min-h-0 h-full min-w-0 self-stretch overflow-hidden">
-        {!isCombinedWorkspace && (
-          <div
-            className={cn(
-              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
-              showOverlaysPanel
-                ? "z-10 opacity-100"
-                : "pointer-events-none z-0 opacity-0",
-            )}
-            aria-hidden={!showOverlaysPanel}
-          >
-            <Overlays />
-          </div>
-        )}
-        {access === "full" && !isCombinedWorkspace && (
-          <div
-            className={cn(
-              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
-              overlayControllerPanel === "boardPosts"
-                ? "z-10 opacity-100"
-                : "pointer-events-none z-0 opacity-0",
-            )}
-            aria-hidden={overlayControllerPanel !== "boardPosts"}
-          >
-            <BoardStreamPanel />
-          </div>
-        )}
-        {access === "full" && isCombinedWorkspace && (
-          <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 overflow-hidden">
-            <OverlaysAndPostsWorkspace />
-          </div>
-        )}
-        {!isViewOnlyAccess(access) && (
-          <div
-            className={cn(
-              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
-              overlayControllerPanel === "credits"
-                ? "z-10 opacity-100"
-                : "pointer-events-none z-0 opacity-0",
-            )}
-            aria-hidden={overlayControllerPanel !== "credits"}
-          >
-            <CreditsEditor embeddedInOverlayController />
-          </div>
-        )}
-        {!isViewOnlyAccess(access) && (
-          <div
-            className={cn(
-              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
-              overlayControllerPanel === "serviceTimes"
-                ? "z-10 opacity-100"
-                : "pointer-events-none z-0 opacity-0",
-            )}
-            aria-hidden={overlayControllerPanel !== "serviceTimes"}
-          >
-            <ServiceTimes />
-          </div>
-        )}
-      </div>
-      {access === "full" && (
-        <>
-          <Button
-            className={cn(
-              "z-10 ml-2 h-1/4 justify-center text-sm lg:hidden",
-              !showPresentationPanel && "hidden",
-            )}
-            svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
-            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-          />
-          <div
-            className={cn(
-              "flex flex-col flex-2 h-full bg-homepage-canvas border-gray-500 transition-all border-l-2",
-              isCombinedWorkspace
-                ? "xl:flex-[0_0_25%] xl:w-1/4 xl:min-w-0"
-                : "lg:w-[min(46rem,46%)] lg:min-w-120",
-              "shrink-0",
-              "max-lg:right-0 max-lg:absolute",
-              isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
-              !showPresentationPanel && "hidden",
-            )}
-            ref={rightPanelRef}
-          >
+        <div className="relative flex flex-3 min-h-0 h-full min-w-0 self-stretch overflow-hidden">
+          {!isCombinedWorkspace && (
+            <div
+              className={cn(
+                "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+                showOverlaysPanel
+                  ? "z-10 opacity-100"
+                  : "pointer-events-none z-0 opacity-0",
+              )}
+              aria-hidden={!showOverlaysPanel}
+            >
+              <Overlays />
+            </div>
+          )}
+          {access === "full" && !isCombinedWorkspace && (
+            <div
+              className={cn(
+                "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+                overlayControllerPanel === "boardPosts"
+                  ? "z-10 opacity-100"
+                  : "pointer-events-none z-0 opacity-0",
+              )}
+              aria-hidden={overlayControllerPanel !== "boardPosts"}
+            >
+              <BoardStreamPanel />
+            </div>
+          )}
+          {access === "full" && isCombinedWorkspace && (
+            <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 overflow-hidden">
+              <OverlaysAndPostsWorkspace />
+            </div>
+          )}
+          {!isViewOnlyAccess(access) && (
+            <div
+              className={cn(
+                "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+                overlayControllerPanel === "credits"
+                  ? "z-10 opacity-100"
+                  : "pointer-events-none z-0 opacity-0",
+              )}
+              aria-hidden={overlayControllerPanel !== "credits"}
+            >
+              <CreditsEditor embeddedInOverlayController />
+            </div>
+          )}
+          {!isViewOnlyAccess(access) && (
+            <div
+              className={cn(
+                "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+                overlayControllerPanel === "serviceTimes"
+                  ? "z-10 opacity-100"
+                  : "pointer-events-none z-0 opacity-0",
+              )}
+              aria-hidden={overlayControllerPanel !== "serviceTimes"}
+            >
+              <ServiceTimes />
+            </div>
+          )}
+        </div>
+        {access === "full" && (
+          <>
             <Button
-              className="lg:hidden text-sm mb-2 justify-center"
+              className={cn(
+                "z-10 ml-2 h-1/4 justify-center text-sm lg:hidden",
+                !showPresentationPanel && "hidden",
+              )}
               svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
               onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+            />
+            <div
+              className={cn(
+                "flex flex-col flex-2 h-full bg-homepage-canvas border-gray-500 transition-all border-l-2",
+                isCombinedWorkspace
+                  ? "xl:flex-[0_0_25%] xl:w-1/4 xl:min-w-0"
+                  : "lg:w-[min(46rem,46%)] lg:min-w-120",
+                "shrink-0",
+                "max-lg:right-0 max-lg:absolute",
+                isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
+                !showPresentationPanel && "hidden",
+              )}
+              ref={rightPanelRef}
             >
-              Close Panel
-            </Button>
-            <div className="flex flex-col flex-1 min-h-0 h-full max-h-full overflow-hidden overflow-x-auto">
-              <TransmitHandler
-                visibleScreens={["stream"]}
-                previewScale={1.875}
-                fillWidth={isCombinedWorkspace}
-                variant="overlayStreamFocus"
-                showStreamOverlayOnlyToggle
-                showClearStreamOverlaysButton
-              />
-              <Media variant="panel" pageMode="overlayController" />
+              <Button
+                className="lg:hidden text-sm mb-2 justify-center"
+                svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
+                onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+              >
+                Close Panel
+              </Button>
+              <div className="flex flex-col flex-1 min-h-0 h-full max-h-full overflow-hidden overflow-x-auto">
+                <TransmitHandler
+                  visibleScreens={["stream"]}
+                  previewScale={1.875}
+                  fillWidth={isCombinedWorkspace}
+                  variant="overlayStreamFocus"
+                  showStreamOverlayOnlyToggle
+                  showClearStreamOverlaysButton
+                />
+                <Media variant="panel" pageMode="overlayController" />
+              </div>
             </div>
+          </>
+        )}
+        {access === "music" && (
+          <div
+            className={cn(
+              "flex h-full shrink-0 flex-col border-l-2 border-gray-500 bg-homepage-canvas lg:w-[min(46rem,46%)] lg:min-w-120",
+              !showPresentationPanel && "hidden",
+            )}
+          >
+            <TransmitHandler
+              visibleScreens={["stream"]}
+              previewScale={1.875}
+              variant="overlayStreamFocus"
+              showStreamOverlayOnlyToggle
+              showClearStreamOverlaysButton
+            />
           </div>
-        </>
-      )}
-      {access === "music" && (
-        <div
-          className={cn(
-            "flex h-full shrink-0 flex-col border-l-2 border-gray-500 bg-homepage-canvas lg:w-[min(46rem,46%)] lg:min-w-120",
-            !showPresentationPanel && "hidden",
-          )}
-        >
-          <TransmitHandler
-            visibleScreens={["stream"]}
-            previewScale={1.875}
-            variant="overlayStreamFocus"
-            showStreamOverlayOnlyToggle
-            showClearStreamOverlaysButton
-          />
-        </div>
-      )}
-      <ServicePlanningSyncFloatingWindow hideOutlineActions />
-    </ControllerPageShell>
+        )}
+        <ServicePlanningSyncFloatingWindow hideOutlineActions />
+      </ControllerPageShell>
+    </ActiveControllerProvider>
   );
 };
 

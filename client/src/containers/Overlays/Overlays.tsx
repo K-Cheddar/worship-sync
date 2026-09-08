@@ -1,8 +1,9 @@
 import Button from "../../components/Button/Button";
+import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
-import { useStore } from "react-redux";
+import { shallowEqual, useStore } from "react-redux";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -14,7 +15,6 @@ import {
   updateOverlayInList,
   updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
-import { selectOutputSlot } from "../../store/presentationSlice";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Overlay from "./Overlay";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
@@ -90,10 +90,11 @@ const Overlays = ({
     (state: RootState) => state.undoable.present.overlay,
   );
 
-  const isStreamTransmitting = useSelector(
-    (state: RootState) =>
-      selectOutputSlot(state, "stream", "stream").isTransmitting,
-  );
+  // Enablement must match what Send will actually reach. "Any stream live" plus
+  // targeting that named a different stream is what let the button light up on
+  // a click that went nowhere.
+  const liveStreamIds = useSelector(selectOverlayTargetIds, shallowEqual);
+  const isStreamTransmitting = liveStreamIds.length > 0;
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.itemList,
   );
@@ -593,12 +594,12 @@ const Overlays = ({
               </section>
               {detailTarget
                 ? isDetailActive &&
-                  createPortal(
-                    <div className="absolute inset-0 z-10 overflow-y-auto p-2">
-                      {overlayEditor}
-                    </div>,
-                    detailTarget,
-                  )
+                createPortal(
+                  <div className="absolute inset-0 z-10 overflow-y-auto p-2">
+                    {overlayEditor}
+                  </div>,
+                  detailTarget,
+                )
                 : overlayEditor}
             </div>
           </div>

@@ -11,6 +11,7 @@ import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
   setMonitorBoardAliasIdFromRemote,
+  setProjectorBoardAliasIdFromRemote,
   toLegacyPresentationShape,
   omitOverlayLanes,
   STREAM_OVERLAY_LANES,
@@ -25,6 +26,8 @@ import {
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
   updateBoardPostStreamInfoFromRemote,
+  updateOutputsFromRemote,
+  type RemoteOutputState,
 } from "./presentationSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -523,6 +526,10 @@ const persistPresentationUpdateLocally = (
   localStorage.setItem(
     "monitorBoardAliasId",
     JSON.stringify(presentationUpdate.monitorBoardAliasId),
+  );
+  localStorage.setItem(
+    "projectorBoardAliasId",
+    JSON.stringify(presentationUpdate.projectorBoardAliasId),
   );
   localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
   localStorage.setItem(
@@ -2482,6 +2489,7 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateBoardPostStreamInfoFromRemote,
       presentationSlice.actions.setStreamItemContentBlockedFromRemote,
       presentationSlice.actions.setMonitorBoardAliasIdFromRemote,
+      presentationSlice.actions.setProjectorBoardAliasIdFromRemote,
       // Registry bookkeeping, not a send: reconciling slots against the display
       // output list must not republish the whole presentation snapshot.
       presentationSlice.actions.syncOutputSlots,
@@ -2628,6 +2636,21 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateStreamFromRemote(action.payload as Presentation),
+    );
+  },
+});
+
+// handle updating outputs created after the display registry. Freshness is
+// checked per output inside the reducer, since one payload carries many.
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "debouncedUpdateOutputs",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      updateOutputsFromRemote(
+        action.payload as Record<string, RemoteOutputState> | null,
+      ),
     );
   },
 });
@@ -2855,6 +2878,19 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
     listenerApi.dispatch(
       setMonitorBoardAliasIdFromRemote(action.payload as string),
+    );
+  },
+});
+
+// handle updating projector board mode from remote (same swap as the monitor,
+// for churches putting the board on a projector)
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "debouncedUpdateProjectorBoardAliasId",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      setProjectorBoardAliasIdFromRemote(action.payload as string),
     );
   },
 });

@@ -19,13 +19,14 @@ import {
 } from "../../store/preferencesSlice";
 import { useDispatch, useSelector } from "../../hooks";
 import {
-  selectOutputSlot,
+  selectOutputSlots,
   updateBibleDisplayInfo,
   updateFormattedTextDisplayInfo,
   updateMonitor,
   updateProjector,
   updateStream,
 } from "../../store/presentationSlice";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
 import ItemSlide from "./ItemSlide";
@@ -49,6 +50,7 @@ import {
   useState,
 } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useActiveControllerProfile } from "../../context/activeController";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
@@ -60,6 +62,15 @@ import { DEFAULT_FONT_PX } from "../../constants";
 import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
 import { inclusiveRangeIndicesFromAnchor } from "../../utils/backgroundTargetResolution";
 import { Slider } from "../../components/ui/Slider";
+import {
+  getSendTargetIdsForType,
+  shouldSendToType,
+} from "../../utils/sendTargets";
+import {
+  resolveOutputDefaults,
+  shouldSendNextSlideForOutput,
+} from "../../utils/displaySettings";
+import { Presentation as PresentationType } from "../../types";
 
 type SizeConfig = {
   borderWidth: string;
@@ -91,15 +102,10 @@ const ItemSlides = () => {
   const showBackgroundTargetActionBar =
     mobileBackgroundTargetSelectMode || backgroundTargetSlideIds.length > 0;
 
-  const projectorInfo = useSelector(
-    (state: RootState) =>
-      selectOutputSlot(state, "projector", "projector").info,
-  );
-  const monitorInfo = useSelector(
-    (state: RootState) => selectOutputSlot(state, "monitor", "monitor").info,
-  );
-  const streamInfo = useSelector(
-    (state: RootState) => selectOutputSlot(state, "stream", "stream").info,
+  // Every slot, so live-slide highlighting can follow whichever displays this
+  // item targets rather than only the built-in three.
+  const outputSlots = useSelector((state: RootState) =>
+    selectOutputSlots(state),
   );
 
   const timers = useSelector((state: RootState) => state.timers.timers);
@@ -116,7 +122,7 @@ const ItemSlides = () => {
     slidesPerRow,
     slidesPerRowMobile,
     shouldShowStreamFormat,
-    monitorSettings: { showNextSlide: monitorShowNextSlide },
+    monitorSettings: churchMonitorSettings,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
@@ -126,8 +132,66 @@ const ItemSlides = () => {
     access === "full" ||
     (access === "music" && (type === "song" || type === "free"));
   const isMusic = useMemo(() => access === "music", [access]);
+  // Send-time setting: it shapes the payload before it goes out, so prepare the
+  // band when any monitor display wants it and let each screen decide whether to
+  // render it.
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const monitorShowNextSlide = useMemo(() => {
+    return displayOutputs
+      .filter((output) => output.enabled && output.type === "monitor")
+      .some((output) =>
+        shouldSendNextSlideForOutput(
+          resolveOutputDefaults(output.settings, churchMonitorSettings),
+        ),
+      );
+  }, [churchMonitorSettings, displayOutputs]);
+  // Targeting resolves against the controller this grid is being operated from,
+  // so an auxiliary controller can only ever reach its own displays.
+  const controllerProfile = useActiveControllerProfile();
+  const sendTargets = useMemo(
+    () => ({
+      projector: getSendTargetIdsForType(
+        shouldSendTo,
+        displayOutputs,
+        "projector",
+        controllerProfile,
+      ),
+      monitor: getSendTargetIdsForType(
+        shouldSendTo,
+        displayOutputs,
+        "monitor",
+        controllerProfile,
+      ),
+      stream: getSendTargetIdsForType(
+        shouldSendTo,
+        displayOutputs,
+        "stream",
+        controllerProfile,
+      ),
+    }),
+    [displayOutputs, shouldSendTo, controllerProfile],
+  );
+  const sendsToProjector = shouldSendToType(
+    shouldSendTo,
+    displayOutputs,
+    "projector",
+    controllerProfile,
+  );
+  const sendsToMonitor = shouldSendToType(
+    shouldSendTo,
+    displayOutputs,
+    "monitor",
+    controllerProfile,
+  );
+  const sendsToStream = shouldSendToType(
+    shouldSendTo,
+    displayOutputs,
+    "stream",
+    controllerProfile,
+  );
+
   const shouldPrepareFreeMonitorSlides =
-    type === "free" && shouldSendTo.monitor && monitorShowNextSlide;
+    type === "free" && sendsToMonitor && monitorShowNextSlide;
 
   const monitorReadySlides = useMemo(() => {
     return shouldPrepareFreeMonitorSlides
@@ -135,38 +199,48 @@ const ItemSlides = () => {
       : slides;
   }, [slides, shouldPrepareFreeMonitorSlides]);
 
-  /** Slide ids currently on outputs for this item (last pushed payload per surface). */
+  /**
+   * Slide ids currently on outputs for this item (last pushed payload per
+   * surface).
+   *
+   * Reads the displays this item actually targets rather than the three
+   * built-ins, so an operator driving only a second projector still sees which
+   * slide is live.
+   */
   const liveSlideIds = useMemo(() => {
     const ids = new Set<string>();
-    if (shouldSendTo.projector && projectorInfo.slide?.id) {
-      ids.add(projectorInfo.slide.id);
-    }
-    if (shouldSendTo.monitor) {
-      const mid = monitorInfo.slide?.id;
-      const monitorItemId = monitorInfo.itemId;
-      if (mid && (!monitorItemId || monitorItemId === _id)) {
-        ids.add(mid);
+    const addLiveSlides = (
+      outputIds: string[],
+      accept?: (info: PresentationType) => boolean,
+    ) => {
+      for (const outputId of outputIds) {
+        const info = outputSlots[outputId]?.info;
+        if (!info?.slide?.id) continue;
+        if (accept && !accept(info)) continue;
+        ids.add(info.slide.id);
       }
+    };
+
+    if (sendsToProjector) addLiveSlides(sendTargets.projector);
+    if (sendsToMonitor) {
+      // A monitor showing a different item must not light up this item's slide.
+      addLiveSlides(
+        sendTargets.monitor,
+        (info) => !info.itemId || info.itemId === _id,
+      );
     }
-    if (
-      shouldSendTo.stream &&
-      type !== "bible" &&
-      type !== "free" &&
-      streamInfo.slide?.id
-    ) {
-      ids.add(streamInfo.slide.id);
+    if (sendsToStream && type !== "bible" && type !== "free") {
+      addLiveSlides(sendTargets.stream);
     }
     return ids;
   }, [
     _id,
-    shouldSendTo.projector,
-    shouldSendTo.monitor,
-    shouldSendTo.stream,
+    outputSlots,
+    sendTargets,
+    sendsToProjector,
+    sendsToMonitor,
+    sendsToStream,
     type,
-    projectorInfo.slide?.id,
-    monitorInfo.slide?.id,
-    monitorInfo.itemId,
-    streamInfo.slide?.id,
   ]);
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
@@ -302,22 +376,30 @@ const ItemSlides = () => {
       dispatch(setSelectedSlide(index));
       const slide = slides[index];
 
-      if (shouldSendTo.stream) {
+      if (sendsToStream) {
         if (type === "bible") {
           const { title, text } = getBibleInfo(index);
           dispatch(
             updateBibleDisplayInfo({
               title,
               text,
+              outputIds: sendTargets.stream,
             }),
           );
         } else {
-          dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
+          dispatch(
+            updateBibleDisplayInfo({
+              title: "",
+              text: "",
+              outputIds: sendTargets.stream,
+            }),
+          );
         }
 
         if (type === "free") {
           dispatch(
             updateFormattedTextDisplayInfo({
+              outputIds: sendTargets.stream,
               text: slide.boxes[1]?.words || "",
               backgroundColor:
                 slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
@@ -333,6 +415,7 @@ const ItemSlides = () => {
         } else {
           dispatch(
             updateFormattedTextDisplayInfo({
+              outputIds: sendTargets.stream,
               text: "",
             }),
           );
@@ -341,6 +424,7 @@ const ItemSlides = () => {
         if (type !== "free" && type !== "bible") {
           dispatch(
             updateStream({
+              outputIds: sendTargets.stream,
               slide,
               type,
               name,
@@ -352,9 +436,10 @@ const ItemSlides = () => {
         }
       }
 
-      if (shouldSendTo.projector) {
+      if (sendsToProjector) {
         dispatch(
           updateProjector({
+            outputIds: sendTargets.projector,
             slide,
             type,
             name,
@@ -371,7 +456,7 @@ const ItemSlides = () => {
         dispatch(setMonitorTimerId(null));
       }
 
-      if (shouldSendTo.monitor) {
+      if (sendsToMonitor) {
         let transitionDirection: "next" | "prev" | "jump";
         if (index === prevSelected + 1) transitionDirection = "next";
         else if (index === prevSelected - 1) transitionDirection = "prev";
@@ -387,10 +472,10 @@ const ItemSlides = () => {
           : null;
         const nextSlideForMonitor = nextSlideSlide
           ? {
-              ...nextSlideSlide,
-              boxes:
-                nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
-            }
+            ...nextSlideSlide,
+            boxes:
+              nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
+          }
           : undefined;
         // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
         const slideForMonitor = {
@@ -402,6 +487,7 @@ const ItemSlides = () => {
         };
         dispatch(
           updateMonitor({
+            outputIds: sendTargets.monitor,
             slide: slideForMonitor,
             type,
             name,
@@ -422,9 +508,10 @@ const ItemSlides = () => {
     },
     [
       dispatch,
-      shouldSendTo.stream,
-      shouldSendTo.projector,
-      shouldSendTo.monitor,
+      sendsToStream,
+      sendsToProjector,
+      sendsToMonitor,
+      sendTargets,
       monitorShowNextSlide,
       type,
       name,

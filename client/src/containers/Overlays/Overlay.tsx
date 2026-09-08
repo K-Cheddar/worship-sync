@@ -1,7 +1,7 @@
 import Button from "../../components/Button/Button";
 import { Airplay } from "lucide-react";
 import { Trash2 } from "lucide-react";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import { addToInitialList } from "../../store/overlaysSlice";
 import gsap from "gsap";
 import {
@@ -10,6 +10,8 @@ import {
   updateQrCodeOverlayInfo,
   updateStbOverlayInfo,
 } from "../../store/presentationSlice";
+import { shallowEqual } from "react-redux";
+import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { OverlayInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -44,6 +46,11 @@ const Overlay = ({
   readOnly = false,
 }: OverlayProps) => {
   const dispatch = useDispatch();
+  // Every live stream this controller drives, not the first enabled one. The
+  // old pick could name a stream that was enabled but not transmitting, which
+  // the reducers skip — so the send silently reached nothing — and it never
+  // reached a second live stream at all.
+  const streamTargets = useSelector(selectOverlayTargetIds, shallowEqual);
 
   const previousOverlay = useRef<OverlayInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -287,6 +294,7 @@ const Overlay = ({
             if (overlay.type === "participant") {
               dispatch(
                 updateParticipantOverlayInfo({
+                  outputIds: streamTargets,
                   name: overlay.name,
                   event: overlay.event,
                   title: overlay.title,
@@ -298,6 +306,7 @@ const Overlay = ({
             } else if (overlay.type === "stick-to-bottom") {
               dispatch(
                 updateStbOverlayInfo({
+                  outputIds: streamTargets,
                   heading: overlay.heading,
                   subHeading: overlay.subHeading,
                   duration: overlay.duration,
@@ -309,6 +318,7 @@ const Overlay = ({
             } else if (overlay.type === "qr-code") {
               dispatch(
                 updateQrCodeOverlayInfo({
+                  outputIds: streamTargets,
                   url: overlay.url,
                   description: overlay.description,
                   duration: overlay.duration,
@@ -320,6 +330,7 @@ const Overlay = ({
             } else if (overlay.type === "image") {
               dispatch(
                 updateImageOverlayInfo({
+                  outputIds: streamTargets,
                   imageUrl: overlay.imageUrl,
                   duration: overlay.duration,
                   type: overlay.type,

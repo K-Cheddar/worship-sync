@@ -14,9 +14,10 @@ import Input from "../../components/Input/Input";
 import ColorField from "../../components/ColorField/ColorField";
 import { useDispatch, useSelector } from "../../hooks";
 import {
-  selectOutputSlot,
   updateBoardPostStreamInfo,
 } from "../../store/presentationSlice";
+import { shallowEqual } from "react-redux";
+import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { useBoardData } from "../../boards/useBoardData";
 import { useBoardEventStream } from "../../boards/useBoardEventStream";
 import { useRestreamSession } from "../../boards/useRestreamSession";
@@ -184,9 +185,8 @@ const BoardStreamPanel = ({
   onDetailRequested,
 }: BoardStreamPanelProps) => {
   const dispatch = useDispatch();
-  const isStreamTransmitting = useSelector(
-    (state) => selectOutputSlot(state, "stream", "stream").isTransmitting,
-  );
+  const liveStreamIds = useSelector(selectOverlayTargetIds, shallowEqual);
+  const isStreamTransmitting = liveStreamIds.length > 0;
 
   const { churchId } = useContext(GlobalInfoContext) ?? {};
   const aliasId = getStoredBoardDisplayAliasId();
@@ -248,13 +248,13 @@ const BoardStreamPanel = ({
   const previewInfo =
     selectedPost != null
       ? {
-          author: selectedPost.author,
-          authorHexColor: getBoardAuthorNameHexColor(selectedPost),
-          text: selectedPost.text,
-          backgroundColor,
-          fontSize,
-          duration,
-        }
+        author: selectedPost.author,
+        authorHexColor: getBoardAuthorNameHexColor(selectedPost),
+        text: selectedPost.text,
+        backgroundColor,
+        fontSize,
+        duration,
+      }
       : undefined;
 
   const handleSend = (item: HighlightedPostItem) => {
@@ -262,6 +262,7 @@ const BoardStreamPanel = ({
     onDetailRequested?.();
     dispatch(
       updateBoardPostStreamInfo({
+        outputIds: liveStreamIds,
         author: item.author,
         authorHexColor: getBoardAuthorNameHexColor(item),
         text: item.text,

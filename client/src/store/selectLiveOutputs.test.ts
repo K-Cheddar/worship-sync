@@ -93,7 +93,7 @@ describe("selectOverlayTargetIds", () => {
     ({
       ...(store.getState() as object),
       undoable: {
-        present: { preferences: { preferences: { overlayTargetOutputIds } } },
+        present: { preferences: { overlayTargetOutputIds } },
       },
     }) as never;
 
@@ -113,9 +113,9 @@ describe("selectOverlayTargetIds", () => {
     store.dispatch(toggleOutputTransmitting("stream"));
     store.dispatch(toggleOutputTransmitting("out_foyer"));
 
-    expect(
-      selectOverlayTargetIds(withSelection(store, ["out_foyer"])),
-    ).toEqual(["out_foyer"]);
+    expect(selectOverlayTargetIds(withSelection(store, ["out_foyer"]))).toEqual(
+      ["out_foyer"],
+    );
   });
 
   it("drops a picked display that is not live", () => {
@@ -124,17 +124,17 @@ describe("selectOverlayTargetIds", () => {
 
     // The reducers skip slots that are not transmitting, so offering this as a
     // target would be a send that silently reaches nothing.
-    expect(
-      selectOverlayTargetIds(withSelection(store, ["out_foyer"])),
-    ).toEqual([]);
+    expect(selectOverlayTargetIds(withSelection(store, ["out_foyer"]))).toEqual(
+      [],
+    );
   });
 
   it("can target a projector, for when overlays reach one", () => {
     const store = createStore();
     store.dispatch(toggleOutputTransmitting("projector"));
 
-    expect(
-      selectOverlayTargetIds(withSelection(store, ["projector"])),
-    ).toEqual(["projector"]);
+    expect(selectOverlayTargetIds(withSelection(store, ["projector"]))).toEqual(
+      ["projector"],
+    );
   });
 });

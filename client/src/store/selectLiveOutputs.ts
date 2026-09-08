@@ -34,7 +34,7 @@ export const selectLiveOutputIdsOfType = (
 type OverlayTargetsState = LiveOutputsState & {
   undoable?: {
     present?: {
-      preferences?: { preferences?: { overlayTargetOutputIds?: string[] } };
+      preferences?: { overlayTargetOutputIds?: string[] };
     };
   };
 };
@@ -52,9 +52,9 @@ type OverlayTargetsState = LiveOutputsState & {
  *
  * Returns a fresh array, so subscribe with `shallowEqual`.
  */
-export const selectOverlayTargetIds = (state: OverlayTargetsState): string[] => {
+export const selectOverlayTargetIds = (state: LiveOutputsState): string[] => {
   const chosen =
-    state?.undoable?.present?.preferences?.preferences
+    (state as OverlayTargetsState)?.undoable?.present?.preferences
       ?.overlayTargetOutputIds ?? [];
   if (chosen.length === 0) return selectLiveOutputIdsOfType(state, "stream");
 

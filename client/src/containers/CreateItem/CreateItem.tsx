@@ -39,8 +39,11 @@ import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
-import Toggle from "../../components/Toggle/Toggle";
 import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
+import SendTargets from "../../components/SendTargets/SendTargets";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { useActiveControllerProfile } from "../../context/activeController";
+import { buildShouldSendToForController } from "../../utils/sendTargets";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -163,11 +166,16 @@ const CreateItem = ({
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
   const [mobileSongTab, setMobileSongTab] =
     useState<MobileSongTab>("create");
-  const [shouldSendTo, setShouldSendTo] = useState<ShouldSendTo>({
-    projector: true,
-    monitor: true,
-    stream: true,
-  });
+  // Seeded from the controller in front of the operator, so a new item lands on
+  // that controller's screens rather than the presentation controller's.
+  const displayOutputsForCreate = useSelector(selectDisplayOutputs);
+  const createControllerProfile = useActiveControllerProfile();
+  const [shouldSendTo, setShouldSendTo] = useState<ShouldSendTo>(() =>
+    buildShouldSendToForController(
+      displayOutputsForCreate,
+      createControllerProfile,
+    ),
+  );
   const [isAdvancedExpanded, setIsAdvancedExpanded] = useState(false);
   const [removeParentheticals, setRemoveParentheticals] = useState(false);
   const [viewLyricsCandidate, setViewLyricsCandidate] =
@@ -565,62 +573,62 @@ const CreateItem = ({
       ) : (
         <ul className="scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
           {lyricsImportCandidates.map((candidate) => {
-          const lyricsText = getImportableLyricsFromTrack(candidate);
+            const lyricsText = getImportableLyricsFromTrack(candidate);
 
-          return (
-            <li
-              key={`${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.lyricsOvhKey ?? candidate.trackName
-                }-${candidate.artistName}`}
-              className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
-            >
-              <div className="flex flex-col gap-1">
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <p className="min-w-0 wrap-break-word font-semibold text-neutral-100">
-                    {candidate.trackName}
-                  </p>
-                  <span
-                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getLyricsImportSourceBadgeClass(
-                      candidate.source,
-                    )}`}
-                  >
-                    {getLyricsImportSourceLabel(candidate.source)}
-                  </span>
-                </div>
-                <p className="text-sm text-neutral-300">
-                  {candidate.artistName}
-                  {candidate.albumName ? ` • ${candidate.albumName}` : ""}
-                </p>
-                {candidate.durationMs ? (
-                  <p className="text-xs text-neutral-400">
-                    {(candidate.durationMs / 1000).toFixed(0)} seconds
-                  </p>
-                ) : null}
-                <LyricsImportLyricsPreview lyricsText={lyricsText} />
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                  {lyricsText.trim() ? (
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      svg={LayoutList}
-                      color="#22d3ee"
-                      aria-label="View lyrics"
-                      onClick={() => setViewLyricsCandidate(candidate)}
+            return (
+              <li
+                key={`${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.lyricsOvhKey ?? candidate.trackName
+                  }-${candidate.artistName}`}
+                className="rounded-md bg-neutral-950/30 p-3 backdrop-blur-md"
+              >
+                <div className="flex flex-col gap-1">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <p className="min-w-0 wrap-break-word font-semibold text-neutral-100">
+                      {candidate.trackName}
+                    </p>
+                    <span
+                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getLyricsImportSourceBadgeClass(
+                        candidate.source,
+                      )}`}
                     >
-                      View lyrics
-                    </Button>
+                      {getLyricsImportSourceLabel(candidate.source)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-neutral-300">
+                    {candidate.artistName}
+                    {candidate.albumName ? ` • ${candidate.albumName}` : ""}
+                  </p>
+                  {candidate.durationMs ? (
+                    <p className="text-xs text-neutral-400">
+                      {(candidate.durationMs / 1000).toFixed(0)} seconds
+                    </p>
                   ) : null}
-                  <Button
-                    variant="cta"
-                    className="min-w-0 flex-1 justify-center"
-                    svg={Import}
-                    onClick={() => void applyLrclibImport(candidate)}
-                  >
-                    Use Lyrics
-                  </Button>
+                  <LyricsImportLyricsPreview lyricsText={lyricsText} />
+                  <div className="flex flex-wrap items-center gap-2 pt-2">
+                    {lyricsText.trim() ? (
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={LayoutList}
+                        color="#22d3ee"
+                        aria-label="View lyrics"
+                        onClick={() => setViewLyricsCandidate(candidate)}
+                      >
+                        View lyrics
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="cta"
+                      className="min-w-0 flex-1 justify-center"
+                      svg={Import}
+                      onClick={() => void applyLrclibImport(candidate)}
+                    >
+                      Use Lyrics
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </li>
-          );
+              </li>
+            );
           })}
         </ul>
       )}
@@ -924,29 +932,13 @@ const CreateItem = ({
                 {isAdvancedExpanded && (
                   <div className="mt-1 flex flex-col items-center gap-2 border-t border-white/10 pt-2">
                     <p className="text-sm font-medium text-gray-200">Sends to:</p>
-                    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-                      <Toggle
-                        label="Projector"
-                        value={shouldSendTo.projector}
-                        onChange={(val) =>
-                          setShouldSendTo((prev) => ({ ...prev, projector: val }))
-                        }
-                      />
-                      <Toggle
-                        label="Monitor"
-                        value={shouldSendTo.monitor}
-                        onChange={(val) =>
-                          setShouldSendTo((prev) => ({ ...prev, monitor: val }))
-                        }
-                      />
-                      <Toggle
-                        label="Stream"
-                        value={shouldSendTo.stream}
-                        onChange={(val) =>
-                          setShouldSendTo((prev) => ({ ...prev, stream: val }))
-                        }
-                      />
-                    </div>
+                    <SendTargets
+                      shouldSendTo={shouldSendTo}
+                      layout="wrap"
+                      onChange={(patch) =>
+                        setShouldSendTo((prev) => ({ ...prev, ...patch }))
+                      }
+                    />
                   </div>
                 )}
               </div>

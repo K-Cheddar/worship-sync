@@ -235,6 +235,7 @@ describe("BoardStreamPanel", () => {
 
     expect(mockDispatch).toHaveBeenCalledWith(
       updateBoardPostStreamInfo({
+        outputIds: ["stream"],
         author: "Restream author",
         authorHexColor: "#ff0000",
         text: "Restream highlighted",

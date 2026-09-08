@@ -29,7 +29,12 @@ interface Display {
   label?: string;
 }
 
-type WindowType = "projector" | "monitor" | "board";
+/**
+ * Key identifying a display window. Built-in surfaces keep "projector",
+ * "monitor", and "board"; a window opened for a display output uses that
+ * output id.
+ */
+type WindowType = string;
 
 interface WindowState {
   displayId?: number;

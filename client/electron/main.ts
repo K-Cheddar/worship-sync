@@ -163,6 +163,9 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
       corsEnabled: true,
       stream: true,
+      // Match media-cache: Chromium AND-combines header CSP with the index.html
+      // meta policy, so local media fails unless the scheme can bypass CSP.
+      bypassCSP: true,
     },
   },
 ]);
@@ -1691,7 +1694,10 @@ ipcMain.handle("fetch-genius-lyrics", async (_event, targetUrl: string) => {
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
       }),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Genius page load timed out.")), 10000),
+        setTimeout(
+          () => reject(new Error("Genius page load timed out.")),
+          10000,
+        ),
       ),
     ]);
 

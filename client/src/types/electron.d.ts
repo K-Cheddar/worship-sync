@@ -1,6 +1,11 @@
 // Re-export WindowType from windowState for use in React code
 // The actual type is defined in electron/windowState.ts
-export type WindowType = "projector" | "monitor" | "board";
+/**
+ * Key identifying a display window. Built-in surfaces keep "projector",
+ * "monitor", and "board"; a window opened for a display output uses that
+ * output id.
+ */
+export type WindowType = string;
 
 export interface Display {
   id: number;
