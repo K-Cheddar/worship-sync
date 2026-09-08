@@ -107,6 +107,7 @@ import {
   isBuiltInOutputId,
   supportsBoardTakeover,
 } from "../utils/displayOutputs";
+import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
 import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
@@ -564,7 +565,12 @@ const persistPresentationUpdateLocally = (
     "stream_itemContentBlocked",
     JSON.stringify(presentationUpdate.stream_itemContentBlocked),
   );
-  localStorage.setItem("outputs", JSON.stringify(presentationUpdate.outputs));
+  // Nest slash-path keys so same-machine display windows can apply named
+  // outputs from the storage event without waiting on Firebase.
+  localStorage.setItem(
+    "outputs",
+    JSON.stringify(nestSlashPathOutputs(presentationUpdate.outputs)),
+  );
 };
 
 type PresentationWrite = {

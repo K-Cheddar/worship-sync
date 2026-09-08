@@ -601,6 +601,66 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(mockDispatch).toHaveBeenCalledTimes(4);
   });
 
+  it("cold-hydrates presentation keys from localStorage when the storage listener attaches", async () => {
+    const projectorInfo = { name: "Live Projector", time: 501 };
+    const monitorInfo = { name: "Live Monitor", time: 502 };
+    const streamInfo = { name: "Live Stream", time: 503 };
+    const outputs = {
+      out_lobby: {
+        id: "out_lobby",
+        type: "projector",
+        info: { name: "Lobby", time: 504 },
+      },
+    };
+
+    localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
+    localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+    localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
+    localStorage.setItem("outputs", JSON.stringify(outputs));
+    localStorage.setItem("stream_itemContentBlocked", JSON.stringify(false));
+    localStorage.setItem("not_a_screen_key", JSON.stringify({ ignored: true }));
+
+    renderProvider();
+
+    await waitFor(() =>
+      expect(mockDispatch.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            {
+              type: "debouncedUpdateProjector",
+              payload: projectorInfo,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateMonitor",
+              payload: monitorInfo,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateStream",
+              payload: streamInfo,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateOutputs",
+              payload: outputs,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateStreamItemContentBlocked",
+              payload: false,
+            },
+          ],
+        ]),
+      ),
+    );
+    expect(mockDispatch).toHaveBeenCalledTimes(5);
+  });
+
   it("subscribes to the default presentation listener keys and dispatches their debounced actions", async () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");

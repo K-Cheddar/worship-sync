@@ -123,6 +123,8 @@ import {
   getSharedDataDatabase,
 } from "../firebase/apps";
 import { getChurchDataPath } from "../utils/firebasePaths";
+import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
+import { withBootstrapTimeout } from "../utils/bootstrapTimeout";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
 import {
@@ -1310,8 +1312,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         },
         // Outputs created after the display registry. Built-ins keep travelling
         // in the flat keys above so older clients stay live during rollout.
+        // Only nest/dispatch when this payload actually includes `outputs` —
+        // otherwise every projector/monitor/stream storage event would apply
+        // an empty `{}` and wake the outputs listener for no reason.
         outputs: {
-          info: data.outputs,
+          info:
+            data.outputs !== undefined
+              ? nestSlashPathOutputs(data.outputs)
+              : undefined,
           updateAction: "debouncedUpdateOutputs",
         },
         stream_bibleInfo: {
@@ -1414,7 +1422,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const enterGuestMode = useCallback(
-    (nextPath = "/controller") => {
+    (nextPath = "/home") => {
       hasRehydratedTimersRef.current = false;
       hasRehydratedServiceTimesRef.current = false;
       setPendingEmailVerificationId(null);
@@ -1492,10 +1500,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         for (let attempt = 0; attempt <= MAX_INITIAL_SESSION_RETRIES; attempt++) {
           try {
-            bootstrap = await getAuthBootstrap({
-              workstationToken: getWorkstationToken(),
-              displayToken: getDisplayToken(),
-            });
+            // Bounded: a request that hangs rather than fails would otherwise
+            // skip the `finally` that ends the loading state — never runs. A
+            // display then sits on its blank placeholder indefinitely.
+            bootstrap = await withBootstrapTimeout(
+              getAuthBootstrap({
+                workstationToken: getWorkstationToken(),
+                displayToken: getDisplayToken(),
+              }),
+            );
             setAuthServerStatus("online");
             setAuthServerRetryCount(0);
             bootstrapError = null;
@@ -1984,14 +1997,30 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       storageListenerCleanupRef.current();
     }
 
-    const handleStorage = ({ key, newValue }: StorageEvent) => {
+    const applyStorageValue = (key: string | null, newValue: string | null) => {
+      if (!key || newValue == null) return;
       const onValueKeys = Object.keys(onValueRef.current);
       if (key === "serviceTimes" && loginState === "success") return;
-      if (newValue && onValueKeys.some((e) => e === key)) {
+      if (!onValueKeys.some((e) => e === key)) return;
+      try {
         const value = JSON.parse(newValue);
         updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
+      } catch {
+        // ignore invalid stored data
       }
     };
+
+    const handleStorage = ({ key, newValue }: StorageEvent) => {
+      applyStorageValue(key, newValue);
+    };
+
+    // Cold-start: `storage` only fires for *future* writes from other documents.
+    // Newly opened same-machine display windows (Electron shared partition) already
+    // have the live snapshot in localStorage, but would otherwise wait on Firebase
+    // (or the next controller transmit) before painting current content.
+    for (const key of Object.keys(onValueRef.current)) {
+      applyStorageValue(key, localStorage.getItem(key));
+    }
 
     window.addEventListener("storage", handleStorage);
     const cleanup = () => {
