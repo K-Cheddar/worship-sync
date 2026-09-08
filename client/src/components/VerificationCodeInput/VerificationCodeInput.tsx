@@ -153,7 +153,9 @@ const VerificationCodeInput = ({
             pattern="[0-9]*"
             autoComplete={index === 0 ? "one-time-code" : "off"}
             name={index === 0 ? "one-time-code" : undefined}
-            maxLength={1}
+            // First field must accept the full OTP so browser autofill can
+            // deliver all digits into handleChange's multi-digit path.
+            maxLength={index === 0 ? LENGTH : 1}
             disabled={disabled}
             value={char}
             aria-label={`Digit ${index + 1} of ${LENGTH}`}
