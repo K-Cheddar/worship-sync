@@ -1,4 +1,4 @@
-import { ComponentProps, memo } from "react";
+import { ComponentProps, memo, type ReactNode } from "react";
 import {
   selectOutputSlot,
   selectResolvedOutputSlot,
@@ -22,6 +22,8 @@ type MonitorPresentationPreviewProps = {
   outputId?: string;
   /** Operator-facing output name; defaults to the surface label. */
   name?: string;
+  /** Mirror / follower chrome for this display, shown inside the card. */
+  footer?: ReactNode;
 };
 
 const MonitorPresentationPreview = memo(
@@ -34,6 +36,7 @@ const MonitorPresentationPreview = memo(
     toggleIsTransmitting,
     outputId = "monitor",
     name = "Monitor",
+    footer,
   }: MonitorPresentationPreviewProps) => {
     const info = useSelector(
       (state) => selectResolvedOutputSlot(state, outputId, "monitor").info,
@@ -75,6 +78,7 @@ const MonitorPresentationPreview = memo(
         showClockTimer
         previewScale={previewScale}
         fillWidth={fillWidth}
+        footer={footer}
         previewOverride={
           monitorBoardAliasId ? (
             <ScaledBoardPreview aliasId={monitorBoardAliasId} />

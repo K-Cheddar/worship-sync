@@ -17,6 +17,8 @@ import {
   setControllerProfilesFromRemote,
 } from "../../store/controllerProfilesSlice";
 import { timersSlice } from "../../store/timersSlice";
+import { ActiveControllerProvider } from "../../context/activeController";
+import itemListsReducer from "../../store/itemListsSlice";
 
 jest.mock("../../components/Presentation/PresentationPreview", () => ({
   __esModule: true,
@@ -24,16 +26,19 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
     name,
     isTransmitting,
     toggleIsTransmitting,
+    footer,
   }: {
     name: string;
     isTransmitting?: boolean;
     toggleIsTransmitting?: () => void;
+    footer?: React.ReactNode;
   }) => (
     <div data-testid={`preview-${name}`} data-live={String(!!isTransmitting)}>
       {name}
       <button type="button" onClick={toggleIsTransmitting}>
         {`Toggle ${name}`}
       </button>
+      {footer}
     </div>
   ),
 }));
@@ -231,5 +236,96 @@ describe("discussion board placement", () => {
       "preview-Stage",
       "preview-Board",
     ]);
+  });
+});
+
+describe("mirror controls on an auxiliary controller", () => {
+  const AUX_ID = "ctrl_lobby";
+
+  const createAuxStore = () => {
+    const store = configureStore({
+      reducer: {
+        presentation: presentationSlice.reducer,
+        displayOutputs: displayOutputsSlice.reducer,
+        controllerProfiles: controllerProfilesSlice.reducer,
+        timers: timersSlice.reducer,
+        // ActiveControllerProvider switches outline scope; keep a shim so that
+        // write does not throw in this focused transmit-handler suite.
+        undoable: (
+          state = {
+            present: {
+              preferences: preferencesSlice.getInitialState(),
+              itemLists: itemListsReducer(undefined, { type: "@@init" }),
+            },
+          },
+          action,
+        ) => ({
+          present: {
+            preferences: state.present.preferences,
+            itemLists: itemListsReducer(state.present.itemLists, action),
+          },
+        }),
+      },
+    });
+    store.dispatch(setDisplayOutputsFromRemote(REGISTRY));
+    store.dispatch(
+      setControllerProfilesFromRemote([
+        {
+          id: "presentation",
+          type: "presentation",
+          name: "Presentation",
+          order: 0,
+          enabled: true,
+          outputIds: ["projector", "monitor", "stream"],
+          outputsConfigured: true,
+          outlineScope: "presentation",
+        },
+        {
+          id: AUX_ID,
+          type: "aux-presentation",
+          name: "Lobby",
+          order: 2,
+          enabled: true,
+          outputIds: ["out_lobby"],
+          outputsConfigured: true,
+          outlineScope: AUX_ID,
+        },
+      ]),
+    );
+    store.dispatch(
+      syncOutputSlots([
+        { id: "projector", type: "projector" },
+        { id: "out_lobby", type: "projector" },
+        { id: "monitor", type: "monitor" },
+        { id: "stream", type: "stream" },
+      ]),
+    );
+    return store;
+  };
+
+  it("offers Mirror under the owned display, not for screens this controller does not drive", () => {
+    const store = createAuxStore();
+    render(
+      <Provider store={store}>
+        <ActiveControllerProvider profileId={AUX_ID}>
+          <TransmitHandler />
+        </ActiveControllerProvider>
+      </Provider>,
+    );
+
+    expect(
+      within(screen.getByTestId("preview-Lobby")).getByRole("button", {
+        name: "Mirror Main",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-Main")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("preview-Stage")).not.toBeInTheDocument();
+  });
+
+  it("does not offer Mirror on the presentation controller even when another projector exists", () => {
+    renderHandler(createStore());
+    expect(
+      screen.queryByRole("button", { name: /Mirror/ }),
+    ).not.toBeInTheDocument();
   });
 });

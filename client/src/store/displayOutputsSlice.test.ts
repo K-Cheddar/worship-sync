@@ -3,6 +3,7 @@ import reducer, {
   removeDisplayOutput,
   renameDisplayOutput,
   reorderDisplayOutputs,
+  setBoardTakeoverOutputId,
   setDisplayOutputEnabled,
   setDisplayOutputSource,
   setDisplayOutputsFromRemote,
@@ -186,6 +187,34 @@ describe("setDisplayOutputSource", () => {
         setDisplayOutputSource({ id: "nope", source: { boardAliasId: "x" } }),
       ).list,
     ).toEqual(state.list);
+  });
+});
+
+describe("setBoardTakeoverOutputId", () => {
+  it("marks the chosen board-capable display as the takeover target", () => {
+    const state = reducer(initial(), setBoardTakeoverOutputId("projector"));
+    expect(
+      state.list.find((o) => o.id === "projector")?.isBoardTakeoverTarget,
+    ).toBe(true);
+    expect(
+      state.list.find((o) => o.id === "monitor")?.isBoardTakeoverTarget,
+    ).toBeUndefined();
+  });
+
+  it("clears the previous target when another display is chosen", () => {
+    let state = reducer(initial(), setBoardTakeoverOutputId("projector"));
+    state = reducer(state, setBoardTakeoverOutputId("monitor"));
+    expect(
+      state.list.find((o) => o.id === "projector")?.isBoardTakeoverTarget,
+    ).toBeUndefined();
+    expect(
+      state.list.find((o) => o.id === "monitor")?.isBoardTakeoverTarget,
+    ).toBe(true);
+  });
+
+  it("ignores stream and other surfaces that cannot host a board", () => {
+    const state = reducer(initial(), setBoardTakeoverOutputId("stream"));
+    expect(state.list.every((o) => !o.isBoardTakeoverTarget)).toBe(true);
   });
 });
 

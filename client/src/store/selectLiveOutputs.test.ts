@@ -93,7 +93,7 @@ describe("selectOverlayTargetIds", () => {
     ({
       ...(store.getState() as object),
       undoable: {
-        present: { preferences: { overlayTargetOutputIds } },
+        present: { preferences: { preferences: { overlayTargetOutputIds } } },
       },
     }) as never;
 

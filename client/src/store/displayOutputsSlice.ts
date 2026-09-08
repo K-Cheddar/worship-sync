@@ -14,6 +14,7 @@ import {
   normalizeDisplayOutputSource,
   normalizeDisplayOutputs,
   sanitizeDisplayOutputName,
+  supportsBoardTakeover,
 } from "../utils/displayOutputs";
 
 type DisplayOutputsState = {
@@ -122,6 +123,22 @@ export const displayOutputsSlice = createSlice({
       }
     },
     /**
+     * Pick which full-frame display the discussion-board transmit toggle uses.
+     * Clears the flag everywhere else so controllers never disagree about the
+     * target. Ignored for ids that cannot host a board takeover.
+     */
+    setBoardTakeoverOutputId: (state, action: PayloadAction<string>) => {
+      const target = state.list.find((output) => output.id === action.payload);
+      if (!target || !supportsBoardTakeover(target.type)) return;
+      for (const output of state.list) {
+        if (output.id === target.id) {
+          output.isBoardTakeoverTarget = true;
+        } else if (output.isBoardTakeoverTarget) {
+          delete output.isBoardTakeoverTarget;
+        }
+      }
+    },
+    /**
      * Default settings for every screen showing this display. Fields the render
      * profile does not understand are dropped, so a stale value cannot leak
      * onto a surface that should ignore it.
@@ -216,6 +233,7 @@ export const {
   renameDisplayOutput,
   setDisplayOutputEnabled,
   setDisplayOutputSource,
+  setBoardTakeoverOutputId,
   setDisplayOutputSettings,
   seedDisplayOutputSettings,
   removeDisplayOutput,

@@ -106,13 +106,9 @@ jest.mock("../../components/Select/Select", () => ({
 
 jest.mock("./SortableQuickLink", () => ({
   __esModule: true,
-  default: ({
-    label,
-    displayType,
-  }: {
-    label: string;
-    displayType: string;
-  }) => <div>{`${displayType}:${label}`}</div>,
+  default: ({ label, displayType }: { label: string; displayType: string }) => (
+    <div>{`${displayType}:${label}`}</div>
+  ),
 }));
 
 describe("QuickLinks", () => {
@@ -125,7 +121,9 @@ describe("QuickLinks", () => {
     render(<QuickLinks streamOnly />);
 
     expect(screen.getByText("stream:Stream Link")).toBeInTheDocument();
-    expect(screen.queryByText("projector:Projector Link")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("projector:Projector Link"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("monitor:Monitor Link")).not.toBeInTheDocument();
   });
 
@@ -133,9 +131,9 @@ describe("QuickLinks", () => {
     render(<QuickLinks />);
 
     expect(
-      screen.getAllByText(/:(Projector Link|Monitor Link|Stream Link)$/).map(
-        (node) => node.textContent
-      )
+      screen
+        .getAllByText(/:(Projector Link|Monitor Link|Stream Link)$/)
+        .map((node) => node.textContent),
     ).toEqual([
       "projector:Projector Link",
       "monitor:Monitor Link",
@@ -157,9 +155,12 @@ describe("QuickLinks", () => {
           label: "",
           canDelete: true,
           displayType: "projector" as const,
+          // New links now name the display they belong to, so two projectors
+          // can carry different shortcuts.
+          outputId: "projector",
           linkType: "media" as const,
         },
-      ])
+      ]),
     );
   });
 
@@ -177,9 +178,10 @@ describe("QuickLinks", () => {
           label: "",
           canDelete: true,
           displayType: "stream" as const,
+          outputId: "stream",
           linkType: "overlay" as const,
         },
-      ])
+      ]),
     );
   });
 });

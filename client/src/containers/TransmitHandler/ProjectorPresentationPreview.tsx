@@ -1,4 +1,4 @@
-import { ComponentProps, memo } from "react";
+import { ComponentProps, memo, type ReactNode } from "react";
 import {
   selectOutputSlot,
   selectResolvedOutputSlot,
@@ -21,6 +21,8 @@ type ProjectorPresentationPreviewProps = {
   outputId?: string;
   /** Operator-facing output name; defaults to the surface label. */
   name?: string;
+  /** Mirror / follower chrome for this display, shown inside the card. */
+  footer?: ReactNode;
 };
 
 const ProjectorPresentationPreview = memo(
@@ -33,6 +35,7 @@ const ProjectorPresentationPreview = memo(
     toggleIsTransmitting,
     outputId = "projector",
     name = "Projector",
+    footer,
   }: ProjectorPresentationPreviewProps) => {
     // Content follows the mirror so the preview shows what is on the screen,
     // not what this display would show if it stopped mirroring. Live state stays
@@ -69,6 +72,7 @@ const ProjectorPresentationPreview = memo(
         showClockTimer
         previewScale={previewScale}
         fillWidth={fillWidth}
+        footer={footer}
       />
     );
   },

@@ -18,6 +18,7 @@ import ServiceTimes from "../../containers/ServiceTimes/ServiceTimes";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 import OverlaysAndPostsWorkspace from "./OverlaysAndPostsWorkspace";
+import OverlayDisplaysPanel from "./OverlayDisplaysPanel";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { ActiveControllerProvider } from "../../context/activeController";
@@ -147,6 +148,14 @@ const OverlayController = () => {
               aria-hidden={overlayControllerPanel !== "serviceTimes"}
             >
               <ServiceTimes />
+            </div>
+          )}
+          {/* Mounted only while selected, unlike the other panels: this one
+              embeds DisplayOutputsPanel, which is heavy and not needed until
+              an operator opens Displays. */}
+          {access === "full" && overlayControllerPanel === "displays" && (
+            <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col overflow-hidden">
+              <OverlayDisplaysPanel />
             </div>
           )}
         </div>

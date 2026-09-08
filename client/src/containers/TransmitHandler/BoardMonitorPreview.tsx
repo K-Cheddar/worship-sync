@@ -1,18 +1,20 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { MonitorUp } from "lucide-react";
 import BoardPresentationFontScaleControl from "../../boards/BoardPresentationFontScaleControl";
 import ScaledBoardPreview from "../../boards/ScaledBoardPreview";
 import { setStoredBoardDisplayAliasId } from "../../boards/boardUtils";
 import { useBoardPresentationFontScale } from "../../boards/useBoardPresentationFontScale";
 import Toggle from "../../components/Toggle/Toggle";
-import Select from "../../components/Select/Select";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   setDisplayBoardAliasId,
   selectOutputSlots,
 } from "../../store/presentationSlice";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
-import { supportsBoardTakeover } from "../../utils/displayOutputs";
+import {
+  getBoardCapableOutputs,
+  resolveBoardTakeoverOutputId,
+} from "../../utils/displayOutputs";
 import { cn } from "../../utils/cnHelper";
 
 type BoardMonitorPreviewProps = {
@@ -38,8 +40,11 @@ type BoardMonitorPreviewProps = {
 
 /**
  * Right-panel tile that previews the discussion board exactly as it appears on the
- * board display, with a toggle to swap the stage monitor between presentation
- * content and the board.
+ * board display, with a toggle to swap the configured room display between
+ * presentation content and the board.
+ *
+ * Which display hosts the board is church setup on the Displays page — this tile
+ * only turns that takeover on or off and adjusts presentation text size.
  */
 const BoardMonitorPreview = ({
   aliasId,
@@ -49,18 +54,14 @@ const BoardMonitorPreview = ({
   fillWidth = false,
 }: BoardMonitorPreviewProps) => {
   const dispatch = useDispatch();
-  // Any full-frame display can host the board, so the operator picks which one.
   const displayOutputs = useSelector(selectDisplayOutputs);
   const boardCapableOutputs = useMemo(
-    () =>
-      displayOutputs.filter(
-        (output) => output.enabled && supportsBoardTakeover(output.type),
-      ),
+    () => getBoardCapableOutputs(displayOutputs),
     [displayOutputs],
   );
   const outputSlots = useSelector(selectOutputSlots);
   // The display already showing a board wins, so the control always describes
-  // what is actually up rather than what this operator last picked.
+  // what is actually up rather than the Displays-page preference alone.
   const liveBoardOutputId = useMemo(
     () =>
       boardCapableOutputs.find(
@@ -68,14 +69,13 @@ const BoardMonitorPreview = ({
       )?.id ?? "",
     [boardCapableOutputs, outputSlots],
   );
-  const [pickedOutputId, setPickedOutputId] = useState("");
-  const targetOutputId =
-    liveBoardOutputId ||
-    (boardCapableOutputs.some((output) => output.id === pickedOutputId)
-      ? pickedOutputId
-      : (boardCapableOutputs.find((output) => output.id === "monitor")?.id ??
-        boardCapableOutputs[0]?.id ??
-        ""));
+  const targetOutputId = resolveBoardTakeoverOutputId(
+    displayOutputs,
+    liveBoardOutputId,
+  );
+  const targetOutputName =
+    boardCapableOutputs.find((output) => output.id === targetOutputId)?.name ??
+    "display";
   const monitorBoardAliasId = targetOutputId
     ? (outputSlots[targetOutputId]?.boardAliasId ?? "")
     : "";
@@ -150,29 +150,8 @@ const BoardMonitorPreview = ({
             fillWidth ? "w-full flex-row flex-wrap" : "flex-1",
           )}
         >
-          {boardCapableOutputs.length > 1 && (
-            <Select
-              className="w-full max-w-40"
-              label="Display"
-              hideLabel
-              value={targetOutputId}
-              options={boardCapableOutputs.map((output) => ({
-                value: output.id,
-                label: output.name,
-              }))}
-              // Locked while a board is up: moving it would need to clear the
-              // old display and set the new one, and a half-applied swap during
-              // a service leaves the board on a screen nobody chose.
-              disabled={isShowingOnMonitor}
-              onChange={(value) => setPickedOutputId(value)}
-            />
-          )}
           <Toggle
-            label={
-              boardCapableOutputs.length > 1
-                ? `On ${boardCapableOutputs.find((o) => o.id === targetOutputId)?.name ?? "display"}`
-                : "On monitor"
-            }
+            label={`On ${targetOutputName}`}
             labelClassName="min-w-0 shrink truncate text-xs"
             className="min-w-0 max-w-full shrink items-center"
             icon={MonitorUp}

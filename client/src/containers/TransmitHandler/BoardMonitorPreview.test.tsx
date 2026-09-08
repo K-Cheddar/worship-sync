@@ -103,21 +103,28 @@ describe("BoardMonitorPreview", () => {
     });
     expect(
       preview.compareDocumentPosition(toggle) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       toggle.compareDocumentPosition(sizeControl) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  it("labels the monitor toggle", () => {
+  it("labels the toggle with the configured display name", () => {
     renderPreview();
 
-    // The switch is labelled by the inline "On monitor" text.
+    // Defaults to the built-in monitor when Displays has no preference set.
     expect(
-      screen.getByRole("switch", { name: /On monitor/i }),
+      screen.getByRole("switch", { name: /On Monitor/i }),
     ).toBeInTheDocument();
+  });
+
+  it("does not offer a display picker on the transmit tile", () => {
+    renderPreview();
+
+    // Which screen hosts the board is church setup on Displays, not a live control.
+    expect(screen.queryByRole("combobox", { name: /Display/i })).toBeNull();
   });
 
   it("disables the toggle when there is no board to put up and none is live", () => {

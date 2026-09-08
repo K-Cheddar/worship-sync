@@ -41,6 +41,7 @@ import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import { useActiveControllerProfile } from "../../context/activeController";
 import { getControllerOutputs } from "../../utils/controllerProfiles";
 import MirroredByBadge from "../../components/MirrorDisplay/MirroredByBadge";
+import MirrorDisplayTile from "../../components/MirrorDisplay/MirrorDisplayTile";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
 const OVERLAY_STREAM_QUICK_LINKS_VISIBLE = 10;
@@ -94,15 +95,38 @@ const TransmitHandler = ({
   // that belongs to someone else.
   const displayOutputs = useSelector(selectDisplayOutputs);
   const controllerProfile = useActiveControllerProfile();
+  const ownedOutputs = useMemo(
+    () => getControllerOutputs(controllerProfile, displayOutputs),
+    [controllerProfile, displayOutputs],
+  );
   const visibleOutputs = useMemo(
     () =>
-      getControllerOutputs(controllerProfile, displayOutputs).filter(
+      ownedOutputs.filter(
         (output) =>
           isPushOutputType(output.type) &&
           visibleScreens.includes(output.type as TransmitScreen),
       ),
-    [controllerProfile, displayOutputs, visibleScreens],
+    [ownedOutputs, visibleScreens],
   );
+
+  // Aux controllers join another room's screen for a shared moment (sermon,
+  // announcements) without sending there. Sources are every same-type display
+  // this controller does not own — owned screens stay independently driven.
+  const mirrorSourceIdsByOutput = useMemo(() => {
+    if (controllerProfile.type !== "aux-presentation") return {};
+    const ownedIds = new Set(ownedOutputs.map((output) => output.id));
+    return ownedOutputs.reduce<Record<string, string[]>>((acc, output) => {
+      acc[output.id] = displayOutputs
+        .filter(
+          (candidate) =>
+            candidate.enabled &&
+            candidate.type === output.type &&
+            !ownedIds.has(candidate.id),
+        )
+        .map((candidate) => candidate.id);
+      return acc;
+    }, {});
+  }, [controllerProfile.type, ownedOutputs, displayOutputs]);
 
   // The overlay controller's focused header acts on the first stream output it
   // shows; per-stream control lives on each tile below it.
@@ -275,7 +299,7 @@ const TransmitHandler = ({
     if (!showBulkControls) return;
     setIsTransmitting(
       visibleOutputs.length > 0 &&
-        visibleOutputs.every((output) => liveByOutputId[output.id]),
+      visibleOutputs.every((output) => liveByOutputId[output.id]),
     );
   }, [showBulkControls, liveByOutputId, visibleOutputs]);
 
@@ -435,36 +459,36 @@ const TransmitHandler = ({
               )}
               {(showStreamOverlayOnlyToggle ||
                 showClearStreamOverlaysButton) && (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  {showStreamOverlayOnlyToggle && (
-                    <Toggle
-                      label="Hide Content"
-                      value={streamItemContentBlocked}
-                      onChange={(value) =>
-                        dispatch(
-                          setStreamItemContentBlocked({
-                            value,
-                            outputIds: primaryStreamOutput
-                              ? [primaryStreamOutput.id]
-                              : undefined,
-                          }),
-                        )
-                      }
-                      color="#f59e0b"
-                    />
-                  )}
-                  {showClearStreamOverlaysButton && (
-                    <Button
-                      onClick={handleClearStreamOverlays}
-                      className="text-sm shrink-0"
-                      variant="tertiary"
-                      padding="py-1 px-3"
-                    >
-                      Clear Overlays
-                    </Button>
-                  )}
-                </div>
-              )}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    {showStreamOverlayOnlyToggle && (
+                      <Toggle
+                        label="Hide Content"
+                        value={streamItemContentBlocked}
+                        onChange={(value) =>
+                          dispatch(
+                            setStreamItemContentBlocked({
+                              value,
+                              outputIds: primaryStreamOutput
+                                ? [primaryStreamOutput.id]
+                                : undefined,
+                            }),
+                          )
+                        }
+                        color="#f59e0b"
+                      />
+                    )}
+                    {showClearStreamOverlaysButton && (
+                      <Button
+                        onClick={handleClearStreamOverlays}
+                        className="text-sm shrink-0"
+                        variant="tertiary"
+                        padding="py-1 px-3"
+                      >
+                        Clear Overlays
+                      </Button>
+                    )}
+                  </div>
+                )}
             </div>
           )}
           <div
@@ -483,6 +507,23 @@ const TransmitHandler = ({
               // travels with that tile when the operator reorders displays.
               const board =
                 output.id === boardAnchorOutputId ? boardSection : null;
+              // Lives inside this display's card so Clear / Live / Mirror all
+              // read as one control surface for the screen they affect.
+              const mirrorControls =
+                !readOnly && controllerProfile.type === "aux-presentation" ? (
+                  <MirrorDisplayTile
+                    outputId={output.id}
+                    sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
+                  />
+                ) : null;
+              const displayFooter = (
+                <>
+                  {mirrorControls}
+                  {output.type === "projector" ? (
+                    <MirroredByBadge outputId={output.id} />
+                  ) : null}
+                </>
+              );
 
               if (output.type === "projector") {
                 return (
@@ -496,8 +537,8 @@ const TransmitHandler = ({
                       previewScale={previewScale}
                       fillWidth={fillWidth}
                       readOnly={readOnly}
+                      footer={displayFooter}
                     />
-                    <MirroredByBadge outputId={output.id} />
                     {board}
                   </Fragment>
                 );
@@ -515,6 +556,7 @@ const TransmitHandler = ({
                       previewScale={previewScale}
                       fillWidth={fillWidth}
                       readOnly={readOnly}
+                      footer={displayFooter}
                     />
                     {board}
                   </Fragment>
@@ -534,6 +576,7 @@ const TransmitHandler = ({
                     previewScale={previewScale}
                     fillWidth={fillWidth}
                     readOnly={readOnly}
+                    footer={displayFooter}
                   />
                   {/* Belongs to the primary stream only — it would otherwise
                       repeat under every stream tile. */}

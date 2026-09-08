@@ -77,6 +77,29 @@ describe("DisplayOutputsPanel", () => {
     expect(screen.getByDisplayValue("Stream")).toBeInTheDocument();
   });
 
+  it("lets the operator pick which screen hosts the discussion board", async () => {
+    const user = userEvent.setup();
+    const store = createStore();
+    renderPanel(store);
+
+    // Main (projector) and Stage (monitor) can both host a board takeover.
+    const select = screen.getByRole("combobox", {
+      name: /Discussion board display/i,
+    });
+    expect(select).toHaveTextContent("Stage");
+
+    await user.click(select);
+    await user.click(screen.getByRole("option", { name: "Main" }));
+
+    expect(
+      store
+        .getState()
+        .displayOutputs.list.find((output) => output.id === "projector")
+        ?.isBoardTakeoverTarget,
+    ).toBe(true);
+    expect(writeDisplayOutputs).toHaveBeenCalled();
+  });
+
   it("leaves out pull outputs, which take no presentation content", () => {
     renderPanel(createStore());
     expect(screen.queryByDisplayValue("Credits")).not.toBeInTheDocument();

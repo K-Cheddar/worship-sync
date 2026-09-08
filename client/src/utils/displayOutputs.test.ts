@@ -3,10 +3,14 @@ import {
   DisplayOutput,
   createDisplayOutputId,
   getBoardAliasForOutput,
+  getBoardCapableOutputs,
   reorderVisibleOutputIds,
   getDefaultDisplayOutputs,
-  getDisplayOutputsByType,
   getEnabledDisplayOutputs,
+  getDisplayOutputBrowserSourceHomePath,
+  getDisplayOutputFullscreenHomePath,
+  getDisplayOutputScreenPath,
+  getDisplayOutputsByType,
   getLegacyPresentationKey,
   getPullOutputs,
   getPushOutputs,
@@ -16,6 +20,7 @@ import {
   isPushOutputType,
   normalizeDisplayOutputSource,
   normalizeDisplayOutputs,
+  resolveBoardTakeoverOutputId,
   resolveOutputForScreen,
   sanitizeDisplayOutputName,
   serializeDisplayOutputs,
@@ -128,6 +133,105 @@ describe("pull output sources", () => {
     ).toBe("youth");
     expect(getBoardAliasForOutput(output({ type: "board" }))).toBe("");
     expect(getBoardAliasForOutput(output({ type: "projector" }))).toBe("");
+  });
+});
+
+describe("board takeover target", () => {
+  it("lists only enabled projector and monitor outputs", () => {
+    const outputs = normalizeDisplayOutputs([
+      { id: "projector", type: "projector", name: "Main", order: 0 },
+      {
+        id: "monitor",
+        type: "monitor",
+        name: "Stage",
+        order: 1,
+        enabled: false,
+      },
+      { id: "stream", type: "stream", name: "Stream", order: 2 },
+      { id: "out_lobby", type: "monitor", name: "Lobby", order: 3 },
+    ]);
+    expect(getBoardCapableOutputs(outputs).map((o) => o.id)).toEqual([
+      "projector",
+      "out_lobby",
+    ]);
+  });
+
+  it("prefers a live board display, then the configured target, then monitor", () => {
+    const outputs = normalizeDisplayOutputs([
+      {
+        id: "projector",
+        type: "projector",
+        name: "Main",
+        order: 0,
+        isBoardTakeoverTarget: true,
+      },
+      { id: "monitor", type: "monitor", name: "Stage", order: 1 },
+    ]);
+    expect(resolveBoardTakeoverOutputId(outputs, "monitor")).toBe("monitor");
+    expect(resolveBoardTakeoverOutputId(outputs)).toBe("projector");
+    expect(
+      resolveBoardTakeoverOutputId(
+        normalizeDisplayOutputs([
+          { id: "projector", type: "projector", name: "Main", order: 0 },
+          { id: "monitor", type: "monitor", name: "Stage", order: 1 },
+        ]),
+      ),
+    ).toBe("monitor");
+  });
+
+  it("keeps only the first takeover flag when several arrive", () => {
+    const result = normalizeDisplayOutputs([
+      {
+        id: "projector",
+        type: "projector",
+        name: "Main",
+        order: 0,
+        isBoardTakeoverTarget: true,
+      },
+      {
+        id: "monitor",
+        type: "monitor",
+        name: "Stage",
+        order: 1,
+        isBoardTakeoverTarget: true,
+      },
+    ]);
+    expect(
+      result.find((o) => o.id === "projector")?.isBoardTakeoverTarget,
+    ).toBe(true);
+    expect(
+      result.find((o) => o.id === "monitor")?.isBoardTakeoverTarget,
+    ).toBeUndefined();
+  });
+
+  it("round-trips the takeover flag through serialize", () => {
+    const outputs = normalizeDisplayOutputs([
+      {
+        id: "projector",
+        type: "projector",
+        name: "Main",
+        order: 0,
+        isBoardTakeoverTarget: true,
+      },
+    ]);
+    expect(normalizeDisplayOutputs(serializeDisplayOutputs(outputs))).toEqual(
+      outputs,
+    );
+  });
+
+  it("drops the takeover flag from stream and other non-host surfaces", () => {
+    const result = normalizeDisplayOutputs([
+      {
+        id: "stream",
+        type: "stream",
+        name: "Stream",
+        order: 0,
+        isBoardTakeoverTarget: true,
+      },
+    ]);
+    expect(
+      result.find((o) => o.id === "stream")?.isBoardTakeoverTarget,
+    ).toBeUndefined();
   });
 });
 
@@ -490,6 +594,37 @@ describe("reordering visible outputs", () => {
   });
 
   it("ignores a drop involving a row that is not listed", () => {
-    expect(reorderVisibleOutputIds(visible, all, "monitor", "credits")).toBeNull();
+    expect(
+      reorderVisibleOutputIds(visible, all, "monitor", "credits"),
+    ).toBeNull();
+  });
+});
+
+describe("display output screen paths", () => {
+  it("builds the shared Configurations screen path for push outputs", () => {
+    expect(
+      getDisplayOutputScreenPath(
+        output({ id: "out_lobby", type: "projector" }),
+      ),
+    ).toBe("/projector-full?output=out_lobby");
+    expect(
+      getDisplayOutputScreenPath(output({ id: "monitor", type: "monitor" })),
+    ).toBe("/monitor?output=monitor");
+  });
+
+  it("keeps Home fullscreen and browser-source paths distinct for projectors", () => {
+    const lobby = output({ id: "out_lobby", type: "projector", name: "Lobby" });
+    expect(getDisplayOutputFullscreenHomePath(lobby)).toBe(
+      "/projector?output=out_lobby",
+    );
+    expect(getDisplayOutputBrowserSourceHomePath(lobby)).toBe(
+      "/projector-full?output=out_lobby",
+    );
+  });
+
+  it("omits pull surfaces from the wrong Home group", () => {
+    const credits = output({ id: "credits", type: "credits", name: "Credits" });
+    expect(getDisplayOutputFullscreenHomePath(credits)).toBeNull();
+    expect(getDisplayOutputBrowserSourceHomePath(credits)).toBe("/credits");
   });
 });

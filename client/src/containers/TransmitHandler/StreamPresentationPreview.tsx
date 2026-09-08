@@ -1,4 +1,4 @@
-import { ComponentProps, memo } from "react";
+import { ComponentProps, memo, type ReactNode } from "react";
 import {
   selectOutputSlot,
   selectResolvedOutputSlot,
@@ -23,6 +23,8 @@ type StreamPresentationPreviewProps = {
   name?: string;
   variant: "default" | "overlayStreamFocus";
   showFocusedStreamControls: boolean;
+  /** Mirror / follower chrome for this display, shown inside the card. */
+  footer?: ReactNode;
 };
 
 const StreamPresentationPreview = memo(
@@ -37,6 +39,7 @@ const StreamPresentationPreview = memo(
     showFocusedStreamControls,
     outputId = "stream",
     name = "Stream",
+    footer,
   }: StreamPresentationPreviewProps) => {
     const info = useSelector(
       (state) => selectResolvedOutputSlot(state, outputId, "stream").info,
@@ -80,6 +83,7 @@ const StreamPresentationPreview = memo(
         streamItemContentBlocked={streamItemContentBlocked}
         previewScale={previewScale}
         fillWidth={fillWidth}
+        footer={footer}
       />
     );
   },

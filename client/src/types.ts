@@ -124,6 +124,8 @@ export type QuickLinkType = {
   id: string;
   action?: "clear";
   displayType?: DisplayType;
+  /** Named display this link belongs to; unset means the built-in for its type. */
+  outputId?: string;
   linkType?: LinkType;
   canDelete: boolean;
 };
@@ -725,6 +727,11 @@ export type PreferencesType = {
   defaultIsMediaExpanded: boolean;
   defaultBibleFontMode: BibleFontMode;
   defaultFreeFormFontMode: OverflowMode;
+  /**
+   * Overlay controller: which push displays receive overlays / board posts.
+   * Empty means every live stream (pre-choice behavior).
+   */
+  overlayTargetOutputIds?: string[];
 };
 
 export type MonitorSettingsType = {

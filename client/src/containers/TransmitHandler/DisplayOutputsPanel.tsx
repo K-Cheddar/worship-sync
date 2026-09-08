@@ -30,6 +30,7 @@ import {
   renameDisplayOutput,
   reorderDisplayOutputs,
   selectDisplayOutputs,
+  setBoardTakeoverOutputId,
   setDisplayOutputEnabled,
   setDisplayOutputSettings,
 } from "../../store/displayOutputsSlice";
@@ -41,9 +42,12 @@ import {
   DisplayOutputType,
   PUSH_OUTPUT_TYPES,
   PushOutputType,
+  getBoardCapableOutputs,
+  getDisplayOutputScreenPath,
   isBuiltInOutputId,
   isPushOutputType,
   reorderVisibleOutputIds,
+  resolveBoardTakeoverOutputId,
 } from "../../utils/displayOutputs";
 import { writeDisplayOutputs } from "../../utils/displayOutputsWriter";
 import { listDisplayDevices } from "../../api/auth";
@@ -57,15 +61,7 @@ import {
 } from "../../utils/displaySettings";
 
 /** Route a screen opens to render a given output. */
-const getScreenPath = (output: DisplayOutput) => {
-  const base =
-    output.type === "projector"
-      ? "/projector-full"
-      : output.type === "monitor"
-        ? "/monitor"
-        : "/stream";
-  return `${base}?output=${output.id}`;
-};
+const getScreenPath = getDisplayOutputScreenPath;
 
 
 const SETTING_SAVE_ERROR =
@@ -111,6 +107,15 @@ const DisplayOutputsPanel = () => {
   // hiding the row would make disabling a display a one-way trip.
   const pushOutputs = useMemo(
     () => outputs.filter((output) => isPushOutputType(output.type)),
+    [outputs],
+  );
+
+  const boardCapableOutputs = useMemo(
+    () => getBoardCapableOutputs(outputs),
+    [outputs],
+  );
+  const boardTakeoverOutputId = useMemo(
+    () => resolveBoardTakeoverOutputId(outputs),
     [outputs],
   );
 
@@ -449,6 +454,30 @@ const DisplayOutputsPanel = () => {
         disabled={!isRegistryLoaded}
         aria-busy={!isRegistryLoaded}
       >
+        {boardCapableOutputs.length > 1 && (
+          <div className="rounded-md border border-white/12 bg-black/20 p-3">
+            <Select
+              className="w-full max-w-xs"
+              label="Discussion board display"
+              value={boardTakeoverOutputId}
+              options={boardCapableOutputs.map((output) => ({
+                value: output.id,
+                label: output.name,
+              }))}
+              onChange={(value) =>
+                void applyAndPersist(
+                  setBoardTakeoverOutputId(value),
+                  "Couldn't update the discussion board display. Check your connection and try again.",
+                )
+              }
+            />
+            <p className="mt-2 text-xs text-gray-300">
+              The discussion board toggle on the controller puts the board on
+              this screen.
+            </p>
+          </div>
+        )}
+
         <DndContext onDragEnd={handleDragEnd} sensors={sensors}>
           <SortableContext items={pushOutputIds}>
             <ul className="flex flex-col gap-2">

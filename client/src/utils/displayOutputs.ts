@@ -84,6 +84,13 @@ export type DisplayOutput = {
    * override any field; see `resolveDisplaySettings`.
    */
   settings?: DisplaySettings;
+  /**
+   * Church-configured target for the discussion-board takeover toggle on the
+   * controller. Setup lives on the Displays page, not the live transmit tile.
+   * At most one board-capable output should carry this; when none does, the
+   * toggle falls back to the built-in monitor.
+   */
+  isBoardTakeoverTarget?: boolean;
 };
 
 export const isPushOutputType = (
@@ -229,6 +236,36 @@ export const getBoardAliasForOutput = (output: DisplayOutput) =>
 export const supportsBoardTakeover = (type: DisplayOutputType) =>
   type === "projector" || type === "monitor";
 
+/** Enabled full-frame displays that can host a discussion-board takeover. */
+export const getBoardCapableOutputs = (outputs: DisplayOutput[]) =>
+  outputs.filter(
+    (output) => output.enabled && supportsBoardTakeover(output.type),
+  );
+
+/**
+ * Which display the discussion-board toggle should target.
+ *
+ * A board already live on a screen wins so the control always describes what is
+ * up. Otherwise use the Displays-page preference, then the built-in monitor,
+ * then the first capable display.
+ */
+export const resolveBoardTakeoverOutputId = (
+  outputs: DisplayOutput[],
+  liveOutputId = "",
+): string => {
+  const capable = getBoardCapableOutputs(outputs);
+  if (liveOutputId && capable.some((output) => output.id === liveOutputId)) {
+    return liveOutputId;
+  }
+  const preferred = capable.find((output) => output.isBoardTakeoverTarget);
+  if (preferred) return preferred.id;
+  return (
+    capable.find((output) => output.id === "monitor")?.id ??
+    capable[0]?.id ??
+    ""
+  );
+};
+
 /**
  * Sequence of output ids after dragging one visible row onto another.
  *
@@ -289,6 +326,8 @@ export const normalizeDisplayOutputs = (raw: unknown): DisplayOutput[] => {
     const order = Number(candidate.order);
     const source = normalizeDisplayOutputSource(candidate.source, type);
     const settings = normalizeDisplaySettings(candidate.settings, type);
+    const isBoardTakeoverTarget =
+      supportsBoardTakeover(type) && candidate.isBoardTakeoverTarget === true;
     byId.set(id, {
       id,
       type,
@@ -298,6 +337,7 @@ export const normalizeDisplayOutputs = (raw: unknown): DisplayOutput[] => {
       enabled: candidate.enabled !== false,
       ...(source ? { source } : {}),
       ...(settings ? { settings } : {}),
+      ...(isBoardTakeoverTarget ? { isBoardTakeoverTarget: true } : {}),
     });
   }
 
@@ -339,6 +379,14 @@ export const normalizeDisplayOutputs = (raw: unknown): DisplayOutput[] => {
   const sorted = Array.from(byId.values()).sort(
     (a, b) => a.order - b.order || a.name.localeCompare(b.name),
   );
+  // At most one takeover target. Corrupt or concurrent writes can leave several
+  // flags; keep the first in display order so every controller agrees.
+  let sawBoardTakeoverTarget = false;
+  for (const output of sorted) {
+    if (!output.isBoardTakeoverTarget) continue;
+    if (sawBoardTakeoverTarget) delete output.isBoardTakeoverTarget;
+    else sawBoardTakeoverTarget = true;
+  }
   return withContiguousOrder(sorted);
 };
 
@@ -350,17 +398,75 @@ export const serializeDisplayOutputs = (
   outputs: DisplayOutput[],
 ): Record<string, DisplayOutput> =>
   outputs.reduce<Record<string, DisplayOutput>>((acc, output) => {
-    const { source, settings, ...rest } = output;
+    const { source, settings, isBoardTakeoverTarget, ...rest } = output;
     acc[output.id] = {
       ...rest,
       ...(source ? { source } : {}),
       ...(settings ? { settings } : {}),
+      ...(isBoardTakeoverTarget ? { isBoardTakeoverTarget: true } : {}),
     };
     return acc;
   }, {});
 
 export const getEnabledDisplayOutputs = (outputs: DisplayOutput[]) =>
   outputs.filter((output) => output.enabled);
+
+/**
+ * Canonical screen path used when opening or sharing one display output
+ * (Configurations → Displays, Electron open, copy link).
+ *
+ * Push surfaces include `?output=` so named projectors/monitors/streams resolve
+ * to the right presentation slot. Pull surfaces keep their dedicated routes.
+ */
+export const getDisplayOutputScreenPath = (output: DisplayOutput): string => {
+  if (output.type === "projector") {
+    return `/projector-full?output=${encodeURIComponent(output.id)}`;
+  }
+  if (output.type === "monitor") {
+    return `/monitor?output=${encodeURIComponent(output.id)}`;
+  }
+  if (output.type === "stream") {
+    return `/stream?output=${encodeURIComponent(output.id)}`;
+  }
+  if (output.type === "credits") return "/credits";
+  if (output.type === "stream-info") return "/stream-info";
+  return "/boards/display";
+};
+
+/**
+ * Home "Fullscreen in the browser" entry for room-facing screens.
+ * Projectors use `/projector` (click-to-fullscreen) rather than `/projector-full`.
+ */
+export const getDisplayOutputFullscreenHomePath = (
+  output: DisplayOutput,
+): string | null => {
+  if (output.type === "monitor") {
+    return `/monitor?output=${encodeURIComponent(output.id)}`;
+  }
+  if (output.type === "projector") {
+    return `/projector?output=${encodeURIComponent(output.id)}`;
+  }
+  if (output.type === "board") return "/boards/display";
+  return null;
+};
+
+/**
+ * Home "Browser sources (streaming)" entry for OBS / vMix style capture.
+ * Projectors appear again here as `/projector-full` for a fixed 1920×1080 page.
+ */
+export const getDisplayOutputBrowserSourceHomePath = (
+  output: DisplayOutput,
+): string | null => {
+  if (output.type === "stream") {
+    return `/stream?output=${encodeURIComponent(output.id)}`;
+  }
+  if (output.type === "stream-info") return "/stream-info";
+  if (output.type === "credits") return "/credits";
+  if (output.type === "projector") {
+    return `/projector-full?output=${encodeURIComponent(output.id)}`;
+  }
+  return null;
+};
 
 export const getDisplayOutputsByType = (
   outputs: DisplayOutput[],
