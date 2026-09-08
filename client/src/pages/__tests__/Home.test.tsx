@@ -73,10 +73,10 @@ const render = (ui: ReactElement) => {
   const wrap = (node: ReactElement) => (
     <Provider store={store}>{node}</Provider>
   );
-  const result = rtlRender(wrap(ui));
+  const view = rtlRender(wrap(ui));
   return {
-    ...result,
-    rerender: (node: ReactElement) => result.rerender(wrap(node)),
+    ...view,
+    rerender: (node: ReactElement) => view.rerender(wrap(node)),
   };
 };
 
