@@ -78,18 +78,7 @@ describe("useElectronWindows", () => {
     await act(async () => {
       await result.current.openWindow("projector");
     });
-    expect(window.electronAPI?.openWindow).toHaveBeenCalledWith(
-      "projector",
-      undefined,
-    );
-
-    await act(async () => {
-      await result.current.openWindow("out_lobby", "monitor");
-    });
-    expect(window.electronAPI?.openWindow).toHaveBeenCalledWith(
-      "out_lobby",
-      "monitor",
-    );
+    expect(window.electronAPI?.openWindow).toHaveBeenCalledWith("projector", undefined);
 
     await act(async () => {
       await result.current.moveWindowToDisplay("monitor", 2);
@@ -110,7 +99,7 @@ describe("useElectronWindows", () => {
 
     await waitFor(() =>
       expect(window.electronAPI?.getWindowStates).toHaveBeenCalledTimes(
-        initialRefreshCalls + 4
+        initialRefreshCalls + 3
       )
     );
   });
@@ -123,10 +112,7 @@ describe("useElectronWindows", () => {
     await act(async () => {
       await result.current.openWindow("board");
     });
-    expect(window.electronAPI?.openWindow).toHaveBeenCalledWith(
-      "board",
-      undefined,
-    );
+    expect(window.electronAPI?.openWindow).toHaveBeenCalledWith("board", undefined);
 
     await act(async () => {
       await result.current.closeWindow("board");

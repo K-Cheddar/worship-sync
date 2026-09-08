@@ -41,8 +41,7 @@ export const useHideProjectorCursor = (enabled = true) => {
     if (!style) {
       style = document.createElement("style");
       style.id = HIDE_PROJECTOR_CURSOR_STYLE_ID;
-      style.textContent =
-        "*, *::before, *::after { cursor: none !important; }";
+      style.textContent = "*, *::before, *::after { cursor: none !important; }";
       document.head.appendChild(style);
     }
 

@@ -54,11 +54,24 @@ describe("WindowManager", () => {
           label: "Side Display",
         },
       ],
+      // Window state is keyed by window key so any display output can have one.
       windowStates: {
-        projector: { displayId: 1, width: 1280, height: 720, isFullScreen: true },
-        monitor: { displayId: 1, width: 1280, height: 720, isFullScreen: false },
-        projectorOpen: false,
-        monitorOpen: true,
+        displays: {
+          projector: {
+            displayId: 1,
+            width: 1280,
+            height: 720,
+            isFullScreen: true,
+            isOpen: false,
+          },
+          monitor: {
+            displayId: 1,
+            width: 1280,
+            height: 720,
+            isFullScreen: false,
+            isOpen: true,
+          },
+        },
       },
       refreshDisplays,
       refreshWindowStates,
@@ -88,12 +101,14 @@ describe("WindowManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Bring to Front" }));
     expect(focusWindow).toHaveBeenCalledWith("monitor");
 
-    const sideDisplayRadios = screen.getAllByLabelText("Side Display (1920x1080):");
+    const sideDisplayRadios = screen.getAllByLabelText(
+      "Side Display (1920x1080):",
+    );
     expect(sideDisplayRadios).toHaveLength(2);
     fireEvent.click(sideDisplayRadios[1]);
 
     await waitFor(() =>
-      expect(moveWindowToDisplay).toHaveBeenCalledWith("monitor", 2)
+      expect(moveWindowToDisplay).toHaveBeenCalledWith("monitor", 2),
     );
   });
 });
