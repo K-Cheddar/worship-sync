@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
+import { MemoryRouter } from "react-router-dom";
 import { configureStore } from "@reduxjs/toolkit";
 import ProjectorFull from "../ProjectorFull";
 import {
@@ -60,9 +61,11 @@ describe("ProjectorFull page", () => {
     });
 
     render(
-      <Provider store={store}>
-        <ProjectorFull />
-      </Provider>,
+      <MemoryRouter>
+        <Provider store={store}>
+          <ProjectorFull />
+        </Provider>
+      </MemoryRouter>,
     );
 
     const stage = screen.getByTestId("projector-full-display-window");

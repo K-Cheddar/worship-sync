@@ -568,7 +568,12 @@ test("new schedules seed microphone defaults from their positions", async (t) =>
     context,
     body: {
       microphones: [
-        { id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" },
+        {
+          id: "mic-lead",
+          name: "Lead vocal",
+          type: "Handheld",
+          color: "#22d3ee",
+        },
       ],
       audiences: [],
     },
@@ -600,10 +605,9 @@ test("new schedules seed microphone defaults from their positions", async (t) =>
   });
 
   assert.equal(schedule.statusCode, 200);
-  assert.deepEqual(
-    schedule.payload.schedule.microphoneAssignments,
-    { [occurrenceId]: { [`${positionId}::0`]: ["mic-lead"] } },
-  );
+  assert.deepEqual(schedule.payload.schedule.microphoneAssignments, {
+    [occurrenceId]: { [`${positionId}::0`]: ["mic-lead"] },
+  });
 });
 
 test("concurrent microphone slot saves retain both changes", async (t) => {
@@ -623,7 +627,12 @@ test("concurrent microphone slot saves retain both changes", async (t) => {
     context,
     body: {
       microphones: [
-        { id: "mic-lead", name: "Lead vocal", type: "Handheld", color: "#22d3ee" },
+        {
+          id: "mic-lead",
+          name: "Lead vocal",
+          type: "Handheld",
+          color: "#22d3ee",
+        },
         { id: "mic-keys", name: "Keys", type: "Handheld", color: "#f59e0b" },
       ],
       audiences: [],
@@ -685,25 +694,30 @@ test("concurrent microphone slot saves retain both changes", async (t) => {
     }),
   ]);
 
-  assert.equal(saves.every((save) => save.statusCode === 200), true);
+  assert.equal(
+    saves.every((save) => save.statusCode === 200),
+    true,
+  );
   assert.ok(
-    saves.some((save) =>
-      Object.keys(save.payload.schedule.microphoneAssignments[occurrenceId] || {}).length === 2,
+    saves.some(
+      (save) =>
+        Object.keys(
+          save.payload.schedule.microphoneAssignments[occurrenceId] || {},
+        ).length === 2,
     ),
   );
   const savedWithBothSlots = saves.find(
     (save) =>
-      Object.keys(save.payload.schedule.microphoneAssignments[occurrenceId] || {}).length === 2,
+      Object.keys(
+        save.payload.schedule.microphoneAssignments[occurrenceId] || {},
+      ).length === 2,
   );
-  assert.deepEqual(
-    savedWithBothSlots.payload.schedule.microphoneAssignments,
-    {
-      [occurrenceId]: {
-        [`${leadPositionId}::0`]: ["mic-lead"],
-        [`${keysPositionId}::0`]: ["mic-keys"],
-      },
+  assert.deepEqual(savedWithBothSlots.payload.schedule.microphoneAssignments, {
+    [occurrenceId]: {
+      [`${leadPositionId}::0`]: ["mic-lead"],
+      [`${keysPositionId}::0`]: ["mic-keys"],
     },
-  );
+  });
 });
 
 test("a position's qualification area must belong to the same team", async (t) => {
@@ -1290,22 +1304,25 @@ test("schedule assignments support schedule-only guests without exposing contact
   });
   const scheduleId = scheduleRes.payload.schedule.scheduleId;
 
-  const assigned = await callHandler(authHandlers.updateTeamScheduleAssignment, {
-    context,
-    params: { scheduleId },
-    body: {
-      serviceId: occurrenceId,
-      positionSlotKey: `${positionIds.Camera}::0`,
-      memberId: null,
-      serviceDate: "2026-08-16",
-      guest: {
-        name: "Jordan Avery",
-        email: "jordan@example.com",
-        phone: "555-0100",
-        note: "Visiting camera operator",
+  const assigned = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionIds.Camera}::0`,
+        memberId: null,
+        serviceDate: "2026-08-16",
+        guest: {
+          name: "Jordan Avery",
+          email: "jordan@example.com",
+          phone: "555-0100",
+          note: "Visiting camera operator",
+        },
       },
     },
-  });
+  );
   assert.equal(assigned.statusCode, 200);
   const guest = assigned.payload.schedule.guests[0];
   assert.match(guest.guestId, /^scheduleGuest_/);
@@ -1359,16 +1376,19 @@ test("schedule assignments support schedule-only guests without exposing contact
   assert.equal(legacyUpdate.statusCode, 200);
   assert.equal(legacyUpdate.payload.schedule.guests[0].guestId, guest.guestId);
 
-  const duplicate = await callHandler(authHandlers.updateTeamScheduleAssignment, {
-    context,
-    params: { scheduleId },
-    body: {
-      serviceId: occurrenceId,
-      positionSlotKey: `${positionIds.Slides}::0`,
-      memberId: guest.guestId,
-      serviceDate: "2026-08-16",
+  const duplicate = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionIds.Slides}::0`,
+        memberId: guest.guestId,
+        serviceDate: "2026-08-16",
+      },
     },
-  });
+  );
   assert.equal(duplicate.statusCode, 400);
   assert.match(duplicate.payload.errorMessage, /one position per service/i);
 
@@ -1388,8 +1408,14 @@ test("schedule assignments support schedule-only guests without exposing contact
     { memberId: guest.guestId, name: "Jordan", guest: true },
   );
   assert.equal("guests" in publicSchedule.payload.schedule, false);
-  assert.equal(JSON.stringify(publicSchedule.payload).includes("jordan@example.com"), false);
-  assert.equal(JSON.stringify(publicSchedule.payload).includes("555-0100"), false);
+  assert.equal(
+    JSON.stringify(publicSchedule.payload).includes("jordan@example.com"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(publicSchedule.payload).includes("555-0100"),
+    false,
+  );
 });
 
 test("schedule assignments require confirmation for cross-team service conflicts", async (t) => {
@@ -2410,34 +2436,28 @@ test("legacy schedule occurrences use service requirements for slot validation",
   );
   assert.equal(slotZero.statusCode, 200);
 
-  const slotOne = await callHandler(
-    authHandlers.updateTeamScheduleAssignment,
-    {
-      context,
-      params: { scheduleId },
-      body: {
-        serviceId: occurrenceId,
-        positionSlotKey: `${cameraId}::1`,
-        memberId: memberIds.Ben,
-        serviceDate: "2026-08-09",
-      },
+  const slotOne = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${cameraId}::1`,
+      memberId: memberIds.Ben,
+      serviceDate: "2026-08-09",
     },
-  );
+  });
   assert.equal(slotOne.statusCode, 200);
 
-  const slotTwo = await callHandler(
-    authHandlers.updateTeamScheduleAssignment,
-    {
-      context,
-      params: { scheduleId },
-      body: {
-        serviceId: occurrenceId,
-        positionSlotKey: `${cameraId}::2`,
-        memberId: memberIds.Ada,
-        serviceDate: "2026-08-09",
-      },
+  const slotTwo = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${cameraId}::2`,
+      memberId: memberIds.Ada,
+      serviceDate: "2026-08-09",
     },
-  );
+  });
   assert.equal(slotTwo.statusCode, 400);
   assert.match(slotTwo.payload.errorMessage, /add this position/i);
 });
@@ -2727,8 +2747,9 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     [directorId, cameraId].sort(),
   );
   assert.equal(
-    publicRes.payload.positions.find((position) => position.positionId === directorId)
-      .icon,
+    publicRes.payload.positions.find(
+      (position) => position.positionId === directorId,
+    ).icon,
     "video",
   );
 
@@ -3206,10 +3227,13 @@ test("member privacy and serving preferences are validated and birth dates are a
   );
   assert.equal(preservedOptionalFields.statusCode, 200);
   assert.equal(preservedOptionalFields.payload.member.title, "Dr.");
-  assert.deepEqual(preservedOptionalFields.payload.member.recurringAvailability, {
-    weeksOfMonth: [4],
-    includeLastWeekOfMonth: false,
-  });
+  assert.deepEqual(
+    preservedOptionalFields.payload.member.recurringAvailability,
+    {
+      weeksOfMonth: [4],
+      includeLastWeekOfMonth: false,
+    },
+  );
 
   const adult = await callHandler(authHandlers.createTeamRosterMember, {
     context,
@@ -3832,7 +3856,11 @@ test("linking intake replaces blockouts within the form period", async (t) => {
         positions: ["Vocal"],
         blockoutDates: [
           { startDate: "2026-08-25", endDate: "2026-09-05", notes: "Vacation" },
-          { startDate: "2026-09-01", endDate: "2026-09-30", notes: "Old intake" },
+          {
+            startDate: "2026-09-01",
+            endDate: "2026-09-30",
+            notes: "Old intake",
+          },
           { startDate: "2026-10-04", endDate: "2026-10-08", notes: "Holiday" },
         ],
       },
@@ -3864,9 +3892,7 @@ test("linking intake replaces blockouts within the form period", async (t) => {
         lastName: "Lee",
         email: "sam.lee@example.com",
         positionIds: [worship.positionIds.Vocal],
-        blockoutRanges: [
-          { startDate: "2026-09-05", endDate: "2026-09-26" },
-        ],
+        blockoutRanges: [{ startDate: "2026-09-05", endDate: "2026-09-26" }],
       },
     },
     submitRes,
@@ -3891,7 +3917,11 @@ test("linking intake replaces blockouts within the form period", async (t) => {
   // period remain intact.
   assert.deepEqual(applyRes.payload.member.blockoutDates, [
     { startDate: "2026-08-25", endDate: "2026-08-31", notes: "Vacation" },
-    { startDate: "2026-09-05", endDate: "2026-09-26", notes: "From intake form" },
+    {
+      startDate: "2026-09-05",
+      endDate: "2026-09-26",
+      notes: "From intake form",
+    },
     { startDate: "2026-10-04", endDate: "2026-10-08", notes: "Holiday" },
   ]);
 
@@ -6133,13 +6163,16 @@ test("my blockout dates bounds upcoming entries without counting expired ones", 
   assert.equal(accepted.statusCode, 200);
   assert.equal(accepted.payload.member.blockoutDates.length, 300);
 
-  const tooManyUpcoming = await callHandler(authHandlers.updateMyBlockoutDates, {
-    context,
-    body: {
-      expectedUpdatedAt: await currentMemberStamp(context),
-      blockoutDates: entries(101, 1),
+  const tooManyUpcoming = await callHandler(
+    authHandlers.updateMyBlockoutDates,
+    {
+      context,
+      body: {
+        expectedUpdatedAt: await currentMemberStamp(context),
+        blockoutDates: entries(101, 1),
+      },
     },
-  });
+  );
   assert.equal(tooManyUpcoming.statusCode, 400);
   assert.match(
     tooManyUpcoming.payload.errorMessage,
@@ -6336,11 +6369,21 @@ test("schedule-only access cannot retain teams or services permissions", async (
   assert.equal(narrowedBootstrap.payload.permissions.services, "none");
 });
 
+/** YYYY-MM-DD that stays ahead of `fromDate` in blockout conflict recording. */
+const calendarDaysFromToday = (days) => {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
 const seedAssignedSchedule = async (
   context,
   suffix,
-  { link = true, cameraSlots = 1 } = {},
+  { link = true, cameraSlots = 1, serviceDate } = {},
 ) => {
+  // Default two weeks out so blockout-conflict tests still see an upcoming
+  // service after the fixture calendar day rolls past "today".
+  const date = serviceDate || calendarDaysFromToday(14);
   const media = await seedTeam(context, {
     teamName: `Media ${suffix}`,
     positions: [{ name: "Camera", icon: "Camera" }],
@@ -6362,22 +6405,22 @@ const seedAssignedSchedule = async (
       params: { memberId },
     });
   }
-  const occurrenceId = `svc-${suffix}@2026-09-06`;
+  const occurrenceId = `svc-${suffix}@${date}`;
   const schedule = await callHandler(authHandlers.createTeamSchedule, {
     context,
     body: {
       name: "Respond schedule",
       teamId: media.teamId,
       serviceIds: [`svc-${suffix}`],
-      startDate: "2026-09-06",
-      endDate: "2026-09-06",
+      startDate: date,
+      endDate: date,
       occurrences: [
         {
           occurrenceId,
           serviceId: `svc-${suffix}`,
           serviceIds: [`svc-${suffix}`],
           name: "Sunday Gathering",
-          startsAt: "2026-09-06T14:00:00.000Z",
+          startsAt: `${date}T14:00:00.000Z`,
           positionRequirements: [
             { positionId: media.positionIds.Camera, count: cameraSlots },
           ],
@@ -6392,7 +6435,14 @@ const seedAssignedSchedule = async (
     params: { scheduleId },
     body: { serviceId: occurrenceId, positionSlotKey: cellKey, memberId },
   });
-  return { memberId, scheduleId, occurrenceId, cellKey, media };
+  return {
+    memberId,
+    scheduleId,
+    occurrenceId,
+    cellKey,
+    media,
+    serviceDate: date,
+  };
 };
 
 test("responding records the answer and leaves the assignment in place", async (t) => {
@@ -6867,10 +6917,7 @@ test("sending reports who could not be reached instead of skipping quietly", asy
 test("sending skips someone who muted schedule assignments", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_muted");
-  const { memberId, scheduleId } = await seedAssignedSchedule(
-    context,
-    "muted",
-  );
+  const { memberId, scheduleId } = await seedAssignedSchedule(context, "muted");
   // Link the roster member to the calling account, then mute the category.
   await callHandler(authHandlers.linkTeamRosterMember, {
     context,
@@ -7146,14 +7193,14 @@ const readScheduleRow = async (context, scheduleId) => {
 test("blocking out a date you are scheduled for tells the owner", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("blockout_conflict");
-  const { memberId, scheduleId, occurrenceId, cellKey } =
+  const { memberId, scheduleId, occurrenceId, cellKey, serviceDate } =
     await seedAssignedSchedule(context, "blockconflict");
 
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
       expectedUpdatedAt: await currentMemberStamp(context),
-      blockoutDates: [{ startDate: "2026-09-06", endDate: "2026-09-06" }],
+      blockoutDates: [{ startDate: serviceDate, endDate: serviceDate }],
     },
   });
   assert.equal(res.statusCode, 200);
@@ -7182,14 +7229,19 @@ test("blocking out a date you are scheduled for tells the owner", async (t) => {
 test("blocking out a date you do not serve notifies nobody", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("blockout_clear");
-  const { scheduleId } = await seedAssignedSchedule(context, "blockclear");
+  const { scheduleId, serviceDate } = await seedAssignedSchedule(
+    context,
+    "blockclear",
+  );
+  // A week after the only service on this schedule.
+  const otherDate = calendarDaysFromToday(21);
+  assert.notEqual(otherDate, serviceDate);
 
   await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
       expectedUpdatedAt: await currentMemberStamp(context),
-      // A week after the only service on this schedule.
-      blockoutDates: [{ startDate: "2026-09-13", endDate: "2026-09-13" }],
+      blockoutDates: [{ startDate: otherDate, endDate: otherDate }],
     },
   });
 
@@ -7201,12 +7253,18 @@ test("blocking out a date you do not serve notifies nobody", async (t) => {
 test("re-saving the same blockout does not re-notify", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("blockout_resave");
-  const { scheduleId } = await seedAssignedSchedule(context, "blockresave");
-  const away = [{ startDate: "2026-09-06", endDate: "2026-09-06" }];
+  const { scheduleId, serviceDate } = await seedAssignedSchedule(
+    context,
+    "blockresave",
+  );
+  const away = [{ startDate: serviceDate, endDate: serviceDate }];
 
   await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
-    body: { expectedUpdatedAt: await currentMemberStamp(context), blockoutDates: away },
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: away,
+    },
   });
   const first = await readScheduleRow(context, scheduleId);
   const firstBlockedAt = Object.values(first.pendingBlockoutConflicts)[0]
@@ -7251,7 +7309,9 @@ test("a second blockout adds to the pending map instead of replacing it", async 
     context,
     params: { memberId },
   });
-  const occurrences = ["2026-09-06", "2026-09-13"].map((date) => ({
+  const firstDate = calendarDaysFromToday(14);
+  const secondDate = calendarDaysFromToday(21);
+  const occurrences = [firstDate, secondDate].map((date) => ({
     occurrenceId: `svc-acc@${date}`,
     serviceId: "svc-acc",
     serviceIds: ["svc-acc"],
@@ -7265,8 +7325,8 @@ test("a second blockout adds to the pending map instead of replacing it", async 
       name: "Accumulate schedule",
       teamId: media.teamId,
       serviceIds: ["svc-acc"],
-      startDate: "2026-09-06",
-      endDate: "2026-09-13",
+      startDate: firstDate,
+      endDate: secondDate,
       occurrences,
     },
   });
@@ -7283,7 +7343,7 @@ test("a second blockout adds to the pending map instead of replacing it", async 
     });
   }
 
-  const away = [{ startDate: "2026-09-06", endDate: "2026-09-06" }];
+  const away = [{ startDate: firstDate, endDate: firstDate }];
   await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
     body: {
@@ -7295,7 +7355,7 @@ test("a second blockout adds to the pending map instead of replacing it", async 
     context,
     body: {
       expectedUpdatedAt: await currentMemberStamp(context),
-      blockoutDates: [...away, { startDate: "2026-09-13", endDate: "2026-09-13" }],
+      blockoutDates: [...away, { startDate: secondDate, endDate: secondDate }],
     },
   });
 
@@ -7306,7 +7366,7 @@ test("a second blockout adds to the pending map instead of replacing it", async 
     Object.values(saved.pendingBlockoutConflicts)
       .map((entry) => entry.occurrenceId)
       .sort(),
-    ["svc-acc@2026-09-06", "svc-acc@2026-09-13"],
+    [`svc-acc@${firstDate}`, `svc-acc@${secondDate}`].sort(),
   );
 });
 

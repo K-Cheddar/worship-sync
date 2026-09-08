@@ -76,6 +76,9 @@ const BirthDateField = ({
             min={1}
             max={31}
             placeholder="Day"
+            // Keep a cleared day empty on blur so a month-only draft stays
+            // partial until submit validation, instead of coercing to min=1.
+            allowEmptyOnBlur
             value={draft.day ? String(draft.day) : ""}
             onChange={(day) => update("day", String(day))}
             required={required}

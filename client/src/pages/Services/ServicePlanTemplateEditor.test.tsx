@@ -259,15 +259,20 @@ describe("ServicePlanTemplateEditor", () => {
       "Audience",
     );
 
-    await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
-      timeout: 2_500,
-    });
-    const [, payload] = mockSaveServicePlanTemplate.mock.calls.at(-1) ?? [];
-    expect(payload?.sections[0].elements[0].assignees[0]).toMatchObject({
-      name: "Audience",
-      microphoneIds: ["mic-orange"],
-    });
+    // Attaching the mic already saves once; wait for the debounced name commit
+    // rather than the first call, or this assertion races under suite load.
+    await waitFor(
+      () => {
+        const [, payload] = mockSaveServicePlanTemplate.mock.calls.at(-1) ?? [];
+        expect(payload?.sections[0].elements[0].assignees[0]).toMatchObject({
+          name: "Audience",
+          microphoneIds: ["mic-orange"],
+        });
+      },
+      { timeout: 2_500 },
+    );
   });
+
 
   it("offers notes but not songs or scripture on an item", async () => {
     const user = userEvent.setup();

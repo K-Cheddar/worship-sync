@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import Monitor from "../Monitor";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -16,6 +17,9 @@ const onValueCallbacks = new Map<string, (snapshot: any) => void>();
 const onValueErrorCallbacks = new Map<string, (error: unknown) => void>();
 let fullscreenPresentationProps: any = null;
 let monitorBoardViewProps: any = null;
+
+const renderMonitor = (ui: React.ReactElement) =>
+  render(<MemoryRouter>{ui}</MemoryRouter>);
 
 const refMock = jest.fn(
   (_db: unknown, path: string) =>
@@ -136,7 +140,7 @@ describe("Monitor page", () => {
   });
 
   it("subscribes to monitor settings and dispatches the current monitor settings actions", async () => {
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider
         value={
           {
@@ -185,7 +189,7 @@ describe("Monitor page", () => {
   });
 
   it("keeps support for legacy monitor settings payloads without showNextSlide", async () => {
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider
         value={
           {
@@ -236,7 +240,7 @@ describe("Monitor page", () => {
   });
 
   it("does not subscribe to monitor settings until shared data is ready", () => {
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider
         value={
           {
@@ -256,7 +260,7 @@ describe("Monitor page", () => {
   });
 
   it("re-attaches the monitor settings listener after a permission_denied error", async () => {
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider
         value={
           {
@@ -286,7 +290,7 @@ describe("Monitor page", () => {
   });
 
   it("passes current and previous monitor presentation info into FullscreenPresentation", () => {
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider value={{} as any}>
         <Monitor />
       </GlobalInfoContext.Provider>
@@ -309,7 +313,7 @@ describe("Monitor page", () => {
   it("renders the discussion board view (not the presentation) when board mode is on", () => {
     mockState.presentation.outputs.monitor.boardAliasId = "board-alias-1";
 
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider value={{} as any}>
         <Monitor />
       </GlobalInfoContext.Provider>
@@ -321,7 +325,7 @@ describe("Monitor page", () => {
   });
 
   it("renders the presentation (not the board) when board mode is off", () => {
-    render(
+    renderMonitor(
       <GlobalInfoContext.Provider value={{} as any}>
         <Monitor />
       </GlobalInfoContext.Provider>

@@ -49,6 +49,7 @@ const loadStoreWithPresentationSync = (
   let timersSliceModule: any;
   let presentationSyncErrorBusModule: any;
   const setMock = jest.fn();
+  const updateMock = jest.fn();
   const runTransactionMock = jest.fn(
     async (_path: unknown, update: (current: unknown) => unknown) => {
       const value = update([]);
@@ -86,6 +87,7 @@ const loadStoreWithPresentationSync = (
       ref: refMock,
       runTransaction: runTransactionMock,
       set: setMock,
+      update: updateMock,
       get: jest.fn(),
     }));
 
@@ -112,6 +114,7 @@ const loadStoreWithPresentationSync = (
       presentationSyncErrorBusModule.registerPresentationSyncErrorHandler,
     globalFireDbInfo,
     setMock,
+    updateMock,
     refMock,
     runTransactionMock,
   };
@@ -1690,7 +1693,9 @@ describe("store module", () => {
     const timerState = store
       .getState()
       .timers.timers.find((timer: any) => timer.id === "timer-1");
-    const monitorInfo = toLegacyPresentationShape(store.getState().presentation).monitorInfo;
+    const monitorInfo = toLegacyPresentationShape(
+      store.getState().presentation,
+    ).monitorInfo;
     expect(timerState).toEqual(
       expect.objectContaining({
         remainingTime: 0,
@@ -2462,7 +2467,7 @@ describe("store module", () => {
       store,
       writePresentationSnapshotToFirebase,
       presentationSlice,
-      setMock,
+      updateMock,
       refMock,
     } = loadStoreWithPresentationSync();
 
@@ -2497,7 +2502,7 @@ describe("store module", () => {
       "firebase-db",
       "churches/church-main/data/presentation",
     );
-    expect(setMock).toHaveBeenCalledWith(
+    expect(updateMock).toHaveBeenCalledWith(
       "churches/church-main/data/presentation",
       expect.objectContaining({
         projectorInfo: expect.objectContaining({
@@ -2529,11 +2534,11 @@ describe("store module", () => {
   });
 
   it("pushes a presentation snapshot after a local projector update", async () => {
-    const { store, presentationSlice, setMock } =
+    const { store, presentationSlice, updateMock } =
       loadStoreWithPresentationSync();
 
     store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
-    setMock.mockClear();
+    updateMock.mockClear();
 
     store.dispatch(
       presentationSlice.actions.updateProjector(
@@ -2545,8 +2550,8 @@ describe("store module", () => {
 
     await waitForListenerDelay();
 
-    expect(setMock).toHaveBeenCalledTimes(1);
-    expect(setMock.mock.calls[0][1]).toEqual(
+    expect(updateMock).toHaveBeenCalledWith(
+      "churches/church-main/data/presentation",
       expect.objectContaining({
         projectorInfo: expect.objectContaining({ name: "Live Projector" }),
       }),
@@ -2554,7 +2559,7 @@ describe("store module", () => {
   });
 
   it("pushes the current stream snapshot when stream transmission turns on", async () => {
-    const { store, presentationSlice, setMock } =
+    const { store, presentationSlice, updateMock } =
       loadStoreWithPresentationSync();
 
     store.dispatch(
@@ -2564,14 +2569,14 @@ describe("store module", () => {
         }),
       ),
     );
-    setMock.mockClear();
+    updateMock.mockClear();
 
     store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
 
     await waitForListenerDelay();
 
-    expect(setMock).toHaveBeenCalledTimes(1);
-    expect(setMock.mock.calls[0][1]).toEqual(
+    expect(updateMock).toHaveBeenCalledWith(
+      "churches/church-main/data/presentation",
       expect.objectContaining({
         streamInfo: expect.objectContaining({ name: "Remote Stream Snapshot" }),
       }),
@@ -2588,7 +2593,7 @@ describe("store module", () => {
       presentationSlice,
       registerPresentationSyncErrorHandler,
       globalFireDbInfo,
-      setMock,
+      updateMock,
     } = loadStoreWithPresentationSync({ realtimeConnected: false });
     const deliveryErrorHandler = jest.fn();
     registerPresentationSyncErrorHandler(deliveryErrorHandler);
@@ -2605,7 +2610,7 @@ describe("store module", () => {
 
     await waitForListenerDelay();
 
-    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
     expect(setItemSpy).toHaveBeenCalledWith(
       "stream_participantOverlayInfo",
       expect.stringContaining("Queued speaker"),
@@ -2614,7 +2619,7 @@ describe("store module", () => {
     globalFireDbInfo.isConnected = true;
     await waitForListenerDelay(50);
 
-    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "[firebase diagnostic]",
       expect.stringContaining('"event":"presentation_sync_write_unavailable"'),
@@ -2625,7 +2630,7 @@ describe("store module", () => {
   });
 
   it("does not publish unrelated pre-auth presentation state after hydration", async () => {
-    const { store, presentationSlice, globalFireDbInfo, setMock } =
+    const { store, presentationSlice, globalFireDbInfo, updateMock } =
       loadStoreWithPresentationSync({ firebaseReady: false });
 
     store.dispatch(
@@ -2640,7 +2645,7 @@ describe("store module", () => {
     globalFireDbInfo.db = "firebase-db";
     await waitForListenerDelay(50);
 
-    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it("reports but does not retry a rejected overlay write", async () => {
@@ -2651,15 +2656,15 @@ describe("store module", () => {
       store,
       presentationSlice,
       registerPresentationSyncErrorHandler,
-      setMock,
+      updateMock,
     } = loadStoreWithPresentationSync();
     const deliveryErrorHandler = jest.fn();
     registerPresentationSyncErrorHandler(deliveryErrorHandler);
 
     store.dispatch(presentationSlice.actions.setTransmitToAll(true));
     await waitForListenerDelay();
-    setMock.mockClear();
-    setMock
+    updateMock.mockClear();
+    updateMock
       .mockRejectedValueOnce({ code: "PERMISSION_DENIED" })
       .mockResolvedValueOnce(undefined);
 
@@ -2673,7 +2678,7 @@ describe("store module", () => {
 
     await waitForListenerDelay(220);
 
-    expect(setMock).toHaveBeenCalledTimes(1);
+    expect(updateMock).toHaveBeenCalledTimes(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "[firebase diagnostic]",
       expect.stringContaining('"event":"firebase_operation_failed"'),
@@ -2688,7 +2693,7 @@ describe("store module", () => {
       store,
       writePresentationSnapshotToFirebase,
       presentationSlice,
-      setMock,
+      updateMock,
     } = loadStoreWithPresentationSync({ canWriteSharedData: false });
 
     store.dispatch(
@@ -2701,7 +2706,7 @@ describe("store module", () => {
 
     await writePresentationSnapshotToFirebase(store.getState());
 
-    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it("applies only newer remote projector updates", async () => {
@@ -2722,9 +2727,10 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(toLegacyPresentationShape(store.getState().presentation).projectorInfo.name).toBe(
-      "Existing Projector",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .name,
+    ).toBe("Existing Projector");
 
     store.dispatch({
       type: "debouncedUpdateProjector",
@@ -2733,9 +2739,10 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(toLegacyPresentationShape(store.getState().presentation).projectorInfo.name).toBe(
-      "New Projector",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo
+        .name,
+    ).toBe("New Projector");
   });
 
   it("applies only newer remote monitor updates", async () => {
@@ -2758,9 +2765,9 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.name).toBe(
-      "Existing Monitor",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).monitorInfo.name,
+    ).toBe("Existing Monitor");
 
     store.dispatch({
       type: "debouncedUpdateMonitor",
@@ -2770,10 +2777,13 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.name).toBe("New Monitor");
-    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.nextSlide).toEqual(
-      createScreenSlide("monitor-next-new", "next-new"),
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).monitorInfo.name,
+    ).toBe("New Monitor");
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).monitorInfo
+        .nextSlide,
+    ).toEqual(createScreenSlide("monitor-next-new", "next-new"));
   });
 
   it("applies only newer remote stream updates", async () => {
@@ -2794,9 +2804,9 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(toLegacyPresentationShape(store.getState().presentation).streamInfo.name).toBe(
-      "Existing Stream",
-    );
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.name,
+    ).toBe("Existing Stream");
 
     store.dispatch({
       type: "debouncedUpdateStream",
@@ -2805,7 +2815,9 @@ describe("store module", () => {
       }),
     });
     await waitForListenerDelay();
-    expect(toLegacyPresentationShape(store.getState().presentation).streamInfo.name).toBe("New Stream");
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.name,
+    ).toBe("New Stream");
   });
 
   it("applies remote service-time updates to shared redux state", async () => {
@@ -2865,10 +2877,13 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const bible = toLegacyPresentationShape(store.getState().presentation).streamInfo.bibleDisplayInfo;
+    const bible = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.bibleDisplayInfo;
     expect(bible?.title).toBe("John 3:16");
     expect(bible?.text).toBe("For God so loved");
-    expect(toLegacyPresentationShape(store.getState().presentation).streamInfo.type).toBe("bible");
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).streamInfo.type,
+    ).toBe("bible");
   });
 
   it("ignores a live remote participant overlay when the local slot only has a newer empty placeholder", async () => {
@@ -2898,8 +2913,8 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const participant =
-      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo;
+    const participant = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.participantOverlayInfo;
     expect(participant?.name ?? "").toBe("");
     expect(participant?.title ?? "").toBe("");
     expect(participant?.time).toBe(1001);
@@ -2921,8 +2936,8 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const participant =
-      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo;
+    const participant = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p1");
     expect(participant?.name).toBe("Alex");
     expect(participant?.title).toBe("Host");
@@ -2953,8 +2968,8 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
 
-    const participant =
-      toLegacyPresentationShape(store.getState().presentation).streamInfo.participantOverlayInfo;
+    const participant = toLegacyPresentationShape(store.getState().presentation)
+      .streamInfo.participantOverlayInfo;
     expect(participant?.id).toBe("p-new");
     expect(participant?.name).toBe("New Host");
     expect(participant?.time).toBe(999);

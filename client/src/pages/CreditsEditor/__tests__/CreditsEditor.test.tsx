@@ -6,6 +6,7 @@ import CreditsEditor from "../CreditsEditor";
 import { configureStore } from "@reduxjs/toolkit";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ToastProvider } from "../../../context/toastContext";
 import { creditsSlice } from "../../../store/creditsSlice";
 import { itemListsSlice } from "../../../store/itemListsSlice";
 import { overlaysSlice } from "../../../store/overlaysSlice";
@@ -168,7 +169,9 @@ describe("CreditsEditor", () => {
           >["value"]}
         >
           <GlobalInfoContext.Provider value={mockGlobalContext}>
-            <BrowserRouter>{component}</BrowserRouter>
+            <ToastProvider>
+              <BrowserRouter>{component}</BrowserRouter>
+            </ToastProvider>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
       </Provider>,
@@ -228,9 +231,11 @@ describe("CreditsEditor", () => {
           >["value"]}
         >
           <GlobalInfoContext.Provider value={mockGlobalContext}>
-            <BrowserRouter>
-              <CreditsEditor />
-            </BrowserRouter>
+            <ToastProvider>
+              <BrowserRouter>
+                <CreditsEditor />
+              </BrowserRouter>
+            </ToastProvider>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
       </Provider>,
@@ -262,9 +267,11 @@ describe("CreditsEditor", () => {
             >["value"]}
           >
             <GlobalInfoContext.Provider value={mockGlobalContext}>
-              <BrowserRouter>
-                <CreditsEditor />
-              </BrowserRouter>
+              <ToastProvider>
+                <BrowserRouter>
+                  <CreditsEditor />
+                </BrowserRouter>
+              </ToastProvider>
             </GlobalInfoContext.Provider>
           </ControllerInfoContext.Provider>
         </Provider>,
@@ -368,9 +375,11 @@ describe("CreditsEditor", () => {
           >["value"]}
         >
           <GlobalInfoContext.Provider value={mockGlobalContext}>
-            <BrowserRouter>
-              <CreditsEditor />
-            </BrowserRouter>
+            <ToastProvider>
+              <BrowserRouter>
+                <CreditsEditor />
+              </BrowserRouter>
+            </ToastProvider>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
       </Provider>,

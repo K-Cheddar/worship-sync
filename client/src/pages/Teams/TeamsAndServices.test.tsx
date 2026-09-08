@@ -33,6 +33,7 @@ import type {
   TeamsBootstrap,
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
+import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -322,13 +323,29 @@ const waitForScheduleGrid = async () => {
   await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8000 });
 };
 
+/**
+ * Open a schedule assignment cell. Occupied slots start on an actions menu
+ * (Find a sub / Add shadow / More options / …); pass `occupiedAction` to enter
+ * the member picker, or leave it unset to default to "Find a sub".
+ */
 const openVocalSlot = async (
   user: ReturnType<typeof userEvent.setup>,
   cellName: RegExp = /Sunday Vocal/i,
+  occupiedAction:
+    | "Find a sub"
+    | "Add shadow"
+    | "Add reverse shadow"
+    | "More options" = "Find a sub",
 ) => {
   await waitForScheduleGrid();
   const cell = await screen.findByRole("button", { name: cellName }, { timeout: 3000 });
   await user.click(cell);
+  const occupiedMenuItem = screen.queryByRole("menuitem", {
+    name: new RegExp(`^${occupiedAction}$`, "i"),
+  });
+  if (occupiedMenuItem) {
+    await user.click(occupiedMenuItem);
+  }
   return screen.findByRole("combobox", { name: /Sunday Vocal/i }, { timeout: 3000 });
 };
 
@@ -337,9 +354,10 @@ describe("Teams", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     originalMatchMedia = window.matchMedia;
-    // Desktop default: max-width queries do not match, so the schedule grid
-    // (not the board) is the layout under test.
+    // Prefer the table layout in these tests so cell roles and grid assertions
+    // stay stable; production defaults to the card ("board") layout.
     window.matchMedia = makeMatchMedia(false);
+    writeTeamScheduleAdminLayout("grid");
     mockState = makeMockState();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(baseBootstrap),
@@ -591,7 +609,7 @@ describe("Teams", () => {
     });
 
     const vocalMicrophone = await screen.findByRole("combobox", {
-      name: /Microphone for Unassigned \(Vocal\)/i,
+      name: /Microphone for Empty \(Vocal\)/i,
     });
     await user.click(vocalMicrophone);
     await user.click(await screen.findByRole("option", { name: /^Lead vocal$/i }));
@@ -604,7 +622,7 @@ describe("Teams", () => {
     });
     expect(
       screen.getByRole("combobox", {
-        name: /Microphone for Unassigned \(Vocal\)/i,
+        name: /Microphone for Empty \(Vocal\)/i,
       }),
     ).toHaveTextContent("Lead vocal");
 
@@ -1535,7 +1553,9 @@ describe("Teams", () => {
     );
 
     renderTeams();
-    await openVocalSlot(user, /Sunday Vocal, Avery/i);
+    // More options keeps shadow-only candidates in the list (Find a sub would
+    // hide them). Recommendations still exclude anyone who cannot take the seat.
+    await openVocalSlot(user, /Sunday Vocal, Avery/i, "More options");
 
     const recommendedGroup = await screen.findByRole("group", {
       name: /^Recommended$/i,
@@ -1964,10 +1984,8 @@ describe("Teams", () => {
     } satisfies UpdateTeamScheduleAssignmentResponse);
 
     renderTeams();
-    await openVocalSlot(user);
-    await user.clear(screen.getByRole("combobox", { name: /Sunday Vocal/i }));
+    await openVocalSlot(user, /Sunday Vocal/i, "Add shadow");
     await user.click(screen.getByRole("option", { name: /^Jordan$/i }));
-    await user.click(screen.getByRole("menuitem", { name: /^Add as shadow$/i }));
 
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith(

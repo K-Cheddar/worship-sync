@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
+import { MemoryRouter } from "react-router-dom";
 import { configureStore } from "@reduxjs/toolkit";
 import Stream from "../Stream";
 import {
@@ -68,9 +69,11 @@ const createStore = () => {
 describe("Stream page", () => {
   it("wires stream presentation state into DisplayWindow including overlays", () => {
     render(
-      <Provider store={createStore()}>
-        <Stream />
-      </Provider>,
+      <MemoryRouter>
+        <Provider store={createStore()}>
+          <Stream />
+        </Provider>
+      </MemoryRouter>,
     );
 
     const stage = screen.getByTestId("stream-display-window");
