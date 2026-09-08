@@ -192,7 +192,16 @@ const HomeLinkCard = ({ title, description, to, icon }: CardLink) => {
     // Let the shared Button preserve its existing behavior for modified and
     // non-primary clicks. A zero-delay handoff gives the pending state one
     // paint before the lazy route replaces the home screen.
-    if (event.defaultPrevented || event.button !== 0) return;
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
 
     event.preventDefault();
     setIsPending(true);
