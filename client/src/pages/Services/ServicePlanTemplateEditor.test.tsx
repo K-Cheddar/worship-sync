@@ -150,6 +150,17 @@ const renderEditor = ({
   return { ...utils, onBack, onSaved, onDeleted };
 };
 
+/** One change event — character-by-character typing is too slow under coverage. */
+const setTemplateName = (value: string) => {
+  fireEvent.change(screen.getByLabelText(/^Template name/i), {
+    target: { value },
+  });
+};
+
+/** Autosave debounce (1.2s) plus coverage load needs headroom past Jest's 5s default. */
+const AUTOSAVE_TEST_TIMEOUT_MS = 15_000;
+const AUTOSAVE_WAIT_MS = 5_000;
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockSaveServicePlanTemplate.mockResolvedValue({
@@ -436,12 +447,10 @@ describe("ServicePlanTemplateEditor", () => {
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Edit details" }));
 
-    const nameField = screen.getByLabelText(/^Template name/i);
-    await user.clear(nameField);
-    await user.type(nameField, "Communion Sabbath");
+    setTemplateName("Communion Sabbath");
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
-      timeout: 2_500,
+      timeout: AUTOSAVE_WAIT_MS,
     });
     expect(mockSaveServicePlanTemplate).toHaveBeenLastCalledWith("church-1", {
       name: "Communion Sabbath",
@@ -451,9 +460,13 @@ describe("ServicePlanTemplateEditor", () => {
       // Sent so the server rejects rather than overwrites a concurrent edit.
       baseRevision: 4,
     });
-    await waitFor(() => expect(onSaved).toHaveBeenCalled());
-    expect(await screen.findByText("Synced")).toBeInTheDocument();
-  });
+    await waitFor(() => expect(onSaved).toHaveBeenCalled(), {
+      timeout: AUTOSAVE_WAIT_MS,
+    });
+    expect(
+      await screen.findByText("Synced", undefined, { timeout: AUTOSAVE_WAIT_MS }),
+    ).toBeInTheDocument();
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
 
   // This editor deliberately never feeds `onSaved` back into its `template`
   // prop, so that prop keeps reporting revision 4 forever. Autosave has to keep
@@ -469,20 +482,21 @@ describe("ServicePlanTemplateEditor", () => {
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Edit details" }));
 
-    const nameField = screen.getByLabelText(/^Template name/i);
-    await user.type(nameField, " A");
+    setTemplateName("Standard Sabbath A");
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalledTimes(1), {
-      timeout: 2_500,
+      timeout: AUTOSAVE_WAIT_MS,
     });
-    expect(await screen.findByText("Synced")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Synced", undefined, { timeout: AUTOSAVE_WAIT_MS }),
+    ).toBeInTheDocument();
 
-    await user.type(nameField, "B");
+    setTemplateName("Standard Sabbath AB");
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalledTimes(2), {
-      timeout: 2_500,
+      timeout: AUTOSAVE_WAIT_MS,
     });
     expect(mockSaveServicePlanTemplate.mock.calls[0][1].baseRevision).toBe(4);
     expect(mockSaveServicePlanTemplate.mock.calls[1][1].baseRevision).toBe(5);
-  });
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
 
   it("drops the service scope when the template is moved to Any service", async () => {
     const user = userEvent.setup();
@@ -494,12 +508,12 @@ describe("ServicePlanTemplateEditor", () => {
     await user.click(await screen.findByRole("option", { name: "Any service" }));
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
-      timeout: 2_500,
+      timeout: AUTOSAVE_WAIT_MS,
     });
     expect(
       mockSaveServicePlanTemplate.mock.calls.at(-1)?.[1],
     ).not.toHaveProperty("serviceId");
-  });
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
 
   it("holds off creating anything until the new template has a name", async () => {
     const user = userEvent.setup();
@@ -513,16 +527,16 @@ describe("ServicePlanTemplateEditor", () => {
     expect(mockSaveServicePlanTemplate).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Edit details" }));
-    await user.type(screen.getByLabelText(/^Template name/i), "Fresh start");
+    setTemplateName("Fresh start");
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
-      timeout: 2_500,
+      timeout: AUTOSAVE_WAIT_MS,
     });
     // Created, not overwritten — there is no id to send yet.
     expect(
       mockSaveServicePlanTemplate.mock.calls.at(-1)?.[1],
     ).not.toHaveProperty("templateId");
-  });
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
 
   it("targets the id the server minted once a new template has been created", async () => {
     const user = userEvent.setup();
@@ -530,22 +544,25 @@ describe("ServicePlanTemplateEditor", () => {
 
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Edit details" }));
-    await user.type(screen.getByLabelText(/^Template name/i), "Fresh start");
+    setTemplateName("Fresh start");
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
-      timeout: 2_500,
+      timeout: AUTOSAVE_WAIT_MS,
     });
+    expect(
+      await screen.findByText("Synced", undefined, { timeout: AUTOSAVE_WAIT_MS }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Add section" }));
 
     await waitFor(
       () => expect(mockSaveServicePlanTemplate.mock.calls.length).toBeGreaterThan(1),
-      { timeout: 2_500 },
+      { timeout: AUTOSAVE_WAIT_MS },
     );
     expect(mockSaveServicePlanTemplate.mock.calls.at(-1)?.[1].templateId).toBe(
       "template-1",
     );
-  });
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
 
   it("surfaces a concurrent edit as a conflict instead of overwriting it", async () => {
     const user = userEvent.setup();
@@ -558,11 +575,11 @@ describe("ServicePlanTemplateEditor", () => {
     renderEditor();
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Edit details" }));
-    await user.type(screen.getByLabelText(/^Template name/i), "!");
+    setTemplateName("Standard Sabbath!");
 
     expect(
       await screen.findByText("Template changed elsewhere", undefined, {
-        timeout: 2_500,
+        timeout: AUTOSAVE_WAIT_MS,
       }),
     ).toBeInTheDocument();
 
@@ -573,8 +590,10 @@ describe("ServicePlanTemplateEditor", () => {
     expect(screen.getByLabelText(/^Template name/i)).toHaveValue(
       "Their version",
     );
-    expect(await screen.findByText("Synced")).toBeInTheDocument();
-  });
+    expect(
+      await screen.findByText("Synced", undefined, { timeout: AUTOSAVE_WAIT_MS }),
+    ).toBeInTheDocument();
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
 
   it("leaves without prompting, since edits are already saving", async () => {
     const user = userEvent.setup();
