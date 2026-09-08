@@ -30,6 +30,9 @@ import Sidebar from "../components/Sidebar/Sidebar";
 
 const AccountPeoplePage = lazy(() => import("./Account/pages/AccountPeoplePage"));
 const AccountSetupPage = lazy(() => import("./Account/pages/AccountSetupPage"));
+const AccountControllersPage = lazy(
+  () => import("./Account/pages/AccountControllersPage"),
+);
 const AccountBrandingPage = lazy(
   () => import("./Account/pages/AccountBrandingPage"),
 );
@@ -91,7 +94,7 @@ const AccountSectionLayout = () => {
 const AccountShell = () => {
   const location = useLocation();
   const { loginState, churchName } = useContext(GlobalInfoContext) || {};
-  const { canManage, toolbarLogoUrl } = useAccountPage();
+  const { canManage, toolbarLogos } = useAccountPage();
   const isLoggedIn = loginState === "success";
   const churchNameTrimmed = churchName?.trim() ?? "";
   const activeSection = useMemo(
@@ -107,7 +110,7 @@ const AccountShell = () => {
       mobileTitle={activeSection.label}
       centerTitleOnMobile
       icon={Building2}
-      toolbarLogoUrl={toolbarLogoUrl}
+      toolbarLogos={toolbarLogos}
       churchName={churchNameTrimmed}
       scrollbarWidth={scrollbarWidth}
       toolbarActions={
@@ -130,29 +133,29 @@ const AccountShell = () => {
           : undefined
       }
     >
-        <section
+      <section
+        className={cn(
+          "mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40",
+          canManage && "lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]",
+        )}
+      >
+        {canManage ? (
+          <>
+            <Sidebar className="hidden lg:block lg:border-r">
+              <AccountSidebarNav />
+            </Sidebar>
+          </>
+        ) : null}
+
+        <div
           className={cn(
-            "mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40",
-            canManage && "lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]",
+            "scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden",
+            activeSection.id === "branding" ? "p-0" : "p-3 sm:p-5",
           )}
         >
-          {canManage ? (
-            <>
-              <Sidebar className="hidden lg:block lg:border-r">
-                <AccountSidebarNav />
-              </Sidebar>
-            </>
-          ) : null}
-
-          <div
-            className={cn(
-              "scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden",
-              activeSection.id === "branding" ? "p-0" : "p-3 sm:p-5",
-            )}
-          >
-            <Outlet />
-          </div>
-        </section>
+          <Outlet />
+        </div>
+      </section>
     </AppWorkspaceShell>
   );
 };
@@ -182,12 +185,20 @@ const AccountRoutes = () => (
           path={ACCOUNT_SECTIONS[2].routePath}
           element={
             <AccountSectionRoute>
-              <AccountBrandingPage />
+              <AccountControllersPage />
             </AccountSectionRoute>
           }
         />
         <Route
           path={ACCOUNT_SECTIONS[3].routePath}
+          element={
+            <AccountSectionRoute>
+              <AccountBrandingPage />
+            </AccountSectionRoute>
+          }
+        />
+        <Route
+          path={ACCOUNT_SECTIONS[4].routePath}
           element={
             <AccountSectionRoute>
               <AccountIntegrationsPage />

@@ -54,6 +54,17 @@ import {
   findCrossTeamScheduleOccurrenceConflicts,
   formatCrossTeamScheduleConflictWarning,
 } from "./scheduleConflicts";
+import {
+  formatSuggestedScheduleName,
+  getCreateScheduleDefaultRange,
+  getCreateScheduleDefaultServiceIds,
+  resolveScheduleNameForSave,
+} from "./scheduleCreateDefaults";
+import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
+import {
+  buildSectionReturnTo,
+  TEAMS_SECTION_PATHS,
+} from "../teamsReturnNavigation";
 
 const ScheduleEditForm = ({
   draftKey,
@@ -65,10 +76,12 @@ const ScheduleEditForm = ({
   services,
   activeTeams,
   schedules,
+  seedSchedules,
   churchId,
   canEdit,
   onDraftChange,
   onDraftFlush,
+  onDraftClear,
   onScheduleSaved,
   onScheduleRemoved,
   setSelectedScheduleId,
@@ -90,6 +103,9 @@ const ScheduleEditForm = ({
   const [scheduleConflictWarning, setScheduleConflictWarning] = useState("");
   const draftRef = useRef(draft);
   const skipNextPersistRef = useRef(false);
+  // After a successful create we clear the `"new"` draft; skip the unmount flush
+  // so it cannot rewrite the just-cleared key with the saved payload.
+  const skipUnmountFlushRef = useRef(false);
   // The last draft we synced from the schedule/persisted source. If the live
   // draft has diverged from this, the operator has unsaved edits in progress and
   // a remote-driven reset must not clobber them.
@@ -110,9 +126,11 @@ const ScheduleEditForm = ({
     skipNextPersistRef.current = true;
     syncedBaselineRef.current = nextDraft;
     setDraft(nextDraft);
-    // persistedDraft is intentionally omitted; remote draft sync is handled below.
+    // Defaults are read from the render that opened this schedule/draft. Do not
+    // re-seed when create defaults recalculate (schedules sync, team filter
+    // load) or an in-progress edit/create would be wiped.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the active schedule changes
-  }, [defaultRange, defaultServiceIds, defaultTeamId, draftKey, selectedSchedule?.scheduleId]);
+  }, [draftKey, selectedSchedule?.scheduleId]);
 
   useEffect(() => {
     const nextDraft = buildScheduleDraft({
@@ -137,13 +155,8 @@ const ScheduleEditForm = ({
     skipNextPersistRef.current = true;
     syncedBaselineRef.current = nextDraft;
     setDraft(nextDraft);
-  }, [
-    defaultRange,
-    defaultServiceIds,
-    defaultTeamId,
-    persistedDraft,
-    selectedSchedule,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- remote draft/schedule sync only
+  }, [persistedDraft, selectedSchedule]);
 
   useDebouncedEffect(
     () => {
@@ -161,6 +174,7 @@ const ScheduleEditForm = ({
   useEffect(
     () => () => {
       if (!canEdit) return;
+      if (skipUnmountFlushRef.current) return;
       onDraftFlush(draftKey, draftRef.current);
     },
     [canEdit, draftKey, onDraftFlush],
@@ -172,6 +186,32 @@ const ScheduleEditForm = ({
     !selectedSchedule && Object.keys(draft.assignments || {}).length > 0;
   const hasPendingChanges = !scheduleDraftsMatch(draft, syncedBaselineRef.current);
   useTeamsUnsavedChanges(hasPendingChanges);
+
+  const suggestedName = useMemo(
+    () =>
+      formatSuggestedScheduleName(draft.startDate || "", draft.endDate || ""),
+    [draft.endDate, draft.startDate],
+  );
+
+  const applyTeamCreateDefaults = (teamId: string) => {
+    const range = getCreateScheduleDefaultRange({
+      teamId,
+      schedules: seedSchedules,
+    });
+    const serviceIds = getCreateScheduleDefaultServiceIds({
+      teamId,
+      schedules: seedSchedules,
+      services,
+      range,
+    });
+    setDraft((current) => ({
+      ...current,
+      teamId,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      serviceIds,
+    }));
+  };
 
   const draftOccurrences = useMemo(
     () =>
@@ -251,13 +291,27 @@ const ScheduleEditForm = ({
   const saveSchedule = async (allowCrossTeamConflict = false) => {
     if (!canEdit) return;
     const currentDraft = draftRef.current;
-    onDraftFlush(draftKey, currentDraft);
+    const resolvedName = resolveScheduleNameForSave({
+      name: currentDraft.name || "",
+      startDate: currentDraft.startDate || "",
+      endDate: currentDraft.endDate || "",
+    });
+    if (!resolvedName) {
+      showToast("Enter a schedule name or choose a date range.", "error");
+      return;
+    }
+    const draftForSave = { ...currentDraft, name: resolvedName };
+    if (draftForSave.name !== currentDraft.name) {
+      setDraft(draftForSave);
+      draftRef.current = draftForSave;
+    }
+    onDraftFlush(draftKey, draftForSave);
     try {
       const occurrences = generateScheduleOccurrences({
         services,
-        serviceIds: currentDraft.serviceIds,
-        startDate: currentDraft.startDate || "",
-        endDate: currentDraft.endDate || "",
+        serviceIds: draftForSave.serviceIds,
+        startDate: draftForSave.startDate || "",
+        endDate: draftForSave.endDate || "",
       });
       // Creating a schedule (including a copy): remap the draft's assignments
       // onto the freshly generated occurrences by service + chronological index,
@@ -267,17 +321,17 @@ const ScheduleEditForm = ({
       // occurrence-id change when services are combined/un-combined after the fact.
       const assignments = selectedSchedule
         ? rekeyAssignmentsByServiceDate({
-          sourceOccurrences: currentDraft.occurrences || [],
+          sourceOccurrences: draftForSave.occurrences || [],
           targetOccurrences: occurrences,
-          assignments: currentDraft.assignments || {},
+          assignments: draftForSave.assignments || {},
         })
         : remapAssignmentsToOccurrences({
-          sourceOccurrences: currentDraft.occurrences || [],
+          sourceOccurrences: draftForSave.occurrences || [],
           targetOccurrences: occurrences,
-          assignments: currentDraft.assignments || {},
+          assignments: draftForSave.assignments || {},
         });
       const payload = {
-        ...currentDraft,
+        ...draftForSave,
         occurrences,
         assignments,
         ...(selectedSchedule?.microphoneAssignments
@@ -338,12 +392,11 @@ const ScheduleEditForm = ({
         : await createTeamSchedule(churchId, payload);
       if (!selectedSchedule) {
         onScheduleSaved(response.schedule, localScheduleId);
-        // Reset the shared "new" draft so the next New/Copy starts clean instead
-        // of re-opening with this schedule's (or a copy's) leftover values.
-        onDraftFlush(
-          draftKey,
-          buildScheduleDraft({ defaultTeamId, defaultServiceIds, defaultRange }),
-        );
+        // Drop the shared "new" draft so the next New/Copy starts from create
+        // defaults instead of this schedule's leftover values. Skip the unmount
+        // flush so cleanup cannot rewrite the cleared key.
+        skipUnmountFlushRef.current = true;
+        onDraftClear(draftKey);
       } else {
         onScheduleSaved(response.schedule);
       }
@@ -440,14 +493,43 @@ const ScheduleEditForm = ({
               label="Name"
               value={draft.name}
               onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
+              helperText={
+                !selectedSchedule && !draft.name.trim() && suggestedName
+                  ? `Saved as “${suggestedName}” unless you enter a name.`
+                  : undefined
+              }
             />
-            <Select
-              className={inputStackClassName}
-              label="Team"
-              value={draft.teamId}
-              onChange={(teamId) => setDraft((current) => ({ ...current, teamId }))}
-              options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
-            />
+            <div className={inputStackClassName}>
+              <Select
+                label="Team"
+                value={draft.teamId}
+                onChange={(teamId) => {
+                  if (selectedSchedule) {
+                    setDraft((current) => ({ ...current, teamId }));
+                    return;
+                  }
+                  applyTeamCreateDefaults(teamId);
+                }}
+                options={activeTeams.map((team) => ({
+                  label: team.name,
+                  value: team.teamId,
+                }))}
+                disabled={!canEdit || activeTeams.length === 0}
+              />
+              {activeTeams.length === 0 ? (
+                <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                  No teams yet.{" "}
+                  <TeamsCrossSectionLink
+                    to={TEAMS_SECTION_PATHS.groups}
+                    returnTo={buildSectionReturnTo(TEAMS_SECTION_PATHS.schedules)}
+                    className="cursor-pointer"
+                  >
+                    Create a team
+                  </TeamsCrossSectionLink>{" "}
+                  to start scheduling.
+                </p>
+              ) : null}
+            </div>
             <TextArea
               className="lg:col-span-2"
               label="Description"
@@ -504,7 +586,7 @@ const ScheduleEditForm = ({
           hasPendingChanges={hasPendingChanges}
           disabled={
             !canEdit ||
-            !draft.name.trim() ||
+            (!draft.name.trim() && !suggestedName) ||
             !draft.teamId ||
             draft.serviceIds.length === 0 ||
             draftOccurrences.length === 0

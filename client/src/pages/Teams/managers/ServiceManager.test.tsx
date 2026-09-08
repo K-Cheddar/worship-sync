@@ -98,6 +98,27 @@ afterEach(() => {
 });
 
 describe("ServiceManager combined services", () => {
+  it("confirms before discarding unsaved service changes", async () => {
+    const user = userEvent.setup();
+    renderManager([sundayMorning, sundayLate, midweek]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    await user.clear(screen.getByLabelText(/^Name:?$/));
+    await user.type(screen.getByLabelText(/^Name:?$/), "Unsaved Service");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Unsaved Service");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+
+    expect(screen.queryByRole("heading", { name: "Edit service" })).not.toBeInTheDocument();
+  });
+
   it("only offers services that can fall on the same day", async () => {
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);

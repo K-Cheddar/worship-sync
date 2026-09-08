@@ -12,12 +12,12 @@ export const TEAM_SCHEDULE_ADMIN_LAYOUT_STORAGE_KEY =
 export type TeamScheduleAdminLayout = "transpose" | "grid" | "board";
 
 export const ADMIN_SCHEDULE_LAYOUTS: TeamScheduleAdminLayout[] = [
+  "board",
   "transpose",
   "grid",
-  "board",
 ];
 
-const DESKTOP_DEFAULT_LAYOUT: TeamScheduleAdminLayout = "transpose";
+const DESKTOP_DEFAULT_LAYOUT: TeamScheduleAdminLayout = "board";
 const NARROW_DEFAULT_LAYOUT: TeamScheduleAdminLayout = "board";
 const NARROW_SCREEN_QUERY = "(max-width: 1023px)";
 

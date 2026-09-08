@@ -12,6 +12,9 @@ export const AUTH_SIGN_IN_AGAIN_MESSAGE = "Please sign in again.";
 export const AUTH_VERIFY_DEVICE_MESSAGE =
   "Enter the code from your email to continue.";
 
+export const AUTH_EMAIL_CODE_EXPIRED_MESSAGE =
+  "This code has expired. Request a new code to continue.";
+
 /** Desktop browser ↔ app handoff expired or failed. */
 export const AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE =
   "Sign-in timed out. Try again.";
@@ -57,8 +60,11 @@ const FIREBASE_AUTH_MESSAGES: Record<string, string> = {
 const VERIFY_CODE_API_MESSAGES: Record<string, string> = {
   "That code is not valid.":
     "That code does not match. Check the number from your email and try again.",
+  "This code has expired. Request a new code to continue.":
+    AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
+  // Keep recognizing the previous server wording during rollout.
   "This sign-in code has expired. Try signing in again.":
-    AUTH_SIGN_IN_AGAIN_MESSAGE,
+    AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
   "This sign-in code has been locked after too many attempts. Sign in again to get a new code.":
     AUTH_SIGN_IN_AGAIN_MESSAGE,
 };

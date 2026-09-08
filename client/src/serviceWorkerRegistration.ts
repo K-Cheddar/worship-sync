@@ -37,6 +37,27 @@ export type UpdateCheckResult =
   | "restartRequired"
   | "unavailable";
 
+type UpdateReadyListener = (isReady: boolean) => void;
+
+const updateReadyListeners = new Set<UpdateReadyListener>();
+let webUpdateReady = false;
+let controllerChangeListenerRegistered = false;
+
+const setWebUpdateReady = (isReady: boolean) => {
+  if (webUpdateReady === isReady) return;
+  webUpdateReady = isReady;
+  updateReadyListeners.forEach((listener) => listener(isReady));
+};
+
+/** Subscribe to a downloaded web update without activating it. */
+export const subscribeToWebUpdateReady = (
+  listener: UpdateReadyListener,
+): (() => void) => {
+  updateReadyListeners.add(listener);
+  listener(webUpdateReady);
+  return () => updateReadyListeners.delete(listener);
+};
+
 export function reloadPage() {
   window.location.reload();
 }
@@ -48,6 +69,13 @@ export function register(config?: Config) {
   }
 
   if ("serviceWorker" in navigator) {
+    if (!controllerChangeListenerRegistered) {
+      controllerChangeListenerRegistered = true;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        setWebUpdateReady(false);
+      });
+    }
+
     // The URL constructor is available in all browsers that support SW.
     // Use BASE_URL from Vite, which defaults to '/' for root path
     const baseUrl = import.meta.env.BASE_URL || "";
@@ -87,8 +115,8 @@ const VERSION_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Polls /api/version and triggers an immediate SW update check when the
- * server version changes (i.e. a new deploy happened). Much faster than
- * waiting for the periodic SW check interval.
+ * server version changes (i.e. a new deploy happened). The downloaded worker
+ * then waits for an operator-approved refresh.
  */
 function startVersionPolling(registration: ServiceWorkerRegistration) {
   let knownVersion: string | null = null;
@@ -122,6 +150,10 @@ function registerValidSW(
   navigator.serviceWorker
     .register(swUrl, { updateViaCache: "none" })
     .then((registration) => {
+      if (registration.waiting) {
+        setWebUpdateReady(true);
+      }
+
       // Periodically check for new service worker while app is open (skip on localhost)
       if (!isLocalhostEnv) {
         setInterval(() => registration.update(), SW_CHECK_INTERVAL_MS);
@@ -135,9 +167,10 @@ function registerValidSW(
         installingWorker.onstatechange = () => {
           if (installingWorker.state === "installed") {
             if (navigator.serviceWorker.controller) {
-              // New service worker installed (our SW calls skipWaiting(), so it
-              // will activate soon). onUpdate lets the app reload once the new
-              // SW takes control so the page runs the new code.
+              // Keep the downloaded worker waiting until the operator chooses
+              // a safe refresh. The old worker keeps serving the matching
+              // release cache to this active session.
+              setWebUpdateReady(true);
               if (config && config.onUpdate) {
                 config.onUpdate(registration);
               }
@@ -191,27 +224,18 @@ function checkValidServiceWorker(swUrl: string, config?: Config) {
     });
 }
 
-/**
- * Trigger an immediate service worker update check (instead of waiting for the
- * periodic interval). If a new version is found, the SW installs and the app's
- * onUpdate callback in main.tsx will reload the page. Call this when the user
- * explicitly asks to get the latest version (e.g. "Get latest version" button).
- */
 const UPDATE_ACTIVATION_TIMEOUT_MS = 8000;
 
-function waitForControllerChange(
+function waitForWorkerActivation(
+  worker: ServiceWorker,
   timeoutMs: number,
-  onActivated?: () => void,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
 
     const cleanup = () => {
       window.clearTimeout(timeoutId);
-      navigator.serviceWorker.removeEventListener(
-        "controllerchange",
-        handleControllerChange,
-      );
+      worker.removeEventListener("statechange", handleStateChange);
     };
 
     const settle = (value: boolean) => {
@@ -221,50 +245,51 @@ function waitForControllerChange(
       resolve(value);
     };
 
-    const handleControllerChange = () => {
-      onActivated?.();
-      settle(true);
+    const handleStateChange = () => {
+      if (worker.state === "activated") {
+        settle(true);
+      } else if (worker.state === "redundant") {
+        settle(false);
+      }
     };
 
     const timeoutId = window.setTimeout(() => settle(false), timeoutMs);
-
-    navigator.serviceWorker.addEventListener(
-      "controllerchange",
-      handleControllerChange,
-    );
+    worker.addEventListener("statechange", handleStateChange);
+    handleStateChange();
   });
 }
 
-function promptWaitingWorker(
+async function activateWaitingWorker(
   registration: ServiceWorkerRegistration,
-): boolean {
-  if (!registration.waiting) {
-    return false;
-  }
+): Promise<UpdateCheckResult | null> {
+  const worker = registration.waiting;
+  if (!worker) return null;
 
-  registration.waiting.postMessage({ type: "SKIP_WAITING" });
-  return true;
+  worker.postMessage({ type: "SKIP_WAITING" });
+  const activated = await waitForWorkerActivation(
+    worker,
+    UPDATE_ACTIVATION_TIMEOUT_MS,
+  );
+  if (!activated) return "restartRequired";
+
+  setWebUpdateReady(false);
+  reloadPage();
+  return "updated";
 }
 
 /**
  * Trigger an immediate service worker update check (instead of waiting for the
- * periodic interval). If a new version is found, the SW installs and activates
- * right away, then the app reloads once the updated worker takes control.
+ * periodic interval). This is the explicit, operator-approved path that
+ * promotes a waiting worker and reloads the page.
  */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   if (!("serviceWorker" in navigator)) return "unavailable";
   const registration = await navigator.serviceWorker.getRegistration();
   if (!registration) return "unavailable";
 
-  const activationPromise = waitForControllerChange(
-    UPDATE_ACTIVATION_TIMEOUT_MS,
-    () => {
-      reloadPage();
-    },
-  );
-
-  if (promptWaitingWorker(registration)) {
-    return (await activationPromise) ? "updated" : "restartRequired";
+  const readyResult = await activateWaitingWorker(registration);
+  if (readyResult) {
+    return readyResult;
   }
 
   let sawUpdateCandidate = Boolean(registration.installing);
@@ -297,7 +322,6 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
           worker.state === "activating" ||
           worker.state === "activated"
         ) {
-          promptWaitingWorker(registration);
           worker.removeEventListener("statechange", handleStateChange);
           finish(true);
           return;
@@ -323,13 +347,20 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
 
     window.setTimeout(() => {
       finish(false);
-    }, 1500);
+    }, UPDATE_ACTIVATION_TIMEOUT_MS);
   });
 
   await registration.update();
 
-  if (promptWaitingWorker(registration)) {
-    return (await activationPromise) ? "updated" : "restartRequired";
+  const updateResult = await activateWaitingWorker(registration);
+  if (updateResult) {
+    return updateResult;
+  }
+
+  // A completed update check with no installing worker is the common
+  // up-to-date path. Do not make the operator wait for the install timeout.
+  if (!sawUpdateCandidate && !registration.installing) {
+    return "upToDate";
   }
 
   const installDetected = await installPromise;
@@ -337,7 +368,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     return "upToDate";
   }
 
-  return (await activationPromise) ? "updated" : "restartRequired";
+  return (await activateWaitingWorker(registration)) ?? "restartRequired";
 }
 
 export function unregister() {

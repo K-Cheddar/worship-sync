@@ -1,6 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { Provider } from "react-redux";
+import { configureStore } from "@reduxjs/toolkit";
+import type { ReactElement } from "react";
 import Home from "../Home";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -10,6 +13,10 @@ import {
 } from "../../test/mocks";
 import { usePwaInstallPrompt } from "../../hooks/usePwaInstallPrompt";
 import { getAppOs } from "../../utils/platform";
+import { controllerProfilesSlice } from "../../store/controllerProfilesSlice";
+import { displayOutputsSlice } from "../../store/displayOutputsSlice";
+import { getDefaultControllerProfiles } from "../../utils/controllerProfiles";
+import { getDefaultDisplayOutputs } from "../../utils/displayOutputs";
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -42,6 +49,36 @@ jest.mock("../../hooks/usePwaInstallPrompt", () => ({
 const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
 const mockGetAppOs = jest.mocked(getAppOs);
 const originalUserAgent = window.navigator.userAgent;
+
+const createHomeStore = () =>
+  configureStore({
+    reducer: {
+      controllerProfiles: controllerProfilesSlice.reducer,
+      displayOutputs: displayOutputsSlice.reducer,
+    },
+    preloadedState: {
+      controllerProfiles: {
+        list: getDefaultControllerProfiles(),
+        isLoaded: true,
+      },
+      displayOutputs: {
+        list: getDefaultDisplayOutputs(),
+        isLoaded: true,
+      },
+    },
+  });
+
+const render = (ui: ReactElement) => {
+  const store = createHomeStore();
+  const wrap = (node: ReactElement) => (
+    <Provider store={store}>{node}</Provider>
+  );
+  const view = rtlRender(wrap(ui));
+  return {
+    ...view,
+    rerender: (node: ReactElement) => view.rerender(wrap(node)),
+  };
+};
 
 const openHomeHubMenu = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: /open menu/i }));
@@ -102,10 +139,10 @@ describe("Home", () => {
     ).toBeInTheDocument();
 
     expect(
-      screen.getByRole("link", { name: /Presentation Controller/i }),
+      screen.getByRole("link", { name: /^Presentation /i }),
     ).toHaveAttribute("href", "/controller");
     expect(
-      screen.getByRole("link", { name: /Overlay Controller/i }),
+      screen.getByRole("link", { name: /^Overlays /i }),
     ).toHaveAttribute("href", "/overlay-controller");
     expect(
       screen.getByRole("link", { name: /Service Workspace/i }),
@@ -119,6 +156,13 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /^Teams /i }),
     ).toHaveAttribute("href", "/teams-and-services");
+
+    expect(
+      screen.getByRole("link", { name: /Privacy Policy/i }),
+    ).toHaveAttribute("href", "/privacy");
+    expect(
+      screen.getByRole("link", { name: /Terms of Service/i }),
+    ).toHaveAttribute("href", "/terms");
 
     expect(
       screen.getByText(
@@ -154,6 +198,31 @@ describe("Home", () => {
       screen.getByRole("button", { name: /Download again/i }),
     ).toBeInTheDocument();
     openSpy.mockRestore();
+  });
+
+  it("shows a pending state on a home card before navigation completes", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const overlayLink = screen.getByRole("link", {
+      name: /^Overlays /i,
+    });
+    expect(overlayLink).toHaveAttribute("aria-busy", "false");
+
+    await user.click(overlayLink);
+
+    expect(overlayLink).toHaveAttribute("aria-busy", "true");
+    expect(overlayLink).toHaveClass("ring-2", "ring-orange-400/40");
   });
 
   it("offers install app and desktop download from the menu when both are available", async () => {
@@ -225,6 +294,57 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /^Credits Editor / }),
     ).toHaveAttribute("href", "/credits-editor");
+  });
+
+  it("shows an offline demo hub with locked sign-in previews for guests", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ loginState: "guest" }) as any}
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: /Offline demo/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /^Presentation /i }),
+    ).toHaveAttribute("href", "/controller");
+    expect(
+      screen.getByRole("link", { name: /^Overlays /i }),
+    ).toHaveAttribute("href", "/overlay-controller");
+    expect(
+      screen.getByRole("heading", { name: /Available after sign in/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Sign in to show display links/),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Teams and Services\. Sign in required\./i,
+      }),
+    );
+    const signInDialog = screen.getByRole("dialog", {
+      name: /Sign in required/i,
+    });
+    expect(signInDialog).toBeInTheDocument();
+    expect(
+      within(signInDialog).getByText(
+        /Teams and Services needs a church account\. Sign in to continue\./i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(signInDialog).getByRole("link", { name: /^Sign in$/i }),
+    ).toHaveAttribute("href", "/login");
   });
 
   it("hides the personal schedule from shared workstations", () => {
@@ -306,10 +426,10 @@ describe("Home", () => {
     );
 
     expect(
-      screen.getByRole("link", { name: /Presentation Controller/i }),
+      screen.getByRole("link", { name: /^Presentation /i }),
     ).toHaveAttribute("href", "/controller");
     expect(
-      screen.queryByRole("link", { name: /Overlay Controller/i }),
+      screen.queryByRole("link", { name: /^Overlays /i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /^Credits Editor / }),
@@ -331,7 +451,7 @@ describe("Home", () => {
     render(
       <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
-          value={createMockGlobalContext({ loginState: "guest" }) as any}
+          value={createMockGlobalContext({ loginState: "idle" }) as any}
         >
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}

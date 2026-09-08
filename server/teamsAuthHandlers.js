@@ -145,6 +145,25 @@ export const createTeamsAuthHandlers = ({
   // workstation, but only for reading saved Service Plans (no roster PII).
   const requireServicePlansView =
     requireServicePlansViewSession || requireTeamsView;
+  // The in-memory store used by local development and tests has no
+  // transactions. Serialize microphone-map writes there so it retains the
+  // same no-lost-update guarantee as Firestore transactions.
+  const inMemoryMicrophoneSaveQueues = new Map();
+  const enqueueInMemoryMicrophoneSave = (scheduleId, task) => {
+    const previous = inMemoryMicrophoneSaveQueues.get(scheduleId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    inMemoryMicrophoneSaveQueues.set(scheduleId, settled);
+    void settled.finally(() => {
+      if (inMemoryMicrophoneSaveQueues.get(scheduleId) === settled) {
+        inMemoryMicrophoneSaveQueues.delete(scheduleId);
+      }
+    });
+    return run;
+  };
 
   const withTeamsErrorNextStep = (message) => {
     if (/\btry again\b/i.test(message)) {
@@ -1988,6 +2007,54 @@ export const createTeamsAuthHandlers = ({
     return merged;
   };
 
+  const shiftPlainDate = (date, days) => {
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    parsed.setUTCDate(parsed.getUTCDate() + days);
+    return parsed.toISOString().slice(0, 10);
+  };
+
+  /**
+   * An intake response is the member's current answer for the form period.
+   * Replace only that period so older blockouts outside the form remain intact.
+   */
+  const replaceBlockoutDateRangesInPeriod = ({
+    existingRanges,
+    replacementRanges,
+    startDate,
+    endDate,
+  }) => {
+    const preserved = (Array.isArray(existingRanges) ? existingRanges : []).flatMap(
+      (range) => {
+        if (!range?.startDate) return [];
+        const rangeEnd = range.endDate || range.startDate;
+        if (rangeEnd < startDate || range.startDate > endDate) {
+          return [{ ...range, endDate: rangeEnd }];
+        }
+
+        const outside = [];
+        if (range.startDate < startDate) {
+          outside.push({
+            ...range,
+            endDate: shiftPlainDate(startDate, -1),
+          });
+        }
+        if (rangeEnd > endDate) {
+          outside.push({
+            ...range,
+            startDate: shiftPlainDate(endDate, 1),
+            endDate: rangeEnd,
+          });
+        }
+        return outside;
+      },
+    );
+
+    return mergeBlockoutDateRanges([
+      ...preserved,
+      ...(replacementRanges || []),
+    ]);
+  };
+
   const getTeamEntity = async (kind, id) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const trimmedId = String(id || "").trim();
@@ -2438,15 +2505,32 @@ export const createTeamsAuthHandlers = ({
    * for summarized schedules too — so the counts travel with the summary rather
    * than being recomputed from cells the client no longer has.
    */
-  const buildScheduleAssignmentCounts = (assignments) => {
+  const buildScheduleAssignmentCounts = (assignments, occurrences = []) => {
     const byMemberId = {};
     const byPositionId = {};
-    Object.values(assignments || {}).forEach((row) => {
+    const lastAssignmentDateByMemberId = {};
+    const occurrenceDateById = new Map(
+      (Array.isArray(occurrences) ? occurrences : []).flatMap((occurrence) => {
+        const date = String(occurrence?.startsAt || "").slice(0, 10);
+        return occurrence?.occurrenceId && /^\d{4}-\d{2}-\d{2}$/.test(date)
+          ? [[occurrence.occurrenceId, date]]
+          : [];
+      }),
+    );
+    Object.entries(assignments || {}).forEach(([occurrenceId, row]) => {
       if (!row || typeof row !== "object") return;
+      const occurrenceDate = occurrenceDateById.get(occurrenceId);
       Object.entries(row).forEach(([cellKey, cell]) => {
         const memberIds = assignmentCellMemberIds(cell);
         memberIds.forEach((memberId) => {
           byMemberId[memberId] = (byMemberId[memberId] || 0) + 1;
+          if (
+            occurrenceDate &&
+            (!lastAssignmentDateByMemberId[memberId] ||
+              occurrenceDate > lastAssignmentDateByMemberId[memberId])
+          ) {
+            lastAssignmentDateByMemberId[memberId] = occurrenceDate;
+          }
         });
         // Mirrors the client's slot-key format: "<positionId>::<slotIndex>".
         const separatorIndex = String(cellKey).lastIndexOf("::");
@@ -2457,7 +2541,7 @@ export const createTeamsAuthHandlers = ({
         }
       });
     });
-    return { byMemberId, byPositionId };
+    return { byMemberId, byPositionId, lastAssignmentDateByMemberId };
   };
 
   const summarizeTeamSchedule = (schedule) => {
@@ -2471,7 +2555,7 @@ export const createTeamsAuthHandlers = ({
     return {
       ...summary,
       assignmentsOmitted: true,
-      assignmentCounts: buildScheduleAssignmentCounts(assignments),
+      assignmentCounts: buildScheduleAssignmentCounts(assignments, schedule.occurrences),
     };
   };
 
@@ -2950,12 +3034,34 @@ export const createTeamsAuthHandlers = ({
         );
       }
     }
+    const defaultMicrophoneId = normalizeShortText(body?.defaultMicrophoneId, {
+      max: 160,
+    });
+    if (defaultMicrophoneId) {
+      if (!team.usesMicrophoneAssignments) {
+        throw httpError(
+          400,
+          "Enable microphone assignments for this team before setting a default microphone.",
+        );
+      }
+      const church = await getDoc(COLLECTIONS.churches, churchId);
+      const knownMicrophoneIds = new Set(
+        (Array.isArray(church?.servicePlanMicrophones)
+          ? church.servicePlanMicrophones
+          : []
+        ).map((microphone) => String(microphone?.id || "").trim()),
+      );
+      if (!knownMicrophoneIds.has(defaultMicrophoneId)) {
+        throw httpError(400, "Default microphone is not in this church's list.");
+      }
+    }
     return {
       name,
       description: normalizeLongText(body?.description),
       icon: normalizeShortText(body?.icon, { max: 40 }),
       groupId: normalizeShortText(body?.groupId, { max: 160 }) || null,
       qualificationAreaId: qualificationAreaId || null,
+      defaultMicrophoneId: defaultMicrophoneId || null,
       teamId: team.teamId,
     };
   };
@@ -3555,6 +3661,65 @@ export const createTeamsAuthHandlers = ({
       const end = String(range?.endDate || start);
       return start <= serviceDate && serviceDate <= end;
     });
+  };
+
+  /**
+   * A position's default microphone is a starting point for a newly created
+   * schedule. Existing schedule rows are never rewritten: date-specific mic
+   * choices, including deliberate clears, remain the operator's decision.
+   */
+  const applyPositionDefaultMicrophones = async ({ churchId, payload }) => {
+    const team = await assertTeamEntityInChurch("team", payload.teamId, churchId, {
+      label: "Team",
+    });
+    if (!team.usesMicrophoneAssignments) return payload;
+
+    const [positions, church] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamPositions,
+        "positionId",
+        churchId,
+      ),
+      getDoc(COLLECTIONS.churches, churchId),
+    ]);
+    const knownMicrophoneIds = new Set(
+      (Array.isArray(church?.servicePlanMicrophones)
+        ? church.servicePlanMicrophones
+        : []
+      ).map((microphone) => String(microphone?.id || "").trim()),
+    );
+    const defaultsByPositionId = new Map(
+      positions
+        .filter((position) => position.teamId === payload.teamId)
+        .map((position) => [
+          position.positionId,
+          String(position.defaultMicrophoneId || "").trim(),
+        ])
+        .filter(([, microphoneId]) => knownMicrophoneIds.has(microphoneId)),
+    );
+    if (!defaultsByPositionId.size) return payload;
+
+    const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
+      payload.microphoneAssignments,
+    );
+    for (const occurrence of payload.occurrences) {
+      const requirements = await resolveScheduleOccurrenceRequirements({
+        churchId,
+        occurrence,
+      });
+      const row = { ...(microphoneAssignments[occurrence.occurrenceId] || {}) };
+      requirements.forEach((requirement) => {
+        const microphoneId = defaultsByPositionId.get(requirement.positionId);
+        if (!microphoneId) return;
+        const count = Math.max(0, Math.floor(Number(requirement.count) || 0));
+        for (let slot = 0; slot < count; slot += 1) {
+          const slotKey = makeScheduleSlotKey(requirement.positionId, slot);
+          if (!row[slotKey]) row[slotKey] = [microphoneId];
+        }
+      });
+      if (Object.keys(row).length) microphoneAssignments[occurrence.occurrenceId] = row;
+    }
+    return { ...payload, microphoneAssignments };
   };
 
   const getServicePlanKeyForOccurrence = (occurrence) => {
@@ -7609,10 +7774,19 @@ export const createTeamsAuthHandlers = ({
     async createTeamSchedule(req, res) {
       try {
         await assertCsrf(req);
-        const payload = await validateTeamSchedulePayload(
+        let payload = await validateTeamSchedulePayload(
           req.body,
           req.params.churchId,
         );
+        // New schedules without an explicit mic plan start from position
+        // defaults. Copies and intentional client-provided allocations retain
+        // their own per-date choices unchanged.
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, "microphoneAssignments")) {
+          payload = await applyPositionDefaultMicrophones({
+            churchId: req.params.churchId,
+            payload,
+          });
+        }
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,
@@ -8676,6 +8850,19 @@ export const createTeamsAuthHandlers = ({
         };
 
         if (action === "applied") {
+          const intakeForm = await getDoc(
+            COLLECTIONS.teamIntakeForms,
+            submission.formId,
+          );
+          const formBelongsToChurch = Boolean(
+            intakeForm && intakeForm.churchId === req.params.churchId,
+          );
+          const formCollectsBlockouts =
+            formBelongsToChurch &&
+            Boolean(intakeForm.startDate && intakeForm.endDate) &&
+            normalizeTeamIntakeFields(undefined, intakeForm.enabledFields).includes(
+              "blockoutDates",
+            );
           const blockoutDates = mergeBlockoutDateRanges(
             (submission.blockoutRanges || []).map((range) => ({
               startDate: range.startDate,
@@ -8698,12 +8885,8 @@ export const createTeamsAuthHandlers = ({
           // requested positions, plus the teams the form explicitly collects
           // for. An all-teams form (empty teamIds) intentionally adds no extra
           // teams beyond the requested-position ones — we never mass-add.
-          const intakeForm = await getDoc(
-            COLLECTIONS.teamIntakeForms,
-            submission.formId,
-          );
           const formTeamIds =
-            intakeForm && intakeForm.churchId === req.params.churchId
+            formBelongsToChurch
               ? normalizeIdArray(intakeForm.teamIds)
               : [];
           const addedTeamIds = new Set();
@@ -8768,12 +8951,22 @@ export const createTeamsAuthHandlers = ({
             // Latest intake wins for desired positions; eligibility
             // (`positionIds`) is left untouched.
             const nextDesiredPositionIds = normalizeIdArray(desiredPositionIds);
-            // Merge the intake blockouts into the member's existing ones so
-            // repeat submissions and overlapping ranges don't pile up duplicates.
-            const nextBlockoutDates = mergeBlockoutDateRanges([
-              ...(member.blockoutDates || []),
-              ...blockoutDates,
-            ]);
+            // A form's blockout field is authoritative for that form's period;
+            // forms that do not collect blockouts must not clear existing data.
+            // Keep the old merge fallback for orphaned legacy submissions.
+            const nextBlockoutDates = formCollectsBlockouts
+              ? replaceBlockoutDateRangesInPeriod({
+                  existingRanges: member.blockoutDates,
+                  replacementRanges: blockoutDates,
+                  startDate: intakeForm.startDate,
+                  endDate: intakeForm.endDate,
+                })
+              : formBelongsToChurch
+                ? member.blockoutDates || []
+                : mergeBlockoutDateRanges([
+                    ...(member.blockoutDates || []),
+                    ...blockoutDates,
+                  ]);
             // Merge availability per occurrence; the latest submission wins for
             // any occurrence it covers, while older occurrences are preserved.
             const nextServiceAvailability = {
@@ -9058,31 +9251,71 @@ export const createTeamsAuthHandlers = ({
         const microphoneIds = normalizeIdArray(req.body?.microphoneIds)
           .filter((microphoneId) => knownMicrophoneIds.has(microphoneId))
           .slice(0, 12);
-        const microphoneAssignments =
-          normalizeTeamScheduleMicrophoneAssignments(
-            schedule.microphoneAssignments,
-          );
-        const row = { ...(microphoneAssignments[occurrenceId] || {}) };
-        if (microphoneIds.length) row[slotKey] = microphoneIds;
-        else delete row[slotKey];
-        if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
-        else delete microphoneAssignments[occurrenceId];
-        const update = {
-          microphoneAssignments,
-          updatedAt: nowIso(),
-          updatedByUid: admin.user.uid,
+        const applyMicrophoneAssignment = (currentSchedule) => {
+          const microphoneAssignments =
+            normalizeTeamScheduleMicrophoneAssignments(
+              currentSchedule.microphoneAssignments,
+            );
+          const row = { ...(microphoneAssignments[occurrenceId] || {}) };
+          if (microphoneIds.length) row[slotKey] = microphoneIds;
+          else delete row[slotKey];
+          if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
+          else delete microphoneAssignments[occurrenceId];
+          return {
+            microphoneAssignments,
+            updatedAt: nowIso(),
+            updatedByUid: admin.user.uid,
+          };
         };
-        await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
-          merge: true,
-        });
-        const updatedSchedule = { ...schedule, ...update };
+        const db = requireFirestore();
+        let updatedSchedule;
+        if (db) {
+          // Microphone controls can be used simultaneously from another
+          // browser or device. Re-read and replace the map inside a
+          // transaction so a late save cannot restore an older map snapshot.
+          updatedSchedule = await db.runTransaction(async (transaction) => {
+            const scheduleRef = db
+              .collection(COLLECTIONS.teamSchedules)
+              .doc(schedule.scheduleId);
+            const snapshot = await transaction.get(scheduleRef);
+            const currentSchedule = readTransactionTeamEntity(
+              snapshot,
+              "scheduleId",
+              "Schedule",
+              { active: false },
+            );
+            if (currentSchedule.churchId !== churchId) {
+              throw httpError(404, "Schedule not found.");
+            }
+            const update = applyMicrophoneAssignment(currentSchedule);
+            transaction.update(scheduleRef, update);
+            return { ...currentSchedule, ...update };
+          });
+        } else {
+          updatedSchedule = await enqueueInMemoryMicrophoneSave(
+            schedule.scheduleId,
+            async () => {
+              const currentSchedule = await assertTeamEntityInChurch(
+                "schedule",
+                schedule.scheduleId,
+                churchId,
+                { label: "Schedule", active: false },
+              );
+              const update = applyMicrophoneAssignment(currentSchedule);
+              await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
+                merge: true,
+              });
+              return { ...currentSchedule, ...update };
+            },
+          );
+        }
         emitTeamsEvent(churchId, "schedule-updated", {
           schedule: updatedSchedule,
         });
         await emitPublicPlansForScheduleOccurrence({
           churchId,
           occurrence,
-          revision: update.updatedAt,
+          revision: updatedSchedule.updatedAt,
         });
         return res.json({ success: true, schedule: updatedSchedule });
       } catch (error) {

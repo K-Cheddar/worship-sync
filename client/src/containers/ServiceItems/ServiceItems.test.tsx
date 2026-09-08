@@ -80,15 +80,18 @@ jest.mock("./ServiceItem", () => ({
     isActive,
     timer,
     timerText,
+    selectedListIds,
   }: {
     item: { listId: string; name: string; type: string };
     isActive: boolean;
     timer?: { remainingTime?: number };
     timerText?: string;
+    selectedListIds: Set<string>;
   }) => (
     <li
       data-testid={`row-${item.type}`}
       data-active={String(isActive)}
+      data-list-selected={String(selectedListIds.has(item.listId))}
       data-timer-value={timer?.remainingTime ?? ""}
       data-timer-text={timerText ?? ""}
     >
@@ -228,6 +231,51 @@ describe("ServiceItems", () => {
     expect(screen.getByTestId("row-timer")).toHaveAttribute(
       "data-timer-text",
       "",
+    );
+  });
+
+  it("syncs cyan list selection when selectedItemListId changes externally", () => {
+    const { rerender } = render(
+      <ControllerInfoContext.Provider
+        value={{ access: "view", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    mockState = {
+      ...mockState,
+      undoable: {
+        ...mockState.undoable,
+        present: {
+          ...mockState.undoable.present,
+          itemList: {
+            ...mockState.undoable.present.itemList,
+            selectedItemListId: "row-timer",
+          },
+        },
+      },
+    };
+
+    rerender(
+      <ControllerInfoContext.Provider
+        value={{ access: "view", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    expect(screen.getByTestId("row-timer")).toHaveAttribute(
+      "data-list-selected",
+      "true",
+    );
+    expect(screen.getByTestId("row-service-time")).toHaveAttribute(
+      "data-list-selected",
+      "false",
     );
   });
 });

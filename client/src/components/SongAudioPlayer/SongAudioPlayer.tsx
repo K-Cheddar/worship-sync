@@ -41,6 +41,12 @@ const SongAudioPlayer = ({
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState("");
 
+  const hasResolvedAudio = Boolean(audioUrl);
+  // Compact setlist rows stay as a Play chip until playback starts, then expand
+  // so native duration / seek / pause controls are usable on mobile.
+  const showCompactPlayer = compact && hasResolvedAudio;
+  const showPlayButton = !showCompactPlayer;
+
   useEffect(() => {
     setAudioUrl(null);
     setError("");
@@ -89,7 +95,22 @@ const SongAudioPlayer = ({
   };
 
   return (
-    <div className={cn("rounded-md border border-gray-700 bg-gray-800/80 p-2", className)}>
+    <div
+      role={showCompactPlayer ? "group" : undefined}
+      aria-label={
+        showCompactPlayer
+          ? `Reference audio for ${audio.fileName}`
+          : undefined
+      }
+      className={cn(
+        compact
+          ? null
+          : "rounded-md border border-gray-700 bg-gray-800/80 p-2",
+        className,
+        showCompactPlayer &&
+        "w-full min-w-0 basis-full rounded-md border border-gray-700 bg-gray-800/80 p-2.5",
+      )}
+    >
       {showFileDetails ? (
         <div className="mb-2 min-w-0">
           <p className="truncate text-sm text-gray-100">{audio.fileName}</p>
@@ -98,36 +119,44 @@ const SongAudioPlayer = ({
           </p>
         </div>
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="tertiary"
-          className={cn("text-sm", compact && "max-md:min-h-0")}
-          svg={Play}
-          disabled={isLoadingAudio}
-          isLoading={isLoadingAudio}
-          onClick={() => void handlePlay()}
-        >
-          Play
-        </Button>
-        {showDownload ? (
-          <Button
-            type="button"
-            variant="tertiary"
-            className={cn("text-sm", compact && "max-md:min-h-0")}
-            svg={Download}
-            disabled={isDownloading}
-            isLoading={isDownloading}
-            onClick={() => void handleDownload()}
-          >
-            Download
-          </Button>
-        ) : null}
-      </div>
+      {showPlayButton || showDownload ? (
+        <div className="flex flex-wrap gap-2">
+          {showPlayButton ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              className={cn("text-sm", compact && "max-md:min-h-0")}
+              svg={Play}
+              disabled={isLoadingAudio}
+              isLoading={isLoadingAudio}
+              onClick={() => void handlePlay()}
+            >
+              Play
+            </Button>
+          ) : null}
+          {showDownload ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              className={cn("text-sm", compact && "max-md:min-h-0")}
+              svg={Download}
+              disabled={isDownloading}
+              isLoading={isDownloading}
+              onClick={() => void handleDownload()}
+            >
+              Download
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {audioUrl ? (
         <audio
           ref={audioRef}
-          className="mt-2 w-full"
+          className={cn(
+            "w-full",
+            showCompactPlayer ? "h-11" : "mt-2",
+            showPlayButton && hasResolvedAudio && "mt-2",
+          )}
           controls
           preload="metadata"
           src={audioUrl}

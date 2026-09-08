@@ -91,7 +91,7 @@ const DatePicker = ({
         <Label
           htmlFor={fieldId}
           className={cn(
-            "block p-1 text-sm font-semibold text-white",
+            "p-1 text-sm font-semibold",
             hideLabel && "sr-only",
           )}
         >
@@ -115,7 +115,7 @@ const DatePicker = ({
               placeholder={placeholder}
               value={inputValue}
               className={cn(
-                "py-1 pl-2 pr-9 text-sm shadow-none",
+                "py-0 pl-2 pr-9 text-sm shadow-none",
                 disabled && "cursor-not-allowed",
                 inputClassName,
               )}

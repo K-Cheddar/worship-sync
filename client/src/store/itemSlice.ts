@@ -14,6 +14,7 @@ import {
   SongMetadata,
   ShouldSendTo,
   TimerInfo,
+  VideoBackgroundSendMode,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import {
@@ -24,6 +25,11 @@ import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
 import { mapSlidesUpdateBox0ById } from "../utils/slideBackgroundSubset";
+import {
+  attachCloudCopyToLocalImageItem,
+  updateLocalImageReferenceInItem,
+  type LocalImageReferencePatch,
+} from "../utils/localImageAssets";
 import type { AppDispatch, RootState } from "./store";
 
 const defaultShouldSendTo: ShouldSendTo = {
@@ -245,6 +251,55 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+    },
+    attachCloudCopyToLocalImageInActiveItem: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        mediaId: string;
+        url: string;
+      }>,
+    ) => {
+      if (state._id !== action.payload.itemId) return;
+      const patched = attachCloudCopyToLocalImageItem(
+        state,
+        action.payload.assetId,
+        { mediaId: action.payload.mediaId, url: action.payload.url },
+      );
+      state.slides = patched.slides;
+      state.arrangements = patched.arrangements;
+      if (state.baseItem) {
+        state.baseItem = attachCloudCopyToLocalImageItem(
+          state.baseItem,
+          action.payload.assetId,
+          { mediaId: action.payload.mediaId, url: action.payload.url },
+        );
+      }
+    },
+    updateLocalImageReferenceInActiveItem: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        patch: LocalImageReferencePatch;
+      }>,
+    ) => {
+      if (state._id !== action.payload.itemId) return;
+      const patched = updateLocalImageReferenceInItem(
+        state,
+        action.payload.assetId,
+        action.payload.patch,
+      );
+      state.slides = patched.slides;
+      state.arrangements = patched.arrangements;
+      if (state.baseItem) {
+        state.baseItem = updateLocalImageReferenceInItem(
+          state.baseItem,
+          action.payload.assetId,
+          action.payload.patch,
+        );
+      }
     },
     setIsEditMode: (state, action: PayloadAction<boolean>) => {
       state.isEditMode = action.payload;
@@ -685,6 +740,45 @@ export const updateSlideBackground = createAsyncThunk(
   },
 );
 
+/**
+ * Sets whether the next send of this slide's video background restarts from
+ * the beginning or lets it keep playing, so a song can restart on its opener and
+ * continue across the lyric advances after it.
+ */
+export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
+  "item/updateSlideVideoBackgroundSendMode",
+  async (args: { mode: VideoBackgroundSendMode }, { dispatch, getState }) => {
+    const state = getState();
+    const item = state.undoable.present.item;
+
+    const applyMode = (slide: ItemSlideType): ItemSlideType =>
+      slide.videoBackgroundSendMode === args.mode
+        ? slide
+        : { ...slide, videoBackgroundSendMode: args.mode };
+
+    const mapSelected = (slides: ItemSlideType[]) =>
+      slides.map((slide, index) =>
+        index === item.selectedSlide ? applyMode(slide) : slide,
+      );
+
+    const arrangementSlides =
+      item.arrangements[item.selectedArrangement]?.slides;
+    if (arrangementSlides) {
+      dispatch(
+        _updateArrangements(
+          item.arrangements.map((arrangement, index) =>
+            index === item.selectedArrangement
+              ? { ...arrangement, slides: mapSelected(arrangement.slides) }
+              : arrangement,
+          ),
+        ),
+      );
+    }
+
+    dispatch(_updateSlides(mapSelected(item.slides)));
+  },
+);
+
 export const updateSlideBackgroundsOnSubset = createAsyncThunk(
   "item/updateSlideBackgroundsOnSubset",
   async (
@@ -859,6 +953,8 @@ export const {
   _updateArrangements,
   clearTransientState,
   setActiveItem,
+  attachCloudCopyToLocalImageInActiveItem,
+  updateLocalImageReferenceInActiveItem,
   setItemIsLoading,
   setSectionLoading,
   setItemFormatting,

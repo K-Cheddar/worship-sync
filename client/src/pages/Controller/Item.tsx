@@ -1,7 +1,7 @@
 import { useParams } from "react-router-dom";
 import SlideEditor from "../../containers/ItemEditor/SlideEditor";
 import ItemSlides from "../../containers/ItemSlides/ItemSlides";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DBItem } from "../../types";
 import { useDispatch, useSelector } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
@@ -41,21 +41,35 @@ const Item = () => {
     "loading"
   );
   const dispatch = useDispatch();
-  const { isLoading, isSectionLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
-  );
+  const { isLoading, isSectionLoading, _id: activeItemId, listId: activeListId } =
+    useSelector((state: RootState) => state.undoable.present.item);
   const showSlidesLoadingOverlay = isSectionLoading && !isLoading;
+  const activeItemRef = useRef({ id: activeItemId, listId: activeListId });
+  activeItemRef.current = { id: activeItemId, listId: activeListId };
 
   useEffect(() => {
     const selectItem = async () => {
       if (!db || !cloud) return;
+      // Outline continuous scroll already applied this item via Redux before
+      // navigating. Re-fetching would flip isLoading and unmount the scroller,
+      // snapping scroll back to the top on every settle.
+      if (
+        activeItemRef.current.id === decodedItemId &&
+        activeItemRef.current.listId === decodedListId &&
+        decodedItemId
+      ) {
+        dispatch(setActiveItemInList(decodedListId));
+        setStatus("success");
+        dispatch(setItemIsLoading(false));
+        return;
+      }
       try {
         dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await db?.get(decodedItemId);
         if (!response) return setStatus("error");
         const itemWithSections: DBItem =
           response.type === "free" &&
-          (!response.formattedSections || response.formattedSections.length === 0)
+            (!response.formattedSections || response.formattedSections.length === 0)
             ? { ...response, formattedSections: getFormattedSections(response.slides ?? [], 1) }
             : response;
         dispatch(setActiveItem({ ...itemWithSections, listId: decodedListId }));
@@ -94,7 +108,7 @@ const Item = () => {
       }
     };
     selectItem();
-  }, [decodedItemId, dispatch, db, decodedListId, cloud]);
+  }, [cloud, db, decodedItemId, decodedListId, dispatch]);
 
   if (status === "error")
     return (

@@ -1,4 +1,5 @@
 import { useElectronWindows } from "../../hooks/useElectronWindows";
+import { getElectronWindowState } from "../../utils/isElectronDisplayWindowOpen";
 import Button from "../Button/Button";
 import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 import { useState, useEffect } from "react";
@@ -36,13 +37,10 @@ const WindowControl = ({
 
   const [selectedDisplay, setSelectedDisplay] = useState<string>("");
 
-  const isOpen = windowType === "projector"
-    ? windowStates?.projectorOpen
-    : windowStates?.monitorOpen;
-
-  const windowState = windowType === "projector"
-    ? windowStates?.projector
-    : windowStates?.monitor;
+  // Keyed by window key, so one control serves any display output rather than
+  // just the original projector/monitor pair.
+  const windowState = getElectronWindowState(windowStates, windowType);
+  const isOpen = windowState?.isOpen ?? false;
 
   useEffect(() => {
     if (windowState && displays.length > 0 && windowState.displayId) {
@@ -65,7 +63,12 @@ const WindowControl = ({
   };
 
   return (
-    <div className={cn("flex flex-col gap-3 bg-gray-800 rounded-lg p-4", className)}>
+    <div
+      className={cn(
+        "flex flex-col gap-3 bg-gray-800 rounded-lg p-4",
+        className,
+      )}
+    >
       <div className="flex items-center gap-2 mb-2">
         <Icon className="size-5 text-white" />
         <h3 className="text-lg font-semibold text-white">{title}</h3>
@@ -76,7 +79,7 @@ const WindowControl = ({
         <span
           className={cn(
             "text-sm font-medium",
-            isOpen ? "text-green-400" : "text-red-400"
+            isOpen ? "text-green-400" : "text-red-400",
           )}
         >
           {isOpen ? "Open" : "Closed"}

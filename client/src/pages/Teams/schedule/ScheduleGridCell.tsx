@@ -22,10 +22,15 @@ import { isMemberAvailableOnDate } from "../memberPreferences";
 import ScheduleAssignmentCell from "./ScheduleAssignmentCell";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
+import ScheduleMicrophoneSelect, {
+  type ScheduleMicrophoneHolder,
+} from "./ScheduleMicrophoneSelect";
 import {
   scheduleCellPaddingClassName,
   scheduleGridLeftBorderClassName,
+  scheduleAssignmentLabelClassName,
 } from "./scheduleUtils";
+import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 
 type ScheduleGridCellProps = {
   occurrenceId: string;
@@ -48,6 +53,13 @@ type ScheduleGridCellProps = {
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   canEdit: boolean;
+  microphones?: ServicePlanMicrophone[];
+  microphoneIds?: string[];
+  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphonesLoading?: boolean;
+  microphonesUnavailable?: boolean;
+  savingMicrophone?: boolean;
+  onMicrophoneChange?: (microphoneIds: string[]) => void;
 };
 
 const ScheduleGridCell = memo(({
@@ -69,6 +81,13 @@ const ScheduleGridCell = memo(({
   allMembers,
   duplicateFirstNames,
   canEdit,
+  microphones,
+  microphoneIds,
+  microphoneHolders,
+  microphonesLoading = false,
+  microphonesUnavailable = false,
+  savingMicrophone = false,
+  onMicrophoneChange,
 }: ScheduleGridCellProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
@@ -188,7 +207,7 @@ const ScheduleGridCell = memo(({
                   aria-hidden
                 />
               ) : null}
-              <span className="block truncate">{displayLabel}</span>
+              <span className={scheduleAssignmentLabelClassName}>{displayLabel}</span>
               {assignedMember?.scheduleGuest ? (
                 <span
                   className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200"
@@ -213,6 +232,20 @@ const ScheduleGridCell = memo(({
             />
           ) : null}
         </div>
+        {microphones && microphoneHolders && onMicrophoneChange ? (
+          <ScheduleMicrophoneSelect
+            microphoneIds={microphoneIds}
+            microphones={microphones}
+            holdersByMicrophone={microphoneHolders}
+            slotKey={`${occurrenceId}:${columnKey}`}
+            ariaLabel={`Microphone for ${displayLabel} (${columnLabel})`}
+            canEdit={canEdit}
+            loading={microphonesLoading}
+            unavailable={microphonesUnavailable}
+            saving={savingMicrophone}
+            onChange={onMicrophoneChange}
+          />
+        ) : null}
         {shadowAssignments.length > 0 ? (
           <div className="flex flex-col gap-1">
             {shadowAssignments.map((shadow) => {

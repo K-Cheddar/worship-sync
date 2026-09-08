@@ -16,6 +16,7 @@ import {
   setName,
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
+import { useControllerBasePath } from "../../context/activeController";
 
 type BibleItemActionsProps = {
   item: ItemState;
@@ -24,6 +25,7 @@ type BibleItemActionsProps = {
 const BibleItemActions = ({ item }: BibleItemActionsProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const isSectionLoading = useSelector(
     (state: RootState) => state.undoable.present.item.isSectionLoading
   );
@@ -38,8 +40,8 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
         version: info.version,
       }),
     );
-    navigate("/controller/bible");
-  }, [item.bibleInfo, dispatch, navigate]);
+    navigate(`${controllerBasePath}/bible`);
+  }, [item.bibleInfo, controllerBasePath, dispatch, navigate]);
 
   const handleVersionChange = useCallback(
     async (newVersion: string) => {

@@ -108,56 +108,63 @@ const ScheduleBrowserDialog = ({
       description="Search and filter every schedule in this church."
     >
       <div className="flex flex-col gap-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            label="Search"
-            type="search"
-            placeholder="Schedule or team name"
-            value={filters.search}
-            onChange={(value) =>
-              setFilters((current) => ({ ...current, search: String(value) }))
-            }
-          />
-          <Select
-            label="Team"
-            value={filters.teamId}
-            options={teamOptions}
-            onChange={(teamId) =>
-              setFilters((current) => ({ ...current, teamId }))
-            }
-          />
-          <Select
-            label="Status"
-            value={filters.status}
-            options={STATUS_OPTIONS}
-            onChange={(status) =>
-              setFilters((current) => ({
-                ...current,
-                status: status as ScheduleBrowserStatus,
-              }))
-            }
-          />
-          <DateRangePicker
-            label="Dates"
-            value={{ startDate: filters.startDate, endDate: filters.endDate }}
-            onChange={({ startDate, endDate }) =>
-              setFilters((current) => ({ ...current, startDate, endDate }))
-            }
-          />
-        </div>
+        {/* Sticky within the modal body scroll so refine stays reachable while
+            scanning a long list — one scrollbar, no nested list scroll. */}
+        <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-gray-700 bg-gray-800 px-4 pb-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              label="Search"
+              labelClassName="text-white"
+              type="search"
+              placeholder="Schedule or team name"
+              value={filters.search}
+              onChange={(value) =>
+                setFilters((current) => ({ ...current, search: String(value) }))
+              }
+            />
+            <Select
+              label="Team"
+              labelClassName="text-white"
+              value={filters.teamId}
+              options={teamOptions}
+              onChange={(teamId) =>
+                setFilters((current) => ({ ...current, teamId }))
+              }
+            />
+            <Select
+              label="Status"
+              labelClassName="text-white"
+              value={filters.status}
+              options={STATUS_OPTIONS}
+              onChange={(status) =>
+                setFilters((current) => ({
+                  ...current,
+                  status: status as ScheduleBrowserStatus,
+                }))
+              }
+            />
+            <DateRangePicker
+              label="Dates"
+              value={{ startDate: filters.startDate, endDate: filters.endDate }}
+              onChange={({ startDate, endDate }) =>
+                setFilters((current) => ({ ...current, startDate, endDate }))
+              }
+            />
+          </div>
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-gray-400" role="status">
-            {rows.length === 1 ? "1 schedule" : `${rows.length} schedules`}
-          </p>
-          {hasFilters ? (
-            <Button
-              variant="tertiary"
-              onClick={() => setFilters(emptyScheduleBrowserFilters)}
-            >
-              Clear filters
-            </Button>
-          ) : null}
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-gray-400" role="status">
+              {rows.length === 1 ? "1 schedule" : `${rows.length} schedules`}
+            </p>
+            {hasFilters ? (
+              <Button
+                variant="tertiary"
+                onClick={() => setFilters(emptyScheduleBrowserFilters)}
+              >
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         {rows.length === 0 ? (
@@ -166,7 +173,7 @@ const ScheduleBrowserDialog = ({
             date range.
           </p>
         ) : (
-          <ul className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+          <ul className="space-y-2">
             {rows.map(({ schedule, teamName }) => {
               const isSelected = schedule.scheduleId === selectedScheduleId;
               return (
@@ -174,11 +181,10 @@ const ScheduleBrowserDialog = ({
                   <button
                     type="button"
                     aria-current={isSelected ? "true" : undefined}
-                    className={`flex w-full flex-col gap-1 rounded-md border p-3 text-left transition-colors ${
-                      isSelected
-                        ? "border-cyan-500 bg-cyan-950/30"
-                        : "border-gray-700 bg-gray-950/40 hover:border-gray-500"
-                    }`}
+                    className={`flex w-full flex-col gap-1 rounded-md border p-3 text-left transition-colors ${isSelected
+                      ? "border-cyan-500 bg-cyan-950/30"
+                      : "border-gray-700 bg-gray-950/40 hover:border-gray-500"
+                      }`}
                     onClick={() => {
                       onSelectSchedule(schedule.scheduleId);
                       onClose();

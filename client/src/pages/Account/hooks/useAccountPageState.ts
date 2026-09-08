@@ -23,7 +23,7 @@ import type {
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import { useApiErrorToast } from "../../../hooks/useApiErrorToast";
-import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
+import { resolveChurchToolbarLogoUrls } from "../../../utils/churchBranding";
 import type {
   AccessSheetTarget,
   AccountDestructiveConfirm,
@@ -117,8 +117,8 @@ export const useAccountPageState = () => {
   const [destructiveConfirmRunning, setDestructiveConfirmRunning] =
     useState(false);
 
-  const toolbarLogoUrl = useMemo(
-    () => resolveChurchToolbarLogoUrl(context?.churchBranding),
+  const toolbarLogos = useMemo(
+    () => resolveChurchToolbarLogoUrls(context?.churchBranding),
     [context?.churchBranding],
   );
   const churchName = context?.churchName?.trim() || "";
@@ -474,7 +474,7 @@ export const useAccountPageState = () => {
     loading,
     isRefreshing,
     churchStatusRaw,
-    toolbarLogoUrl,
+    toolbarLogos,
     churchName,
     teams,
     teamsAccessOptions: teamsPageAccessOptions,

@@ -29,7 +29,12 @@ interface Display {
   label?: string;
 }
 
-type WindowType = "projector" | "monitor" | "board";
+/**
+ * Key identifying a display window. Built-in surfaces keep "projector",
+ * "monitor", and "board"; a window opened for a display output uses that
+ * output id.
+ */
+type WindowType = string;
 
 interface WindowState {
   displayId?: number;
@@ -57,7 +62,11 @@ interface ElectronAPI {
   openExternalUrl: (url: string) => Promise<boolean>;
 
   // Window management - all generic handlers
-  openWindow: (windowType: WindowType) => Promise<boolean>;
+  /** `surface` names the render profile when opening an output window. */
+  openWindow: (
+    windowType: WindowType,
+    surface?: "projector" | "monitor" | "stream",
+  ) => Promise<boolean>;
   closeWindow: (windowType: WindowType) => Promise<boolean>;
   focusWindow: (windowType: WindowType) => Promise<boolean>;
   toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;

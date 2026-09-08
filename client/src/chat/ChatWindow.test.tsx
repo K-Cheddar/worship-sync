@@ -44,6 +44,9 @@ const baseChat = {
   retry: jest.fn(),
   connectionStatus: "connected" as const,
   unreadCount: 0,
+  markReadThrough: jest.fn(),
+  draftsByDay: {},
+  setDraftForDay: jest.fn(),
   typingUsers: [],
   updateTypingDraft: jest.fn(),
   sendMessage: jest.fn(),
@@ -127,6 +130,72 @@ describe("ChatWindow", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Back to this week" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps long message drafts scrollable within the composer", () => {
+    mockedUseChat.mockReturnValue(baseChat);
+
+    render(<ChatWindow />);
+
+    expect(screen.getByPlaceholderText("Message")).toHaveClass(
+      "max-h-28",
+      "overflow-y-auto",
+    );
+  });
+
+  it("restores and updates the draft for the selected week", () => {
+    const setDraftForDay = jest.fn();
+    mockedUseChat.mockReturnValue({
+      ...baseChat,
+      draftsByDay: { "2026-03-08": "Draft to keep" },
+      setDraftForDay,
+    });
+
+    render(<ChatWindow />);
+
+    const messageInput = screen.getByPlaceholderText("Message");
+    expect(messageInput).toHaveValue("Draft to keep");
+    fireEvent.change(messageInput, { target: { value: "Updated draft" } });
+    expect(setDraftForDay).toHaveBeenCalledWith(
+      "2026-03-08",
+      "Updated draft",
+    );
+  });
+
+  it("offers a new-message action when the operator is reading older messages", () => {
+    mockedUseChat.mockReturnValue(baseChat);
+
+    const { rerender } = render(<ChatWindow />);
+    const log = screen.getByRole("log", { name: "Team chat messages" });
+    Object.defineProperties(log, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, value: 0 },
+    });
+    fireEvent.scroll(log);
+
+    mockedUseChat.mockReturnValue({
+      ...baseChat,
+      messages: [
+        {
+          messageId: "new-message",
+          clientMessageId: "client-new-message",
+          churchId: "church-1",
+          dayKey: "2026-03-08",
+          authorId: "actor-2",
+          authorName: "Alex",
+          authorSessionKind: "human",
+          text: "New message",
+          createdAt: Date.parse("2026-03-08T12:00:00.000Z"),
+          reactions: [],
+        },
+      ],
+    });
+    rerender(<ChatWindow />);
+
+    expect(
+      screen.getByRole("button", { name: "New messages" }),
     ).toBeInTheDocument();
   });
 
@@ -225,6 +294,10 @@ describe("ChatWindow", () => {
     expect(within(log).getByText("Alex")).toBeInTheDocument();
     expect(within(log).getByText("Hello team")).toBeInTheDocument();
     expect(
+      screen.queryByRole("button", { name: "Edit message" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    expect(
       screen.getByRole("button", { name: "Edit message" }),
     ).toBeInTheDocument();
     expect(
@@ -270,6 +343,42 @@ describe("ChatWindow", () => {
     expect(screen.getByText("Second message")).toBeInTheDocument();
   });
 
+  it("separates messages from different calendar days", () => {
+    mockedUseChat.mockReturnValue({
+      ...baseChat,
+      messages: [
+        {
+          messageId: "m1",
+          clientMessageId: "client-m1",
+          churchId: "church-1",
+          dayKey: "2026-03-08",
+          authorId: "actor-2",
+          authorName: "Alex",
+          authorSessionKind: "human",
+          text: "Yesterday's message",
+          createdAt: Date.parse("2026-03-10T23:00:00.000Z"),
+          reactions: [],
+        },
+        {
+          messageId: "m2",
+          clientMessageId: "client-m2",
+          churchId: "church-1",
+          dayKey: "2026-03-08",
+          authorId: "actor-1",
+          authorName: "You",
+          authorSessionKind: "human",
+          text: "Today's message",
+          createdAt: Date.parse("2026-03-11T12:00:00.000Z"),
+          reactions: [],
+        },
+      ],
+    });
+
+    render(<ChatWindow />);
+
+    expect(screen.getAllByRole("separator")).toHaveLength(2);
+  });
+
   it("opens the reaction picker from a message action", () => {
     mockedUseChat.mockReturnValue({
       ...baseChat,
@@ -310,6 +419,7 @@ describe("ChatWindow", () => {
     expect(
       screen.getByRole("status", { name: "Alex is typing" }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Team messages")).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("Message"), {
       target: { value: "Ready" },
     });

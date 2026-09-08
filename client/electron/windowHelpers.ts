@@ -158,7 +158,7 @@ interface WindowConfig {
   isDev: boolean;
   dirname: string;
   /** Hide the mouse pointer in this window when the display is output-only. */
-  hideCursor: boolean;
+  hideCursor?: boolean;
 }
 
 export const setupWindowEventListeners = (
@@ -173,10 +173,22 @@ export const setupWindowEventListeners = (
 };
 
 export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
+  // The stream surface must stay transparent so OBS and browser captures can
+  // composite behind it. Without this the native window paints an opaque
+  // background under the transparent CSS, making the Electron stream window
+  // unusable for capture even though the browser route is fine.
+  const isTransparentSurface = config.route.startsWith("/stream");
+
   const window = new BrowserWindow({
     ...config.bounds,
+    ...(isTransparentSurface
+      ? { transparent: true, backgroundColor: "#00000000" }
+      : {}),
     webPreferences: {
       ...sharedChildWindowWebPreferences(config.dirname),
+      // Dedicated outputs receive presentation changes without a local click.
+      // Allow routed capture sound to start with the live video stream.
+      autoplayPolicy: "no-user-gesture-required",
     },
     autoHideMenuBar: true,
     frame: false,
@@ -187,7 +199,9 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
   // displays keep it available for local scrolling and interaction.
   if (config.hideCursor) {
     window.webContents.on("dom-ready", () => {
-      void window.webContents.insertCSS("*, *::before, *::after { cursor: none !important; }");
+      void window.webContents.insertCSS(
+        "*, *::before, *::after { cursor: none !important; }",
+      );
     });
   }
 

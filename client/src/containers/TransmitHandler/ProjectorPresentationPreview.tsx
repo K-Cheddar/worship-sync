@@ -1,8 +1,14 @@
-import { ComponentProps, memo } from "react";
+import { ComponentProps, memo, type ReactNode } from "react";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
 
-type PresentationQuickLinks = ComponentProps<typeof PresentationPreview>["quickLinks"];
+type PresentationQuickLinks = ComponentProps<
+  typeof PresentationPreview
+>["quickLinks"];
 
 type ProjectorPresentationPreviewProps = {
   quickLinks: PresentationQuickLinks;
@@ -11,6 +17,12 @@ type ProjectorPresentationPreviewProps = {
   fillWidth?: boolean;
   readOnly?: boolean;
   toggleIsTransmitting: () => void;
+  /** Output this tile shows; defaults to the built-in surface. */
+  outputId?: string;
+  /** Operator-facing output name; defaults to the surface label. */
+  name?: string;
+  /** Mirror / follower chrome for this display, shown inside the card. */
+  footer?: ReactNode;
 };
 
 const ProjectorPresentationPreview = memo(
@@ -21,24 +33,32 @@ const ProjectorPresentationPreview = memo(
     fillWidth,
     readOnly = false,
     toggleIsTransmitting,
+    outputId = "projector",
+    name = "Projector",
+    footer,
   }: ProjectorPresentationPreviewProps) => {
-    const info = useSelector((state) => state.presentation.projectorInfo);
-    const prevInfo = useSelector((state) => state.presentation.prevProjectorInfo);
+    // Content follows the mirror so the preview shows what is on the screen,
+    // not what this display would show if it stopped mirroring. Live state stays
+    // this display's own.
+    const { info, prevInfo } = useSelector((state) =>
+      selectResolvedOutputSlot(state, outputId, "projector"),
+    );
     const isTransmitting = useSelector(
-      (state) => state.presentation.isProjectorTransmitting
+      (state) => selectOutputSlot(state, outputId, "projector").isTransmitting,
     );
     const timers = useSelector((state) => state.timers.timers);
     const timerInfo = useSelector((state) =>
-      state.timers.timers.find((timer) => timer.id === info.timerId)
+      state.timers.timers.find((timer) => timer.id === info.timerId),
     );
     const prevTimerInfo = useSelector((state) =>
-      state.timers.timers.find((timer) => timer.id === prevInfo.timerId)
+      state.timers.timers.find((timer) => timer.id === prevInfo.timerId),
     );
 
     return (
       <PresentationPreview
         timers={timers}
-        name="Projector"
+        name={name}
+        outputId={outputId}
         prevInfo={prevInfo}
         timerInfo={timerInfo}
         prevTimerInfo={prevTimerInfo}
@@ -49,11 +69,13 @@ const ProjectorPresentationPreview = memo(
         hideQuickLinks={readOnly}
         minimalHeader={readOnly}
         isMobile={isMobile}
+        showClockTimer
         previewScale={previewScale}
         fillWidth={fillWidth}
+        footer={footer}
       />
     );
-  }
+  },
 );
 
 export default ProjectorPresentationPreview;

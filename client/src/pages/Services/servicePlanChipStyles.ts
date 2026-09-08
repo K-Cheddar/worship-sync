@@ -4,9 +4,11 @@
  * same colors without importing the row back.
  */
 
-/** Compact attachment chips (song / scripture) on the second row. */
+/** Compact attachment chips — fixed rem on small screens (fluid `h-8` shrinks).
+ * `leading-none` keeps label + remove icon optically centered in the fixed height;
+ * line-height struts from `leading-5`/`leading-6` sat content high in the pill. */
 export const SERVICE_PLAN_ATTACHMENT_CHIP_CLASS =
-  "flex h-7 items-center gap-0.5 rounded border px-1.5 py-0 text-xs leading-5 max-md:h-8 max-md:text-sm";
+  "box-border flex h-7 max-h-7 min-h-0 items-center gap-0.5 rounded border px-1.5 py-0 text-xs max-md:text-sm font-normal leading-none max-md:h-[2rem] max-md:max-h-[2rem]";
 
 export const SERVICE_PLAN_SONG_ICON_CLASS = "text-cyan-400";
 export const SERVICE_PLAN_SONG_CHIP_CLASS = "border-cyan-500/50 text-cyan-50";

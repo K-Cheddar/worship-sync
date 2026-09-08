@@ -8,6 +8,7 @@ import itemListReducer, {
   initiateItemList,
   setItemListIsLoading,
   setHasPendingUpdate,
+  updateItemListFromRemote,
 } from "./itemListSlice";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
@@ -58,6 +59,29 @@ describe("itemListSlice", () => {
       expect(state.list).toHaveLength(2);
       expect(state.isInitialized).toBe(true);
       expect(state.list[1].listId).toBe("list-id-1");
+      expect(state.hasPendingUpdate).toBe(false);
+    });
+
+    it("updateItemListFromRemote clears pending dirty flag", () => {
+      const store = createStore({
+        itemList: {
+          list: [createServiceItem({ name: "Old", _id: "old", listId: "l1" })],
+          isLoading: false,
+          selectedItemListId: "",
+          insertPointIndex: -1,
+          hasPendingUpdate: true,
+          initialItems: ["l1"],
+          isInitialized: true,
+        },
+      });
+      store.dispatch(
+        updateItemListFromRemote([
+          createServiceItem({ name: "New", _id: "new", listId: "l2" }),
+        ]),
+      );
+      const state = store.getState().itemList;
+      expect(state.list[0].name).toBe("New");
+      expect(state.hasPendingUpdate).toBe(false);
     });
 
     it("updateItemList replaces list and sets hasPendingUpdate", () => {
@@ -196,9 +220,7 @@ describe("itemListSlice", () => {
     it("addItemToItemList always assigns a fresh listId (ignores payload listId)", () => {
       const store = createStore({
         itemList: {
-          list: [
-            createServiceItem({ name: "A", _id: "a", listId: "l1" }),
-          ],
+          list: [createServiceItem({ name: "A", _id: "a", listId: "l1" })],
           isLoading: false,
           selectedItemListId: "l1",
           insertPointIndex: 0,

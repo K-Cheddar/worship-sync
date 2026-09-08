@@ -2,6 +2,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -17,6 +18,7 @@ import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import SetupScreenBackButton from "../components/SetupScreenBackButton";
 import AuthScreenMain from "../components/AuthScreenMain";
 import HostedDesktopBrowserLogin from "./HostedDesktopBrowserLogin";
+import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
 import VerificationCodeInput from "../components/VerificationCodeInput/VerificationCodeInput";
 import {
   completeDesktopAuth,
@@ -45,19 +47,27 @@ import {
 } from "../utils/authStorage";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import {
+  AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
+  AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
+} from "../utils/authUserMessages";
+import {
   getDesktopSsoCompleteReplaceHref,
   isDesktopBrokerAuthCompleted,
   markDesktopBrokerAuthCompleted,
   setDesktopSsoCompleteFlash,
 } from "../utils/desktopSsoBrowserSession";
 import { isElectron } from "../utils/environment";
+import { passwordMeetsPolicy } from "../utils/passwordRequirements";
+import { isCreateChurchUiEnabled } from "../utils/devFeatures";
 
-type Mode = "signIn" | "code" | "forgotPassword";
+type Mode = "signIn" | "code" | "forgotPassword" | "createChurch";
 
 type LoginFieldErrors = {
   email?: string;
   password?: string;
   code?: string;
+  churchName?: string;
+  adminName?: string;
 };
 
 type DesktopBrowserFlowStatus = "idle" | "loading";
@@ -107,6 +117,8 @@ const Login = () => {
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [churchName, setChurchName] = useState("");
+  const [adminName, setAdminName] = useState("");
   const [code, setCode] = useState("");
   const [pendingAuthId, setPendingAuthId] = useState("");
   const [verificationEmail, setVerificationEmail] = useState("");
@@ -120,6 +132,7 @@ const Login = () => {
   const [activeProviderSignIn, setActiveProviderSignIn] = useState<
     "google" | "microsoft" | null
   >(null);
+  const createChurchPasswordStrengthId = useId();
   const [pendingDesktopAuth, setPendingDesktopAuth] =
     useState<PendingDesktopAuthState | null>(() => {
       const stored = getPendingDesktopAuthState();
@@ -246,15 +259,17 @@ const Login = () => {
    */
   const showWebSessionNavigatingChrome = Boolean(
     isFinishingSignIn &&
-      !isHostedDesktopBrowserFlow &&
-      // A device-code challenge outranks "navigating". Firebase sign-in can
-      // succeed (so `loginState` is "success") while the server still requires
-      // a code for an unrecognized device — as happens right after accepting an
-      // invite. Showing "Signed in — hang tight, this screen will switch in a
-      // moment" over the code form tells the operator to wait for something
-      // that will never arrive, while the action they must take sits below.
-      mode !== "code",
+    !isHostedDesktopBrowserFlow &&
+    // A device-code challenge outranks "navigating". Firebase sign-in can
+    // succeed (so `loginState` is "success") while the server still requires
+    // a code for an unrecognized device — as happens right after accepting an
+    // invite. Showing "Signed in — hang tight, this screen will switch in a
+    // moment" over the code form tells the operator to wait for something
+    // that will never arrive, while the action they must take sits below.
+    mode !== "code",
   );
+  const isVerificationCodeComplete =
+    mode === "code" && isFinishingSignIn;
   /**
    * `isFinishingSignIn` means "signed in, navigating away", which normally
    * should lock the form. It must not while a device code is outstanding:
@@ -262,7 +277,7 @@ const Login = () => {
    * treating that as "finishing" disables the Verify button and the six-digit
    * auto-submit — leaving the one action that can unblock the person unusable.
    */
-  const isAwaitingDeviceCode = mode === "code";
+  const isAwaitingDeviceCode = mode === "code" && !isVerificationCodeComplete;
   const isAuthActionDisabled =
     context?.loginState === "loading" ||
     (isFinishingSignIn && !isAwaitingDeviceCode) ||
@@ -441,11 +456,15 @@ const Login = () => {
   useEffect(() => {
     const codeParam = searchParams.get("code");
     const pendingParam = searchParams.get("pendingAuthId");
+    const createChurchParam = searchParams.get("createChurch");
     const digits = codeParam ? codeParam.replace(/\D/g, "") : "";
     const hasValidCode = digits.length === 6;
     const pendingTrimmed = pendingParam?.trim() ?? "";
+    const wantsCreateChurch =
+      isCreateChurchUiEnabled() &&
+      (createChurchParam === "1" || createChurchParam === "true");
 
-    if (!hasValidCode && !pendingTrimmed) {
+    if (!hasValidCode && !pendingTrimmed && !wantsCreateChurch) {
       return;
     }
 
@@ -457,6 +476,8 @@ const Login = () => {
     }
     if (hasValidCode || pendingTrimmed) {
       setMode("code");
+    } else if (wantsCreateChurch) {
+      setMode("createChurch");
     }
 
     setSearchParams(
@@ -464,6 +485,7 @@ const Login = () => {
         const next = new URLSearchParams(prev);
         next.delete("code");
         next.delete("pendingAuthId");
+        next.delete("createChurch");
         return next;
       },
       { replace: true }
@@ -497,13 +519,32 @@ const Login = () => {
   }, [mode, pendingAuthId, verificationEmail, isAuthServerOnline]);
 
   const guestDestination =
-    getAuthRedirectPathnameFromState(location.state) ?? "/controller";
+    getAuthRedirectPathnameFromState(location.state) ?? "/home";
 
   const clearPendingDesktopAuth = useCallback(() => {
     setPendingDesktopAuth(null);
     setPendingDesktopAuthState(null);
     clearProviderSignInAttempt();
   }, [clearProviderSignInAttempt]);
+
+  useEffect(() => {
+    if (
+      mode !== "code" ||
+      context?.authError !== AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE
+    ) {
+      return;
+    }
+    setCode("");
+    setPendingAuthId("");
+    setVerificationEmail("");
+    setFieldErrors({});
+    setInfoBanner("");
+    setPendingEmailCodeSignInMethod(null);
+    setPendingDesktopEmailResendState(null);
+    context.clearPendingEmailVerification();
+    clearPendingDesktopAuth();
+    setMode("signIn");
+  }, [clearPendingDesktopAuth, context, mode]);
 
   const openDesktopBrowserUrl = useCallback(async (url: string) => {
     if (isElectronRuntime && window.electronAPI?.openExternalUrl) {
@@ -765,6 +806,88 @@ const Login = () => {
     }
   };
 
+  const validateCreateChurchIdentityFields = () => {
+    const nextErrors: LoginFieldErrors = {};
+    if (!churchName.trim()) {
+      nextErrors.churchName = "Enter the church name.";
+    }
+    if (!adminName.trim()) {
+      nextErrors.adminName = "Enter the admin name.";
+    }
+    setFieldErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const finishCreateChurchChallenge = (response: {
+    requiresEmailCode?: boolean;
+    pendingAuthId?: string;
+    verificationEmail?: string;
+  }, fallbackEmail?: string) => {
+    if (response.requiresEmailCode && response.pendingAuthId) {
+      clearProviderSignInAttempt();
+      openVerificationCodeStep({
+        pendingId: response.pendingAuthId,
+        verificationEmail: response.verificationEmail || fallbackEmail,
+      });
+    }
+  };
+
+  const handleCreateChurchWithPassword = async () => {
+    setInfoBanner("");
+    setLocalAuthError("");
+    if (!validateCreateChurchIdentityFields()) {
+      return;
+    }
+    const trimmedEmail = email.trim();
+    const nextErrors: LoginFieldErrors = {};
+    if (!trimmedEmail) {
+      nextErrors.email = "Enter the admin email.";
+    } else if (!isValidEmailFormat(trimmedEmail)) {
+      nextErrors.email = INVALID_EMAIL_FORMAT_MESSAGE;
+    }
+    if (!password) {
+      nextErrors.password = "Enter a password.";
+    } else if (!passwordMeetsPolicy(password)) {
+      nextErrors.password = "Meet every password requirement below.";
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
+      return;
+    }
+    setFieldErrors({});
+    const response = await context?.createChurchAccount({
+      method: "password",
+      churchName: churchName.trim(),
+      adminName: adminName.trim(),
+      adminEmail: trimmedEmail,
+      password,
+    });
+    if (response) {
+      finishCreateChurchChallenge(response, trimmedEmail);
+    }
+  };
+
+  const handleCreateChurchWithProvider = async (
+    method: "google" | "microsoft",
+  ) => {
+    setInfoBanner("");
+    setLocalAuthError("");
+    if (!validateCreateChurchIdentityFields()) {
+      return;
+    }
+    setActiveProviderSignIn(method);
+    finishingProviderSignInRef.current = method;
+    setFieldErrors({});
+    const response = await context?.createChurchAccount({
+      method,
+      churchName: churchName.trim(),
+      adminName: adminName.trim(),
+    });
+    if (response) {
+      finishCreateChurchChallenge(response);
+    }
+  };
+
   const isProviderSignInLoading = (method: "google" | "microsoft") =>
     activeProviderSignIn === method ||
     (showWebSessionNavigatingChrome &&
@@ -910,6 +1033,8 @@ const Login = () => {
     setForgotPasswordEmailSent(false);
     setCode("");
     setVerificationEmail("");
+    setChurchName("");
+    setAdminName("");
     setPendingEmailCodeSignInMethod(null);
     setPendingDesktopEmailResendState(null);
     clearPendingDesktopAuth();
@@ -936,6 +1061,8 @@ const Login = () => {
     }
     if (mode === "code") {
       void handleVerifyCode();
+    } else if (mode === "createChurch") {
+      void handleCreateChurchWithPassword();
     } else if (isHostedDesktopBrowserFlow) {
       void handleHostedDesktopBrowserCompletion();
     } else {
@@ -982,6 +1109,9 @@ const Login = () => {
     context?.loginState !== "loading" &&
     context?.loginState !== "success";
 
+  const isExpiredEmailCodeError =
+    mode === "code" && context?.authError === AUTH_EMAIL_CODE_EXPIRED_MESSAGE;
+
   let resendButtonLabel = "Resend code";
   if (resendCooldownSec > 0) {
     resendButtonLabel = `Resend code in ${resendCooldownSec}s`;
@@ -1019,9 +1149,15 @@ const Login = () => {
     }
     if (showWebSessionNavigatingChrome) return "Signed in";
     if (hasPendingDesktopAuth) return "Continue in browser";
-    if (mode === "code") return "Check your email";
+    if (mode === "code") {
+      if (isVerificationCodeComplete) return "You’re signed in";
+      return isExpiredEmailCodeError ? "Get a new code" : "Check your email";
+    }
     if (mode === "forgotPassword") {
       return forgotPasswordEmailSent ? "Check your email" : "Forgot password";
+    }
+    if (mode === "createChurch") {
+      return "Create a church";
     }
     return "Sign in";
   })();
@@ -1039,6 +1175,14 @@ const Login = () => {
     if (hasPendingDesktopAuth) {
       return "";
     }
+    if (mode === "code" && isVerificationCodeComplete) {
+      return "Opening WorshipSync…";
+    }
+    if (mode === "code" && isExpiredEmailCodeError) {
+      return verificationEmail
+        ? `We'll send a new six-digit code to ${verificationEmail}.`
+        : "We'll send a new six-digit code to your email.";
+    }
     if (mode === "code") {
       return renderVerificationCodeSubtext(verificationEmail);
     }
@@ -1047,6 +1191,9 @@ const Login = () => {
         return "If an account exists for that address, we sent a password reset link. It may take a minute to arrive.";
       }
       return "";
+    }
+    if (mode === "createChurch") {
+      return "Creates the church and signs in the first admin. That account can only belong to one church at a time.";
     }
     return "Choose a sign-in method to continue.";
   })();
@@ -1063,7 +1210,9 @@ const Login = () => {
     >
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         {!isHostedDesktopBrowserFlow &&
-          (mode === "code" || mode === "forgotPassword" ? (
+          (mode === "code" ||
+            mode === "forgotPassword" ||
+            mode === "createChurch" ? (
             <div className="mb-3 flex justify-start">
               <Button
                 type="button"
@@ -1339,7 +1488,148 @@ const Login = () => {
               </div>
             )}
 
-            {mode === "code" && (
+            {mode === "createChurch" ? (
+              <>
+                <Input
+                  className="mt-4"
+                  id="create-church-name"
+                  label="Church name"
+                  value={churchName}
+                  errorText={fieldErrors.churchName}
+                  onChange={(value) => {
+                    setChurchName(String(value));
+                    setInfoBanner("");
+                    if (fieldErrors.churchName) {
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        churchName: undefined,
+                      }));
+                    }
+                  }}
+                  autoComplete="organization"
+                  disabled={isSignInFormFieldsLocked}
+                  autoFocus
+                />
+                <Input
+                  className="mt-3"
+                  id="create-church-admin-name"
+                  label="Admin name"
+                  value={adminName}
+                  errorText={fieldErrors.adminName}
+                  onChange={(value) => {
+                    setAdminName(String(value));
+                    setInfoBanner("");
+                    if (fieldErrors.adminName) {
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        adminName: undefined,
+                      }));
+                    }
+                  }}
+                  autoComplete="name"
+                  disabled={isSignInFormFieldsLocked}
+                />
+                <div className="mt-4 grid grid-cols-1 gap-2">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={GoogleMark}
+                    iconSize="sm"
+                    gap="gap-2"
+                    className="w-full justify-center"
+                    isLoading={isProviderSignInLoading("google")}
+                    disabled={
+                      isAuthActionDisabled || activeProviderSignIn !== null
+                    }
+                    onClick={() => void handleCreateChurchWithProvider("google")}
+                  >
+                    Create with Google
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={MicrosoftMark}
+                    iconSize="sm"
+                    gap="gap-2"
+                    className="w-full justify-center"
+                    isLoading={isProviderSignInLoading("microsoft")}
+                    disabled={
+                      isAuthActionDisabled || activeProviderSignIn !== null
+                    }
+                    onClick={() =>
+                      void handleCreateChurchWithProvider("microsoft")
+                    }
+                  >
+                    Create with Microsoft
+                  </Button>
+                </div>
+                <p className="mt-3 text-center text-sm text-gray-400">
+                  Or create with email and password
+                </p>
+                <Input
+                  className="mt-4"
+                  id="create-church-email"
+                  label="Admin email"
+                  type="email"
+                  value={email}
+                  errorText={fieldErrors.email}
+                  onChange={(value) => {
+                    setEmail(String(value));
+                    setInfoBanner("");
+                    if (fieldErrors.email) {
+                      setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                    }
+                  }}
+                  autoComplete="email"
+                  disabled={isSignInFormFieldsLocked}
+                />
+                <Input
+                  className="mt-3"
+                  id="create-church-password"
+                  label="Password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  errorText={fieldErrors.password}
+                  onChange={(value) => {
+                    setPassword(String(value));
+                    setInfoBanner("");
+                    if (fieldErrors.password) {
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        password: undefined,
+                      }));
+                    }
+                  }}
+                  svg={showPassword ? EyeOff : Eye}
+                  svgAction={() => setShowPassword((current) => !current)}
+                  svgActionAriaLabel={
+                    showPassword ? "Hide password" : "Show password"
+                  }
+                  autoComplete="new-password"
+                  disabled={isSignInFormFieldsLocked}
+                  aria-describedby={createChurchPasswordStrengthId}
+                />
+                <PasswordStrengthIndicator
+                  id={createChurchPasswordStrengthId}
+                  password={password}
+                  className="mt-2"
+                />
+              </>
+            ) : null}
+
+            {isVerificationCodeComplete ? (
+              <div
+                className="mt-4 flex flex-col items-center gap-3 rounded-xl border border-gray-600 bg-white/5 px-4 py-6 text-center"
+                role="status"
+                aria-live="polite"
+              >
+                <LoaderCircle
+                  className="h-10 w-10 animate-spin text-cyan-400"
+                  aria-hidden="true"
+                />
+                <p className="text-sm text-gray-200">Signing you in…</p>
+              </div>
+            ) : mode === "code" && !isExpiredEmailCodeError ? (
               <VerificationCodeInput
                 id="verification-code"
                 value={code}
@@ -1354,38 +1644,49 @@ const Login = () => {
                 autoFocus
                 errorText={fieldErrors.code}
               />
-            )}
+            ) : null}
 
-            {mode === "code" && (
-              <div className="mt-3 flex flex-col items-center gap-1">
-                <span className="text-sm text-gray-300">
-                  Didn&apos;t receive a code?
-                </span>
-                <Button
-                  type="button"
-                  variant="textLink"
-                  disabled={!canResendCode}
-                  aria-disabled={!canResendCode}
-                  onClick={() => void handleResendCode()}
-                >
-                  {resendButtonLabel}
-                </Button>
-              </div>
-            )}
+            {mode === "code" &&
+              !isVerificationCodeComplete &&
+              !isExpiredEmailCodeError && (
+                <div className="mt-3 flex flex-col items-center gap-1">
+                  <span className="text-sm text-gray-300">
+                    Didn&apos;t receive a code?
+                  </span>
+                  <Button
+                    type="button"
+                    variant="textLink"
+                    disabled={!canResendCode}
+                    aria-disabled={!canResendCode}
+                    onClick={() => void handleResendCode()}
+                  >
+                    {resendButtonLabel}
+                  </Button>
+                </div>
+              )}
 
             <div className="mt-4 flex flex-col gap-2">
-              {mode === "code" ? (
+              {mode === "code" && !isVerificationCodeComplete ? (
                 <Button
-                  type="submit"
+                  type={isExpiredEmailCodeError ? "button" : "submit"}
                   variant="cta"
                   className="w-full justify-center"
                   // Not "success": sign-in completing is what produced this
                   // challenge, so spinning here reads as work in progress when
                   // the form is actually waiting on input.
                   isLoading={context?.loginState === "loading"}
-                  disabled={isAuthActionDisabled}
+                  disabled={
+                    isExpiredEmailCodeError
+                      ? !canResendCode
+                      : isAuthActionDisabled
+                  }
+                  onClick={
+                    isExpiredEmailCodeError
+                      ? () => void handleResendCode()
+                      : undefined
+                  }
                 >
-                  Verify device
+                  {isExpiredEmailCodeError ? "Get new code" : "Verify device"}
                 </Button>
               ) : mode === "forgotPassword" ? (
                 forgotPasswordEmailSent ? (
@@ -1425,6 +1726,16 @@ const Login = () => {
                     Send reset link
                   </Button>
                 )
+              ) : mode === "createChurch" ? (
+                <Button
+                  type="submit"
+                  variant="cta"
+                  className="w-full justify-center"
+                  isLoading={context?.loginState === "loading"}
+                  disabled={isAuthActionDisabled}
+                >
+                  Create church
+                </Button>
               ) : !(mode === "signIn" && hasPendingDesktopAuth) ? (
                 <Button
                   type="submit"
@@ -1452,20 +1763,60 @@ const Login = () => {
               )}
 
               {mode === "signIn" && !hasPendingDesktopAuth ? (
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  className="w-full justify-center"
-                  disabled={isAuthActionDisabled}
-                  onClick={() => context?.enterGuestMode(guestDestination)}
-                >
-                  Test as guest
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    className="w-full justify-center"
+                    disabled={isAuthActionDisabled}
+                    onClick={() => context?.enterGuestMode(guestDestination)}
+                  >
+                    Test as guest
+                  </Button>
+                  {isCreateChurchUiEnabled() ? (
+                    <Button
+                      type="button"
+                      variant="textLink"
+                      className="w-full justify-center"
+                      disabled={isAuthActionDisabled}
+                      onClick={() => {
+                        setFieldErrors({});
+                        setInfoBanner("");
+                        setLocalAuthError("");
+                        context?.clearAuthError();
+                        setMode("createChurch");
+                      }}
+                    >
+                      Create church
+                    </Button>
+                  ) : null}
+                </>
               ) : null}
             </div>
           </form>
         )}
       </div>
+      <footer className="mt-6 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-gray-300">
+        <Button
+          component="link"
+          to="/privacy"
+          variant="none"
+          className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+        >
+          Privacy Policy
+        </Button>
+        <span aria-hidden className="text-gray-600">
+          ·
+        </span>
+        <Button
+          component="link"
+          to="/terms"
+          variant="none"
+          className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+        >
+          Terms of Service
+        </Button>
+      </footer>
     </AuthScreenMain>
   );
 };

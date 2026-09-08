@@ -14,6 +14,14 @@ const db = {} as Database;
 const mockDispatch = jest.fn();
 jest.mock("./reduxHooks", () => ({
   useDispatch: () => mockDispatch,
+  // The hook reads the display registry to decide whether to seed settings onto
+  // the monitor display.
+  useSelector: (selector: (state: unknown) => unknown) =>
+    selector({ displayOutputs: { list: [] } }),
+}));
+
+jest.mock("../utils/displayOutputsWriter", () => ({
+  writeDisplayOutputs: jest.fn().mockResolvedValue(true),
 }));
 
 const onValueCallbacks = new Map<

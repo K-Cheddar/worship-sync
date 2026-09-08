@@ -641,20 +641,26 @@ const CreditsEditor = ({
   }, [churchId, dispatch, firebaseDb]);
 
   const editorRef = useCallback(
-    (node: HTMLDivElement) => {
-      if (node) {
-        const resizeObserver = new ResizeObserver((entries) => {
-          const width = entries[0].borderBoxSize[0].inlineSize;
-          // Match Tailwind `md` (768px) so `isMobile` aligns with max-md/md layout on this page.
-          if (width < 768) {
-            setIsMobile?.(true);
-          } else {
-            setIsMobile?.(false);
-          }
-        });
-
-        resizeObserver.observe(node);
+    (node: HTMLDivElement | null) => {
+      if (!node) {
+        setIsMobile?.(false);
+        return;
       }
+      const resizeObserver = new ResizeObserver((entries) => {
+        const width = entries[0].borderBoxSize[0].inlineSize;
+        // Match Tailwind `md` (768px) so `isMobile` aligns with max-md/md layout on this page.
+        if (width < 768) {
+          setIsMobile?.(true);
+        } else {
+          setIsMobile?.(false);
+        }
+      });
+
+      resizeObserver.observe(node);
+      return () => {
+        resizeObserver.disconnect();
+        setIsMobile?.(false);
+      };
     },
     [setIsMobile]
   );

@@ -5,11 +5,23 @@ import {
   forwardRef,
   useEffect,
   useCallback,
+  useContext,
 } from "react";
 import { createPortal } from "react-dom";
-import { Upload, Minimize2 } from "lucide-react";
+import { Cloud, Upload, Minimize2 } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Modal from "../../components/Modal/Modal";
+import Toggle from "../../components/Toggle/Toggle";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import type { LocalAssetStoragePolicy } from "../../types";
+import {
+  getRememberedLocalImagePolicy,
+  rememberLocalImagePolicy,
+} from "../../utils/localImageAssets";
+import { enqueueLocalImageUpload } from "../../utils/localImageUploadQueue";
+import { createLocalMediaFromFile } from "./localMediaImport";
+import { buildLocalVideoCloudSharePatch } from "./localMediaCloudShare";
 import {
   MediaUploadInputProps,
   MediaUploadInputRef,
@@ -18,7 +30,6 @@ import {
 } from "./MediaUploadInput.types";
 import { detectFileType, validateFiles } from "./utils/fileUtils";
 import { uploadVideoToMux } from "./utils/muxUpload";
-import { uploadImageToCloudinary } from "./utils/cloudinaryUpload";
 import { FileList } from "./components/FileList";
 import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
 import { ProgressPopup } from "./components/ProgressPopup";
@@ -26,16 +37,19 @@ import { ProgressPopup } from "./components/ProgressPopup";
 const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
   (
     {
-      onImageComplete,
-      onVideoComplete,
+      onLocalMediaAdded,
+      onLocalMediaPatched,
       showButton = true,
       uploadPreset = "bpqu4ma5",
-      cloudName = "portable-media",
       onUploadActiveChange,
       uploadDisabled = false,
     },
     ref,
   ) => {
+    const { churchId = "", uploadPreset: contextUploadPreset } =
+      useContext(GlobalInfoContext) || {};
+    const { isGuestSession = false } = useContext(ControllerInfoContext) || {};
+    const resolvedUploadPreset = contextUploadPreset || uploadPreset;
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
     const [isMinimizedToButton, setIsMinimizedToButton] = useState(false);
@@ -45,6 +59,11 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const [overallProgress, setOverallProgress] = useState(0);
     const [statusMessage, setStatusMessage] = useState("");
     const [currentFileIndex, setCurrentFileIndex] = useState(0);
+    const [uploadToCloud, setUploadToCloud] = useState(
+      () =>
+        !isGuestSession &&
+        getRememberedLocalImagePolicy() !== "local-only",
+    );
     const fileInputRef = useRef<HTMLInputElement>(null);
     const cancelRequestedRef = useRef(false);
     const activeXhrRef = useRef<XMLHttpRequest | null>(null);
@@ -90,51 +109,71 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const uploadSingleFile = async (
       fileProgress: FileUploadProgress,
       fileIndex: number,
-      totalFiles: number
+      totalFiles: number,
+      storagePolicy: LocalAssetStoragePolicy,
     ): Promise<void> => {
       updateFileStatus(fileIndex, { status: "uploading", progress: 0 });
-      setStatusMessage(`Uploading ${fileIndex + 1}/${totalFiles}: ${fileProgress.file.name}...`);
-
-      const callbacks = {
-        onProgress: (progress: number) => {
-          const overallFileProgress =
-            (fileIndex / totalFiles) * 100 + (progress * (fileProgress.fileType === "video" ? 0.4 : 1)) / totalFiles;
-          updateFileStatus(fileIndex, { progress });
-          setOverallProgress(overallFileProgress);
-          setStatusMessage(
-            `Uploading ${fileIndex + 1}/${totalFiles}: ${fileProgress.file.name}... ${Math.round(progress)}%`
-          );
-        },
-        onStatusUpdate: (message: string) => {
-          setStatusMessage(message);
-        },
-        isCancelled: () => cancelRequestedRef.current,
-        setXhr: (xhr: XMLHttpRequest) => {
-          activeXhrRef.current = xhr;
-        },
-        addTimeout: (timeoutId: NodeJS.Timeout) => {
-          pollingTimeoutsRef.current.push(timeoutId);
-        },
-      };
+      setStatusMessage(
+        `Adding ${fileIndex + 1}/${totalFiles}: ${fileProgress.file.name}...`,
+      );
 
       try {
+        const media = await createLocalMediaFromFile(
+          fileProgress.file,
+          churchId,
+          storagePolicy,
+        );
+        onLocalMediaAdded(media);
+        updateFileStatus(fileIndex, { progress: 40 });
+
+        if (storagePolicy !== "local-and-cloud") {
+          updateFileStatus(fileIndex, { status: "ready", progress: 100 });
+          return;
+        }
+
+        const callbacks = {
+          onProgress: (progress: number) => {
+            const overallFileProgress =
+              (fileIndex / totalFiles) * 100 + (progress * 0.6) / totalFiles;
+            updateFileStatus(fileIndex, { progress: 40 + progress * 0.6 });
+            setOverallProgress(overallFileProgress);
+            setStatusMessage(
+              `Uploading ${fileIndex + 1}/${totalFiles}: ${fileProgress.file.name}... ${Math.round(progress)}%`,
+            );
+          },
+          onStatusUpdate: (message: string) => {
+            setStatusMessage(message);
+          },
+          isCancelled: () => cancelRequestedRef.current,
+          setXhr: (xhr: XMLHttpRequest) => {
+            activeXhrRef.current = xhr;
+          },
+          addTimeout: (timeoutId: NodeJS.Timeout) => {
+            pollingTimeoutsRef.current.push(timeoutId);
+          },
+        };
+
         if (fileProgress.fileType === "video") {
           updateFileStatus(fileIndex, { status: "processing", progress: 40 });
           const result = await uploadVideoToMux(fileProgress.file, callbacks);
-          updateFileStatus(fileIndex, { status: "ready", progress: 100 });
-          onVideoComplete(result);
-        } else {
-          const result = await uploadImageToCloudinary(
-            fileProgress.file,
-            uploadPreset,
-            cloudName,
-            callbacks
+          onLocalMediaPatched?.(
+            media.id,
+            buildLocalVideoCloudSharePatch(media, result),
           );
           updateFileStatus(fileIndex, { status: "ready", progress: 100 });
-          onImageComplete(result);
+          return;
         }
 
-        setOverallProgress(((fileIndex + 1) / totalFiles) * 100);
+        if (!churchId) {
+          throw new Error("Could not start the cloud upload. Try again.");
+        }
+        await enqueueLocalImageUpload({
+          assetId: media.localImage?.id || media.id,
+          itemId: "",
+          workspaceId: churchId,
+          uploadPreset: resolvedUploadPreset,
+        });
+        updateFileStatus(fileIndex, { status: "ready", progress: 100 });
       } catch (err) {
         updateFileStatus(fileIndex, {
           status: "error",
@@ -151,11 +190,18 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         return;
       }
 
+      const storagePolicy: LocalAssetStoragePolicy =
+        !isGuestSession && uploadToCloud ? "local-and-cloud" : "local-only";
+
       setError("");
       setUploadStatus("uploading");
       setOverallProgress(0);
       setCurrentFileIndex(0);
-      setStatusMessage("Starting uploads...");
+      setStatusMessage(
+        storagePolicy === "local-and-cloud"
+          ? "Starting uploads..."
+          : "Adding files...",
+      );
       setIsMinimized(true);
       cancelRequestedRef.current = false;
 
@@ -168,9 +214,15 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
         setCurrentFileIndex(i);
         try {
-          await uploadSingleFile(selectedFiles[i], i, totalFiles);
+          await uploadSingleFile(
+            selectedFiles[i],
+            i,
+            totalFiles,
+            storagePolicy,
+          );
           if (!cancelRequestedRef.current) {
             successCount++;
+            setOverallProgress(((i + 1) / totalFiles) * 100);
           }
         } catch (err) {
           if (cancelRequestedRef.current) {
@@ -195,8 +247,11 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       } else {
         if (errorCount === 0) {
           setUploadStatus("ready");
+          const noun = successCount === 1 ? "file" : "files";
           setStatusMessage(
-            `All ${successCount} ${successCount === 1 ? "file" : "files"} uploaded.`
+            storagePolicy === "local-and-cloud"
+              ? `All ${successCount} ${noun} uploaded.`
+              : `All ${successCount} ${noun} added.`,
           );
         } else if (successCount === 0) {
           setUploadStatus("error");
@@ -308,6 +363,17 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       }
     }, [isUploading, overallProgress]);
 
+    useEffect(() => {
+      if (isGuestSession) setUploadToCloud(false);
+    }, [isGuestSession]);
+
+    const handleUploadToCloudChange = (enabled: boolean) => {
+      setUploadToCloud(enabled);
+      if (!isGuestSession) {
+        rememberLocalImagePolicy(enabled ? "local-and-cloud" : "local-only");
+      }
+    };
+
     const getControllerElement = () => {
       const controllerMain = document.getElementById("controller-main");
       return controllerMain || document.body;
@@ -315,6 +381,16 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     const imageCount = selectedFiles.filter(f => f.fileType === "image").length;
     const videoCount = selectedFiles.filter(f => f.fileType === "video").length;
+    const cloudEnabled = !isGuestSession && uploadToCloud;
+    let confirmLabel = cloudEnabled ? "Upload" : "Add";
+    if (selectedFiles.length === 1) {
+      confirmLabel = `${confirmLabel} (1 file)`;
+    } else if (selectedFiles.length > 1) {
+      confirmLabel = `${confirmLabel} (${selectedFiles.length} files)`;
+    }
+    if (isUploading) {
+      confirmLabel = `Uploading... (${currentFileIndex + 1}/${selectedFiles.length})`;
+    }
 
     return (
       <>
@@ -419,6 +495,21 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               )}
             </div>
 
+            <div className="flex flex-col gap-1">
+              <Toggle
+                label="Upload to cloud"
+                icon={Cloud}
+                value={cloudEnabled}
+                onChange={handleUploadToCloudChange}
+                disabled={isGuestSession || isUploading}
+              />
+              <p className="text-xs text-gray-400">
+                {cloudEnabled
+                  ? "Keep a copy here and upload so other computers can use it."
+                  : "Keep files on this device only."}
+              </p>
+            </div>
+
             <UploadStatusDisplay
               uploadStatus={uploadStatus}
               statusMessage={statusMessage}
@@ -439,16 +530,16 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                 disabled={selectedFiles.length === 0 || isUploading}
                 svg={Upload}
               >
-                {isUploading
-                  ? `Uploading... (${currentFileIndex + 1}/${selectedFiles.length})`
-                  : `Upload ${selectedFiles.length > 0 ? `(${selectedFiles.length} ${selectedFiles.length === 1 ? 'file' : 'files'})` : ""}`}
+                {confirmLabel}
               </Button>
             </div>
 
             <div className="pt-4 border-t border-gray-700">
               <p className="text-xs text-gray-400">
-                Select one or more images or videos to upload.
-                Processing may take a few minutes depending on file size.
+                Select one or more images or videos.
+                {cloudEnabled
+                  ? " Cloud processing may take a few minutes for large videos."
+                  : " You can upload to the cloud later from Media."}
               </p>
             </div>
           </div>

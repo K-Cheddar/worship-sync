@@ -1,7 +1,11 @@
 import Button from "../../components/Button/Button";
 import type { MediaFolder } from "../../types";
 import { ArrowUp, Folder } from "lucide-react";
-import { MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE } from "./mediaLibraryOrangeFolderIcon";
+import {
+  MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS,
+  MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS,
+  MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
+} from "./mediaLibraryOrangeFolderIcon";
 import cn from "classnames";
 
 type MediaLibraryFolderGridItemsProps = {
@@ -17,13 +21,6 @@ type MediaLibraryFolderGridItemsProps = {
 /** Row spans the grid; chip inside is only as wide as its content. */
 const rowLiClass =
   "col-span-full flex list-none justify-start py-0.5 min-w-0";
-
-/** Frosted glass chip (folder rows + Up) */
-const folderChipButtonClass =
-  "inline-flex max-w-full min-w-0 shrink-0 flex-row items-center gap-1.5 rounded-md border border-white/20 bg-white/[0.08] px-1.5 py-0.5 text-left text-xs font-medium text-zinc-100 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] backdrop-blur-md transition-[background-color,border-color] hover:border-white/30 hover:bg-white/[0.14]";
-
-/** Long names truncate so the chip stays compact; short names keep tight width. */
-const labelClass = "min-w-0 max-w-[14rem] truncate text-left text-zinc-100";
 
 /**
  * Full-width rows at the top of the media grid: Up, then one row per folder.
@@ -46,7 +43,7 @@ const MediaLibraryFolderGridItems = ({
           <Button
             variant="none"
             padding="p-0"
-            className={folderChipButtonClass}
+            className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
             onClick={onGoUp}
             title="Up one level"
           >
@@ -54,7 +51,7 @@ const MediaLibraryFolderGridItems = ({
               className="h-3.5 w-3.5 shrink-0 text-zinc-200 "
               aria-hidden
             />
-            <span className={labelClass}>
+            <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>
               Up
             </span>
           </Button>
@@ -67,7 +64,7 @@ const MediaLibraryFolderGridItems = ({
           <Button
             variant="none"
             padding="p-0"
-            className={folderChipButtonClass}
+            className={MEDIA_LIBRARY_FOLDER_CHIP_BUTTON_CLASS}
             onClick={() => onOpenFolder(f.id)}
             title={f.name}
           >
@@ -76,7 +73,7 @@ const MediaLibraryFolderGridItems = ({
               className="h-3.5 w-3.5 shrink-0 text-orange-400"
               aria-hidden
             />
-            <span className={labelClass}>{f.name}</span>
+            <span className={MEDIA_LIBRARY_FOLDER_CHIP_LABEL_CLASS}>{f.name}</span>
           </Button>
         </li>
       ))}

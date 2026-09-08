@@ -25,7 +25,10 @@ test("safeCanvaReturnTo accepts only local application paths", () => {
   }
 });
 
-const createConnectedService = async ({ designUpdatedAt = 100 } = {}) => {
+const createConnectedService = async ({
+  designUpdatedAt = 100,
+  designEditUrl = "https://www.canva.com/api/design/token/edit",
+} = {}) => {
   const calls = [];
   const httpClient = {
     async post(url, body) {
@@ -67,6 +70,10 @@ const createConnectedService = async ({ designUpdatedAt = 100 } = {}) => {
                 thumbnail: { url: "https://example.test/thumb.png" },
                 page_count: 2,
                 updated_at: 100,
+                urls: {
+                  edit_url: "https://www.canva.com/api/design/token/edit",
+                  view_url: "https://www.canva.com/api/design/token/view",
+                },
               },
             ],
           },
@@ -76,8 +83,14 @@ const createConnectedService = async ({ designUpdatedAt = 100 } = {}) => {
         return {
           data: {
             design: {
+              id: "DAF_design_1",
               title: "Sunday Welcome",
               updated_at: designUpdatedAt,
+              page_count: 2,
+              urls: {
+                edit_url: designEditUrl,
+                view_url: "https://www.canva.com/api/design/token/view",
+              },
             },
           },
         };
@@ -149,6 +162,34 @@ test("Canva design browsing normalizes stable design metadata", async () => {
   const designs = await service.listDesigns({ churchId: "church-1" });
   assert.equal(designs.items[0].title, "Sunday Welcome");
   assert.equal(designs.items[0].pageCount, 2);
+  assert.equal(
+    designs.items[0].editUrl,
+    "https://www.canva.com/api/design/token/edit",
+  );
+});
+
+test("Canva loads fresh metadata for a saved design source", async () => {
+  const { service } = await createConnectedService({ designUpdatedAt: 101 });
+  const design = await service.getDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+  });
+
+  assert.equal(design.id, "DAF_design_1");
+  assert.equal(design.updatedAt, 101);
+  assert.equal(design.editUrl, "https://www.canva.com/api/design/token/edit");
+});
+
+test("Canva rejects untrusted design URLs before returning them to clients", async () => {
+  const { service } = await createConnectedService({
+    designEditUrl: "https://evil.example/design/token/edit",
+  });
+  const design = await service.getDesign({
+    churchId: "church-1",
+    designId: "DAF_design_1",
+  });
+
+  assert.equal(design.editUrl, "");
 });
 
 test("Canva PNG imports are copied to Cloudinary instead of storing export URLs", async () => {
@@ -171,6 +212,13 @@ test("Canva PNG imports are copied to Cloudinary instead of storing export URLs"
     result.assets[0].data.canvaImportKey,
     "canva:DAF_design_1:rev:100:png:1",
   );
+  assert.deepEqual(result.assets[0].data.canvaSource, {
+    designId: "DAF_design_1",
+    designTitle: "Sunday Welcome",
+    revision: 100,
+    format: "png",
+    pageNumbers: [1],
+  });
 });
 
 test("Canva skips an imported page only when its design revision is unchanged", async () => {

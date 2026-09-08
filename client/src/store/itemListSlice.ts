@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import type { LocalImageReferencePatch } from "../utils/localImageAssets";
 
 type ItemListState = {
   list: ServiceItem[];
@@ -47,6 +48,7 @@ export const itemListSlice = createSlice({
       state.initialItems = state.list.map((item) => item.listId);
       state.insertPointIndex = -1;
       state.isInitialized = true;
+      state.hasPendingUpdate = false;
     },
     updateItemListFromRemote: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload.map((item) => ({
@@ -57,9 +59,58 @@ export const itemListSlice = createSlice({
         -1,
         Math.min(state.insertPointIndex, state.list.length - 1),
       );
+      // Drop any in-flight local dirty flag so a delayed autosave cannot
+      // republish a pre-hydrate snapshot after remote sync.
+      state.hasPendingUpdate = false;
+    },
+    attachCloudCopyToLocalImageInItemList: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        mediaId: string;
+        url: string;
+      }>,
+    ) => {
+      state.list.forEach((item) => {
+        if (
+          item._id === action.payload.itemId &&
+          item.localImage?.id === action.payload.assetId
+        ) {
+          item.localImage.storagePolicy = "local-and-cloud";
+          item.localImage.cloudMediaId = action.payload.mediaId;
+          item.localImage.cloudUrl = action.payload.url;
+        }
+      });
+      state.hasPendingUpdate = true;
+    },
+    updateLocalImageReferenceInItemList: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        patch: LocalImageReferencePatch;
+      }>,
+    ) => {
+      state.list.forEach((item) => {
+        if (
+          item._id === action.payload.itemId &&
+          item.localImage?.id === action.payload.assetId &&
+          action.payload.patch.reference
+        ) {
+          item.localImage = {
+            ...item.localImage,
+            ...action.payload.patch.reference,
+            id: action.payload.assetId,
+          };
+        }
+      });
+      state.hasPendingUpdate = true;
     },
     removeItemFromList: (state, action: PayloadAction<string>) => {
-      const idx = state.list.findIndex((item) => item.listId === action.payload);
+      const idx = state.list.findIndex(
+        (item) => item.listId === action.payload,
+      );
       if (idx >= 0) {
         if (state.insertPointIndex > idx) {
           state.insertPointIndex -= 1;
@@ -116,11 +167,9 @@ export const itemListSlice = createSlice({
               );
         let insertAt: number;
         if (anchorIndex >= 0) {
-          insertAt =
-            newItem.type === "heading" ? anchorIndex : anchorIndex + 1;
+          insertAt = newItem.type === "heading" ? anchorIndex : anchorIndex + 1;
         } else {
-          insertAt =
-            newItem.type === "heading" ? 0 : state.list.length;
+          insertAt = newItem.type === "heading" ? 0 : state.list.length;
         }
         const index = Math.max(0, Math.min(insertAt, state.list.length));
         state.list.splice(index, 0, newItem);
@@ -163,6 +212,8 @@ export const {
   setHasPendingUpdate,
   addToInitialItems,
   forceUpdate,
+  attachCloudCopyToLocalImageInItemList,
+  updateLocalImageReferenceInItemList,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

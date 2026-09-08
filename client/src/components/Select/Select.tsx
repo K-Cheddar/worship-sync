@@ -1,6 +1,7 @@
 import { Option } from "../../types";
 import cn from "classnames";
 import { Fragment, useId, useMemo } from "react";
+import Label from "@/components/ui/Label";
 import {
   Select as RadixSelect,
   SelectContent,
@@ -129,20 +130,20 @@ const Select = ({
   const sections = useMemo(() => toOptionSections(options), [options]);
 
   return (
-    <div className={className}>
-      {label && (
-        <label
+    <div className={cn("group relative h-fit", className)}>
+      {label ? (
+        <Label
+          htmlFor={id}
           className={cn(
-            "p-1 font-semibold",
+            labelFontSize,
+            "font-semibold p-1",
             hideLabel && "sr-only",
             labelClassName,
-            labelFontSize
           )}
-          htmlFor={id}
         >
           {label}:
-        </label>
-      )}
+        </Label>
+      ) : null}
       <RadixSelect
         value={selectValue}
         onValueChange={(next) => onChange(fromRadixValue(next))}

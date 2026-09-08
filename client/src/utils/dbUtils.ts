@@ -995,7 +995,10 @@ export const migrateFontSizesToDefaults = async (
 const ITEM_TYPES = ["song", "free", "bible", "timer", "image"] as const;
 
 function isPouchNotFound(e: unknown): boolean {
-  return (e as { status?: number })?.status === 404;
+  const err = e as { status?: number | string; name?: string };
+  return (
+    err?.status === 404 || err?.status === "404" || err?.name === "not_found"
+  );
 }
 
 const DEFAULT_MONITOR_SETTINGS: MonitorSettingsType = {

@@ -1,4 +1,11 @@
-import { useRef, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import {
+  useRef,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import Select from "../../components/Select/Select";
 import BibleSection from "./BibleSection";
 import { bookType, chapterType, DBBibleChapter, verseType } from "../../types";
@@ -38,8 +45,10 @@ import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { ArrowLeft, Check, FileInput, Plus, X } from "lucide-react";
 import {
+  selectOutputSlot,
   updateBibleDisplayInfo,
   updatePresentation,
+
 } from "../../store/presentationSlice";
 import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
@@ -61,6 +70,7 @@ import {
 } from "../../components/ui/Popover";
 import cn from "classnames";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { useControllerBasePath } from "../../context/activeController";
 
 const BULK_BIBLE_IMPORT_STORAGE_PREFIX = "worshipSync_bibleBulkImport_";
 const BULK_BIBLE_IMPORT_ACTIVE_ID_KEY = "worshipSync_bibleBulkImport_activeId";
@@ -76,6 +86,7 @@ const Bible = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const [searchParams] = useSearchParams();
 
   const {
@@ -92,11 +103,18 @@ const Bible = () => {
     search,
   } = useSelector((state: RootState) => state.bible);
 
-  const {
-    isMonitorTransmitting,
-    isProjectorTransmitting,
-    isStreamTransmitting,
-  } = useSelector((state: RootState) => state.presentation);
+  const isMonitorTransmitting = useSelector(
+    (state: RootState) =>
+      selectOutputSlot(state, "monitor", "monitor").isTransmitting,
+  );
+  const isProjectorTransmitting = useSelector(
+    (state: RootState) =>
+      selectOutputSlot(state, "projector", "projector").isTransmitting,
+  );
+  const isStreamTransmitting = useSelector(
+    (state: RootState) =>
+      selectOutputSlot(state, "stream", "stream").isTransmitting,
+  );
 
   const {
     preferences: {
@@ -123,23 +141,23 @@ const Bible = () => {
 
   const [justAdded, setJustAdded] = useState(false);
   const [fetchedChapters, setFetchedChapters] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
   const [bulkImportText, setBulkImportText] = useState("");
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [bulkReview, setBulkReview] = useState<BulkBibleImportReview | null>(
-    null
+    null,
   );
   const [selectedBulkRowIds, setSelectedBulkRowIds] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
   const [addedBulkRowIds, setAddedBulkRowIds] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
-  const [bulkRowMessages, setBulkRowMessages] = useState<Record<string, string>>(
-    {}
-  );
+  const [bulkRowMessages, setBulkRowMessages] = useState<
+    Record<string, string>
+  >({});
   const [isAddingBulkRows, setIsAddingBulkRows] = useState(false);
 
   const createItemName = decodeURI(searchParams.get("name") || "");
@@ -160,7 +178,9 @@ const Bible = () => {
 
   const loadBulkReviewFromStorage = useCallback((id: string) => {
     try {
-      const raw = window.sessionStorage.getItem(getBulkBibleImportStorageKey(id));
+      const raw = window.sessionStorage.getItem(
+        getBulkBibleImportStorageKey(id),
+      );
       if (!raw) {
         setBulkReview(null);
         setSelectedBulkRowIds(new Set());
@@ -175,8 +195,8 @@ const Bible = () => {
         new Set(
           review.rows
             .filter((row) => row.status === "ready")
-            .map((row) => row.id)
-        )
+            .map((row) => row.id),
+        ),
       );
       setAddedBulkRowIds(new Set());
       setBulkRowMessages({});
@@ -192,17 +212,17 @@ const Bible = () => {
     if (bulkImportMode === "review" && bulkImportId) {
       window.sessionStorage.setItem(
         BULK_BIBLE_IMPORT_ACTIVE_ID_KEY,
-        bulkImportId
+        bulkImportId,
       );
       loadBulkReviewFromStorage(bulkImportId);
     } else if (!searchParams.toString()) {
       const activeId = window.sessionStorage.getItem(
-        BULK_BIBLE_IMPORT_ACTIVE_ID_KEY
+        BULK_BIBLE_IMPORT_ACTIVE_ID_KEY,
       );
       if (activeId) {
         navigate(
-          `/controller/bible?bulkImport=review&id=${encodeURIComponent(activeId)}`,
-          { replace: true }
+          `${controllerBasePath}/bible?bulkImport=review&id=${encodeURIComponent(activeId)}`,
+          { replace: true },
         );
       } else {
         setBulkReview(null);
@@ -213,6 +233,7 @@ const Bible = () => {
   }, [
     bulkImportId,
     bulkImportMode,
+    controllerBasePath,
     loadBulkReviewFromStorage,
     navigate,
     searchParams,
@@ -234,7 +255,7 @@ const Bible = () => {
 
   const hasRenderableVerses = useMemo(
     () => hasRenderableVersesInRange(verses, startVerse, endVerse),
-    [verses, startVerse, endVerse]
+    [verses, startVerse, endVerse],
   );
 
   useDebouncedEffect(
@@ -342,13 +363,12 @@ const Bible = () => {
     },
     [chapter, dispatch, bibleDb, version, books, book, isOfflineGuest, store],
     500,
-    true
+    true,
   );
-
 
   const submitVerses = async () => {
     const versesToUse = verses.filter(
-      ({ index }) => index >= startVerse && index <= endVerse
+      ({ index }) => index >= startVerse && index <= endVerse,
     );
 
     const item = await createNewBible({
@@ -401,7 +421,7 @@ const Bible = () => {
           });
           const selectedVerses = selectBibleVersesFromRange(
             chapterVerses,
-            row.verseRange
+            row.verseRange,
           );
 
           if (!selectedVerses.length) {
@@ -433,7 +453,7 @@ const Bible = () => {
 
       return resolvedRows;
     },
-    [bibleDb]
+    [bibleDb],
   );
 
   const handleBulkImport = async () => {
@@ -454,19 +474,21 @@ const Bible = () => {
 
       window.sessionStorage.setItem(
         getBulkBibleImportStorageKey(id),
-        JSON.stringify(review)
+        JSON.stringify(review),
       );
       window.sessionStorage.setItem(BULK_BIBLE_IMPORT_ACTIVE_ID_KEY, id);
       setBulkReview(review);
       setSelectedBulkRowIds(
         new Set(
-          rows.filter((row) => row.status === "ready").map((row) => row.id)
-        )
+          rows.filter((row) => row.status === "ready").map((row) => row.id),
+        ),
       );
       setAddedBulkRowIds(new Set());
       setBulkRowMessages({});
       setBulkImportOpen(false);
-      navigate(`/controller/bible?bulkImport=review&id=${encodeURIComponent(id)}`);
+      navigate(
+        `${controllerBasePath}/bible?bulkImport=review&id=${encodeURIComponent(id)}`,
+      );
     } finally {
       setIsBulkImporting(false);
     }
@@ -474,7 +496,7 @@ const Bible = () => {
 
   const handleBackFromBulkReview = () => {
     clearActiveBulkBibleImport();
-    navigate("/controller/bible");
+    navigate(`${controllerBasePath}/bible`);
   };
 
   const toggleBulkRowSelection = (rowId: string) => {
@@ -527,7 +549,7 @@ const Bible = () => {
       (row) =>
         row.status === "ready" &&
         selectedBulkRowIds.has(row.id) &&
-        !addedBulkRowIds.has(row.id)
+        !addedBulkRowIds.has(row.id),
     );
     if (!rowsToAdd.length) return;
 
@@ -552,7 +574,7 @@ const Bible = () => {
       dispatch(resetCreateItem());
       setIsAddingBulkRows(false);
       clearActiveBulkBibleImport();
-      navigate("/controller/bible");
+      navigate(`${controllerBasePath}/bible`);
     }
   };
 
@@ -588,14 +610,14 @@ const Bible = () => {
       updateBibleDisplayInfo({
         title,
         text,
-      })
+      }),
     );
     dispatch(
       updatePresentation({
         slide: slides[1],
         type: "bible",
         name: createItemName || bibleItemName,
-      })
+      }),
     );
   };
 
@@ -605,54 +627,57 @@ const Bible = () => {
     }
   }, [book, books, dispatch]);
 
-  const handleSearch = useCallback((val: string) => {
-    dispatch(setSearch(val));
-    if (!val) {
-      dispatch(setSearchValue({ type: "book", value: "" }));
-      dispatch(setSearchValue({ type: "chapter", value: "" }));
-      dispatch(setSearchValue({ type: "startVerse", value: "" }));
-      dispatch(setSearchValue({ type: "endVerse", value: "" }));
-      return;
-    }
+  const handleSearch = useCallback(
+    (val: string) => {
+      dispatch(setSearch(val));
+      if (!val) {
+        dispatch(setSearchValue({ type: "book", value: "" }));
+        dispatch(setSearchValue({ type: "chapter", value: "" }));
+        dispatch(setSearchValue({ type: "startVerse", value: "" }));
+        dispatch(setSearchValue({ type: "endVerse", value: "" }));
+        return;
+      }
 
-    // Matches:
-    // "Genesis"
-    // "John 3"
-    // "Gen 3:16"
-    // "Gen 3 16"
-    // "Gen 3:16-20"
-    // "Gen 3:16 20"
-    // "1 John 2 3-5"
-    // "Psalm 78 40-64 NKJV"
-    const parsedReference = parseBibleSearchReference(val);
-    if (!parsedReference) return;
+      // Matches:
+      // "Genesis"
+      // "John 3"
+      // "Gen 3:16"
+      // "Gen 3 16"
+      // "Gen 3:16-20"
+      // "Gen 3:16 20"
+      // "1 John 2 3-5"
+      // "Psalm 78 40-64 NKJV"
+      const parsedReference = parseBibleSearchReference(val);
+      if (!parsedReference) return;
 
-    const {
-      book: bookStr,
-      chapter: chapterStr,
-      startVerse: verseStartStr,
-      endVerse: verseEndStr,
-      version: parsedVersion,
-    } = parsedReference;
+      const {
+        book: bookStr,
+        chapter: chapterStr,
+        startVerse: verseStartStr,
+        endVerse: verseEndStr,
+        version: parsedVersion,
+      } = parsedReference;
 
-    dispatch(setSearchValue({ type: "book", value: bookStr || "" }));
-    dispatch(setSearchValue({ type: "chapter", value: chapterStr || "" }));
-    if (parsedVersion) {
-      dispatch(setVersion(parsedVersion));
-    }
-    if (chapterStr) {
-      dispatch(setSearchValue({ type: "chapter", value: chapterStr }));
-      dispatch(setChapter(parseInt(chapterStr)));
-    }
-    if (verseStartStr) {
-      dispatch(setSearchValue({ type: "startVerse", value: verseStartStr }));
-      dispatch(setStartVerse(parseInt(verseStartStr)));
-    }
-    if (verseEndStr) {
-      dispatch(setSearchValue({ type: "endVerse", value: verseEndStr }));
-      dispatch(setEndVerse(parseInt(verseEndStr)));
-    }
-  }, [dispatch]);
+      dispatch(setSearchValue({ type: "book", value: bookStr || "" }));
+      dispatch(setSearchValue({ type: "chapter", value: chapterStr || "" }));
+      if (parsedVersion) {
+        dispatch(setVersion(parsedVersion));
+      }
+      if (chapterStr) {
+        dispatch(setSearchValue({ type: "chapter", value: chapterStr }));
+        dispatch(setChapter(parseInt(chapterStr)));
+      }
+      if (verseStartStr) {
+        dispatch(setSearchValue({ type: "startVerse", value: verseStartStr }));
+        dispatch(setStartVerse(parseInt(verseStartStr)));
+      }
+      if (verseEndStr) {
+        dispatch(setSearchValue({ type: "endVerse", value: verseEndStr }));
+        dispatch(setEndVerse(parseInt(verseEndStr)));
+      }
+    },
+    [dispatch],
+  );
 
   useEffect(() => {
     if (hasNavigatedFromUrl.current || !books.length) return;
@@ -680,7 +705,7 @@ const Bible = () => {
           chapter: chapterParam,
           version: versionParam ?? version,
           verseRange: versesParam?.trim() ? versesParam : undefined,
-        })
+        }),
       );
     }
   }, [books, dispatch, handleSearch, searchParams, version]);
@@ -716,9 +741,7 @@ const Bible = () => {
           className="ml-auto mt-auto mb-2"
           onClick={submitVerses}
           isLoading={isLoadingChapter}
-          disabled={
-            isLoadingChapter || justAdded || !hasRenderableVerses
-          }
+          disabled={isLoadingChapter || justAdded || !hasRenderableVerses}
           color={justAdded ? "#67e8f9" : undefined}
           svg={justAdded ? Check : Plus}
         >
@@ -731,7 +754,7 @@ const Bible = () => {
   const readyBulkRows =
     bulkReview?.rows.filter((row) => row.status === "ready") || [];
   const selectedReadyBulkRows = readyBulkRows.filter(
-    (row) => selectedBulkRowIds.has(row.id) && !addedBulkRowIds.has(row.id)
+    (row) => selectedBulkRowIds.has(row.id) && !addedBulkRowIds.has(row.id),
   );
 
   const bulkReviewSection = (
@@ -843,7 +866,7 @@ const Bible = () => {
                       <span
                         className={cn(
                           "rounded-full px-2 py-0.5 text-xs font-medium",
-                          statusTone
+                          statusTone,
                         )}
                       >
                         {statusLabel}
@@ -906,16 +929,17 @@ const Bible = () => {
             </p>
           </div>
         )}
-        <div className="flex gap-4 items-end flex-wrap">
+        <div className="flex min-w-0 gap-4 items-center flex-wrap">
           <Select
             value={version}
             onChange={(val) => dispatch(setVersion(val))}
             label="Version"
-            className="max-lg:w-full flex justify-center"
+            className="shrink-0 max-lg:w-full flex justify-center"
+            selectClassName="w-72 max-lg:w-full"
             hideLabel
             options={bibleVersions}
           />
-          <div className="flex gap-2 items-center">
+          <div className="flex min-w-0 flex-1 gap-2 items-center">
             <Input
               svg={search ? X : undefined}
               svgAction={() => handleSearch("")}
@@ -929,7 +953,7 @@ const Bible = () => {
                 }
               }}
               label="Search"
-              className="max-lg:w-full flex justify-center gap-2 items-center"
+              className="min-w-0 flex-1 max-lg:w-full flex justify-center gap-2 items-center"
               placeholder="Gen 3:15"
               svgPadding="max-lg:p-1 lg:p-0"
             />
@@ -950,9 +974,12 @@ const Bible = () => {
               >
                 <div className="flex flex-col gap-3">
                   <div>
-                    <h3 className="text-sm font-semibold">Import Bible texts</h3>
+                    <h3 className="text-sm font-semibold">
+                      Import Bible texts
+                    </h3>
                     <p className="mt-1 text-xs text-gray-400">
-                      Paste text that includes Bible references. We extract them so you can review before importing.
+                      Paste text that includes Bible references. We extract them
+                      so you can review before importing.
                     </p>
                   </div>
                   <TextArea
@@ -1008,7 +1035,7 @@ const Bible = () => {
               <div
                 className={cn(
                   "flex flex-1 w-full gap-2 max-lg:justify-center min-h-0",
-                  isMobile && showVersesDisplaySection && "hidden"
+                  isMobile && showVersesDisplaySection && "hidden",
                 )}
               >
                 <BibleSection

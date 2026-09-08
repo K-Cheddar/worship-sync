@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -13,6 +13,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
+import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -21,9 +22,11 @@ import {
   archiveTeamPosition,
   createTeamPosition,
   deleteTeamPosition,
+  getServicePlanMicrophones,
   updateTeamPosition,
 } from "../../../api/auth";
 import type { TeamRecord, TeamPosition } from "../../../api/authTypes";
+import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
 import {
@@ -61,12 +64,20 @@ import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
+import {
+  Select as RadixSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 
 type PositionDraft = {
   name: string;
   description: string;
   icon: string;
   qualificationAreaId: string;
+  defaultMicrophoneId: string;
 };
 
 // Key used to track an in-flight save for the create form, which has no
@@ -76,6 +87,7 @@ const CREATE_SAVING_KEY = "__create__";
 // Radix Select forbids an empty-string item value, so "no area picked" needs
 // its own sentinel distinct from the draft's real (empty-string) value.
 const NO_QUALIFICATION_AREA_VALUE = "__none__";
+const NO_DEFAULT_MICROPHONE_VALUE = "__none_microphone__";
 
 type PositionManagerProps = {
   positions: TeamPosition[];
@@ -101,6 +113,7 @@ const PositionManager = ({
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
+  const defaultMicrophoneLabelId = useId();
   const sensors = useSensors();
   const activeTeams = useMemo(() => teams.filter(isActive), [teams]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
@@ -113,7 +126,9 @@ const PositionManager = ({
     description: "",
     icon: "",
     qualificationAreaId: "",
+    defaultMicrophoneId: "",
   });
+  const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   // Positions with a save currently in flight, keyed by positionId (or
   // CREATE_SAVING_KEY for a new position). Tracking per-editor keeps the Save
   // spinner on the position actually saving and lets editing continue
@@ -143,6 +158,14 @@ const PositionManager = ({
 
   // Default the selected team to the first active team once teams load.
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
+  const positionTeamId = editing?.teamId || teamId;
+  const positionTeamUsesMicrophones = Boolean(
+    activeTeams.find((team) => team.teamId === positionTeamId)
+      ?.usesMicrophoneAssignments,
+  );
+  const selectedDefaultMicrophone = microphones.find(
+    (microphone) => microphone.id === draft.defaultMicrophoneId,
+  );
   const teamQualificationAreaOptions = useMemo(
     () =>
       data.qualificationAreas
@@ -187,8 +210,32 @@ const PositionManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ name: "", description: "", icon: "", qualificationAreaId: "" });
+    setDraft({
+      name: "",
+      description: "",
+      icon: "",
+      qualificationAreaId: "",
+      defaultMicrophoneId: "",
+    });
   };
+
+  useEffect(() => {
+    if (!churchId) {
+      setMicrophones([]);
+      return undefined;
+    }
+    let cancelled = false;
+    getServicePlanMicrophones(churchId)
+      .then((result) => {
+        if (!cancelled) setMicrophones(result.microphones);
+      })
+      .catch(() => {
+        if (!cancelled) setMicrophones([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId]);
 
   const cancelEditing = () => {
     finishEditing(reset);
@@ -235,6 +282,9 @@ const PositionManager = ({
       description: draft.description || "",
       icon: draft.icon || "",
       qualificationAreaId: draft.qualificationAreaId || undefined,
+      ...(draft.defaultMicrophoneId
+        ? { defaultMicrophoneId: draft.defaultMicrophoneId }
+        : {}),
       teamId: positionTeamId,
     };
     const saveToastMessage = formatPositionSaveToast(wasEditing, payload);
@@ -246,6 +296,7 @@ const PositionManager = ({
       description: payload.description,
       icon: payload.icon,
       qualificationAreaId: payload.qualificationAreaId,
+      defaultMicrophoneId: payload.defaultMicrophoneId || null,
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -298,14 +349,21 @@ const PositionManager = ({
   const isSavingCurrent = savingIds.has(currentEditorKey);
   const hasPendingChanges = editing
     ? JSON.stringify(draft) !==
-      JSON.stringify({
-        name: editing.name,
-        description: editing.description || "",
-        icon: editing.icon || "",
-        qualificationAreaId: editing.qualificationAreaId || "",
-      })
+    JSON.stringify({
+      name: editing.name,
+      description: editing.description || "",
+      icon: editing.icon || "",
+      qualificationAreaId: editing.qualificationAreaId || "",
+      defaultMicrophoneId: editing.defaultMicrophoneId || "",
+    })
     : JSON.stringify(draft) !==
-      JSON.stringify({ name: "", description: "", icon: "", qualificationAreaId: "" });
+    JSON.stringify({
+      name: "",
+      description: "",
+      icon: "",
+      qualificationAreaId: "",
+      defaultMicrophoneId: "",
+    });
   // A save already in flight for this editor is not an unsaved change: the
   // operator committed it, and `editing` only catches up when the response
   // lands. Without this, switching positions mid-save falsely prompts to
@@ -322,6 +380,7 @@ const PositionManager = ({
       description: position.description || "",
       icon: position.icon || "",
       qualificationAreaId: position.qualificationAreaId || "",
+      defaultMicrophoneId: position.defaultMicrophoneId || "",
     });
   }, []);
 
@@ -381,12 +440,7 @@ const PositionManager = ({
           activeTeams.length === 0 ? (
             returnTo && !showCreate ? (
               <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
-            ) : (
-              <TeamsSectionReturnPrompt
-                message="Create a team first — positions belong to a team."
-                originSection={TEAMS_SECTION_PATHS.positions}
-              />
-            )
+            ) : null
           ) : (
             <div className="space-y-3">
               {returnTo && !showCreate ? (
@@ -514,6 +568,71 @@ const PositionManager = ({
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
         <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-24" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
+        {positionTeamUsesMicrophones ? (
+          <div>
+            <p
+              id={defaultMicrophoneLabelId}
+              className="p-1 text-sm font-semibold"
+            >
+              Default microphone:
+            </p>
+            <RadixSelect
+              value={draft.defaultMicrophoneId || NO_DEFAULT_MICROPHONE_VALUE}
+              onValueChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  defaultMicrophoneId:
+                    value === NO_DEFAULT_MICROPHONE_VALUE ? "" : value,
+                }))
+              }
+            >
+              <SelectTrigger
+                aria-labelledby={defaultMicrophoneLabelId}
+                className="w-full justify-between"
+              >
+                <SelectValue placeholder="No default microphone">
+                  {selectedDefaultMicrophone ? (
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      <ServicePlanMicrophoneIcon
+                        microphone={selectedDefaultMicrophone}
+                        color={selectedDefaultMicrophone.color}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="truncate">{selectedDefaultMicrophone.name}</span>
+                    </span>
+                  ) : (
+                    "No default microphone"
+                  )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_DEFAULT_MICROPHONE_VALUE}>
+                  No default microphone
+                </SelectItem>
+                {microphones.map((microphone) => (
+                  <SelectItem
+                    key={microphone.id}
+                    value={microphone.id}
+                    textValue={microphone.name}
+                  >
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      <ServicePlanMicrophoneIcon
+                        microphone={microphone}
+                        color={microphone.color}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="truncate">{microphone.name}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </RadixSelect>
+            <p className="mt-1 text-xs text-gray-400">
+              Applied to this position&apos;s slots when a new schedule is created.
+              You can change any date&apos;s microphone in the schedule.
+            </p>
+          </div>
+        ) : null}
         <div>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div className="min-w-0 flex-1">

@@ -95,16 +95,12 @@ const TeamsMicrophonesPage = () => {
     next: ServicePlanMicrophone[],
     nextAudiences: ServicePlanMicrophoneAudience[],
     saveTarget: "microphones" | "visibility",
-  ) => {
-    if (!churchId) return;
+  ): Promise<boolean> => {
+    if (!churchId) return false;
     const microphonesToSave =
       saveTarget === "microphones" ? next : microphones;
     const audiencesToSave =
       saveTarget === "visibility" ? nextAudiences : microphoneAudiences;
-    const hasUnsavedChangesOnOtherTab =
-      saveTarget === "microphones"
-        ? JSON.stringify(nextAudiences) !== JSON.stringify(microphoneAudiences)
-        : JSON.stringify(next) !== JSON.stringify(microphones);
     setSaving(true);
     try {
       const result = await saveServicePlanMicrophones(
@@ -114,15 +110,23 @@ const TeamsMicrophonesPage = () => {
       );
       setMicrophones(result.microphones);
       setMicrophoneAudiences(result.audiences || []);
-      setIsEditing(hasUnsavedChangesOnOtherTab);
+      if (saveTarget === "microphones") setIsEditing(false);
       showToast(
         saveTarget === "visibility"
-          ? "Who sees microphone notes saved."
+          ? "Mic note visibility saved."
           : "Microphone list saved.",
         "success",
       );
+      return true;
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not save the microphone list.");
+      showApiErrorToast(
+        showToast,
+        error,
+        saveTarget === "visibility"
+          ? "Could not save mic note visibility."
+          : "Could not save the microphone list.",
+      );
+      return false;
     } finally {
       setSaving(false);
     }

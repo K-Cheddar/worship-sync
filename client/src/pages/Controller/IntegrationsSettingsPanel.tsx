@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronUp, Info, Plus, RotateCcw, Unplug } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useToast } from "../../context/toastContext";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -597,6 +598,8 @@ export const IntegrationsSettingsPanel = ({
   integrationsStatus,
 }: IntegrationsSettingsPanelProps) => {
   const { showToast } = useToast();
+  const { refreshChurchIntegrationsSync } =
+    useContext(GlobalInfoContext) || {};
   const draftRef = useRef<ChurchIntegrations>(cloneIntegrations(integrations));
   const [draft, setDraft] = useState<ChurchIntegrations>(() =>
     cloneIntegrations(integrations),
@@ -792,6 +795,7 @@ export const IntegrationsSettingsPanel = ({
         }
         setPendingRestreamConnect(null);
         if (result.status === "completed") {
+          refreshChurchIntegrationsSync?.();
           showToast(
             result.accountLabel
               ? `Restream connected to ${result.accountLabel}.`
@@ -828,7 +832,7 @@ export const IntegrationsSettingsPanel = ({
       cancelled = true;
       window.clearInterval(timerId);
     };
-  }, [churchId, pendingRestreamConnect, showToast]);
+  }, [churchId, pendingRestreamConnect, refreshChurchIntegrationsSync, showToast]);
 
   const youtube = integrations.youtube;
 
@@ -928,6 +932,7 @@ export const IntegrationsSettingsPanel = ({
         if (result.status === "pending") return;
         setPendingYouTubeConnect(null);
         if (result.status === "completed") {
+          refreshChurchIntegrationsSync?.();
           showToast(
             result.accountLabel
               ? `YouTube connected to ${result.accountLabel}.`
@@ -964,7 +969,7 @@ export const IntegrationsSettingsPanel = ({
       cancelled = true;
       window.clearInterval(timerId);
     };
-  }, [churchId, pendingYouTubeConnect, showToast]);
+  }, [churchId, pendingYouTubeConnect, refreshChurchIntegrationsSync, showToast]);
 
   const setServicePlanningEnabled = useCallback((enabled: boolean) => {
     setIsDraftDirty(true);
@@ -1266,38 +1271,38 @@ export const IntegrationsSettingsPanel = ({
           </div>
           <div className="col-start-2 row-start-1 sm:col-start-4">
             <IntegrationInfoPopover
-            name="Restream"
-            description="Connect one Restream account for this church. Moderators can then review live comments from the board moderation page."
-          >
-            {restream.enabled ? (
-              <Button
-                type="button"
-                variant="destructive"
-                svg={Unplug}
-                iconSize="sm"
-                disabled={isRestreamActing}
-                isLoading={isRestreamActing}
-                onClick={() => void handleDisconnectRestream()}
-              >
-                Disconnect Restream
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="cta"
-                disabled={isRestreamActing}
-                isLoading={isRestreamActing}
-                onClick={() => void handleConnectRestream()}
-              >
-                Connect Restream
-              </Button>
-            )}
-            <dl className="space-y-2 text-sm">
-              <div><dt className="text-gray-400">Last event</dt><dd className="font-medium">{restream.lastEventAt ? new Date(restream.lastEventAt).toLocaleString() : "No messages received yet"}</dd></div>
-              {restream.platformSummary.length ? <div><dt className="text-gray-400">Live sources</dt><dd className="font-medium">{restream.platformSummary.join(" | ")}</dd></div> : null}
-              {restream.sessionStartedAt ? <div><dt className="text-gray-400">Current session started</dt><dd className="font-medium">{new Date(restream.sessionStartedAt).toLocaleString()}</dd></div> : null}
-              {restream.lastError ? <div><dt className="text-amber-200">Connection message</dt><dd className="font-medium text-amber-100">{restream.lastError}</dd></div> : null}
-            </dl>
+              name="Restream"
+              description="Connect one Restream account for this church. Moderators can then review live comments from the board moderation page."
+            >
+              {restream.enabled ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  svg={Unplug}
+                  iconSize="sm"
+                  disabled={isRestreamActing}
+                  isLoading={isRestreamActing}
+                  onClick={() => void handleDisconnectRestream()}
+                >
+                  Disconnect Restream
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="cta"
+                  disabled={isRestreamActing}
+                  isLoading={isRestreamActing}
+                  onClick={() => void handleConnectRestream()}
+                >
+                  Connect Restream
+                </Button>
+              )}
+              <dl className="space-y-2 text-sm">
+                <div><dt className="text-gray-400">Last event</dt><dd className="font-medium">{restream.lastEventAt ? new Date(restream.lastEventAt).toLocaleString() : "No messages received yet"}</dd></div>
+                {restream.platformSummary.length ? <div><dt className="text-gray-400">Live sources</dt><dd className="font-medium">{restream.platformSummary.join(" | ")}</dd></div> : null}
+                {restream.sessionStartedAt ? <div><dt className="text-gray-400">Current session started</dt><dd className="font-medium">{new Date(restream.sessionStartedAt).toLocaleString()}</dd></div> : null}
+                {restream.lastError ? <div><dt className="text-amber-200">Connection message</dt><dd className="font-medium text-amber-100">{restream.lastError}</dd></div> : null}
+              </dl>
             </IntegrationInfoPopover>
           </div>
         </div>
@@ -1337,63 +1342,63 @@ export const IntegrationsSettingsPanel = ({
         </div>
 
         <div className="hidden">
-        {restream.platformSummary.length ? (
-          <p className="mt-3 text-sm text-gray-300">
-            Live sources: {restream.platformSummary.join(" | ")}
-          </p>
-        ) : null}
-        {pendingRestreamConnect ? (
-          <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
-            <p className="text-sm font-medium text-cyan-100">
-              Finish the Restream connection in your browser.
+          {restream.platformSummary.length ? (
+            <p className="mt-3 text-sm text-gray-300">
+              Live sources: {restream.platformSummary.join(" | ")}
             </p>
-            <p className="mt-1 text-xs text-cyan-100/80">
-              This request stays open until it finishes or expires.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  if (isElectron() && window.electronAPI?.openExternalUrl) {
-                    void window.electronAPI.openExternalUrl(
+          ) : null}
+          {pendingRestreamConnect ? (
+            <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
+              <p className="text-sm font-medium text-cyan-100">
+                Finish the Restream connection in your browser.
+              </p>
+              <p className="mt-1 text-xs text-cyan-100/80">
+                This request stays open until it finishes or expires.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    if (isElectron() && window.electronAPI?.openExternalUrl) {
+                      void window.electronAPI.openExternalUrl(
+                        pendingRestreamConnect.authorizeUrl,
+                      );
+                      return;
+                    }
+                    const opened = window.open(
                       pendingRestreamConnect.authorizeUrl,
+                      "_blank",
+                      "noopener,noreferrer",
                     );
-                    return;
-                  }
-                  const opened = window.open(
-                    pendingRestreamConnect.authorizeUrl,
-                    "_blank",
-                    "noopener,noreferrer",
-                  );
-                  if (!opened) {
-                    window.location.assign(
-                      pendingRestreamConnect.authorizeUrl,
-                    );
-                  }
-                }}
-              >
-                Reopen browser
-              </Button>
-              <Button
-                type="button"
-                variant="tertiary"
-                onClick={() => setPendingRestreamConnect(null)}
-              >
-                Stop waiting
-              </Button>
+                    if (!opened) {
+                      window.location.assign(
+                        pendingRestreamConnect.authorizeUrl,
+                      );
+                    }
+                  }}
+                >
+                  Reopen browser
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  onClick={() => setPendingRestreamConnect(null)}
+                >
+                  Stop waiting
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : null}
-        {restream.sessionStartedAt ? (
-          <p className="mt-2 text-xs text-gray-400">
-            Current Restream session started{" "}
-            {new Date(restream.sessionStartedAt).toLocaleString()}.
-          </p>
-        ) : null}
-        {restream.lastError ? (
-          <p className="mt-3 text-sm text-amber-100/90">{restream.lastError}</p>
-        ) : null}
+          ) : null}
+          {restream.sessionStartedAt ? (
+            <p className="mt-2 text-xs text-gray-400">
+              Current Restream session started{" "}
+              {new Date(restream.sessionStartedAt).toLocaleString()}.
+            </p>
+          ) : null}
+          {restream.lastError ? (
+            <p className="mt-3 text-sm text-amber-100/90">{restream.lastError}</p>
+          ) : null}
         </div>
       </section>
 
@@ -1406,37 +1411,37 @@ export const IntegrationsSettingsPanel = ({
           </div>
           <div className="col-start-2 row-start-1 sm:col-start-4">
             <IntegrationInfoPopover
-            name="YouTube"
-            description="Connect the church YouTube channel so moderators can post to that channel's live chat from the board page. Connect the destination channel, not a personal staff account."
-          >
-            {youtube.enabled ? (
-              <Button
-                type="button"
-                variant="destructive"
-                svg={Unplug}
-                iconSize="sm"
-                disabled={isYouTubeActing}
-                isLoading={isYouTubeActing}
-                onClick={() => void handleDisconnectYouTube()}
-              >
-                Disconnect YouTube
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="cta"
-                iconSize="sm"
-                disabled={isYouTubeActing}
-                isLoading={isYouTubeActing}
-                onClick={() => void handleConnectYouTube()}
-              >
-                Connect YouTube
-              </Button>
-            )}
-            <dl className="space-y-2 text-sm">
-              {youtube.lastPostedAt ? <div><dt className="text-gray-400">Last chat post</dt><dd className="font-medium">{new Date(youtube.lastPostedAt).toLocaleString()}</dd></div> : null}
-              {youtube.lastError ? <div><dt className="text-amber-200">Connection message</dt><dd className="font-medium text-amber-100">{youtube.lastError}</dd></div> : null}
-            </dl>
+              name="YouTube"
+              description="Connect the church YouTube channel so moderators can post to that channel's live chat from the board page. Connect the destination channel, not a personal staff account."
+            >
+              {youtube.enabled ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  svg={Unplug}
+                  iconSize="sm"
+                  disabled={isYouTubeActing}
+                  isLoading={isYouTubeActing}
+                  onClick={() => void handleDisconnectYouTube()}
+                >
+                  Disconnect YouTube
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="cta"
+                  iconSize="sm"
+                  disabled={isYouTubeActing}
+                  isLoading={isYouTubeActing}
+                  onClick={() => void handleConnectYouTube()}
+                >
+                  Connect YouTube
+                </Button>
+              )}
+              <dl className="space-y-2 text-sm">
+                {youtube.lastPostedAt ? <div><dt className="text-gray-400">Last chat post</dt><dd className="font-medium">{new Date(youtube.lastPostedAt).toLocaleString()}</dd></div> : null}
+                {youtube.lastError ? <div><dt className="text-amber-200">Connection message</dt><dd className="font-medium text-amber-100">{youtube.lastError}</dd></div> : null}
+              </dl>
             </IntegrationInfoPopover>
           </div>
         </div>
@@ -1455,56 +1460,56 @@ export const IntegrationsSettingsPanel = ({
           </div>
         </dl>
         <div className="hidden">
-        {pendingYouTubeConnect ? (
-          <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
-            <p className="text-sm font-medium text-cyan-100">
-              Finish the YouTube connection in your browser.
-            </p>
-            <p className="mt-1 text-xs text-cyan-100/80">
-              This request stays open until it finishes or expires.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  if (isElectron() && window.electronAPI?.openExternalUrl) {
-                    void window.electronAPI.openExternalUrl(
+          {pendingYouTubeConnect ? (
+            <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
+              <p className="text-sm font-medium text-cyan-100">
+                Finish the YouTube connection in your browser.
+              </p>
+              <p className="mt-1 text-xs text-cyan-100/80">
+                This request stays open until it finishes or expires.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    if (isElectron() && window.electronAPI?.openExternalUrl) {
+                      void window.electronAPI.openExternalUrl(
+                        pendingYouTubeConnect.authorizeUrl,
+                      );
+                      return;
+                    }
+                    const opened = window.open(
                       pendingYouTubeConnect.authorizeUrl,
+                      "_blank",
+                      "noopener,noreferrer",
                     );
-                    return;
-                  }
-                  const opened = window.open(
-                    pendingYouTubeConnect.authorizeUrl,
-                    "_blank",
-                    "noopener,noreferrer",
-                  );
-                  if (!opened) {
-                    window.location.assign(pendingYouTubeConnect.authorizeUrl);
-                  }
-                }}
-              >
-                Reopen browser
-              </Button>
-              <Button
-                type="button"
-                variant="tertiary"
-                onClick={() => setPendingYouTubeConnect(null)}
-              >
-                Cancel
-              </Button>
+                    if (!opened) {
+                      window.location.assign(pendingYouTubeConnect.authorizeUrl);
+                    }
+                  }}
+                >
+                  Reopen browser
+                </Button>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  onClick={() => setPendingYouTubeConnect(null)}
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : null}
-        {youtube.lastPostedAt ? (
-          <p className="mt-2 text-xs text-gray-400">
-            Last YouTube chat post{" "}
-            {new Date(youtube.lastPostedAt).toLocaleString()}.
-          </p>
-        ) : null}
-        {youtube.lastError ? (
-          <p className="mt-3 text-sm text-amber-100/90">{youtube.lastError}</p>
-        ) : null}
+          ) : null}
+          {youtube.lastPostedAt ? (
+            <p className="mt-2 text-xs text-gray-400">
+              Last YouTube chat post{" "}
+              {new Date(youtube.lastPostedAt).toLocaleString()}.
+            </p>
+          ) : null}
+          {youtube.lastError ? (
+            <p className="mt-3 text-sm text-amber-100/90">{youtube.lastError}</p>
+          ) : null}
         </div>
       </section>
 

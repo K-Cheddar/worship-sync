@@ -20,7 +20,7 @@ import {
   AUTOSAVE_DEBOUNCE_KEYS,
   autosaveIndicatorSlice,
 } from "../../../store/autosaveIndicatorSlice";
-import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
+import { resolveChurchToolbarLogoUrls } from "../../../utils/churchBranding";
 import { teamsDataKeys } from "../teamsConstants";
 import type { TeamsData, TeamsDataKey, TeamsScheduleDrafts } from "../types";
 import {
@@ -167,8 +167,8 @@ export const useTeamsPageState = () => {
   const teamsAutosaveEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const toolbarLogoUrl = useMemo(
-    () => resolveChurchToolbarLogoUrl(context?.churchBranding),
+  const toolbarLogos = useMemo(
+    () => resolveChurchToolbarLogoUrls(context?.churchBranding),
     [context?.churchBranding],
   );
   const churchName = context?.churchName?.trim() || "";
@@ -286,7 +286,7 @@ export const useTeamsPageState = () => {
   // short tail after the last save lands. Also drives the toolbar autosave chip
   // off the real save lifecycle, so "Syncing…" means a save is actually pending.
   const trackTeamsSave = useCallback(
-    <T,>(run: Promise<T>): Promise<T> => {
+    <T>(run: Promise<T>): Promise<T> => {
       pendingTeamsSavesRef.current += 1;
       lastLocalEditAtRef.current = Date.now();
       beginTeamsAutosave();
@@ -373,6 +373,30 @@ export const useTeamsPageState = () => {
     [canEditAnyTeam, persistScheduleDrafts],
   );
 
+  /** Drop a draft key (e.g. clear `"new"` after a successful create). */
+  const clearScheduleDraft = useCallback(
+    (draftKey: string) => {
+      if (!canEditAnyTeam) return;
+      if (!(draftKey in scheduleDraftsRef.current)) {
+        if (draftPersistTimeoutRef.current) {
+          clearTimeout(draftPersistTimeoutRef.current);
+          draftPersistTimeoutRef.current = null;
+        }
+        return;
+      }
+      const nextDrafts = { ...scheduleDraftsRef.current };
+      delete nextDrafts[draftKey];
+      scheduleDraftsRef.current = nextDrafts;
+      setScheduleDrafts(nextDrafts);
+      if (draftPersistTimeoutRef.current) {
+        clearTimeout(draftPersistTimeoutRef.current);
+        draftPersistTimeoutRef.current = null;
+      }
+      persistScheduleDrafts();
+    },
+    [canEditAnyTeam, persistScheduleDrafts],
+  );
+
   // Schedules hydrated on demand this session, kept so a bootstrap refetch (which
   // returns out-of-window schedules as summaries) doesn't blank the open grid.
   const hydratedSchedulesRef = useRef(new Map<string, TeamSchedule>());
@@ -404,78 +428,81 @@ export const useTeamsPageState = () => {
   // Warn at most once per session if the server reports a truncated (capped) view.
   const truncationWarnedRef = useRef(false);
 
-  const refresh = useCallback(async (isCancelled: () => boolean = () => false) => {
-    if (!churchId) {
-      if (!isCancelled()) setLoading(false);
-      return;
-    }
-    // If a bootstrap load is already running, don't fire a second one. Wait for
-    // it and then resolve our own loading state off its result. This keeps
-    // `loading` from getting stranded when an in-flight refresh is superseded by
-    // a re-run — e.g. StrictMode's mount/cleanup/mount, or a dependency settling
-    // mid-load — where the original (now "cancelled") call would otherwise never
-    // clear loading and the re-run would bail without doing anything.
-    if (refreshInFlightRef.current) {
-      const pending = bootstrapLoadRef.current;
+  const refresh = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      if (!churchId) {
+        if (!isCancelled()) setLoading(false);
+        return;
+      }
+      // If a bootstrap load is already running, don't fire a second one. Wait for
+      // it and then resolve our own loading state off its result. This keeps
+      // `loading` from getting stranded when an in-flight refresh is superseded by
+      // a re-run — e.g. StrictMode's mount/cleanup/mount, or a dependency settling
+      // mid-load — where the original (now "cancelled") call would otherwise never
+      // clear loading and the re-run would bail without doing anything.
+      if (refreshInFlightRef.current) {
+        const pending = bootstrapLoadRef.current;
+        try {
+          if (pending) await pending;
+        } catch {
+          // The owning refresh surfaces its own error toast; we only mirror the
+          // loading state here.
+        } finally {
+          if (!isCancelled()) setLoading(false);
+        }
+        return;
+      }
+
+      refreshInFlightRef.current = true;
+      // The fetch + state application runs to completion independently of any
+      // single caller's cancellation, so the data still lands when a superseding
+      // re-run is waiting on it. Stale writes after a real church switch are
+      // guarded by comparing against the latest churchId instead.
+      const load = (async () => {
+        const response = await getTeamsBootstrap(churchId);
+        if (churchIdRef.current !== churchId) return;
+        const nextData = buildTeamsDataFromBootstrap(response);
+        nextData.schedules = withRetainedHydration(nextData.schedules);
+        const nextSelectedScheduleId =
+          selectedScheduleIdRef.current &&
+          nextData.schedules.some(
+            (schedule) => schedule.scheduleId === selectedScheduleIdRef.current,
+          )
+            ? selectedScheduleIdRef.current
+            : nextData.schedules.find(isActive)?.scheduleId ||
+              nextData.schedules[0]?.scheduleId ||
+              "";
+        setData(nextData);
+        setSelectedScheduleId(nextSelectedScheduleId);
+        selectedScheduleIdRef.current = nextSelectedScheduleId;
+        // Keep localStorage in step when the bootstrap falls back to a different
+        // schedule (e.g. the persisted one no longer exists), so a reload doesn't
+        // briefly restore a stale id.
+        writeSelectedScheduleId(churchId, nextSelectedScheduleId);
+        if (response.truncated && !truncationWarnedRef.current) {
+          truncationWarnedRef.current = true;
+          showToast(
+            "This church has more teams data than we can load at once, so some rows may be missing. Please contact support.",
+            "neutral",
+          );
+        }
+      })();
+      bootstrapLoadRef.current = load;
+
       try {
-        if (pending) await pending;
-      } catch {
-        // The owning refresh surfaces its own error toast; we only mirror the
-        // loading state here.
+        await load;
+      } catch (error) {
+        if (!isCancelled()) {
+          showApiErrorToast(showToast, error, "Could not load teams.");
+        }
       } finally {
+        refreshInFlightRef.current = false;
+        bootstrapLoadRef.current = null;
         if (!isCancelled()) setLoading(false);
       }
-      return;
-    }
-
-    refreshInFlightRef.current = true;
-    // The fetch + state application runs to completion independently of any
-    // single caller's cancellation, so the data still lands when a superseding
-    // re-run is waiting on it. Stale writes after a real church switch are
-    // guarded by comparing against the latest churchId instead.
-    const load = (async () => {
-      const response = await getTeamsBootstrap(churchId);
-      if (churchIdRef.current !== churchId) return;
-      const nextData = buildTeamsDataFromBootstrap(response);
-      nextData.schedules = withRetainedHydration(nextData.schedules);
-      const nextSelectedScheduleId =
-        selectedScheduleIdRef.current &&
-        nextData.schedules.some(
-          (schedule) => schedule.scheduleId === selectedScheduleIdRef.current,
-        )
-          ? selectedScheduleIdRef.current
-          : nextData.schedules.find(isActive)?.scheduleId ||
-            nextData.schedules[0]?.scheduleId ||
-            "";
-      setData(nextData);
-      setSelectedScheduleId(nextSelectedScheduleId);
-      selectedScheduleIdRef.current = nextSelectedScheduleId;
-      // Keep localStorage in step when the bootstrap falls back to a different
-      // schedule (e.g. the persisted one no longer exists), so a reload doesn't
-      // briefly restore a stale id.
-      writeSelectedScheduleId(churchId, nextSelectedScheduleId);
-      if (response.truncated && !truncationWarnedRef.current) {
-        truncationWarnedRef.current = true;
-        showToast(
-          "This church has more teams data than we can load at once, so some rows may be missing. Please contact support.",
-          "neutral",
-        );
-      }
-    })();
-    bootstrapLoadRef.current = load;
-
-    try {
-      await load;
-    } catch (error) {
-      if (!isCancelled()) {
-        showApiErrorToast(showToast, error, "Could not load teams.");
-      }
-    } finally {
-      refreshInFlightRef.current = false;
-      bootstrapLoadRef.current = null;
-      if (!isCancelled()) setLoading(false);
-    }
-  }, [churchId, showToast, withRetainedHydration]);
+    },
+    [churchId, showToast, withRetainedHydration],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -550,7 +577,10 @@ export const useTeamsPageState = () => {
           }),
         );
       } catch (error) {
-        updateDataLocal((current) => ({ ...current, positions: previousPositions }));
+        updateDataLocal((current) => ({
+          ...current,
+          positions: previousPositions,
+        }));
         showApiErrorToast(showToast, error, "Could not reorder positions.");
       }
     },
@@ -585,7 +615,8 @@ export const useTeamsPageState = () => {
     // A poll uses its own in-flight gate so it never trips `refresh`'s dedupe
     // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a poll
     // in flight during a church switch would make refresh skip the real load.
-    if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current) return;
+    if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current)
+      return;
     if (isLocalEditCoolingDown()) return;
     backgroundRefreshInFlightRef.current = true;
     try {
@@ -669,7 +700,9 @@ export const useTeamsPageState = () => {
   const [hydratingScheduleId, setHydratingScheduleId] = useState("");
   /** Ids `hydrateSchedules` is currently fetching, so a surface reading their
    * cells can say "loading" instead of rendering an empty roster. */
-  const [hydratingScheduleIds, setHydratingScheduleIds] = useState<string[]>([]);
+  const [hydratingScheduleIds, setHydratingScheduleIds] = useState<string[]>(
+    [],
+  );
 
   useEffect(() => {
     hydratedScheduleIdsRef.current = new Set<string>();
@@ -697,12 +730,14 @@ export const useTeamsPageState = () => {
       );
       if (!pending.length || !churchIdAtStart) return;
       pending.forEach((scheduleId) =>
-        hydratedScheduleIdsRef.current.add(scheduleId));
+        hydratedScheduleIdsRef.current.add(scheduleId),
+      );
       setHydratingScheduleIds((current) => [...current, ...pending]);
       try {
         const results = await Promise.allSettled(
           pending.map((scheduleId) =>
-            getTeamScheduleDetail(churchIdAtStart, scheduleId)),
+            getTeamScheduleDetail(churchIdAtStart, scheduleId),
+          ),
         );
         if (!isMountedRef.current || churchIdRef.current !== churchIdAtStart) {
           return;
@@ -717,8 +752,12 @@ export const useTeamsPageState = () => {
         mergeHydratedSchedules(
           results.flatMap((result) =>
             result.status === "fulfilled"
-              ? [result.value.schedule, ...(result.value.relatedSchedules || [])]
-              : []),
+              ? [
+                  result.value.schedule,
+                  ...(result.value.relatedSchedules || []),
+                ]
+              : [],
+          ),
         );
         if (results.some((result) => result.status === "rejected")) {
           showToast("Could not load this date's assignments.", "error");
@@ -726,7 +765,8 @@ export const useTeamsPageState = () => {
       } finally {
         if (isMountedRef.current) {
           setHydratingScheduleIds((current) =>
-            current.filter((scheduleId) => !pending.includes(scheduleId)));
+            current.filter((scheduleId) => !pending.includes(scheduleId)),
+          );
         }
       }
     },
@@ -741,7 +781,8 @@ export const useTeamsPageState = () => {
   // summary: Auto-fill must not plan with incomplete conflict data.
   useEffect(() => {
     if (!churchId || !selectedScheduleId) return undefined;
-    if (hydratedScheduleIdsRef.current.has(selectedScheduleId)) return undefined;
+    if (hydratedScheduleIdsRef.current.has(selectedScheduleId))
+      return undefined;
     const selected = data.schedules.find(
       (schedule) => schedule.scheduleId === selectedScheduleId,
     );
@@ -754,10 +795,7 @@ export const useTeamsPageState = () => {
         !isHydratedSchedule(schedule) &&
         scheduleDateRangesOverlap(selected, schedule),
     );
-    if (
-      isHydratedSchedule(selected) &&
-      !hasUnhydratedOverlappingTeamSchedule
-    ) {
+    if (isHydratedSchedule(selected) && !hasUnhydratedOverlappingTeamSchedule) {
       return undefined;
     }
 
@@ -766,7 +804,10 @@ export const useTeamsPageState = () => {
     setHydratingScheduleId(selectedScheduleId);
     (async () => {
       try {
-        const response = await getTeamScheduleDetail(churchId, selectedScheduleId);
+        const response = await getTeamScheduleDetail(
+          churchId,
+          selectedScheduleId,
+        );
         if (cancelled || !isMountedRef.current) return;
         if (churchIdRef.current !== churchId) return;
         mergeHydratedSchedules([
@@ -810,7 +851,11 @@ export const useTeamsPageState = () => {
   // upsert/remove paths a local save uses — no refetch needed.
   const applyTeamsStreamEvent = useCallback(
     (event: TeamsStreamEvent) => {
-      if (event.type === "schedule-updated" && "schedule" in event && event.schedule) {
+      if (
+        event.type === "schedule-updated" &&
+        "schedule" in event &&
+        event.schedule
+      ) {
         if (isLocalEditCoolingDown()) {
           scheduleDeferredBackgroundRefresh();
           return;
@@ -823,7 +868,11 @@ export const useTeamsPageState = () => {
         }
         return;
       }
-      if (event.type === "schedule-removed" && "scheduleId" in event && event.scheduleId) {
+      if (
+        event.type === "schedule-removed" &&
+        "scheduleId" in event &&
+        event.scheduleId
+      ) {
         if (isLocalEditCoolingDown()) {
           scheduleDeferredBackgroundRefresh();
           return;
@@ -936,7 +985,8 @@ export const useTeamsPageState = () => {
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
-    toolbarLogoUrl,
+    clearScheduleDraft,
+    toolbarLogos,
     churchName,
   };
 };

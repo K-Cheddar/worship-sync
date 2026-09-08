@@ -122,6 +122,10 @@ export type AuthBootstrap = {
     label: string | null;
     operatorName: string | null;
     surfaceType: string | null;
+    /** Display output this screen renders; null falls back to the built-in. */
+    outputId?: string | null;
+    /** Per-screen setting overrides for this paired display. */
+    settings?: Record<string, unknown> | null;
   } | null;
   errorMessage?: string;
 };
@@ -311,6 +315,8 @@ export type TeamPosition = {
    * on a schedule, not as a hard eligibility gate.
    */
   qualificationAreaId?: string;
+  /** Default church microphone for new schedule slots in this position. */
+  defaultMicrophoneId?: string | null;
   archivedAt?: string | null;
 };
 
@@ -473,6 +479,8 @@ export type TeamScheduleSummary = {
   assignmentCounts?: {
     byMemberId: Record<string, number>;
     byPositionId: Record<string, number>;
+    /** Latest occurrence date assigned to each member in this schedule. */
+    lastAssignmentDateByMemberId?: Record<string, string>;
   };
 };
 
@@ -672,6 +680,10 @@ export type DisplayDeviceClient = {
   churchId: string;
   label: string;
   surfaceType?: string;
+  /** Display output this screen renders; absent falls back to the built-in. */
+  outputId?: string | null;
+  /** Per-screen setting overrides applied on top of the display defaults. */
+  settings?: Record<string, unknown> | null;
   status: string;
   createdAt: string;
   lastSeenAt?: string;

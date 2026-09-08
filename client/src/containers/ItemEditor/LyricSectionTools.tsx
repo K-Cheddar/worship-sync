@@ -1,12 +1,16 @@
 import { useId, useRef, useState } from "react";
 import { BookCopy, ChevronDown, Layers, Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
-import Select from "../../components/Select/Select";
 import { Switch } from "../../components/ui/Switch";
 import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
 import { sortList } from "../../utils/sort";
 import cn from "classnames";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../components/ui/Popover";
 import RemoveParentheticalsToggle from "../../components/RemoveParentheticalsToggle/RemoveParentheticalsToggle";
 import TextArea from "../../components/TextArea/TextArea";
 import { removeParentheticalPhrases } from "../../utils/itemUtil";
@@ -20,8 +24,6 @@ type LyricSectionToolsProps = {
   /** One-row trigger; full tools show when expanded (use on small screens). */
   collapsible?: boolean;
 };
-
-const ADD_SECTION_SELECT_ID = "lyrics-section-tools-add-section-select";
 
 const sectionTypeOptions = sortList(sectionTypes).map((type) => ({
   value: type,
@@ -40,8 +42,7 @@ const LyricSectionTools = ({
   onAddMultipleSections,
   collapsible = false,
 }: LyricSectionToolsProps) => {
-  /** Remount Radix Select after each add so the same section type can be chosen again. */
-  const [addSectionSelectKey, setAddSectionSelectKey] = useState(0);
+  const [addSectionPopoverOpen, setAddSectionPopoverOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [multipleSectionsOpen, setMultipleSectionsOpen] = useState(false);
   const [multipleSectionsPosition, setMultipleSectionsPosition] = useState<{ x: number; y: number } | undefined>();
@@ -68,7 +69,7 @@ const LyricSectionTools = ({
   const handleAddSection = (sectionType: string) => {
     if (!sectionType) return;
     onAddEmptySection(sectionType);
-    setAddSectionSelectKey((k) => k + 1);
+    setAddSectionPopoverOpen(false);
   };
 
   const orderToggleAndActions = (
@@ -99,37 +100,46 @@ const LyricSectionTools = ({
       </div>
 
       <div className="flex flex-col gap-2">
-        <Select
-          key={addSectionSelectKey}
-          onChange={handleAddSection}
-          value=""
-          suppressCloseAutoFocus
-          options={sectionTypeOptions}
-          className="sr-only"
-          id={ADD_SECTION_SELECT_ID}
-          hideLabel
-          label="Add empty section"
-          backgroundColor="bg-black/40"
-          textColor="text-white"
-          chevronColor="text-white"
-          contentBackgroundColor="bg-gray-800"
-          contentTextColor="text-white"
-        />
-        <Button
-          onClick={() => {
-            const trigger = document.getElementById(ADD_SECTION_SELECT_ID);
-            if (trigger instanceof HTMLButtonElement) {
-              trigger.click();
-            }
-          }}
-          variant="tertiary"
-          svg={Plus}
-          color="#22d3ee"
-          className="w-full justify-center rounded-md border border-gray-500"
-          aria-label="Add empty section"
+        <Popover
+          open={addSectionPopoverOpen}
+          onOpenChange={setAddSectionPopoverOpen}
+          modal={false}
         >
-          Add empty section
-        </Button>
+          <PopoverTrigger asChild>
+            <Button
+              variant="tertiary"
+              svg={Plus}
+              color="#22d3ee"
+              className="w-full justify-center rounded-md border border-gray-500"
+              aria-label="Add empty section"
+            >
+              Add empty section
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="right"
+            align="start"
+            sideOffset={8}
+            className="w-48 border border-gray-600 bg-gray-800 p-2 text-white shadow-lg"
+            onOpenAutoFocus={(event) => event.preventDefault()}
+          >
+            <div className="flex flex-col gap-1">
+              {sectionTypeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    "cursor-pointer rounded px-2 py-1.5 text-left text-sm text-white hover:brightness-110",
+                    option.className,
+                  )}
+                  onClick={() => handleAddSection(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
         <Button
           ref={addMultipleButtonRef}
           variant="tertiary"
@@ -152,12 +162,12 @@ const LyricSectionTools = ({
             setMultipleSectionsOpen(true);
           }}
         >
-          Add from lyrics
+          Add lyric sections
         </Button>
         {multipleSectionsOpen && (
           <FloatingWindow
             ref={floatingWindowRef}
-            title="Add from lyrics"
+            title="Create sections from lyrics"
             onClose={() => {
               setMultipleSectionsOpen(false);
               setMultipleLyricsText("");

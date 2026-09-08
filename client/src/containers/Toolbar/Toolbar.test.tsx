@@ -136,14 +136,22 @@ jest.mock("../../hooks/useGenerateCreditsFromOverlays", () => ({
   }),
 }));
 
+jest.mock("../../context/activeController", () => ({
+  useControllerBasePath: () => mockControllerBasePath,
+}));
+
+let mockControllerBasePath = "/controller";
+
 const renderToolbar = ({
   access,
   itemType,
   lastControllerConfigurationRoute,
+  variant,
 }: {
   access: "full" | "music" | "view";
   itemType: string;
   lastControllerConfigurationRoute?: string;
+  variant?: "default" | "aux";
 }) => {
   mockState = {
     undoable: {
@@ -165,7 +173,7 @@ const renderToolbar = ({
   return render(
     <GlobalInfoContext.Provider value={{ access } as any}>
       <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        <Toolbar className="toolbar" />
+        <Toolbar className="toolbar" variant={variant} />
       </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
@@ -177,11 +185,11 @@ const renderToolbarOverlay = ({
 }: {
   access: "full" | "music" | "view";
   overlayPanel?:
-    | "overlays"
-    | "boardPosts"
-    | "overlaysAndPosts"
-    | "credits"
-    | "serviceTimes";
+  | "overlays"
+  | "boardPosts"
+  | "overlaysAndPosts"
+  | "credits"
+  | "serviceTimes";
 }) => {
   mockState = {
     undoable: {
@@ -211,6 +219,7 @@ describe("Toolbar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPathname = "/controller/item/item-id/list-id";
+    mockControllerBasePath = "/controller";
   });
 
   it("hides slide and box tools for music access on non-song items", () => {
@@ -246,14 +255,14 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides quick links and monitor settings for music access", () => {
+  it("hides quick links and displays for music access", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
     expect(
       screen.queryByRole("button", { name: "Quick Links" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Monitor Settings" }),
+      screen.queryByRole("button", { name: "Displays" }),
     ).not.toBeInTheDocument();
   });
 
@@ -273,6 +282,56 @@ describe("Toolbar", () => {
 
     const settings = screen.getByRole("link", { name: "Configurations" });
     expect(settings).toHaveAttribute("href", "/controller/preferences");
+  });
+
+  it("scopes configuration links to an auxiliary controller base path", () => {
+    mockControllerBasePath = "/aux-controller/ctrl_lobby";
+    mockPathname = "/aux-controller/ctrl_lobby/displays";
+    renderToolbar({
+      access: "full",
+      itemType: "song",
+      variant: "aux",
+      lastControllerConfigurationRoute: "/controller/displays",
+    });
+
+    expect(screen.getByRole("link", { name: "Configurations" })).toHaveAttribute(
+      "href",
+      "/aux-controller/ctrl_lobby/displays",
+    );
+    expect(screen.getByRole("link", { name: "Displays" })).toHaveAttribute(
+      "href",
+      "/aux-controller/ctrl_lobby/displays",
+    );
+    expect(screen.getByRole("link", { name: "Preferences" })).toHaveAttribute(
+      "href",
+      "/aux-controller/ctrl_lobby/preferences",
+    );
+    expect(
+      screen.queryByRole("link", { name: "Service Planning" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows slide and item tools on an auxiliary controller item page", () => {
+    mockControllerBasePath = "/aux-controller/ctrl_lobby";
+    mockPathname = "/aux-controller/ctrl_lobby/item/item-id/list-id";
+    renderToolbar({
+      access: "full",
+      itemType: "song",
+      variant: "aux",
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Slide Tools" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Box Tools" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Item Tools" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Stream Format" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders Configurations as a button for view access", () => {

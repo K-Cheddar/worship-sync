@@ -8,6 +8,7 @@ import {
   getOccurrenceDate,
   getSharedOccurrenceTiming,
   isOccurrenceOnCalendarDay,
+  isOccurrenceToday,
   occurrenceIdsMatch,
 } from "./teamScheduleOccurrences";
 
@@ -99,6 +100,34 @@ describe("generateScheduleOccurrences", () => {
       "2026-07-19",
       "2026-07-26",
     ]);
+  });
+
+  it("keeps historical occurrences for archived services and skips dates after archive", () => {
+    const archivedService = service({
+      serviceId: "retired",
+      dayOfWeek: 0,
+      // After the July 12 service local time in every timezone; before July 19.
+      archivedAt: "2026-07-13T00:00:00.000Z",
+    });
+
+    const historical = generateScheduleOccurrences({
+      services: [archivedService],
+      serviceIds: ["retired"],
+      startDate: "2026-07-01",
+      endDate: "2026-07-12",
+    });
+    expect(historical.map(getOccurrenceDate)).toEqual([
+      "2026-07-05",
+      "2026-07-12",
+    ]);
+
+    const future = generateScheduleOccurrences({
+      services: [archivedService],
+      serviceIds: ["retired"],
+      startDate: "2026-07-13",
+      endDate: "2026-07-31",
+    });
+    expect(future).toEqual([]);
   });
 
   it("snapshots standalone service position requirements onto each occurrence", () => {
@@ -607,5 +636,26 @@ describe("isOccurrenceOnCalendarDay", () => {
         new Date("2026-07-27T23:00:00.000Z"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("isOccurrenceToday", () => {
+  const occurrence: TeamScheduleOccurrence = {
+    occurrenceId: "svc@2026-07-28T18:00:00.000Z",
+    serviceId: "svc",
+    name: "Service",
+    startsAt: "2026-07-28T18:00:00.000Z",
+  };
+
+  it("matches the local calendar day of the reference date", () => {
+    expect(isOccurrenceToday(occurrence, new Date("2026-07-28T12:00:00"))).toBe(
+      true,
+    );
+  });
+
+  it("is false for a different local calendar day", () => {
+    expect(isOccurrenceToday(occurrence, new Date("2026-07-27T12:00:00"))).toBe(
+      false,
+    );
   });
 });

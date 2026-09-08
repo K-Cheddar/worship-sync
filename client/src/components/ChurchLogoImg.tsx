@@ -16,7 +16,7 @@ const variantClass: Record<ChurchLogoImgVariant, string> = {
     "md:size-24",
   ),
   "account-header": cn(
-    "max-h-16 w-auto max-w-full shrink-0 rounded-md border border-gray-600/80 bg-gray-900",
+    "max-h-16 w-auto max-w-full shrink-0",
     "sm:max-h-16 md:max-h-16 lg:max-h-14",
   ),
   popover: cn(

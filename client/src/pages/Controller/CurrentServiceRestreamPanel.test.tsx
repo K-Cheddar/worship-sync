@@ -9,6 +9,17 @@ jest.mock("../../boards/useRestreamSession", () => ({
   useRestreamSession: (...args: unknown[]) => mockUseRestreamSession(...args),
 }));
 
+jest.mock("../../boards/useYouTubeConnectionStatus", () => ({
+  useYouTubeConnectionStatus: (
+    _churchId: string,
+    firebaseConnected: boolean,
+    firebaseAccountLabel = "",
+  ) => ({
+    connected: firebaseConnected,
+    accountLabel: firebaseAccountLabel,
+  }),
+}));
+
 jest.mock("../../boards/BoardYouTubeChatComposer", () => ({
   BoardYouTubeChatComposer: ({
     accountLabel,
@@ -96,8 +107,8 @@ describe("CurrentServiceRestreamPanel", () => {
     render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected
-        youtubeAccountLabel="Church Live"
+        firebaseYoutubeConnected
+        firebaseYoutubeAccountLabel="Church Live"
         showToast={jest.fn()}
       />,
     );
@@ -129,7 +140,7 @@ describe("CurrentServiceRestreamPanel", () => {
     render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         showToast={jest.fn()}
       />,
     );
@@ -151,7 +162,7 @@ describe("CurrentServiceRestreamPanel", () => {
     render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         showToast={jest.fn()}
       />,
     );
@@ -163,6 +174,30 @@ describe("CurrentServiceRestreamPanel", () => {
     expect(
       screen.queryByText("No Restream messages yet."),
     ).not.toBeInTheDocument();
+  });
+
+  it("avoids the not-connected banner when chat is on screen but enabled is stale", () => {
+    mockUseRestreamSession.mockReturnValue(
+      buildRestreamState({
+        session: { ...session, enabled: false, connected: false },
+        messages: [makeMessage("one", "Still arriving", 1_800_000_000_100)],
+        feedState: "has_messages",
+      }),
+    );
+
+    render(
+      <CurrentServiceRestreamPanel
+        churchId="church-1"
+        firebaseYoutubeConnected={false}
+        showToast={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Disconnected")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Restream is not connected."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Still arriving")).toBeInTheDocument();
   });
 
   it("counts messages received while hidden and marks them read while visible", async () => {
@@ -182,7 +217,7 @@ describe("CurrentServiceRestreamPanel", () => {
     const { rerender } = render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible={false}
         onUnreadCountChange={onUnreadCountChange}
         showToast={jest.fn()}
@@ -197,7 +232,7 @@ describe("CurrentServiceRestreamPanel", () => {
     rerender(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible
         onUnreadCountChange={onUnreadCountChange}
         showToast={jest.fn()}
@@ -221,7 +256,7 @@ describe("CurrentServiceRestreamPanel", () => {
     rerender(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible
         onUnreadCountChange={onUnreadCountChange}
         showToast={jest.fn()}
@@ -236,7 +271,7 @@ describe("CurrentServiceRestreamPanel", () => {
     rerender(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible={false}
         onUnreadCountChange={onUnreadCountChange}
         showToast={jest.fn()}
@@ -261,7 +296,7 @@ describe("CurrentServiceRestreamPanel", () => {
     rerender(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible={false}
         onUnreadCountChange={onUnreadCountChange}
         showToast={jest.fn()}
@@ -286,7 +321,7 @@ describe("CurrentServiceRestreamPanel", () => {
     const { unmount: unmountInitialPanel } = render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible
         onUnreadCountChange={jest.fn()}
         showToast={jest.fn()}
@@ -322,7 +357,7 @@ describe("CurrentServiceRestreamPanel", () => {
     const { unmount: unmountPersistedPanel } = render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible={false}
         onUnreadCountChange={persistedUnread}
         showToast={jest.fn()}
@@ -349,7 +384,7 @@ describe("CurrentServiceRestreamPanel", () => {
     render(
       <CurrentServiceRestreamPanel
         churchId="church-1"
-        youtubeConnected={false}
+        firebaseYoutubeConnected={false}
         isVisible={false}
         onUnreadCountChange={nextSessionUnread}
         showToast={jest.fn()}

@@ -20,7 +20,12 @@ describe("electron preload API contract", () => {
       "onWindowStateChanged",
       "downloadMedia",
       "getMediaCacheMap",
+      "importLocalAsset",
+      "getLocalAsset",
+      "deleteLocalAsset",
+      "getDesktopCaptureSources",
       "openExternalUrl",
+      "fetchGeniusLyrics",
       "saveLastRoute",
       "getLastRoute",
     ];
@@ -39,5 +44,10 @@ describe("electron preload API contract", () => {
       /exposeInMainWorld\(\s*["']ipcRenderer["']/,
     );
     expect(preloadSource).not.toMatch(/exposeInMainWorld\(\s*["']require["']/);
+  });
+
+  it("keeps native file paths inside the preload boundary", () => {
+    expect(preloadSource).toContain("webUtils.getPathForFile(file)");
+    expect(preloadSource).not.toContain("getPathForFile:");
   });
 });

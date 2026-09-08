@@ -19,6 +19,7 @@ import {
   scheduleMemberName,
   sortScheduleMembersForPanel,
   defaultScheduleMembersSort,
+  type MemberServingHistory,
   type ScheduleMembersSort as ScheduleMembersSortState,
 } from "../teamsUtils";
 import ScheduleMemberPositionGroupDivider from "./ScheduleMemberPositionGroupDivider";
@@ -45,6 +46,7 @@ type ScheduleMembersPanelProps = {
   scheduleStartDate?: string;
   scheduleEndDate?: string;
   scheduleAssignmentCounts: Map<string, number>;
+  memberServingHistory: Map<string, MemberServingHistory>;
   recommendationStats?: Map<string, ScheduleMemberRecommendationStats>;
   duplicateFirstNames: Set<string>;
   highlightedMemberIdSet: Set<string>;
@@ -80,6 +82,7 @@ const ScheduleMembersPanel = ({
   scheduleStartDate,
   scheduleEndDate,
   scheduleAssignmentCounts,
+  memberServingHistory,
   recommendationStats,
   duplicateFirstNames,
   highlightedMemberIdSet,
@@ -128,6 +131,9 @@ const ScheduleMembersPanel = ({
       scheduleEndDate,
     );
     const birthDate = formatBirthDate(member.birthDate);
+    const servingHistory = memberServingHistory.get(member.memberId) || {
+      recentAssignmentCount: 0,
+    };
 
     return (
       <dl className="space-y-2">
@@ -166,6 +172,12 @@ const ScheduleMembersPanel = ({
           <dt className="font-semibold text-gray-400">Minor</dt>
           <dd className="mt-0.5 text-gray-200">
             {resolveMemberMinorStatus(member) ? "Yes" : "No"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-gray-400">Serving history</dt>
+          <dd className="mt-0.5 text-gray-200">
+            Served {servingHistory.recentAssignmentCount} {servingHistory.recentAssignmentCount === 1 ? "time" : "times"} in the last month
           </dd>
         </div>
         <div>
@@ -250,6 +262,7 @@ const ScheduleMembersPanel = ({
           label={scheduleMemberName(member, duplicateFirstNames)}
           subtitle={positionNames.length > 0 ? positionNames.join(", ") : undefined}
           assignmentCount={scheduleAssignmentCounts.get(member.memberId) || 0}
+          lastServedDate={memberServingHistory.get(member.memberId)?.lastServedDate}
           highlighted={highlightedMemberIdSet.has(member.memberId)}
           expanded={expandedMemberIdSet.has(member.memberId)}
           showHighlightAction
@@ -292,6 +305,7 @@ const ScheduleMembersPanel = ({
             warning={row.eligible ? row.warning || undefined : undefined}
             desiresPosition={row.desiresPosition}
             assignmentCount={scheduleAssignmentCounts.get(row.member.memberId) || 0}
+            lastServedDate={memberServingHistory.get(row.member.memberId)?.lastServedDate}
             disabled={!row.eligible}
             expanded={expandedMemberIdSet.has(row.member.memberId)}
             details={renderMemberDetails(row.member)}

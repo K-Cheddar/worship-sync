@@ -774,6 +774,26 @@ describe("TeamsPlansPage", () => {
     jest.useRealTimers();
   });
 
+  it("marks a same-day occurrence that already started with a Today badge", async () => {
+    // After the morning service starts it is no longer Up next, but operators
+    // still need a same-day marker on the tile.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-25T18:00:00"));
+
+    renderPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText(/^Today$/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /, today/i }),
+    ).toBeInTheDocument();
+
+    jest.useRealTimers();
+  });
+
   it("excludes a one-time service whose fixed date falls outside the selected range", async () => {
     // Regression test: a one-time service's single occurrence used to always
     // show regardless of the selected Range preset, since only recurring

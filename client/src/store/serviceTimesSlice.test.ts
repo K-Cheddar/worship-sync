@@ -71,6 +71,24 @@ describe("serviceTimesSlice", () => {
       expect(list.find((service) => service.id === "s2")?.name).toBe("Other");
     });
 
+    it("persists a service archive state until the service is restored", () => {
+      const store = createStore({
+        serviceTimes: {
+          list: [createServiceTime({ id: "s1", name: "Seasonal service" })],
+          isInitialized: true,
+        },
+      });
+      store.dispatch(
+        updateService({ id: "s1", changes: { archivedAt: "2026-09-04T12:00:00.000Z" } }),
+      );
+      expect(store.getState().serviceTimes.list[0].archivedAt).toBe(
+        "2026-09-04T12:00:00.000Z",
+      );
+
+      store.dispatch(updateService({ id: "s1", changes: { archivedAt: null } }));
+      expect(store.getState().serviceTimes.list[0].archivedAt).toBeNull();
+    });
+
     it("removeService removes by id", () => {
       const store = createStore({
         serviceTimes: {

@@ -29,7 +29,8 @@ const shellClassNames: Record<SegmentedControlVariant, string> = {
   admin: "inline-flex rounded-lg border border-gray-700 bg-gray-900 p-0.5",
   publicDark: "inline-flex rounded-lg border border-stone-700 bg-stone-900 p-0.5",
   publicLight: "inline-flex rounded-lg border border-gray-200 bg-gray-100 p-0.5",
-  compact: "inline-flex flex-wrap gap-1",
+  // Same toggle shell as admin, denser padding/type for toolbars.
+  compact: "inline-flex rounded-md border border-gray-700 bg-gray-900 p-0.5",
   muted: "inline-flex rounded-md border border-stone-700 bg-stone-900/80 p-0.5",
 };
 
@@ -55,7 +56,7 @@ const itemClassNames: Record<
   compact: {
     base: "rounded px-2 py-1 text-xs font-medium",
     selected: "bg-cyan-600 text-white",
-    unselected: "bg-gray-700 text-gray-200 hover:bg-gray-600",
+    unselected: "text-gray-300 hover:text-white",
   },
   muted: {
     base: "rounded-md px-3 py-1 text-xs font-semibold",

@@ -5,6 +5,7 @@ import {
   type ScheduleAssignmentHandlers,
 } from "./ScheduleAssignmentContext";
 import ScheduleGridCell from "./ScheduleGridCell";
+import { scheduleAssignmentLabelClassName } from "./scheduleUtils";
 
 const baseProps = {
   occurrenceId: "occ-1",
@@ -92,6 +93,9 @@ describe("ScheduleGridCell", () => {
     expect(
       screen.getByRole("button", { name: /Sunday Service Camera 2, Empty/i }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Empty")).toHaveClass(
+      ...scheduleAssignmentLabelClassName.split(" "),
+    );
   });
 
   it("labels a schedule-only guest without treating the slot as empty", () => {

@@ -1,4 +1,5 @@
 import {
+  MonitorCog,
   Palette,
   Plug,
   ShieldCheck,
@@ -6,7 +7,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type AccountTabId = "people" | "setup" | "branding" | "integrations";
+export type AccountTabId =
+  | "people"
+  | "setup"
+  | "controllers"
+  | "branding"
+  | "integrations";
 
 export type AccountSection = {
   id: AccountTabId;
@@ -34,6 +40,15 @@ export const ACCOUNT_SECTIONS: AccountSection[] = [
     description:
       "Create link codes, manage trusted devices, and update recovery email from one place.",
     icon: ShieldCheck,
+  },
+  {
+    id: "controllers",
+    routePath: "controllers",
+    path: "/account/controllers",
+    label: "Controllers",
+    description:
+      "Operator surfaces and the displays each one drives, so a second screen can run its own content.",
+    icon: MonitorCog,
   },
   {
     id: "branding",

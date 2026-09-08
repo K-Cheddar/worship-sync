@@ -229,13 +229,13 @@ const TeamRoleManager = ({
   const hasPendingChanges = !showCreate
     ? false
     : editing
-    ? JSON.stringify(draft) !==
+      ? JSON.stringify(draft) !==
       JSON.stringify({
         teamId: editing.teamId,
         name: editing.name,
         description: editing.description || "",
       })
-    : JSON.stringify(draft) !==
+      : JSON.stringify(draft) !==
       JSON.stringify({ teamId, name: "", description: "" });
   useTeamsUnsavedChanges(hasPendingChanges);
 
@@ -261,12 +261,7 @@ const TeamRoleManager = ({
           activeTeams.length === 0 ? (
             returnTo && !showCreate ? (
               <TeamsReturnToolbar returnTo={returnTo} onBack={() => finishEditing()} />
-            ) : (
-              <TeamsSectionReturnPrompt
-                message="Create a team first — roles belong to a team."
-                originSection={TEAMS_SECTION_PATHS.roles}
-              />
-            )
+            ) : null
           ) : (
             <div className="space-y-3">
               {returnTo && !showCreate ? (

@@ -47,11 +47,15 @@ import {
   formatBlockoutDateRangeLabel,
 } from "./Teams/teamsUtils";
 import ScheduleExportTable from "./Teams/schedule/ScheduleExportTable";
+import ScheduleOccurrenceRibbon from "./Teams/schedule/ScheduleOccurrenceRibbon";
 import SchedulePdfExportButton from "./Teams/schedule/SchedulePdfExportButton";
-import ScheduleUpNextBadge from "./Teams/schedule/ScheduleUpNextBadge";
 import type { ScheduleExportLayout } from "./Teams/schedule/scheduleExportPdf";
-import { scheduleUpNextBorderClassName } from "./Teams/schedule/scheduleUtils";
+import {
+  scheduleTodayBorderClassName,
+  scheduleUpNextBorderClassName,
+} from "./Teams/schedule/scheduleUtils";
 import { cn } from "@/utils/cnHelper";
+import { isOccurrenceToday } from "../utils/teamScheduleOccurrences";
 
 /**
  * A volunteer's own services: when they serve, in what capacity, who is on with
@@ -80,10 +84,10 @@ const SCHEDULE_LAYOUT_OPTIONS: {
   value: ScheduleExportLayout;
   label: string;
 }[] = [
-  { value: "byDate", label: "By date" },
-  { value: "transpose", label: "By position" },
-  { value: "grid", label: "Grid" },
-];
+    { value: "byDate", label: "By date" },
+    { value: "transpose", label: "By position" },
+    { value: "grid", label: "Grid" },
+  ];
 
 type OccurrenceTileParts = {
   weekday: string;
@@ -347,20 +351,34 @@ const OccurrenceTile = ({
   const role = myRoleLabel(occurrence);
   const hasPlan = Boolean(occurrence.plan);
   const openLabel = `Open ${serviceName} on ${tile.label}`;
+  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
+
+  let markerAriaSuffix = "";
+  if (isNextUpcoming) {
+    markerAriaSuffix = ", up next";
+  } else if (isToday) {
+    markerAriaSuffix = ", today";
+  }
+
+  let markerBorderClassName: string | false = false;
+  if (isNextUpcoming) {
+    markerBorderClassName = scheduleUpNextBorderClassName;
+  } else if (isToday) {
+    markerBorderClassName = scheduleTodayBorderClassName;
+  }
 
   return (
     <li className="relative">
-      {isNextUpcoming ? (
-        <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
-          <ScheduleUpNextBadge />
-        </div>
-      ) : null}
+      <ScheduleOccurrenceRibbon
+        isNextUpcoming={isNextUpcoming}
+        isToday={isToday}
+      />
       <Button
         type="button"
         variant="tertiary"
         aria-label={cn(
           openLabel,
-          isNextUpcoming && ", up next",
+          markerAriaSuffix,
           isBlockedOut && ", blocked out",
         )}
         className={cn(
@@ -368,7 +386,7 @@ const OccurrenceTile = ({
           hasPlan
             ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
             : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
-          isNextUpcoming && scheduleUpNextBorderClassName,
+          markerBorderClassName,
           isPast && "opacity-55",
         )}
         onClick={onOpen}
@@ -522,96 +540,96 @@ const OccurrenceDetail = ({
       </nav>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/70">
-      <header className="shrink-0 space-y-2 border-b border-gray-800 px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            type="button"
-            variant="tertiary"
-            svg={ArrowLeft}
-            iconSize="sm"
-            className="max-md:min-h-0"
-            onClick={onBack}
-          >
-            Back
-          </Button>
-          <div
-            className="flex shrink-0 items-center gap-1"
-            role="group"
-            aria-label="Service navigation"
-          >
+        <header className="shrink-0 space-y-2 border-b border-gray-800 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
-              variant="secondary"
-              svg={ChevronLeft}
+              variant="tertiary"
+              svg={ArrowLeft}
               iconSize="sm"
               className="max-md:min-h-0"
-              aria-label="Previous service"
-              disabled={!onPrevious}
-              onClick={onPrevious}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              svg={ChevronRight}
-              iconSize="sm"
-              className="max-md:min-h-0"
-              aria-label="Next service"
-              disabled={!onNext}
-              onClick={onNext}
-            />
+              onClick={onBack}
+            >
+              Back
+            </Button>
+            <div
+              className="flex shrink-0 items-center gap-1"
+              role="group"
+              aria-label="Service navigation"
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                svg={ChevronLeft}
+                iconSize="sm"
+                className="max-md:min-h-0"
+                aria-label="Previous service"
+                disabled={!onPrevious}
+                onClick={onPrevious}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                svg={ChevronRight}
+                iconSize="sm"
+                className="max-md:min-h-0"
+                aria-label="Next service"
+                disabled={!onNext}
+                onClick={onNext}
+              />
+            </div>
           </div>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-base font-semibold text-gray-50 sm:text-lg">
-              {serviceName}
-            </h2>
-            <p className="mt-0.5 text-xs text-gray-400">
-              {formatWhen(occurrence.startsAt)}
-            </p>
-            {/* The role line is redundant once each slot renders its own row
-                with the same label plus its answer. */}
-            {role && !onRespond ? (
-              <p className="mt-1 text-sm text-orange-300">{role}</p>
-            ) : null}
-            {/* Opening a tile must not drop the warning the tile carried. */}
-            {blockoutLabel ? (
-              <p className="mt-1 flex items-start gap-1.5 text-sm text-amber-300">
-                <Icon svg={TriangleAlert} size="sm" className="mt-0.5 shrink-0" />
-                <span>
-                  You are scheduled here but marked yourself away{" "}
-                  {blockoutLabel}. Your team lead sees this on the schedule.
-                </span>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-base font-semibold text-gray-50 sm:text-lg">
+                {serviceName}
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-400">
+                {formatWhen(occurrence.startsAt)}
               </p>
+              {/* The role line is redundant once each slot renders its own row
+                with the same label plus its answer. */}
+              {role && !onRespond ? (
+                <p className="mt-1 text-sm text-orange-300">{role}</p>
+              ) : null}
+              {/* Opening a tile must not drop the warning the tile carried. */}
+              {blockoutLabel ? (
+                <p className="mt-1 flex items-start gap-1.5 text-sm text-amber-300">
+                  <Icon svg={TriangleAlert} size="sm" className="mt-0.5 shrink-0" />
+                  <span>
+                    You are scheduled here but marked yourself away{" "}
+                    {blockoutLabel}. Your team lead sees this on the schedule.
+                  </span>
+                </p>
+              ) : null}
+            </div>
+            {jumpOptions.length > 1 ? (
+              <Select
+                label="Jump to"
+                className="w-full sm:w-56"
+                value={occurrence.occurrenceId}
+                options={jumpOptions}
+                onChange={(value) => onJump(String(value))}
+              />
             ) : null}
           </div>
-          {jumpOptions.length > 1 ? (
-            <Select
-              label="Jump to"
-              className="w-full sm:w-56"
-              value={occurrence.occurrenceId}
-              options={jumpOptions}
-              onChange={(value) => onJump(String(value))}
-            />
+          {onRespond ? (
+            <div className="space-y-2">
+              {occurrence.serving
+                .filter((person) => person.isMe && person.isPrimary)
+                .map((slot) => (
+                  <AssignmentResponseRow
+                    key={slot.columnKey}
+                    slot={slot}
+                    disabled={respondingKey === slot.columnKey}
+                    onRespond={onRespond}
+                  />
+                ))}
+            </div>
           ) : null}
-        </div>
-        {onRespond ? (
-          <div className="space-y-2">
-            {occurrence.serving
-              .filter((person) => person.isMe && person.isPrimary)
-              .map((slot) => (
-                <AssignmentResponseRow
-                  key={slot.columnKey}
-                  slot={slot}
-                  disabled={respondingKey === slot.columnKey}
-                  onRespond={onRespond}
-                />
-              ))}
-          </div>
-        ) : null}
-      </header>
+        </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3 sm:p-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3 sm:p-4">
           {tab === "schedule" ? (
             <>
               <div className="flex w-full flex-wrap items-end justify-end gap-2">
@@ -791,13 +809,13 @@ const MySchedule = () => {
           current.map((occurrence) =>
             occurrence.occurrenceId === selectedId
               ? {
-                  ...occurrence,
-                  serving: occurrence.serving.map((person) =>
-                    person.isMe && person.columnKey === slot.columnKey
-                      ? { ...person, response: value }
-                      : person,
-                  ),
-                }
+                ...occurrence,
+                serving: occurrence.serving.map((person) =>
+                  person.isMe && person.columnKey === slot.columnKey
+                    ? { ...person, response: value }
+                    : person,
+                ),
+              }
               : occurrence,
           ),
         );

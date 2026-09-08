@@ -11,6 +11,10 @@ import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
   setMonitorBoardAliasIdFromRemote,
+  setProjectorBoardAliasIdFromRemote,
+  toLegacyPresentationShape,
+  omitOverlayLanes,
+  STREAM_OVERLAY_LANES,
   updateBibleDisplayInfoFromRemote,
   updateMonitor,
   updateMonitorFromRemote,
@@ -22,6 +26,8 @@ import {
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
   updateBoardPostStreamInfoFromRemote,
+  updateOutputsFromRemote,
+  type RemoteOutputState,
 } from "./presentationSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -37,7 +43,7 @@ import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
-import { ref, set, get, runTransaction } from "firebase/database";
+import { ref, set, get, runTransaction, update } from "firebase/database";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
@@ -88,6 +94,8 @@ import {
   refreshPreviewSongMatches,
 } from "./servicePlanningImportSlice";
 import { generatedCreditsSlice } from "./generatedCreditsSlice";
+import { displayOutputsSlice } from "./displayOutputsSlice";
+import { controllerProfilesSlice } from "./controllerProfilesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
@@ -95,6 +103,11 @@ import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
+import {
+  isBuiltInOutputId,
+  supportsBoardTakeover,
+} from "../utils/displayOutputs";
+import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
 import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
@@ -122,7 +135,10 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 }
 
 export function broadcastItemUpdate(doc: DBItem) {
-  safePostMessage({ type: "update", data: { docs: doc, hostId: globalHostId } });
+  safePostMessage({
+    type: "update",
+    data: { docs: doc, hostId: globalHostId },
+  });
 }
 
 const cleanObject = (obj: Object) =>
@@ -381,18 +397,92 @@ const getOverlaySelectionForUndoRedo = (
   return targetOverlay || null;
 };
 
+/**
+ * Serialize outputs created after the registry for `presentation/outputs`.
+ *
+ * Built-ins are excluded: their state still travels in the flat legacy keys so
+ * clients on older builds stay live, and writing both would double-apply on
+ * receipt.
+ */
+const buildRemoteOutputs = (state: RootState) => {
+  const knownOutputIds = new Set(
+    (state.displayOutputs?.list ?? []).map((output) => output.id),
+  );
+  const outputs: Record<string, unknown> = {};
+  for (const slot of Object.values(state.presentation.outputs)) {
+    if (isBuiltInOutputId(slot.id)) continue;
+    if (!knownOutputIds.has(slot.id)) continue;
+    outputs[`${slot.id}/type`] = slot.type;
+    outputs[`${slot.id}/info`] = omitOverlayLanes(slot.info);
+    if (slot.type === "stream") {
+      for (const lane of STREAM_OVERLAY_LANES) {
+        const value = slot.info[lane];
+        if (value !== undefined) outputs[`${slot.id}/${lane}`] = value;
+      }
+      outputs[`${slot.id}/itemContentBlocked`] = slot.itemContentBlocked;
+      outputs[`${slot.id}/itemContentBlockedTime`] =
+        slot.itemContentBlockedTime ?? 0;
+    }
+    if (supportsBoardTakeover(slot.type)) {
+      outputs[`${slot.id}/boardAliasId`] = slot.boardAliasId;
+    }
+    outputs[`${slot.id}/followingOutputId`] = slot.followingOutputId ?? "";
+  }
+  return outputs;
+};
+
+/**
+ * Last value this client published, per top-level key, keyed by scope.
+ *
+ * Reset when the church changes: a different church's node has never been
+ * written by this client, so everything must go out again.
+ */
+const lastPublished = new Map<string, Map<string, string>>();
+let lastPublishedChurchId: string | null = null;
+
+/** The subset of `payload` whose serialized value differs from our last write. */
+const onlyChangedSincePublish = (
+  scope: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (lastPublishedChurchId !== globalFireDbInfo.churchId) {
+    lastPublished.clear();
+    lastPublishedChurchId = globalFireDbInfo.churchId ?? null;
+  }
+  const seen = lastPublished.get(scope) ?? new Map<string, string>();
+  lastPublished.set(scope, seen);
+
+  const changed: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    const serialized = JSON.stringify(value ?? null);
+    if (seen.get(key) === serialized) continue;
+    seen.set(key, serialized);
+    changed[key] = value;
+  }
+  return changed;
+};
+
+/** Forget what we published, so the next write republishes in full. */
+export const resetPublishedPresentationCache = () => {
+  lastPublished.clear();
+  lastPublishedChurchId = null;
+};
+
 const createPresentationUpdate = (state: RootState) => {
   const {
     projectorInfo,
     monitorInfo,
     streamInfo,
     streamItemContentBlocked,
+    streamItemContentBlockedTime,
     monitorBoardAliasId,
-  } = state.presentation;
+    projectorBoardAliasId,
+  } = toLegacyPresentationShape(state.presentation);
   return {
     projectorInfo,
     monitorInfo,
     monitorBoardAliasId,
+    projectorBoardAliasId,
     streamInfo: {
       displayType: streamInfo.displayType,
       time: streamInfo.time,
@@ -402,8 +492,11 @@ const createPresentationUpdate = (state: RootState) => {
       type: streamInfo.type,
       slideIndex: streamInfo.slideIndex,
       slideCount: streamInfo.slideCount,
+      localVideoInput: streamInfo.localVideoInput,
+      videoPlayback: streamInfo.videoPlayback,
     },
     stream_itemContentBlocked: streamItemContentBlocked,
+    stream_itemContentBlockedTime: streamItemContentBlockedTime,
     stream_bibleInfo: streamInfo.bibleDisplayInfo,
     stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
     stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
@@ -411,6 +504,7 @@ const createPresentationUpdate = (state: RootState) => {
     stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
     stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
     stream_boardPostStreamInfo: streamInfo.boardPostStreamInfo,
+    outputs: buildRemoteOutputs(state),
   };
 };
 
@@ -420,7 +514,7 @@ const persistPresentationUpdateLocally = (
   state: RootState,
   presentationUpdate: PresentationUpdate,
 ) => {
-  const { streamInfo } = state.presentation;
+  const { streamInfo } = toLegacyPresentationShape(state.presentation);
 
   localStorage.setItem(
     "projectorInfo",
@@ -433,6 +527,10 @@ const persistPresentationUpdateLocally = (
   localStorage.setItem(
     "monitorBoardAliasId",
     JSON.stringify(presentationUpdate.monitorBoardAliasId),
+  );
+  localStorage.setItem(
+    "projectorBoardAliasId",
+    JSON.stringify(presentationUpdate.projectorBoardAliasId),
   );
   localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
   localStorage.setItem(
@@ -467,6 +565,12 @@ const persistPresentationUpdateLocally = (
     "stream_itemContentBlocked",
     JSON.stringify(presentationUpdate.stream_itemContentBlocked),
   );
+  // Nest slash-path keys so same-machine display windows can apply named
+  // outputs from the storage event without waiting on Firebase.
+  localStorage.setItem(
+    "outputs",
+    JSON.stringify(nestSlashPathOutputs(presentationUpdate.outputs)),
+  );
 };
 
 type PresentationWrite = {
@@ -478,7 +582,7 @@ type PresentationWrite = {
 };
 
 const getActiveOverlayLanes = (state: RootState) => {
-  const { streamInfo } = state.presentation;
+  const { streamInfo } = toLegacyPresentationShape(state.presentation);
   return [
     hasParticipantOverlayData(streamInfo.participantOverlayInfo)
       ? "participant"
@@ -495,17 +599,34 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
   if (!firebaseDb || !globalFireDbInfo.churchId) return false;
   if (globalFireDbInfo.churchId !== write.churchId) return false;
 
-  const presentationPath = getChurchDataPath(
-    write.churchId,
-    "presentation",
-  );
+  const presentationPath = getChurchDataPath(write.churchId, "presentation");
+  const { outputs: remoteOutputs, ...legacyUpdate } = write.presentationUpdate;
   try {
-    await Promise.resolve(
-      set(
-        ref(firebaseDb, presentationPath),
-        cleanObject(write.presentationUpdate),
-      ),
+    const changedLegacy = onlyChangedSincePublish(
+      "legacy",
+      cleanObject(legacyUpdate) as Record<string, unknown>,
     );
+    if (Object.keys(changedLegacy).length > 0) {
+      await Promise.resolve(
+        update(ref(firebaseDb, presentationPath), changedLegacy),
+      );
+    }
+
+    const changedOutputs = onlyChangedSincePublish(
+      "outputs",
+      cleanObject(remoteOutputs) as Record<string, unknown>,
+    );
+    if (Object.keys(changedOutputs).length > 0) {
+      await Promise.resolve(
+        update(
+          ref(
+            firebaseDb,
+            getChurchDataPath(write.churchId, "presentation", "outputs"),
+          ),
+          changedOutputs,
+        ),
+      );
+    }
   } catch (error) {
     const permissionDenied = isFirebasePermissionDenied(error);
     logFirebaseOperationFailure("presentation_sync", presentationPath, error, {
@@ -521,6 +642,23 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
   return true;
 };
 
+/** Clear a removed output's synced presentation state. */
+export const clearRemoteOutputState = async (outputId: string) => {
+  if (!globalFireDbInfo.db || !globalFireDbInfo.churchId || !outputId) return;
+  await set(
+    ref(
+      globalFireDbInfo.db,
+      getChurchDataPath(
+        globalFireDbInfo.churchId,
+        "presentation",
+        "outputs",
+        outputId,
+      ),
+    ),
+    null,
+  );
+};
+
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
 export const writePresentationSnapshotToFirebase = async (
   state: RootState,
@@ -529,6 +667,9 @@ export const writePresentationSnapshotToFirebase = async (
   const presentationUpdate = createPresentationUpdate(state);
   persistPresentationUpdateLocally(state, presentationUpdate);
   const activeOverlayLanes = getActiveOverlayLanes(state);
+  const { isStreamTransmitting } = toLegacyPresentationShape(
+    state.presentation,
+  );
   const churchId = globalFireDbInfo.churchId;
   if (!globalFireDbInfo.canWriteSharedData) return true;
   if (
@@ -547,7 +688,7 @@ export const writePresentationSnapshotToFirebase = async (
           churchId: churchId || null,
           realtimeConnected: globalFireDbInfo.isConnected === true,
           triggerAction,
-          streamTransmitting: state.presentation.isStreamTransmitting,
+          streamTransmitting: isStreamTransmitting,
           activeOverlayLanes,
         }),
       );
@@ -558,7 +699,7 @@ export const writePresentationSnapshotToFirebase = async (
     churchId,
     presentationUpdate,
     triggerAction,
-    streamTransmitting: state.presentation.isStreamTransmitting,
+    streamTransmitting: isStreamTransmitting,
     activeOverlayLanes,
   });
 };
@@ -1078,33 +1219,62 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    let state = listenerApi.getState() as RootState;
-    if (itemListsSlice.actions.selectItemList.match(action)) {
-      state = listenerApi.getOriginalState() as RootState;
-    } else {
+    const dbAtStart = db;
+
+    if (!itemListsSlice.actions.selectItemList.match(action)) {
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
     }
 
-    listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
+    // Always read post-debounce state so we never persist a closed-over
+    // pre-delay snapshot after remote hydrate or a newer local edit.
+    const present = (listenerApi.getState() as RootState).undoable.present;
+    const { list, hasPendingUpdate, isInitialized } = present.itemList;
+    const { selectedList } = present.itemLists;
 
-    // update ItemList
-    const { list } = state.undoable.present.itemList;
-    const { selectedList } = state.undoable.present.itemLists;
-    if (!db || !selectedList) return;
-    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
-    db_itemList.items = [...list];
-    db_itemList.updatedAt = new Date().toISOString();
-    db.put(db_itemList);
+    if (
+      !dbAtStart ||
+      db !== dbAtStart ||
+      !isInitialized ||
+      !hasPendingUpdate ||
+      !selectedList
+    ) {
+      return;
+    }
 
-    // Local machine updates
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_itemList,
-        hostId: globalHostId,
-      },
-    });
+    try {
+      const db_itemList: DBItemListDetails = await dbAtStart.get(
+        selectedList._id,
+      );
+
+      // A newer local edit or remote hydrate may have landed while awaiting get.
+      const latest = (listenerApi.getState() as RootState).undoable.present
+        .itemList;
+      if (!latest.hasPendingUpdate || latest.list !== list) {
+        return;
+      }
+
+      db_itemList.items = [...list];
+      db_itemList.updatedAt = new Date().toISOString();
+      const result = await dbAtStart.put(db_itemList);
+
+      // Only clear dirty after a successful write so failed puts can retry.
+      const afterPut = (listenerApi.getState() as RootState).undoable.present
+        .itemList;
+      if (afterPut.list === list && afterPut.hasPendingUpdate) {
+        listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
+      }
+
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: { ...db_itemList, _rev: result.rev },
+          hostId: globalHostId,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to persist item list outline:", error);
+    }
   },
 });
 
@@ -1409,7 +1579,7 @@ listenerMiddleware.startListening({
     if (!timersSlice.actions.tickTimers.match(action)) return false;
     const curr = currentState as RootState;
     const prev = previousState as RootState;
-    const { monitorInfo } = curr.presentation;
+    const { monitorInfo } = toLegacyPresentationShape(curr.presentation);
     if (!isMonitorShowingTimerCountdownSlide(monitorInfo)) return false;
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return false;
@@ -1433,7 +1603,7 @@ listenerMiddleware.startListening({
   },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
-    const { monitorInfo } = state.presentation;
+    const { monitorInfo } = toLegacyPresentationShape(state.presentation);
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return;
     const currentItem = state.undoable.present.item;
@@ -1717,9 +1887,9 @@ listenerMiddleware.startListening({
         const currentMedia = (listenerApi.getState() as RootState).media;
         return Boolean(
           dbAtStart &&
-            db === dbAtStart &&
-            currentMedia.isInitialized &&
-            currentMedia === mediaAtStart,
+          db === dbAtStart &&
+          currentMedia.isInitialized &&
+          currentMedia === mediaAtStart,
         );
       };
       if (!dbAtStart || !mediaSaveIsCurrent()) return;
@@ -2170,17 +2340,12 @@ listenerMiddleware.startListening({
       .undoable.present.serviceTimes.list;
     const localServices = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes.list;
-    const {
-      db: firebaseDb,
-      churchId,
-      canWriteSharedData,
-      isConnected,
-    } = globalFireDbInfo;
+    const { db: firebaseDb, churchId, canWriteSharedData } = globalFireDbInfo;
     if (!canWriteSharedData) return;
-    if (!firebaseDb || !churchId || !isConnected) {
+    if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       notifyPresentationSyncError(
-        "Live sync is not ready. Your change was not saved. Wait for it to connect, then try again.",
+        "Live sync is not ready. Your change was not saved. Wait for it to finish connecting, then try again.",
       );
       return;
     }
@@ -2330,6 +2495,11 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateBoardPostStreamInfoFromRemote,
       presentationSlice.actions.setStreamItemContentBlockedFromRemote,
       presentationSlice.actions.setMonitorBoardAliasIdFromRemote,
+      presentationSlice.actions.setProjectorBoardAliasIdFromRemote,
+      // Registry bookkeeping, not a send: reconciling slots against the display
+      // output list must not republish the whole presentation snapshot.
+      presentationSlice.actions.syncOutputSlots,
+      presentationSlice.actions.updateOutputsFromRemote,
     );
     return (
       (currentState as RootState).presentation !==
@@ -2355,8 +2525,12 @@ listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (!presentationSlice.actions.toggleStreamTransmitting.match(action))
       return false;
-    const curr = (currentState as RootState).presentation;
-    const prev = (previousState as RootState).presentation;
+    const curr = toLegacyPresentationShape(
+      (currentState as RootState).presentation,
+    );
+    const prev = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
   effect: async (action, listenerApi) => {
@@ -2371,8 +2545,12 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (!presentationSlice.actions.setTransmitToAll.match(action)) return false;
-    const curr = (currentState as RootState).presentation;
-    const prev = (previousState as RootState).presentation;
+    const curr = toLegacyPresentationShape(
+      (currentState as RootState).presentation,
+    );
+    const prev = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
   effect: async (action, listenerApi) => {
@@ -2387,7 +2565,9 @@ listenerMiddleware.startListening({
 // handle updating from remote projector
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as Presentation;
     return (
       action.type === "debouncedUpdateProjector" &&
@@ -2413,7 +2593,9 @@ listenerMiddleware.startListening({
 // handle updating from remote monitor
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as Presentation;
     return (
       action.type === "debouncedUpdateMonitor" &&
@@ -2439,7 +2621,9 @@ listenerMiddleware.startListening({
 // handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as Presentation;
     return (
       action.type === "debouncedUpdateStream" &&
@@ -2462,11 +2646,28 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating outputs created after the display registry. Freshness is
+// checked per output inside the reducer, since one payload carries many.
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "debouncedUpdateOutputs",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      updateOutputsFromRemote(
+        action.payload as Record<string, RemoteOutputState> | null,
+      ),
+    );
+  },
+});
+
 // handle updating from remote bible info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateBibleDisplayInfo") return false;
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as BibleDisplayInfo;
     const currentBible = state.streamInfo.bibleDisplayInfo;
     return !!(
@@ -2492,7 +2693,9 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateParticipantOverlayInfo") return false;
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     const currentParticipant = state.streamInfo.participantOverlayInfo;
     return shouldApplyIncomingOverlayPayload(
@@ -2516,7 +2719,9 @@ listenerMiddleware.startListening({
 // handle updating from remote stb overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateStbOverlayInfo" &&
@@ -2542,7 +2747,9 @@ listenerMiddleware.startListening({
 // handle updating from remote qr code overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateQrCodeOverlayInfo" &&
@@ -2568,7 +2775,9 @@ listenerMiddleware.startListening({
 // handle updating from remote image overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as OverlayInfo;
     return (
       action.type === "debouncedUpdateImageOverlayInfo" &&
@@ -2594,7 +2803,9 @@ listenerMiddleware.startListening({
 // handle updating from remote formatted text display info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const state = (previousState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (previousState as RootState).presentation,
+    );
     const info = action.payload as FormattedTextDisplayInfo;
     return (
       action.type === "debouncedUpdateFormattedTextDisplayInfo" &&
@@ -2623,7 +2834,9 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState) => {
     if (action.type !== "debouncedUpdateBoardPostStreamInfo") return false;
-    const state = (currentState as RootState).presentation;
+    const state = toLegacyPresentationShape(
+      (currentState as RootState).presentation,
+    );
     const info = action.payload as BoardPostStreamInfo;
     if (!info.time && info.transitionSequence == null) return false;
     const current = state.streamInfo.boardPostStreamInfo;
@@ -2671,6 +2884,19 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
     listenerApi.dispatch(
       setMonitorBoardAliasIdFromRemote(action.payload as string),
+    );
+  },
+});
+
+// handle updating projector board mode from remote (same swap as the monitor,
+// for churches putting the board on a projector)
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "debouncedUpdateProjectorBoardAliasId",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      setProjectorBoardAliasIdFromRemote(action.payload as string),
     );
   },
 });
@@ -2952,6 +3178,8 @@ const combinedReducers = combineReducers({
   autosaveIndicator: autosaveIndicatorSlice.reducer,
   servicePlanningImport: servicePlanningImportSlice.reducer,
   generatedCredits: generatedCreditsSlice.reducer,
+  displayOutputs: displayOutputsSlice.reducer,
+  controllerProfiles: controllerProfilesSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

@@ -1,5 +1,10 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { DBItem } from "../types";
+import {
+  attachCloudCopyToLocalImageItem,
+  updateLocalImageReferenceInItem,
+  type LocalImageReferencePatch,
+} from "../utils/localImageAssets";
 
 function getDocsKey(type: string): keyof AllDocsState | null {
   if (type === "song") return "allSongDocs";
@@ -57,9 +62,60 @@ export const allDocsSlice = createSlice({
     ) => {
       const key = getDocsKey(action.payload.type);
       if (!key) return;
-      state[key] = state[key].filter(
-        (doc) => doc._id !== action.payload._id,
-      );
+      state[key] = state[key].filter((doc) => doc._id !== action.payload._id);
+    },
+    attachCloudCopyToLocalImageInAllDocs: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        mediaId: string;
+        url: string;
+      }>,
+    ) => {
+      for (const key of [
+        "allSongDocs",
+        "allFreeFormDocs",
+        "allTimerDocs",
+        "allBibleDocs",
+      ] as const) {
+        const index = state[key].findIndex(
+          (item) => item._id === action.payload.itemId,
+        );
+        if (index < 0) continue;
+        state[key][index] = attachCloudCopyToLocalImageItem(
+          state[key][index],
+          action.payload.assetId,
+          { mediaId: action.payload.mediaId, url: action.payload.url },
+        );
+        return;
+      }
+    },
+    updateLocalImageReferenceInAllDocs: (
+      state,
+      action: PayloadAction<{
+        itemId: string;
+        assetId: string;
+        patch: LocalImageReferencePatch;
+      }>,
+    ) => {
+      for (const key of [
+        "allSongDocs",
+        "allFreeFormDocs",
+        "allTimerDocs",
+        "allBibleDocs",
+      ] as const) {
+        const index = state[key].findIndex(
+          (item) => item._id === action.payload.itemId,
+        );
+        if (index < 0) continue;
+        state[key][index] = updateLocalImageReferenceInItem(
+          state[key][index],
+          action.payload.assetId,
+          action.payload.patch,
+        );
+        return;
+      }
     },
   },
 });
@@ -71,6 +127,8 @@ export const {
   updateAllBibleDocs,
   upsertItemInAllDocs,
   removeItemFromAllDocs,
+  attachCloudCopyToLocalImageInAllDocs,
+  updateLocalImageReferenceInAllDocs,
 } = allDocsSlice.actions;
 
 export default allDocsSlice.reducer;

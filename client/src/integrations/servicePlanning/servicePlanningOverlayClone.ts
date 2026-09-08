@@ -24,6 +24,8 @@ export const buildClonedParticipantOverlay = (
   template: OverlayInfo,
   patch: ServicePlanningFieldPatch,
   newId: string,
+  formatting: OverlayFormatting =
+    template.formatting || getDefaultFormatting("participant"),
 ): OverlayInfo => {
   const next: OverlayInfo = {
     ...template,
@@ -32,6 +34,7 @@ export const buildClonedParticipantOverlay = (
     title: patch.title ?? "",
     event: patch.event ?? template.event,
     duration: template.duration ?? DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
+    formatting,
   };
   next.heading = "";
   next.subHeading = "";

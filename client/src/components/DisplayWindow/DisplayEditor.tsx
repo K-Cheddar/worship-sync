@@ -6,6 +6,7 @@ import cn from "classnames";
 
 import { Box } from "../../types";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -91,8 +92,19 @@ const DisplayEditorComponent = ({
   const rndResizeObserverRef = useRef<ResizeObserver | null>(null);
   const isVideoBg = box.mediaInfo?.type === "video";
   const videoUrl = box.mediaInfo?.background;
+  // Match DisplayBox: local files resolve to an object URL that never equals
+  // mediaInfo.background, so comparing the raw form left the poster painted
+  // over a playing editor video.
+  const localVideoDisplay = useLocalVideoFileUrl(box.mediaInfo?.localVideoFile);
+  const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
+    ? localVideoDisplay.url
+    : videoUrl;
+  const localVideoThumbnail = useLocalVideoFileUrl(
+    box.mediaInfo?.localVideoFile,
+    "thumbnail",
+  );
   const rawBackground = isVideoBg
-    ? box.mediaInfo?.placeholderImage
+    ? localVideoThumbnail.url || box.mediaInfo?.placeholderImage
     : box.background;
   const background = useCachedMediaUrl(rawBackground);
   const { showToast } = useToast();
@@ -102,10 +114,10 @@ const DisplayEditorComponent = ({
   const shouldImageBeHidden = useMemo(
     () =>
       isVideoBg &&
-      videoUrl &&
-      videoUrl === activeVideoUrl &&
+      resolvedVideoUrl &&
+      resolvedVideoUrl === activeVideoUrl &&
       isWindowVideoLoaded,
-    [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded]
+    [isVideoBg, resolvedVideoUrl, activeVideoUrl, isWindowVideoLoaded]
   );
 
   const anchorScrollToTop = useCallback(() => {

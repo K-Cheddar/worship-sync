@@ -21,6 +21,7 @@ export type PreferencesTabType = "defaults" | "quickLinks";
 export type ControllerConfigurationRoute =
   | "/controller/preferences"
   | "/controller/quick-links"
+  | "/controller/displays"
   | "/controller/monitor-settings"
   | "/controller/service-planning";
 
@@ -71,7 +72,8 @@ type PreferencesState = {
     | "boardPosts"
     | "overlaysAndPosts"
     | "credits"
-    | "serviceTimes";
+    | "serviceTimes"
+    | "displays";
   /** Overlay credits tab: open Credits settings drawer from toolbar (not persisted). */
   overlayCreditsSettingsDrawerOpen: boolean;
   /** Last-selected media library folder per controller route; `null` = All media */
@@ -119,6 +121,7 @@ const initialState: PreferencesState = {
     defaultIsMediaExpanded: false,
     defaultBibleFontMode: "separate",
     defaultFreeFormFontMode: "separate",
+    overlayTargetOutputIds: [],
   },
   monitorSettings: {
     showClock: true,
@@ -172,6 +175,9 @@ export const preferencesSlice = createSlice({
       action: PayloadAction<Partial<PreferencesType>>,
     ) => {
       state.preferences = { ...state.preferences, ...action.payload };
+    },
+    setOverlayTargetOutputIds: (state, action: PayloadAction<string[]>) => {
+      state.preferences.overlayTargetOutputIds = action.payload;
     },
     setDefaultSongBackgroundBrightness: (
       state,
@@ -400,6 +406,7 @@ export const preferencesSlice = createSlice({
         defaultFreeFormFontMode:
           preferences.defaultFreeFormFontMode ||
           initialState.preferences.defaultFreeFormFontMode,
+        overlayTargetOutputIds: preferences.overlayTargetOutputIds ?? [],
       };
 
       state.slidesPerRow =
@@ -533,6 +540,7 @@ export const preferencesSlice = createSlice({
         | "overlaysAndPosts"
         | "credits"
         | "serviceTimes"
+        | "displays"
       >,
     ) => {
       state.overlayControllerPanel = action.payload;
@@ -628,6 +636,7 @@ export const preferencesSlice = createSlice({
 export const {
   setMediaRouteFolder,
   setDefaultPreferences,
+  setOverlayTargetOutputIds,
   setDefaultSongBackgroundBrightness,
   setDefaultTimerBackgroundBrightness,
   setDefaultBibleBackgroundBrightness,

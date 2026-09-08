@@ -34,6 +34,11 @@ export const useRestreamSession = (
   const mountedRef = useRef(true);
   const hasLoadedOnceRef = useRef(false);
   const loadInFlightRef = useRef(false);
+  const loadQueuedRef = useRef(false);
+  const churchIdRef = useRef(churchId);
+  const loadLatestRef = useRef<() => Promise<void>>(async () => {});
+
+  churchIdRef.current = churchId;
 
   const feedState = useMemo((): RestreamFeedState => {
     if (!churchId || isLoading) return "pending";
@@ -43,25 +48,33 @@ export const useRestreamSession = (
   }, [churchId, error, isLoading, messages.length, session?.enabled]);
 
   const load = useCallback(async () => {
-    if (!churchId) {
+    const requestedChurchId = churchId;
+    if (!requestedChurchId) {
       setSession(null);
       setMessages([]);
       setIsLoading(false);
       hasLoadedOnceRef.current = false;
       return;
     }
-    if (loadInFlightRef.current) return;
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return;
+    }
     loadInFlightRef.current = true;
+    loadQueuedRef.current = false;
 
     if (!hasLoadedOnceRef.current) {
       setIsLoading(true);
     }
     try {
       const [statusResponse, messagesResponse] = await Promise.all([
-        getRestreamSessionStatus(churchId),
-        getRestreamMessages(churchId),
+        getRestreamSessionStatus(requestedChurchId),
+        getRestreamMessages(requestedChurchId),
       ]);
-      if (!mountedRef.current) return;
+      // Reject responses that belong to an earlier church after a switch.
+      if (!mountedRef.current || churchIdRef.current !== requestedChurchId) {
+        return;
+      }
       setSession(statusResponse.session);
       setMessages(messagesResponse.messages);
       setBestEffortOnly(statusResponse.bestEffortOnly);
@@ -69,7 +82,9 @@ export const useRestreamSession = (
       setError("");
       hasLoadedOnceRef.current = true;
     } catch (nextError) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || churchIdRef.current !== requestedChurchId) {
+        return;
+      }
       setError(
         nextError instanceof Error
           ? nextError.message
@@ -77,11 +92,23 @@ export const useRestreamSession = (
       );
     } finally {
       loadInFlightRef.current = false;
-      if (mountedRef.current) {
+      if (mountedRef.current && churchIdRef.current === requestedChurchId) {
         setIsLoading(false);
+      }
+      // Always re-enter through the latest load so a queued refresh cannot
+      // reuse a stale churchId closure from the request that just finished.
+      if (mountedRef.current && loadQueuedRef.current) {
+        loadQueuedRef.current = false;
+        queueMicrotask(() => {
+          void loadLatestRef.current();
+        });
       }
     }
   }, [churchId]);
+
+  useEffect(() => {
+    loadLatestRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -1,12 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
-import generateRandomId from "../../utils/generateRandomId";
 import { useDispatch } from "../../hooks";
-import {
-  addToInitialItems,
-  removeItemFromList,
-} from "../../store/itemListSlice";
+import { addToInitialItems } from "../../store/itemListSlice";
 import gsap from "gsap";
 import { ServiceItem as ServiceItemType, TimerInfo } from "../../types";
 import { useLiveRemainingSeconds } from "../../hooks/useLiveRemainingSeconds";
@@ -15,6 +10,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import { useGSAP } from "@gsap/react";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
+import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { useControllerBasePath } from "../../context/activeController";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -62,6 +59,7 @@ const ServiceItem = ({
   onEnterMultiSelectMode,
   dragActiveId,
 }: ServiceItemsProps) => {
+  const controllerBasePath = useControllerBasePath();
   const dispatch = useDispatch();
   // Live countdown computed locally so only this row re-renders each second.
   const liveTimerValue = useLiveRemainingSeconds(timer);
@@ -72,7 +70,6 @@ const ServiceItem = ({
       disabled: !canMutateOutline,
     });
   const previousItem = useRef<ServiceItemType | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const { isSelected, isInsertPoint } = getOutlineRowSelectionState(
     item.listId,
@@ -92,23 +89,6 @@ const ServiceItem = ({
     overflow: isCollapsedByMultiDrag ? "hidden" : undefined,
     borderWidth: isCollapsedByMultiDrag ? 0 : undefined,
   };
-
-  const actions = useMemo(() => {
-    if (!canMutateOutline) return undefined;
-    return [
-      {
-        action: (listId: string) => {
-          setIsDeleting(true);
-          setTimeout(() => {
-            dispatch(removeItemFromList(listId));
-            setIsDeleting(false);
-          }, 500);
-        },
-        svg: Trash2,
-        id: generateRandomId(),
-      },
-    ];
-  }, [canMutateOutline, dispatch]);
 
   useEffect(() => {
     // track previousItem for highlighting
@@ -184,25 +164,6 @@ const ServiceItem = ({
             duration: 0.5,
             ease: "power1.inOut",
           });
-      } else if (isDeleting) {
-        // delete animation
-        gsap.timeline().fromTo(
-          serviceItemRef.current,
-          {
-            height: serviceItemRef.current.offsetHeight,
-            minHeight: serviceItemRef.current.style.minHeight,
-            borderBottomWidth: serviceItemRef.current.style.borderBottomWidth,
-            opacity: 1,
-          },
-          {
-            height: 0,
-            minHeight: 0,
-            opacity: 0,
-            borderBottomWidth: 0,
-            duration: 0.5,
-            ease: "power1.inOut",
-          }
-        );
       } else if (!initialItems.includes(item.listId)) {
         // initial animation for new items
         gsap
@@ -229,7 +190,7 @@ const ServiceItem = ({
           });
       }
     },
-    { scope: serviceItemRef, dependencies: [item, isDeleting] }
+    { scope: serviceItemRef, dependencies: [item] }
   );
 
   return (
@@ -252,14 +213,11 @@ const ServiceItem = ({
         !isSelected && !isInsertPoint && "border-b-transparent"
       )}
       isSelected={isSelected}
-      to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
-        encodeURI(item.listId)
-      )}`}
+      to={getControllerItemPath(item, controllerBasePath)}
       type={item.type}
       image={item.background}
       timerValue={timer ? liveTimerValue : undefined}
       timerText={timerText}
-      actions={actions}
       displayId={`service-item-${item.listId}`}
       id={item.listId}
       isActive={isActive}

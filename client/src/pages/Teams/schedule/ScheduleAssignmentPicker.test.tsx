@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
-import type { TeamScheduleGuest } from "../../../api/authTypes";
+import type {
+  TeamRosterMember,
+  TeamScheduleGuest,
+} from "../../../api/authTypes";
+import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
 import ScheduleAssignmentPicker from "./ScheduleAssignmentPicker";
 
 const PickerHarness = ({
@@ -11,6 +15,9 @@ const PickerHarness = ({
   recentGuests,
   onAssignGuest,
   onEditGuest,
+  members,
+  getAssignmentActionIssues,
+  onAssignmentAction,
 }: {
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
@@ -19,6 +26,9 @@ const PickerHarness = ({
   recentGuests: TeamScheduleGuest[];
   onAssignGuest: jest.Mock;
   onEditGuest: jest.Mock;
+  members: TeamRosterMember[];
+  getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
+  onAssignmentAction?: jest.Mock;
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   return (
@@ -32,7 +42,7 @@ const PickerHarness = ({
         label="Sunday Camera"
         positionId="camera"
         positionName="Camera"
-        members={[]}
+        members={members}
         assignmentQuery=""
         onAssignmentQueryChange={jest.fn()}
         currentPrimaryMemberId={currentPrimaryMemberId}
@@ -41,7 +51,9 @@ const PickerHarness = ({
         hasCurrentAssignee={hasCurrentAssignee}
         recentGuests={recentGuests}
         getIssue={() => ""}
+        getAssignmentActionIssues={getAssignmentActionIssues}
         onSelectMember={jest.fn()}
+        onAssignmentAction={onAssignmentAction}
         onAssignGuest={onAssignGuest}
         onEditGuest={onEditGuest}
       />
@@ -57,6 +69,9 @@ const renderPicker = ({
   recentGuests = [],
   onAssignGuest = jest.fn(),
   onEditGuest = jest.fn(),
+  members = [],
+  getAssignmentActionIssues,
+  onAssignmentAction,
 }: {
   currentPrimaryMemberId?: string;
   currentAssigneeLabel?: string;
@@ -65,6 +80,9 @@ const renderPicker = ({
   recentGuests?: TeamScheduleGuest[];
   onAssignGuest?: jest.Mock;
   onEditGuest?: jest.Mock;
+  members?: TeamRosterMember[];
+  getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
+  onAssignmentAction?: jest.Mock;
 } = {}) => {
   render(
     <PickerHarness
@@ -75,6 +93,9 @@ const renderPicker = ({
       recentGuests={recentGuests}
       onAssignGuest={onAssignGuest}
       onEditGuest={onEditGuest}
+      members={members}
+      getAssignmentActionIssues={getAssignmentActionIssues}
+      onAssignmentAction={onAssignmentAction}
     />,
   );
   return { onAssignGuest, onEditGuest };
@@ -190,5 +211,57 @@ describe("ScheduleAssignmentPicker guests", () => {
       }),
     );
     expect(onAssignGuest).not.toHaveBeenCalled();
+  });
+});
+
+describe("ScheduleAssignmentPicker occupied slots", () => {
+  const member: TeamRosterMember = {
+    memberId: "member-2",
+    churchId: "church-1",
+    firstName: "Taylor",
+    lastName: "Morgan",
+    positionIds: ["camera"],
+    blockoutDates: [],
+  };
+
+  const getAssignmentActionIssues = (): MemberAssignmentActionIssues => ({
+    replace: "",
+    shadow: "",
+    reverseShadow: "",
+  });
+
+  it("starts with focused actions instead of the full member list", () => {
+    renderPicker({
+      currentPrimaryMemberId: "member-1",
+      currentAssigneeLabel: "Morgan",
+      hasCurrentAssignee: true,
+      members: [member],
+      getAssignmentActionIssues,
+      onAssignmentAction: jest.fn(),
+    });
+
+    expect(screen.getByRole("menuitem", { name: "Find a sub" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Add shadow" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Add reverse shadow" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  });
+
+  it("opens the member list for the selected action", () => {
+    const onAssignmentAction = jest.fn();
+    renderPicker({
+      currentPrimaryMemberId: "member-1",
+      currentAssigneeLabel: "Morgan",
+      hasCurrentAssignee: true,
+      members: [member],
+      getAssignmentActionIssues,
+      onAssignmentAction,
+    });
+
+    fireEvent.mouseDown(screen.getByRole("menuitem", { name: "Add shadow" }));
+    fireEvent.mouseDown(screen.getByRole("option", { name: "Taylor" }));
+
+    expect(onAssignmentAction).toHaveBeenCalledWith("member-2", "shadow");
   });
 });

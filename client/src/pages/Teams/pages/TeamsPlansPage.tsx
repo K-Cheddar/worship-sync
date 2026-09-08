@@ -30,6 +30,7 @@ import {
   generateScheduleOccurrences,
   getOccurrenceDate,
   getSharedOccurrenceTiming,
+  isOccurrenceToday,
   type SharedOccurrenceTiming,
 } from "../../../utils/teamScheduleOccurrences";
 import { getServicePlanKey } from "../../../utils/servicePlanKeys";
@@ -64,8 +65,11 @@ import {
   type TeamsPlansRestore,
 } from "../teamsReturnNavigation";
 import { isActive } from "../teamsUtils";
-import ScheduleUpNextBadge from "../schedule/ScheduleUpNextBadge";
-import { scheduleUpNextBorderClassName } from "../schedule/scheduleUtils";
+import ScheduleOccurrenceRibbon from "../schedule/ScheduleOccurrenceRibbon";
+import {
+  scheduleTodayBorderClassName,
+  scheduleUpNextBorderClassName,
+} from "../schedule/scheduleUtils";
 import { cn } from "@/utils/cnHelper";
 import type {
   TeamScheduleOccurrence,
@@ -253,6 +257,7 @@ const PlansOccurrenceTile = ({
   onOpen,
 }: PlansOccurrenceTileProps) => {
   const tile = getPlansTileParts(occurrence, shared);
+  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
   let planActionLabel = `Add plan for ${tile.label}`;
   if (planStatusLoading) {
     planActionLabel = `Plan for ${tile.label}`;
@@ -263,17 +268,30 @@ const PlansOccurrenceTile = ({
     planActionLabel = `${planActionLabel} (${serviceName})`;
   }
 
+  let markerAriaSuffix = "";
+  if (isNextUpcoming) {
+    markerAriaSuffix = ", up next";
+  } else if (isToday) {
+    markerAriaSuffix = ", today";
+  }
+
+  let markerBorderClassName: string | false = false;
+  if (isNextUpcoming) {
+    markerBorderClassName = scheduleUpNextBorderClassName;
+  } else if (isToday) {
+    markerBorderClassName = scheduleTodayBorderClassName;
+  }
+
   return (
     <li className="relative">
-      {isNextUpcoming ? (
-        <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
-          <ScheduleUpNextBadge />
-        </div>
-      ) : null}
+      <ScheduleOccurrenceRibbon
+        isNextUpcoming={isNextUpcoming}
+        isToday={isToday}
+      />
       <Button
         type="button"
         variant="tertiary"
-        aria-label={`${planActionLabel}${isNextUpcoming ? ", up next" : ""}`}
+        aria-label={`${planActionLabel}${markerAriaSuffix}`}
         aria-busy={planStatusLoading || undefined}
         className={cn(
           "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
@@ -282,7 +300,7 @@ const PlansOccurrenceTile = ({
             : hasPlan
               ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
               : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
-          isNextUpcoming && scheduleUpNextBorderClassName,
+          markerBorderClassName,
           isPast && !hasPlan && !planStatusLoading && "opacity-55",
         )}
         onClick={onOpen}
@@ -1234,7 +1252,7 @@ const TeamsPlansPage = () => {
       ) : (
         <div
           className={cn(
-            // Top padding leaves room for the absolute "Up next" badge so the
+            // Top padding leaves room for the absolute "Up next" / "Today" badge so the
             // Plans scrollport does not clip it (same pattern as schedule board).
             "grid grid-cols-1 items-start gap-4 pt-3",
             visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",

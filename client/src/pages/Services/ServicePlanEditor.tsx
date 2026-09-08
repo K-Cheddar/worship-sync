@@ -117,6 +117,7 @@ import ServicePlanTemplateModal, {
 import {
   formatPlanStartTimeDisplay,
   servicePlanElementDomId,
+  type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
 import ServicePlanSectionList, {
@@ -176,6 +177,7 @@ import {
   cloneSectionsFromTemplate,
   createEmptyServicePlanSections,
   replaceMatchingPendingSongReferences,
+  resolveServicePlanAddTarget,
 } from "./servicePlanDraftUtils";
 import { resolveServicePlanSongRefs } from "./servicePlanSongResolution";
 import {
@@ -494,6 +496,7 @@ const ServicePlanEditor = ({
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
   const planTabPlanKeyRef = useRef(planKey);
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [showServiceDetails, setShowServiceDetails] = useState(false);
   /** Drill-in panels replace side submenus so nested pickers stay on-screen. */
   const [planActionsView, setPlanActionsView] = useState<
@@ -977,10 +980,14 @@ const ServicePlanEditor = ({
   };
 
   const startFromScratch = () => {
+    const nextSections = createEmptyServicePlanSections();
     updateDraft({
-      sections: createEmptyServicePlanSections(),
+      sections: nextSections,
       planName: occurrence.name || service.name || "",
     });
+    // Sole starter section is the only place items can go — select it so the
+    // footer Add item control is immediately usable without an extra click.
+    setSelectedPlanTarget({ sectionId: nextSections[0].id });
     setIsEditing(true);
   };
 
@@ -1190,7 +1197,7 @@ const ServicePlanEditor = ({
         await navigator.clipboard?.writeText(url);
         showToast(`${label} link copied.`, "success");
       } catch {
-        showToast(`${label} link is ready. Use Plan actions to copy it again.`, "success");
+        showToast(`${label} link is ready. Use Share to copy it again.`, "success");
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not publish this service plan.");
@@ -1360,30 +1367,43 @@ const ServicePlanEditor = ({
     (row) => Boolean(row.memberName) && row.microphoneIds.length > 0,
   );
   const respondedRows = filledScheduledRows.filter((row) => (row.response || "pending") !== "pending");
-  const workspaceSummary = (
+  // Empty 0/0 fill/response/mic counts are noise — only surface the summary when
+  // there is at least one scheduled slot (or mic coverage) worth scanning.
+  const hasFillStats = scheduledRows.length > 0;
+  const hasResponseStats = filledScheduledRows.length > 0;
+  const hasMicStats = Boolean(teamMicrophones) && filledScheduledRows.length > 0;
+  const hasUsefulSummary = hasFillStats || hasMicStats;
+  const hasSummaryDetails = hasMicStats;
+  const workspaceSummary = hasUsefulSummary ? (
     <div className="shrink-0 rounded-lg border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5 text-xs" aria-label="Service summary">
       <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium text-gray-100">{plan || hasSections ? "Plan ready" : "Plan needs work"}</span>
-        <span className="text-gray-300">{filledScheduledRows.length}/{scheduledRows.length} filled</span>
-        <span className="text-gray-300">{respondedRows.length}/{filledScheduledRows.length} responses</span>
-        <button
-          type="button"
-          className="ml-auto rounded px-1.5 py-0.5 text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
-          aria-expanded={summaryExpanded}
-          onClick={() => setSummaryExpanded((expanded) => !expanded)}
-        >
-          {summaryExpanded ? "Hide details" : "Details"}
-        </button>
+        {hasFillStats ? (
+          <span className="text-gray-300">{filledScheduledRows.length}/{scheduledRows.length} filled</span>
+        ) : null}
+        {hasResponseStats ? (
+          <span className="text-gray-300">{respondedRows.length}/{filledScheduledRows.length} responses</span>
+        ) : null}
+        {hasSummaryDetails ? (
+          <button
+            type="button"
+            className="ml-auto cursor-pointer rounded px-1.5 py-0.5 text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
+            aria-expanded={summaryExpanded}
+            onClick={() => setSummaryExpanded((expanded) => !expanded)}
+          >
+            {summaryExpanded ? "Hide details" : "Details"}
+          </button>
+        ) : null}
       </div>
-      {summaryExpanded ? (
+      {summaryExpanded && hasSummaryDetails ? (
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 border-t border-gray-700/70 pt-1 text-gray-400">
-          <span>Schedule send: Managed in schedules</span>
-          <span>Conflicts: Review in People</span>
-          {teamMicrophones ? <span>Mics: {micCoveredRows.length}/{filledScheduledRows.length} covered</span> : null}
+          {hasMicStats ? (
+            <span>Mics: {micCoveredRows.length}/{filledScheduledRows.length} covered</span>
+          ) : null}
         </div>
       ) : null}
     </div>
-  );
+  ) : null;
   const roleNoteOptions = useMemo(
     () => collectServicePlanRoleNoteOptions(sections, positions, teams, microphoneAudiences),
     [microphoneAudiences, positions, sections, teams],
@@ -1628,6 +1648,11 @@ const ServicePlanEditor = ({
     canEdit && !isEditing && isServiceDay && liveElementId,
   );
 
+  const closeShareMenus = useCallback(() => {
+    setShareMenuOpen(false);
+    setPlanActionsOpen(false);
+  }, []);
+
   const shareViewActions = (
     kind: "detailed" | "simple",
     label: string,
@@ -1647,7 +1672,7 @@ const ServicePlanEditor = ({
           className="max-md:min-h-0"
           aria-label={`Copy ${label.toLowerCase()} link`}
           onClick={() => {
-            setPlanActionsOpen(false);
+            closeShareMenus();
             void sharePlanLink(kind, "copy");
           }}
         >
@@ -1663,7 +1688,7 @@ const ServicePlanEditor = ({
           className="max-md:min-h-0"
           aria-label={`View ${label.toLowerCase()}`}
           onClick={() => {
-            setPlanActionsOpen(false);
+            closeShareMenus();
             void sharePlanLink(kind, "view");
           }}
         >
@@ -1671,6 +1696,53 @@ const ServicePlanEditor = ({
         </ButtonGroupItem>
       </ButtonGroup>
     </div>
+  );
+
+  // Publishing is its own action, not a by-product of copying a link: the
+  // church's current-service link is shared once and resolves to whichever
+  // published plan is running or next, so making a plan reachable meant
+  // copying a URL you did not want. Paired with Disable so the control is
+  // symmetric — sharing could previously be turned off but never explicitly on.
+  //
+  // Worded as enable/disable rather than "live": any number of plans can be
+  // published at once, and the current-service link picks by time. A plan
+  // published for next month is eligible, not live.
+  const renderSharePublishingItems = () =>
+    publicSharingEnabled ? (
+      <>
+        <DropdownMenuItem disabled>
+          <Check aria-hidden />
+          Shared links enabled
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={!canEdit || publishing}
+          onSelect={() => {
+            void handleUnpublish();
+          }}
+        >
+          Disable shared links
+        </DropdownMenuItem>
+      </>
+    ) : (
+      <DropdownMenuItem
+        disabled={shareActionsDisabled}
+        onSelect={() => {
+          void handlePublish();
+        }}
+      >
+        <Share2 aria-hidden />
+        Enable shared links
+      </DropdownMenuItem>
+    );
+
+  const renderShareMenuBody = () => (
+    <>
+      {shareViewActions("detailed", "Detailed view")}
+      {shareViewActions("simple", "Simple view")}
+      <DropdownMenuSeparator className="my-1 bg-gray-600" />
+      {renderSharePublishingItems()}
+    </>
   );
 
   const canSwitchOccurrence = Boolean(
@@ -1691,7 +1763,32 @@ const ServicePlanEditor = ({
     </DropdownMenuItem>
   );
 
-  const shareMenu =
+  // Prefer a header Share control when the toolbar has room; fall back to the
+  // overflow menu below md (same pattern as live pause/resume actions).
+  const shareToolbar =
+    plan || hasSections ? (
+      <DropdownMenu open={shareMenuOpen} onOpenChange={setShareMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="secondary"
+            svg={Share2}
+            iconSize="sm"
+            className="hidden max-md:min-h-0 md:inline-flex"
+            disabled={publishing}
+            aria-label={publishing ? "Updating share options" : "Share"}
+            aria-haspopup="menu"
+          >
+            Share
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          {renderShareMenuBody()}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : null;
+
+  const planActionsMenu =
     plan || hasSections || canSwitchOccurrence ? (
       <DropdownMenu open={planActionsOpen} onOpenChange={handlePlanActionsOpenChange}>
         <DropdownMenuTrigger asChild>
@@ -1875,48 +1972,12 @@ const ServicePlanEditor = ({
                   ) : null}
                 </>
               ) : null}
-              <DropdownMenuSeparator className="my-1 bg-gray-600" />
-              {shareViewActions("detailed", "Detailed view")}
-              {shareViewActions("simple", "Simple view")}
-              <DropdownMenuSeparator className="my-1 bg-gray-600" />
-              {/* Publishing is its own action, not a by-product of copying a
-                  link: the church's current-service link is shared once and
-                  resolves to whichever published plan is running or next, so
-                  making a plan reachable meant copying a URL you did not want.
-                  Paired with Disable so the control is symmetric — sharing
-                  could previously be turned off but never explicitly on.
-
-                  Worded as enable/disable rather than "live": any number of
-                  plans can be published at once, and the current-service link
-                  picks by time. A plan published for next month is eligible,
-                  not live. */}
-              {publicSharingEnabled ? (
-                <>
-                  <DropdownMenuItem disabled>
-                    <Check aria-hidden />
-                    Shared links enabled
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    disabled={!canEdit || publishing}
-                    onSelect={() => {
-                      void handleUnpublish();
-                    }}
-                  >
-                    Disable shared links
-                  </DropdownMenuItem>
-                </>
-              ) : (
-                <DropdownMenuItem
-                  disabled={shareActionsDisabled}
-                  onSelect={() => {
-                    void handlePublish();
-                  }}
-                >
-                  <Share2 aria-hidden />
-                  Enable shared links
-                </DropdownMenuItem>
-              )}
+              {(plan || hasSections) ? (
+                <div className="md:hidden">
+                  <DropdownMenuSeparator className="my-1 bg-gray-600" />
+                  {renderShareMenuBody()}
+                </div>
+              ) : null}
               {occurrenceSwitcher && canSwitchOccurrence ? (
                 <>
                   <DropdownMenuSeparator className="my-1 bg-gray-600" />
@@ -2151,16 +2212,16 @@ const ServicePlanEditor = ({
   );
 
   /**
-   * Add section plus the plan's save state. It sits below the tabs rather than
-   * inside the running order, so a failed or conflicted save is never hidden
-   * behind the Microphones tab.
+   * Add section plus the plan's save state. It stays in the footer chrome
+   * (not inside the running order) so edit ↔ view does not shift the list,
+   * and a failed or conflicted save is never hidden behind another tab.
    */
-  const selectedPlanSection = sections?.find(
-    (section) => section.id === selectedPlanTarget?.sectionId,
-  );
+  const planAddTarget = sections
+    ? resolveServicePlanAddTarget(sections, selectedPlanTarget)
+    : null;
   const planToolbar =
     hasSections && sections ? (
-      <div className="flex shrink-0 flex-wrap gap-2">
+      <div className="flex min-h-9 shrink-0 flex-wrap gap-2">
         {canEdit && isEditing && activeTab === "plan" ? (
           <>
             <Button
@@ -2169,10 +2230,12 @@ const ServicePlanEditor = ({
               svg={Plus}
               iconSize="sm"
               className="max-md:min-h-0"
-              disabled={!selectedPlanSection}
               onClick={() =>
-                selectedPlanSection
-                && handleAddElement(selectedPlanSection.id, selectedPlanTarget?.elementId)
+                planAddTarget &&
+                handleAddElement(
+                  planAddTarget.sectionId,
+                  planAddTarget.insertAfterElementId,
+                )
               }
             >
               Add item
@@ -2388,7 +2451,8 @@ const ServicePlanEditor = ({
                     {isEditing ? "Done" : "Edit"}
                   </Button>
                 ) : null}
-                {shareMenu}
+                {shareToolbar}
+                {planActionsMenu}
               </div>
             ) : null}
           </div>

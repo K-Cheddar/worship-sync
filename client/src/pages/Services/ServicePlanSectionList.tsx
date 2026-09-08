@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, GripVertical, MoreHorizontal, Trash2, X } from "lucide-react";
-import { closestCenter, DndContext, DragOverlay, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import {
   arrayMove,
   SortableContext,
@@ -14,7 +14,6 @@ import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import { cn } from "@/utils/cnHelper";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { useSensors } from "../../utils/dndUtils";
 import ServicePlanAssigneeList from "./ServicePlanAssigneeList";
 import ServicePlanContentPanel from "./ServicePlanContentPanel";
 import ServicePlanSongDetailsPanel from "./ServicePlanSongDetailsPanel";
@@ -27,6 +26,13 @@ import ServicePlanElementRow, {
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
+import {
+  SERVICE_PLAN_ELEMENT_DND_PREFIX,
+  SERVICE_PLAN_SECTION_DND_PREFIX,
+  resolveServicePlanDropAction,
+  servicePlanCollisionDetection,
+  useServicePlanSensors,
+} from "./servicePlanDnd";
 import {
   removeElement,
   removeSection,
@@ -59,11 +65,8 @@ import { richTextToPlainText } from "../../types/richText";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import type { DBItem } from "../../types";
 
-const SECTION_ID_PREFIX = "section:";
-const ELEMENT_ID_PREFIX = "element:";
-
 export const sectionDndId = (sectionId: string) =>
-  `${SECTION_ID_PREFIX}${sectionId}`;
+  `${SERVICE_PLAN_SECTION_DND_PREFIX}${sectionId}`;
 
 export const servicePlanSectionDomId = (sectionId: string) =>
   `service-plan-section-${sectionId}`;
@@ -444,7 +447,7 @@ const ServicePlanSectionList = ({
   allSongDocs = [],
   ...liveRowState
 }: ServicePlanSectionListProps) => {
-  const sensors = useSensors();
+  const sensors = useServicePlanSensors();
   const isDesktopPanel = useMediaQuery("(min-width: 1280px)");
   const sectionIds = sections.map((section) => sectionDndId(section.id));
   const selectedSectionId = selection?.sectionId || null;
@@ -455,21 +458,25 @@ const ServicePlanSectionList = ({
   const [songDetailsEditing, setSongDetailsEditing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragSections, setDragSections] = useState<ServicePlanSection[] | null>(null);
+  const clearDragState = () => {
+    setActiveDragId(null);
+    setDragSections(null);
+  };
   const assignmentPanelTriggerRef = useRef<HTMLElement | null>(null);
   const assignmentPanelElement = assignmentPanelElementId
     ? sections.flatMap((section) => section.elements).find(
-        (element) => element.id === assignmentPanelElementId,
-      )
+      (element) => element.id === assignmentPanelElementId,
+    )
     : undefined;
   const contentPanelElement = contentPanelElementId
     ? sections.flatMap((section) => section.elements).find(
-        (element) => element.id === contentPanelElementId,
-      )
+      (element) => element.id === contentPanelElementId,
+    )
     : undefined;
   const assignmentPanelSection = assignmentPanelElement
     ? sections.find((section) =>
-        section.elements.some((element) => element.id === assignmentPanelElement.id),
-      )
+      section.elements.some((element) => element.id === assignmentPanelElement.id),
+    )
     : undefined;
   const closeAssignmentPanel = () => {
     setAssignmentPanelElementId(null);
@@ -517,25 +524,34 @@ const ServicePlanSectionList = ({
     : undefined;
 
   const handleDragEnd = (event: DragEndEvent) => {
-    setActiveDragId(null);
     const previewSections = dragSections;
     const sectionsAtDrop = previewSections || sections;
-    setDragSections(null);
+    clearDragState();
     const { active, over } = event;
-    if (!canEdit || !isEditing || !over || active.id === over.id) return;
+    if (!canEdit || !isEditing || !over) return;
     const activeId = String(active.id);
     const overId = String(over.id);
+    const rawActiveElementId = activeId.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
+      ? activeId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length)
+      : null;
+    const activeElementOwningSectionId = rawActiveElementId
+      ? sections.find((section) =>
+        section.elements.some((element) => element.id === rawActiveElementId),
+      )?.id ?? null
+      : null;
+    const dropAction = resolveServicePlanDropAction({
+      activeId,
+      overId,
+      activeElementOwningSectionId,
+    });
 
-    if (
-      activeId.startsWith(SECTION_ID_PREFIX) &&
-      overId.startsWith(SECTION_ID_PREFIX)
-    ) {
+    if (dropAction.type === "reorder-sections") {
       const ids = sectionsAtDrop.map((section) => sectionDndId(section.id));
       const oldIndex = ids.indexOf(activeId);
       const newIndex = ids.indexOf(overId);
       if (oldIndex === -1 || newIndex === -1) return;
       const reorderedIds = arrayMove(ids, oldIndex, newIndex).map((id) =>
-        id.slice(SECTION_ID_PREFIX.length),
+        id.slice(SERVICE_PLAN_SECTION_DND_PREFIX.length),
       );
       const next = reorderSections(sectionsAtDrop, reorderedIds);
       const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
@@ -543,16 +559,11 @@ const ServicePlanSectionList = ({
       return;
     }
 
-    if (
-      activeId.startsWith(ELEMENT_ID_PREFIX) &&
-      overId.startsWith(ELEMENT_ID_PREFIX)
-    ) {
-      const rawActiveId = activeId.slice(ELEMENT_ID_PREFIX.length);
-      const rawOverId = overId.slice(ELEMENT_ID_PREFIX.length);
+    if (dropAction.type === "move-element-to-element" && rawActiveElementId) {
+      const rawOverId = overId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length);
       const owningSection = sections.find((section) =>
-        section.elements.some((element) => element.id === rawActiveId),
+        section.elements.some((element) => element.id === rawActiveElementId),
       );
-      // Cross-section drag reorder isn't supported — use "Move to section" instead.
       const destination = sections.find((section) =>
         section.elements.some((element) => element.id === rawOverId),
       );
@@ -560,21 +571,34 @@ const ServicePlanSectionList = ({
       const targetIndex = destination.elements.findIndex((element) => element.id === rawOverId);
       const next = owningSection.id !== destination.id && previewSections
         ? previewSections
-        : moveElementToPosition(sections, rawActiveId, owningSection.id, destination.id, targetIndex);
+        : moveElementToPosition(
+          sections,
+          rawActiveElementId,
+          owningSection.id,
+          destination.id,
+          targetIndex,
+        );
       const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
       onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
       return;
     }
 
-    if (activeId.startsWith(ELEMENT_ID_PREFIX) && overId.startsWith(SECTION_ID_PREFIX)) {
-      const rawActiveId = activeId.slice(ELEMENT_ID_PREFIX.length);
-      const destinationId = overId.slice(SECTION_ID_PREFIX.length);
-      const owningSection = sections.find((section) => section.elements.some((element) => element.id === rawActiveId));
+    if (dropAction.type === "move-element-to-section" && rawActiveElementId) {
+      const destinationId = overId.slice(SERVICE_PLAN_SECTION_DND_PREFIX.length);
+      const owningSection = sections.find((section) =>
+        section.elements.some((element) => element.id === rawActiveElementId),
+      );
       const destination = sections.find((section) => section.id === destinationId);
       if (!owningSection || !destination) return;
       const next = owningSection.id !== destination.id && previewSections
         ? previewSections
-        : moveElementToPosition(sections, rawActiveId, owningSection.id, destination.id, destination.elements.length);
+        : moveElementToPosition(
+          sections,
+          rawActiveElementId,
+          owningSection.id,
+          destination.id,
+          destination.elements.length,
+        );
       const anchor = sectionsAtDrop.flatMap((section) => section.elements)[0]?.startTime;
       onSectionsChange(anchor ? applyPlanAnchorStartTime(next, anchor) : next);
     }
@@ -586,28 +610,47 @@ const ServicePlanSectionList = ({
   };
 
   const handleDragOver = (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
-    if (!canEdit || !isEditing || !event.over || !String(event.active.id).startsWith(ELEMENT_ID_PREFIX)) return;
+    if (
+      !canEdit ||
+      !isEditing ||
+      !event.over ||
+      !String(event.active.id).startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
+    ) {
+      return;
+    }
     const activeId = String(event.active.id);
     const overId = String(event.over.id);
     const current = dragSections || sections;
-    const source = current.find((section) => section.elements.some((element) => elementDndId(element.id) === activeId));
-    const destination = overId.startsWith(SECTION_ID_PREFIX)
+    const source = current.find((section) =>
+      section.elements.some((element) => elementDndId(element.id) === activeId),
+    );
+    const destination = overId.startsWith(SERVICE_PLAN_SECTION_DND_PREFIX)
       ? current.find((section) => sectionDndId(section.id) === overId)
-      : current.find((section) => section.elements.some((element) => elementDndId(element.id) === overId));
+      : current.find((section) =>
+        section.elements.some((element) => elementDndId(element.id) === overId),
+      );
     if (!source || !destination || source.id === destination.id) return;
-    const targetIndex = overId.startsWith(ELEMENT_ID_PREFIX)
+    const targetIndex = overId.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
       ? destination.elements.findIndex((element) => elementDndId(element.id) === overId)
       : destination.elements.length;
-    setDragSections(moveElementToPosition(current, activeId.slice(ELEMENT_ID_PREFIX.length), source.id, destination.id, targetIndex));
+    setDragSections(
+      moveElementToPosition(
+        current,
+        activeId.slice(SERVICE_PLAN_ELEMENT_DND_PREFIX.length),
+        source.id,
+        destination.id,
+        targetIndex,
+      ),
+    );
   };
 
-  const activeDragSection = activeDragId?.startsWith(SECTION_ID_PREFIX)
+  const activeDragSection = activeDragId?.startsWith(SERVICE_PLAN_SECTION_DND_PREFIX)
     ? sections.find((section) => sectionDndId(section.id) === activeDragId)
     : undefined;
-  const activeDragElement = activeDragId?.startsWith(ELEMENT_ID_PREFIX)
+  const activeDragElement = activeDragId?.startsWith(SERVICE_PLAN_ELEMENT_DND_PREFIX)
     ? (dragSections || sections)
-        .flatMap((section) => section.elements)
-        .find((element) => elementDndId(element.id) === activeDragId)
+      .flatMap((section) => section.elements)
+      .find((element) => elementDndId(element.id) === activeDragId)
     : undefined;
   const activePanelTitle = activePanelElement?.title
     ? richTextToPlainText(activePanelElement.title).trim()
@@ -707,10 +750,10 @@ const ServicePlanSectionList = ({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={servicePlanCollisionDetection}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
-      onDragCancel={() => setActiveDragId(null)}
+      onDragCancel={clearDragState}
       onDragEnd={handleDragEnd}
     >
       <div className="flex min-h-0 min-w-0 flex-1 gap-3">
@@ -721,103 +764,103 @@ const ServicePlanSectionList = ({
             aria-label={ariaLabel}
             className="scrollbar-variable min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto"
           >
-          {header}
-          <ServicePlanElementColumnHeader
-            isEditing={isEditing}
-            showActionsColumn={isEditing || Boolean(liveRowState.isServiceDay)}
-            showAssignedColumn={!structureOnly}
-          />
-
-          {(dragSections || sections).map((section) => (
-            <SortableSectionCard
-              key={section.id}
-              section={section}
-              canEdit={canEdit}
+            {header}
+            <ServicePlanElementColumnHeader
               isEditing={isEditing}
-              onRename={(name) =>
-                onSectionsChange(
-                  renameSection(sections, section.id, name),
-                  `section:${section.id}:name`,
-                )
-              }
-              onRemove={() => onSectionsChange(removeSection(sections, section.id))}
-              isSelected={selectedSectionId === section.id && !selectedElementId}
-              selectedElementId={
-                selectedSectionId === section.id ? selectedElementId || undefined : undefined
-              }
-              onSelectSection={() => {
-                if (!canEdit || !isEditing) return;
-                onSelectionChange?.({ sectionId: section.id });
-              }}
-              onSelectElement={(elementId) => {
-                if (!canEdit || !isEditing) return;
-                onSelectionChange?.({ sectionId: section.id, elementId });
-              }}
-              onRemoveElement={(elementId) =>
-                onSectionsChange(removeElement(sections, section.id, elementId))
-              }
-              onUpdateElement={(elementId, changes, coalesceKey) =>
-                onSectionsChange(
-                  updateElement(sections, section.id, elementId, changes),
-                  // Only the row knows whether this is continuous typing or a
-                  // discrete action — every note edit arrives as the same
-                  // `teamNotes` shape, so the change itself can't tell a
-                  // keystroke from a removal.
-                  coalesceKey && `element:${elementId}:${coalesceKey}`,
-                )
-              }
-              onElementDurationChange={(elementId, durationSeconds) =>
-                onSectionsChange(
-                  applyElementDurationSecondsChange(
-                    sections,
-                    elementId,
-                    durationSeconds,
-                  ),
-                  `element:${elementId}:duration`,
-                )
-              }
-              onElementStartTimeChange={(elementId, time) =>
-                onSectionsChange(
-                  applyElementStartTimeChange(sections, elementId, time),
-                  `element:${elementId}:startTime`,
-                )
-              }
-              assignedToHistoryValues={assignedToHistoryValues}
-              onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
-              isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
-                  roleNoteOptions={roleNoteOptions}
-                  scheduledPositionOptions={scheduledPositionOptions}
-              teamNoteOptions={teamNoteOptions}
-              microphones={microphones}
-              microphoneAudiences={microphoneAudiences}
-              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
-              scheduledAssignmentRows={scheduledAssignmentRows}
-              onOpenScheduledAssignment={onOpenScheduledAssignment}
-              hideNotes={hideNotes}
-              teamNotesFilter={teamNotesFilter}
-              roleNotesFilter={roleNotesFilter}
-              onViewSongLyrics={onViewSongLyrics}
-              canCreateLibrarySong={canCreateLibrarySong}
-              onCreatePendingSong={onCreatePendingSong}
-              resolvedSongRefs={resolvedSongRefs}
-                  structureOnly={structureOnly}
-              sectionLabelColor={sectionLabelColor}
-              sectionBorderColor={sectionBorderColor}
-              onOpenAssignment={handleOpenAssignment}
-              onOpenContent={handleOpenContent}
-              onOpenSongDetails={(songRef) => {
-                if (songRef.kind !== "library") {
-                  onViewSongLyrics?.(songRef);
-                  return;
-                }
-                setContentPanelElementId(null);
-                setAssignmentPanelElementId(null);
-                setSongDetailsEditing(false);
-                setSongDetailsRef(songRef);
-              }}
-              {...liveRowState}
+              showActionsColumn={isEditing || Boolean(liveRowState.isServiceDay)}
+              showAssignedColumn={!structureOnly}
             />
-          ))}
+
+            {(dragSections || sections).map((section) => (
+              <SortableSectionCard
+                key={section.id}
+                section={section}
+                canEdit={canEdit}
+                isEditing={isEditing}
+                onRename={(name) =>
+                  onSectionsChange(
+                    renameSection(sections, section.id, name),
+                    `section:${section.id}:name`,
+                  )
+                }
+                onRemove={() => onSectionsChange(removeSection(sections, section.id))}
+                isSelected={selectedSectionId === section.id && !selectedElementId}
+                selectedElementId={
+                  selectedSectionId === section.id ? selectedElementId || undefined : undefined
+                }
+                onSelectSection={() => {
+                  if (!canEdit || !isEditing) return;
+                  onSelectionChange?.({ sectionId: section.id });
+                }}
+                onSelectElement={(elementId) => {
+                  if (!canEdit || !isEditing) return;
+                  onSelectionChange?.({ sectionId: section.id, elementId });
+                }}
+                onRemoveElement={(elementId) =>
+                  onSectionsChange(removeElement(sections, section.id, elementId))
+                }
+                onUpdateElement={(elementId, changes, coalesceKey) =>
+                  onSectionsChange(
+                    updateElement(sections, section.id, elementId, changes),
+                    // Only the row knows whether this is continuous typing or a
+                    // discrete action — every note edit arrives as the same
+                    // `teamNotes` shape, so the change itself can't tell a
+                    // keystroke from a removal.
+                    coalesceKey && `element:${elementId}:${coalesceKey}`,
+                  )
+                }
+                onElementDurationChange={(elementId, durationSeconds) =>
+                  onSectionsChange(
+                    applyElementDurationSecondsChange(
+                      sections,
+                      elementId,
+                      durationSeconds,
+                    ),
+                    `element:${elementId}:duration`,
+                  )
+                }
+                onElementStartTimeChange={(elementId, time) =>
+                  onSectionsChange(
+                    applyElementStartTimeChange(sections, elementId, time),
+                    `element:${elementId}:startTime`,
+                  )
+                }
+                assignedToHistoryValues={assignedToHistoryValues}
+                onRemoveAssignedToHistoryValue={onRemoveAssignedToHistoryValue}
+                isAssignedToHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+                roleNoteOptions={roleNoteOptions}
+                scheduledPositionOptions={scheduledPositionOptions}
+                teamNoteOptions={teamNoteOptions}
+                microphones={microphones}
+                microphoneAudiences={microphoneAudiences}
+                scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+                scheduledAssignmentRows={scheduledAssignmentRows}
+                onOpenScheduledAssignment={onOpenScheduledAssignment}
+                hideNotes={hideNotes}
+                teamNotesFilter={teamNotesFilter}
+                roleNotesFilter={roleNotesFilter}
+                onViewSongLyrics={onViewSongLyrics}
+                canCreateLibrarySong={canCreateLibrarySong}
+                onCreatePendingSong={onCreatePendingSong}
+                resolvedSongRefs={resolvedSongRefs}
+                structureOnly={structureOnly}
+                sectionLabelColor={sectionLabelColor}
+                sectionBorderColor={sectionBorderColor}
+                onOpenAssignment={handleOpenAssignment}
+                onOpenContent={handleOpenContent}
+                onOpenSongDetails={(songRef) => {
+                  if (songRef.kind !== "library") {
+                    onViewSongLyrics?.(songRef);
+                    return;
+                  }
+                  setContentPanelElementId(null);
+                  setAssignmentPanelElementId(null);
+                  setSongDetailsEditing(false);
+                  setSongDetailsRef(songRef);
+                }}
+                {...liveRowState}
+              />
+            ))}
 
           </div>
         </SortableContext>

@@ -9,17 +9,15 @@ import {
 } from "../../types";
 import { MonitorX, MonitorUp } from "lucide-react";
 import { useDispatch } from "../../hooks";
-import {
-  clearMonitor,
-  clearProjector,
-  clearStream,
-} from "../../store/presentationSlice";
+import { clearOutput } from "../../store/presentationSlice";
 import Button from "../Button/Button";
 import cn from "classnames";
 import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 
 type PresentationPreviewProps = {
   name: string;
+  /** Display this tile controls; clear and quick links act on it alone. */
+  outputId: string;
   info: PresentationType;
   prevInfo: PresentationType;
   isTransmitting: boolean;
@@ -36,7 +34,7 @@ type PresentationPreviewProps = {
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   timers: TimerInfo[];
-  showMonitorClockTimer?: boolean;
+  showClockTimer?: boolean;
   /** Stream only: when true, item content is faded out (overlay only). */
   streamItemContentBlocked?: boolean;
   /** Multiplier for DisplayWindow width (vw). Default 1; use 2 for double-size previews. */
@@ -49,11 +47,17 @@ type PresentationPreviewProps = {
   /** Replaces the live DisplayWindow preview (keeps the card header/controls). Used
    * by the monitor preview to show the discussion board while it's on the monitor. */
   previewOverride?: ReactNode;
+  /**
+   * Content pinned inside this display's card (e.g. mirror controls), so it is
+   * visually tied to the screen it affects rather than floating below the tile.
+   */
+  footer?: ReactNode;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
 const PresentationPreview = ({
   name,
+  outputId,
   prevInfo,
   info,
   isTransmitting,
@@ -67,11 +71,12 @@ const PresentationPreview = ({
   timerInfo,
   prevTimerInfo,
   timers,
-  showMonitorClockTimer = false,
+  showClockTimer = false,
   streamItemContentBlocked = false,
   previewScale = 1,
   fillWidth = false,
   previewOverride,
+  footer,
 }: PresentationPreviewProps) => {
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
@@ -84,17 +89,15 @@ const PresentationPreview = ({
   const [shouldShowClearLabel, setShouldShowClearLabel] = useState(true);
   const [shouldShowTransmitLabel, setShouldShowTransmitLabel] = useState(true);
 
+  // This display only. The per-surface clears iterate every slot of a type, so
+  // clearing Lobby would blank Main alongside it.
   const handleClear = () => {
-    if (info.displayType === "projector") {
-      dispatch(clearProjector());
-    } else if (info.displayType === "monitor") {
-      dispatch(clearMonitor());
-    } else if (info.displayType === "stream") {
-      dispatch(clearStream());
-    }
+    dispatch(clearOutput(outputId));
   };
 
-  const filteredQuickLinks = quickLinks.filter((link) => link.action !== "clear");
+  const filteredQuickLinks = quickLinks.filter(
+    (link) => link.action !== "clear",
+  );
 
   useEffect(() => {
     if (hideHeader || minimalHeader) return;
@@ -166,6 +169,9 @@ const PresentationPreview = ({
     bibleInfoBox: info.bibleInfoBox,
     ...(fillWidth ? {} : { width: previewWidthVw }),
     showBorder,
+    // Without this the preview resolves the built-in output's settings, so a
+    // second projector would render the first one's clock, timer, and background.
+    outputId,
     displayType: info.displayType,
     participantOverlayInfo: info.participantOverlayInfo,
     prevParticipantOverlayInfo: prevInfo.participantOverlayInfo,
@@ -187,13 +193,16 @@ const PresentationPreview = ({
     prevTime: prevInfo.time,
     shouldAnimate: true,
     shouldPlayVideo: true,
-    showMonitorClockTimer,
+    showClockTimer,
     // Only the transmit-handler monitor preview uses the full monitor chrome.
     monitorLayoutMode:
       info.displayType === "monitor" ? "full-monitor" : "content-only",
     transitionDirection: info.transitionDirection,
     streamItemContentBlocked:
       info.displayType === "stream" ? streamItemContentBlocked : undefined,
+    localVideoInput: info.localVideoInput,
+    prevLocalVideoInput: prevInfo.localVideoInput,
+    videoPlayback: info.videoPlayback,
   } as const;
 
   return (
@@ -202,7 +211,7 @@ const PresentationPreview = ({
         <div
           className={cn(
             "flex gap-2",
-            hideQuickLinks ? "flex-col w-full" : "flex-row"
+            hideQuickLinks ? "flex-col w-full" : "flex-row",
           )}
         >
           <div
@@ -213,7 +222,7 @@ const PresentationPreview = ({
               hideQuickLinks && !fillWidth && "items-center",
               // Match DisplayWindow width so the header never exceeds the preview (w-fit used the
               // header’s intrinsic width and could overflow past the aspect-video box below).
-              !hideQuickLinks && !fillWidth && "shrink-0 min-w-0"
+              !hideQuickLinks && !fillWidth && "shrink-0 min-w-0",
             )}
             style={
               fillWidth
@@ -231,7 +240,7 @@ const PresentationPreview = ({
                   "border-b border-white/10 bg-black/25 text-center text-xs font-semibold px-2 py-1",
                   minimalHeader
                     ? "flex items-center justify-center"
-                    : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"
+                    : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2",
                 )}
               >
                 <span
@@ -239,7 +248,7 @@ const PresentationPreview = ({
                   data-measure="presentation-title"
                   className={cn(
                     "truncate min-w-0 text-left",
-                    minimalHeader && "w-full text-center"
+                    minimalHeader && "w-full text-center",
                   )}
                 >
                   {name}
@@ -331,9 +340,7 @@ const PresentationPreview = ({
               </>
             )}
             <div
-              className={cn(
-                info.displayType === "stream" && "bg-gray-500/35"
-              )}
+              className={cn(info.displayType === "stream" && "bg-gray-500/35")}
             >
               {previewOverride ?? <DisplayWindow {...displayWindowProps} />}
             </div>
@@ -344,6 +351,7 @@ const PresentationPreview = ({
                 <QuickLink
                   timers={timers}
                   displayType={info.displayType}
+                  outputId={outputId}
                   isMobile={isMobile}
                   {...link}
                   key={link.id}
@@ -352,6 +360,11 @@ const PresentationPreview = ({
             </ul>
           )}
         </div>
+        {footer != null ? (
+          <div className="empty:hidden border-t border-white/10 px-2 py-1.5">
+            {footer}
+          </div>
+        ) : null}
       </section>
     </div>
   );

@@ -76,6 +76,16 @@ const VerificationCodeInput = ({
 
   const handleKeyDown = (index: number, e: KeyboardEvent<HTMLInputElement>) => {
     const compact = digitsOnly(value);
+    if (/^\d$/.test(e.key)) {
+      const row = [...chars];
+      row[index] = e.key;
+      emitFromRow(row);
+      if (index < LENGTH - 1) {
+        focusAt(index + 1);
+      }
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Backspace") {
       if (chars[index]) {
         const row = [...chars];
@@ -143,6 +153,8 @@ const VerificationCodeInput = ({
             pattern="[0-9]*"
             autoComplete={index === 0 ? "one-time-code" : "off"}
             name={index === 0 ? "one-time-code" : undefined}
+            // First field must accept the full OTP so browser autofill can
+            // deliver all digits into handleChange's multi-digit path.
             maxLength={index === 0 ? LENGTH : 1}
             disabled={disabled}
             value={char}
@@ -150,6 +162,7 @@ const VerificationCodeInput = ({
             aria-invalid={index === 0 ? Boolean(errorText) : undefined}
             aria-describedby={index === 0 && errorText ? errorId : undefined}
             className={inputClassName}
+            onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => handleChange(index, e.target.value)}
             onKeyDown={(e) => handleKeyDown(index, e)}
             onPaste={handlePaste}

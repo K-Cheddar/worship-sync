@@ -3,9 +3,10 @@ import QuickLink from "../QuickLink";
 import type { Presentation } from "../../../types";
 
 const mockDispatch = jest.fn();
-const mockClearMonitor = jest.fn(() => ({ type: "presentation/clearMonitor" }));
-const mockClearProjector = jest.fn(() => ({ type: "presentation/clearProjector" }));
-const mockClearStream = jest.fn(() => ({ type: "presentation/clearStream" }));
+const mockClearOutput = jest.fn((outputId: string) => ({
+  type: "presentation/clearOutput",
+  payload: outputId,
+}));
 const mockUpdateProjector = jest.fn((payload: any) => ({
   type: "presentation/updateProjector",
   payload,
@@ -54,9 +55,7 @@ jest.mock("../../../hooks", () => ({
 }));
 
 jest.mock("../../../store/presentationSlice", () => ({
-  clearMonitor: () => mockClearMonitor(),
-  clearProjector: () => mockClearProjector(),
-  clearStream: () => mockClearStream(),
+  clearOutput: (outputId: string) => mockClearOutput(outputId),
   updateProjector: (payload: any) => mockUpdateProjector(payload),
   updateMonitor: (payload: any) => mockUpdateMonitor(payload),
   updateStream: (payload: any) => mockUpdateStream(payload),
@@ -65,7 +64,8 @@ jest.mock("../../../store/presentationSlice", () => ({
     mockUpdateParticipantOverlayInfo(payload),
   updateStbOverlayInfo: (payload: any) => mockUpdateStbOverlayInfo(payload),
   updateImageOverlayInfo: (payload: any) => mockUpdateImageOverlayInfo(payload),
-  updateQrCodeOverlayInfo: (payload: any) => mockUpdateQrCodeOverlayInfo(payload),
+  updateQrCodeOverlayInfo: (payload: any) =>
+    mockUpdateQrCodeOverlayInfo(payload),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -100,7 +100,7 @@ describe("QuickLink", () => {
         displayType="monitor"
         presentationInfo={presentationInfo}
         timers={[]}
-      />
+      />,
     );
 
     fireEvent.click(screen.getByRole("button"));
@@ -129,7 +129,7 @@ describe("QuickLink", () => {
         displayType="monitor"
         presentationInfo={presentationInfo}
         timers={[]}
-      />
+      />,
     );
 
     fireEvent.click(screen.getByRole("button"));
@@ -140,47 +140,31 @@ describe("QuickLink", () => {
 
   it("returns null when there is no presentationInfo and no action", () => {
     const { container } = render(
-      <QuickLink {...quickLinkBase} label="Empty" displayType="stream" timers={[]} />
+      <QuickLink
+        {...quickLinkBase}
+        label="Empty"
+        displayType="stream"
+        timers={[]}
+      />,
     );
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("dispatches clear action by display type", () => {
-    const { rerender } = render(
+  it("clears only the display the tile belongs to", () => {
+    render(
       <QuickLink
         {...quickLinkBase}
-        label="Clear stream"
-        displayType="stream"
-        action="clear"
-        timers={[]}
-      />
-    );
-    fireEvent.click(screen.getByRole("button"));
-    expect(mockClearStream).toHaveBeenCalled();
-
-    rerender(
-      <QuickLink
-        {...quickLinkBase}
-        label="Clear monitor"
-        displayType="monitor"
-        action="clear"
-        timers={[]}
-      />
-    );
-    fireEvent.click(screen.getByRole("button"));
-    expect(mockClearMonitor).toHaveBeenCalled();
-
-    rerender(
-      <QuickLink
-        {...quickLinkBase}
-        label="Clear projector"
+        label="Clear lobby"
         displayType="projector"
+        outputId="out_lobby"
         action="clear"
         timers={[]}
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button"));
-    expect(mockClearProjector).toHaveBeenCalled();
+    // The per-surface clears iterate every slot of a type, so a Lobby tile must
+    // not blank Main.
+    expect(mockClearOutput).toHaveBeenCalledWith("out_lobby");
   });
 
   it("updates projector presentation payload", () => {
@@ -197,7 +181,7 @@ describe("QuickLink", () => {
         displayType="projector"
         presentationInfo={presentationInfo}
         timers={[]}
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button"));
     expect(mockUpdateProjector).toHaveBeenCalledWith(presentationInfo);
@@ -219,12 +203,12 @@ describe("QuickLink", () => {
         displayType="stream"
         presentationInfo={presentationInfo}
         timers={[]}
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button"));
     expect(mockUpdateStream).toHaveBeenCalledWith(presentationInfo);
     expect(mockUpdateBibleDisplayInfo).toHaveBeenCalledWith(
-      presentationInfo.bibleDisplayInfo
+      presentationInfo.bibleDisplayInfo,
     );
     expect(mockUpdateImageOverlayInfo).not.toHaveBeenCalled();
   });
@@ -244,12 +228,12 @@ describe("QuickLink", () => {
         displayType="stream"
         presentationInfo={presentationInfo}
         timers={[]}
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button"));
     expect(mockUpdateStream).not.toHaveBeenCalled();
     expect(mockUpdateParticipantOverlayInfo).toHaveBeenCalledWith(
-      presentationInfo.participantOverlayInfo
+      presentationInfo.participantOverlayInfo,
     );
   });
 });

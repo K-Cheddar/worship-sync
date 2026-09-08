@@ -7,6 +7,7 @@ import {
   ScheduleAssignmentContext,
   type ScheduleAssignmentHandlers,
 } from "./ScheduleAssignmentContext";
+import { scheduleAssignmentLabelClassName } from "./scheduleUtils";
 
 const member = (overrides: Partial<TeamRosterMember> = {}): TeamRosterMember => ({
   memberId: "m1",
@@ -58,7 +59,12 @@ describe("ScheduleBoardCell", () => {
 
   it("shows an unassigned placeholder when the slot is empty", () => {
     renderCell({ assignmentCell: undefined });
-    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+    // Behavior change: assert shared assignment-label classes, not presence alone.
+    // The previous toBeInTheDocument() check is obsolete now that empty slots use
+    // the same muted label styling as assigned names for scanability.
+    expect(screen.getByText("Unassigned")).toHaveClass(
+      ...scheduleAssignmentLabelClassName.split(" "),
+    );
   });
 
   it("activates the matching slot, anchored to the row, when clicked (picker parity)", () => {

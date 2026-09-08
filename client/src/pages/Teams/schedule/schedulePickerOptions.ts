@@ -6,11 +6,10 @@ import type { Option } from "../../../types";
 // ("August 2026"), which leaves identical-looking entries. Grouping by team
 // disambiguates them without adding a second control to the header.
 //
-// A church running ten teams adds ten schedules a month, so this list would
-// grow past a hundred entries within a year. The picker is a quick-switcher for
-// what an operator is actually working on, not a browser: it shows the most
-// recent schedules per team and defers the full, filterable list to the
-// schedules list page.
+// Churches often keep one schedule per month (or quarter) per team. The picker
+// is a quick-switcher for what an operator is working on now: the current
+// period and the previous one. Older and archived schedules stay reachable via
+// "Browse all schedules…".
 
 type SchedulePickerSchedule = Pick<
   TeamSchedule,
@@ -31,16 +30,13 @@ export const UNASSIGNED_SCHEDULE_GROUP = "Other schedules";
 export const CURRENT_SCHEDULE_GROUP_SUFFIX = " — currently open";
 
 /** How many schedules each team contributes to the quick-switcher. */
-export const MAX_PICKER_SCHEDULES_PER_TEAM = 6;
+export const MAX_PICKER_SCHEDULES_PER_TEAM = 2;
 
 /** Sentinel value for the entry that opens the full schedules list. */
 export const BROWSE_ALL_SCHEDULES_VALUE = "__browse_all_schedules__";
 
 /** Newest first, by date window and then name, so the current month leads. */
-const byMostRecent = (
-  a: SchedulePickerSchedule,
-  b: SchedulePickerSchedule,
-) => {
+const byMostRecent = (a: SchedulePickerSchedule, b: SchedulePickerSchedule) => {
   const aDate = a.startDate || a.endDate || "";
   const bDate = b.startDate || b.endDate || "";
   if (aDate && bDate && aDate !== bDate) return bDate.localeCompare(aDate);
@@ -120,14 +116,26 @@ export const buildSchedulePickerOptions = ({
     value: schedule.scheduleId,
     group: showGroups
       ? `${teamNameById.get(schedule.teamId) || UNASSIGNED_SCHEDULE_GROUP}${
-        isPinnedOutsideFilter(schedule) ? CURRENT_SCHEDULE_GROUP_SUFFIX : ""
-      }`
+          isPinnedOutsideFilter(schedule) ? CURRENT_SCHEDULE_GROUP_SUFFIX : ""
+        }`
       : undefined,
   }));
 
-  // Only offer the full list when the quick-switcher is actually hiding
-  // something, so small churches never see a pointless extra row.
-  if (options.length < schedules.length) {
+  // Offer browse only when something in the current filter scope is missing
+  // from the picker (capped away, or archived while includeArchived is off).
+  // Narrowing the team dropdown alone must not invent a browse row — those
+  // other teams are already reachable by changing the team filter.
+  const inScope = schedules.filter(
+    (schedule) =>
+      schedule.scheduleId === selectedScheduleId ||
+      !teamId ||
+      schedule.teamId === teamId,
+  );
+  const shownIds = new Set(capped.map((schedule) => schedule.scheduleId));
+  const hasHiddenInScope = inScope.some(
+    (schedule) => !shownIds.has(schedule.scheduleId),
+  );
+  if (hasHiddenInScope) {
     // Ungrouped so it reads as an action on the list, not another team's entry.
     options.push({
       label: "Browse all schedules…",

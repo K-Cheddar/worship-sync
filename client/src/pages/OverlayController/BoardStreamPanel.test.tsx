@@ -3,7 +3,10 @@ import type { ReactNode } from "react";
 import BoardStreamPanel from "./BoardStreamPanel";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createMockGlobalContext } from "../../test/mocks";
-import { updateBoardPostStreamInfo } from "../../store/presentationSlice";
+import {
+  fromLegacyPresentationShape,
+  updateBoardPostStreamInfo,
+} from "../../store/presentationSlice";
 
 const mockDispatch = jest.fn();
 const mockUseBoardData = jest.fn();
@@ -13,9 +16,7 @@ const mockDisplayWindow = jest.fn(() => (
 ));
 
 let mockState = {
-  presentation: {
-    isStreamTransmitting: true,
-  },
+  presentation: fromLegacyPresentationShape({ isStreamTransmitting: true }),
 };
 
 jest.mock("../../hooks", () => ({
@@ -133,9 +134,7 @@ describe("BoardStreamPanel", () => {
     mockDispatch.mockClear();
     mockDisplayWindow.mockClear();
     mockState = {
-      presentation: {
-        isStreamTransmitting: true,
-      },
+      presentation: fromLegacyPresentationShape({ isStreamTransmitting: true }),
     };
 
     mockUseBoardData.mockReturnValue({
@@ -236,6 +235,7 @@ describe("BoardStreamPanel", () => {
 
     expect(mockDispatch).toHaveBeenCalledWith(
       updateBoardPostStreamInfo({
+        outputIds: ["stream"],
         author: "Restream author",
         authorHexColor: "#ff0000",
         text: "Restream highlighted",

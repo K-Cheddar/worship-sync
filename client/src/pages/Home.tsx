@@ -1,11 +1,12 @@
 import {
-  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
-  type ReactNode,
+  type MouseEvent,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   Building2,
@@ -20,34 +21,31 @@ import {
   Radio,
   ScrollText,
   ScreenShare,
-  Smartphone,
   Users,
 } from "lucide-react";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog";
+import Modal from "../components/Modal/Modal";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
-import { isElectron } from "../utils/environment";
-import { getBrowserFamily } from "../utils/browserFamily";
-import { getAppOs, isMobileBrowser } from "../utils/platform";
-import { getPwaInstallGuidance } from "../utils/pwaInstallGuidance";
+import { useAppInstallChrome } from "../hooks/useAppInstallChrome";
 import { isMemberOnlyAccess, isViewOnlyAccess } from "../utils/accessTiers";
+import { useSelector } from "../hooks";
+import { selectControllerProfiles } from "../store/controllerProfilesSlice";
+import { selectDisplayOutputs } from "../store/displayOutputsSlice";
 import {
-  fetchLatestLinuxInstallerUrl,
-  fetchLatestMacInstallerUrl,
-  fetchLatestWindowsInstallerUrl,
-  getLatestReleaseUrl,
-} from "../utils/githubRelease";
-import type { MenuItemType } from "../types";
+  findControllerProfile,
+  getAuxControllerProfiles,
+  OVERLAY_CONTROLLER_ID,
+  PRESENTATION_CONTROLLER_ID,
+} from "../utils/controllerProfiles";
+import {
+  getDisplayOutputBrowserSourceHomePath,
+  getDisplayOutputFullscreenHomePath,
+  getEnabledDisplayOutputs,
+} from "../utils/displayOutputs";
 
 type CardLink = {
   title: string;
@@ -56,16 +54,14 @@ type CardLink = {
   icon: LucideIcon;
 };
 
-const primaryControllers: CardLink[] = [
+const primaryControllerTemplates: Omit<CardLink, "title">[] = [
   {
-    title: "Presentation Controller",
     description:
       "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.",
     to: "/controller",
     icon: Presentation,
   },
   {
-    title: "Overlay Controller",
     description: "Manage overlays, service timers, credits, and lower thirds for the stream.",
     to: "/overlay-controller",
     icon: Layers,
@@ -123,65 +119,108 @@ const adminLinks: CardLink[] = [
   },
 ];
 
-const standaloneDisplays: CardLink[] = [
+/** Features shown to guests as locked previews (not navigable without sign-in). */
+const guestLockedFeatures: CardLink[] = [
+  adminLinks[1],
+  secondaryControllers[0],
+  adminLinks[0],
   {
-    title: "Monitor",
-    description: "Open the monitor view, move to the desired display, then enter fullscreen when you are ready to show it.",
-    to: "/monitor",
-    icon: Monitor,
-  },
-  {
-    title: "Projector",
-    description: "Open the projector view, move to the desired display, then enter fullscreen when you are ready to show it.",
+    title: "Display outputs",
+    description:
+      "URLs for room screens or browser sources in streaming software.",
     to: "/projector",
-    icon: Projector,
-  },
-  {
-    title: "Discussion Board",
-    description: "Open the discussion board view, move to the desired display, then enter fullscreen when you are ready to show it.",
-    to: "/boards/display",
-    icon: MessagesSquare,
+    icon: ScreenShare,
   },
 ];
 
-const obsDisplays: CardLink[] = [
-  {
-    title: "Stream",
-    description: "Main program output for a browser source in your streaming software.",
-    to: "/stream",
-    icon: Radio,
-  },
-  {
-    title: "Stream Info",
-    description: "Information pages for a browser source in your streaming software.",
-    to: "/stream-info",
-    icon: Info,
-  },
-  {
-    title: "Projector",
-    description: "Projector-sized output for a browser source in your streaming software.",
-    to: "/projector-full",
-    icon: Projector,
-  },
-  {
-    title: "Credits",
-    description:
-      "Credits roll for a browser source. In Credits Editor, choose which scene to switch to after the roll. In OBS, set this Browser Source's page permissions to Advanced access so the page can change scenes when credits finish.",
-    to: "/credits",
-    icon: ScrollText,
-  },
-];
+type LockedFeaturePrompt = {
+  title: string;
+};
+
+const displayOutputIcon = (type: string): LucideIcon => {
+  if (type === "monitor") return Monitor;
+  if (type === "projector") return Projector;
+  if (type === "stream") return Radio;
+  if (type === "stream-info") return Info;
+  if (type === "credits") return ScrollText;
+  if (type === "board") return MessagesSquare;
+  return ScreenShare;
+};
+
+const displayOutputFullscreenDescription = (type: string) => {
+  if (type === "board") {
+    return "Open the discussion board view, move to the desired display, then enter fullscreen when you are ready to show it.";
+  }
+  if (type === "monitor") {
+    return "Open the monitor view, move to the desired display, then enter fullscreen when you are ready to show it.";
+  }
+  return "Open the projector view, move to the desired display, then enter fullscreen when you are ready to show it.";
+};
+
+const displayOutputBrowserSourceDescription = (type: string) => {
+  if (type === "stream") {
+    return "Main program output for a browser source in your streaming software.";
+  }
+  if (type === "stream-info") {
+    return "Information pages for a browser source in your streaming software.";
+  }
+  if (type === "credits") {
+    return "Credits roll for a browser source. In Credits Editor, choose which scene to switch to after the roll. In OBS, set this Browser Source's page permissions to Advanced access so the page can change scenes when credits finish.";
+  }
+  return "Projector-sized output for a browser source in your streaming software.";
+};
 
 const HomeLinkCard = ({ title, description, to, icon }: CardLink) => {
+  const navigate = useNavigate();
+  const navigationTimeoutRef = useRef<number | null>(null);
+  const [isPending, setIsPending] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (navigationTimeoutRef.current !== null) {
+        window.clearTimeout(navigationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    // Let the shared Button preserve its existing behavior for modified and
+    // non-primary clicks. A zero-delay handoff gives the pending state one
+    // paint before the lazy route replaces the home screen.
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsPending(true);
+    navigationTimeoutRef.current = window.setTimeout(() => {
+      navigationTimeoutRef.current = null;
+      navigate(to);
+    }, 0);
+  };
+
   return (
     <Button
       variant="none"
       to={to}
       component="link"
-      className="h-full w-full flex-col items-start gap-3 rounded-2xl border border-gray-600 border-l-4 border-l-orange-400 bg-gray-900 p-5 text-left hover:border-gray-500 hover:border-l-orange-300 hover:bg-gray-800"
+      aria-busy={isPending}
+      isLoading={isPending}
+      onClick={handleClick}
+      className={`h-full min-w-0 w-full flex-col items-start gap-3 rounded-2xl border border-gray-600 border-l-4 border-l-orange-400 bg-gray-900 p-5 text-left hover:border-gray-500 hover:border-l-orange-300 hover:bg-gray-800 ${isPending
+        ? "border-orange-300 border-l-orange-200 bg-gray-800 ring-2 ring-orange-400/40"
+        : ""
+        }`}
       wrap
     >
-      <span className="flex w-full items-start gap-3">
+      <span className="flex w-full min-w-0 items-start gap-3">
         <span aria-hidden className="shrink-0 text-orange-400">
           <Icon
             svg={icon}
@@ -192,7 +231,57 @@ const HomeLinkCard = ({ title, description, to, icon }: CardLink) => {
         </span>
         <span className="min-w-0 flex-1 text-xl font-semibold">{title}</span>
       </span>
-      <span className="text-sm font-normal text-gray-200">{description}</span>
+      <span className="block w-full min-w-0 text-sm font-normal text-gray-200 whitespace-normal break-words">
+        {description}
+      </span>
+    </Button>
+  );
+};
+
+type HomeLockedFeatureCardProps = {
+  title: string;
+  description: string;
+  icon: LucideIcon;
+  onSelect: () => void;
+};
+
+const HomeLockedFeatureCard = ({
+  title,
+  description,
+  icon,
+  onSelect,
+}: HomeLockedFeatureCardProps) => {
+  return (
+    <Button
+      variant="none"
+      component="button"
+      type="button"
+      onClick={onSelect}
+      className="h-full min-w-0 w-full cursor-pointer flex-col items-start gap-3 rounded-2xl border border-gray-700 border-l-4 border-l-gray-500 bg-gray-950/60 p-5 text-left opacity-80 hover:border-gray-600 hover:bg-gray-900/80 hover:opacity-100"
+      wrap
+      aria-label={`${title}. Sign in required.`}
+    >
+      <span className="flex w-full min-w-0 items-start gap-3">
+        <span aria-hidden className="shrink-0 text-gray-400">
+          <Icon
+            svg={icon}
+            size="lg"
+            className="text-gray-400"
+            svgClassName="text-gray-400"
+          />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-xl font-semibold text-gray-100">{title}</span>
+            <span className="rounded border border-gray-500 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-300">
+              Sign in required
+            </span>
+          </span>
+        </span>
+      </span>
+      <span className="block w-full min-w-0 text-sm font-normal text-gray-400 whitespace-normal break-words">
+        {description}
+      </span>
     </Button>
   );
 };
@@ -214,112 +303,23 @@ const DisplayLinkGroup = ({
       <p className="text-sm leading-relaxed text-gray-300">{description}</p>
       <div className="grid gap-4 pt-1 md:grid-cols-2">
         {links.map((link) => (
-          <HomeLinkCard key={link.to} {...link} />
+          <HomeLinkCard key={`${link.to}:${link.title}`} {...link} />
         ))}
       </div>
     </div>
   );
 };
 
-type DesktopOs = "windows" | "mac" | "linux";
-
-type DesktopDownloadHelpProps = {
-  os: DesktopOs;
-  onTryAgain: () => void;
-  /** When false, omit the inline heading (e.g. when DialogTitle is used). */
-  showHeading?: boolean;
-};
-
-const getDesktopDownloadButtonLabel = (os: DesktopOs) => {
-  if (os === "windows") return "Download Windows app";
-  if (os === "mac") return "Download Mac app";
-  return "Download Linux app";
-};
-
-const getDesktopDownloadHelpAriaLabel = (os: DesktopOs) => {
-  if (os === "windows") return "Windows download help";
-  if (os === "mac") return "Mac download help";
-  return "Linux download help";
-};
-
-const getDesktopDownloadHelpTitle = (os: DesktopOs) => {
-  if (os === "windows") return "Download for Windows";
-  if (os === "mac") return "Download for Mac";
-  return "Download for Linux";
-};
-
-const DesktopDownloadHelp = ({
-  os,
-  onTryAgain,
-  showHeading = true,
-}: DesktopDownloadHelpProps) => {
-  const releaseLink = (
-    <a
-      href={getLatestReleaseUrl()}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
-    >
-      release page
-    </a>
-  );
-
-  let body: ReactNode;
-  if (os === "windows") {
-    body = (
-      <>
-        Your download should begin automatically. If it does not, try again
-        or open the {releaseLink} and choose the Windows installer from Assets.
-      </>
-    );
-  } else if (os === "mac") {
-    body = (
-      <>
-        Your download should begin automatically. If it does not, try again
-        or open the {releaseLink} and choose the Mac disk image (.dmg) from
-        Assets. If macOS warns that the app cannot be checked for malicious
-        software, Control-click WorshipSync in Finder, choose Open, then
-        confirm.
-      </>
-    );
-  } else {
-    body = (
-      <>
-        Your download should begin automatically. If it does not, try again
-        or open the {releaseLink} and choose the Linux AppImage or .deb from
-        Assets. AppImage runs without installing a package; use the .deb if you
-        prefer a system package.
-      </>
-    );
-  }
-
-  return (
-    <>
-      {showHeading ? (
-        <p className="text-sm font-semibold text-white">
-          {getDesktopDownloadHelpTitle(os)}
-        </p>
-      ) : null}
-      <p className={showHeading ? "mt-2 text-sm" : "text-sm"}>{body}</p>
-
-      <div className="mt-3 flex flex-col gap-2">
-        <Button
-          component="button"
-          variant="tertiary"
-          className="w-full"
-          onClick={onTryAgain}
-        >
-          Download again
-        </Button>
-      </div>
-    </>
-  );
-};
-
 const Welcome = () => {
   const { loginState, role, access, canViewTeams, sessionKind } =
     useContext(GlobalInfoContext) || {};
+  const { installMenuItems, installHelpDialogs } = useAppInstallChrome();
+  const controllerProfiles = useSelector(selectControllerProfiles);
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const [lockedFeaturePrompt, setLockedFeaturePrompt] =
+    useState<LockedFeaturePrompt | null>(null);
   const isLoggedIn = loginState === "success";
+  const isGuest = loginState === "guest";
   const isHumanSession = sessionKind === "human";
   const isAdmin = role === "admin";
   const visibleAdminLinks = adminLinks.filter(
@@ -333,16 +333,45 @@ const Welcome = () => {
    * `isViewOnlyAccess`.
    */
   const isMemberAccess = isMemberOnlyAccess(access);
+  const primaryControllers = useMemo((): CardLink[] => {
+    const presentationName =
+      findControllerProfile(controllerProfiles, PRESENTATION_CONTROLLER_ID)
+        ?.name || "Presentation";
+    const overlayName =
+      findControllerProfile(controllerProfiles, OVERLAY_CONTROLLER_ID)?.name ||
+      "Overlays";
+    return [
+      { ...primaryControllerTemplates[0], title: presentationName },
+      { ...primaryControllerTemplates[1], title: overlayName },
+    ];
+  }, [controllerProfiles]);
   const visiblePrimaryControllers = isMemberAccess
     ? []
     : isMusicAccess
       ? primaryControllers.filter((link) => link.to === "/controller")
       : primaryControllers;
+  const auxControllerLinks = useMemo(
+    (): CardLink[] =>
+      getAuxControllerProfiles(controllerProfiles).map((profile) => ({
+        title: profile.name,
+        description:
+          "Drive this screen with its own outline and content, or mirror another display.",
+        to: `/aux-controller/${profile.id}`,
+        icon: Projector,
+      })),
+    [controllerProfiles],
+  );
+  const visibleAuxControllers =
+    isMemberAccess || isMusicAccess ? [] : auxControllerLinks;
   const visibleControllerLinks = isMemberAccess
     ? []
     : canViewTeams
-      ? [...visiblePrimaryControllers, currentPlanLink]
-      : visiblePrimaryControllers;
+      ? [
+        ...visiblePrimaryControllers,
+        ...visibleAuxControllers,
+        currentPlanLink,
+      ]
+      : [...visiblePrimaryControllers, ...visibleAuxControllers];
   const visibleSecondaryControllers = isMemberAccess
     ? []
     : isMusicAccess
@@ -355,124 +384,50 @@ const Welcome = () => {
           return true;
         })
         : secondaryControllers.filter((link) => link.to !== "/boards/controller");
-  const { canShowInstall, installPwa, isStandalone } = usePwaInstallPrompt();
-  const isWeb = !isElectron();
-  const desktopOs = useMemo((): DesktopOs | null => {
-    if (!isWeb) return null;
-    // `getAppOs` resolves ios/android first, so an iPad — which reports a
-    // desktop "Macintosh" user agent — no longer falls through to "mac" and
-    // gets offered a Mac installer it cannot run.
-    const os = getAppOs();
-    if (os === "windows" || os === "mac" || os === "linux") return os;
-    return null;
-  }, [isWeb]);
 
-  const [installerHref, setInstallerHref] = useState(() =>
-    isElectron() ? "" : getLatestReleaseUrl(),
+  const enabledDisplayOutputs = useMemo(
+    () => getEnabledDisplayOutputs(displayOutputs),
+    [displayOutputs],
   );
-  const [desktopInstallHelpDialogOpen, setDesktopInstallHelpDialogOpen] =
-    useState(false);
-  const [mobileInstallHelpDialogOpen, setMobileInstallHelpDialogOpen] =
-    useState(false);
-  const isMobileWeb = useMemo(() => isWeb && isMobileBrowser(), [isWeb]);
-  const mobileInstallGuidance = useMemo(
-    () =>
-      getPwaInstallGuidance({
-        os: getAppOs(),
-        browser: getBrowserFamily(),
-      }),
-    [],
-  );
-
-  useEffect(() => {
-    if (isElectron() || !desktopOs) return;
-    let cancelled = false;
-    let fetcher: () => Promise<string | null>;
-    if (desktopOs === "windows") {
-      fetcher = fetchLatestWindowsInstallerUrl;
-    } else if (desktopOs === "mac") {
-      fetcher = fetchLatestMacInstallerUrl;
-    } else {
-      fetcher = fetchLatestLinuxInstallerUrl;
-    }
-    void fetcher().then((directUrl) => {
-      if (!cancelled && directUrl) {
-        setInstallerHref(directUrl);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopOs]);
-
-  const openInstallerDownload = useCallback(() => {
-    window.open(installerHref, "_blank", "noopener,noreferrer");
-  }, [installerHref]);
-
-  const handleDownloadInstallerClick = () => {
-    openInstallerDownload();
-  };
-
-  /** One desktop web entry point avoids a toolbar flash when `beforeinstallprompt` arrives after first paint. */
-  const showDesktopAppMenu = desktopOs !== null && !isStandalone;
-  const showMobileInstallButton = isMobileWeb && !desktopOs && !isStandalone;
-
-  const installMenuItems = useMemo((): MenuItemType[] => {
-    const items: MenuItemType[] = [];
-    if (showDesktopAppMenu && desktopOs) {
-      items.push({
-        element: (
-          <div className="flex items-center gap-2 max-md:min-h-12">
-            <Icon svg={Smartphone} color="#d1d5dc" />
-            Install
-          </div>
-        ),
-        subItems: [
-          ...(canShowInstall
-            ? [
-              {
-                text: "Install app",
-                onClick: () => {
-                  void installPwa();
-                },
-              },
-            ]
-            : []),
-          {
-            text: getDesktopDownloadButtonLabel(desktopOs),
-            onClick: () => {
-              openInstallerDownload();
-              setDesktopInstallHelpDialogOpen(true);
-            },
-          },
-        ],
-      });
-    } else if (showMobileInstallButton) {
-      items.push({
-        element: (
-          <div className="flex items-center gap-2 max-md:min-h-12">
-            <Icon svg={Smartphone} color="#d1d5dc" />
-            Install
-          </div>
-        ),
-        onClick: () => {
-          if (canShowInstall) {
-            void installPwa();
-          } else {
-            setMobileInstallHelpDialogOpen(true);
-          }
+  const standaloneDisplays = useMemo((): CardLink[] => {
+    return enabledDisplayOutputs.flatMap((output) => {
+      const to = getDisplayOutputFullscreenHomePath(output);
+      if (!to) return [];
+      return [
+        {
+          title: output.name,
+          description: displayOutputFullscreenDescription(output.type),
+          to,
+          icon: displayOutputIcon(output.type),
         },
-      });
-    }
-    return items;
-  }, [
-    canShowInstall,
-    desktopOs,
-    installPwa,
-    openInstallerDownload,
-    showDesktopAppMenu,
-    showMobileInstallButton,
-  ]);
+      ];
+    });
+  }, [enabledDisplayOutputs]);
+  const obsDisplays = useMemo((): CardLink[] => {
+    return enabledDisplayOutputs.flatMap((output) => {
+      const to = getDisplayOutputBrowserSourceHomePath(output);
+      if (!to) return [];
+      // Projectors appear in both groups; suffix the streaming card so two
+      // Home cards with the same configured name stay distinguishable.
+      const title =
+        output.type === "projector" &&
+          standaloneDisplays.some((link) => link.title === output.name)
+          ? `${output.name} (browser source)`
+          : output.name;
+      return [
+        {
+          title,
+          description: displayOutputBrowserSourceDescription(output.type),
+          to,
+          icon: displayOutputIcon(output.type),
+        },
+      ];
+    });
+  }, [enabledDisplayOutputs, standaloneDisplays]);
+
+  const closeLockedFeaturePrompt = () => {
+    setLockedFeaturePrompt(null);
+  };
 
   return (
     <main className="h-dvh overflow-y-auto bg-homepage-canvas text-white">
@@ -516,6 +471,24 @@ const Welcome = () => {
             </p>
           </div>
         </section>
+
+        {isGuest ? (
+          <section
+            className="mx-auto w-full max-w-5xl rounded-xl border border-orange-400/30 bg-orange-500/10 p-4 sm:p-5"
+            aria-labelledby="guest-demo-heading"
+          >
+            <h2
+              id="guest-demo-heading"
+              className="text-lg font-semibold text-white"
+            >
+              Offline demo
+            </h2>
+            <p className="mt-2 text-sm text-gray-200">
+              Presentation tools work on this device. Sign in to use scheduling,
+              boards, church admin, and display links.
+            </p>
+          </section>
+        ) : null}
 
         {visibleAdminLinks.length > 0 && (
           <section className="mx-auto w-full max-w-5xl space-y-3 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
@@ -601,6 +574,39 @@ const Welcome = () => {
             </section>
           )}
 
+        {isGuest ? (
+          <section
+            className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5"
+            aria-labelledby="guest-locked-heading"
+          >
+            <div className="space-y-2 text-center">
+              <h2
+                id="guest-locked-heading"
+                className="text-2xl font-semibold"
+              >
+                Available after sign in
+              </h2>
+              <p className="text-sm text-gray-200">
+                These stay with your church account. Open one for a quick path
+                to sign in.
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {guestLockedFeatures.map((feature) => (
+                <HomeLockedFeatureCard
+                  key={feature.title}
+                  title={feature.title}
+                  description={feature.description}
+                  icon={feature.icon}
+                  onSelect={() => {
+                    setLockedFeaturePrompt({ title: feature.title });
+                  }}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         {isLoggedIn && access === "full" ? (
           <details className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <summary className="cursor-pointer list-none">
@@ -642,7 +648,7 @@ const Welcome = () => {
               </div>
             </div>
           </details>
-        ) : !isLoggedIn ? (
+        ) : !isLoggedIn && !isGuest ? (
           <section
             className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5"
             aria-labelledby="display-outputs-heading"
@@ -671,59 +677,68 @@ const Welcome = () => {
             </p>
           </section>
         ) : null}
+
+        <footer className="mx-auto mt-2 flex w-full max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-700 pt-6 text-sm text-gray-300">
+          <Button
+            component="link"
+            to="/privacy"
+            variant="none"
+            className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+          >
+            Privacy Policy
+          </Button>
+          <span aria-hidden className="text-gray-600">
+            ·
+          </span>
+          <Button
+            component="link"
+            to="/terms"
+            variant="none"
+            className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white"
+          >
+            Terms of Service
+          </Button>
+        </footer>
       </div>
 
-      {desktopOs ? (
-        <Dialog
-          open={desktopInstallHelpDialogOpen}
-          onOpenChange={setDesktopInstallHelpDialogOpen}
-        >
-          <DialogContent
-            className="border-gray-600 bg-gray-800 text-gray-100"
-            aria-describedby={undefined}
-            aria-label={getDesktopDownloadHelpAriaLabel(desktopOs)}
-          >
-            <DialogHeader>
-              <DialogTitle className="text-white">
-                {getDesktopDownloadHelpTitle(desktopOs)}
-              </DialogTitle>
-            </DialogHeader>
-            <DesktopDownloadHelp
-              os={desktopOs}
-              onTryAgain={handleDownloadInstallerClick}
-              showHeading={false}
-            />
-          </DialogContent>
-        </Dialog>
-      ) : null}
-
-      <Dialog
-        open={mobileInstallHelpDialogOpen}
-        onOpenChange={setMobileInstallHelpDialogOpen}
+      <Modal
+        isOpen={lockedFeaturePrompt !== null}
+        onClose={closeLockedFeaturePrompt}
+        title="Sign in required"
+        size="sm"
+        description={
+          lockedFeaturePrompt
+            ? `${lockedFeaturePrompt.title} needs a church account.`
+            : undefined
+        }
       >
-        <DialogContent
-          className="border-gray-600 bg-gray-800 text-gray-100"
-          aria-describedby={undefined}
-          aria-label="Mobile install instructions"
-        >
-          <DialogHeader>
-            <DialogTitle className="text-white">
-              {mobileInstallGuidance.title}
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-gray-200">
-            {mobileInstallGuidance.segments.map((segment, index) =>
-              segment.type === "emphasis" ? (
-                <span key={index} className="font-semibold text-white">
-                  {segment.value}
-                </span>
-              ) : (
-                <span key={index}>{segment.value}</span>
-              ),
-            )}
+        <div className="space-y-4 text-sm text-gray-200">
+          <p>
+            {lockedFeaturePrompt
+              ? `${lockedFeaturePrompt.title} needs a church account. Sign in to continue.`
+              : null}
           </p>
-        </DialogContent>
-      </Dialog>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              variant="tertiary"
+              type="button"
+              onClick={closeLockedFeaturePrompt}
+            >
+              Not now
+            </Button>
+            <Button
+              variant="cta"
+              component="link"
+              to="/login"
+              onClick={closeLockedFeaturePrompt}
+            >
+              Sign in
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {installHelpDialogs}
     </main>
   );
 };

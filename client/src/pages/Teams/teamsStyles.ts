@@ -21,7 +21,7 @@ export const teamsManagerPageRootClassName = "flex min-h-0 flex-1 flex-col";
 
 /** Side-by-side list + edit form row inside Teams managers. */
 export const teamsCreatePanelRowClassName =
-  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch";
+  "flex w-full min-h-0 min-w-0 flex-1 flex-col gap-0 lg:flex-row lg:items-stretch lg:gap-4";
 
 /** List column when the edit form is open: shares space instead of a fixed max width. */
 export const teamsCreatePanelListOpenClassName =
@@ -35,7 +35,7 @@ export const teamsCreatePanelFormClassName = "lg:min-w-0 lg:flex-1 lg:max-w-xl";
 
 /** Teams list/form panels that scroll internally and fill the content column. */
 export const teamsPanelMaxHeightClassName =
-  "min-h-0 flex-1 max-lg:max-h-[min(48rem,calc(100dvh-14rem))] lg:min-h-0 lg:flex-1";
+  "min-h-0 flex-1 max-lg:max-h-none lg:min-h-0 lg:flex-1";
 
 /** Schedule tab fills the Teams outlet and stacks the selector above the workspace. */
 export const scheduleTabRootClassName =
@@ -87,6 +87,11 @@ export const teamsRowIconButtonClassName =
 
 export const teamsRowIconButtonPadding =
   "px-2 py-1 max-md:px-2 lg:px-1 lg:py-0.5";
+
+/** Church mic catalog tiles — fill down each column, then across. */
+export const microphoneCatalogGridClassName =
+  "columns-1 min-[24rem]:columns-2 min-[36rem]:columns-3 gap-x-2 [column-fill:auto] [&>*]:mb-2 [&>*]:break-inside-avoid";
+
 export const inputStackClassName = "min-w-0 w-full";
 
 export const boardDarkFieldClassName =

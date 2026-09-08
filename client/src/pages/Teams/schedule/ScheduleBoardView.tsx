@@ -10,16 +10,22 @@ import type {
 } from "../../../api/authTypes";
 import {
   formatOccurrenceTiming,
+  isOccurrenceToday,
   type SharedOccurrenceTiming,
 } from "@/utils/teamScheduleOccurrences";
 import type { OccurrenceFill, ScheduleSlotColumn } from "./scheduleRequirements";
 import ScheduleBoardCell from "./ScheduleBoardCell";
 import type { TeamScheduleAssignmentResponse } from "./scheduleResponseState";
+import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
 import ScheduleFillBadge from "./ScheduleFillBadge";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
-import ScheduleUpNextBadge from "./ScheduleUpNextBadge";
+import ScheduleOccurrenceRibbon from "./ScheduleOccurrenceRibbon";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
-import { scheduleUpNextBorderClassName } from "./scheduleUtils";
+import {
+  scheduleTodayBorderClassName,
+  scheduleUpNextBorderClassName,
+} from "./scheduleUtils";
 
 const BOARD_CARD_MIN_WIDTH_PX = 288;
 const BOARD_CARD_GAP_PX = 16;
@@ -31,7 +37,7 @@ export const getBoardColumnCount = (availableWidth: number, cardCount: number) =
       Math.max(cardCount, 1),
       Math.floor(
         (availableWidth + BOARD_CARD_GAP_PX) /
-          (BOARD_CARD_MIN_WIDTH_PX + BOARD_CARD_GAP_PX),
+        (BOARD_CARD_MIN_WIDTH_PX + BOARD_CARD_GAP_PX),
       ),
     ),
   );
@@ -51,6 +57,13 @@ type BoardCellData = {
   allMembers: TeamRosterMember[];
   duplicateFirstNames: Set<string>;
   canEdit: boolean;
+  microphones?: ServicePlanMicrophone[];
+  microphoneIds?: string[];
+  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphonesLoading?: boolean;
+  microphonesUnavailable?: boolean;
+  savingMicrophone?: boolean;
+  onMicrophoneChange?: (microphoneIds: string[]) => void;
 };
 
 type BoardOccurrenceGroup = {
@@ -93,7 +106,8 @@ type ScheduleBoardViewProps = {
  * Each card's date, service, team, and fill summary stay visible; only the
  * positions list collapses, so a collapsed card still reads as a quick overview.
  * The soonest upcoming service gets a thin orange border plus an absolutely
- * positioned "Up next" marker that never shifts the surrounding cards.
+ * positioned "Up next" marker that never shifts the surrounding cards. Other
+ * same-day services get a sky "Today" marker instead (Up next wins when both).
  */
 const ScheduleBoardView = ({
   groups,
@@ -131,133 +145,146 @@ const ScheduleBoardView = ({
   }, []);
 
   const renderCard = ({ occurrence, group }: (typeof occurrences)[number]) => {
-        const rows = columns.flatMap((column) => {
-          const cellProps = buildCellProps(occurrence, column, "");
-          if (!cellProps.isSlotEnabled) return [];
-          return [{ column, cellProps }];
-        });
-        const additionalPositionOptions = getAdditionalPositionOptions(occurrence.occurrenceId);
-        const serviceArchived = serviceArchivedById(group.serviceId);
-        const occurrenceTiming = formatOccurrenceTiming(occurrence);
-        const expanded = isExpanded(occurrence.occurrenceId);
-        const fill = fillByOccurrence.get(occurrence.occurrenceId);
-        const isNextUpcoming =
-          occurrence.occurrenceId === nextUpcomingOccurrenceId;
+    const rows = columns.flatMap((column) => {
+      const cellProps = buildCellProps(occurrence, column, "");
+      if (!cellProps.isSlotEnabled) return [];
+      return [{ column, cellProps }];
+    });
+    const additionalPositionOptions = getAdditionalPositionOptions(occurrence.occurrenceId);
+    const serviceArchived = serviceArchivedById(group.serviceId);
+    const occurrenceTiming = formatOccurrenceTiming(occurrence);
+    const expanded = isExpanded(occurrence.occurrenceId);
+    const fill = fillByOccurrence.get(occurrence.occurrenceId);
+    const isNextUpcoming =
+      occurrence.occurrenceId === nextUpcomingOccurrenceId;
+    const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
+    let markerBorderClassName = "border-transparent";
+    if (isNextUpcoming) {
+      markerBorderClassName = scheduleUpNextBorderClassName;
+    } else if (isToday) {
+      markerBorderClassName = scheduleTodayBorderClassName;
+    }
     return (
       <section
         key={occurrence.occurrenceId}
         className={cn(
-          // Always render the border so colouring the up-next card never
+          // Always render the border so colouring the marker card never
           // shifts layout.
           "relative flex break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
-          isNextUpcoming ? scheduleUpNextBorderClassName : "border-transparent",
+          markerBorderClassName,
         )}
       >
-            {isNextUpcoming ? (
-              <div className="pointer-events-none absolute -top-2.5 left-1/2 z-20 -translate-x-1/2">
-                <ScheduleUpNextBadge />
+        <ScheduleOccurrenceRibbon
+          isNextUpcoming={isNextUpcoming}
+          isToday={isToday}
+        />
+        <div className="space-y-1.5 px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <ScheduleOccurrenceDateButton
+              label={occurrenceTiming}
+              ariaLabel={`View and copy assignments for ${group.serviceName} on ${occurrenceTiming}`}
+              className={cn(
+                // Override the shared button's w-full so it shares this row
+                // with the expand control instead of pushing it onto a new line.
+                "min-w-0 w-auto flex-1",
+              )}
+              onClick={() => onOpenServiceSummary(occurrence.occurrenceId)}
+            />
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={ChevronDown}
+              iconSize="lg"
+              padding="p-1"
+              aria-expanded={expanded}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${group.serviceName} on ${occurrenceTiming}`}
+              onClick={() => onToggleExpanded(occurrence.occurrenceId)}
+              className={cn(
+                // Match the date button: drop Button's mobile min-height so the
+                // header row stays compact. Rotate the icon for expand/collapse.
+                "shrink-0 text-gray-300 max-md:min-h-0 [&_svg]:transition-transform motion-reduce:[&_svg]:transition-none",
+                expanded && "[&_svg]:rotate-180",
+              )}
+            />
+          </div>
+          <p className="flex items-center gap-1.5 truncate text-xs text-gray-400">
+            <span className="truncate">{group.serviceName}</span>
+            {serviceArchived ? (
+              <span className="shrink-0 text-gray-500">· Archived</span>
+            ) : null}
+          </p>
+          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">
+            <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{teamName}</span>
+            {fill ? (
+              <ScheduleFillBadge
+                filled={fill.filled}
+                required={fill.required}
+                showLabel
+                className="ml-auto"
+              />
+            ) : null}
+          </div>
+        </div>
+        <div className={cn(expanded ? "block" : "hidden")}>
+          <div className="flex flex-col divide-y divide-gray-800/60 border-t border-gray-800/60 px-3 py-2">
+            {rows.length > 0 ? (
+              rows.map(({ column, cellProps }) => (
+                <ScheduleBoardCell
+                  key={column.columnKey}
+                  occurrenceId={occurrence.occurrenceId}
+                  occurrenceName={occurrence.name}
+                  occurrenceDate={cellProps.occurrenceDate}
+                  columnKey={column.columnKey}
+                  positionId={column.positionId}
+                  positionLabel={column.label}
+                  positionIcon={column.position.icon}
+                  positionArchived={Boolean(column.position.archivedAt)}
+                  assignmentCell={cellProps.assignmentCell}
+                  assignmentResponse={cellProps.assignmentResponse}
+                  isMemberHighlighted={cellProps.isMemberHighlighted}
+                  isActiveSlot={cellProps.isActiveSlot}
+                  isAdditionalPosition={cellProps.isAdditionalPosition}
+                  justFilled={cellProps.justFilled}
+                  allMembers={cellProps.allMembers}
+                  duplicateFirstNames={cellProps.duplicateFirstNames}
+                  canEdit={cellProps.canEdit}
+                  microphones={cellProps.microphones}
+                  microphoneIds={cellProps.microphoneIds}
+                  microphoneHolders={cellProps.microphoneHolders}
+                  microphonesLoading={cellProps.microphonesLoading}
+                  microphonesUnavailable={cellProps.microphonesUnavailable}
+                  savingMicrophone={cellProps.savingMicrophone}
+                  onMicrophoneChange={cellProps.onMicrophoneChange}
+                />
+              ))
+            ) : (
+              <p className="px-2.5 py-3 text-center text-xs text-gray-500">
+                No positions required for this service.
+              </p>
+            )}
+            {canEdit && additionalPositionOptions.length > 0 ? (
+              <div className="px-2.5 py-2">
+                <Menu
+                  align="start"
+                  menuItems={additionalPositionOptions.map((option) => ({
+                    text: `Add ${option.label}`,
+                    onClick: () =>
+                      void handlersRef?.current?.addAdditionalPosition({
+                        serviceId: occurrence.occurrenceId,
+                        positionId: option.positionId,
+                      }),
+                  }))}
+                  TriggeringButton={
+                    <Button type="button" variant="tertiary" className="text-xs">
+                      Add position
+                    </Button>
+                  }
+                />
               </div>
             ) : null}
-            <div className="space-y-1.5 px-3 py-2.5">
-              <div className="flex items-center gap-2">
-                <ScheduleOccurrenceDateButton
-                  label={occurrenceTiming}
-                  ariaLabel={`View and copy assignments for ${group.serviceName} on ${occurrenceTiming}`}
-                  className={cn(
-                    // Override the shared button's w-full so it shares this row
-                    // with the expand control instead of pushing it onto a new line.
-                    "min-w-0 w-auto flex-1",
-                  )}
-                  onClick={() => onOpenServiceSummary(occurrence.occurrenceId)}
-                />
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  svg={ChevronDown}
-                  iconSize="lg"
-                  padding="p-1"
-                  aria-expanded={expanded}
-                  aria-label={`${expanded ? "Collapse" : "Expand"} ${group.serviceName} on ${occurrenceTiming}`}
-                  onClick={() => onToggleExpanded(occurrence.occurrenceId)}
-                  className={cn(
-                    // Match the date button: drop Button's mobile min-height so the
-                    // header row stays compact. Rotate the icon for expand/collapse.
-                    "shrink-0 text-gray-300 max-md:min-h-0 [&_svg]:transition-transform motion-reduce:[&_svg]:transition-none",
-                    expanded && "[&_svg]:rotate-180",
-                  )}
-                />
-              </div>
-              <p className="flex items-center gap-1.5 truncate text-xs text-gray-400">
-                <span className="truncate">{group.serviceName}</span>
-                {serviceArchived ? (
-                  <span className="shrink-0 text-gray-500">· Archived</span>
-                ) : null}
-              </p>
-              <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">
-                <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{teamName}</span>
-                {fill ? (
-                  <ScheduleFillBadge
-                    filled={fill.filled}
-                    required={fill.required}
-                    showLabel
-                    className="ml-auto"
-                  />
-                ) : null}
-              </div>
-            </div>
-            <div className={cn(expanded ? "block" : "hidden")}>
-              <div className="flex flex-col divide-y divide-gray-800/60 border-t border-gray-800/60 px-3 py-2">
-                {rows.length > 0 ? (
-                  rows.map(({ column, cellProps }) => (
-                    <ScheduleBoardCell
-                      key={column.columnKey}
-                      occurrenceId={occurrence.occurrenceId}
-                      occurrenceName={occurrence.name}
-                      occurrenceDate={cellProps.occurrenceDate}
-                      columnKey={column.columnKey}
-                      positionId={column.positionId}
-                      positionLabel={column.label}
-                      positionIcon={column.position.icon}
-                      positionArchived={Boolean(column.position.archivedAt)}
-                      assignmentCell={cellProps.assignmentCell}
-                      assignmentResponse={cellProps.assignmentResponse}
-                      isMemberHighlighted={cellProps.isMemberHighlighted}
-                      isActiveSlot={cellProps.isActiveSlot}
-                      isAdditionalPosition={cellProps.isAdditionalPosition}
-                      justFilled={cellProps.justFilled}
-                      allMembers={cellProps.allMembers}
-                      duplicateFirstNames={cellProps.duplicateFirstNames}
-                      canEdit={cellProps.canEdit}
-                    />
-                  ))
-                ) : (
-                  <p className="px-2.5 py-3 text-center text-xs text-gray-500">
-                    No positions required for this service.
-                  </p>
-                )}
-                {canEdit && additionalPositionOptions.length > 0 ? (
-                  <div className="px-2.5 py-2">
-                    <Menu
-                      align="start"
-                      menuItems={additionalPositionOptions.map((option) => ({
-                        text: `Add ${option.label}`,
-                        onClick: () =>
-                          void handlersRef?.current?.addAdditionalPosition({
-                            serviceId: occurrence.occurrenceId,
-                            positionId: option.positionId,
-                          }),
-                      }))}
-                      TriggeringButton={
-                        <Button type="button" variant="tertiary" className="text-xs">
-                          Add position
-                        </Button>
-                      }
-                    />
-                  </div>
-                ) : null}
-              </div>
-            </div>
+          </div>
+        </div>
       </section>
     );
   };

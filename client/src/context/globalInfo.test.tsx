@@ -311,6 +311,12 @@ const ContextProbe = () => {
       <div data-testid="branding-mission">
         {context.churchBranding.mission || "none"}
       </div>
+      <div data-testid="integrations-status">
+        {context.churchIntegrationsStatus}
+      </div>
+      <div data-testid="youtube-connected">
+        {context.churchIntegrations.youtube.connected ? "yes" : "no"}
+      </div>
       <div data-testid="path">{location.pathname}</div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
@@ -595,6 +601,66 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(mockDispatch).toHaveBeenCalledTimes(4);
   });
 
+  it("cold-hydrates presentation keys from localStorage when the storage listener attaches", async () => {
+    const projectorInfo = { name: "Live Projector", time: 501 };
+    const monitorInfo = { name: "Live Monitor", time: 502 };
+    const streamInfo = { name: "Live Stream", time: 503 };
+    const outputs = {
+      out_lobby: {
+        id: "out_lobby",
+        type: "projector",
+        info: { name: "Lobby", time: 504 },
+      },
+    };
+
+    localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
+    localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+    localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
+    localStorage.setItem("outputs", JSON.stringify(outputs));
+    localStorage.setItem("stream_itemContentBlocked", JSON.stringify(false));
+    localStorage.setItem("not_a_screen_key", JSON.stringify({ ignored: true }));
+
+    renderProvider();
+
+    await waitFor(() =>
+      expect(mockDispatch.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            {
+              type: "debouncedUpdateProjector",
+              payload: projectorInfo,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateMonitor",
+              payload: monitorInfo,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateStream",
+              payload: streamInfo,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateOutputs",
+              payload: outputs,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateStreamItemContentBlocked",
+              payload: false,
+            },
+          ],
+        ]),
+      ),
+    );
+    expect(mockDispatch).toHaveBeenCalledTimes(5);
+  });
+
   it("subscribes to the default presentation listener keys and dispatches their debounced actions", async () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");
@@ -847,6 +913,75 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(screen.getByTestId("branding-status")).toHaveTextContent("ready"),
     );
     expect(screen.getByTestId("branding-mission")).toHaveTextContent("none");
+  });
+
+  it("keeps a live YouTube connection after integrations listen failure and retries later", async () => {
+    jest.useFakeTimers();
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    const integrationsPath = "churches/church-1/data/integrations";
+
+    await waitFor(() =>
+      expect(onValueCallbacks.has(integrationsPath)).toBe(true),
+    );
+
+    act(() => {
+      onValueCallbacks.get(integrationsPath)?.(
+        snapshotFor({
+          youtube: {
+            enabled: true,
+            connected: true,
+            accountLabel: "Church Live",
+            lastError: "",
+          },
+        }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("youtube-connected")).toHaveTextContent("yes"),
+    );
+
+    const listenCallsBeforeFailure = onValueMock.mock.calls.filter(
+      ([target]) => target.path === integrationsPath,
+    ).length;
+    const tokenCallsBeforeFailure = (authApi.getSharedDataToken as jest.Mock)
+      .mock.calls.length;
+
+    act(() => {
+      onValueErrorCallbacks
+        .get(integrationsPath)
+        ?.(new Error("listener failed"));
+    });
+
+    expect(screen.getByTestId("youtube-connected")).toHaveTextContent("yes");
+    expect(screen.getByTestId("integrations-status")).toHaveTextContent(
+      "ready",
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(30_000);
+    });
+
+    await waitFor(() =>
+      expect(
+        onValueMock.mock.calls.filter(
+          ([target]) => target.path === integrationsPath,
+        ).length,
+      ).toBeGreaterThan(listenCallsBeforeFailure),
+    );
+    // First slow recovery is listen-only; remint waits for later recoveries.
+    expect((authApi.getSharedDataToken as jest.Mock).mock.calls.length).toBe(
+      tokenCallsBeforeFailure,
+    );
+
+    jest.useRealTimers();
   });
 
   it("routes legacy stream subkeys from storage and Firebase to the current debounced actions", async () => {

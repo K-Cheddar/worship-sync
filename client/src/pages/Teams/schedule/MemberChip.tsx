@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { Highlighter, Info } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
-import { scheduleMemberAssignmentCountLabel } from "../teamsUtils";
+import {
+  formatPlainDateLabel,
+  scheduleMemberAssignmentCountLabel,
+} from "../teamsUtils";
 import { WantsThisBadge } from "./WantsThisIndicator";
 
 type MemberChipProps = {
@@ -14,6 +17,7 @@ type MemberChipProps = {
   /** Member asked for the active position on intake. */
   desiresPosition?: boolean;
   assignmentCount?: number;
+  lastServedDate?: string;
   disabled?: boolean;
   highlighted?: boolean;
   expanded?: boolean;
@@ -31,6 +35,7 @@ const MemberChip = ({
   warning,
   desiresPosition = false,
   assignmentCount = 0,
+  lastServedDate,
   disabled,
   highlighted = false,
   expanded = false,
@@ -41,6 +46,9 @@ const MemberChip = ({
   onSelect,
 }: MemberChipProps) => {
   const assignmentCountLabel = scheduleMemberAssignmentCountLabel(assignmentCount);
+  const lastServedLabel = lastServedDate
+    ? `Last served ${formatPlainDateLabel(lastServedDate)}`
+    : "Not yet served";
   const selectable = Boolean(onSelect);
   const showSecondRow = Boolean(subtitle || desiresPosition);
 
@@ -178,6 +186,10 @@ const MemberChip = ({
             {desiresPosition ? <WantsThisBadge /> : null}
           </div>
         ) : null}
+
+        <p className="mt-0.5 truncate text-xs font-normal text-gray-500">
+          {lastServedLabel}
+        </p>
 
         {warning ? (
           <span className="mt-0.5 block truncate text-xs font-normal text-amber-300">

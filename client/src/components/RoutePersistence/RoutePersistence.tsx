@@ -1,4 +1,8 @@
 import { useContext, useEffect, useMemo } from "react";
+import {
+  buildPersistableRoute,
+  getRoutePathname,
+} from "../../utils/displayRoutePersistence";
 import { useLocation, useNavigate } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -30,6 +34,8 @@ const RESTORE_STARTUP_ROUTES = new Set([
 
 const ROUTES_TO_SKIP_SAVE = new Set([
   "/login",
+  "/privacy",
+  "/terms",
   "/login/desktop-sso-complete",
   "/restream/connect-complete",
   "/youtube/connect-complete",
@@ -63,21 +69,24 @@ const RoutePersistence: React.FC = () => {
       permissions: context?.permissions,
       operatorName: context?.operatorName,
       displaySurfaceType: context?.device?.surfaceType,
+      displayOutputId: context?.device?.outputId,
     }),
     [
       context?.access,
       context?.device?.surfaceType,
+      context?.device?.outputId,
       context?.loginState,
       context?.operatorName,
       context?.permissions,
       context?.role,
       context?.sessionKind,
-    ]
+    ],
   );
 
   // Restore once after auth/bootstrap settles so we don't bounce through blocked routes.
   useEffect(() => {
-    if (!isElectron || !bootstrapReady || initialRouteRestoreStatus === "done") return;
+    if (!isElectron || !bootstrapReady || initialRouteRestoreStatus === "done")
+      return;
     if (initialRouteRestoreTimeout !== null) return;
 
     if (!RESTORE_STARTUP_ROUTES.has(location.pathname)) {
@@ -88,17 +97,27 @@ const RoutePersistence: React.FC = () => {
     const restoreRoute = async () => {
       try {
         const lastRoute = await window.electronAPI!.getLastRoute();
-        if (!lastRoute || lastRoute === "/" || lastRoute === location.pathname) {
+        if (
+          !lastRoute ||
+          lastRoute === "/" ||
+          lastRoute === location.pathname
+        ) {
           return;
         }
 
-        if (isRouteAllowedForSession(lastRoute, routeContext)) {
+        if (
+          isRouteAllowedForSession(getRoutePathname(lastRoute), routeContext)
+        ) {
           navigate(lastRoute, { replace: true });
           return;
         }
 
         const fallbackRoute = getAllowedRouteOrDefault(null, routeContext);
-        if (fallbackRoute && fallbackRoute !== location.pathname && fallbackRoute !== "/") {
+        if (
+          fallbackRoute &&
+          fallbackRoute !== location.pathname &&
+          fallbackRoute !== "/"
+        ) {
           navigate(fallbackRoute, { replace: true });
         }
       } catch (error) {
@@ -129,14 +148,16 @@ const RoutePersistence: React.FC = () => {
     // Save the current route
     const saveRoute = async () => {
       try {
-        await window.electronAPI!.saveLastRoute(location.pathname);
+        await window.electronAPI!.saveLastRoute(
+          buildPersistableRoute(location.pathname, location.search),
+        );
       } catch (error) {
         console.error("Error saving route:", error);
       }
     };
 
     saveRoute();
-  }, [location.pathname, isElectron]);
+  }, [location.pathname, location.search, isElectron]);
 
   return null;
 };

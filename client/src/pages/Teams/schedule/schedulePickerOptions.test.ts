@@ -52,7 +52,9 @@ describe("buildSchedulePickerOptions", () => {
     const options = buildSchedulePickerOptions({
       teams: [team("team-media", "Media"), team("team-music", "Music")],
       schedules: [
-        schedule("s-1", "August 2026", "team-media", { startDate: "2026-08-01" }),
+        schedule("s-1", "August 2026", "team-media", {
+          startDate: "2026-08-01",
+        }),
         schedule("s-2", "September 2026", "team-media", {
           startDate: "2026-09-01",
         }),
@@ -91,12 +93,18 @@ describe("buildSchedulePickerOptions", () => {
     const options = buildSchedulePickerOptions({
       teams: [team("team-media", "Media")],
       schedules: [
-        schedule("s-jul", "July 2026", "team-media", { startDate: "2026-07-01" }),
+        schedule("s-jul", "July 2026", "team-media", {
+          startDate: "2026-07-01",
+        }),
         schedule("s-sep", "September 2026", "team-media", {
           startDate: "2026-09-01",
         }),
-        schedule("s-aug", "August 2026", "team-media", { startDate: "2026-08-01" }),
+        schedule("s-aug", "August 2026", "team-media", {
+          startDate: "2026-08-01",
+        }),
       ],
+      // Wide enough that sorting is visible without the default per-team cap.
+      maxPerTeam: 10,
     });
 
     expect(options.map((option) => option.value)).toEqual([
@@ -140,7 +148,9 @@ describe("buildSchedulePickerOptions", () => {
     const options = buildSchedulePickerOptions({
       teams: [team("team-media", "Media")],
       schedules: [
-        schedule("s-1", "August 2026", "team-media", { startDate: "2026-08-01" }),
+        schedule("s-1", "August 2026", "team-media", {
+          startDate: "2026-08-01",
+        }),
         schedule("s-old", "July 2026", "team-media", {
           startDate: "2026-07-01",
           archivedAt: "2026-08-01",
@@ -204,10 +214,10 @@ describe("buildSchedulePickerOptions", () => {
       teamId: "team-music",
     });
 
-    // Only one team left, so the group heading is dropped as noise.
+    // Only one team left, so the group heading is dropped as noise. The other
+    // team's schedule is not "hidden" — change the team filter to reach it.
     expect(options).toEqual([
       { label: "August 2026", value: "s-music", group: undefined },
-      { label: "Browse all schedules…", value: BROWSE_ALL_SCHEDULES_VALUE },
     ]);
   });
 
@@ -275,19 +285,74 @@ describe("buildSchedulePickerOptions", () => {
     });
 
     // One team left and nothing pinned, so headings stay off entirely.
-    expect(options.map((option) => option.group)).toEqual([undefined, undefined]);
+    expect(options.map((option) => option.group)).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it("omits the browse entry when nothing is hidden", () => {
     const options = buildSchedulePickerOptions({
       teams: [team("team-media", "Media")],
       schedules: [
-        schedule("s-1", "August 2026", "team-media", { startDate: "2026-08-01" }),
+        schedule("s-1", "August 2026", "team-media", {
+          startDate: "2026-08-01",
+        }),
       ],
     });
 
     expect(
       options.some((option) => option.value === BROWSE_ALL_SCHEDULES_VALUE),
     ).toBe(false);
+  });
+
+  it("defaults to the two most recent schedules per team", () => {
+    const options = buildSchedulePickerOptions({
+      teams: [team("team-media", "Media")],
+      schedules: [
+        schedule("s-jul", "July 2026", "team-media", {
+          startDate: "2026-07-01",
+        }),
+        schedule("s-sep", "September 2026", "team-media", {
+          startDate: "2026-09-01",
+        }),
+        schedule("s-aug", "August 2026", "team-media", {
+          startDate: "2026-08-01",
+        }),
+      ],
+    });
+
+    expect(options.map((option) => option.value)).toEqual([
+      "s-sep",
+      "s-aug",
+      BROWSE_ALL_SCHEDULES_VALUE,
+    ]);
+  });
+
+  it("offers browse for older schedules even when a team filter is set", () => {
+    const options = buildSchedulePickerOptions({
+      teams: [team("team-media", "Media"), team("team-music", "Praise Team")],
+      schedules: [
+        schedule("s-media", "August 2026", "team-media", {
+          startDate: "2026-08-01",
+        }),
+        schedule("s-music-1", "September 2026", "team-music", {
+          startDate: "2026-09-01",
+        }),
+        schedule("s-music-2", "August 2026", "team-music", {
+          startDate: "2026-08-01",
+        }),
+        schedule("s-music-3", "July 2026", "team-music", {
+          startDate: "2026-07-01",
+        }),
+      ],
+      teamId: "team-music",
+    });
+
+    expect(options.map((option) => option.value)).toEqual([
+      "s-music-1",
+      "s-music-2",
+      BROWSE_ALL_SCHEDULES_VALUE,
+    ]);
   });
 });

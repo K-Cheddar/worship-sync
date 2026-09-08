@@ -1,9 +1,11 @@
 import {
+  FocusEvent,
   FunctionComponent,
   HTMLProps,
   KeyboardEvent,
   SVGProps,
   useId,
+  useState,
 } from "react";
 import { cn } from "@/utils/cnHelper";
 import Button from "../Button/Button";
@@ -53,6 +55,11 @@ export type InputProps = Omit<HTMLProps<HTMLInputElement>, "onChange" | "value">
   numericArrowStep?: number;
   /** When the value does not parse as a number, arrow keys start from this base (with `numericArrowStep`). */
   numericArrowEmptyBase?: number;
+  /**
+   * When true, an empty number field stays empty on blur instead of becoming
+   * 0 or min. Use for optional fields (e.g. birth year).
+   */
+  allowEmptyOnBlur?: boolean;
 };
 
 function stepForArrowIncrement(
@@ -69,6 +76,27 @@ function parseOptionalBound(
   if (v === "" || v === undefined) return undefined;
   const n = typeof v === "number" ? v : parseFloat(String(v));
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Empty/invalid number fields become 0 on blur, then clamp to optional min/max. */
+export function coerceNumberInputOnBlur(
+  raw: string | number,
+  minVal?: number,
+  maxVal?: number,
+  options?: { allowEmpty?: boolean },
+): number | "" {
+  const trimmed = typeof raw === "number" ? String(raw) : String(raw ?? "").trim();
+  if (trimmed === "" && options?.allowEmpty) return "";
+  const parsed = trimmed === "" ? NaN : Number(trimmed);
+  let n = Number.isFinite(parsed) ? parsed : 0;
+  if (minVal !== undefined) n = Math.max(minVal, n);
+  if (maxVal !== undefined) n = Math.min(maxVal, n);
+  return n;
+}
+
+function numberInputDisplayValue(value: string | number): string {
+  if (value === "" || value === undefined || value === null) return "";
+  return String(value);
 }
 
 const Input = ({
@@ -100,6 +128,7 @@ const Input = ({
   errorText,
   numericArrowStep,
   numericArrowEmptyBase,
+  allowEmptyOnBlur = false,
   min,
   max,
   step,
@@ -110,30 +139,63 @@ const Input = ({
   const inputId = id || generatedId;
   const helperId = useId();
   const errorId = useId();
+  const isNumberType = type === "number";
+  const [numberDraft, setNumberDraft] = useState<string | null>(null);
 
   const {
     "aria-describedby": ariaDescribedByProp,
+    onBlur: onBlurProp,
+    onFocus: onFocusProp,
     ...restForInput
   } = rest;
+
+  const minVal = parseOptionalBound(min);
+  const maxVal = parseOptionalBound(max);
+  const displayValue =
+    isNumberType && numberDraft !== null
+      ? numberDraft
+      : numberInputDisplayValue(value);
+
+  const commitNumberValue = (next: number) => {
+    if (numberDraft !== null) setNumberDraft(String(next));
+    onChange(next);
+  };
+
+  const handleFocus = (e: FocusEvent<HTMLInputElement>) => {
+    if (isNumberType) {
+      setNumberDraft(numberInputDisplayValue(value));
+    }
+    onFocusProp?.(e);
+  };
+
+  const handleBlur = (e: FocusEvent<HTMLInputElement>) => {
+    if (isNumberType) {
+      const raw = numberDraft !== null ? numberDraft : numberInputDisplayValue(value);
+      const coerced = coerceNumberInputOnBlur(raw, minVal, maxVal, {
+        allowEmpty: allowEmptyOnBlur,
+      });
+      setNumberDraft(null);
+      onChange(coerced);
+    }
+    onBlurProp?.(e);
+  };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     onKeyDownProp?.(e);
     if (e.defaultPrevented) return;
 
-    const minVal = parseOptionalBound(min);
-    const maxVal = parseOptionalBound(max);
-
-    if (type === "number" && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    if (isNumberType && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
       const inc = stepForArrowIncrement(step);
-      const raw =
-        typeof value === "number" ? value : parseFloat(String(value));
+      const source =
+        numberDraft !== null ? numberDraft : numberInputDisplayValue(value);
+      const raw = parseFloat(source);
       let current = Number.isFinite(raw) ? raw : minVal ?? 0;
       const delta = e.key === "ArrowUp" ? inc : -inc;
       let next = current + delta;
       if (minVal !== undefined) next = Math.max(minVal, next);
       if (maxVal !== undefined) next = Math.min(maxVal, next);
-      onChange(Number(next));
+      commitNumberValue(Number(next));
       return;
     }
 
@@ -223,7 +285,7 @@ const Input = ({
     <span className={inputWrapClassName}>
       <UIInput
         className={cn(
-          "peer py-1 pl-2 shadow-none",
+          "peer py-0 pl-2 shadow-none",
           inputTextSize,
           inputWidth,
           hideSpinButtons &&
@@ -236,14 +298,17 @@ const Input = ({
         )}
         {...restForInput}
         type={type}
-        value={value ?? ""}
+        value={displayValue}
         disabled={disabled}
         data-ignore-undo="true"
         aria-invalid={Boolean(errorText)}
         aria-describedby={describedByIds || undefined}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         onChange={(e) => {
           const val = e.target.value;
-          if (type === "number") {
+          if (isNumberType) {
+            setNumberDraft(val);
             onChange(val === "" ? "" : Number(val));
           } else {
             onChange(val as string);

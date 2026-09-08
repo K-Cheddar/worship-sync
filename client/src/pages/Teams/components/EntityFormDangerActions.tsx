@@ -12,8 +12,10 @@ type EntityFormDangerActionsProps = {
   archived?: boolean;
   canEdit?: boolean;
   onArchive?: () => void;
+  onRestore?: () => void;
   onDelete?: () => void;
   archiveLabel?: string;
+  restoreLabel?: string;
   deleteLabel?: string;
   menuLabel?: string;
 };
@@ -23,22 +25,26 @@ const EntityFormDangerActions = ({
   archived = false,
   canEdit = true,
   onArchive,
+  onRestore,
   onDelete,
   archiveLabel = "Archive",
+  restoreLabel = "Restore",
   deleteLabel = "Delete",
   menuLabel = "More actions",
 }: EntityFormDangerActionsProps) => {
   const menuItems = useMemo(() => {
     const items: MenuItemType[] = [];
     if (!canEdit) return items;
-    if (!archived && onArchive) {
+    if (archived && onRestore) {
+      items.push({ text: restoreLabel, onClick: onRestore });
+    } else if (!archived && onArchive) {
       items.push({ text: archiveLabel, onClick: onArchive });
     }
     if (onDelete) {
       items.push({ text: deleteLabel, variant: "destructive", onClick: onDelete });
     }
     return items;
-  }, [archived, archiveLabel, canEdit, deleteLabel, onArchive, onDelete]);
+  }, [archived, archiveLabel, canEdit, deleteLabel, onArchive, onDelete, onRestore, restoreLabel]);
 
   if (menuItems.length === 0) return null;
 

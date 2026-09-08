@@ -460,6 +460,115 @@ describe("ServicePlanEditor", () => {
     });
   });
 
+  describe("Service summary", () => {
+    const openPlan = () => {
+      mockGetServicePlan.mockResolvedValue({
+        success: true,
+        servicePlan: {
+          planId: "church-1::service-1@2026-07-26",
+          churchId: "church-1",
+          planKey: "service-1@2026-07-26",
+          serviceId: "service-1",
+          date: "2026-07-26",
+          name: "Easter Sunday",
+          sections: [
+            {
+              id: "section-1",
+              name: "Worship",
+              elements: [
+                { id: "el-1", type: "song", title: plainTextToRichText("Living Hope") },
+              ],
+            },
+          ],
+        },
+      });
+    };
+
+    const emptySlot: TeamsAssignmentSummaryRow = {
+      teamId: "team-1",
+      teamName: "Worship",
+      scheduleId: "schedule-1",
+      occurrenceId: occurrence.occurrenceId,
+      positionId: "position-vocal",
+      positionName: "Vocal",
+      columnKey: "position-vocal::0",
+      slotLabel: "Vocal 1",
+      microphoneIds: [],
+    };
+
+    it("hides the summary when there are no scheduled assignment rows", async () => {
+      openPlan();
+      renderEditor();
+
+      expect(
+        await screen.findByRole("button", { name: "View full name: Living Hope" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("Service summary")).not.toBeInTheDocument();
+      expect(screen.queryByText(/filled/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/responses/i)).not.toBeInTheDocument();
+    });
+
+    it("shows fill progress for empty scheduled slots without a useless 0/0 responses count", async () => {
+      openPlan();
+      renderEditor({ scheduledAssignmentRows: [emptySlot] });
+
+      const summary = await screen.findByLabelText("Service summary");
+      expect(within(summary).getByText("0/1 filled")).toBeInTheDocument();
+      expect(within(summary).queryByText(/responses/i)).not.toBeInTheDocument();
+      expect(
+        within(summary).queryByRole("button", { name: /^Details$/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows response progress once scheduled slots are filled", async () => {
+      openPlan();
+      renderEditor({
+        scheduledAssignmentRows: [
+          {
+            ...emptySlot,
+            memberId: "member-1",
+            memberName: "Avery Stone",
+            response: "accepted",
+          },
+        ],
+      });
+
+      const summary = await screen.findByLabelText("Service summary");
+      expect(within(summary).getByText("1/1 filled")).toBeInTheDocument();
+      expect(within(summary).getByText("1/1 responses")).toBeInTheDocument();
+    });
+
+    it("shows mic coverage under Details when filled people can hold microphones", async () => {
+      const user = userEvent.setup();
+      openPlan();
+      renderEditor({
+        scheduledAssignmentRows: [
+          {
+            ...emptySlot,
+            memberId: "member-1",
+            memberName: "Avery Stone",
+            microphoneIds: ["mic-lead"],
+          },
+        ],
+        teamMicrophones: {
+          rows: [
+            {
+              ...emptySlot,
+              memberId: "member-1",
+              memberName: "Avery Stone",
+              microphoneIds: ["mic-lead"],
+            },
+          ],
+          onChange: jest.fn(),
+        },
+      });
+
+      const summary = await screen.findByLabelText("Service summary");
+      await user.click(within(summary).getByRole("button", { name: /^Details$/i }));
+      expect(within(summary).getByText("Mics: 1/1 covered")).toBeInTheDocument();
+    });
+  });
+
   it("shows an ordered compact setlist and opens full song details", async () => {
     const user = userEvent.setup();
     mockAllSongDocs = [{
@@ -1114,8 +1223,7 @@ describe("ServicePlanEditor", () => {
     await user.click(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
-    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     // Microphones hang off a person now, so an item starts with nobody on it.
     // Assignment editing opens in a side sheet to keep the plan list stable.
     await user.click(
@@ -1162,9 +1270,8 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
-    // Seeded with one default section already; choose it before adding.
-    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    // Seeded with one default section; Add item targets it without an extra pick.
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.type(screen.getByLabelText(/^Title/i), "Great Are You Lord");
 
     await waitFor(() => {
@@ -1189,8 +1296,7 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: /Start from scratch/i }),
     );
 
-    await user.click(screen.getByRole("button", { name: /Choose item destination/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Add to Service/i }));
+    await user.click(screen.getByRole("button", { name: /^Add item$/i }));
     await user.click(screen.getByRole("button", { name: /^Add item$/i }));
 
     // fireEvent.change (not userEvent.clear/type) — number inputs behave
@@ -1558,6 +1664,7 @@ describe("ServicePlanEditor", () => {
     expect(
       screen.queryByRole("button", { name: /Start from scratch/i }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Add item$/i })).toBeEnabled();
     expect(
       screen.getByRole("button", { name: /Add section/i }),
     ).toBeInTheDocument();
@@ -1867,7 +1974,7 @@ describe("ServicePlanEditor", () => {
     expect(screen.queryByRole("button", { name: /Add section/i })).not.toBeInTheDocument();
   });
 
-  it("shares from the header menu and lets an editor make an item live from its row", async () => {
+  it("shares from plan actions on narrow layouts and lets an editor make an item live from its row", async () => {
     // Make live only appears on the service's calendar day — pin this
     // occurrence to "today" (plan timezone = local) so the control is available.
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -1951,6 +2058,8 @@ describe("ServicePlanEditor", () => {
     const user = userEvent.setup();
     renderEditor({ occurrence: todayOccurrence });
 
+    // Header Share is md+ only (`hidden md:inline-flex`); below that (and in
+    // jsdom, where the base `hidden` rule wins) share stays in Plan actions.
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
     expect(
       await screen.findByRole("button", { name: /Copy detailed view link/i }),

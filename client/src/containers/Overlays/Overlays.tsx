@@ -1,8 +1,9 @@
 import Button from "../../components/Button/Button";
+import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
-import { useStore } from "react-redux";
+import { shallowEqual, useStore } from "react-redux";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -89,9 +90,11 @@ const Overlays = ({
     (state: RootState) => state.undoable.present.overlay,
   );
 
-  const { isStreamTransmitting } = useSelector(
-    (state: RootState) => state.presentation,
-  );
+  // Enablement must match what Send will actually reach. "Any stream live" plus
+  // targeting that named a different stream is what let the button light up on
+  // a click that went nowhere.
+  const liveStreamIds = useSelector(selectOverlayTargetIds, shallowEqual);
+  const isStreamTransmitting = liveStreamIds.length > 0;
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.itemList,
   );

@@ -123,6 +123,8 @@ import {
   getSharedDataDatabase,
 } from "../firebase/apps";
 import { getChurchDataPath } from "../utils/firebasePaths";
+import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
+import { withBootstrapTimeout } from "../utils/bootstrapTimeout";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
 import {
@@ -193,6 +195,10 @@ function getPresenceSurface(pathname: string): "controller" | "display" | null {
 
 const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
 const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
+/** After fast retries fail, re-subscribe on this interval before considering another remint. */
+const CHURCH_INTEGRATIONS_LISTEN_RECOVERY_MS = 30_000;
+/** Remint shared auth only every N slow recoveries (~3 minutes at 30s listen retries). */
+const CHURCH_INTEGRATIONS_REMINT_EVERY_N_RECOVERIES = 6;
 
 const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
   Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
@@ -433,6 +439,8 @@ type GlobalInfoContextType = {
   churchBrandingStatus: ChurchBrandingStatus;
   churchIntegrations: ChurchIntegrations;
   churchIntegrationsStatus: ChurchIntegrationsStatus;
+  /** Re-auth shared RTDB and resubscribe integrations (e.g. after OAuth connect). */
+  refreshChurchIntegrationsSync: () => void;
   role: string;
   authError: string;
   clearAuthError: () => void;
@@ -627,6 +635,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsGateKeyRef = useRef("");
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
+  const churchIntegrationsHasLiveSnapshotRef = useRef(false);
+  const churchIntegrationsSlowRecoveryAttemptRef = useRef(0);
   const hasSeenRealtimeConnectedRef = useRef(false);
   const wasRealtimeConnectedRef = useRef(false);
   const location = useLocation();
@@ -761,6 +771,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_boardPostStreamInfo: Unsubscribe | undefined;
     stream_itemContentBlocked: Unsubscribe | undefined;
     monitorBoardAliasId: Unsubscribe | undefined;
+    projectorBoardAliasId: Unsubscribe | undefined;
+    outputs: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
     serviceTimes: Unsubscribe | undefined;
   }>({
@@ -776,6 +788,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_boardPostStreamInfo: undefined,
     stream_itemContentBlocked: undefined,
     monitorBoardAliasId: undefined,
+    projectorBoardAliasId: undefined,
+    outputs: undefined,
     timerInfo: undefined,
     serviceTimes: undefined,
   });
@@ -1296,6 +1310,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.streamInfo,
           updateAction: "debouncedUpdateStream",
         },
+        // Outputs created after the display registry. Built-ins keep travelling
+        // in the flat keys above so older clients stay live during rollout.
+        // Only nest/dispatch when this payload actually includes `outputs` —
+        // otherwise every projector/monitor/stream storage event would apply
+        // an empty `{}` and wake the outputs listener for no reason.
+        outputs: {
+          info:
+            data.outputs !== undefined
+              ? nestSlashPathOutputs(data.outputs)
+              : undefined,
+          updateAction: "debouncedUpdateOutputs",
+        },
         stream_bibleInfo: {
           info: data.stream_bibleInfo,
           updateAction: "debouncedUpdateBibleDisplayInfo",
@@ -1332,6 +1358,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.monitorBoardAliasId,
           updateAction: "debouncedUpdateMonitorBoardAliasId",
         },
+        projectorBoardAliasId: {
+          info: data.projectorBoardAliasId,
+          updateAction: "debouncedUpdateProjectorBoardAliasId",
+        },
         timerInfo: {
           info: data.timerInfo,
           updateAction: "debouncedUpdateTimerInfo",
@@ -1352,7 +1382,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         // mode off) — for those, skip only when the value is truly absent.
         const propagateWhenFalsy =
           _key === "stream_itemContentBlocked" ||
-          _key === "monitorBoardAliasId";
+          _key === "monitorBoardAliasId" ||
+          _key === "projectorBoardAliasId";
         if (propagateWhenFalsy ? info === undefined : !info) continue;
         const payload =
           _key === "stream_itemContentBlocked" ? Boolean(info) : info;
@@ -1391,7 +1422,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const enterGuestMode = useCallback(
-    (nextPath = "/controller") => {
+    (nextPath = "/home") => {
       hasRehydratedTimersRef.current = false;
       hasRehydratedServiceTimesRef.current = false;
       setPendingEmailVerificationId(null);
@@ -1469,10 +1500,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         for (let attempt = 0; attempt <= MAX_INITIAL_SESSION_RETRIES; attempt++) {
           try {
-            bootstrap = await getAuthBootstrap({
-              workstationToken: getWorkstationToken(),
-              displayToken: getDisplayToken(),
-            });
+            // Bounded: a request that hangs rather than fails would otherwise
+            // skip the `finally` that ends the loading state — never runs. A
+            // display then sits on its blank placeholder indefinitely.
+            bootstrap = await withBootstrapTimeout(
+              getAuthBootstrap({
+                workstationToken: getWorkstationToken(),
+                displayToken: getDisplayToken(),
+              }),
+            );
             setAuthServerStatus("online");
             setAuthServerRetryCount(0);
             bootstrapError = null;
@@ -1961,14 +1997,30 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       storageListenerCleanupRef.current();
     }
 
-    const handleStorage = ({ key, newValue }: StorageEvent) => {
+    const applyStorageValue = (key: string | null, newValue: string | null) => {
+      if (!key || newValue == null) return;
       const onValueKeys = Object.keys(onValueRef.current);
       if (key === "serviceTimes" && loginState === "success") return;
-      if (newValue && onValueKeys.some((e) => e === key)) {
+      if (!onValueKeys.some((e) => e === key)) return;
+      try {
         const value = JSON.parse(newValue);
         updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
+      } catch {
+        // ignore invalid stored data
       }
     };
+
+    const handleStorage = ({ key, newValue }: StorageEvent) => {
+      applyStorageValue(key, newValue);
+    };
+
+    // Cold-start: `storage` only fires for *future* writes from other documents.
+    // Newly opened same-machine display windows (Electron shared partition) already
+    // have the live snapshot in localStorage, but would otherwise wait on Firebase
+    // (or the next controller transmit) before painting current content.
+    for (const key of Object.keys(onValueRef.current)) {
+      applyStorageValue(key, localStorage.getItem(key));
+    }
 
     window.addEventListener("storage", handleStorage);
     const cleanup = () => {
@@ -2141,8 +2193,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     churchBrandingListenGeneration,
   ]);
 
+  const refreshChurchIntegrationsSync = useCallback(() => {
+    churchIntegrationsPermissionRetryRef.current = 0;
+    churchIntegrationsRemintAttemptsRef.current = 0;
+    setSharedDataTokenRemintNonce((n) => n + 1);
+  }, []);
+
   useEffect(() => {
     if (loginState !== "success" || !churchId) {
+      churchIntegrationsHasLiveSnapshotRef.current = false;
       setChurchIntegrations(createDefaultChurchIntegrations());
       setChurchIntegrationsStatus("ready");
       return;
@@ -2172,6 +2231,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       (snapshot) => {
         churchIntegrationsPermissionRetryRef.current = 0;
         churchIntegrationsRemintAttemptsRef.current = 0;
+        churchIntegrationsSlowRecoveryAttemptRef.current = 0;
+        churchIntegrationsHasLiveSnapshotRef.current = true;
         setChurchIntegrations(
           snapshot.exists()
             ? normalizeChurchIntegrations(snapshot.val())
@@ -2202,8 +2263,26 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
         console.error("Could not subscribe to church integrations:", error);
-        setChurchIntegrations(createDefaultChurchIntegrations());
+        // Do not wipe a previously good snapshot to defaults — that shows a long
+        // false "Not connected" while Restream/YouTube may still be live via API.
+        if (!churchIntegrationsHasLiveSnapshotRef.current) {
+          setChurchIntegrations(createDefaultChurchIntegrations());
+        }
         setChurchIntegrationsStatus("ready");
+        churchIntegrationsPermissionRetryRef.current = 0;
+        churchIntegrationsSlowRecoveryAttemptRef.current += 1;
+        const recoveryAttempt = churchIntegrationsSlowRecoveryAttemptRef.current;
+        const shouldRemint =
+          recoveryAttempt % CHURCH_INTEGRATIONS_REMINT_EVERY_N_RECOVERIES === 0;
+        permissionDeniedRetryTimeout = setTimeout(() => {
+          if (cancelled) return;
+          if (shouldRemint) {
+            churchIntegrationsRemintAttemptsRef.current = 0;
+            setSharedDataTokenRemintNonce((n) => n + 1);
+            return;
+          }
+          setChurchIntegrationsListenGeneration((g) => g + 1);
+        }, CHURCH_INTEGRATIONS_LISTEN_RECOVERY_MS);
       },
     );
 
@@ -2861,6 +2940,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       churchIntegrations,
       churchIntegrationsStatus,
+      refreshChurchIntegrationsSync,
       role,
       authError,
       clearAuthError,
@@ -2924,6 +3004,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       churchIntegrations,
       churchIntegrationsStatus,
+      refreshChurchIntegrationsSync,
       role,
       authError,
       clearAuthError,

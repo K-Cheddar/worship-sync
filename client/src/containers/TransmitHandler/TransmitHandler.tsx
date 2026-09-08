@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -7,15 +8,16 @@ import {
 } from "react";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
+import { shallowEqual } from "react-redux";
 import {
   setTransmitToAll,
   clearStreamOverlaysOnly,
   setStreamItemContentBlocked,
-  toggleMonitorTransmitting,
-  toggleStreamTransmitting,
-  toggleProjectorTransmitting,
+  toggleOutputTransmitting,
   clearAll,
   clearStream,
+  selectOutputSlot,
+  selectOutputSlots,
 } from "../../store/presentationSlice";
 import Button from "../../components/Button/Button";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -29,6 +31,17 @@ import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
 import BoardMonitorPreview from "./BoardMonitorPreview";
 import { useResolvedBoardDisplayAlias } from "../../boards/useResolvedBoardDisplayAlias";
+import {
+  isPushOutputType,
+  supportsBoardTakeover,
+} from "../../utils/displayOutputs";
+import { getQuickLinksForOutput } from "../../utils/quickLinksForOutput";
+import { QuickLinkType } from "../../types";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import { useActiveControllerProfile } from "../../context/activeController";
+import { getControllerOutputs } from "../../utils/controllerProfiles";
+import MirroredByBadge from "../../components/MirrorDisplay/MirroredByBadge";
+import MirrorDisplayTile from "../../components/MirrorDisplay/MirrorDisplayTile";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
 const OVERLAY_STREAM_QUICK_LINKS_VISIBLE = 10;
@@ -72,17 +85,67 @@ const TransmitHandler = ({
   showClearStreamOverlaysButton = false,
   maxQuickLinks,
 }: TransmitHandlerProps) => {
-  const isMonitorTransmitting = useSelector(
-    (state) => state.presentation.isMonitorTransmitting
+  // Outputs this surface shows: the displays the active controller owns, then
+  // narrowed to the render profiles the caller asked for. `visibleScreens` stays
+  // a type filter, so the overlay controller keeps showing "the stream ones"
+  // without naming them.
+  //
+  // The ownership narrowing is a no-op for the unscoped built-ins, and it is
+  // what keeps an auxiliary controller from showing — or arming — a display
+  // that belongs to someone else.
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const controllerProfile = useActiveControllerProfile();
+  const ownedOutputs = useMemo(
+    () => getControllerOutputs(controllerProfile, displayOutputs),
+    [controllerProfile, displayOutputs],
   );
-  const isProjectorTransmitting = useSelector(
-    (state) => state.presentation.isProjectorTransmitting
+  const visibleOutputs = useMemo(
+    () =>
+      ownedOutputs.filter(
+        (output) =>
+          isPushOutputType(output.type) &&
+          visibleScreens.includes(output.type as TransmitScreen),
+      ),
+    [ownedOutputs, visibleScreens],
   );
+
+  // Aux controllers join another room's screen for a shared moment (sermon,
+  // announcements) without sending there. Sources are every same-type display
+  // this controller does not own — owned screens stay independently driven.
+  const mirrorSourceIdsByOutput = useMemo(() => {
+    if (controllerProfile.type !== "aux-presentation") return {};
+    const ownedIds = new Set(ownedOutputs.map((output) => output.id));
+    return ownedOutputs.reduce<Record<string, string[]>>((acc, output) => {
+      acc[output.id] = displayOutputs
+        .filter(
+          (candidate) =>
+            candidate.enabled &&
+            candidate.type === output.type &&
+            !ownedIds.has(candidate.id),
+        )
+        .map((candidate) => candidate.id);
+      return acc;
+    }, {});
+  }, [controllerProfile.type, ownedOutputs, displayOutputs]);
+
+  // The overlay controller's focused header acts on the first stream output it
+  // shows; per-stream control lives on each tile below it.
+  const primaryStreamOutput = visibleOutputs.find(
+    (output) => output.type === "stream",
+  );
+  const primaryStreamOutputId = primaryStreamOutput?.id ?? "stream";
+
+  // The header acts on the primary stream, so it has to report that stream —
+  // "any stream is live" would show Live on while the control below it turns
+  // the primary on instead of off.
   const isStreamTransmitting = useSelector(
-    (state) => state.presentation.isStreamTransmitting
+    (state) =>
+      selectOutputSlot(state, primaryStreamOutputId, "stream").isTransmitting,
   );
   const streamItemContentBlocked = useSelector(
-    (state) => state.presentation.streamItemContentBlocked
+    (state) =>
+      selectOutputSlot(state, primaryStreamOutputId, "stream")
+        .itemContentBlocked,
   );
   const [isTransmitting, setIsTransmitting] = useState(false);
 
@@ -91,25 +154,53 @@ const TransmitHandler = ({
   const dispatch = useDispatch();
 
   const isMediaExpanded = useSelector(
-    (state) => state.undoable.present.preferences.isMediaExpanded
+    (state) => state.undoable.present.preferences.isMediaExpanded,
   );
   const quickLinks = useSelector(
-    (state) => state.undoable.present.preferences.quickLinks
+    (state) => state.undoable.present.preferences.quickLinks,
   );
   const defaultQuickLinks = useSelector(
-    (state) => state.undoable.present.preferences.defaultQuickLinks
+    (state) => state.undoable.present.preferences.defaultQuickLinks,
   );
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
-  const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
-  );
+  // Any full-frame display can host the board now, so find whichever one has it.
+  const boardHostOutputId = useSelector((state) => {
+    for (const slot of Object.values(selectOutputSlots(state))) {
+      if (supportsBoardTakeover(slot.type) && slot.boardAliasId) return slot.id;
+    }
+    return "";
+  });
   const [isBoardSectionOpen, setIsBoardSectionOpen] = useState(false);
 
-  const showProjector = visibleScreens.includes("projector");
-  const showMonitor = visibleScreens.includes("monitor");
-  const showStream = visibleScreens.includes("stream");
+  const liveByOutputId = useSelector((state) => {
+    const map: Record<string, boolean> = {};
+    for (const slot of Object.values(selectOutputSlots(state))) {
+      map[slot.id] = slot.isTransmitting;
+    }
+    return map;
+  }, shallowEqual);
+
+  // Stable per-output callbacks; recreating these each render would defeat the
+  // memo on the preview tiles during live use.
+  const toggleByOutputId = useMemo(() => {
+    const map: Record<string, () => void> = {};
+    for (const output of visibleOutputs) {
+      map[output.id] = () => dispatch(toggleOutputTransmitting(output.id));
+    }
+    return map;
+  }, [visibleOutputs, dispatch]);
+
+  // Derived from the displays actually on screen, not from the caller's type
+  // filter. A controller that drives no monitor was still being offered the
+  // discussion board and the bulk controls, because it "asked for" all three
+  // types by default while owning only a projector.
+  const hasOutputOfType = (type: TransmitScreen) =>
+    visibleOutputs.some((output) => output.type === type);
+  const showProjector = hasOutputOfType("projector");
+  const showMonitor = hasOutputOfType("monitor");
+  const showStream = hasOutputOfType("stream");
 
   // Discussion board → monitor: only relevant on the main controller. Resolve the
   // church's board from the server (not just this device's stored alias) so the
@@ -123,94 +214,183 @@ const TransmitHandler = ({
   // resolvable board alias or the monitor being visible — have since gone away.
   // Otherwise the control that turns the board off can unmount while the board
   // stays on the monitor, leaving no way to remove it.
-  const isBoardLiveOnMonitor = monitorBoardAliasId !== "";
+  const isBoardLiveOnMonitor = boardHostOutputId !== "";
   const showBoardSection =
     !readOnly &&
     variant === "default" &&
     (isBoardLiveOnMonitor || (showMonitor && Boolean(boardAliasId)));
+  /**
+   * The tile the discussion board belongs under.
+   *
+   * It follows whichever display is hosting the board, falling back to the
+   * built-in monitor. Null when that display is not on screen, and the section
+   * falls to the end so its off switch stays reachable.
+   */
+  const boardAnchorOutputId = useMemo(() => {
+    if (!showBoardSection) return null;
+    // Follow the display actually hosting the board; otherwise sit under the
+    // built-in monitor, which is where it goes by default.
+    const host = visibleOutputs.find(
+      (output) => output.id === boardHostOutputId,
+    );
+    return (
+      host?.id ??
+      visibleOutputs.find((output) => output.id === "monitor")?.id ??
+      null
+    );
+  }, [boardHostOutputId, showBoardSection, visibleOutputs]);
+
+  const boardSection = showBoardSection ? (
+    <div className="relative shrink-0 overflow-hidden rounded-sm border border-white/12 bg-black/30">
+      <button
+        type="button"
+        onClick={() => setIsBoardSectionOpen((open) => !open)}
+        className={cn(
+          "flex w-full cursor-pointer items-center justify-between gap-2 bg-black/25 px-2 py-1 text-xs font-semibold transition-colors",
+          isBoardSectionOpen && "border-b border-white/10",
+          "hover:bg-black/40 active:bg-black/50",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500/60",
+        )}
+        aria-expanded={isBoardSectionOpen}
+        aria-controls="discussion-board-panel"
+      >
+        <span className="truncate min-w-0 text-left">Discussion Board</span>
+        <ChevronDown
+          className={cn(
+            "size-3.5 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none",
+            isBoardSectionOpen ? "rotate-180" : "rotate-0",
+          )}
+          aria-hidden
+        />
+      </button>
+      <div
+        id="discussion-board-panel"
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          isBoardSectionOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div
+          className="min-h-0 overflow-hidden"
+          inert={isBoardSectionOpen ? undefined : true}
+        >
+          <div className="pb-2 pr-2">
+            <BoardMonitorPreview
+              aliasId={boardAliasId}
+              isOpen={isBoardSectionOpen}
+              isMobile={isMobile}
+              previewScale={previewScale}
+              fillWidth={fillWidth}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   const showBulkControls =
     !readOnly && showProjector && showMonitor && showStream;
   const showFocusedStreamControls =
-    !readOnly && showStream && (showStreamOverlayOnlyToggle || showClearStreamOverlaysButton);
+    !readOnly &&
+    showStream &&
+    (showStreamOverlayOnlyToggle || showClearStreamOverlaysButton);
 
   useEffect(() => {
     if (!showBulkControls) return;
     setIsTransmitting(
-      isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting
+      visibleOutputs.length > 0 &&
+      visibleOutputs.every((output) => liveByOutputId[output.id]),
     );
-  }, [
-    showBulkControls,
-    isMonitorTransmitting,
-    isProjectorTransmitting,
-    isStreamTransmitting,
-  ]);
+  }, [showBulkControls, liveByOutputId, visibleOutputs]);
 
   const handleSetTransmitting = useCallback(() => {
     setIsTransmitting((prev) => {
       const next = !prev;
-      queueMicrotask(() => dispatch(setTransmitToAll(next)));
+      queueMicrotask(() =>
+        dispatch(
+          setTransmitToAll({
+            value: next,
+            outputIds: visibleOutputs.map((output) => output.id),
+          }),
+        ),
+      );
       return next;
     });
-  }, [dispatch]);
+  }, [dispatch, visibleOutputs]);
+
+  // Clear every enabled push output, not just the ones this controller shows —
+  // Clear All is a panic button and should blank the room, not only the tiles in
+  // view. Disabled displays are left alone: a clear is a write, and a display the
+  // operator turned off should not be written to.
+  const clearableOutputIds = useMemo(
+    () =>
+      displayOutputs
+        .filter((output) => output.enabled && isPushOutputType(output.type))
+        .map((output) => output.id),
+    [displayOutputs],
+  );
 
   const handleClearAll = useCallback(() => {
-    dispatch(clearAll());
-  }, [dispatch]);
+    dispatch(clearAll({ outputIds: clearableOutputIds }));
+  }, [dispatch, clearableOutputIds]);
 
-  const toggleProjector = useCallback(() => {
-    dispatch(toggleProjectorTransmitting());
-  }, [dispatch]);
-
-  const toggleMonitor = useCallback(() => {
-    dispatch(toggleMonitorTransmitting());
-  }, [dispatch]);
-
-  const toggleStream = useCallback(() => {
-    dispatch(toggleStreamTransmitting());
-  }, [dispatch]);
+  const handleTogglePrimaryStream = useCallback(() => {
+    if (!primaryStreamOutput) return;
+    dispatch(toggleOutputTransmitting(primaryStreamOutput.id));
+  }, [dispatch, primaryStreamOutput]);
 
   const handleClearStreamOverlays = useCallback(() => {
-    dispatch(clearStreamOverlaysOnly());
-  }, [dispatch]);
+    dispatch(
+      clearStreamOverlaysOnly(
+        primaryStreamOutput
+          ? { outputIds: [primaryStreamOutput.id] }
+          : undefined,
+      ),
+    );
+  }, [dispatch, primaryStreamOutput]);
 
   const allQuickLinks = useMemo(
     () => [...defaultQuickLinks, ...quickLinks],
-    [defaultQuickLinks, quickLinks]
+    [defaultQuickLinks, quickLinks],
   );
 
-  const projectorQuickLinks = useMemo(() => {
-    const list = allQuickLinks.filter((link) => link.displayType === "projector");
-    return maxQuickLinks === undefined ? list : list.slice(0, maxQuickLinks);
-  }, [allQuickLinks, maxQuickLinks]);
-
-  const monitorQuickLinks = useMemo(() => {
-    const list = allQuickLinks.filter((link) => link.displayType === "monitor");
-    return maxQuickLinks === undefined ? list : list.slice(0, maxQuickLinks);
-  }, [allQuickLinks, maxQuickLinks]);
-
-  const streamQuickLinks = useMemo(() => {
-    const list = allQuickLinks.filter((link) => link.displayType === "stream");
-    return maxQuickLinks === undefined ? list : list.slice(0, maxQuickLinks);
-  }, [allQuickLinks, maxQuickLinks]);
+  // Quick links belong to a display, not a display type, so two projectors can
+  // carry different shortcuts. Resolved once per render rather than per tile.
+  const quickLinksByOutputId = useMemo(() => {
+    const map: Record<string, QuickLinkType[]> = {};
+    for (const output of visibleOutputs) {
+      map[output.id] = getQuickLinksForOutput(
+        allQuickLinks,
+        output,
+        maxQuickLinks,
+      );
+    }
+    return map;
+  }, [allQuickLinks, maxQuickLinks, visibleOutputs]);
 
   const overlayStreamQuickLinksBelowPreview = useMemo(() => {
-    const actionable = streamQuickLinks.filter((link) => link.action !== "clear");
+    if (!primaryStreamOutput) return [];
+    const actionable = (
+      quickLinksByOutputId[primaryStreamOutput.id] ?? []
+    ).filter((link) => link.action !== "clear");
     return actionable.slice(0, OVERLAY_STREAM_QUICK_LINKS_VISIBLE);
-  }, [streamQuickLinks]);
+  }, [primaryStreamOutput, quickLinksByOutputId]);
 
   return (
     <ErrorBoundary>
       <div
         className={cn(
           "transition-all relative flex flex-col min-h-0",
-          !readOnly && isMediaExpanded ? "h-0 z-0 opacity-0 flex-none" : "flex-1 opacity-100"
+          !readOnly && isMediaExpanded
+            ? "h-0 z-0 opacity-0 flex-none"
+            : "flex-1 opacity-100",
         )}
         data-is-media-expanded={isMediaExpanded}
       >
         <section
           className={cn(
             "flex flex-col gap-2 w-full mx-auto h-full p-2",
-            variant === "overlayStreamFocus" && "gap-3"
+            variant === "overlayStreamFocus" && "gap-3",
           )}
         >
           {showBulkControls && (
@@ -240,13 +420,23 @@ const TransmitHandler = ({
                 "rounded-md border border-white/12 bg-black/30 px-3 py-3",
                 variant === "overlayStreamFocus"
                   ? "flex flex-col gap-4"
-                  : "flex items-center gap-3"
+                  : "flex items-center gap-3",
               )}
             >
               {variant === "overlayStreamFocus" && (
                 <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-white/10 pb-4">
                   <Button
-                    onClick={() => dispatch(clearStream())}
+                    // Scoped like Hide Content and Clear Overlays beside it.
+                    // Untargeted, this blanked every stream in the church.
+                    onClick={() =>
+                      dispatch(
+                        clearStream(
+                          primaryStreamOutput
+                            ? { outputIds: [primaryStreamOutput.id] }
+                            : undefined,
+                        ),
+                      )
+                    }
                     className="text-sm shrink-0 justify-self-start"
                     padding="py-1 px-2"
                     svg={MonitorX}
@@ -261,36 +451,44 @@ const TransmitHandler = ({
                     label="Live"
                     icon={MonitorUp}
                     value={isStreamTransmitting}
-                    onChange={toggleStream}
+                    onChange={handleTogglePrimaryStream}
                     color="#22c55e"
                     className="shrink-0 justify-self-end"
                   />
                 </div>
               )}
-              {(showStreamOverlayOnlyToggle || showClearStreamOverlaysButton) && (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  {showStreamOverlayOnlyToggle && (
-                    <Toggle
-                      label="Hide Content"
-                      value={streamItemContentBlocked}
-                      onChange={(value) =>
-                        dispatch(setStreamItemContentBlocked(value))
-                      }
-                      color="#f59e0b"
-                    />
-                  )}
-                  {showClearStreamOverlaysButton && (
-                    <Button
-                      onClick={handleClearStreamOverlays}
-                      className="text-sm shrink-0"
-                      variant="tertiary"
-                      padding="py-1 px-3"
-                    >
-                      Clear Overlays
-                    </Button>
-                  )}
-                </div>
-              )}
+              {(showStreamOverlayOnlyToggle ||
+                showClearStreamOverlaysButton) && (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    {showStreamOverlayOnlyToggle && (
+                      <Toggle
+                        label="Hide Content"
+                        value={streamItemContentBlocked}
+                        onChange={(value) =>
+                          dispatch(
+                            setStreamItemContentBlocked({
+                              value,
+                              outputIds: primaryStreamOutput
+                                ? [primaryStreamOutput.id]
+                                : undefined,
+                            }),
+                          )
+                        }
+                        color="#f59e0b"
+                      />
+                    )}
+                    {showClearStreamOverlaysButton && (
+                      <Button
+                        onClick={handleClearStreamOverlays}
+                        className="text-sm shrink-0"
+                        variant="tertiary"
+                        padding="py-1 px-3"
+                      >
+                        Clear Overlays
+                      </Button>
+                    )}
+                  </div>
+                )}
             </div>
           )}
           <div
@@ -298,104 +496,109 @@ const TransmitHandler = ({
               "scrollbar-variable overflow-y-auto flex-1 min-h-0 gap-2",
               columns === 2
                 ? "grid grid-cols-2 content-start"
-                : "flex flex-col"
+                : "flex flex-col",
             )}
           >
-            {showProjector && (
-              <ProjectorPresentationPreview
-                toggleIsTransmitting={toggleProjector}
-                quickLinks={projectorQuickLinks}
-                isMobile={isMobile}
-                previewScale={previewScale}
-                fillWidth={fillWidth}
-                readOnly={readOnly}
-              />
-            )}
-            {showMonitor && (
-              <MonitorPresentationPreview
-                toggleIsTransmitting={toggleMonitor}
-                quickLinks={monitorQuickLinks}
-                isMobile={isMobile}
-                previewScale={previewScale}
-                fillWidth={fillWidth}
-                readOnly={readOnly}
-              />
-            )}
-            {showBoardSection && (
-              <div className="relative shrink-0 overflow-hidden rounded-sm border border-white/12 bg-black/30">
-                <button
-                  type="button"
-                  onClick={() => setIsBoardSectionOpen((open) => !open)}
-                  className={cn(
-                    "flex w-full cursor-pointer items-center justify-between gap-2 bg-black/25 px-2 py-1 text-xs font-semibold transition-colors",
-                    isBoardSectionOpen && "border-b border-white/10",
-                    "hover:bg-black/40 active:bg-black/50",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500/60"
-                  )}
-                  aria-expanded={isBoardSectionOpen}
-                  aria-controls="discussion-board-panel"
-                >
-                  <span className="truncate min-w-0 text-left">Discussion Board</span>
-                  <ChevronDown
-                    className={cn(
-                      "size-3.5 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none",
-                      isBoardSectionOpen ? "rotate-180" : "rotate-0"
-                    )}
-                    aria-hidden
+            {/* One ordered pass over every push output. Splitting streams into
+                a second pass pinned them last, so reordering a stream relative to
+                a projector changed the registry and nothing on screen. */}
+            {visibleOutputs.map((output) => {
+              // The board sits directly under the display hosting it, so it
+              // travels with that tile when the operator reorders displays.
+              const board =
+                output.id === boardAnchorOutputId ? boardSection : null;
+              // Lives inside this display's card so Clear / Live / Mirror all
+              // read as one control surface for the screen they affect.
+              const mirrorControls =
+                !readOnly && controllerProfile.type === "aux-presentation" ? (
+                  <MirrorDisplayTile
+                    outputId={output.id}
+                    sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
                   />
-                </button>
-                <div
-                  id="discussion-board-panel"
-                  className={cn(
-                    "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-                    isBoardSectionOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-                  )}
-                >
-                  <div
-                    className="min-h-0 overflow-hidden"
-                    inert={isBoardSectionOpen ? undefined : true}
-                  >
-                    <div className="pb-2 pr-2">
-                      <BoardMonitorPreview
-                        aliasId={boardAliasId}
-                        isOpen={isBoardSectionOpen}
-                        isMobile={isMobile}
-                        previewScale={previewScale}
-                        fillWidth={fillWidth}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {showStream && (
-              <>
-                <StreamPresentationPreview
-                  toggleIsTransmitting={toggleStream}
-                  quickLinks={streamQuickLinks}
-                  variant={variant}
-                  showFocusedStreamControls={showFocusedStreamControls}
-                  isMobile={isMobile}
-                  previewScale={previewScale}
-                  fillWidth={fillWidth}
-                  readOnly={readOnly}
-                />
-                {variant === "overlayStreamFocus" &&
-                  overlayStreamQuickLinksBelowPreview.length > 0 && (
-                    <ul className="grid w-full shrink-0 grid-cols-4 gap-2 border-t border-white/12 py-1 pt-2">
-                      {overlayStreamQuickLinksBelowPreview.map((link) => (
-                        <QuickLink
-                          key={link.id}
-                          timers={timers}
-                          displayType="stream"
-                          isMobile={isMobile}
-                          {...link}
-                        />
-                      ))}
-                    </ul>
-                  )}
-              </>
-            )}
+                ) : null;
+              const displayFooter = (
+                <>
+                  {mirrorControls}
+                  {output.type === "projector" ? (
+                    <MirroredByBadge outputId={output.id} />
+                  ) : null}
+                </>
+              );
+
+              if (output.type === "projector") {
+                return (
+                  <Fragment key={output.id}>
+                    <ProjectorPresentationPreview
+                      outputId={output.id}
+                      name={output.name}
+                      toggleIsTransmitting={toggleByOutputId[output.id]}
+                      quickLinks={quickLinksByOutputId[output.id] ?? []}
+                      isMobile={isMobile}
+                      previewScale={previewScale}
+                      fillWidth={fillWidth}
+                      readOnly={readOnly}
+                      footer={displayFooter}
+                    />
+                    {board}
+                  </Fragment>
+                );
+              }
+
+              if (output.type === "monitor") {
+                return (
+                  <Fragment key={output.id}>
+                    <MonitorPresentationPreview
+                      outputId={output.id}
+                      name={output.name}
+                      toggleIsTransmitting={toggleByOutputId[output.id]}
+                      quickLinks={quickLinksByOutputId[output.id] ?? []}
+                      isMobile={isMobile}
+                      previewScale={previewScale}
+                      fillWidth={fillWidth}
+                      readOnly={readOnly}
+                      footer={displayFooter}
+                    />
+                    {board}
+                  </Fragment>
+                );
+              }
+
+              return (
+                <Fragment key={output.id}>
+                  <StreamPresentationPreview
+                    outputId={output.id}
+                    name={output.name}
+                    toggleIsTransmitting={toggleByOutputId[output.id]}
+                    quickLinks={quickLinksByOutputId[output.id] ?? []}
+                    variant={variant}
+                    showFocusedStreamControls={showFocusedStreamControls}
+                    isMobile={isMobile}
+                    previewScale={previewScale}
+                    fillWidth={fillWidth}
+                    readOnly={readOnly}
+                    footer={displayFooter}
+                  />
+                  {/* Belongs to the primary stream only — it would otherwise
+                      repeat under every stream tile. */}
+                  {variant === "overlayStreamFocus" &&
+                    output.id === primaryStreamOutput?.id &&
+                    overlayStreamQuickLinksBelowPreview.length > 0 && (
+                      <ul className="grid w-full shrink-0 grid-cols-4 gap-2 border-t border-white/12 py-1 pt-2">
+                        {overlayStreamQuickLinksBelowPreview.map((link) => (
+                          <QuickLink
+                            key={link.id}
+                            timers={timers}
+                            displayType="stream"
+                            isMobile={isMobile}
+                            {...link}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                </Fragment>
+              );
+            })}
+            {showBoardSection && !boardAnchorOutputId && boardSection}
           </div>
         </section>
       </div>

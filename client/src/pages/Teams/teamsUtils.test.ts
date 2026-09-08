@@ -1,6 +1,8 @@
 import type {
   TeamBlockoutDateRange,
   TeamRosterMember,
+  TeamSchedule,
+  TeamScheduleSummary,
   TeamService,
 } from "../../api/authTypes";
 import {
@@ -9,12 +11,26 @@ import {
   findBlockoutRangeForDate,
   formatPlainDateRangeLabel,
   formatShortOccurrenceDate,
+  getMemberServingHistories,
   isServiceActive,
   isServicePastEnd,
   memberName,
   serviceDateBlockedOut,
   sortTeamRosterMembersAlphabetically,
 } from "./teamsUtils";
+
+const schedule = (
+  overrides: Partial<TeamSchedule | TeamScheduleSummary>,
+): TeamSchedule => ({
+  scheduleId: "schedule-1",
+  churchId: "church-1",
+  name: "Schedule",
+  teamId: "team-1",
+  serviceIds: [],
+  occurrences: [],
+  assignments: {},
+  ...overrides,
+}) as TeamSchedule;
 
 const service = (overrides: Partial<TeamService>): TeamService => ({
   id: overrides.serviceId || "service",
@@ -55,6 +71,71 @@ describe("formatPlainDateRangeLabel", () => {
     expect(formatPlainDateRangeLabel("2026-09-06", "2026-09-13")).toBe(
       "September 06, 2026 – September 13, 2026",
     );
+  });
+});
+
+describe("getMemberServingHistories", () => {
+  it("counts completed assignments and finds the latest served date", () => {
+    const histories = getMemberServingHistories(
+      "team-1",
+      ["member-1"],
+      [
+        schedule({
+          startDate: "2026-08-01",
+          endDate: "2026-08-31",
+          occurrences: [
+            {
+              occurrenceId: "service@2026-08-10",
+              serviceId: "service",
+              name: "Sunday",
+              startsAt: "2026-08-10T10:00:00.000Z",
+            },
+          ],
+          assignments: {
+            "service@2026-08-10": {
+              "position::0": { primaryMemberId: "member-1" },
+            },
+          },
+        }),
+        schedule({
+          scheduleId: "schedule-old",
+          startDate: "2026-07-01",
+          endDate: "2026-07-31",
+          occurrences: [
+            {
+              occurrenceId: "service@2026-07-10",
+              serviceId: "service",
+              name: "Sunday",
+              startsAt: "2026-07-10T10:00:00.000Z",
+            },
+          ],
+          assignments: {
+            "service@2026-07-10": {
+              "position::0": { primaryMemberId: "member-1" },
+            },
+          },
+        }),
+        {
+          ...schedule({
+            scheduleId: "schedule-2",
+            startDate: "2026-09-10",
+            endDate: "2026-09-30",
+          }),
+          assignmentsOmitted: true,
+          assignmentCounts: {
+            byMemberId: { "member-1": 1 },
+            byPositionId: {},
+            lastAssignmentDateByMemberId: { "member-1": "2026-09-20" },
+          },
+        },
+      ],
+      "2026-09-01",
+    );
+
+    expect(histories.get("member-1")).toEqual({
+      recentAssignmentCount: 1,
+      lastServedDate: "2026-08-10",
+    });
   });
 });
 

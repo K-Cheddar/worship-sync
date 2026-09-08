@@ -10,6 +10,11 @@ import MultiSelectSubsetTick from "../MultiSelectSubsetTick/MultiSelectSubsetTic
 type LeftPanelButtonProps = {
   isSelected: boolean;
   style?: React.CSSProperties | undefined;
+  /**
+   * Absolute route for this row. Callers build it from the controller they are
+   * on — this used to prefix "/controller" itself, which threw operators on an
+   * auxiliary controller onto the presentation controller.
+   */
   to: string;
   title: string;
   subtitle?: string;
@@ -91,21 +96,21 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         <Button
           variant="none"
           className="relative z-10 flex min-h-8 min-w-0 flex-1 shrink items-center self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none"
-          iconSize="md"
+          iconSize="xs"
           wrap
-          svg={image || isActive ? undefined : svgMap.get(type) || FileQuestion}
+          svg={svgMap.get(type) || FileQuestion}
           gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
           padding="py-1 px-2"
           component="link"
-          to={`/controller/${to}`}
+          to={to}
           onClick={onClick}
         >
           {image && !isActive && (
             <img
               src={resolvedImage ?? image}
-              className="w-14 max-w-[30%] shrink-0"
+              className="w-12 max-w-[20%] shrink-0"
               alt={title}
             />
           )}

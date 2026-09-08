@@ -45,6 +45,7 @@ import {
   validateBoardPostTextUpdate,
 } from "./server/boardService.js";
 import { getChurchIntegrationsPath } from "./server/churchIntegrations.js";
+import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
 import {
   createRestreamService,
   normalizeRestreamPostedAtMs,
@@ -73,10 +74,23 @@ import {
   createChatImageFinalizeGuard,
   createChatImageUploadGuard,
 } from "./server/chatImageUploadGuard.js";
+import { resolveMinimumSupportedWebVersion } from "./server/webUpdatePolicy.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
 dotenv.config();
+
+const minimumSupportedWebVersion = resolveMinimumSupportedWebVersion(
+  process.env.MIN_SUPPORTED_WEB_VERSION,
+  packageJson.version,
+);
+
+if (process.env.MIN_SUPPORTED_WEB_VERSION && !minimumSupportedWebVersion) {
+  console.error(
+    "Ignoring invalid MIN_SUPPORTED_WEB_VERSION; it must be a released version at or below this deployment.",
+  );
+}
+
 // Validate required environment variables
 const requiredEnvVars = [
   "AZURE_TENANT_ID",
@@ -1341,6 +1355,10 @@ app.get(
   authHandlers.listDisplayDevices,
 );
 app.post(
+  "/api/churches/:churchId/display-devices/:deviceId/settings",
+  authHandlers.updateDisplayDeviceSettings,
+);
+app.post(
   "/api/churches/:churchId/display-devices/:deviceId/revoke",
   authHandlers.revokeDisplayDevice,
 );
@@ -1914,6 +1932,19 @@ app.get("/api/churches/:churchId/canva/designs", async (req, res) => {
     );
   } catch (error) {
     respondCanvaError(res, "Error listing Canva designs:", error);
+  }
+});
+
+app.get("/api/churches/:churchId/canva/designs/:designId", async (req, res) => {
+  try {
+    res.json(
+      await canvaService.getDesign({
+        churchId: req.params.churchId,
+        designId: req.params.designId,
+      }),
+    );
+  } catch (error) {
+    respondCanvaError(res, "Error loading Canva design:", error);
   }
 });
 
@@ -2633,7 +2664,10 @@ app.get("/api/hello", (req, res) => {
 });
 
 app.get("/api/version", (req, res) => {
-  res.json({ version: packageJson.version });
+  res.json({
+    version: packageJson.version,
+    minSupportedWebVersion: minimumSupportedWebVersion,
+  });
 });
 
 app.post("/api/log", (req, res) => {
@@ -2990,6 +3024,24 @@ app.delete("/api/mux/asset/:assetId", async (req, res) => {
 
 app.get("/api/getDbSession", async (req, res) => {
   try {
+    // New churches need an empty CouchDB content DB before the client can
+    // finish initial replication. Ensure it here so already-created churches
+    // without a remote DB recover on the next controller open.
+    try {
+      const bootstrap = await resolveRequestBootstrap(req);
+      const contentDatabaseKey = String(bootstrap?.database || "").trim();
+      if (contentDatabaseKey) {
+        await ensureWorshipSyncContentDatabase(contentDatabaseKey);
+      }
+    } catch (provisionError) {
+      console.error(
+        "Error ensuring church content database:",
+        provisionError?.message || provisionError,
+      );
+      // Still establish the CouchDB cookie below; replication may retry once
+      // the DB exists. Creation failure is logged for ops.
+    }
+
     const couchURL = `https://${process.env.COUCHDB_HOST}/_session`;
 
     const loginResp = await axios({

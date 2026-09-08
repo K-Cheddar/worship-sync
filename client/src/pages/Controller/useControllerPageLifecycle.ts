@@ -38,14 +38,16 @@ import {
   getOverlaysByIds,
   updateAllDocs,
   migrateMediaLibraryFoldersFieldIfNeeded,
-  loadPreferencesBundle,
 } from "../../utils/dbUtils";
+import {
+  loadOrCreateAllItemsDoc,
+  loadOrCreatePreferencesBundle,
+} from "../../utils/controllerBootstrapDocs";
 import {
   mergeRemoteOverlayListWithLocalBuffer,
   syncSelectedOverlayFromRemote,
   type OverlaySyncRootSlice,
 } from "../../utils/overlayRemoteSync";
-import { useMediaCache } from "../../hooks/useMediaCache";
 import { getMediaUrlsFromMediaDoc } from "../../utils/mediaCacheUtils";
 import {
   initiateMonitorSettings,
@@ -97,14 +99,16 @@ export const useControllerPageLifecycle = () => {
   const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
-  const { access, refreshPresentationListeners, churchId, firebaseDb, loginState } =
-    useContext(GlobalInfoContext) || {};
+  const {
+    access,
+    refreshPresentationListeners,
+    churchId,
+    firebaseDb,
+    loginState,
+  } = useContext(GlobalInfoContext) || {};
 
   const selectedList = useSelector(
     (state) => state.undoable.present.itemLists.selectedList,
-  );
-  const activeList = useSelector(
-    (state) => state.undoable.present.itemLists.activeList,
   );
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
@@ -120,7 +124,6 @@ export const useControllerPageLifecycle = () => {
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
-  const { preloadOutlineMedia } = useMediaCache();
 
   const updateAllItemsAndListFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -235,12 +238,18 @@ export const useControllerPageLifecycle = () => {
         }
       });
       resizeObserver.observe(node);
+      return () => resizeObserver.disconnect();
     },
     [setIsMobile, setIsPhone],
   );
 
   useEffect(() => {
     return () => {
+      // Button (and others) read sticky isMobile from context; leaving it true
+      // after leaving the controller makes Account/settings icons jump to xl
+      // until a full refresh resets the provider.
+      setIsMobile?.(false);
+      setIsPhone?.(false);
       dispatch({ type: "RESET" });
       dispatch(setAllItemsIsInitialized(false));
       dispatch(setPreferencesIsInitialized(false));
@@ -252,13 +261,16 @@ export const useControllerPageLifecycle = () => {
       dispatch({ type: "RESET_INITIALIZATION" });
       refreshPresentationListeners?.();
     };
-  }, [dispatch, refreshPresentationListeners]);
+  }, [dispatch, refreshPresentationListeners, setIsMobile, setIsPhone]);
 
   // Firebase gives real-time service time updates (same mechanism as StreamInfo.tsx).
   // Falls back to a one-time DB load for guest / offline sessions.
   useEffect(() => {
     if (!firebaseDb || loginState === "guest" || !churchId) return;
-    const servicesRef = ref(firebaseDb, getChurchDataPath(churchId, "services"));
+    const servicesRef = ref(
+      firebaseDb,
+      getChurchDataPath(churchId, "services"),
+    );
     const unsubscribe = onValue(servicesRef, (snapshot) => {
       const data = snapshot.val() as ServiceTime[] | null;
       dispatch(initiateServices(data ?? []));
@@ -270,7 +282,8 @@ export const useControllerPageLifecycle = () => {
     if (!db || loginState !== "guest") return;
     const load = async () => {
       try {
-        const doc: { list?: ServiceTime[] } | undefined = await db.get("services");
+        const doc: { list?: ServiceTime[] } | undefined =
+          await db.get("services");
         dispatch(initiateServices(doc?.list ?? []));
       } catch {
         dispatch(initiateServices([]));
@@ -282,22 +295,32 @@ export const useControllerPageLifecycle = () => {
   useEffect(() => {
     const getAllItems = async () => {
       if (!db) return;
-      const allItems: DBAllItems | undefined = await db.get("allItems");
-      const items = allItems?.items || [];
-      const sortedItems = sortNamesInList(items);
-      dispatch(initiateAllItemsList(sortedItems));
-      updateAllDocs(dispatch);
-      deleteUnusedBibleItems({ db, allItems });
-      deleteUnusedHeadings({ db, allItems });
+      try {
+        const allItems = await loadOrCreateAllItemsDoc(db);
+        const items = allItems.items || [];
+        const sortedItems = sortNamesInList(items);
+        dispatch(initiateAllItemsList(sortedItems));
+        updateAllDocs(dispatch);
+        deleteUnusedBibleItems({ db, allItems });
+        deleteUnusedHeadings({ db, allItems });
+      } catch (error) {
+        console.error(error);
+        // Non-404 failure: unblock UI for this session only — do not write empty docs.
+        dispatch(initiateAllItemsList([]));
+        showToast(
+          "Could not load the item library. Reload the page before editing songs or items.",
+          "error",
+        );
+      }
     };
-    getAllItems();
-  }, [dispatch, db]);
+    void getAllItems();
+  }, [dispatch, db, showToast]);
 
   useEffect(() => {
     if (!db) return;
     const getPreferences = async () => {
       try {
-        const bundle = await loadPreferencesBundle(db);
+        const bundle = await loadOrCreatePreferencesBundle(db);
         dispatch(
           initiatePreferences({
             preferences: bundle.preferences,
@@ -328,7 +351,7 @@ export const useControllerPageLifecycle = () => {
         dispatch(setPreferencesIsInitialized(true));
       }
     };
-    getPreferences();
+    void getPreferences();
   }, [dispatch, db, access, showToast]);
 
   useEffect(() => {
@@ -398,13 +421,6 @@ export const useControllerPageLifecycle = () => {
   }, [allControllerSlicesInitialized, dispatch]);
 
   useEffect(() => {
-    if (!db || !window.electronAPI || !activeList?._id) return;
-    preloadOutlineMedia(activeList._id).catch((error) => {
-      console.warn("Error preloading active outline media:", error);
-    });
-  }, [activeList?._id, db, preloadOutlineMedia]);
-
-  useEffect(() => {
     if (!db || !window.electronAPI) return;
     const syncMedia = async () => {
       try {
@@ -437,7 +453,15 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     const getItemList = async () => {
-      if (!selectedList || !db || !cloud) return;
+      if (!db || !cloud) return;
+      // No selected outline (empty registry): leave empty state, never keep skeletons.
+      if (!selectedList?._id) {
+        dispatch(initiateItemList([]));
+        dispatch(setStoredServicePlanningOutlineIfIdle(null));
+        dispatch(setServicePlanningOutlinePlanBinding(null));
+        dispatch(setItemListIsLoading(false));
+        return;
+      }
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db.get(
@@ -455,9 +479,7 @@ export const useControllerPageLifecycle = () => {
             response?.servicePlanBinding ?? null,
           ),
         );
-        if (cloud) {
-          dispatch(initiateItemList(formatItemList(itemList, cloud)));
-        }
+        dispatch(initiateItemList(formatItemList(itemList, cloud)));
         const formattedOverlays = await getOverlaysByIds(db, overlayIds);
         dispatch(initiateOverlayList(formattedOverlays));
         const overlayHistory = await getAllOverlayHistory(db);

@@ -22,6 +22,7 @@ import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { DBItem, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
 import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
@@ -146,6 +147,7 @@ const FilteredItems = ({
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const controllerBasePath = useControllerBasePath();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   const listOfType = useMemo(() => {
@@ -545,7 +547,7 @@ const FilteredItems = ({
       onCreateFromExternal(candidate);
       return;
     }
-    navigate("/controller/create");
+    navigate(`${controllerBasePath}/create`);
   };
 
   const renderDisplayRow = (row: FilteredItemsVirtualRow, rowIndex: number) => {
@@ -786,7 +788,7 @@ const FilteredItems = ({
                 svg={FilePlus}
                 color="#84cc16"
                 component="link"
-                to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+                to={`${controllerBasePath}/create?type=${type}&name=${encodeURI(searchValue)}`}
               >
                 Create a new {label}
               </Button>

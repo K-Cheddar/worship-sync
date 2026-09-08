@@ -95,7 +95,7 @@ const TeamsAndServicesIndexRedirect = () => {
 };
 
 const TeamsAndServicesLayout = () => {
-  const { loading, toolbarLogoUrl, churchName } = useTeamsPage();
+  const { loading, toolbarLogos, churchName } = useTeamsPage();
   const location = useLocation();
   useTeamsAbandonedReturnCleanup();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -119,50 +119,50 @@ const TeamsAndServicesLayout = () => {
       mobileTitle={activeSection.label}
       centerTitleOnMobile
       icon={Users}
-      toolbarLogoUrl={toolbarLogoUrl}
+      toolbarLogos={toolbarLogos}
       churchName={churchName}
       mobileNavigation={
         (menuItems) => <TeamsMobileNavigation menuItems={menuItems} />
       }
     >
-        <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
-          <Sidebar
-            className={cn(
-              "relative hidden flex-col transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
-              sidebarCollapsed ? "w-14 lg:p-2" : `${APP_SIDEBAR_WIDTH_CLASS} lg:p-2`,
-            )}
+      <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
+        <Sidebar
+          className={cn(
+            "relative hidden flex-col transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
+            sidebarCollapsed ? "w-14 lg:p-2" : `${APP_SIDEBAR_WIDTH_CLASS} lg:p-2`,
+          )}
+        >
+          <Button
+            type="button"
+            variant="tertiary"
+            padding="p-0"
+            position="absolute"
+            className="right-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-950 shadow-sm"
+            aria-expanded={!sidebarCollapsed}
+            aria-label={
+              sidebarCollapsed ? "Expand sections" : "Collapse sections"
+            }
+            onClick={() => setSidebarCollapsed((current) => !current)}
           >
-            <Button
-              type="button"
-              variant="tertiary"
-              padding="p-0"
-              position="absolute"
-              className="right-0 top-1/2 z-20 flex size-8 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-950 shadow-sm"
-              aria-expanded={!sidebarCollapsed}
-              aria-label={
-                sidebarCollapsed ? "Expand sections" : "Collapse sections"
-              }
-              onClick={() => setSidebarCollapsed((current) => !current)}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight className="size-4 shrink-0" aria-hidden />
-              ) : (
-                <ChevronLeft className="size-4 shrink-0" aria-hidden />
-              )}
-            </Button>
-            <TeamsSidebarNav collapsed={sidebarCollapsed} />
-          </Sidebar>
+            {sidebarCollapsed ? (
+              <ChevronRight className="size-4 shrink-0" aria-hidden />
+            ) : (
+              <ChevronLeft className="size-4 shrink-0" aria-hidden />
+            )}
+          </Button>
+          <TeamsSidebarNav collapsed={sidebarCollapsed} />
+        </Sidebar>
 
-          <div className={teamsSectionScrollClassName}>
-            <div className="flex min-h-0 flex-1 flex-col">
-              {loading ? (
-                getTeamsSectionSkeleton(activeSection.routePath)
-              ) : (
-                <Outlet />
-              )}
-            </div>
+        <div className={teamsSectionScrollClassName}>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {loading ? (
+              getTeamsSectionSkeleton(activeSection.routePath)
+            ) : (
+              <Outlet />
+            )}
           </div>
-        </section>
+        </div>
+      </section>
     </AppWorkspaceShell>
   );
 };

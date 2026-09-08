@@ -47,6 +47,20 @@ describe("buildClonedParticipantOverlay", () => {
     expect(built.formatting?.participantOverlayPosition).toBe("left");
   });
 
+  it("uses the configured default formatting when supplied", () => {
+    const built = buildClonedParticipantOverlay(
+      {
+        ...p("t", "Sabbath School"),
+        formatting: { participantOverlayPosition: "left" },
+      },
+      { name: "New Name", event: "Sabbath School" },
+      "new-id",
+      { participantOverlayPosition: "right" },
+    );
+
+    expect(built.formatting?.participantOverlayPosition).toBe("right");
+  });
+
   it("clears stale template titles when the service plan has no matching title", () => {
     const template = p("t", "Sabbath School", "Old");
     template.title = "Stale Title";

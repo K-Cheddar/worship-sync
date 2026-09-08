@@ -7,16 +7,17 @@ import {
   LayoutGrid,
   Maximize,
   ImageUp,
+  HardDrive,
+  MonitorSmartphone,
+  MonitorUp,
   Plus,
-  Upload,
+  Video,
   X,
 } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
 import MediaUploadInput from "./MediaUploadInput";
-import {
-  setIsMediaExpanded,
-} from "../../store/preferencesSlice";
+import { setIsMediaExpanded } from "../../store/preferencesSlice";
 import {
   MEDIA_LIBRARY_ROOT_VIEW,
   moveMediaToFolder,
@@ -30,13 +31,16 @@ import {
 import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import cn from "classnames";
 import Toggle from "../../components/Toggle/Toggle";
+import MediaOriginFilter from "./MediaOriginFilter";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import MediaModal from "./MediaModal";
 import MediaProviderRetryModal from "./MediaProviderRetryModal";
 import MediaLibraryGrid from "./MediaLibraryGrid";
 import { useMediaLibraryController } from "./useMediaLibraryController";
-import type { MediaFolder } from "../../types";
-import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import type { MediaFolder, MediaType } from "../../types";
+import FloatingWindow, {
+  FloatingWindowHandle,
+} from "../../components/FloatingWindow/FloatingWindow";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +48,19 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
 import CanvaImportSheet from "./CanvaImportSheet";
+import { getCanvaStatus } from "../../api/canva";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import LocalVideoInputPicker, {
+  type LocalVideoCaptureMode,
+} from "../../components/LocalVideoInputPicker/LocalVideoInputPicker";
+import {
+  addItemToMediaList,
+  updateMediaItemFields,
+} from "../../store/mediaSlice";
+import type { LocalVideoInputMediaSource } from "../../types";
+import { getOrCreateDeviceId } from "../../utils/authStorage";
+import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
+import { supportsDesktopCapture } from "../../utils/desktopCapture";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -56,8 +73,61 @@ type MediaProps = {
 
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
-  const c = useMediaLibraryController({ variant, pageMode });
+  const { churchId = "" } = useContext(GlobalInfoContext) || {};
+  const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
+  const [canvaSourceMedia, setCanvaSourceMedia] = useState<MediaType | null>(
+    null,
+  );
+  const [canvaOauthConfigured, setCanvaOauthConfigured] = useState(false);
+  const [isVideoInputOpen, setIsVideoInputOpen] = useState(false);
+  const [videoInputToEdit, setVideoInputToEdit] =
+    useState<LocalVideoInputMediaSource>();
+  const [videoInputMode, setVideoInputMode] =
+    useState<LocalVideoCaptureMode>("device");
+  const openCanva = useCallback((sourceMedia?: MediaType) => {
+    setCanvaSourceMedia(sourceMedia || null);
+    setIsCanvaImportOpen(true);
+  }, []);
+  const relinkVideoInput = useCallback((media: MediaType) => {
+    const captureKind = media.localVideoInput?.captureKind;
+    setVideoInputMode(
+      captureKind === "screen" || captureKind === "window"
+        ? "desktop"
+        : "device",
+    );
+    setVideoInputToEdit(media.localVideoInput);
+    setIsVideoInputOpen(true);
+  }, []);
+  const openVideoInputPicker = useCallback((mode: LocalVideoCaptureMode) => {
+    setVideoInputMode(mode);
+    setVideoInputToEdit(undefined);
+    setIsVideoInputOpen(true);
+  }, []);
+  const c = useMediaLibraryController({
+    variant,
+    pageMode,
+    onManageCanvaSource: canvaOauthConfigured ? openCanva : undefined,
+    onRelinkVideoInput: relinkVideoInput,
+  });
   const { showAll, navigateToFolder } = c;
+
+  useEffect(() => {
+    if (!churchId) {
+      setCanvaOauthConfigured(false);
+      return;
+    }
+    let active = true;
+    void getCanvaStatus(churchId)
+      .then((status) => {
+        if (active) setCanvaOauthConfigured(Boolean(status.oauthConfigured));
+      })
+      .catch(() => {
+        if (active) setCanvaOauthConfigured(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [churchId]);
 
   const selectedCount = c.selectedMediaIds.size;
   const mediaRenameWindowRef = useRef<FloatingWindowHandle>(null);
@@ -65,7 +135,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
-  const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
 
   const handleNewFolderCreated = useCallback(
     (nf: MediaFolder) => {
@@ -102,9 +171,49 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   let toolbarAddMediaTitle = "Add Media";
   if (c.uploadProgress.isUploading) {
     toolbarAddMediaTitle = `Uploading... ${Math.round(c.uploadProgress.progress)}%`;
-  } else if (c.isGuestSession) {
-    toolbarAddMediaTitle = "Guest mode: sample media only. Sign in to upload.";
   }
+
+  const addLocalMedia = useCallback(
+    (media: MediaType) => {
+      const existing = c.list.find((item) => item.id === media.id);
+      if (existing) {
+        dispatch(updateMediaItemFields({ id: existing.id, patch: media }));
+        return;
+      }
+      dispatch(addItemToMediaList(media));
+    },
+    [c.list, dispatch],
+  );
+
+  const addVideoInput = useCallback(
+    (source: LocalVideoInputMediaSource) => {
+      const ownedSource: LocalVideoInputMediaSource = {
+        ...source,
+        ownerDeviceId: getOrCreateDeviceId(),
+        ownerLabel: getTrustedDeviceLabel(),
+      };
+      const now = new Date().toISOString();
+      const id = `local_input_${ownedSource.sourceId}`;
+      addLocalMedia({
+        path: "",
+        createdAt: now,
+        updatedAt: now,
+        format: "live",
+        height: 1080,
+        width: 1920,
+        name: ownedSource.label,
+        publicId: id,
+        type: "video",
+        id,
+        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
+        thumbnail: "",
+        placeholderImage: "",
+        source: "local",
+        localVideoInput: ownedSource,
+      });
+    },
+    [addLocalMedia],
+  );
 
   return (
     <ErrorBoundary>
@@ -153,14 +262,28 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
-                  <Upload /> Upload files
+                  <HardDrive /> Add files
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={c.isGuestSession || c.isMediaReadOnly}
-                  onSelect={() => setIsCanvaImportOpen(true)}
+                  onSelect={() => openVideoInputPicker("device")}
                 >
-                  <ImageUp /> Import from Canva
+                  <Video /> Add video input
                 </DropdownMenuItem>
+                {supportsDesktopCapture() ? (
+                  <DropdownMenuItem
+                    onSelect={() => openVideoInputPicker("desktop")}
+                  >
+                    <MonitorUp /> Add screen or window
+                  </DropdownMenuItem>
+                ) : null}
+                {canvaOauthConfigured ? (
+                  <DropdownMenuItem
+                    disabled={c.isGuestSession || c.isMediaReadOnly}
+                    onSelect={() => openCanva()}
+                  >
+                    <ImageUp /> Import from Canva
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
             <Button
@@ -174,18 +297,32 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         </div>
         <MediaUploadInput
           ref={c.mediaUploadInputRef}
-          onImageComplete={c.addNewBackground}
-          onVideoComplete={c.addMuxVideo}
+          onLocalMediaAdded={addLocalMedia}
+          onLocalMediaPatched={(id, patch) =>
+            dispatch(updateMediaItemFields({ id, patch }))
+          }
           showButton={false}
           uploadPreset="bpqu4ma5"
-          cloudName="portable-media"
           onUploadActiveChange={c.handleUploadActiveChange}
-          uploadDisabled={c.isGuestSession || c.isMediaReadOnly}
+          uploadDisabled={c.isMediaReadOnly}
         />
+        {isVideoInputOpen ? (
+          <LocalVideoInputPicker
+            hideTrigger
+            open
+            captureMode={videoInputMode}
+            source={videoInputToEdit}
+            onOpenChange={(open) => {
+              setIsVideoInputOpen(open);
+              if (!open) setVideoInputToEdit(undefined);
+            }}
+            onLinked={addVideoInput}
+          />
+        ) : null}
         {!c.isMediaReadOnly && c.isMediaExpanded && (
           <>
             <div className="w-full min-w-0">
-              <div className="mx-2 flex items-center gap-2 border-b border-gray-500 bg-black/60 px-4 py-2">
+              <div className="mx-2 flex flex-wrap items-center gap-2 border-b border-gray-500 bg-black/60 px-4 py-2">
                 <Input
                   type="text"
                   label="Search"
@@ -194,7 +331,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   onChange={(value) => c.setSearchTerm(String(value))}
                   placeholder="Search..."
                   aria-label="Search"
-                  className="flex gap-4 items-center flex-1"
+                  className="flex min-w-48 flex-1 gap-4 items-center"
                   inputWidth="w-full"
                   inputTextSize="text-sm"
                   svg={c.searchTerm ? X : undefined}
@@ -207,6 +344,19 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   value={c.showAll}
                   onChange={c.handleShowAllChange}
                 />
+                <MediaOriginFilter
+                  value={c.originFilter}
+                  onChange={c.setOriginFilter}
+                  className="w-40 shrink-0"
+                />
+                {c.showOtherDeviceLocalMediaToggle ? (
+                  <Toggle
+                    label="Other devices"
+                    icon={MonitorSmartphone}
+                    value={c.showOtherDeviceLocalMedia}
+                    onChange={c.setShowOtherDeviceLocalMedia}
+                  />
+                ) : null}
               </div>
               <div className="w-full">
                 <MediaLibraryActionBar
@@ -332,9 +482,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onClose={c.handleCancelDelete}
           onConfirm={c.handleConfirmDelete}
           isConfirming={c.isDeleteInProgress}
-          itemName={
-            c.isDeletingMultiple ? undefined : c.mediaToDelete?.name
-          }
+          itemName={c.isDeletingMultiple ? undefined : c.mediaToDelete?.name}
           title="Delete Media"
           message={
             c.isDeletingMultiple
@@ -374,6 +522,11 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           showName={c.showName}
           typeFilter={c.typeFilter}
           onTypeFilterChange={c.setTypeFilter}
+          originFilter={c.originFilter}
+          onOriginFilterChange={c.setOriginFilter}
+          showOtherDeviceLocalMedia={c.showOtherDeviceLocalMedia}
+          onShowOtherDeviceLocalMediaChange={c.setShowOtherDeviceLocalMedia}
+          showOtherDeviceLocalMediaToggle={c.showOtherDeviceLocalMediaToggle}
           onMediaClick={c.handleMediaClick}
           onSearchChange={(value) => c.setSearchTerm(value)}
           onShowNameToggle={() => c.setShowName(!c.showName)}
@@ -386,16 +539,32 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaUploadInputRef={c.mediaUploadInputRef}
           uploadProgress={c.uploadProgress}
           onAddMediaClick={c.requestMediaUpload}
-          onImportFromCanva={() => setIsCanvaImportOpen(true)}
-          mediaUploadDisabled={c.isGuestSession || c.isMediaReadOnly}
+          onAddVideoInput={() => openVideoInputPicker("device")}
+          onAddScreenShare={
+            supportsDesktopCapture()
+              ? () => openVideoInputPicker("desktop")
+              : undefined
+          }
+          onRelinkVideoInput={relinkVideoInput}
+          onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
+          mediaUploadDisabled={c.isMediaReadOnly}
+          isGuestSession={c.isGuestSession}
         />
-        <CanvaImportSheet
-          open={isCanvaImportOpen}
-          onOpenChange={setIsCanvaImportOpen}
-          onImageComplete={c.addNewBackground}
-          onVideoComplete={c.addMuxVideo}
-          existingMedia={c.list}
-        />
+        {canvaOauthConfigured ? (
+          <CanvaImportSheet
+            open={isCanvaImportOpen}
+            onOpenChange={(open) => {
+              setIsCanvaImportOpen(open);
+              if (!open) setCanvaSourceMedia(null);
+            }}
+            onImageComplete={c.addNewBackground}
+            onVideoComplete={c.addMuxVideo}
+            onImageRefresh={c.refreshCanvaImage}
+            onVideoRefresh={c.refreshCanvaVideo}
+            existingMedia={c.list}
+            sourceMedia={canvaSourceMedia}
+          />
+        ) : null}
         {selectedCount === 1 && c.mediaRenameOpen ? (
           <FloatingWindow
             ref={mediaRenameWindowRef}

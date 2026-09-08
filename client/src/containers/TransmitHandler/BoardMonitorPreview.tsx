@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { MonitorUp } from "lucide-react";
 import BoardPresentationFontScaleControl from "../../boards/BoardPresentationFontScaleControl";
 import ScaledBoardPreview from "../../boards/ScaledBoardPreview";
@@ -6,7 +6,15 @@ import { setStoredBoardDisplayAliasId } from "../../boards/boardUtils";
 import { useBoardPresentationFontScale } from "../../boards/useBoardPresentationFontScale";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
-import { setMonitorBoardAliasId } from "../../store/presentationSlice";
+import {
+  setDisplayBoardAliasId,
+  selectOutputSlots,
+} from "../../store/presentationSlice";
+import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
+import {
+  getBoardCapableOutputs,
+  resolveBoardTakeoverOutputId,
+} from "../../utils/displayOutputs";
 import { cn } from "../../utils/cnHelper";
 
 type BoardMonitorPreviewProps = {
@@ -32,8 +40,11 @@ type BoardMonitorPreviewProps = {
 
 /**
  * Right-panel tile that previews the discussion board exactly as it appears on the
- * board display, with a toggle to swap the stage monitor between presentation
- * content and the board.
+ * board display, with a toggle to swap the configured room display between
+ * presentation content and the board.
+ *
+ * Which display hosts the board is church setup on the Displays page — this tile
+ * only turns that takeover on or off and adjusts presentation text size.
  */
 const BoardMonitorPreview = ({
   aliasId,
@@ -43,9 +54,31 @@ const BoardMonitorPreview = ({
   fillWidth = false,
 }: BoardMonitorPreviewProps) => {
   const dispatch = useDispatch();
-  const monitorBoardAliasId = useSelector(
-    (state) => state.presentation.monitorBoardAliasId
+  const displayOutputs = useSelector(selectDisplayOutputs);
+  const boardCapableOutputs = useMemo(
+    () => getBoardCapableOutputs(displayOutputs),
+    [displayOutputs],
   );
+  const outputSlots = useSelector(selectOutputSlots);
+  // The display already showing a board wins, so the control always describes
+  // what is actually up rather than the Displays-page preference alone.
+  const liveBoardOutputId = useMemo(
+    () =>
+      boardCapableOutputs.find(
+        (output) => (outputSlots[output.id]?.boardAliasId ?? "") !== "",
+      )?.id ?? "",
+    [boardCapableOutputs, outputSlots],
+  );
+  const targetOutputId = resolveBoardTakeoverOutputId(
+    displayOutputs,
+    liveBoardOutputId,
+  );
+  const targetOutputName =
+    boardCapableOutputs.find((output) => output.id === targetOutputId)?.name ??
+    "display";
+  const monitorBoardAliasId = targetOutputId
+    ? (outputSlots[targetOutputId]?.boardAliasId ?? "")
+    : "";
   const isShowingOnMonitor = monitorBoardAliasId !== "";
 
   // While a board is live on the monitor, mirror exactly that board so the preview
@@ -60,7 +93,7 @@ const BoardMonitorPreview = ({
   // here instead of opening the board controller. Idle while collapsed.
   const { fontScale, changeFontScale } = useBoardPresentationFontScale(
     targetAliasId,
-    { enabled: isOpen }
+    { enabled: isOpen },
   );
 
   const handleToggle = useCallback(
@@ -71,9 +104,14 @@ const BoardMonitorPreview = ({
       if (next && aliasId) {
         setStoredBoardDisplayAliasId(aliasId);
       }
-      dispatch(setMonitorBoardAliasId(next ? aliasId : ""));
+      dispatch(
+        setDisplayBoardAliasId({
+          aliasId: next ? aliasId : "",
+          outputIds: targetOutputId ? [targetOutputId] : undefined,
+        }),
+      );
     },
-    [dispatch, aliasId]
+    [dispatch, aliasId, targetOutputId],
   );
 
   // Match PresentationPreview so the board tile is the same footprint as
@@ -113,7 +151,7 @@ const BoardMonitorPreview = ({
           )}
         >
           <Toggle
-            label="On monitor"
+            label={`On ${targetOutputName}`}
             labelClassName="min-w-0 shrink truncate text-xs"
             className="min-w-0 max-w-full shrink items-center"
             icon={MonitorUp}

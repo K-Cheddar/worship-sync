@@ -53,7 +53,7 @@ const SongSection = ({
     <li
       id={`song-section-${index}`}
       className={cn(
-        "flex shrink-0 items-stretch overflow-hidden rounded-md border transition-colors",
+        "flex shrink-0 cursor-grab touch-none items-stretch overflow-hidden rounded-md border transition-colors active:cursor-grabbing",
         isSelected
           ? songOrderSectionSelectedClass
           : isLinked
@@ -63,15 +63,15 @@ const SongSection = ({
       {...attributes}
       style={style}
       ref={setNodeRef}
+      {...listeners}
       onClick={() => setSelectedIndex(index)}
     >
       <div
         className={cn(
-          "w-1.5 shrink-0 cursor-grab self-stretch touch-none active:cursor-grabbing",
+          "w-1.5 shrink-0 self-stretch",
           accentBarClass,
         )}
         aria-hidden
-        {...listeners}
       />
       <div className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-1 pl-2 max-lg:py-2">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">
@@ -82,6 +82,7 @@ const SongSection = ({
           variant="tertiary"
           svg={Trash2}
           aria-label={`Remove ${name} from song order`}
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             const copiedSongOrder = [...songOrder];
