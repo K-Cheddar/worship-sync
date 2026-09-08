@@ -27,7 +27,7 @@ export const InterfaceZoomMenuControl = () => {
           className="justify-center"
           disabled={zoomLevel === 100}
           variant="secondary"
-          // Keep compact in menus; Button otherwise uses xl icons when isMobile is sticky.
+          // Keep compact in menus even if a prior page left isMobile sticky.
           iconSize="sm"
         />
       </div>

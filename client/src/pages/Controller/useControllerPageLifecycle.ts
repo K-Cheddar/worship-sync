@@ -238,12 +238,18 @@ export const useControllerPageLifecycle = () => {
         }
       });
       resizeObserver.observe(node);
+      return () => resizeObserver.disconnect();
     },
     [setIsMobile, setIsPhone],
   );
 
   useEffect(() => {
     return () => {
+      // Button (and others) read sticky isMobile from context; leaving it true
+      // after leaving the controller makes Account/settings icons jump to xl
+      // until a full refresh resets the provider.
+      setIsMobile?.(false);
+      setIsPhone?.(false);
       dispatch({ type: "RESET" });
       dispatch(setAllItemsIsInitialized(false));
       dispatch(setPreferencesIsInitialized(false));
@@ -255,7 +261,7 @@ export const useControllerPageLifecycle = () => {
       dispatch({ type: "RESET_INITIALIZATION" });
       refreshPresentationListeners?.();
     };
-  }, [dispatch, refreshPresentationListeners]);
+  }, [dispatch, refreshPresentationListeners, setIsMobile, setIsPhone]);
 
   // Firebase gives real-time service time updates (same mechanism as StreamInfo.tsx).
   // Falls back to a one-time DB load for guest / offline sessions.

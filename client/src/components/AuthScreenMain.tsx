@@ -16,7 +16,9 @@ type AuthScreenMainProps = Omit<ComponentPropsWithoutRef<"main">, "className"> &
  * `html` / `body` / `#root` use `overflow: hidden`, so this surface must own
  * scrolling. Use a bounded viewport height (`h-dvh`), not `min-h-dvh`, or the
  * main grows with content and nothing scrolls. `my-auto` centers the short
- * cards these screens are made of.
+ * cards these screens are made of. Children stack in a column (`flex-col
+ * items-center`) so multi-node pages (login card + legal footer) stay
+ * centered instead of sitting side by side in a row.
  */
 const AuthScreenMain = ({ children, className, ...rest }: AuthScreenMainProps) => (
   <main
@@ -31,7 +33,7 @@ const AuthScreenMain = ({ children, className, ...rest }: AuthScreenMainProps) =
     <div className="mx-auto flex w-full max-w-2xl justify-start pb-4">
       <HomeToolbarMenu />
     </div>
-    <div className="my-auto flex w-full justify-center">{children}</div>
+    <div className="my-auto flex w-full flex-col items-center">{children}</div>
   </main>
 );
 

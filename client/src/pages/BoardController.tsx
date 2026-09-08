@@ -294,6 +294,7 @@ export const BoardControllerContent = () => {
   const { setIsMobile } = useContext(ControllerInfoContext) || {};
   useEffect(() => {
     setIsMobile?.(!isLgUp);
+    return () => setIsMobile?.(false);
   }, [isLgUp, setIsMobile]);
 
   const loadAliases = useCallback(async () => {

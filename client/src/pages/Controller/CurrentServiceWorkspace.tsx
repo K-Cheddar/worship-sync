@@ -410,6 +410,7 @@ const CurrentServiceWorkspace = () => {
 
   useEffect(() => {
     setIsMobile?.(!isDesktop);
+    return () => setIsMobile?.(false);
   }, [isDesktop, setIsMobile]);
 
   useEffect(() => {
@@ -856,9 +857,8 @@ const CurrentServiceWorkspace = () => {
 
         {isDesktop ? (
           <aside
-            className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${
-              isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
-            }`}
+            className={`relative flex min-h-0 shrink-0 flex-col self-stretch rounded-xl border border-gray-700 bg-gray-900/60 transition-[width] duration-300 ease-in-out ${isPreviewPanelOpen ? "w-[clamp(18rem,32vw,28rem)]" : "w-10"
+              }`}
             aria-label="Workspace preview"
           >
             <Button

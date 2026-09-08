@@ -95,6 +95,8 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
 
     const { isMobile } = useContext(ControllerInfoContext) || {};
 
+    // Prefer explicit iconSize. Default xl when isMobile is for controller touch
+    // targets; that context flag is sticky, so settings pages should pass iconSize.
     const iconSize = useMemo(() => {
       if (isMobile) {
         return _iconSize || "xl";
