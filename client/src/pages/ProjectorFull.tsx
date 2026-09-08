@@ -4,6 +4,7 @@ import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useCallback } from "react";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { useWakeLock } from "../hooks/useWakeLock";
+import { useHideProjectorCursor } from "../hooks/useHideProjectorCursor";
 
 const ProjectorFull = () => {
   const projectorInfo = useSelector(
@@ -20,6 +21,8 @@ const ProjectorFull = () => {
   );
 
   useWakeLock();
+  // AuthGate only mounts this route after the display is linked / signed in.
+  useHideProjectorCursor();
 
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {
