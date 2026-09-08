@@ -150,4 +150,56 @@ describe("Controller Item page", () => {
       }),
     );
   });
+
+  it("skips re-fetch when Redux already has the route item loaded", async () => {
+    const dbGet = jest.fn().mockResolvedValue({
+      _id: "item-123",
+      name: "Should not load",
+      type: "song",
+      slides: [],
+      arrangements: [],
+      selectedArrangement: 0,
+    } as unknown as DBItem);
+    const controllerContext = createMockControllerContext({
+      db: createMockPouchDB({ get: dbGet }),
+    });
+    const globalContext = createMockGlobalContext();
+    const store = createTestStore();
+    store.dispatch(
+      itemSlice.actions.setActiveItem({
+        _id: "item-123",
+        listId: "list-456",
+        name: "Already loaded",
+        type: "song",
+        slides: [],
+        arrangements: [],
+        selectedArrangement: 0,
+      } as any),
+    );
+
+    const itemId = window.btoa(encodeURI("item-123"));
+    const listId = window.btoa(encodeURI("list-456"));
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={controllerContext as any}>
+          <GlobalInfoContext.Provider value={globalContext as any}>
+            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
+              <Routes>
+                <Route
+                  path="/controller/item/:itemId/:listId"
+                  element={<Item />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(await screen.findByTestId("item-slides")).toBeInTheDocument();
+    expect(dbGet).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.isLoading).toBe(false);
+    expect(store.getState().undoable.present.item.name).toBe("Already loaded");
+  });
 });

@@ -62,6 +62,7 @@ import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
 } from "../../utils/persistSongAudioAttachment";
+import { resolveEditorPreviewVideoPlayback } from "../../utils/videoBackgroundPlayback";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
@@ -142,6 +143,14 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
+
+  const outputSlots = useSelector(
+    (state: RootState) => state.presentation.outputs,
+  );
+  const editorVideoPlayback = useMemo(
+    () => resolveEditorPreviewVideoPlayback(outputSlots, slides[selectedSlide]),
+    [outputSlots, slides, selectedSlide],
+  );
 
   const canEdit =
     access === "full" ||
@@ -1296,6 +1305,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               isBoxLocked={isBoxLocked}
               disabled={!canEdit}
               shouldPlayVideo
+              videoPlayback={editorVideoPlayback}
             />
           </div>
         </div>

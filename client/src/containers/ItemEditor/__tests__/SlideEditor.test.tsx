@@ -112,8 +112,12 @@ jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-const displayWindowCapture: { onChange: ((info: any) => void) | null } = {
+const displayWindowCapture: {
+  onChange: ((info: any) => void) | null;
+  videoPlayback: unknown;
+} = {
   onChange: null,
+  videoPlayback: undefined,
 };
 
 jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
@@ -121,10 +125,16 @@ jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
   default: (props: {
     disabled?: boolean;
     onChange?: (info: any) => void;
+    videoPlayback?: unknown;
   }) => {
     if (props.onChange) displayWindowCapture.onChange = props.onChange;
+    displayWindowCapture.videoPlayback = props.videoPlayback;
     return (
-      <div data-testid="display-window" data-disabled={props.disabled ? "true" : "false"} />
+      <div
+        data-testid="display-window"
+        data-disabled={props.disabled ? "true" : "false"}
+        data-has-video-playback={props.videoPlayback ? "true" : "false"}
+      />
     );
   },
 }));
@@ -206,10 +216,21 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
         },
       },
     },
+    presentation: {
+      outputs: {},
+    },
   };
   return {
     ...base,
     ...overrides,
+    presentation: {
+      ...base.presentation,
+      ...((overrides as any).presentation || {}),
+      outputs: {
+        ...base.presentation.outputs,
+        ...((overrides as any).presentation?.outputs || {}),
+      },
+    },
     undoable: {
       ...base.undoable,
       ...(overrides as any).undoable,
@@ -280,6 +301,7 @@ describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     displayWindowCapture.onChange = null;
+    displayWindowCapture.videoPlayback = undefined;
     mockState = makeBaseState();
     mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
@@ -298,6 +320,165 @@ describe("SlideEditor", () => {
 
     render(<SlideEditor access="full" />);
     expect(screen.getByText("No slide selected")).toBeInTheDocument();
+  });
+
+  it("passes the live video playback cue into the editor preview", () => {
+    const liveCue = {
+      mediaKey: "remote:video-1",
+      positionSeconds: 4,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 9,
+      applySeek: false,
+    };
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Media",
+                name: "Verse 1",
+                boxes: [
+                  {
+                    width: 100,
+                    height: 100,
+                    words: "",
+                    x: 0,
+                    y: 0,
+                    background: "https://cdn.example/loop.mp4",
+                    mediaInfo: {
+                      type: "video",
+                      id: "video-1",
+                      background: "https://cdn.example/loop.mp4",
+                      placeholderImage: "https://cdn.example/poster.jpg",
+                    },
+                  },
+                  { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      presentation: {
+        outputs: {
+          projector: {
+            isTransmitting: true,
+            info: {
+              slide: {
+                id: "s1",
+                type: "Media",
+                name: "Verse 1",
+                boxes: [
+                  {
+                    width: 100,
+                    height: 100,
+                    words: "",
+                    x: 0,
+                    y: 0,
+                    background: "https://cdn.example/loop.mp4",
+                    mediaInfo: {
+                      type: "video",
+                      id: "video-1",
+                      background: "https://cdn.example/loop.mp4",
+                    },
+                  },
+                ],
+              },
+              videoPlayback: liveCue,
+            },
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" />);
+
+    expect(screen.getByTestId("display-window")).toHaveAttribute(
+      "data-has-video-playback",
+      "true",
+    );
+    expect(displayWindowCapture.videoPlayback).toEqual(liveCue);
+  });
+
+  it("keeps the editor preview off the live cue when the selected slide is not on air", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Media",
+                name: "Verse 1",
+                boxes: [
+                  {
+                    width: 100,
+                    height: 100,
+                    words: "",
+                    x: 0,
+                    y: 0,
+                    background: "https://cdn.example/loop.mp4",
+                    mediaInfo: {
+                      type: "video",
+                      id: "video-1",
+                      background: "https://cdn.example/loop.mp4",
+                    },
+                  },
+                  { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      presentation: {
+        outputs: {
+          projector: {
+            isTransmitting: true,
+            info: {
+              slide: {
+                id: "other-slide",
+                type: "Media",
+                name: "Chorus",
+                boxes: [
+                  {
+                    width: 100,
+                    height: 100,
+                    words: "",
+                    x: 0,
+                    y: 0,
+                    mediaInfo: {
+                      type: "video",
+                      id: "video-1",
+                      background: "https://cdn.example/loop.mp4",
+                    },
+                  },
+                ],
+              },
+              videoPlayback: {
+                mediaKey: "remote:video-1",
+                positionSeconds: 4,
+                paused: false,
+                atServerMs: 1_000_000,
+                generation: 9,
+                applySeek: false,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" />);
+
+    expect(screen.getByTestId("display-window")).toHaveAttribute(
+      "data-has-video-playback",
+      "false",
+    );
+    expect(displayWindowCapture.videoPlayback).toBeUndefined();
   });
 
   it("renders box tools panel when toolbar section is box-tools", () => {

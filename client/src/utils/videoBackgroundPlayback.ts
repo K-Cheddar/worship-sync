@@ -239,7 +239,9 @@ export const restartVideoPreview = (): void => {
  * unrelated clip to restart on its next send.
  */
 export const consumeVideoPreviewDirty = (mediaKey?: string): boolean => {
-  const wasDirty = mediaKey ? dirtyMediaKey === mediaKey : dirtyMediaKey !== null;
+  const wasDirty = mediaKey
+    ? dirtyMediaKey === mediaKey
+    : dirtyMediaKey !== null;
   if (!mediaKey || wasDirty) dirtyMediaKey = null;
   return wasDirty;
 };
@@ -315,6 +317,41 @@ export const resolveSyncedVideoPlayback = (
     }
   }
   return best;
+};
+
+type OutputSlotForEditorPreview = {
+  isTransmitting: boolean;
+  info: {
+    slide?: ItemSlideType | null;
+    videoPlayback?: VideoBackgroundPlaybackCue;
+  };
+};
+
+/**
+ * Live transport drives outputs via Redux cues and stops emitting local preview
+ * commands. The editor DisplayWindow has to follow that same cue, or the
+ * preview stays paused while Projector/Monitor/Stream keep playing.
+ */
+export const resolveEditorPreviewVideoPlayback = (
+  outputs: Record<string, OutputSlotForEditorPreview>,
+  slide?: ItemSlideType | null,
+): VideoBackgroundPlaybackCue | undefined => {
+  const mediaKey = getVideoBackgroundMediaKey(
+    getSlideVideoBackgroundMedia(slide),
+  );
+  if (!mediaKey || !slide?.id) return undefined;
+
+  const isSelectedSlideLive = Object.values(outputs).some((slot) => {
+    if (!slot.isTransmitting || slot.info.slide?.id !== slide.id) return false;
+    return (
+      getVideoBackgroundMediaKey(
+        getSlideVideoBackgroundMedia(slot.info.slide),
+      ) === mediaKey
+    );
+  });
+  if (!isSelectedSlideLive) return undefined;
+
+  return resolveSyncedVideoPlayback(outputs, mediaKey);
 };
 
 export const buildVideoPlaybackCueForSend = (

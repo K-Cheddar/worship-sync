@@ -3,12 +3,14 @@ import { act } from "react";
 import OutlineItemSlidesScroller from "./OutlineItemSlidesScroller";
 import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
+import { keepElementInView } from "../../utils/generalUtils";
 import type { DBItem, ItemSlideType, ServiceItem } from "../../types";
 
 const mockDispatch = jest.fn();
 const mockNavigate = jest.fn();
 const mockSelectSlide = jest.fn();
 const mockOnSlideGridClick = jest.fn();
+const mockScrollToIndex = jest.fn();
 let mockState: any;
 let mockDocsById: Map<string, DBItem>;
 
@@ -25,6 +27,10 @@ jest.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
 }));
 
+jest.mock("../../utils/generalUtils", () => ({
+  keepElementInView: jest.fn(() => true),
+}));
+
 jest.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getTotalSize: () => count * 40,
@@ -36,7 +42,7 @@ jest.mock("@tanstack/react-virtual", () => ({
       })),
     measureElement: jest.fn(),
     measure: jest.fn(),
-    scrollToIndex: jest.fn(),
+    scrollToIndex: (...args: unknown[]) => mockScrollToIndex(...args),
     getOffsetForIndex: (index: number) => [index * 40, "start"] as const,
   }),
 }));
@@ -53,13 +59,19 @@ jest.mock("./ItemSlide", () => ({
   default: ({
     index,
     slide,
+    slideDomId,
     onSlideGridClick,
   }: {
     index: number;
     slide: { name: string };
+    slideDomId?: string;
     onSlideGridClick: (e: React.MouseEvent, index: number) => void;
   }) => (
-    <button type="button" onClick={(event) => onSlideGridClick(event, index)}>
+    <button
+      id={slideDomId}
+      type="button"
+      onClick={(event) => onSlideGridClick(event, index)}
+    >
       {slide.name}
     </button>
   ),
@@ -107,9 +119,9 @@ const sizeConfig = {
   borderWidth: "2px",
 };
 
-const renderScroller = () => {
+const renderScroller = (selectedSlide = 0) => {
   const scrollRef = { current: null as HTMLElement | null };
-  const view = render(
+  const ui = (
     <div
       ref={(node) => {
         scrollRef.current = node;
@@ -125,7 +137,7 @@ const renderScroller = () => {
         isMobile={false}
         isStreamFormat={false}
         canEdit
-        selectedSlide={0}
+        selectedSlide={selectedSlide}
         liveSlideIds={new Set()}
         backgroundTargetSlideIds={[]}
         draggedSection={null}
@@ -133,9 +145,40 @@ const renderScroller = () => {
         selectSlide={mockSelectSlide}
         onSlideGridClick={mockOnSlideGridClick}
       />
-    </div>,
+    </div>
   );
-  return { ...view, scrollRef };
+  const view = render(ui);
+  return {
+    ...view,
+    scrollRef,
+    rerenderWithSlide: (nextSlide: number) =>
+      view.rerender(
+        <div
+          ref={(node) => {
+            scrollRef.current = node;
+          }}
+          data-testid="scroll-root"
+          style={{ height: 80, overflow: "auto" }}
+        >
+          <OutlineItemSlidesScroller
+            scrollRef={scrollRef}
+            cols={2}
+            size={2}
+            sizeConfig={sizeConfig}
+            isMobile={false}
+            isStreamFormat={false}
+            canEdit
+            selectedSlide={nextSlide}
+            liveSlideIds={new Set()}
+            backgroundTargetSlideIds={[]}
+            draggedSection={null}
+            timers={[]}
+            selectSlide={mockSelectSlide}
+            onSlideGridClick={mockOnSlideGridClick}
+          />
+        </div>,
+      ),
+  };
 };
 
 describe("OutlineItemSlidesScroller", () => {
@@ -150,7 +193,15 @@ describe("OutlineItemSlidesScroller", () => {
       },
     });
     mockDocsById = new Map([
-      ["song-1", songDoc("song-1", [slide("s1a", "Song 1 A"), slide("s1b", "Song 1 B")])],
+      [
+        "song-1",
+        songDoc("song-1", [
+          slide("s1a", "Song 1 A"),
+          slide("s1b", "Song 1 B"),
+          slide("s1c", "Song 1 C"),
+          slide("s1d", "Song 1 D"),
+        ]),
+      ],
       ["song-2", songDoc("song-2", [slide("s2a", "Song 2 A")])],
     ]);
     mockState = {
@@ -168,7 +219,12 @@ describe("OutlineItemSlidesScroller", () => {
                 name: "Default",
                 formattedLyrics: [],
                 songOrder: [],
-                slides: [slide("s1a", "Song 1 A"), slide("s1b", "Song 1 B")],
+                slides: [
+                  slide("s1a", "Song 1 A"),
+                  slide("s1b", "Song 1 B"),
+                  slide("s1c", "Song 1 C"),
+                  slide("s1d", "Song 1 D"),
+                ],
               },
             ],
             slides: [],
@@ -203,38 +259,79 @@ describe("OutlineItemSlidesScroller", () => {
     expect(screen.queryByText("Section")).not.toBeInTheDocument();
   });
 
-  it("updates outline selection on scroll without sending a slide", () => {
+  it("does not change item or slide selection on manual scroll", () => {
     const { scrollRef } = renderScroller();
     const root = screen.getByTestId("scroll-root");
     expect(scrollRef.current).toBe(root);
 
-    root.scrollTop = 80;
-    fireEvent.scroll(root);
+    // Unlock initial scroll + clear ignorePin from the programmatic scroll.
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
 
-    expect(mockDispatch).toHaveBeenCalledWith(setActiveItemInList("l-2"));
-    expect(mockSelectSlide).not.toHaveBeenCalled();
-    expect(mockOnSlideGridClick).not.toHaveBeenCalled();
-    expect(mockDispatch.mock.calls.some(([action]) =>
-      String(action?.type ?? "").startsWith("presentation/"),
-    )).toBe(false);
+    mockDispatch.mockClear();
+    mockNavigate.mockClear();
+    mockSelectSlide.mockClear();
+    mockOnSlideGridClick.mockClear();
+
+    root.scrollTop = 120;
+    fireEvent.scroll(root);
 
     act(() => {
       jest.advanceTimersByTime(120);
     });
 
-    expect(mockDispatch).toHaveBeenCalledWith(
-      setActiveItem(
-        expect.objectContaining({
-          _id: "song-2",
-          listId: "l-2",
-        }),
-      ),
-    );
-    expect(mockNavigate).toHaveBeenCalledWith(
-      expect.stringContaining("/controller/item/"),
-      { replace: true },
-    );
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
     expect(mockSelectSlide).not.toHaveBeenCalled();
+    expect(mockOnSlideGridClick).not.toHaveBeenCalled();
+  });
+
+  it("scrolls to the selected outline item on mount", () => {
+    mockState.undoable.present.itemList.selectedItemListId = "l-2";
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "l-2",
+      arrangements: [
+        {
+          id: "arr-1",
+          name: "Default",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [slide("s2a", "Song 2 A")],
+        },
+      ],
+    };
+
+    const { scrollRef } = renderScroller();
+    const root = screen.getByTestId("scroll-root");
+
+    // Selected slide 0 of l-2 is the tile row at index 4 with 4 slides on l-1
+    // (label + 2 tile rows) ahead of it.
+    expect(scrollRef.current).toBe(root);
+    expect(root.scrollTop).toBe(160);
+  });
+
+  it("keeps the selected slide in view when selection changes", () => {
+    const { rerenderWithSlide } = renderScroller(0);
+
+    act(() => {
+      jest.advanceTimersByTime(320);
+    });
+    mockScrollToIndex.mockClear();
+    (keepElementInView as jest.Mock).mockClear();
+
+    rerenderWithSlide(2);
+
+    // Mounted tiles use keepElementInView only (no competing smooth scrollToIndex).
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+    expect(keepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-l-1-2" }),
+        shouldScrollToCenter: true,
+      }),
+    );
   });
 
   it("sends on an explicit click after activating a neighbor item", () => {
@@ -275,6 +372,7 @@ describe("OutlineItemSlidesScroller", () => {
         expect.objectContaining({
           _id: "song-2",
           listId: "l-2",
+          selectedSlide: 0,
         }),
       ),
     );

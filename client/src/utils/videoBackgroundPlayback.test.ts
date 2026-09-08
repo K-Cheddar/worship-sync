@@ -14,6 +14,8 @@ import {
   applyVideoBackgroundTransport,
   reportVideoPreviewState,
   resetVideoBackgroundPlaybackForTests,
+  resolveEditorPreviewVideoPlayback,
+  resolveSyncedVideoPlayback,
   resolveVideoCueDrift,
   resolveVideoPlaybackPosition,
   seekVideoPreview,
@@ -442,6 +444,88 @@ describe("videoBackgroundPlayback", () => {
       applySeek: false,
     });
     expect(second.generation).toBeGreaterThan(first!.generation);
+  });
+
+  describe("resolveEditorPreviewVideoPlayback", () => {
+    const liveCue = {
+      mediaKey: "remote:video-1",
+      positionSeconds: 8,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 4,
+      applySeek: false,
+    };
+
+    it("returns the live cue when the selected slide is transmitting", () => {
+      const slide = slideWithVideo(videoMedia());
+      expect(
+        resolveEditorPreviewVideoPlayback(
+          {
+            projector: {
+              isTransmitting: true,
+              info: { slide, videoPlayback: liveCue },
+            },
+          },
+          slide,
+        ),
+      ).toEqual(liveCue);
+    });
+
+    it("returns undefined when the selected slide is not on air", () => {
+      const selected = slideWithVideo(videoMedia());
+      const other = { ...selected, id: "slide-2" };
+      expect(
+        resolveEditorPreviewVideoPlayback(
+          {
+            projector: {
+              isTransmitting: true,
+              info: { slide: other, videoPlayback: liveCue },
+            },
+          },
+          selected,
+        ),
+      ).toBeUndefined();
+    });
+
+    it("picks the newest matching cue across transmitting outputs", () => {
+      const slide = slideWithVideo(videoMedia());
+      expect(
+        resolveSyncedVideoPlayback(
+          {
+            projector: {
+              isTransmitting: true,
+              info: { videoPlayback: { ...liveCue, generation: 2 } },
+            },
+            stream: {
+              isTransmitting: true,
+              info: { videoPlayback: { ...liveCue, generation: 7 } },
+            },
+          },
+          "remote:video-1",
+        )?.generation,
+      ).toBe(7);
+      expect(
+        resolveEditorPreviewVideoPlayback(
+          {
+            projector: {
+              isTransmitting: true,
+              info: {
+                slide,
+                videoPlayback: { ...liveCue, generation: 2 },
+              },
+            },
+            stream: {
+              isTransmitting: true,
+              info: {
+                slide,
+                videoPlayback: { ...liveCue, generation: 7 },
+              },
+            },
+          },
+          slide,
+        )?.generation,
+      ).toBe(7);
+    });
   });
 
   describe("resolveVideoCueDrift", () => {

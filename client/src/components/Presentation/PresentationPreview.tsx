@@ -47,6 +47,11 @@ type PresentationPreviewProps = {
   /** Replaces the live DisplayWindow preview (keeps the card header/controls). Used
    * by the monitor preview to show the discussion board while it's on the monitor. */
   previewOverride?: ReactNode;
+  /**
+   * Content pinned inside this display's card (e.g. mirror controls), so it is
+   * visually tied to the screen it affects rather than floating below the tile.
+   */
+  footer?: ReactNode;
 };
 
 /** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
@@ -71,6 +76,7 @@ const PresentationPreview = ({
   previewScale = 1,
   fillWidth = false,
   previewOverride,
+  footer,
 }: PresentationPreviewProps) => {
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
@@ -354,6 +360,11 @@ const PresentationPreview = ({
             </ul>
           )}
         </div>
+        {footer != null ? (
+          <div className="empty:hidden border-t border-white/10 px-2 py-1.5">
+            {footer}
+          </div>
+        ) : null}
       </section>
     </div>
   );

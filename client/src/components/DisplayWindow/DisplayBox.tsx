@@ -303,7 +303,12 @@ const DisplayBox = ({
       selector: ".display-box-background",
       durationSeconds: BACKGROUND_FADE_SECONDS,
       hold: Boolean(skipBackgroundAnimation),
-      holdBehavior: "snapToEnd",
+      // Same image: the incoming box stays painted (keepVisible). The outgoing
+      // box must clear immediately (snapToEnd → 0) so it does not sit opaque
+      // on top and hide the text crossfade. Video stills also snap away once
+      // playback is up.
+      holdBehavior:
+        isPrev || shouldImageBeHidden ? "snapToEnd" : "keepVisible",
       // 0 once the video is up: the still is only a placeholder for it.
       targetOpacity: targetCurrentImgOpacity,
       enabled: Boolean(shouldShowBackground),

@@ -10,6 +10,7 @@ import {
   mergeDocsById,
   prepareItemForEditor,
   resolveSlidesForOutlineItem,
+  findOutlineRowIndexForItem,
 } from "./outlineSlideSections";
 
 const slide = (id: string, name: string): ItemSlideType =>
@@ -255,6 +256,32 @@ describe("outlineSlideSections", () => {
     expect(
       getPinnedListIdFromRowOffsets(rows, (index) => starts[index], 196),
     ).toBe("l-2");
+  });
+
+  it("finds the tile row for a slide, falling back to the section label", () => {
+    const sections = [
+      {
+        listId: "l-1",
+        itemId: "a",
+        name: "A",
+        type: "song",
+        slides: [slide("s0", "0"), slide("s1", "1"), slide("s2", "2")],
+        isActive: true,
+      },
+      {
+        listId: "l-2",
+        itemId: "b",
+        name: "B",
+        type: "song",
+        slides: [],
+        isActive: false,
+      },
+    ];
+    const rows = buildOutlineVirtualRows(sections, 2);
+
+    expect(findOutlineRowIndexForItem(rows, "l-1", 2)).toBe(2); // second tile row
+    expect(findOutlineRowIndexForItem(rows, "l-1", 0)).toBe(1); // first tile row
+    expect(findOutlineRowIndexForItem(rows, "l-2")).toBe(3); // section label
   });
 
   it("merges extra pouch docs that allDocs does not hold", () => {

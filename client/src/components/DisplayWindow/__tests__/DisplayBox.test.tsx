@@ -390,6 +390,65 @@ describe("DisplayBox", () => {
     );
   });
 
+  it("clears the outgoing matching background so text can crossfade above the incoming image", () => {
+    render(
+      <DisplayBox
+        box={baseBox}
+        prevBox={{ ...baseBox, words: "Next lyric" }}
+        width={100}
+        showBackground
+        index={0}
+        shouldAnimate
+        isPrev
+      />,
+    );
+
+    expect(mockTimeline.fromTo).toHaveBeenCalledWith(
+      ".display-box-background",
+      { opacity: 0 },
+      expect.objectContaining({ opacity: 0, duration: 0 }),
+      "fadeOut",
+    );
+    expect(mockTimeline.fromTo).toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 1 },
+      expect.objectContaining({ opacity: 0, duration: 0.35 }),
+      "fadeOut",
+    );
+  });
+
+  it("holds the incoming matching background while text still fades in", () => {
+    render(
+      <DisplayBox
+        box={{ ...baseBox, words: "Next lyric" }}
+        prevBox={baseBox}
+        width={100}
+        showBackground
+        index={0}
+        shouldAnimate
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveStyle({ opacity: "1" });
+    expect(mockTimeline.set).toHaveBeenCalledWith(
+      ".display-box-background",
+      { opacity: 1 },
+      "fadeIn",
+    );
+    expect(mockTimeline.fromTo).not.toHaveBeenCalledWith(
+      ".display-box-background",
+      expect.anything(),
+      expect.anything(),
+      "fadeIn",
+    );
+    expect(mockTimeline.fromTo).toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 0 },
+      expect.objectContaining({ opacity: 1, duration: 0.35 }),
+      "fadeIn",
+    );
+  });
+
   it("crossfades relinked local bytes even when the persisted background URI matches", () => {
     setLocalImageResolution({
       isLocalImage: true,

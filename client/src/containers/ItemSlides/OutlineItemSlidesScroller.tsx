@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import { shallowEqual } from "react-redux";
 import { File } from "lucide-react";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { useDispatch, useSelector } from "../../hooks";
@@ -15,13 +16,17 @@ import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
 import { useControllerBasePath } from "../../context/activeController";
-import type { ItemSlideType, TimerInfo } from "../../types";
-import { svgMap, getItemTypeLabel } from "../../utils/itemTypeMaps";
+import type { Arrangment, ItemSlideType, TimerInfo } from "../../types";
+import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { cn } from "../../utils/cnHelper";
+import { keepElementInView } from "../../utils/generalUtils";
 import {
+  OUTLINE_INITIAL_ANCHOR_MS,
   OUTLINE_SCROLL_SETTLE_MS,
+  OUTLINE_SMOOTH_SCROLL_MS,
   buildOutlineSlideSections,
   buildOutlineVirtualRows,
+  findOutlineRowIndexForItem,
   getControllerItemPath,
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
@@ -66,6 +71,16 @@ type OutlineItemSlidesScrollerProps = {
   ) => void;
 };
 
+type OutlineActiveItemSource = {
+  _id?: string;
+  listId?: string;
+  name?: string;
+  type?: string;
+  slides?: ItemSlideType[];
+  arrangements?: Arrangment[];
+  selectedArrangement?: number;
+};
+
 const getBibleInfoFromSlides = (slides: ItemSlideType[], index: number) => {
   const slide = slides[index];
   if (!slide) return { title: "", text: "" };
@@ -75,6 +90,20 @@ const getBibleInfoFromSlides = (slides: ItemSlideType[], index: number) => {
     title: (slideText ? titleSlideText : "") || "",
     text: index > 0 ? slideText || "" : "",
   };
+};
+
+const bibleInfoGetterCache = new WeakMap<
+  ItemSlideType[],
+  (index: number) => { title: string; text: string }
+>();
+
+const getBibleInfoGetter = (slides: ItemSlideType[]) => {
+  let getter = bibleInfoGetterCache.get(slides);
+  if (!getter) {
+    getter = (index: number) => getBibleInfoFromSlides(slides, index);
+    bibleInfoGetterCache.set(slides, getter);
+  }
+  return getter;
 };
 
 const OutlineItemSlidesScroller = ({
@@ -103,15 +132,40 @@ const OutlineItemSlidesScroller = ({
   const selectedItemListId = useSelector(
     (state) => state.undoable.present.itemList?.selectedItemListId,
   );
-  const activeItem = useSelector((state) => state.undoable.present.item);
+  // Ignore selection-only item updates so choosing a slide does not rebuild the
+  // whole outline virtual list (major jank with long services).
+  const activeItem = useSelector((state): OutlineActiveItemSource => {
+    const item = state.undoable.present.item;
+    return {
+      _id: item._id,
+      listId: item.listId,
+      name: item.name,
+      type: item.type,
+      slides: item.slides,
+      arrangements: item.arrangements,
+      selectedArrangement: item.selectedArrangement,
+    };
+  }, shallowEqual);
+  const activeItemListId = activeItem.listId;
+  const activeItemId = activeItem._id;
 
   const outlineItems = useMemo(
     () => getNonHeadingOutlineItems(outlineList),
     [outlineList],
   );
+  // Prefetch follows where the operator is browsing, not only the selected item.
+  const [browsePinListId, setBrowsePinListId] = useState(
+    () => selectedItemListId || activeItemListId,
+  );
+  const browsePinListIdRef = useRef(browsePinListId);
+  browsePinListIdRef.current = browsePinListId;
   const prefetchIds = useMemo(
-    () => getPrefetchItemIds(outlineItems, selectedItemListId),
-    [outlineItems, selectedItemListId],
+    () =>
+      getPrefetchItemIds(
+        outlineItems,
+        browsePinListId || selectedItemListId,
+      ),
+    [browsePinListId, outlineItems, selectedItemListId],
   );
   const docsById = useOutlineItemDocs(prefetchIds);
 
@@ -136,6 +190,14 @@ const OutlineItemSlidesScroller = ({
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
 
+  const timersByItemId = useMemo(() => {
+    const map = new Map<string, TimerInfo>();
+    for (const timer of timers) {
+      if (timer.id) map.set(timer.id, timer);
+    }
+    return map;
+  }, [timers]);
+
   const [tileRowHeight, setTileRowHeight] = useState(INITIAL_TILE_ROW_HEIGHT);
   const tileRowHeightRef = useRef(tileRowHeight);
   tileRowHeightRef.current = tileRowHeight;
@@ -150,7 +212,7 @@ const OutlineItemSlidesScroller = ({
       if (row?.type === "empty") return EMPTY_ROW_HEIGHT;
       return tileRowHeightRef.current;
     },
-    overscan: 3,
+    overscan: 2,
     gap: ROW_GAP,
     initialRect: { width: 0, height: 600 },
   });
@@ -176,56 +238,96 @@ const OutlineItemSlidesScroller = ({
     }
   }, [cols]);
 
-  const selectionSourceRef = useRef<"scroll" | "external">("external");
-  const lastPinnedListIdRef = useRef(selectedItemListId);
-  const settleTimerRef = useRef<number | null>(null);
+  const targetListId =
+    selectedItemListId || activeItemListId || undefined;
+  const lastPinnedListIdRef = useRef(targetListId);
+  const selectedItemListIdRef = useRef(targetListId);
+  selectedItemListIdRef.current = targetListId;
+  const selectedSlideRef = useRef(selectedSlide);
+  selectedSlideRef.current = selectedSlide;
+  const ignorePinTimerRef = useRef<number | null>(null);
+  const initialAnchorTimerRef = useRef<number | null>(null);
   const pendingSelectRef = useRef<{ listId: string; index: number } | null>(
     null,
   );
+  const lastSelectionScrollKeyRef = useRef<string>("");
   const didInitialScrollRef = useRef(false);
+  const isInitialAnchoringRef = useRef(false);
   const ignorePinRef = useRef(true);
   const pinRafRef = useRef<number | null>(null);
+  const pinnedAnchorOffsetRef = useRef<number | null>(null);
+
+  const readRowOffset = useCallback((rowIndex: number) => {
+    if (rowIndex < 0) return null;
+    return virtualizerRef.current.getOffsetForIndex(rowIndex)?.[0] ?? null;
+  }, []);
+
+  const readSectionOffset = useCallback((listId: string | undefined) => {
+    if (!listId) return null;
+    const rowIndex = findOutlineRowIndexForItem(rowsRef.current, listId);
+    return readRowOffset(rowIndex);
+  }, [readRowOffset]);
+
+  const beginIgnorePin = useCallback((durationMs = OUTLINE_SCROLL_SETTLE_MS) => {
+    ignorePinRef.current = true;
+    if (ignorePinTimerRef.current != null) {
+      window.clearTimeout(ignorePinTimerRef.current);
+    }
+    ignorePinTimerRef.current = window.setTimeout(() => {
+      ignorePinTimerRef.current = null;
+      ignorePinRef.current = false;
+      pinnedAnchorOffsetRef.current = readSectionOffset(
+        lastPinnedListIdRef.current,
+      );
+    }, durationMs);
+  }, [readSectionOffset]);
+
+  const extendInitialAnchoring = useCallback(() => {
+    isInitialAnchoringRef.current = true;
+    if (initialAnchorTimerRef.current != null) {
+      window.clearTimeout(initialAnchorTimerRef.current);
+    }
+    initialAnchorTimerRef.current = window.setTimeout(() => {
+      initialAnchorTimerRef.current = null;
+      isInitialAnchoringRef.current = false;
+    }, OUTLINE_INITIAL_ANCHOR_MS);
+  }, []);
 
   const activateItem = useCallback(
-    (listId: string, mode: "immediate" | "settled") => {
+    (listId: string, options?: { selectedSlide?: number }) => {
       const item = outlineItems.find((entry) => entry.listId === listId);
       if (!item) return;
+      beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
       lastPinnedListIdRef.current = listId;
+      // Re-base drift tracking on the new item so a rows rebuild does not yank
+      // scroll toward the previous pin while selection keep-in-view runs.
+      pinnedAnchorOffsetRef.current = readSectionOffset(listId);
+      setBrowsePinListId(listId);
       dispatch(setActiveItemInList(listId));
-      const finish = () => {
-        const doc = docsById.get(item._id);
-        if (doc) {
-          dispatch(setActiveItem(prepareItemForEditor(doc, listId)));
-        }
-        navigate(getControllerItemPath(item, controllerBasePath), { replace: true });
-      };
-      if (mode === "immediate") {
-        if (settleTimerRef.current != null) {
-          window.clearTimeout(settleTimerRef.current);
-          settleTimerRef.current = null;
-        }
-        finish();
-        return;
+      const doc = docsById.get(item._id);
+      if (doc) {
+        const prepared = prepareItemForEditor(doc, listId);
+        dispatch(
+          setActiveItem(
+            options?.selectedSlide != null
+              ? { ...prepared, selectedSlide: options.selectedSlide }
+              : prepared,
+          ),
+        );
       }
-      if (settleTimerRef.current != null) {
-        window.clearTimeout(settleTimerRef.current);
-      }
-      settleTimerRef.current = window.setTimeout(() => {
-        settleTimerRef.current = null;
-        if (lastPinnedListIdRef.current !== listId) return;
-        finish();
-      }, OUTLINE_SCROLL_SETTLE_MS);
+      navigate(getControllerItemPath(item, controllerBasePath), {
+        replace: true,
+      });
     },
-    [dispatch, docsById, navigate, outlineItems, controllerBasePath],
-  );
-
-  const pinFromScroll = useCallback(
-    (listId: string) => {
-      if (!listId || listId === lastPinnedListIdRef.current) return;
-      selectionSourceRef.current = "scroll";
-      activateItem(listId, "settled");
-    },
-    [activateItem],
+    [
+      beginIgnorePin,
+      dispatch,
+      docsById,
+      navigate,
+      outlineItems,
+      controllerBasePath,
+      readSectionOffset,
+    ],
   );
 
   const readPinnedListId = useCallback(() => {
@@ -237,6 +339,8 @@ const OutlineItemSlidesScroller = ({
     );
   }, [scrollRef]);
 
+  // Manual scroll only updates prefetch focus. It must not change the selected
+  // item/slide — that stays until an explicit slide click or left-list select.
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
@@ -246,7 +350,9 @@ const OutlineItemSlidesScroller = ({
       pinRafRef.current = window.requestAnimationFrame(() => {
         pinRafRef.current = null;
         const pinned = readPinnedListId();
-        if (pinned) pinFromScroll(pinned);
+        if (!pinned || pinned === browsePinListIdRef.current) return;
+        browsePinListIdRef.current = pinned;
+        setBrowsePinListId(pinned);
       });
     };
     element.addEventListener("scroll", onScroll, { passive: true });
@@ -257,53 +363,289 @@ const OutlineItemSlidesScroller = ({
         pinRafRef.current = null;
       }
     };
-  }, [pinFromScroll, readPinnedListId, scrollRef]);
+  }, [readPinnedListId, scrollRef]);
 
   useEffect(() => {
     return () => {
-      if (settleTimerRef.current != null) {
-        window.clearTimeout(settleTimerRef.current);
+      if (ignorePinTimerRef.current != null) {
+        window.clearTimeout(ignorePinTimerRef.current);
+      }
+      if (initialAnchorTimerRef.current != null) {
+        window.clearTimeout(initialAnchorTimerRef.current);
       }
     };
   }, []);
 
-  const scrollToListId = useCallback((listId: string | undefined) => {
-    if (!listId) return;
-    const rowIndex = rowsRef.current.findIndex(
-      (row) => row.type === "sectionLabel" && row.listId === listId,
-    );
-    if (rowIndex < 0) return;
-    ignorePinRef.current = true;
-    virtualizerRef.current.scrollToIndex(rowIndex, { align: "start" });
-    window.requestAnimationFrame(() => {
-      ignorePinRef.current = false;
-    });
-  }, []);
+  const scrollToListId = useCallback(
+    (
+      listId: string | undefined,
+      slideIndex?: number,
+      options?: { behavior?: ScrollBehavior },
+    ) => {
+      if (!listId) return;
+      const rowIndex = findOutlineRowIndexForItem(
+        rowsRef.current,
+        listId,
+        slideIndex,
+      );
+      if (rowIndex < 0) return;
+      const behavior: ScrollBehavior =
+        options?.behavior ??
+        (isInitialAnchoringRef.current ? "auto" : "smooth");
+      const offset = readRowOffset(rowIndex);
+      if (offset == null) return;
+      beginIgnorePin(
+        behavior === "smooth"
+          ? OUTLINE_SMOOTH_SCROLL_MS
+          : isInitialAnchoringRef.current
+            ? OUTLINE_INITIAL_ANCHOR_MS
+            : OUTLINE_SCROLL_SETTLE_MS,
+      );
+      const element = scrollRef.current;
+      if (behavior === "auto" && element) {
+        // Instant placement for collapse/open — smooth would still be mid-flight
+        // while measurements keep shifting.
+        element.scrollTop = offset;
+        virtualizerRef.current.scrollToIndex(rowIndex, {
+          align: "start",
+          behavior: "auto",
+        });
+        if (Math.abs(element.scrollTop - offset) > 1) {
+          element.scrollTop = offset;
+        }
+      } else {
+        virtualizerRef.current.scrollToIndex(rowIndex, {
+          align: "start",
+          behavior: "smooth",
+        });
+      }
+      pinnedAnchorOffsetRef.current = offset;
+    },
+    [beginIgnorePin, readRowOffset, scrollRef],
+  );
+
+  const applyPinnedScroll = useCallback(
+    (slideIndex?: number, behavior: ScrollBehavior = "auto") => {
+      const listId = lastPinnedListIdRef.current;
+      if (!listId) return;
+      scrollToListId(listId, slideIndex, { behavior });
+    },
+    [scrollToListId],
+  );
 
   useLayoutEffect(() => {
-    if (didInitialScrollRef.current || rows.length === 0) return;
-    didInitialScrollRef.current = true;
-    lastPinnedListIdRef.current = selectedItemListId;
-    scrollToListId(selectedItemListId);
-  }, [rows.length, scrollToListId, selectedItemListId]);
+    if (rows.length === 0) return;
+    const listId = selectedItemListIdRef.current;
+    if (!listId) return;
 
+    const tryScroll = () => {
+      // Parent attaches the scroll element ref; child layout can run first.
+      if (!scrollRef.current) return false;
+      if (!didInitialScrollRef.current) {
+        didInitialScrollRef.current = true;
+        lastPinnedListIdRef.current = listId;
+        extendInitialAnchoring();
+        scrollToListId(listId, selectedSlideRef.current, { behavior: "auto" });
+        return true;
+      }
+      if (isInitialAnchoringRef.current) {
+        extendInitialAnchoring();
+        applyPinnedScroll(selectedSlideRef.current, "auto");
+      }
+      return true;
+    };
+
+    if (tryScroll()) return;
+
+    const rafId = window.requestAnimationFrame(() => {
+      tryScroll();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [
+    applyPinnedScroll,
+    extendInitialAnchoring,
+    rows,
+    scrollRef,
+    scrollToListId,
+    tileRowHeight,
+  ]);
+
+  // useEffect runs after parent refs attach, so collapse/open still lands on
+  // the selected item when child layout raced ahead of the scroll element.
   useEffect(() => {
-    if (selectionSourceRef.current === "scroll") {
-      selectionSourceRef.current = "external";
-      lastPinnedListIdRef.current = selectedItemListId;
+    if (rows.length === 0) return;
+    const listId = selectedItemListIdRef.current;
+    if (!listId || !scrollRef.current) return;
+    if (!didInitialScrollRef.current) {
+      didInitialScrollRef.current = true;
+      lastPinnedListIdRef.current = listId;
+      extendInitialAnchoring();
+      scrollToListId(listId, selectedSlideRef.current, { behavior: "auto" });
       return;
     }
+    if (isInitialAnchoringRef.current) {
+      applyPinnedScroll(selectedSlideRef.current, "auto");
+    }
+  }, [
+    applyPinnedScroll,
+    extendInitialAnchoring,
+    rows,
+    scrollRef,
+    scrollToListId,
+    tileRowHeight,
+  ]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    let lastHeight = element.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const nextHeight = element.clientHeight;
+      if (nextHeight <= 0) return;
+      const heightChanged = nextHeight !== lastHeight;
+      lastHeight = nextHeight;
+      if (!heightChanged && didInitialScrollRef.current && !isInitialAnchoringRef.current) {
+        return;
+      }
+      if (!didInitialScrollRef.current) {
+        const listId = selectedItemListIdRef.current;
+        if (!listId) return;
+        didInitialScrollRef.current = true;
+        lastPinnedListIdRef.current = listId;
+      }
+      extendInitialAnchoring();
+      applyPinnedScroll(selectedSlideRef.current, "auto");
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [applyPinnedScroll, extendInitialAnchoring, scrollRef]);
+
+  // After the initial anchor window, only correct drift when content above the
+  // pin grows (prefetch), instead of hard-jumping back to the selection.
+  useLayoutEffect(() => {
+    if (!didInitialScrollRef.current || isInitialAnchoringRef.current) return;
+    const listId = lastPinnedListIdRef.current;
+    const nextOffset = readSectionOffset(listId);
+    const prevOffset = pinnedAnchorOffsetRef.current;
+    pinnedAnchorOffsetRef.current = nextOffset;
+    // Selection / programmatic scrolls own the viewport; do not stack a pin yank.
+    if (ignorePinRef.current) return;
+    const element = scrollRef.current;
+    if (
+      prevOffset == null ||
+      nextOffset == null ||
+      !element ||
+      Math.abs(nextOffset - prevOffset) < 1
+    ) {
+      return;
+    }
+    beginIgnorePin();
+    element.scrollTop += nextOffset - prevOffset;
+  }, [beginIgnorePin, readSectionOffset, rows, scrollRef]);
+
+  // Left-list / route item changes: update browse pin only. Scrolling to the
+  // selection is owned by the activeItemListId + selectedSlide effect below so
+  // we never start a second smooth scroll toward a stale slide index.
+  useEffect(() => {
+    if (!didInitialScrollRef.current) return;
+    if (
+      selectedItemListId === lastPinnedListIdRef.current &&
+      isInitialAnchoringRef.current
+    ) {
+      return;
+    }
+    if (selectedItemListId !== lastPinnedListIdRef.current) {
+      beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
+    }
     lastPinnedListIdRef.current = selectedItemListId;
-    scrollToListId(selectedItemListId);
-  }, [scrollToListId, selectedItemListId]);
+    pinnedAnchorOffsetRef.current = readSectionOffset(selectedItemListId);
+    setBrowsePinListId(selectedItemListId);
+  }, [beginIgnorePin, readSectionOffset, selectedItemListId]);
+
+  // Single scroll authority for selection changes after the initial anchor.
+  // Avoid stacking virtualizer smooth + keepElementInView smooth, and wait out
+  // any pending cross-item click until the final slide index is applied.
+  useEffect(() => {
+    if (!didInitialScrollRef.current || isInitialAnchoringRef.current) return;
+    if (selectedSlide < 0) return;
+    const listId = activeItemListId || selectedItemListIdRef.current;
+    if (!listId) return;
+
+    const pending = pendingSelectRef.current;
+    if (pending) {
+      if (pending.listId !== listId || pending.index !== selectedSlide) {
+        return;
+      }
+    }
+
+    const scrollKey = `${listId}:${selectedSlide}`;
+    if (lastSelectionScrollKeyRef.current === scrollKey) return;
+    lastSelectionScrollKeyRef.current = scrollKey;
+
+    const parent = scrollRef.current;
+    const childId = `item-slide-${listId}-${selectedSlide}`;
+    const mountedChild = document.getElementById(childId);
+    beginIgnorePin(OUTLINE_SMOOTH_SCROLL_MS);
+
+    // Tile already in the DOM (typical after browsing then clicking): one smooth
+    // keep-in-view. Far/unmounted tiles: jump the virtualizer, then smooth-center.
+    if (parent && mountedChild) {
+      keepElementInView({
+        child: mountedChild,
+        parent,
+        shouldScrollToCenter: true,
+      });
+      pinnedAnchorOffsetRef.current = readSectionOffset(listId);
+      return;
+    }
+
+    const rowIndex = findOutlineRowIndexForItem(
+      rowsRef.current,
+      listId,
+      selectedSlide,
+    );
+    if (rowIndex < 0) return;
+
+    virtualizerRef.current.scrollToIndex(rowIndex, {
+      align: "center",
+      behavior: "auto",
+    });
+
+    const runKeepInView = () => {
+      const scrollParent = scrollRef.current;
+      const child = document.getElementById(childId);
+      if (!scrollParent || !child) return;
+      keepElementInView({
+        child,
+        parent: scrollParent,
+        shouldScrollToCenter: true,
+      });
+      pinnedAnchorOffsetRef.current = readSectionOffset(listId);
+    };
+
+    const outerRaf = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(runKeepInView);
+    });
+    const retryTimer = window.setTimeout(runKeepInView, 80);
+    return () => {
+      window.cancelAnimationFrame(outerRaf);
+      window.clearTimeout(retryTimer);
+    };
+  }, [
+    activeItemListId,
+    beginIgnorePin,
+    readSectionOffset,
+    scrollRef,
+    selectedSlide,
+  ]);
 
   useEffect(() => {
     const pending = pendingSelectRef.current;
     if (!pending) return;
-    if (pending.listId !== activeItem.listId) return;
+    if (pending.listId !== activeItemListId) return;
     pendingSelectRef.current = null;
     selectSlide(pending.index);
-  }, [activeItem.listId, activeItem._id, selectSlide]);
+  }, [activeItemListId, activeItemId, selectSlide]);
 
   const handleTileClick = useCallback(
     (
@@ -313,8 +655,9 @@ const OutlineItemSlidesScroller = ({
     ) => {
       if (!section.isActive) {
         pendingSelectRef.current = { listId: section.listId, index };
-        selectionSourceRef.current = "external";
-        activateItem(section.listId, "immediate");
+        // Apply the clicked slide immediately so we never scroll toward the
+        // previous item's slide index (or slide 0) before selectSlide runs.
+        activateItem(section.listId, { selectedSlide: index });
         return;
       }
       onSlideGridClick(event, index);
@@ -368,9 +711,6 @@ const OutlineItemSlidesScroller = ({
                 >
                   <SectionTypeIcon itemType={row.itemType} />
                   <span className="min-w-0 truncate">{row.name}</span>
-                  <span className="shrink-0 text-xs font-normal text-gray-400">
-                    {getItemTypeLabel(row.itemType)}
-                  </span>
                 </div>
               )}
               {row.type === "empty" && (
@@ -386,10 +726,7 @@ const OutlineItemSlidesScroller = ({
                     return (
                       <ItemSlide
                         key={`${section.listId}-${slide.id || index}`}
-                        timerInfo={
-                          timers.find((timer) => timer.id === section.itemId) ??
-                          undefined
-                        }
+                        timerInfo={timersByItemId.get(section.itemId)}
                         slide={slide}
                         index={index}
                         selectSlide={selectSlide}
@@ -400,9 +737,7 @@ const OutlineItemSlidesScroller = ({
                         isMobile={isMobile}
                         draggedSection={isActive ? draggedSection : null}
                         isStreamFormat={isStreamFormat}
-                        getBibleInfo={(slideIndex) =>
-                          getBibleInfoFromSlides(section.slides, slideIndex)
-                        }
+                        getBibleInfo={getBibleInfoGetter(section.slides)}
                         borderWidth={sizeConfig.borderWidth}
                         hSize={sizeConfig.hSize}
                         canEdit={isActive && canEdit}
@@ -434,7 +769,13 @@ const OutlineItemSlidesScroller = ({
 
 function SectionTypeIcon({ itemType }: { itemType: string }) {
   const Icon = svgMap.get(itemType) ?? File;
-  return <Icon className="h-4 w-4 shrink-0 text-gray-300" aria-hidden />;
+  return (
+    <Icon
+      className="h-4 w-4 shrink-0"
+      style={{ color: iconColorMap.get(itemType) }}
+      aria-hidden
+    />
+  );
 }
 
 export default OutlineItemSlidesScroller;

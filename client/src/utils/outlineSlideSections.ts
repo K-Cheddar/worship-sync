@@ -10,6 +10,10 @@ import { getFormattedSections } from "./overflow";
 export const OUTLINE_PREFETCH_WINDOW = 2;
 export const OUTLINE_SCROLL_SETTLE_MS = 120;
 export const OUTLINE_PIN_THRESHOLD_PX = 8;
+/** Keep re-applying the collapse/open scroll target while measurements settle. */
+export const OUTLINE_INITIAL_ANCHOR_MS = 320;
+/** Ignore scroll-pinning while a smooth programmatic scroll is in flight. */
+export const OUTLINE_SMOOTH_SCROLL_MS = 450;
 
 export type AllDocsLookup = {
   allSongDocs: DBItem[];
@@ -241,6 +245,30 @@ export const getPinnedListIdFromRowOffsets = (
     }
   }
   return pinned;
+};
+
+/**
+ * Prefer the tile row that contains `slideIndex` so collapsing the editor keeps
+ * the operator on the slide they were viewing, not only the section header.
+ */
+export const findOutlineRowIndexForItem = (
+  rows: OutlineVirtualRow[],
+  listId: string,
+  slideIndex?: number,
+): number => {
+  if (slideIndex != null && slideIndex >= 0) {
+    const tileIndex = rows.findIndex(
+      (row) =>
+        row.type === "tiles" &&
+        row.listId === listId &&
+        slideIndex >= row.startIndex &&
+        slideIndex < row.startIndex + row.slides.length,
+    );
+    if (tileIndex >= 0) return tileIndex;
+  }
+  return rows.findIndex(
+    (row) => row.type === "sectionLabel" && row.listId === listId,
+  );
 };
 
 export const prepareItemForEditor = (

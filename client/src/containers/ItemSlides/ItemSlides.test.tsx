@@ -72,6 +72,30 @@ jest.mock("../../utils/generalUtils", () => ({
   keepElementInView: jest.fn(),
 }));
 
+jest.mock("./OutlineItemSlidesScroller", () => ({
+  __esModule: true,
+  default: () => <div data-testid="outline-scroller" />,
+}));
+
+const mockNeighborDocs = new Map<string, unknown>();
+jest.mock("../../hooks/useOutlineItemDocs", () => ({
+  useOutlineItemDocs: () => mockNeighborDocs,
+}));
+
+jest.mock("../../context/activeController", () => {
+  const actual = jest.requireActual("../../context/activeController");
+  return {
+    ...actual,
+    useControllerBasePath: () => "/controller",
+  };
+});
+
+const mockNavigate = jest.fn();
+jest.mock("react-router-dom", () => ({
+  useLocation: () => ({ pathname: "/controller/item/free-1/list-1" }),
+  useNavigate: () => mockNavigate,
+}));
+
 jest.mock("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useDroppable: () => ({ setNodeRef: jest.fn() }),
@@ -80,10 +104,6 @@ jest.mock("@dnd-kit/core", () => ({
 jest.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   rectSortingStrategy: {},
-}));
-
-jest.mock("react-router-dom", () => ({
-  useLocation: () => ({ pathname: "/controller/item/free-1/list-1" }),
 }));
 
 jest.mock("./ItemSlide", () => ({
@@ -135,6 +155,7 @@ const mockControllerInfoValue = {
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockNeighborDocs.clear();
     Object.defineProperty(window, "requestAnimationFrame", {
       writable: true,
       value: (callback: FrameRequestCallback) => {
@@ -155,6 +176,7 @@ describe("ItemSlides", () => {
             slides: baseSlides,
             isLoading: false,
             _id: "free-1",
+            listId: "list-1",
             shouldSendTo: {
               monitor: true,
               projector: false,
@@ -162,10 +184,28 @@ describe("ItemSlides", () => {
             },
             isEditMode: false,
           },
+          itemList: {
+            selectedItemListId: "list-1",
+            list: [
+              {
+                _id: "free-1",
+                listId: "list-1",
+                name: "Custom Item",
+                type: "free",
+              },
+              {
+                _id: "song-2",
+                listId: "list-2",
+                name: "Next Song",
+                type: "song",
+              },
+            ],
+          },
           preferences: {
             slidesPerRow: 3,
             slidesPerRowMobile: 2,
             shouldShowStreamFormat: false,
+            shouldShowItemEditor: true,
             monitorSettings: {
               showNextSlide: true,
             },
@@ -213,6 +253,12 @@ describe("ItemSlides", () => {
       },
       timers: {
         timers: [],
+      },
+      allDocs: {
+        allSongDocs: [],
+        allFreeFormDocs: [],
+        allTimerDocs: [],
+        allBibleDocs: [],
       },
     };
   });
@@ -271,5 +317,109 @@ describe("ItemSlides", () => {
         payload: null,
       }),
     );
+  });
+
+  it("moves to the next outline song with ArrowDown in continuous mode", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+    mockNeighborDocs.set("song-2", {
+      _id: "song-2",
+      _rev: "1",
+      name: "Next Song",
+      type: "song",
+      selectedArrangement: 0,
+      arrangements: [
+        {
+          id: "arr-1",
+          name: "Default",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [
+            {
+              id: "title",
+              name: "Title",
+              type: "Title",
+              boxes: [],
+            },
+            {
+              id: "v1",
+              name: "Verse 1",
+              type: "Verse",
+              boxes: [],
+            },
+          ],
+        },
+      ],
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    });
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    fireEvent.keyDown(document.body, { key: "ArrowDown" });
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "itemList/setActiveItemInList",
+        payload: "list-2",
+      }),
+    );
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "item/setActiveItem",
+        payload: expect.objectContaining({
+          _id: "song-2",
+          listId: "list-2",
+        }),
+      }),
+    );
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.stringContaining("/controller/item/"),
+      { replace: true },
+    );
+  });
+
+  it("does not change songs with ArrowDown when the item editor is open", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = true;
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    fireEvent.keyDown(document.body, { key: "ArrowDown" });
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "itemList/setActiveItemInList",
+        payload: "list-2",
+      }),
+    );
+  });
+
+  it("keeps zoom controls in continuous mode and hides edit controls", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByTestId("outline-scroller")).toBeInTheDocument();
+    expect(screen.getByLabelText("Slide thumbnail zoom")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 });
