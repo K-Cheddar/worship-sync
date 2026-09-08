@@ -40,7 +40,6 @@ import { QuickLinkType } from "../../types";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import { useActiveControllerProfile } from "../../context/activeController";
 import { getControllerOutputs } from "../../utils/controllerProfiles";
-import MirroredByBadge from "../../components/MirrorDisplay/MirroredByBadge";
 import MirrorDisplayTile from "../../components/MirrorDisplay/MirrorDisplayTile";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
@@ -509,21 +508,15 @@ const TransmitHandler = ({
                 output.id === boardAnchorOutputId ? boardSection : null;
               // Lives inside this display's card so Clear / Live / Mirror all
               // read as one control surface for the screen they affect.
-              const mirrorControls =
+              // Mirror controls stay on the follower only. The source does not
+              // need a "mirrored by" badge — that status is irrelevant there.
+              const displayFooter =
                 !readOnly && controllerProfile.type === "aux-presentation" ? (
                   <MirrorDisplayTile
                     outputId={output.id}
                     sourceOutputIds={mirrorSourceIdsByOutput[output.id] ?? []}
                   />
                 ) : null;
-              const displayFooter = (
-                <>
-                  {mirrorControls}
-                  {output.type === "projector" ? (
-                    <MirroredByBadge outputId={output.id} />
-                  ) : null}
-                </>
-              );
 
               if (output.type === "projector") {
                 return (

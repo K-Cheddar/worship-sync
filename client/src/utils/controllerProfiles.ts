@@ -45,6 +45,12 @@ export type ControllerProfile = {
   type: ControllerProfileType;
   /** Operator-facing name, e.g. "Presentation", "Lobby". */
   name: string;
+  /**
+   * Optional home-page blurb. Empty means use the type default from
+   * {@link getControllerProfileDescription}. Churches that rename controllers
+   * to role titles can match the sentence under the name.
+   */
+  description: string;
   /** Ascending sort order for pickers and navigation. */
   order: number;
   /**
@@ -115,11 +121,39 @@ export const isBuiltInControllerId = (id: string): id is BuiltInControllerId =>
  * controller reads the same outlines today, and giving it a scope of its own
  * would empty its picker on upgrade.
  */
+/** Home-card copy when a profile has no custom description. */
+export const DEFAULT_CONTROLLER_PROFILE_DESCRIPTIONS: Record<
+  ControllerProfileType,
+  string
+> = {
+  presentation:
+    "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.",
+  overlay:
+    "Manage overlays, service timers, credits, and lower thirds for the stream.",
+  "aux-presentation":
+    "Drive this screen with its own outline and content, or mirror another display.",
+};
+
+export const getDefaultControllerProfileDescription = (
+  type: ControllerProfileType,
+): string => DEFAULT_CONTROLLER_PROFILE_DESCRIPTIONS[type];
+
+/**
+ * Resolved home-page blurb: custom text when set, otherwise the type default.
+ */
+export const getControllerProfileDescription = (
+  profile: Pick<ControllerProfile, "type" | "description">,
+): string => {
+  const custom = profile.description.trim();
+  return custom || getDefaultControllerProfileDescription(profile.type);
+};
+
 export const DEFAULT_CONTROLLER_PROFILES: ControllerProfile[] = [
   {
     id: PRESENTATION_CONTROLLER_ID,
     type: "presentation",
     name: "Presentation",
+    description: "",
     order: 0,
     enabled: true,
     outputIds: [],
@@ -131,6 +165,7 @@ export const DEFAULT_CONTROLLER_PROFILES: ControllerProfile[] = [
     id: OVERLAY_CONTROLLER_ID,
     type: "overlay",
     name: "Overlays",
+    description: "",
     order: 1,
     enabled: true,
     outputIds: [],
@@ -154,9 +189,7 @@ export const getDefaultControllerProfiles = (): ControllerProfile[] =>
  * the presentation controller runs the room, overlays run the stream. A new
  * controller starts empty — creating one should never put a screen on air.
  */
-export const getDefaultOutputIds = (
-  type: ControllerProfileType,
-): string[] => {
+export const getDefaultOutputIds = (type: ControllerProfileType): string[] => {
   if (type === "presentation") return [...PUSH_OUTPUT_TYPES];
   if (type === "overlay") return ["stream"];
   return [];
@@ -169,6 +202,8 @@ export const getEffectiveOutputIds = (profile: ControllerProfile): string[] =>
     : getDefaultOutputIds(profile.type);
 
 const MAX_PROFILE_NAME_LENGTH = 40;
+/** Short enough for a home card; long enough for one clear sentence. */
+const MAX_PROFILE_DESCRIPTION_LENGTH = 280;
 
 export const createControllerProfileId = () => `ctrl_${generateRandomId()}`;
 
@@ -186,6 +221,13 @@ export const sanitizeControllerProfileName = (name: unknown) => {
     .slice(0, MAX_PROFILE_NAME_LENGTH);
   return cleaned || "Controller";
 };
+
+/** Trim, collapse whitespace, cap length. Empty means "use the type default". */
+export const sanitizeControllerProfileDescription = (description: unknown) =>
+  String(description ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_PROFILE_DESCRIPTION_LENGTH);
 
 /**
  * Suffix a name until it no longer collides case-insensitively. Operators pick
@@ -267,6 +309,8 @@ export const normalizeControllerProfiles = (
       id,
       type: candidate.type,
       name: sanitizeControllerProfileName(candidate.name),
+      // Absent/empty keeps the type default on the home page.
+      description: sanitizeControllerProfileDescription(candidate.description),
       order: Number.isFinite(order) ? order : UNORDERED,
       // Absent means enabled: churches written before the flag existed are live.
       enabled: candidate.enabled !== false,
@@ -372,6 +416,7 @@ const synthesizeAuxProfile = (id: string): ControllerProfile => ({
   id,
   type: "aux-presentation",
   name: "Controller",
+  description: "",
   order: Number.MAX_SAFE_INTEGER,
   enabled: true,
   outputIds: [],
@@ -385,7 +430,6 @@ export const isKnownControllerProfile = (
   profiles: ControllerProfile[],
   profile: ControllerProfile,
 ) => profiles.some((entry) => entry.id === profile.id);
-
 
 /**
  * Displays this controller drives, narrowed to those that still exist and are

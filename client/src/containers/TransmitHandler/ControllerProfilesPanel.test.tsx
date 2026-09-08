@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
@@ -214,5 +214,25 @@ describe("assigning a display", () => {
         ?.outputIds,
     ).toEqual(["out_tvs"]);
     expect(within(drivesGroup()).getByLabelText("TVs:")).toBeChecked();
+  });
+});
+
+describe("home description", () => {
+  it("saves a custom home description for a controller", async () => {
+    const { store } = renderPanel();
+    const visualField = screen.getByPlaceholderText(
+      /Drive this screen with its own outline/i,
+    );
+
+    fireEvent.change(visualField, {
+      target: { value: "Drive the lobby screens." },
+    });
+    fireEvent.blur(visualField);
+
+    expect(
+      store.getState().controllerProfiles.list.find((p) => p.id === "ctrl_visual")
+        ?.description,
+    ).toBe("Drive the lobby screens.");
+    await waitFor(() => expect(writeControllerProfiles).toHaveBeenCalled());
   });
 });

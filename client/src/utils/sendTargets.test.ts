@@ -189,6 +189,7 @@ const controller = (
   id: "ctrl_lobby",
   type: "aux-presentation",
   name: "Lobby",
+  description: "",
   order: 2,
   enabled: true,
   outputIds: ["out_lobby"],
@@ -237,7 +238,12 @@ describe("the presentation controller keeps its per-surface behaviour", () => {
 
   it("still targets the three built-in displays for an unconfigured item", () => {
     expect(
-      getSendTargetIdsForType(sendTo(), outputs, "projector", presentationDefault),
+      getSendTargetIdsForType(
+        sendTo(),
+        outputs,
+        "projector",
+        presentationDefault,
+      ),
     ).toEqual(["projector"]);
     expect(
       getSelectedSendTargetIds(sendTo(), outputs, presentationDefault),
@@ -371,7 +377,9 @@ describe("explicit send-nowhere survives controller scoping", () => {
     expect(shouldSendToType(nowhere, outputs, "projector", controller())).toBe(
       false,
     );
-    expect(getSelectedSendTargetIds(nowhere, outputs, controller())).toEqual([]);
+    expect(getSelectedSendTargetIds(nowhere, outputs, controller())).toEqual(
+      [],
+    );
   });
 });
 
@@ -392,7 +400,13 @@ describe("toggling from a scoped controller", () => {
   it("adds a second owned display without disturbing another controller's", () => {
     const withCafe: DisplayOutput[] = [
       ...outputs,
-      { id: "out_cafe", type: "projector", name: "Cafe", order: 4, enabled: true },
+      {
+        id: "out_cafe",
+        type: "projector",
+        name: "Cafe",
+        order: 4,
+        enabled: true,
+      },
     ];
     const twoScreens = controller({
       outputIds: ["out_lobby", "out_cafe"],
@@ -468,9 +482,9 @@ describe("buildShouldSendToForController", () => {
       outputIds: ["out_lobby", "monitor"],
       defaultSendOutputIds: ["monitor"],
     });
-    expect(buildShouldSendToForController(outputs, twoScreens).outputIds).toEqual(
-      ["monitor"],
-    );
+    expect(
+      buildShouldSendToForController(outputs, twoScreens).outputIds,
+    ).toEqual(["monitor"]);
   });
 
   it("gives the presentation controller its three surfaces", () => {

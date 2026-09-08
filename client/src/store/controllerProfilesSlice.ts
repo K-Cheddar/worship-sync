@@ -6,6 +6,7 @@ import {
   getUniqueControllerProfileName,
   isBuiltInControllerId,
   normalizeControllerProfiles,
+  sanitizeControllerProfileDescription,
   sanitizeControllerProfileName,
 } from "../utils/controllerProfiles";
 
@@ -37,7 +38,10 @@ export const controllerProfilesSlice = createSlice({
      * guarantees the built-ins survive a malformed payload, so a bad write
      * upstream can never strip the presentation controller's displays.
      */
-    setControllerProfilesFromRemote: (state, action: PayloadAction<unknown>) => {
+    setControllerProfilesFromRemote: (
+      state,
+      action: PayloadAction<unknown>,
+    ) => {
       state.list = normalizeControllerProfiles(action.payload);
       state.isLoaded = true;
     },
@@ -62,6 +66,7 @@ export const controllerProfilesSlice = createSlice({
             id,
             type: "aux-presentation",
             name,
+            description: "",
             order: state.list.length,
             enabled: true,
             outputIds,
@@ -96,6 +101,18 @@ export const controllerProfilesSlice = createSlice({
       );
       if (name === profile.name) return;
       profile.name = name;
+    },
+    setControllerProfileDescription: (
+      state,
+      action: PayloadAction<{ id: string; description: string }>,
+    ) => {
+      const profile = state.list.find((p) => p.id === action.payload.id);
+      if (!profile) return;
+      const description = sanitizeControllerProfileDescription(
+        action.payload.description,
+      );
+      if (description === profile.description) return;
+      profile.description = description;
     },
     setControllerProfileEnabled: (
       state,
@@ -188,6 +205,7 @@ export const {
   setControllerProfilesFromRemote,
   addControllerProfile,
   renameControllerProfile,
+  setControllerProfileDescription,
   setControllerProfileEnabled,
   setControllerProfileOutputs,
   setControllerProfileDefaultSends,

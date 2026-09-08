@@ -3,6 +3,7 @@ import { useStore } from "react-redux";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
+import TextArea from "../../components/TextArea/TextArea";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -14,6 +15,7 @@ import {
   renameControllerProfile,
   selectControllerProfiles,
   setControllerProfileDefaultSends,
+  setControllerProfileDescription,
   setControllerProfileEnabled,
   setControllerProfileOutputs,
 } from "../../store/controllerProfilesSlice";
@@ -22,6 +24,7 @@ import {
   ControllerProfile,
   getControllerOutputs,
   getControllersClaimingOutput,
+  getDefaultControllerProfileDescription,
   isBuiltInControllerId,
   toggleControllerOutput,
 } from "../../utils/controllerProfiles";
@@ -58,6 +61,9 @@ const ControllerProfilesPanel = () => {
   );
 
   const [pendingName, setPendingName] = useState<Record<string, string>>({});
+  const [pendingDescription, setPendingDescription] = useState<
+    Record<string, string>
+  >({});
   const persistenceQueue = useRef<Promise<void>>(Promise.resolve());
 
   /** Displays a controller can actually be given. */
@@ -221,6 +227,35 @@ const ControllerProfilesPanel = () => {
             </Button>
           )}
         </div>
+
+        <TextArea
+          label="Home description"
+          description="Shown on the home page under this controller's name. Leave blank to use the default."
+          className="w-full"
+          textareaClassName="min-h-20"
+          value={pendingDescription[profile.id] ?? profile.description}
+          placeholder={getDefaultControllerProfileDescription(profile.type)}
+          onChange={(value) =>
+            setPendingDescription((prev) => ({
+              ...prev,
+              [profile.id]: value,
+            }))
+          }
+          onBlur={() => {
+            const next = pendingDescription[profile.id];
+            setPendingDescription((prev) => {
+              const { [profile.id]: _dropped, ...rest } = prev;
+              return rest;
+            });
+            if (next === undefined || next === profile.description) return;
+            withPersist(
+              setControllerProfileDescription({
+                id: profile.id,
+                description: next,
+              }),
+            );
+          }}
+        />
 
         {/* aria-label carries the controller name so each card's group is
             distinguishable when several are listed; the legend stays short. */}
