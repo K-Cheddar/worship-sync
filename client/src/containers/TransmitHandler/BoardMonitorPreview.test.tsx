@@ -1,14 +1,14 @@
 import { type ComponentProps } from "react";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BoardMonitorPreview from "./BoardMonitorPreview";
-import {
-  fromLegacyPresentationShape,
-  setDisplayBoardAliasId,
-} from "../../store/presentationSlice";
+import { setDisplayBoardAliasId } from "../../store/presentationSlice";
 
 const mockState = {
-  presentation: fromLegacyPresentationShape({ monitorBoardAliasId: "" }),
+  presentation: fromLegacyPresentationShape({
+    monitorBoardAliasId: "",
+  }),
 };
 
 let scaledBoardPreviewProps: { aliasId: string } | null = null;
@@ -48,10 +48,7 @@ jest.mock("../../boards/ScaledBoardPreview", () => ({
 
 const renderPreview = (
   props: Partial<ComponentProps<typeof BoardMonitorPreview>> = {},
-) =>
-  render(
-    <BoardMonitorPreview aliasId="local-board" isOpen {...props} />,
-  );
+) => render(<BoardMonitorPreview aliasId="local-board" isOpen {...props} />);
 
 describe("BoardMonitorPreview", () => {
   beforeEach(() => {
@@ -105,10 +102,12 @@ describe("BoardMonitorPreview", () => {
       name: /Presentation text size/i,
     });
     expect(
-      preview.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+      preview.compareDocumentPosition(toggle) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      toggle.compareDocumentPosition(sizeControl) & Node.DOCUMENT_POSITION_FOLLOWING,
+      toggle.compareDocumentPosition(sizeControl) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -142,7 +141,7 @@ describe("BoardMonitorPreview", () => {
 
     await userEvent.click(toggle);
 
-    expect(dispatch).toHaveBeenCalledWith(setDisplayBoardAliasId({ aliasId: "" }));
+    expect(dispatch).toHaveBeenCalledWith(setDisplayBoardAliasId({ aliasId: "", outputIds: ["monitor"] }));
   });
 
   it("remembers the resolved board for this device when turned on", async () => {
@@ -154,7 +153,10 @@ describe("BoardMonitorPreview", () => {
 
     // Turning it on both puts it on the monitor and seeds this device's storage.
     expect(dispatch).toHaveBeenCalledWith(
-      setDisplayBoardAliasId({ aliasId: "resolved-board" }),
+      setDisplayBoardAliasId({
+        aliasId: "resolved-board",
+        outputIds: ["monitor"],
+      }),
     );
     expect(localStorage.getItem("worshipsyncBoardDisplayAliasId")).toBe(
       "resolved-board",

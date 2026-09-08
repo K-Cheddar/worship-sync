@@ -7,7 +7,15 @@ import {
   pickFallbackDisplay,
 } from "./windowDisplayMatch";
 
-export type WindowType = "projector" | "monitor" | "board";
+/**
+ * Key identifying a display window. The three original surfaces keep the keys
+ * "projector", "monitor", and "board"; windows opened for a display output use
+ * that output's id, so a church can run as many as it has screens.
+ */
+export type WindowType = string;
+
+/** Windows that predate display outputs and are always available. */
+export const BUILT_IN_WINDOW_KEYS = ["projector", "monitor", "board"] as const;
 
 export interface SavedDisplayBounds {
   x: number;
@@ -17,6 +25,12 @@ export interface SavedDisplayBounds {
 }
 
 export interface WindowState {
+  /**
+   * Render profile this window was opened with. Persisted so a window for a
+   * display output can be rebuilt on launch, when the main process has no
+   * access to the church registry.
+   */
+  surface?: string;
   displayId?: number;
   /** Saved display bounds for matching after reboot (display IDs can change on Windows) */
   displayBounds?: SavedDisplayBounds;
@@ -29,17 +43,32 @@ export interface MainWindowState {
 }
 
 export interface WindowStates {
-  projector: WindowState;
-  monitor: WindowState;
-  board: WindowState;
+  /** Per-window state, keyed by window key. */
+  displays: Record<string, WindowState>;
   main?: MainWindowState;
 }
 
 // Default window states
-const DEFAULT_WINDOW_STATES: WindowStates = {
-  projector: {},
-  monitor: {},
-  board: {},
+const DEFAULT_WINDOW_STATES: WindowStates = { displays: {} };
+
+/**
+ * Older builds stored each window at the top level (`{ projector: {...} }`).
+ * Fold those into `displays` so an existing install keeps its screen
+ * assignments instead of reopening every window on the primary display.
+ */
+const migrateStates = (raw: Record<string, unknown>): WindowStates => {
+  if (raw.displays && typeof raw.displays === "object") {
+    return {
+      displays: (raw.displays as Record<string, WindowState>) ?? {},
+      main: raw.main as MainWindowState | undefined,
+    };
+  }
+  const displays: Record<string, WindowState> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === "main" || !value || typeof value !== "object") continue;
+    displays[key] = value as WindowState;
+  }
+  return { displays, main: raw.main as MainWindowState | undefined };
 };
 
 export class WindowStateManager {
@@ -55,7 +84,7 @@ export class WindowStateManager {
     try {
       if (fs.existsSync(this.stateFilePath)) {
         const data = fs.readFileSync(this.stateFilePath, "utf-8");
-        return { ...DEFAULT_WINDOW_STATES, ...JSON.parse(data) };
+        return migrateStates(JSON.parse(data) as Record<string, unknown>);
       }
     } catch (error) {
       console.error("Error loading window states:", error);
@@ -75,8 +104,22 @@ export class WindowStateManager {
     }
   }
 
+  /** Every window key with saved state, including display output windows. */
+  listKeys(): string[] {
+    return Object.keys(this.states.displays);
+  }
+
+  /** Remember the render profile so the window can be recreated on launch. */
+  rememberSurface(windowType: WindowType, surface?: string): void {
+    if (!surface) return;
+    const existing = this.states.displays[windowType] ?? {};
+    if (existing.surface === surface) return;
+    this.states.displays[windowType] = { ...existing, surface };
+    this.saveStates();
+  }
+
   getState(windowType: WindowType): WindowState {
-    return this.states[windowType];
+    return this.states.displays[windowType] ?? {};
   }
 
   saveWindowState(windowType: WindowType, window: BrowserWindow): void {
@@ -85,7 +128,10 @@ export class WindowStateManager {
     const detectedDisplay = screen.getDisplayMatching(bounds);
     const b = detectedDisplay.bounds;
 
-    this.states[windowType] = {
+    this.states.displays[windowType] = {
+      // Keep the render profile: it is what rebuilds the route on next launch,
+      // and a save on move or ready-to-show must not drop it.
+      ...this.states.displays[windowType],
       displayId: detectedDisplay.id,
       displayBounds: { x: b.x, y: b.y, width: b.width, height: b.height },
       wasOpen: true,
@@ -98,7 +144,8 @@ export class WindowStateManager {
    * Mark a window as closed
    */
   markWindowClosed(windowType: WindowType) {
-    this.states[windowType].wasOpen = false;
+    if (!this.states.displays[windowType]) return;
+    this.states.displays[windowType].wasOpen = false;
     this.saveStates();
   }
 
@@ -106,7 +153,7 @@ export class WindowStateManager {
    * Check if window was open when app last closed
    */
   wasWindowOpen(windowType: WindowType): boolean {
-    return this.states[windowType].wasOpen ?? false;
+    return this.states.displays[windowType]?.wasOpen ?? false;
   }
 
   /**
@@ -114,7 +161,7 @@ export class WindowStateManager {
    * Uses displayId first; if not found (e.g. IDs changed after reboot), matches by saved bounds.
    */
   getDisplayForWindow(windowType: WindowType) {
-    const state = this.states[windowType];
+    const state = this.getState(windowType);
     const displays = screen.getAllDisplays();
 
     const byId = findDisplayById(displays, state.displayId);
@@ -152,13 +199,13 @@ export class WindowStateManager {
    * Set display preference for a window (also saves bounds for stable matching after reboot)
    */
   setDisplayPreference(windowType: WindowType, displayId: number): void {
-    if (!this.states[windowType]) {
-      this.states[windowType] = {};
+    if (!this.states.displays[windowType]) {
+      this.states.displays[windowType] = {};
     }
     const display = screen.getAllDisplays().find((d) => d.id === displayId);
     const b = display?.bounds;
-    this.states[windowType].displayId = displayId;
-    this.states[windowType].displayBounds = b
+    this.states.displays[windowType].displayId = displayId;
+    this.states.displays[windowType].displayBounds = b
       ? { x: b.x, y: b.y, width: b.width, height: b.height }
       : undefined;
     this.saveStates();

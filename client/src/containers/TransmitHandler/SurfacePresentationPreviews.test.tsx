@@ -1,39 +1,39 @@
 import { render, screen } from "@testing-library/react";
+import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
 import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
-import { fromLegacyPresentationShape } from "../../store/presentationSlice";
 
 const mockState = {
   presentation: fromLegacyPresentationShape({
     projectorInfo: {
+      type: "",
       name: "Proj Song",
       displayType: "projector",
-      timerId: null,
       slide: null,
     },
-    prevProjectorInfo: { name: "", timerId: null, slide: null },
+    prevProjectorInfo: { type: "", name: "", slide: null },
     isProjectorTransmitting: true,
     monitorInfo: {
+      type: "",
       name: "Mon Song",
       displayType: "monitor",
-      timerId: null,
       slide: null,
     },
-    prevMonitorInfo: { name: "", timerId: null, slide: null },
+    prevMonitorInfo: { type: "", name: "", slide: null },
     isMonitorTransmitting: false,
     monitorBoardAliasId: "",
     streamInfo: {
+      type: "",
       name: "Stream Song",
       displayType: "stream",
-      timerId: null,
       slide: null,
       participantOverlayInfo: { id: "p1", name: "Alex", time: 1 },
     },
-    prevStreamInfo: { name: "", timerId: null, slide: null },
+    prevStreamInfo: { type: "", name: "", slide: null },
     isStreamTransmitting: true,
     streamItemContentBlocked: true,
-  } as never),
+  }),
   timers: { timers: [] },
 };
 
@@ -42,6 +42,7 @@ let lastPreviewProps: Record<string, unknown> | null = null;
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: typeof mockState) => unknown) =>
     selector(mockState),
+  useDispatch: () => jest.fn(),
 }));
 
 jest.mock("../../components/Presentation/PresentationPreview", () => ({
@@ -54,7 +55,7 @@ jest.mock("../../components/Presentation/PresentationPreview", () => ({
         data-transmitting={props.isTransmitting ? "true" : "false"}
         data-hide-quick-links={props.hideQuickLinks ? "true" : "false"}
         data-item-blocked={props.streamItemContentBlocked ? "true" : "false"}
-        data-show-monitor-clock={props.showMonitorClockTimer ? "true" : "false"}
+        data-show-clock-timer={props.showClockTimer ? "true" : "false"}
       />
     );
   },
@@ -83,12 +84,16 @@ describe("TransmitHandler surface previews", () => {
       />,
     );
 
-    expect(screen.getByTestId("presentation-preview-projector")).toHaveAttribute(
-      "data-transmitting",
-      "true",
+    expect(
+      screen.getByTestId("presentation-preview-projector"),
+    ).toHaveAttribute("data-transmitting", "true");
+    expect(lastPreviewProps?.info).toEqual(
+      mockState.presentation.outputs.projector.info,
     );
-    expect(lastPreviewProps?.info).toEqual(mockState.presentation.outputs.projector.info);
     expect(lastPreviewProps?.name).toBe("Projector");
+    expect(
+      screen.queryByRole("button", { name: /video input/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("wires monitor Redux state and shows monitor clock/timer band flag", () => {
@@ -102,9 +107,11 @@ describe("TransmitHandler surface previews", () => {
 
     const preview = screen.getByTestId("presentation-preview-monitor");
     expect(preview).toHaveAttribute("data-transmitting", "false");
-    expect(preview).toHaveAttribute("data-show-monitor-clock", "true");
+    expect(preview).toHaveAttribute("data-show-clock-timer", "true");
     expect(preview).toHaveAttribute("data-hide-quick-links", "true");
-    expect(lastPreviewProps?.info).toEqual(mockState.presentation.outputs.monitor.info);
+    expect(lastPreviewProps?.info).toEqual(
+      mockState.presentation.outputs.monitor.info,
+    );
   });
 
   it("wires stream overlay-only blocked flag and hides quick links in overlay focus", () => {
@@ -121,6 +128,8 @@ describe("TransmitHandler surface previews", () => {
     expect(preview).toHaveAttribute("data-transmitting", "true");
     expect(preview).toHaveAttribute("data-item-blocked", "true");
     expect(preview).toHaveAttribute("data-hide-quick-links", "true");
-    expect(lastPreviewProps?.info).toEqual(mockState.presentation.outputs.stream.info);
+    expect(lastPreviewProps?.info).toEqual(
+      mockState.presentation.outputs.stream.info,
+    );
   });
 });

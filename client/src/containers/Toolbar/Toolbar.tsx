@@ -2,7 +2,7 @@ import { useLocation } from "react-router-dom";
 import {
   Settings,
   SquarePen,
-  Monitor,
+  MonitorCog,
   RectangleEllipsis,
   Pencil,
   MonitorPlay,
@@ -47,6 +47,7 @@ import {
 import { ItemState } from "../../types";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import Outlines from "./ToolbarElements/Outlines";
 type sections =
   | "configurations"
   | "slide-tools"
@@ -54,7 +55,13 @@ type sections =
   | "item-tools"
   | "box-tools";
 
-export type ToolbarVariant = "default" | "overlay";
+/**
+ * "aux" is the slim toolbar for auxiliary controllers: its outline picker and
+ * nothing else. The default toolbar's tabs navigate into "/controller/..."
+ * routes, which belong to the main controller and would take the operator off
+ * the screen they are driving.
+ */
+export type ToolbarVariant = "default" | "overlay" | "aux";
 
 const getControllerConfigurationRoute = (
   pathname: string,
@@ -65,8 +72,8 @@ const getControllerConfigurationRoute = (
   if (pathname.includes("quick-links")) {
     return "/controller/quick-links";
   }
-  if (pathname.includes("monitor-settings")) {
-    return "/controller/monitor-settings";
+  if (pathname.includes("displays") || pathname.includes("monitor-settings")) {
+    return "/controller/displays";
   }
   if (pathname.includes("preferences")) {
     return "/controller/preferences";
@@ -103,12 +110,12 @@ const Toolbar = ({
   const configurationsSubTabRefs = useRef<{
     preferences: HTMLButtonElement | HTMLAnchorElement | null;
     quickLinks: HTMLButtonElement | HTMLAnchorElement | null;
-    monitor: HTMLButtonElement | HTMLAnchorElement | null;
+    displays: HTMLButtonElement | HTMLAnchorElement | null;
     servicePlanning: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     preferences: null,
     quickLinks: null,
-    monitor: null,
+    displays: null,
     servicePlanning: null,
   });
 
@@ -205,8 +212,8 @@ const Toolbar = ({
       ? "servicePlanning"
       : path.includes("quick-links")
         ? "quickLinks"
-        : path.includes("monitor-settings")
-          ? "monitor"
+        : path.includes("displays") || path.includes("monitor-settings")
+          ? "displays"
           : "preferences";
     scrollToolbarTabIntoViewIfNeeded(configurationsSubTabRefs.current[subKey]);
   }, [section, location.pathname]);
@@ -215,7 +222,7 @@ const Toolbar = ({
     <ErrorBoundary>
       <div className={className}>
         <div className="px-2 py-1 flex gap-2 border-r-2 border-gray-500 items-center flex-col justify-center">
-          <Menu variant={variant} />
+          <Menu variant={variant === "overlay" ? "overlay" : "default"} />
           {!isEditMode && !isViewOnlyAccess(access) && <Undo />}
         </div>
         <div
@@ -224,7 +231,11 @@ const Toolbar = ({
             isEditMode && "invisible"
           )}
         >
-          {variant === "overlay" ? (
+          {variant === "aux" ? (
+            <div className="flex w-full min-w-0 items-center gap-2 px-2 py-1">
+              <Outlines matchToolbarTabs className="shrink-0" />
+            </div>
+          ) : variant === "overlay" ? (
             <ToolbarOverlay
               isEditMode={!!isEditMode}
               quickLinksDrawerOpen={quickLinksDrawerOpen}
@@ -344,14 +355,17 @@ const Toolbar = ({
                 {access === "full" && (
                   <ToolbarButton
                     ref={(el) => {
-                      configurationsSubTabRefs.current.monitor = el;
+                      configurationsSubTabRefs.current.displays = el;
                     }}
-                    svg={Monitor}
-                    to="/controller/monitor-settings"
+                    svg={MonitorCog}
+                    to="/controller/displays"
                     hidden={section !== "configurations"}
-                    isActive={location.pathname.includes("monitor-settings")}
+                    isActive={
+                      location.pathname.includes("displays") ||
+                      location.pathname.includes("monitor-settings")
+                    }
                   >
-                    Monitor Settings
+                    Displays
                   </ToolbarButton>
                 )}
                 {access === "full" && (

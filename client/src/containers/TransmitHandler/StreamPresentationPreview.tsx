@@ -1,7 +1,10 @@
 import { ComponentProps, memo } from "react";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../../store/presentationSlice";
 import PresentationPreview from "../../components/Presentation/PresentationPreview";
 import { useSelector } from "../../hooks";
-import { selectOutputSlot } from "../../store/presentationSlice";
 
 type PresentationQuickLinks = ComponentProps<
   typeof PresentationPreview
@@ -14,6 +17,10 @@ type StreamPresentationPreviewProps = {
   fillWidth?: boolean;
   readOnly?: boolean;
   toggleIsTransmitting: () => void;
+  /** Output this tile shows; defaults to the built-in surface. */
+  outputId?: string;
+  /** Operator-facing output name; defaults to the surface label. */
+  name?: string;
   variant: "default" | "overlayStreamFocus";
   showFocusedStreamControls: boolean;
 };
@@ -28,18 +35,20 @@ const StreamPresentationPreview = memo(
     toggleIsTransmitting,
     variant,
     showFocusedStreamControls,
+    outputId = "stream",
+    name = "Stream",
   }: StreamPresentationPreviewProps) => {
     const info = useSelector(
-      (state) => selectOutputSlot(state, "stream", "stream").info,
+      (state) => selectResolvedOutputSlot(state, outputId, "stream").info,
     );
     const prevInfo = useSelector(
-      (state) => selectOutputSlot(state, "stream", "stream").prevInfo,
+      (state) => selectResolvedOutputSlot(state, outputId, "stream").prevInfo,
     );
     const isTransmitting = useSelector(
-      (state) => selectOutputSlot(state, "stream", "stream").isTransmitting,
+      (state) => selectOutputSlot(state, outputId, "stream").isTransmitting,
     );
     const streamItemContentBlocked = useSelector(
-      (state) => selectOutputSlot(state, "stream", "stream").itemContentBlocked,
+      (state) => selectOutputSlot(state, outputId, "stream").itemContentBlocked,
     );
     const timers = useSelector((state) => state.timers.timers);
     const timerInfo = useSelector((state) =>
@@ -52,7 +61,8 @@ const StreamPresentationPreview = memo(
     return (
       <PresentationPreview
         timers={timers}
-        name="Stream"
+        name={name}
+        outputId={outputId}
         prevInfo={prevInfo}
         timerInfo={timerInfo}
         prevTimerInfo={prevTimerInfo}

@@ -1,17 +1,28 @@
 import { useSelector } from "../hooks";
-import { selectOutputSlot } from "../store/presentationSlice";
+import {
+  useOutputForSurface,
+  useWindowKeyForSurface,
+} from "../hooks/useOutputForSurface";
+import {
+  selectOutputSlot,
+  selectResolvedOutputSlot,
+} from "../store/presentationSlice";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useWakeLock } from "../hooks/useWakeLock";
+import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
+import { useCallback } from "react";
 
 const Stream = () => {
+  const output = useOutputForSurface("stream");
+  const windowKey = useWindowKeyForSurface("stream");
   const streamInfo = useSelector(
-    (state) => selectOutputSlot(state, "stream", "stream").info,
+    (state) => selectResolvedOutputSlot(state, output.id, "stream").info,
   );
   const prevStreamInfo = useSelector(
-    (state) => selectOutputSlot(state, "stream", "stream").prevInfo,
+    (state) => selectResolvedOutputSlot(state, output.id, "stream").prevInfo,
   );
   const streamItemContentBlocked = useSelector(
-    (state) => selectOutputSlot(state, "stream", "stream").itemContentBlocked,
+    (state) => selectOutputSlot(state, output.id, "stream").itemContentBlocked,
   );
   const streamTimer = useSelector((state) =>
     state.timers.timers.find((timer) => timer.id === streamInfo.timerId),
@@ -22,10 +33,21 @@ const Stream = () => {
 
   useWakeLock();
 
+  // Escape closes this stream's window, the same way the monitor and projector
+  // windows behave. Keyed by output so one stream cannot close another.
+  const closeWindow = useCallback(async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.closeWindow(windowKey);
+    }
+  }, [windowKey]);
+
+  useCloseOnEscape(closeWindow);
+
   return (
     <DisplayWindow
       boxes={streamInfo.slide?.boxes || []}
       prevBoxes={prevStreamInfo.slide?.boxes || []}
+      outputId={output.id}
       displayType={streamInfo.displayType}
       participantOverlayInfo={streamInfo.participantOverlayInfo}
       prevParticipantOverlayInfo={prevStreamInfo.participantOverlayInfo}
@@ -46,6 +68,11 @@ const Stream = () => {
       timerInfo={streamTimer}
       prevTimerInfo={prevStreamTimer}
       streamItemContentBlocked={streamItemContentBlocked}
+      localVideoInput={streamInfo.localVideoInput}
+      prevLocalVideoInput={prevStreamInfo.localVideoInput}
+      videoPlayback={streamInfo.videoPlayback}
+      shouldPlayVideo
+      canCaptureLocalVideo
     />
   );
 };

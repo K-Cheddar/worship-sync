@@ -26,7 +26,11 @@ jest.mock("electron", () => ({
 }));
 
 describe("createDisplayWindow", () => {
-  it("disables background throttling so videos keep playing when unfocused", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("keeps media playing with sound when the display is unfocused", () => {
     createDisplayWindow({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       route: "/projector-full",
@@ -37,13 +41,14 @@ describe("createDisplayWindow", () => {
     expect(BrowserWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         webPreferences: expect.objectContaining({
+          autoplayPolicy: "no-user-gesture-required",
           backgroundThrottling: false,
         }),
       }),
     );
   });
 
-  it("hides the cursor once the projector route finishes loading", () => {
+  it("hides the cursor only when hideCursor is requested", () => {
     const window = createDisplayWindow({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       route: "/projector-full",
@@ -55,45 +60,24 @@ describe("createDisplayWindow", () => {
     const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
       ([event]) => event === "dom-ready",
     )?.[1];
-
-    expect(domReadyHandler).toBeDefined();
-
+    expect(domReadyHandler).toEqual(expect.any(Function));
     domReadyHandler();
-
     expect(window.webContents.insertCSS).toHaveBeenCalledWith(
-      expect.stringContaining("cursor: none"),
+      "*, *::before, *::after { cursor: none !important; }",
     );
   });
 
-  it("keeps the cursor visible for monitor displays", () => {
+  it("keeps the cursor visible by default so display sign-in stays usable", () => {
     const window = createDisplayWindow({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
-      route: "/monitor",
+      route: "/projector-full",
       isDev: true,
       dirname: "C:/app/dist-electron/main",
-      hideCursor: false,
     });
 
     const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
       ([event]) => event === "dom-ready",
     )?.[1];
-
-    expect(domReadyHandler).toBeUndefined();
-  });
-
-  it("keeps the cursor visible for board displays", () => {
-    const window = createDisplayWindow({
-      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
-      route: "/boards/display",
-      isDev: true,
-      dirname: "C:/app/dist-electron/main",
-      hideCursor: false,
-    });
-
-    const domReadyHandler = (window.webContents.on as jest.Mock).mock.calls.find(
-      ([event]) => event === "dom-ready",
-    )?.[1];
-
     expect(domReadyHandler).toBeUndefined();
   });
 });

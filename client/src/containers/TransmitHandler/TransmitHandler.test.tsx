@@ -3,9 +3,10 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import TransmitHandler from "./TransmitHandler";
 import {
-  fromLegacyPresentationShape,
   presentationSlice,
+  fromLegacyPresentationShape,
   toLegacyPresentationShape,
+  PresentationState,
 } from "../../store/presentationSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import { timersSlice } from "../../store/timersSlice";
@@ -218,7 +219,9 @@ describe("TransmitHandler", () => {
 
     await user.click(screen.getByRole("button", { name: "Clear Overlays" }));
 
-    const state = toLegacyPresentationShape(store.getState().presentation);
+    const state = toLegacyPresentationShape(
+      (store.getState() as { presentation: PresentationState }).presentation,
+    );
     expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
     expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Ann");
     expect(state.streamInfo.slide?.boxes?.[0]?.words).toBe("Lyrics");
@@ -238,10 +241,16 @@ describe("TransmitHandler", () => {
       </Provider>,
     );
 
-    expect(toLegacyPresentationShape(store.getState().presentation)
-      .streamItemContentBlocked).toBe(false);
+    expect(
+      toLegacyPresentationShape(
+        (store.getState() as { presentation: PresentationState }).presentation,
+      ).streamItemContentBlocked,
+    ).toBe(false);
     await user.click(screen.getByText("Hide Content:"));
-    expect(toLegacyPresentationShape(store.getState().presentation)
-      .streamItemContentBlocked).toBe(true);
+    expect(
+      toLegacyPresentationShape(
+        (store.getState() as { presentation: PresentationState }).presentation,
+      ).streamItemContentBlocked,
+    ).toBe(true);
   });
 });

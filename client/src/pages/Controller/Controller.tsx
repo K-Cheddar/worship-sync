@@ -20,7 +20,7 @@ import FreeForms from "../../containers/FreeForms/FreeForms";
 import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
 import QuickLinks from "./QuickLinks";
-import MonitorSettings from "./MonitorSettings";
+import Displays from "./Displays";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setIsEditMode } from "../../store/itemSlice";
@@ -34,6 +34,8 @@ import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
+import { ActiveControllerProvider } from "../../context/activeController";
+import { PRESENTATION_CONTROLLER_ID } from "../../utils/controllerProfiles";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -107,6 +109,7 @@ const Controller = () => {
   };
 
   return (
+    <ActiveControllerProvider profileId={PRESENTATION_CONTROLLER_ID}>
     <ControllerPageShell
       user={user}
       churchName={churchName}
@@ -159,7 +162,11 @@ const Controller = () => {
             <Route path="preferences" element={<Preferences />} />
             <Route path="account" element={<Navigate to="/account" replace />} />
             <Route path="quick-links" element={<QuickLinks />} />
-            <Route path="monitor-settings" element={<MonitorSettings />} />
+            <Route path="displays" element={<Displays />} />
+            <Route
+              path="monitor-settings"
+              element={<Navigate to="/controller/displays" replace />}
+            />
             <Route path="service-planning" element={<ServicePlanningImportPanel />} />
           </Routes>
         </ControllerViewRouteGuard>
@@ -195,6 +202,7 @@ const Controller = () => {
         </>
       )}
     </ControllerPageShell>
+    </ActiveControllerProvider>
   );
 };
 
