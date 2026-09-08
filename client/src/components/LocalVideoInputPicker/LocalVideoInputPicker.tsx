@@ -193,7 +193,7 @@ const LocalVideoInputPicker = ({
     if (!open) return;
     setLabel(
       source?.label ??
-        getDefaultLocalVideoInputLabel(isDesktopMode ? "screen" : "device"),
+      getDefaultLocalVideoInputLabel(isDesktopMode ? "screen" : "device"),
     );
     setIsLabelEdited(Boolean(source?.label));
     setFit(source?.fit ?? "contain");
@@ -528,8 +528,8 @@ const LocalVideoInputPicker = ({
     "Media saves a logical input name. This computer keeps the USB hardware mapping locally.";
   if (isDesktopMode) {
     sheetDescription = canListDesktopSources
-      ? "Media saves the share name. This computer keeps the screen or window it points to."
-      : "Media saves the share name. Choose what to share in this browser; sharing ends when this tab closes.";
+      ? "Share a screen or Canva Present window. Media saves the name; only this computer can push it to your chosen WorshipSync display."
+      : "Share a screen or Canva Present window in this browser. Only this computer can show the live share; sharing ends when this tab closes.";
   }
   const desktopPlaceholder = hasListedDesktopSources
     ? "No screens or windows found"

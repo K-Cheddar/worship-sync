@@ -62,6 +62,57 @@ const refreshedImage = {
   },
 } as mediaInfoType;
 
+test("opens a design from a pasted Canva link when the church account can access it", async () => {
+  jest.mocked(getCanvaStatus).mockResolvedValue({
+    connected: true,
+    oauthConfigured: true,
+    accountLabel: "Church Creative",
+  });
+  jest.mocked(listCanvaDesigns).mockResolvedValue({
+    items: [],
+    continuation: "",
+  });
+  jest.mocked(getCanvaDesign).mockResolvedValue({
+    id: "DAF_shared_99",
+    title: "Shared Weekly Deck",
+    thumbnailUrl: "https://example.test/shared.png",
+    pageCount: 3,
+    updatedAt: 200,
+    editUrl: "https://www.canva.com/design/DAF_shared_99/edit",
+    viewUrl: "https://www.canva.com/design/DAF_shared_99/view",
+  });
+
+  render(
+    <MemoryRouter>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <CanvaImportSheet
+          open
+          onOpenChange={jest.fn()}
+          onImageComplete={jest.fn()}
+          onVideoComplete={jest.fn()}
+          onImageRefresh={jest.fn()}
+          onVideoRefresh={jest.fn()}
+          existingMedia={[]}
+        />
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  const user = userEvent.setup();
+  const linkInput = await screen.findByLabelText(/Open by link/i);
+  await user.type(
+    linkInput,
+    "https://www.canva.com/design/DAF_shared_99/view",
+  );
+  await user.click(screen.getByRole("button", { name: /^Open$/i }));
+
+  await waitFor(() => {
+    expect(getCanvaDesign).toHaveBeenCalledWith("church-1", "DAF_shared_99");
+  });
+  expect(await screen.findByText("Shared Weekly Deck")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Page 1/i })).toBeInTheDocument();
+});
+
 test("refreshes an existing Canva media record when its design revision changes", async () => {
   jest.mocked(getCanvaStatus).mockResolvedValue({
     connected: true,

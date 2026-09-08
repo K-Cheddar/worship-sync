@@ -21,6 +21,7 @@ import {
   DBOverlay,
   SongMetadata,
   ShouldSendTo,
+  SlideMediaSource,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import {
@@ -502,6 +503,14 @@ type CreateNewFreeFormType = {
   background: string;
   brightness: number;
   mediaInfo?: MediaType;
+  mediaSource?: SlideMediaSource;
+  /** When set, replaces the default single slide (e.g. multi-page Canva import). */
+  slideDefs?: Array<{
+    name?: string;
+    background: string;
+    mediaInfo?: MediaType;
+    mediaSource?: SlideMediaSource;
+  }>;
   overflow?: OverflowMode;
   /** When true, first slide body stays empty (no `text || name` fallback). */
   emptyBodyText?: boolean;
@@ -515,6 +524,8 @@ export const createNewFreeForm = async ({
   db,
   background,
   mediaInfo,
+  mediaSource,
+  slideDefs,
   brightness,
   overflow = "fit",
   emptyBodyText = false,
@@ -524,6 +535,40 @@ export const createNewFreeForm = async ({
   const bodyWords: [string, string] = emptyBodyText
     ? ["", ""]
     : ["", text || name];
+  const resolvedMediaSource =
+    mediaSource ??
+    (mediaInfo?.localVideoInput?.kind === "local-video-input"
+      ? mediaInfo.localVideoInput
+      : undefined);
+  const slides =
+    slideDefs && slideDefs.length > 0
+      ? slideDefs.map((def, index) =>
+          createNewSlide({
+            type: "Section",
+            name: def.name || `Page ${index + 1}`,
+            fontSize: DEFAULT_FONT_PX,
+            words: index === 0 ? bodyWords : ["", ""],
+            background: def.background,
+            mediaInfo: def.mediaInfo,
+            mediaSource: def.mediaSource,
+            brightness,
+            overflow,
+          }),
+        )
+      : [
+          createNewSlide({
+            type: "Section",
+            name: "Section 1",
+            fontSize: DEFAULT_FONT_PX,
+            words: bodyWords,
+            background: resolvedMediaSource ? "" : background,
+            mediaInfo: resolvedMediaSource ? undefined : mediaInfo,
+            mediaSource: resolvedMediaSource,
+            brightness,
+            overflow,
+          }),
+        ];
+  const firstBackground = slides[0]?.boxes[0]?.background || background;
   const newItem: ItemState = {
     name: _name,
     type: "free",
@@ -532,19 +577,10 @@ export const createNewFreeForm = async ({
     selectedSlide: 0,
     selectedBox: 1,
     background:
-      mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
-    slides: [
-      createNewSlide({
-        type: "Section",
-        name: "Section 1",
-        fontSize: DEFAULT_FONT_PX,
-        words: bodyWords,
-        background,
-        mediaInfo,
-        brightness,
-        overflow,
-      }),
-    ],
+      mediaInfo?.type === "video" && !resolvedMediaSource
+        ? mediaInfo?.placeholderImage
+        : firstBackground,
+    slides,
     arrangements: [],
     shouldSendTo: shouldSendTo ?? {
       projector: true,

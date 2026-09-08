@@ -18,7 +18,8 @@ const createClientError = (message, statusCode = 400) => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const hash = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
-const randomValue = (bytes = 32) => crypto.randomBytes(bytes).toString("base64url");
+const randomValue = (bytes = 32) =>
+  crypto.randomBytes(bytes).toString("base64url");
 const DEFAULT_RETURN_TO = "/account/integrations";
 const RETURN_TO_BASE_URL = "https://worshipsync.invalid";
 
@@ -45,7 +46,9 @@ export const safeCanvaReturnTo = (value) => {
   }
 };
 const safeName = (value, fallback) =>
-  String(value || fallback || "Canva design").trim().slice(0, 160);
+  String(value || fallback || "Canva design")
+    .trim()
+    .slice(0, 160);
 const safeCanvaDesignUrl = (value) => {
   try {
     const parsed = new URL(String(value || ""));
@@ -75,7 +78,10 @@ const normalizeAxiosError = (error, fallback) => {
     error?.response?.data?.message ||
     error?.response?.data?.error_description ||
     error?.response?.data?.error?.message;
-  return createClientError(providerMessage || fallback, error?.response?.status || 502);
+  return createClientError(
+    providerMessage || fallback,
+    error?.response?.status || 502,
+  );
 };
 
 export const createCanvaService = ({
@@ -101,9 +107,9 @@ export const createCanvaService = ({
   const refreshes = new Map();
   const configured = Boolean(
     String(clientId || "").trim() &&
-      String(clientSecret || "").trim() &&
-      String(tokenEncryptionKey || "").trim() &&
-      String(redirectBaseUrl || "").trim(),
+    String(clientSecret || "").trim() &&
+    String(tokenEncryptionKey || "").trim() &&
+    String(redirectBaseUrl || "").trim(),
   );
   const encryptionKey = configured
     ? crypto.createHash("sha256").update(String(tokenEncryptionKey)).digest()
@@ -201,7 +207,10 @@ export const createCanvaService = ({
       );
       return response.data;
     } catch (error) {
-      throw normalizeAxiosError(error, "Canva did not complete the connection. Try again.");
+      throw normalizeAxiosError(
+        error,
+        "Canva did not complete the connection. Try again.",
+      );
     }
   };
 
@@ -232,10 +241,14 @@ export const createCanvaService = ({
 
   const accessTokenFor = async (churchId) => {
     if (!configured) {
-      throw createClientError("Canva is not configured for this WorshipSync server.", 503);
+      throw createClientError(
+        "Canva is not configured for this WorshipSync server.",
+        503,
+      );
     }
     const tokenDoc = await getDoc(TOKEN_COLLECTION, churchId);
-    if (!tokenDoc) throw createClientError("Connect Canva in Integrations first.", 409);
+    if (!tokenDoc)
+      throw createClientError("Connect Canva in Integrations first.", 409);
     if (Number(tokenDoc.expiresAt) > now() + TOKEN_SKEW_MS) {
       return decrypt(tokenDoc.accessToken);
     }
@@ -256,7 +269,8 @@ export const createCanvaService = ({
 
   const forceRefreshAccessToken = async (churchId) => {
     const tokenDoc = await getDoc(TOKEN_COLLECTION, churchId);
-    if (!tokenDoc) throw createClientError("Connect Canva in Integrations first.", 409);
+    if (!tokenDoc)
+      throw createClientError("Connect Canva in Integrations first.", 409);
     return refreshToken(churchId, tokenDoc);
   };
 
@@ -281,7 +295,10 @@ export const createCanvaService = ({
           );
         }
       }
-      throw normalizeAxiosError(error, "Canva could not load that content. Try again.");
+      throw normalizeAxiosError(
+        error,
+        "Canva could not load that content. Try again.",
+      );
     }
   };
   const canvaPost = async (churchId, path, body) => {
@@ -307,17 +324,26 @@ export const createCanvaService = ({
           );
         }
       }
-      throw normalizeAxiosError(error, "Canva could not start that export. Try again.");
+      throw normalizeAxiosError(
+        error,
+        "Canva could not start that export. Try again.",
+      );
     }
   };
 
   const startConnect = async ({ churchId, userId, returnTo, desktop }) => {
     if (!configured) {
-      throw createClientError("Add the Canva credentials to the server before connecting.", 503);
+      throw createClientError(
+        "Add the Canva credentials to the server before connecting.",
+        503,
+      );
     }
     const state = randomValue();
     const verifier = randomValue(64);
-    const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+    const challenge = crypto
+      .createHash("sha256")
+      .update(verifier)
+      .digest("base64url");
     const requestId = `canva_${crypto.randomUUID()}`;
     const requestSecret = randomValue();
     const expiresAt = now() + STATE_TTL_MS;
@@ -357,18 +383,26 @@ export const createCanvaService = ({
   const completeConnect = async ({ state, code, denied }) => {
     const stateDoc = await getDoc(STATE_COLLECTION, String(state || ""));
     if (!stateDoc || Number(stateDoc.expiresAt) <= now()) {
-      throw createClientError("This Canva connection request expired. Start again.", 400);
+      throw createClientError(
+        "This Canva connection request expired. Start again.",
+        400,
+      );
     }
     await deleteDoc(STATE_COLLECTION, stateDoc.id);
     const finish = async (patch) =>
       setDoc(CONNECT_COLLECTION, stateDoc.requestId, {
         churchId: stateDoc.churchId,
-        secretHash: (await getDoc(CONNECT_COLLECTION, stateDoc.requestId))?.secretHash || "",
+        secretHash:
+          (await getDoc(CONNECT_COLLECTION, stateDoc.requestId))?.secretHash ||
+          "",
         expiresAt: stateDoc.expiresAt,
         ...patch,
       });
     if (denied || !code) {
-      await finish({ status: "failed", errorMessage: "Canva access was not approved." });
+      await finish({
+        status: "failed",
+        errorMessage: "Canva access was not approved.",
+      });
       const error = createClientError("Canva access was not approved.");
       error.returnTo = stateDoc.returnTo;
       error.desktop = stateDoc.desktop;
@@ -383,10 +417,17 @@ export const createCanvaService = ({
       });
       const profileResponse = await httpClient.get(
         "https://api.canva.com/rest/v1/users/me/profile",
-        { headers: { Authorization: `Bearer ${token.access_token}` }, timeout: 20000 },
+        {
+          headers: { Authorization: `Bearer ${token.access_token}` },
+          timeout: 20000,
+        },
       );
-      const profile = profileResponse.data?.profile || profileResponse.data || {};
-      const accountLabel = safeName(profile.display_name, "Connected Canva account");
+      const profile =
+        profileResponse.data?.profile || profileResponse.data || {};
+      const accountLabel = safeName(
+        profile.display_name,
+        "Connected Canva account",
+      );
       await saveToken(stateDoc.churchId, token, accountLabel);
       await updateStatus(stateDoc.churchId, {
         enabled: true,
@@ -395,7 +436,11 @@ export const createCanvaService = ({
         lastError: "",
       });
       await finish({ status: "completed", accountLabel, completedAt: now() });
-      return { accountLabel, returnTo: stateDoc.returnTo, desktop: stateDoc.desktop };
+      return {
+        accountLabel,
+        returnTo: stateDoc.returnTo,
+        desktop: stateDoc.desktop,
+      };
     } catch (error) {
       await finish({ status: "failed", errorMessage: error.message });
       error.returnTo = stateDoc.returnTo;
@@ -409,16 +454,25 @@ export const createCanvaService = ({
     connectRequestId,
     connectRequestSecret,
   }) => {
-    const doc = await getDoc(CONNECT_COLLECTION, String(connectRequestId || ""));
+    const doc = await getDoc(
+      CONNECT_COLLECTION,
+      String(connectRequestId || ""),
+    );
     if (
       !doc ||
       doc.churchId !== churchId ||
       hash(connectRequestSecret) !== doc.secretHash
     ) {
-      throw createClientError("That Canva connection request is not available.", 404);
+      throw createClientError(
+        "That Canva connection request is not available.",
+        404,
+      );
     }
     if (doc.status === "pending" && Number(doc.expiresAt) <= now()) {
-      return { status: "expired", errorMessage: "This Canva connection request expired." };
+      return {
+        status: "expired",
+        errorMessage: "This Canva connection request expired.",
+      };
     }
     return {
       status: doc.status,
@@ -448,7 +502,10 @@ export const createCanvaService = ({
           { headers: basicHeaders(), timeout: 10000 },
         );
       } catch (error) {
-        console.warn("Could not revoke Canva token; removing local connection:", error?.message);
+        console.warn(
+          "Could not revoke Canva token; removing local connection:",
+          error?.message,
+        );
       }
     }
     await deleteDoc(TOKEN_COLLECTION, churchId);
@@ -475,22 +532,46 @@ export const createCanvaService = ({
     if (!/^[A-Za-z0-9_-]{3,200}$/.test(String(designId || ""))) {
       throw createClientError("Choose a valid Canva design.");
     }
-    const response = await canvaGet(
-      churchId,
-      `/designs/${encodeURIComponent(designId)}`,
-    );
-    return normalizeCanvaDesign(response.data?.design || response.data || {});
+    try {
+      const response = await canvaGet(
+        churchId,
+        `/designs/${encodeURIComponent(designId)}`,
+      );
+      return normalizeCanvaDesign(response.data?.design || response.data || {});
+    } catch (error) {
+      if (error?.statusCode === 403 || error?.statusCode === 404) {
+        throw createClientError(
+          "This design is not available to the church Canva account. Share it with that account, then try again.",
+          error.statusCode,
+        );
+      }
+      throw error;
+    }
   };
 
   const waitForExport = async (churchId, initialJob) => {
     let job = initialJob;
-    for (let attempt = 0; attempt < 90 && job?.status === "in_progress"; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 90 && job?.status === "in_progress";
+      attempt += 1
+    ) {
       await wait(1000);
-      const response = await canvaGet(churchId, `/exports/${encodeURIComponent(job.id)}`);
+      const response = await canvaGet(
+        churchId,
+        `/exports/${encodeURIComponent(job.id)}`,
+      );
       job = response.data?.job;
     }
-    if (job?.status !== "success" || !Array.isArray(job.urls) || !job.urls.length) {
-      const reason = job?.error?.message || job?.error?.code || "The Canva export did not finish.";
+    if (
+      job?.status !== "success" ||
+      !Array.isArray(job.urls) ||
+      !job.urls.length
+    ) {
+      const reason =
+        job?.error?.message ||
+        job?.error?.code ||
+        "The Canva export did not finish.";
       throw createClientError(`${reason} Try another design or format.`, 422);
     }
     return job.urls;
@@ -506,17 +587,23 @@ export const createCanvaService = ({
     if (!/^[A-Za-z0-9_-]{3,200}$/.test(String(designId || ""))) {
       throw createClientError("Choose a valid Canva design.");
     }
-    const requestedPages = [...new Set((Array.isArray(pages) ? pages : []).map(Number))]
-      .filter((page) => Number.isInteger(page) && page >= 1 && page <= 500);
-    if (!requestedPages.length) throw createClientError("Select at least one page to import.");
+    const requestedPages = [
+      ...new Set((Array.isArray(pages) ? pages : []).map(Number)),
+    ].filter((page) => Number.isInteger(page) && page >= 1 && page <= 500);
+    if (!requestedPages.length)
+      throw createClientError("Select at least one page to import.");
     if (requestedPages.length > MAX_IMPORT_PAGES) {
       throw createClientError(
         `Import up to ${MAX_IMPORT_PAGES} pages at a time. Select fewer pages and try again.`,
       );
     }
-    if (format !== "png" && format !== "mp4") throw createClientError("Choose PNG or MP4.");
+    if (format !== "png" && format !== "mp4")
+      throw createClientError("Choose PNG or MP4.");
 
-    const designResponse = await canvaGet(churchId, `/designs/${encodeURIComponent(designId)}`);
+    const designResponse = await canvaGet(
+      churchId,
+      `/designs/${encodeURIComponent(designId)}`,
+    );
     const design = designResponse.data?.design || designResponse.data || {};
     const title = safeName(design.title, "Canva design");
     const revision = Math.max(0, Number(design.updated_at) || 0);
@@ -571,14 +658,19 @@ export const createCanvaService = ({
     const assets = [];
     if (format === "png") {
       if (!cloudinaryClient?.uploader?.upload) {
-        throw createClientError("Image storage is not configured. Ask an admin to check the server.", 503);
+        throw createClientError(
+          "Image storage is not configured. Ask an admin to check the server.",
+          503,
+        );
       }
       for (let index = 0; index < urls.length; index += 1) {
         const uploaded = await cloudinaryClient.uploader.upload(urls[index], {
           resource_type: "image",
           folder: `worship-sync/canva/${churchId}`,
           tags: ["canva-import"],
-          context: { caption: `${title} - Page ${selectedPages[index] || index + 1}` },
+          context: {
+            caption: `${title} - Page ${selectedPages[index] || index + 1}`,
+          },
         });
         assets.push({
           kind: "image",
@@ -596,15 +688,17 @@ export const createCanvaService = ({
               revision,
               selectedPages[index] || index + 1,
             ),
-            canvaSource: sourceFor([
-              selectedPages[index] || index + 1,
-            ]),
+            canvaSource: sourceFor([selectedPages[index] || index + 1]),
           },
         });
       }
     } else {
       const mux = getMuxClient?.();
-      if (!mux) throw createClientError("Video storage is not configured. Ask an admin to check the server.", 503);
+      if (!mux)
+        throw createClientError(
+          "Video storage is not configured. Ask an admin to check the server.",
+          503,
+        );
       const asset = await mux.video.assets.create({
         inputs: [{ url: urls[0] }],
         playback_policies: ["public"],
@@ -612,13 +706,25 @@ export const createCanvaService = ({
         meta: { title, creator_id: churchId, external_id: designId },
       });
       let ready = asset;
-      for (let attempt = 0; attempt < 120 && ready.status !== "ready"; attempt += 1) {
-        if (ready.status === "errored") throw createClientError("Mux could not process the Canva video.", 422);
+      for (
+        let attempt = 0;
+        attempt < 120 && ready.status !== "ready";
+        attempt += 1
+      ) {
+        if (ready.status === "errored")
+          throw createClientError(
+            "Mux could not process the Canva video.",
+            422,
+          );
         await wait(1000);
         ready = await mux.video.assets.retrieve(asset.id);
       }
       const playbackId = ready.playback_ids?.[0]?.id;
-      if (!playbackId) throw createClientError("The Canva video did not finish processing. Try again.", 504);
+      if (!playbackId)
+        throw createClientError(
+          "The Canva video did not finish processing. Try again.",
+          504,
+        );
       assets.push({
         kind: "video",
         data: {

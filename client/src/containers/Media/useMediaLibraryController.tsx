@@ -22,6 +22,12 @@ import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { deleteLocalImage } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { isDesktopCaptureKind } from "../../utils/localVideoInput";
+import {
+  buildLocalVideoInputSendPresentation,
+  isLocalVideoInputMedia,
+  mediaHasSendableContent,
+  sendLocalVideoInputWithWarmCapture,
+} from "../../utils/localVideoMediaLibrary";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -546,8 +552,36 @@ export function useMediaLibraryController({
 
   const handleSendSelectedMediaToProjector = useCallback(() => {
     const m = selectedMedia;
-    if (!m.background || !isProjectorTransmitting) return;
+    if (!mediaHasSendableContent(m) || !isProjectorTransmitting) return;
     const displayName = mediaLibraryDisplayName(m);
+
+    if (isLocalVideoInputMedia(m)) {
+      const built = buildLocalVideoInputSendPresentation({
+        source: m.localVideoInput,
+        name: displayName,
+        outputIds: projectorTargetIds,
+        brightness: defaultFreeFormBackgroundBrightness,
+      });
+      if (!built.ok) {
+        showToast(built.message, "warning");
+        return;
+      }
+      void sendLocalVideoInputWithWarmCapture({
+        sourceId: built.sourceId,
+        captureKind: m.localVideoInput.captureKind,
+        send: () => {
+          dispatch(updateProjector(built.presentation));
+          showToast(
+            `Sent "${truncatedMediaToastLabel(m)}" to ${projectorTargetLabel}. Only this computer can show the live share.`,
+            "success",
+          );
+        },
+        onError: (message) => showToast(message, "warning"),
+      });
+      return;
+    }
+
+    if (!m.background) return;
     const slide = createNewSlide({
       type: "Section",
       name: "Section 1",
@@ -584,16 +618,18 @@ export function useMediaLibraryController({
 
   const handleCreateCustomItemFromMedia = useCallback(async () => {
     const m = selectedMedia;
-    if (!db || !m.background) return;
+    if (!db || !mediaHasSendableContent(m)) return;
     const displayName = mediaLibraryDisplayName(m);
+    const isLiveInput = isLocalVideoInputMedia(m);
     try {
       const newItem = await createNewFreeForm({
         name: displayName,
         text: "",
         list: allItemsList,
         db,
-        background: m.background,
-        mediaInfo: m,
+        background: isLiveInput ? "" : m.background,
+        mediaInfo: isLiveInput ? undefined : m,
+        mediaSource: isLiveInput ? m.localVideoInput : undefined,
         brightness: defaultFreeFormBackgroundBrightness,
         overflow: defaultFreeFormFontMode,
         emptyBodyText: true,
@@ -615,7 +651,9 @@ export function useMediaLibraryController({
         ),
       );
       showToast(
-        `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created and added to the outline.`,
+        isLiveInput
+          ? `Live input item "${truncatedMediaToastLabel({ name: newItem.name })}" created. Select its slide to send the share to your displays.`
+          : `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created and added to the outline.`,
         "success",
       );
     } catch {
@@ -1181,20 +1219,20 @@ export function useMediaLibraryController({
     is_audio,
     canvaImportKey,
     canvaSource,
-  }: mediaInfoType) => {
+  }: mediaInfoType): MediaType | undefined => {
     if (isGuestSession) {
       notifyMediaAction(
         "Guest mode uses sample media only. Sign in to upload images or videos.",
         "error",
       );
-      return;
+      return undefined;
     }
     if (
       canvaImportKey &&
       list.some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
     ) {
       notifyMediaAction("That Canva page is already in Media.", "error");
-      return;
+      return undefined;
     }
     let placeholderImage = "";
     let thumbnailUrl = "";
@@ -1235,7 +1273,67 @@ export function useMediaLibraryController({
     };
 
     dispatch(addItemToMediaList(newMedia));
+    return newMedia;
   };
+
+  const createCanvaDeckItemFromMedia = useCallback(
+    async (pages: MediaType[], designTitle: string) => {
+      if (!db || pages.length === 0) return;
+      try {
+        const newItem = await createNewFreeForm({
+          name: designTitle || "Canva presentation",
+          text: "",
+          list: allItemsList,
+          db,
+          background: pages[0].background,
+          mediaInfo: pages[0],
+          brightness: defaultFreeFormBackgroundBrightness,
+          overflow: defaultFreeFormFontMode,
+          emptyBodyText: true,
+          slideDefs: pages.map((page, index) => ({
+            name: `Page ${index + 1}`,
+            background: page.background,
+            mediaInfo: page,
+          })),
+        });
+        const listItem = {
+          name: newItem.name,
+          type: newItem.type,
+          background: newItem.background,
+          _id: newItem._id,
+          listId: "",
+        };
+        dispatch(setActiveItem(newItem));
+        const addedAction = dispatch(addItemToItemList(listItem));
+        dispatch(addItemToAllItemsList(listItem));
+        navigate(
+          getControllerItemPath(
+            { _id: newItem._id, listId: addedAction.payload.listId },
+            controllerBasePath,
+          ),
+        );
+        showToast(
+          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${pages.length} slides.`,
+          "success",
+        );
+      } catch {
+        showToast(
+          "Pages were imported, but the multi-slide item could not be created. Try Create custom item from Media.",
+          "error",
+        );
+      }
+    },
+    [
+      allItemsList,
+      controllerBasePath,
+      db,
+      defaultFreeFormBackgroundBrightness,
+      defaultFreeFormFontMode,
+      dispatch,
+      navigate,
+      showToast,
+    ],
+  );
 
   const addMuxVideo = ({
     playbackId,
@@ -1433,6 +1531,7 @@ export function useMediaLibraryController({
     uploadProgress,
     requestMediaUpload,
     addNewBackground,
+    createCanvaDeckItemFromMedia,
     addMuxVideo,
     refreshCanvaImage,
     refreshCanvaVideo,

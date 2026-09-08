@@ -13,6 +13,7 @@ import {
   SongLink,
   SongMetadata,
   ShouldSendTo,
+  SlideMediaSource,
   TimerInfo,
   VideoBackgroundSendMode,
 } from "../types";
@@ -610,30 +611,46 @@ export const updateArrangements = createAsyncThunk(
 export const updateAllSlideBackgrounds = createAsyncThunk(
   "item/updateAllSlideBackgrounds",
   async (
-    args: { background: string; mediaInfo?: MediaType },
+    args: {
+      background: string;
+      mediaInfo?: MediaType;
+      mediaSource?: SlideMediaSource | null;
+    },
     { dispatch, getState },
   ) => {
     const state = getState();
     const item = state.undoable.present.item;
+    const mediaSourcePatch =
+      args.mediaSource !== undefined
+        ? { mediaSource: args.mediaSource }
+        : args.mediaInfo?.localVideoInput
+          ? { mediaSource: args.mediaInfo.localVideoInput }
+          : { mediaSource: null as const };
 
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
     const mapSlides = (slides: ItemSlideType[]) => {
       return slides.map((slide) => {
+        const nextBoxes = [
+          ...slide.boxes.map((box, index) => {
+            if (index === 0) {
+              return {
+                ...box,
+                background: args.background,
+                mediaInfo: args.mediaInfo,
+              };
+            }
+            return box;
+          }),
+        ];
+        if (mediaSourcePatch.mediaSource === null) {
+          const { mediaSource: _removed, ...rest } = slide;
+          return { ...rest, boxes: nextBoxes };
+        }
         return {
           ...slide,
-          boxes: [
-            ...slide.boxes.map((box, index) => {
-              if (index === 0) {
-                return {
-                  ...box,
-                  background: args.background,
-                  mediaInfo: args.mediaInfo,
-                };
-              }
-              return box;
-            }),
-          ],
+          boxes: nextBoxes,
+          mediaSource: mediaSourcePatch.mediaSource,
         };
       });
     };
@@ -670,11 +687,41 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
 export const updateSlideBackground = createAsyncThunk(
   "item/updateSlideBackground",
   async (
-    args: { background: string; mediaInfo?: MediaType },
+    args: {
+      background: string;
+      mediaInfo?: MediaType;
+      mediaSource?: SlideMediaSource | null;
+    },
     { dispatch, getState },
   ) => {
     const state = getState();
     const item = state.undoable.present.item;
+    const mediaSourcePatch =
+      args.mediaSource !== undefined
+        ? { mediaSource: args.mediaSource }
+        : args.mediaInfo?.localVideoInput
+          ? { mediaSource: args.mediaInfo.localVideoInput }
+          : { mediaSource: null as const };
+
+    const applySlide = (slide: ItemSlideType): ItemSlideType => {
+      const nextBoxes = slide.boxes.map((box, index) => {
+        if (index !== 0) return box;
+        return {
+          ...box,
+          background: args.background,
+          mediaInfo: args.mediaInfo,
+        };
+      });
+      if (mediaSourcePatch.mediaSource === null) {
+        const { mediaSource: _removed, ...rest } = slide;
+        return { ...rest, boxes: nextBoxes };
+      }
+      return {
+        ...slide,
+        boxes: nextBoxes,
+        mediaSource: mediaSourcePatch.mediaSource,
+      };
+    };
 
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
@@ -689,17 +736,7 @@ export const updateSlideBackground = createAsyncThunk(
           slides: [
             ...arrangement.slides.map((slide, slideIndex) => {
               if (slideIndex !== item.selectedSlide) return slide;
-              return {
-                ...slide,
-                boxes: slide.boxes.map((box, index) => {
-                  if (index !== 0) return box;
-                  return {
-                    ...box,
-                    background: args.background,
-                    mediaInfo: args.mediaInfo,
-                  };
-                }),
-              };
+              return applySlide(slide);
             }),
           ],
         };
@@ -708,17 +745,7 @@ export const updateSlideBackground = createAsyncThunk(
 
     const slides = item.slides.map((slide, index) => {
       if (index !== item.selectedSlide) return slide;
-      return {
-        ...slide,
-        boxes: slide.boxes.map((box, index) => {
-          if (index !== 0) return box;
-          return {
-            ...box,
-            background: args.background,
-            mediaInfo: args.mediaInfo,
-          };
-        }),
-      };
+      return applySlide(slide);
     });
 
     dispatch(_updateSlides(slides));
@@ -782,7 +809,12 @@ export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
 export const updateSlideBackgroundsOnSubset = createAsyncThunk(
   "item/updateSlideBackgroundsOnSubset",
   async (
-    args: { slideIds: string[]; background: string; mediaInfo?: MediaType },
+    args: {
+      slideIds: string[];
+      background: string;
+      mediaInfo?: MediaType;
+      mediaSource?: SlideMediaSource | null;
+    },
     { dispatch, getState },
   ) => {
     const state = getState();
@@ -795,7 +827,17 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
     let arrangements = [...item.arrangements];
-    const patch = { background: args.background, mediaInfo: args.mediaInfo };
+    const mediaSource =
+      args.mediaSource !== undefined
+        ? args.mediaSource
+        : args.mediaInfo?.localVideoInput
+          ? args.mediaInfo.localVideoInput
+          : null;
+    const patch = {
+      background: args.background,
+      mediaInfo: args.mediaInfo,
+      mediaSource,
+    };
 
     if (arrangementSlides?.length) {
       arrangements = arrangements.map((arrangement, index) => {
@@ -841,6 +883,7 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
     const patch = {
       background: "",
       mediaInfo: undefined as MediaType | undefined,
+      mediaSource: null as const,
     };
 
     const arrangementSlides =

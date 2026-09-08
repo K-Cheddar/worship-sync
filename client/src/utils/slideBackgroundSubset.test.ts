@@ -38,4 +38,24 @@ describe("mapSlidesUpdateBox0ById", () => {
     expect(next[1].boxes[0].mediaInfo).toBeUndefined();
     expect(next[1].boxes[1]).toEqual(slides[1].boxes[1]);
   });
+
+  it("sets and clears slide mediaSource when provided", () => {
+    const withSource = mapSlidesUpdateBox0ById(slides, new Set(["s0"]), {
+      background: "",
+      mediaSource: {
+        kind: "local-video-input",
+        sourceId: "local_video_1",
+        label: "Screen",
+        captureKind: "screen",
+      },
+    });
+    expect(withSource[0].mediaSource?.sourceId).toBe("local_video_1");
+
+    const cleared = mapSlidesUpdateBox0ById(withSource, new Set(["s0"]), {
+      background: "https://example.com/a.png",
+      mediaSource: null,
+    });
+    expect(cleared[0].mediaSource).toBeUndefined();
+    expect(cleared[0].boxes[0].background).toBe("https://example.com/a.png");
+  });
 });

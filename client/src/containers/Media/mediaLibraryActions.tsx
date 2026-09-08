@@ -42,6 +42,24 @@ import {
 import type { OverlayInfo } from "../../types";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { truncatedMediaToastLabel } from "./mediaLibraryMeta";
+import {
+  isLocalVideoInputMedia,
+  mediaHasSendableContent,
+} from "../../utils/localVideoMediaLibrary";
+
+/** Build apply/clear payloads so live inputs set mediaSource instead of a fake URL. */
+const backgroundApplyArgs = (m: MediaType) => {
+  if (isLocalVideoInputMedia(m)) {
+    return {
+      background: "",
+      mediaSource: m.localVideoInput,
+    };
+  }
+  return {
+    background: m.background,
+    mediaInfo: m,
+  };
+};
 
 export type MediaActionRouteFlags = {
   itemSlides: boolean;
@@ -189,15 +207,10 @@ export function buildMediaLibraryBarActions(args: {
       id: "apply-all-slides",
       label: "Apply to all slides",
       icon: <Images className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-      disabled: isLoading || !m.background,
+      disabled: isLoading || !mediaHasSendableContent(m),
       onClick: () => {
-        if (m.background && db) {
-          dispatch(
-            updateAllSlideBackgrounds({
-              background: m.background,
-              mediaInfo: m,
-            }),
-          );
+        if (mediaHasSendableContent(m) && db) {
+          dispatch(updateAllSlideBackgrounds(backgroundApplyArgs(m)));
           slideBgAck("apply-all-slides");
         }
       },
@@ -208,24 +221,18 @@ export function buildMediaLibraryBarActions(args: {
         id: "apply-selected-slides",
         label: `Apply to selected slides (${manualIdsForSubset.length || 1})`,
         icon: <Image className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />,
-        disabled: isLoading || !m.background || !db,
+        disabled: isLoading || !mediaHasSendableContent(m) || !db,
         onClick: () => {
-          if (!m.background || !db) return;
+          if (!mediaHasSendableContent(m) || !db) return;
           if (manualIdsForSubset.length === 0) {
-            dispatch(
-              updateSlideBackground({
-                background: m.background,
-                mediaInfo: m,
-              }),
-            );
+            dispatch(updateSlideBackground(backgroundApplyArgs(m)));
             slideBgAck("apply-selected-slides");
             return;
           }
           dispatch(
             updateSlideBackgroundsOnSubset({
               slideIds: manualIdsForSubset,
-              background: m.background,
-              mediaInfo: m,
+              ...backgroundApplyArgs(m),
             }),
           );
           slideBgAck("apply-selected-slides");
@@ -266,7 +273,7 @@ export function buildMediaLibraryBarActions(args: {
         : "slides";
       const sectionBadgeType = currentType ?? undefined;
 
-      const applyDisabled = isLoading || !m.background || !db;
+      const applyDisabled = isLoading || !mediaHasSendableContent(m) || !db;
       const applyMenuItems: MediaLibraryBarMenuEntry[] = [
         {
           id: "apply-this-section",
@@ -274,12 +281,12 @@ export function buildMediaLibraryBarActions(args: {
           sectionBadgeType,
           disabled: applyDisabled || sectionIds.length === 0,
           onClick: () => {
-            if (!m.background || !db || sectionIds.length === 0) return;
+            if (!mediaHasSendableContent(m) || !db || sectionIds.length === 0)
+              return;
             dispatch(
               updateSlideBackgroundsOnSubset({
                 slideIds: sectionIds,
-                background: m.background,
-                mediaInfo: m,
+                ...backgroundApplyArgs(m),
               }),
             );
             slideBgAck("apply-to-subset");
@@ -293,12 +300,16 @@ export function buildMediaLibraryBarActions(args: {
           sectionBadgeType,
           disabled: applyDisabled || allNamedSectionIds.length === 0,
           onClick: () => {
-            if (!m.background || !db || allNamedSectionIds.length === 0) return;
+            if (
+              !mediaHasSendableContent(m) ||
+              !db ||
+              allNamedSectionIds.length === 0
+            )
+              return;
             dispatch(
               updateSlideBackgroundsOnSubset({
                 slideIds: allNamedSectionIds,
-                background: m.background,
-                mediaInfo: m,
+                ...backgroundApplyArgs(m),
               }),
             );
             slideBgAck("apply-to-subset");
@@ -312,12 +323,12 @@ export function buildMediaLibraryBarActions(args: {
           sectionBadgeType,
           disabled: applyDisabled || allTypeIds.length === 0,
           onClick: () => {
-            if (!m.background || !db || allTypeIds.length === 0) return;
+            if (!mediaHasSendableContent(m) || !db || allTypeIds.length === 0)
+              return;
             dispatch(
               updateSlideBackgroundsOnSubset({
                 slideIds: allTypeIds,
-                background: m.background,
-                mediaInfo: m,
+                ...backgroundApplyArgs(m),
               }),
             );
             slideBgAck("apply-to-subset");
@@ -331,12 +342,11 @@ export function buildMediaLibraryBarActions(args: {
           sectionBadgeType,
           disabled: applyDisabled,
           onClick: () => {
-            if (!m.background || !db) return;
+            if (!mediaHasSendableContent(m) || !db) return;
             dispatch(
               updateSlideBackgroundsOnSubset({
                 slideIds: manualIds,
-                background: m.background,
-                mediaInfo: m,
+                ...backgroundApplyArgs(m),
               }),
             );
             slideBgAck("apply-to-subset");
@@ -437,9 +447,10 @@ export function buildMediaLibraryBarActions(args: {
       id: "set-image-overlay",
       label: "Set Image Overlay",
       icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-      disabled: !m.background || !selectedOverlay,
+      disabled:
+        !m.background || !selectedOverlay || isLocalVideoInputMedia(m),
       onClick: () => {
-        if (m.background && db) {
+        if (m.background && db && !isLocalVideoInputMedia(m)) {
           dispatch(
             updateOverlay({
               imageUrl: m.background,
@@ -463,8 +474,12 @@ export function buildMediaLibraryBarActions(args: {
       id: "set-pref-bg",
       label: "Set Background",
       icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-      disabled: !selectedPreference || !m.background,
+      disabled:
+        !selectedPreference ||
+        !m.background ||
+        isLocalVideoInputMedia(m),
       onClick: () => {
+        if (isLocalVideoInputMedia(m)) return;
         dispatch(
           setDefaultPreferences({
             [selectedPreference]: {
@@ -484,8 +499,11 @@ export function buildMediaLibraryBarActions(args: {
       label: "Set Quick Link Background",
       icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
       disabled:
-        !selectedQuickLink || selectedQuickLink?.linkType !== "media",
+        !selectedQuickLink ||
+        selectedQuickLink?.linkType !== "media" ||
+        isLocalVideoInputMedia(m),
       onClick: () => {
+        if (isLocalVideoInputMedia(m)) return;
         dispatch(setSelectedQuickLinkImage(m));
         toast(`Set quick link background to "${mediaLabel}".`);
       },
@@ -500,7 +518,11 @@ export function buildMediaLibraryBarActions(args: {
       onCreateCustomItem,
     } = controllerFromSelectedMedia;
     /** Do not use `isLoading` (item document) here — it stays true during unrelated item fetches and incorrectly disables send. */
-    const sendDisabled = !m.background || !isProjectorTransmitting;
+    const sendDisabled =
+      !mediaHasSendableContent(m) || !isProjectorTransmitting;
+    const createLabel = isLocalVideoInputMedia(m)
+      ? "Create live input item"
+      : "Create custom item";
     out.push(
       {
         id: "send-media-to-projector",
@@ -518,9 +540,9 @@ export function buildMediaLibraryBarActions(args: {
       },
       {
         id: "create-custom-item-from-media",
-        label: "Create custom item",
+        label: createLabel,
         icon: <FilePlus2 className={MEDIA_LIBRARY_MEDIA_ACTION_CREATE_ICON_CLASS} />,
-        disabled: !m.background || !db,
+        disabled: !mediaHasSendableContent(m) || !db,
         onClick: () => {
           void Promise.resolve(onCreateCustomItem());
         },
