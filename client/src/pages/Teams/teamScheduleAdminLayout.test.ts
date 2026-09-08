@@ -67,6 +67,9 @@ describe("teamScheduleAdminLayout", () => {
 
     it("defaults to the card view on wide screens", () => {
       setNarrowScreen(false);
+      // Behavior change: wide screens now default to the card ("board") layout.
+      // The previous "transpose" default is obsolete after the admin schedule
+      // responsive policy standardized on card view for both breakpoints.
       expect(resolveInitialTeamScheduleAdminLayout()).toBe("board");
     });
 
