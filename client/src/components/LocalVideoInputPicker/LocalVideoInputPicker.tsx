@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Cable, MonitorUp, RefreshCw, Video } from "lucide-react";
 import type {
   LocalVideoCaptureKind,
@@ -664,6 +671,26 @@ const LocalVideoInputPicker = ({
     livePreviewStatusLabel = "";
   }
 
+  let desktopSourcePreview: ReactNode = null;
+  if (selectedDesktopSource?.thumbnailDataUrl) {
+    desktopSourcePreview = (
+      <img
+        src={selectedDesktopSource.thumbnailDataUrl}
+        alt={`Preview of ${selectedDesktopSource.name}`}
+        className={`aspect-video w-full rounded border border-white/10 bg-black ${previewObjectFit}`}
+      />
+    );
+  } else if (selectedDesktopSource) {
+    desktopSourcePreview = (
+      <div
+        className="flex aspect-video w-full items-center justify-center rounded border border-white/10 bg-black px-4 text-center text-sm text-neutral-400"
+        role="status"
+      >
+        No preview for this screen or window
+      </div>
+    );
+  }
+
   // The preview <video> mounts only after a source is selected; re-attach if
   // getUserMedia finished while the element was still unmounted.
   useEffect(() => {
@@ -736,22 +763,7 @@ const LocalVideoInputPicker = ({
                     onClick={() => void refreshDesktopSources()}
                   />
                 </div>
-                {selectedDesktopSource ? (
-                  selectedDesktopSource.thumbnailDataUrl ? (
-                    <img
-                      src={selectedDesktopSource.thumbnailDataUrl}
-                      alt={`Preview of ${selectedDesktopSource.name}`}
-                      className={`aspect-video w-full rounded border border-white/10 bg-black ${previewObjectFit}`}
-                    />
-                  ) : (
-                    <div
-                      className="flex aspect-video w-full items-center justify-center rounded border border-white/10 bg-black px-4 text-center text-sm text-neutral-400"
-                      role="status"
-                    >
-                      No preview for this screen or window
-                    </div>
-                  )
-                ) : null}
+                {desktopSourcePreview}
               </>
             ) : null}
             {isDesktopMode && !canListDesktopSources ? (
