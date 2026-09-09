@@ -399,6 +399,10 @@ export const formatFree = (item: ItemState) => {
       return box;
     });
 
+    // Keep live-input (and other) media sources across overflow rebuilds.
+    const preservedMediaSource =
+      currentSectionSlide?.mediaSource ?? newSlide.mediaSource;
+
     // Create the new slide with the background from the last slide
     const newSlideWithBackground = {
       ...newSlide,
@@ -410,6 +414,7 @@ export const formatFree = (item: ItemState) => {
       overflow: slide.overflow,
       boxes: combinedBoxes,
       background,
+      ...(preservedMediaSource ? { mediaSource: preservedMediaSource } : {}),
     };
 
     return newSlideWithBackground;

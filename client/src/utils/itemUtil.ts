@@ -592,7 +592,8 @@ export const createNewFreeForm = async ({
     },
   };
 
-  const formattedItem = formatFree(newItem);
+  const formattedItem =
+    resolvedMediaSource && emptyBodyText ? newItem : formatFree(newItem);
 
   const item = await createNewItemInDb({ item: formattedItem, db });
 
