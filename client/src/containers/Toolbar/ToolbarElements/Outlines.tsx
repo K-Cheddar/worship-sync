@@ -36,6 +36,7 @@ import { useToast } from "../../../context/toastContext";
 import {
   DEFAULT_OUTLINE_SCOPE,
   filterOutlinesByScope,
+  isOutlineInScope,
 } from "../../../utils/outlineScope";
 
 /** Shared popover chrome (matches service outlines left column). */
@@ -81,6 +82,8 @@ const Services = ({
   const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
   const currentListsRef = useRef(currentLists);
   currentListsRef.current = currentLists;
+  /** One aux bootstrap create per scope — avoids duplicate empties under Strict Mode / remount. */
+  const bootstrapInFlightByScopeRef = useRef(new Set<string>());
 
   const { setNodeRef } = useDroppable({
     id: "items-lists",
@@ -155,22 +158,33 @@ const Services = ({
     if (!itemListsReady || !db || access !== "full") return;
     if (scope === DEFAULT_OUTLINE_SCOPE) return;
     if (scopedLists.length > 0) return;
+    if (bootstrapInFlightByScopeRef.current.has(scope)) return;
 
+    bootstrapInFlightByScopeRef.current.add(scope);
     let cancelled = false;
     void (async () => {
       try {
-        const lists = currentListsRef.current;
+        const listsAtStart = currentListsRef.current;
         const newList = await createNewItemList({
           db,
           name: "New Outline",
-          currentLists: lists,
+          currentLists: listsAtStart,
           controllerScope: scope,
         });
         if (cancelled) return;
-        dispatch(updateItemLists([...lists, newList]));
+        // Append onto the latest registry so concurrent remote updates to other
+        // scopes are not wiped by a pre-await snapshot.
+        const latestLists = currentListsRef.current;
+        const scopeStillEmpty = !latestLists.some((list) =>
+          isOutlineInScope(list, scope),
+        );
+        if (!scopeStillEmpty) return;
+        dispatch(updateItemLists([...latestLists, newList]));
         dispatch(selectItemList(newList._id));
       } catch (e) {
         console.error(e);
+      } finally {
+        bootstrapInFlightByScopeRef.current.delete(scope);
       }
     })();
 
