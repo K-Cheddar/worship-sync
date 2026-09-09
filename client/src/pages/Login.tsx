@@ -29,7 +29,9 @@ import {
 import type { DesktopAuthProvider } from "../api/authTypes";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
+  clearPublicShellAuthReturnPath,
   getAuthRedirectPathnameFromState,
+  peekPublicShellAuthReturnPath,
 } from "../utils/authRedirectPath";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
@@ -518,8 +520,14 @@ const Login = () => {
     };
   }, [mode, pendingAuthId, verificationEmail, isAuthServerOnline]);
 
+  const shellReturnPath = peekPublicShellAuthReturnPath();
+  const shellReturnPathname = shellReturnPath
+    ? shellReturnPath.split("?")[0]
+    : null;
   const guestDestination =
-    getAuthRedirectPathnameFromState(location.state) ?? "/home";
+    getAuthRedirectPathnameFromState(location.state) ??
+    shellReturnPathname ??
+    "/home";
 
   const clearPendingDesktopAuth = useCallback(() => {
     setPendingDesktopAuth(null);
@@ -640,7 +648,10 @@ const Login = () => {
           userAgent: navigator.userAgent,
           platform: navigator.platform,
           deviceLabel: getTrustedDeviceLabel(),
-          requestedPath: getAuthRedirectPathnameFromState(location.state) ?? "",
+          requestedPath:
+            getAuthRedirectPathnameFromState(location.state) ??
+            shellReturnPathname ??
+            "",
         });
         const nextPendingAuth: PendingDesktopAuthState = {
           desktopAuthId: response.desktopAuthId,
@@ -667,7 +678,7 @@ const Login = () => {
         setIsStartingDesktopAuth(false);
       }
     },
-    [clearPendingDesktopAuth, context, location.state, openDesktopBrowserUrl],
+    [clearPendingDesktopAuth, context, location.state, openDesktopBrowserUrl, shellReturnPathname],
   );
 
   const handleHostedDesktopBrowserCompletion = useCallback(async () => {
@@ -1769,7 +1780,10 @@ const Login = () => {
                     variant="tertiary"
                     className="w-full justify-center"
                     disabled={isAuthActionDisabled}
-                    onClick={() => context?.enterGuestMode(guestDestination)}
+                    onClick={() => {
+                      clearPublicShellAuthReturnPath();
+                      context?.enterGuestMode(guestDestination);
+                    }}
                   >
                     Test as guest
                   </Button>

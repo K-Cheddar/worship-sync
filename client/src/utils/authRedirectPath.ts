@@ -86,8 +86,64 @@ export function getAuthRedirectPathnameFromState(
   return q === -1 ? to : to.slice(0, q);
 }
 
+/**
+ * Reload-safe return path when leaving the public BrowserRouter shell for the
+ * HashRouter operator app (full-page assign drops React Router `state.from`).
+ */
+export const PUBLIC_SHELL_AUTH_RETURN_KEY =
+  "worshipsync_public_shell_auth_return";
+
+const sanitizeStoredAuthReturnPath = (raw: string): string | null => {
+  const q = raw.indexOf("?");
+  const pathname = q === -1 ? raw : raw.slice(0, q);
+  const search = q === -1 ? "" : raw.slice(q);
+  const safePath = sanitizeAuthRedirectPathname(pathname);
+  if (!safePath) return null;
+  return `${safePath}${sanitizeAuthRedirectSearch(search)}`;
+};
+
+export function setPublicShellAuthReturnPath(redirectTo: string): void {
+  if (typeof window === "undefined") return;
+  const sanitized = sanitizeStoredAuthReturnPath(redirectTo);
+  if (!sanitized) return;
+  try {
+    window.sessionStorage.setItem(PUBLIC_SHELL_AUTH_RETURN_KEY, sanitized);
+  } catch {
+    // Privacy modes may block sessionStorage; post-auth falls back to /home.
+  }
+}
+
+export function peekPublicShellAuthReturnPath(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(PUBLIC_SHELL_AUTH_RETURN_KEY);
+    if (!raw) return null;
+    return sanitizeStoredAuthReturnPath(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function clearPublicShellAuthReturnPath(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(PUBLIC_SHELL_AUTH_RETURN_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+/** Read and clear the public-shell return path (one-shot handoff). */
+export function takePublicShellAuthReturnPath(): string | null {
+  const path = peekPublicShellAuthReturnPath();
+  clearPublicShellAuthReturnPath();
+  return path;
+}
+
 /** After human sign-in, matches AppEntry: deep link when present, otherwise `/home`. */
 export function getHumanPostAuthPath(location: Location): string {
-  const p = getAuthRedirectToFromState(location.state);
-  return p && p !== "/" ? p : "/home";
+  const fromState = getAuthRedirectToFromState(location.state);
+  if (fromState && fromState !== "/") return fromState;
+  const fromShell = takePublicShellAuthReturnPath();
+  return fromShell && fromShell !== "/" ? fromShell : "/home";
 }
