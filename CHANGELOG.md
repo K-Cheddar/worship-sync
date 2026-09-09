@@ -1,3 +1,22 @@
+# [2.32.0](https://github.com/K-Cheddar/worship-sync/compare/v2.31.0...v2.32.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* Harden video paint-ready and song lyrics drawer flow ([c17900f](https://github.com/K-Cheddar/worship-sync/commit/c17900f7a1360db0e6dd789a42585b2388483c1b))
+* Share next-service countdown ticker and polish schedule search UX ([b801b41](https://github.com/K-Cheddar/worship-sync/commit/b801b417921fcdab04c48f16b1cc2c3a6eea21c1))
+
+
+### Features
+
+* Allow custom controller profile descriptions on Home ([0a81b2b](https://github.com/K-Cheddar/worship-sync/commit/0a81b2b18b128cb2ff7bcc7f0d8acc2e338ce390))
+* Grant booth workstations Current Service Workspace access ([06f493f](https://github.com/K-Cheddar/worship-sync/commit/06f493f0e399027dcc13d1d380b0374d217e4ab8))
+* Harden local video inputs and media library workflows ([b417b4e](https://github.com/K-Cheddar/worship-sync/commit/b417b4e6afa5db4ba9f9b2f5f0d9e2c45db9e044))
+* Improve media library for live inputs and Canva imports ([23b3d6c](https://github.com/K-Cheddar/worship-sync/commit/23b3d6c4aefa2ceebf4577c99ac34c92506ff091))
+* Multi-select roles and smoother service plan menus ([37d70c2](https://github.com/K-Cheddar/worship-sync/commit/37d70c2afcbc1ca4ed39633a4e69bf3d69b6176e))
+* Scope outlines per controller and soft-reset controller sessions ([f8c9652](https://github.com/K-Cheddar/worship-sync/commit/f8c965256610633019064f59579455f78e003923))
+* Serve path-based public share links with Open Graph meta ([0ca5a5d](https://github.com/K-Cheddar/worship-sync/commit/0ca5a5d9ed569dac0e374312acfdc54f873f7534))
+
 # [2.31.0](https://github.com/K-Cheddar/worship-sync/compare/v2.30.2...v2.31.0) (2026-09-08)
 
 
