@@ -1,5 +1,7 @@
 /**
- * Public service plan URLs look like `https://host/#/services/<token>`.
+ * Public service plan URLs look like `https://host/services/<token>`
+ * (path-based for link previews) or the legacy hash form
+ * `https://host/#/services/<token>`.
  * Returns the share token, or "" when the URL is not a public service link.
  */
 export const shareIdFromPublicServiceUrl = (url: string): string => {

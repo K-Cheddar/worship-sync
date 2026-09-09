@@ -35,6 +35,10 @@ import {
   setPendingEmailCodeSignInMethod,
 } from "../utils/authStorage";
 import { isPackagedElectronRenderer } from "../utils/environment";
+import {
+  assignOperatorAppLocation,
+  isPublicPathShell,
+} from "../utils/operatorAppNavigation";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
@@ -121,6 +125,16 @@ const InviteAccept = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const context = useContext(GlobalInfoContext);
+  const goToOperator = (
+    pathWithOptionalSearch: string,
+    options?: { replace?: boolean; state?: unknown },
+  ) => {
+    if (isPublicPathShell()) {
+      assignOperatorAppLocation(pathWithOptionalSearch);
+      return;
+    }
+    navigate(pathWithOptionalSearch, options);
+  };
   const [signedInEmail, setSignedInEmail] = useState(
     () => getHumanAuth().currentUser?.email || ""
   );
@@ -340,7 +354,7 @@ const InviteAccept = () => {
       clearInviteRecovery();
       setInviteAccepted(false);
       setNeedsSessionRetry(false);
-      navigate("/home", { replace: true });
+      goToOperator("/home", { replace: true });
       return;
     }
     if (session.requiresEmailCode && session.pendingAuthId) {
@@ -356,7 +370,7 @@ const InviteAccept = () => {
       setInviteAccepted(false);
       setNeedsSessionRetry(false);
       const params = new URLSearchParams({ pendingAuthId: session.pendingAuthId });
-      navigate(`/login?${params.toString()}`, {
+      goToOperator(`/login?${params.toString()}`, {
         replace: true,
         state: { from: { pathname: "/invite" } },
       });
@@ -516,7 +530,7 @@ const InviteAccept = () => {
         method,
       });
       if (!authResult) {
-        navigate("/login", {
+        goToOperator("/login", {
           replace: true,
           state: { from: { pathname: "/invite" } },
         });
@@ -527,7 +541,7 @@ const InviteAccept = () => {
         return;
       }
       if (authResult.status === "requires-existing-method") {
-        navigate("/login", {
+        goToOperator("/login", {
           replace: true,
           state: { from: { pathname: "/invite" } },
         });

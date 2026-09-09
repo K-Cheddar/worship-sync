@@ -887,7 +887,7 @@ const sendPairingSetupEmailInternal = async ({
 };
 
 const buildInviteUrl = (token) =>
-  `${APP_BASE_URL}/#/invite?token=${encodeURIComponent(token)}`;
+  `${APP_BASE_URL}/invite?token=${encodeURIComponent(token)}`;
 const buildRecoveryUrl = (token) =>
   `${APP_BASE_URL}/#/recovery/confirm?token=${encodeURIComponent(token)}`;
 const buildResetUrlFromFirebaseLink = (firebaseLink) => {

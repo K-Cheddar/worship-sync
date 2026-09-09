@@ -64,6 +64,13 @@ import {
   RichLinkPreviewUnavailableError,
   createRichLinkPreviewService,
 } from "./server/richLinkPreview.js";
+import {
+  buildPublicShareImageUrl,
+  isLinkPreviewCrawler,
+  matchPublicShareRoute,
+  renderPublicShareHtml,
+  resolvePublicShareMeta,
+} from "./server/publicShareMeta.js";
 import { createChatService } from "./server/chatService.js";
 import { createChatHandlers } from "./server/chatApi.js";
 import {
@@ -130,6 +137,65 @@ const resolveProductionFrontEndHost = () => {
 const frontEndHost = isDevelopment
   ? "https://local.worshipsync.net:3000"
   : resolveProductionFrontEndHost();
+
+const APP_PUBLIC_BASE_URL =
+  process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
+  "https://www.worshipsync.net";
+const PUBLIC_SHARE_OG_IMAGE_URL = buildPublicShareImageUrl(APP_PUBLIC_BASE_URL);
+
+/**
+ * Path-based public share pages: crawlers get Open Graph HTML; browsers get the
+ * SPA so {@link PublicApp} can mount on the same path (BrowserRouter).
+ */
+const sendPublicShareMetaPage = async (req, res, matched) => {
+  let overrides = {};
+  if (
+    (matched.kind === "board" || matched.kind === "board-present") &&
+    matched.param
+  ) {
+    try {
+      const aliasId = normalizeAliasId(matched.param);
+      if (aliasId) {
+        const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+        const boardTitle = String(aliasDoc?.title || "").trim();
+        if (boardTitle) {
+          overrides = {
+            title: `${boardTitle} | WorshipSync`,
+            description:
+              matched.kind === "board-present"
+                ? `View the live presentation for ${boardTitle}.`
+                : `Join the conversation on ${boardTitle}.`,
+          };
+        }
+      }
+    } catch (error) {
+      console.error("Error loading board title for share preview:", error);
+    }
+  }
+
+  const { title, description } = resolvePublicShareMeta(
+    matched.kind,
+    overrides,
+  );
+  const canonicalUrl = `${APP_PUBLIC_BASE_URL}${matched.canonicalPath}${
+    matched.kind === "invite" && req.query?.token
+      ? `?${new URLSearchParams({ token: String(req.query.token) }).toString()}`
+      : ""
+  }`;
+
+  res
+    .status(200)
+    .setHeader("Content-Type", "text/html; charset=utf-8")
+    .setHeader("Cache-Control", "public, max-age=300")
+    .send(
+      renderPublicShareHtml({
+        title,
+        description,
+        canonicalUrl,
+        imageUrl: PUBLIC_SHARE_OG_IMAGE_URL,
+      }),
+    );
+};
 
 // The public app is deployed on the `www` hostname, but people naturally type
 // the apex domain. Normalize that hostname before any API or SPA handling so a
@@ -3136,7 +3202,7 @@ app.use(
 );
 
 // Express 5 / path-to-regexp v8+: bare "*" is invalid; use a named wildcard.
-app.get("/{*path}", (req, res) => {
+app.get("/{*path}", async (req, res) => {
   const pathname = req.path;
 
   // Don’t serve index.html for these
@@ -3155,7 +3221,16 @@ app.get("/{*path}", (req, res) => {
     return;
   }
 
-  // Otherwise serve SPA index
+  const publicShare = matchPublicShareRoute(
+    pathname,
+    req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "",
+  );
+  if (publicShare && isLinkPreviewCrawler(req.get("user-agent") || "")) {
+    await sendPublicShareMetaPage(req, res, publicShare);
+    return;
+  }
+
+  // SPA index: public paths mount PublicApp; everything else uses HashRouter
   res.sendFile(path.join(dist, "index.html"));
 });
 

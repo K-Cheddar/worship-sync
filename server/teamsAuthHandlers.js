@@ -228,15 +228,15 @@ export const createTeamsAuthHandlers = ({
    * The link that goes in an assignment email.
    *
    * `response` carries the reader's intent so Accept in the email *is* the
-   * answer — one click, not click-then-click-again. It rides in the URL hash,
-   * which is never sent to the server: the intent only becomes a write when the
-   * page POSTs it.
+   * answer — one click, not click-then-click-again. It rides in the query
+   * string and is only applied when the SPA POSTs it.
    *
    * That indirection is not ceremony. Corporate mail security (Safe Links,
    * Proofpoint and friends) fetches every link in an email before a human sees
    * it; if a GET recorded the answer, scanners would accept on behalf of people
    * who never opened the message. Scanners do not run a single-page app and do
-   * not POST, so the write stays with the reader.
+   * not POST, so the write stays with the reader. (Share links are path-based
+   * for Open Graph previews; GET on this URL must never mutate schedule state.)
    */
   const buildAssignmentResponseUrl = (payload, response = "") => {
     const token = createAssignmentResponseToken(
@@ -247,7 +247,9 @@ export const createTeamsAuthHandlers = ({
     const query = response
       ? `?${new URLSearchParams({ respond: response }).toString()}`
       : "";
-    return `${APP_BASE_URL}/#/schedule-response/${encodeURIComponent(token)}${query}`;
+    // Path URL (not hash): chat crawlers strip fragments, so Open Graph meta is
+    // served for `/schedule-response/...` and browsers redirect into HashRouter.
+    return `${APP_BASE_URL}/schedule-response/${encodeURIComponent(token)}${query}`;
   };
 
   /**
@@ -738,7 +740,7 @@ export const createTeamsAuthHandlers = ({
   };
 
   const buildTeamIntakePublicUrl = (token) =>
-    `${APP_BASE_URL}/#/teams/intake/${encodeURIComponent(String(token || "").trim())}`;
+    `${APP_BASE_URL}/teams/intake/${encodeURIComponent(String(token || "").trim())}`;
 
   const TEAM_ENTITY_CONFIG = {
     member: {
@@ -1568,7 +1570,7 @@ export const createTeamsAuthHandlers = ({
     crypto.randomBytes(24).toString("base64url");
 
   const buildPublicServicePlanUrl = (token) =>
-    `${APP_BASE_URL}/#/services/${encodeURIComponent(String(token || "").trim())}`;
+    `${APP_BASE_URL}/services/${encodeURIComponent(String(token || "").trim())}`;
 
   const ensureChurchCurrentServiceTokens = async (churchId, adminUid) => {
     const church = await getDoc(COLLECTIONS.churches, churchId);

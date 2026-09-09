@@ -45,3 +45,17 @@ export const buildShareableHashRouterUrl = (hashRoute: string): string => {
   const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
   return `${prefix}#${path}`;
 };
+
+export const getShareablePublicOrigin = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.origin;
+};
+
+export const buildShareablePublicPathUrl = (route: string): string => {
+  const origin = getShareablePublicOrigin();
+  const trimmed = route.replace(/^#/, "");
+  const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${origin}${path}`;
+};

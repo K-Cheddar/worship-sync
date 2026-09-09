@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
         authToken: process.env.SENTRY_AUTH_TOKEN,
         org: "worshipsync",
         project: "javascript-react",
-      })
+      }),
     );
   }
 
@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
       injectManifest: {
         maximumFileSizeToCacheInBytes: 7 * 1024 * 1024, // 7 MiB (main bundle is over 5 MiB)
       },
-    })
+    }),
   );
 
   return {

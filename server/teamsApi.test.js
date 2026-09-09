@@ -4362,10 +4362,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     params: { planKey },
   });
   assert.equal(published.statusCode, 200);
-  assert.match(published.payload.publicUrl, /#\/services\//);
-  assert.match(published.payload.generalPublicUrl, /#\/services\//);
-  assert.match(published.payload.currentTeamPublicUrl, /#\/services\//);
-  assert.match(published.payload.currentGeneralPublicUrl, /#\/services\//);
+  assert.match(published.payload.publicUrl, /\/services\//);
+  assert.match(published.payload.generalPublicUrl, /\/services\//);
+  assert.match(published.payload.currentTeamPublicUrl, /\/services\//);
+  assert.match(published.payload.currentGeneralPublicUrl, /\/services\//);
   // Share tokens are capabilities, so they no longer ride along in the plan
   // body — publish hands them back only as explicit share URLs.
   assert.equal(published.payload.servicePlan.publicLinkToken, undefined);

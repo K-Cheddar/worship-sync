@@ -27,9 +27,12 @@ import type { TeamSchedulePayload } from "../../api/auth";
 import type { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { formatPlainDate, parsePlainDate } from "../../utils/plainDate";
-import { buildShareableHashRouterUrl } from "../../utils/environment";
+import { buildShareablePublicPathUrl } from "../../utils/environment";
 import { emptyData } from "./teamsConstants";
-import { DEFAULT_SERVING_FREQUENCY, resolveMemberMinorStatus } from "./memberPreferences";
+import {
+  DEFAULT_SERVING_FREQUENCY,
+  resolveMemberMinorStatus,
+} from "./memberPreferences";
 import { parseSlotKey } from "./schedule/scheduleRequirements";
 import type { TeamsData, TeamsDataKey } from "./types";
 
@@ -179,12 +182,12 @@ export const normalizeTeamsDataKey = <K extends TeamsDataKey>(
 };
 
 export const buildTeamIntakePublicUrl = (token: string): string =>
-  buildShareableHashRouterUrl(
+  buildShareablePublicPathUrl(
     `/teams/intake/${encodeURIComponent(String(token || "").trim())}`,
   );
 
 export const buildTeamSchedulePublicUrl = (token: string): string =>
-  buildShareableHashRouterUrl(
+  buildShareablePublicPathUrl(
     `/teams/schedule/${encodeURIComponent(String(token || "").trim())}`,
   );
 
@@ -248,8 +251,9 @@ const scrubMemberFromScheduleCounts = (
       ...schedule.assignmentCounts,
       byMemberId,
       lastAssignmentDateByMemberId: Object.fromEntries(
-        Object.entries(schedule.assignmentCounts.lastAssignmentDateByMemberId || {})
-          .filter(([id]) => id !== memberId),
+        Object.entries(
+          schedule.assignmentCounts.lastAssignmentDateByMemberId || {},
+        ).filter(([id]) => id !== memberId),
       ),
     },
   };
@@ -606,11 +610,11 @@ export const compareTeamRosterMembersByName = (
   a: TeamRosterMember,
   b: TeamRosterMember,
 ) =>
-  `${a.firstName} ${a.lastName}`.trim().localeCompare(
-    `${b.firstName} ${b.lastName}`.trim(),
-    undefined,
-    { sensitivity: "base" },
-  );
+  `${a.firstName} ${a.lastName}`
+    .trim()
+    .localeCompare(`${b.firstName} ${b.lastName}`.trim(), undefined, {
+      sensitivity: "base",
+    });
 
 export const getDuplicateScheduleFirstNames = (members: TeamRosterMember[]) => {
   const counts = new Map<string, number>();
@@ -912,7 +916,8 @@ export const getMemberServingHistories = (
         Object.entries(
           schedule.assignmentCounts?.lastAssignmentDateByMemberId || {},
         ).forEach(([memberId, summaryDate]) => {
-          if (summaryDate <= throughDate) recordServedDate(memberId, summaryDate);
+          if (summaryDate <= throughDate)
+            recordServedDate(memberId, summaryDate);
         });
         return;
       }
@@ -1368,8 +1373,7 @@ export const buildServiceTimeUpdate = (
     shouldShowName: existing?.shouldShowName,
     positionRequirements:
       draft.positionRequirements ?? existing?.positionRequirements,
-    defaultPlanTemplateId:
-      draft.defaultPlanTemplateId || undefined,
+    defaultPlanTemplateId: draft.defaultPlanTemplateId || undefined,
     serviceGroupId: draft.serviceGroupId,
     archivedAt: existing?.archivedAt || null,
     createdAt: existing?.createdAt || new Date().toISOString(),
@@ -1436,9 +1440,9 @@ export const countMemberAssignmentsOnTeam = (
       if (!isHydratedSchedule(schedule)) {
         return total + (schedule.assignmentCounts?.byMemberId[memberId] || 0);
       }
-      return total + countScheduleAssignmentsForMember(
-        schedule.assignments,
-        memberId,
+      return (
+        total +
+        countScheduleAssignmentsForMember(schedule.assignments, memberId)
       );
     }, 0);
 

@@ -165,6 +165,35 @@ export const buildShareableHashRouterUrl = (hashRoute: string): string => {
 };
 
 /**
+ * Origin for path-based public share links (no hash). Chat crawlers strip
+ * fragments, so public pages use `/services/...` and the server serves OG meta.
+ */
+export const getShareablePublicOrigin = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  if (isPackagedElectronRenderer()) {
+    try {
+      return shareablePrefixFromHttpApiBase(getApiBasePath()).replace(
+        /\/$/,
+        "",
+      );
+    } catch {
+      return "https://www.worshipsync.net";
+    }
+  }
+  return window.location.origin;
+};
+
+/** Full URL for a public path route (e.g. `/boards/x`), safe to copy from Electron. */
+export const buildShareablePublicPathUrl = (route: string): string => {
+  const origin = getShareablePublicOrigin();
+  const trimmed = route.replace(/^#/, "");
+  const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${origin}${path}`;
+};
+
+/**
  * Get the development mode status (async, for Electron)
  */
 export const getIsDev = async (): Promise<boolean> => {
