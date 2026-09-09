@@ -311,6 +311,7 @@ const LocalVideoInputView = ({
     let playbackRecoveryTimer: number | undefined;
     let frameCallbackId: number | undefined;
     let directPlaybackReady = false;
+    let attachedVideo: HTMLVideoElement | null = null;
     const captureConsumerId = captureConsumerIdRef.current;
     const retryCapture = (delayMs = 0) => {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
@@ -365,6 +366,7 @@ const LocalVideoInputView = ({
           retryCapture(50);
           return;
         }
+        attachedVideo = video;
         const markDirectReady = () => {
           if (!active || video.srcObject !== stream) return;
           if (
@@ -477,7 +479,7 @@ const LocalVideoInputView = ({
       if (playbackRecoveryTimer !== undefined) {
         window.clearInterval(playbackRecoveryTimer);
       }
-      const video = videoRef.current;
+      const video = attachedVideo;
       if (
         video &&
         frameCallbackId !== undefined &&

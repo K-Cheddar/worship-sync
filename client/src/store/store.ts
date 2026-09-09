@@ -7,17 +7,6 @@ import {
   Reducer,
 } from "@reduxjs/toolkit";
 import undoable, { ActionCreators } from "redux-undo";
-
-/**
- * Store wipes that drop presentation/session slices.
- *
- * - `RESET` — full clear (logout, sign-in, guest exit).
- * - `RESET_CONTROLLER_SESSION` — leave a controller page; keeps church
- *   registries (`controllerProfiles`, `displayOutputs`) so Home and sync
- *   surfaces do not flash built-in names while Firebase re-hydrates.
- */
-export const isStoreResetAction = (action: { type: string }) =>
-  action.type === "RESET" || action.type === "RESET_CONTROLLER_SESSION";
 import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
@@ -132,6 +121,17 @@ import {
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+
+/**
+ * Store wipes that drop presentation/session slices.
+ *
+ * - `RESET` — full clear (logout, sign-in, guest exit).
+ * - `RESET_CONTROLLER_SESSION` — leave a controller page; keeps church
+ *   registries (`controllerProfiles`, `displayOutputs`) so Home and sync
+ *   surfaces do not flash built-in names while Firebase re-hydrates.
+ */
+export const isStoreResetAction = (action: { type: string }) =>
+  action.type === "RESET" || action.type === "RESET_CONTROLLER_SESSION";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
