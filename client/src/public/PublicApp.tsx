@@ -41,7 +41,7 @@ const PublicFallback = () => (
   </div>
 );
 
-/** Invite needs Firebase session helpers from GlobalInfo (+ Redux). */
+/** Invite + schedule-response need Firebase session helpers from GlobalInfo (+ Redux). */
 const InviteProviderLayout = () => (
   <Provider store={store}>
     <GlobalInfoProvider>
@@ -66,10 +66,6 @@ const PublicApp = () => (
           <Routes>
             <Route path="/services/:shareId" element={<ServicePublic />} />
             <Route
-              path="/schedule-response/:token"
-              element={<ScheduleResponsePublic />}
-            />
-            <Route
               path="/teams/schedule/:token"
               element={<TeamSchedulePublic />}
             />
@@ -78,6 +74,10 @@ const PublicApp = () => (
             <Route path="/boards/present/:aliasId" element={<BoardPresent />} />
             <Route path="/boards/:aliasId" element={<BoardPage />} />
             <Route element={<InviteProviderLayout />}>
+              <Route
+                path="/schedule-response/:token"
+                element={<ScheduleResponsePublic />}
+              />
               <Route path="/invite" element={<InviteAccept />} />
             </Route>
             <Route path="*" element={<LeaveToOperatorApp />} />
