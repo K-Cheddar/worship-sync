@@ -142,6 +142,22 @@ const APP_PUBLIC_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
   "https://www.worshipsync.net";
 const PUBLIC_SHARE_OG_IMAGE_URL = buildPublicShareImageUrl(APP_PUBLIC_BASE_URL);
+/** Crawler OG title lookup only — keep share HTML responsive if CouchDB stalls. */
+const BOARD_SHARE_PREVIEW_TIMEOUT_MS = 2000;
+
+const withTimeout = async (promise, timeoutMs, timeoutMessage) => {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 /**
  * Path-based public share pages: crawlers get Open Graph HTML; browsers get the
@@ -156,7 +172,11 @@ const sendPublicShareMetaPage = async (req, res, matched) => {
     try {
       const aliasId = normalizeAliasId(matched.param);
       if (aliasId) {
-        const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+        const aliasDoc = await withTimeout(
+          getBoardDoc(getAliasDocId(aliasId)),
+          BOARD_SHARE_PREVIEW_TIMEOUT_MS,
+          "Board share preview timed out",
+        );
         const boardTitle = String(aliasDoc?.title || "").trim();
         if (boardTitle) {
           overrides = {
