@@ -26,9 +26,18 @@ const SlideBoxes = ({
   const dispatch = useDispatch();
   const item = useSelector((state) => state.undoable.present.item);
   const mediaList = useSelector((state) => state.media.list);
-  const { selectedSlide, selectedBox, slides } = item;
+  const { selectedSlide, selectedBox, slides, arrangements, selectedArrangement, type } =
+    item;
 
-  const boxes = slides?.[selectedSlide]?.boxes || [];
+  const arrangementSlides = arrangements?.[selectedArrangement]?.slides;
+  const activeSlides =
+    type === "song" && arrangementSlides ? arrangementSlides : slides;
+  const selectedSlideData = activeSlides?.[selectedSlide];
+  const boxes = selectedSlideData?.boxes || [];
+  const slideVideoInput =
+    selectedSlideData?.mediaSource?.kind === "local-video-input"
+      ? selectedSlideData.mediaSource
+      : undefined;
   const isEmpty = boxes.length === 0;
 
   if (isEmpty) {
@@ -36,7 +45,11 @@ const SlideBoxes = ({
   }
 
   const activeBox: Box | undefined = boxes[selectedBox];
-  const activeBoxHasMedia = Boolean(activeBox?.mediaInfo?.id || activeBox?.background);
+  const activeBoxHasFileMedia = Boolean(
+    activeBox?.mediaInfo?.id || activeBox?.background,
+  );
+  const activeBoxShowsVideoInput = selectedBox === 0 && Boolean(slideVideoInput);
+  const activeBoxHasMedia = activeBoxHasFileMedia || activeBoxShowsVideoInput;
   const activeBoxIsLocked = isBoxLocked[selectedBox] ?? false;
 
   return (
@@ -81,10 +94,18 @@ const SlideBoxes = ({
               onClick={() => {
                 dispatch(setRequestOpenMediaPanel(true));
                 dispatch(setIsMediaExpanded(true));
-                console.log("activeBox", activeBox);
                 const mediaId =
-                  (activeBox.mediaInfo?.id && mediaList.find((m) => m.id === activeBox.mediaInfo!.id)?.id) ||
-                  (activeBox.background && mediaList.find((m) => m.background === activeBox.background)?.id);
+                  (activeBox.mediaInfo?.id &&
+                    mediaList.find((m) => m.id === activeBox.mediaInfo!.id)
+                      ?.id) ||
+                  (activeBox.background &&
+                    mediaList.find((m) => m.background === activeBox.background)
+                      ?.id) ||
+                  (slideVideoInput &&
+                    mediaList.find(
+                      (m) =>
+                        m.localVideoInput?.sourceId === slideVideoInput.sourceId,
+                    )?.id);
                 if (mediaId) {
                   dispatch(setFocusMediaId(mediaId));
                 }
@@ -98,6 +119,31 @@ const SlideBoxes = ({
 
       <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto pb-2 pt-1">
         {boxes.map((box: Box, index: number) => {
+          const boxVideoInput = index === 0 ? slideVideoInput : undefined;
+          const mediaType =
+            box.mediaInfo?.type ||
+            (boxVideoInput
+              ? "video"
+              : box.background?.includes("stream.mux.com")
+                ? "video"
+                : box.background
+                  ? "image"
+                  : undefined);
+          const boxLabel =
+            box.label ||
+            (boxVideoInput
+              ? `Video input: ${boxVideoInput.label.trim() || "Video input"}`
+              : undefined) ||
+            box.words?.trim() ||
+            (box.mediaInfo?.name ||
+              box.background?.replace(
+                /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
+                "",
+              )
+            )
+              ?.replace(/^backgrounds?\//i, "")
+              .replace(/\?.*$/, "");
+
           return (
             <span
               key={box.id}
@@ -115,25 +161,13 @@ const SlideBoxes = ({
                 variant="none"
                 onClick={() => dispatch(setSelectedBox(index))}
               >
-                {(() => {
-                  const mediaType =
-                    box.mediaInfo?.type ||
-                    (box.background?.includes("stream.mux.com") ? "video" : box.background ? "image" : undefined);
-                  return mediaType ? (
-                    <Icon
-                      svg={mediaType === "video" ? Video : ImageIcon}
-                      className="shrink-0"
-                    />
-                  ) : null;
-                })()}
-                <p className="truncate">
-                  {box.label ||
-                    box.words?.trim() ||
-                    (box.mediaInfo?.name || box.background?.replace(
-                      /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
-                      ""
-                    ))?.replace(/^backgrounds?\//i, "").replace(/\?.*$/, "")}
-                </p>
+                {mediaType ? (
+                  <Icon
+                    svg={mediaType === "video" ? Video : ImageIcon}
+                    className="shrink-0"
+                  />
+                ) : null}
+                <p className="truncate">{boxLabel}</p>
               </Button>
               <Icon
                 svg={isBoxLocked[index] ? Lock : Unlock}

@@ -291,55 +291,64 @@ const MediaModal = ({
   }, [uploadProgress?.isUploading, uploadProgress?.progress]);
 
   const addMediaMenu = mediaUploadInputRef ? (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="tertiary"
-          svg={Plus}
-          title={fullscreenAddMediaTitle}
-          aria-label="Add media"
-          disabled={uploadProgress?.isUploading || mediaUploadDisabled}
-        >
-          {uploadProgress?.isUploading
-            ? `${Math.round(uploadProgress.progress)}%`
-            : ""}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {onAddMediaClick ? (
-          <DropdownMenuItem
+    uploadProgress?.isUploading ? (
+      <Button
+        variant="tertiary"
+        svg={Plus}
+        title={fullscreenAddMediaTitle}
+        aria-label="Show upload progress"
+        onClick={() => onAddMediaClick?.()}
+        disabled={mediaUploadDisabled}
+      >
+        {`${Math.round(uploadProgress.progress)}%`}
+      </Button>
+    ) : (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="tertiary"
+            svg={Plus}
+            title={fullscreenAddMediaTitle}
+            aria-label="Add media"
             disabled={mediaUploadDisabled}
-            onSelect={() => onAddMediaClick()}
-          >
-            <HardDrive /> Add files
-          </DropdownMenuItem>
-        ) : null}
-        {onAddVideoInput ? (
-          <DropdownMenuItem
-            disabled={mediaUploadDisabled}
-            onSelect={onAddVideoInput}
-          >
-            <Video /> Add video input
-          </DropdownMenuItem>
-        ) : null}
-        {onAddScreenShare ? (
-          <DropdownMenuItem
-            disabled={mediaUploadDisabled}
-            onSelect={onAddScreenShare}
-          >
-            <MonitorUp /> Add screen or window
-          </DropdownMenuItem>
-        ) : null}
-        {onImportFromCanva ? (
-          <DropdownMenuItem
-            disabled={mediaUploadDisabled || isGuestSession}
-            onSelect={() => onImportFromCanva()}
-          >
-            <ImageUp /> Import from Canva
-          </DropdownMenuItem>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {onAddMediaClick ? (
+            <DropdownMenuItem
+              disabled={mediaUploadDisabled}
+              onSelect={() => onAddMediaClick()}
+            >
+              <HardDrive /> Add files
+            </DropdownMenuItem>
+          ) : null}
+          {onAddVideoInput ? (
+            <DropdownMenuItem
+              disabled={mediaUploadDisabled}
+              onSelect={onAddVideoInput}
+            >
+              <Video /> Add video input
+            </DropdownMenuItem>
+          ) : null}
+          {onAddScreenShare ? (
+            <DropdownMenuItem
+              disabled={mediaUploadDisabled}
+              onSelect={onAddScreenShare}
+            >
+              <MonitorUp /> Add screen or window
+            </DropdownMenuItem>
+          ) : null}
+          {onImportFromCanva ? (
+            <DropdownMenuItem
+              disabled={mediaUploadDisabled || isGuestSession}
+              onSelect={() => onImportFromCanva()}
+            >
+              <ImageUp /> Import from Canva
+            </DropdownMenuItem>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
   ) : null;
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -919,7 +928,7 @@ const MediaModal = ({
                 />
               </div>
               <img
-                src={resolvedPreviewImageUrl ?? modalPreviewMedia.background}
+                src={resolvedPreviewImageUrl}
                 alt={modalPreviewMedia.name}
                 className="w-full h-full object-contain transition-transform duration-300 ease-in-out"
                 style={{
@@ -983,8 +992,7 @@ const MediaModal = ({
                         src={
                           localPreviewVideo.isLocalVideoFile
                             ? localPreviewVideo.url
-                            : (resolvedPreviewVideoUrl ??
-                              modalPreviewMedia.background)
+                            : resolvedPreviewVideoUrl
                         }
                         className="max-h-full max-w-full w-full h-full object-contain"
                         controls
@@ -995,8 +1003,7 @@ const MediaModal = ({
                         src={
                           localPreviewImage.isLocalImage
                             ? localPreviewImage.url
-                            : (resolvedPreviewImageUrl ??
-                              modalPreviewMedia.background)
+                            : resolvedPreviewImageUrl
                         }
                         alt={modalPreviewMedia.name}
                         className="max-h-full max-w-full h-full w-full object-contain"

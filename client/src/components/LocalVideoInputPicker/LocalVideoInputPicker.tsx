@@ -42,6 +42,8 @@ import {
 
 const PICKER_CAPTURE_CONSUMER_ID = "input-picker";
 const SYSTEM_AUDIO_VALUE = "__system_audio__";
+const PREVIEW_WIDTH = 640;
+const PREVIEW_HEIGHT = 360;
 
 export type LocalVideoCaptureMode = "device" | "desktop";
 
@@ -62,6 +64,8 @@ type BrowserShare = {
   name: string;
 };
 
+type PreviewStatus = "idle" | "loading" | "ready" | "error";
+
 const enumerateInputs = async () => {
   if (!navigator.mediaDevices?.enumerateDevices) return [];
   return (await navigator.mediaDevices.enumerateDevices()).filter(
@@ -71,6 +75,24 @@ const enumerateInputs = async () => {
 
 const stopShare = (share: BrowserShare | undefined) =>
   share?.stream.getTracks().forEach((track) => track.stop());
+
+const stopMediaStream = (stream: MediaStream | undefined) =>
+  stream?.getTracks().forEach((track) => track.stop());
+
+const attachPreviewStream = (
+  video: HTMLVideoElement | null,
+  stream: MediaStream | undefined,
+) => {
+  if (!video) return;
+  video.srcObject = stream ?? null;
+  if (!stream) return;
+  try {
+    const playPromise = video.play();
+    void playPromise?.catch(() => undefined);
+  } catch {
+    // jsdom and locked-autoplay browsers can reject play synchronously.
+  }
+};
 
 const LocalVideoInputPicker = ({
   source,
@@ -112,10 +134,22 @@ const LocalVideoInputPicker = ({
   const [deviceEnumerationFailed, setDeviceEnumerationFailed] = useState(false);
   const [hasEnumeratedDevices, setHasEnumeratedDevices] = useState(false);
   const [hasListedDesktopSources, setHasListedDesktopSources] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle");
+  const [previewError, setPreviewError] = useState("");
   const refreshRequestRef = useRef(0);
   const desktopRequestRef = useRef(0);
   const linkedShareRef = useRef<MediaStream | undefined>(undefined);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const previewStreamRef = useRef<MediaStream | undefined>(undefined);
   const runningInElectron = isElectron();
+
+  const clearDevicePreview = useCallback(() => {
+    stopMediaStream(previewStreamRef.current);
+    previewStreamRef.current = undefined;
+    attachPreviewStream(previewVideoRef.current, undefined);
+    setPreviewStatus("idle");
+    setPreviewError("");
+  }, []);
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestRef.current;
@@ -227,7 +261,80 @@ const LocalVideoInputPicker = ({
       }
       return undefined;
     });
-  }, [open]);
+    clearDevicePreview();
+  }, [clearDevicePreview, open]);
+
+  // Live muted preview of the selected camera so operators confirm the right
+  // USB input before saving. Released before link() so the capture pool can
+  // open the device exclusively for presentation.
+  useEffect(() => {
+    if (!open || isDesktopMode) return;
+    if (!videoDeviceId) {
+      clearDevicePreview();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPreviewStatus("error");
+      setPreviewError("Video inputs are not supported in this browser.");
+      return;
+    }
+
+    let cancelled = false;
+    const previewVideo = previewVideoRef.current;
+    setPreviewStatus("loading");
+    setPreviewError("");
+    stopMediaStream(previewStreamRef.current);
+    previewStreamRef.current = undefined;
+    attachPreviewStream(previewVideo, undefined);
+
+    void navigator.mediaDevices
+      .getUserMedia({
+        audio: false,
+        video: {
+          deviceId: { exact: videoDeviceId },
+          width: { ideal: PREVIEW_WIDTH },
+          height: { ideal: PREVIEW_HEIGHT },
+        },
+      })
+      .then((stream) => {
+        if (cancelled) {
+          stopMediaStream(stream);
+          return;
+        }
+        previewStreamRef.current = stream;
+        attachPreviewStream(previewVideoRef.current ?? previewVideo, stream);
+        setPreviewStatus("ready");
+      })
+      .catch((nextError) => {
+        if (cancelled) return;
+        previewStreamRef.current = undefined;
+        attachPreviewStream(previewVideoRef.current ?? previewVideo, undefined);
+        setPreviewStatus("error");
+        setPreviewError(getVideoInputErrorMessage(nextError));
+      });
+
+    return () => {
+      cancelled = true;
+      stopMediaStream(previewStreamRef.current);
+      previewStreamRef.current = undefined;
+      attachPreviewStream(previewVideo, undefined);
+    };
+  }, [clearDevicePreview, isDesktopMode, open, videoDeviceId]);
+
+  // Browser shares keep their stream until save or dismiss; mirror it in the
+  // preview so operators see the chosen screen or window.
+  useEffect(() => {
+    if (!open || !isDesktopMode || canListDesktopSources) return;
+    if (!browserShare) {
+      attachPreviewStream(previewVideoRef.current, undefined);
+      setPreviewStatus("idle");
+      setPreviewError("");
+      return;
+    }
+    attachPreviewStream(previewVideoRef.current, browserShare.stream);
+    setPreviewStatus("ready");
+    setPreviewError("");
+  }, [browserShare, canListDesktopSources, isDesktopMode, open]);
 
   const videoInputs = useMemo(
     () => devices.filter((device) => device.kind === "videoinput"),
@@ -478,6 +585,8 @@ const LocalVideoInputPicker = ({
       );
     setIsLoading(true);
     setError("");
+    // Free the preview capture before the pool opens the same device.
+    clearDevicePreview();
     try {
       await resetWarmLocalVideoCapture(nextSource.sourceId);
       if (isDesktopMode) {
@@ -544,6 +653,34 @@ const LocalVideoInputPicker = ({
   const saveLabel = source ? "Save local link" : "Add to Media";
   let triggerIcon = source ? Cable : Video;
   if (isDesktopMode) triggerIcon = MonitorUp;
+  const showDeviceOrBrowserPreview =
+    (!isDesktopMode && Boolean(videoDeviceId)) ||
+    (isDesktopMode && !canListDesktopSources && Boolean(browserShare));
+  const previewObjectFit = fit === "cover" ? "object-cover" : "object-contain";
+  let livePreviewStatusLabel = "Starting preview…";
+  if (previewStatus === "error") {
+    livePreviewStatusLabel = previewError || "Preview unavailable";
+  } else if (previewStatus === "ready") {
+    livePreviewStatusLabel = "";
+  }
+
+  // The preview <video> mounts only after a source is selected; re-attach if
+  // getUserMedia finished while the element was still unmounted.
+  useEffect(() => {
+    if (!showDeviceOrBrowserPreview || previewStatus !== "ready") return;
+    const stream =
+      previewStreamRef.current ??
+      (isDesktopMode && !canListDesktopSources
+        ? browserShare?.stream
+        : undefined);
+    attachPreviewStream(previewVideoRef.current, stream);
+  }, [
+    browserShare?.stream,
+    canListDesktopSources,
+    isDesktopMode,
+    previewStatus,
+    showDeviceOrBrowserPreview,
+  ]);
 
   return (
     <>
@@ -599,12 +736,21 @@ const LocalVideoInputPicker = ({
                     onClick={() => void refreshDesktopSources()}
                   />
                 </div>
-                {selectedDesktopSource?.thumbnailDataUrl ? (
-                  <img
-                    src={selectedDesktopSource.thumbnailDataUrl}
-                    alt={`Preview of ${selectedDesktopSource.name}`}
-                    className="w-full rounded border border-white/10 bg-black object-contain"
-                  />
+                {selectedDesktopSource ? (
+                  selectedDesktopSource.thumbnailDataUrl ? (
+                    <img
+                      src={selectedDesktopSource.thumbnailDataUrl}
+                      alt={`Preview of ${selectedDesktopSource.name}`}
+                      className={`aspect-video w-full rounded border border-white/10 bg-black ${previewObjectFit}`}
+                    />
+                  ) : (
+                    <div
+                      className="flex aspect-video w-full items-center justify-center rounded border border-white/10 bg-black px-4 text-center text-sm text-neutral-400"
+                      role="status"
+                    >
+                      No preview for this screen or window
+                    </div>
+                  )
                 ) : null}
               </>
             ) : null}
@@ -657,6 +803,27 @@ const LocalVideoInputPicker = ({
               }
               selectClassName="w-full"
             />
+            {showDeviceOrBrowserPreview ? (
+              <div className="relative aspect-video w-full overflow-hidden rounded border border-white/10 bg-black">
+                <video
+                  ref={previewVideoRef}
+                  muted
+                  playsInline
+                  autoPlay
+                  aria-label="Input preview"
+                  className={`h-full w-full ${previewObjectFit} ${previewStatus === "ready" ? "opacity-100" : "opacity-0"
+                    }`}
+                />
+                {livePreviewStatusLabel ? (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-neutral-300"
+                    role="status"
+                  >
+                    {livePreviewStatusLabel}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {showAllowAccess || showRetryDeviceScan ? (
               <div className="flex flex-wrap gap-2">
                 {showAllowAccess ? (

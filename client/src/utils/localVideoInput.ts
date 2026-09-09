@@ -29,6 +29,27 @@ export const isDesktopCaptureKind = (
   captureKind === "screen" || captureKind === "window";
 
 /**
+ * Operator-facing type name for badges and inspectors.
+ * Matches live-status wording ("Screen share unavailable").
+ */
+export const getLocalVideoInputKindLabel = (
+  captureKind: LocalVideoCaptureKind | undefined,
+) => {
+  if (captureKind === "screen") return "Screen share";
+  if (captureKind === "window") return "Window share";
+  return "Video input";
+};
+
+/** Field label for the linked device or share target in the slide inspector. */
+export const getLocalVideoInputSourceFieldLabel = (
+  captureKind: LocalVideoCaptureKind | undefined,
+) => {
+  if (captureKind === "screen") return "Screen";
+  if (captureKind === "window") return "Window";
+  return "Video input";
+};
+
+/**
  * Hardware inputs keep the payload they have always synced: an absent kind
  * already means `device`, so only desktop shares add the field.
  */
@@ -175,26 +196,30 @@ const readLocalBindings = (): LocalVideoInputBinding[] => {
         MAX_DEVICE_ID_LENGTH,
       );
       const captureKind = normalizeCaptureKind(candidate.captureKind);
-      return [{
-        sourceId,
-        deviceId,
-        deviceLabel:
-          cleanString(candidate.deviceLabel, MAX_LABEL_LENGTH) ||
-          getDefaultLocalVideoInputLabel(captureKind),
-        ...buildBindingExtras({
-          captureKind,
-          displaySourceName: candidate.displaySourceName as string | undefined,
-          systemAudio: candidate.systemAudio === true,
-        }),
-        ...(audioDeviceId
-          ? {
-              audioDeviceId,
-              audioDeviceLabel:
-                cleanString(candidate.audioDeviceLabel, MAX_LABEL_LENGTH) ||
-                "Audio input",
-            }
-          : {}),
-      }];
+      return [
+        {
+          sourceId,
+          deviceId,
+          deviceLabel:
+            cleanString(candidate.deviceLabel, MAX_LABEL_LENGTH) ||
+            getDefaultLocalVideoInputLabel(captureKind),
+          ...buildBindingExtras({
+            captureKind,
+            displaySourceName: candidate.displaySourceName as
+              | string
+              | undefined,
+            systemAudio: candidate.systemAudio === true,
+          }),
+          ...(audioDeviceId
+            ? {
+                audioDeviceId,
+                audioDeviceLabel:
+                  cleanString(candidate.audioDeviceLabel, MAX_LABEL_LENGTH) ||
+                  "Audio input",
+              }
+            : {}),
+        },
+      ];
     });
   } catch {
     return [];
@@ -212,11 +237,10 @@ export const registerLocalVideoInput = (
   const cleanDeviceId = cleanString(deviceId, MAX_DEVICE_ID_LENGTH);
   if (!cleanDeviceId) return undefined;
   const bindings = readLocalBindings();
-  const existing = bindings.find((binding) => binding.deviceId === cleanDeviceId);
-  const cleanAudioDeviceId = cleanString(
-    audioDeviceId,
-    MAX_DEVICE_ID_LENGTH,
+  const existing = bindings.find(
+    (binding) => binding.deviceId === cleanDeviceId,
   );
+  const cleanAudioDeviceId = cleanString(audioDeviceId, MAX_DEVICE_ID_LENGTH);
   const binding: LocalVideoInputBinding = {
     sourceId: existing?.sourceId ?? `local_video_${generateRandomId()}`,
     deviceId: cleanDeviceId,
@@ -238,10 +262,7 @@ export const registerLocalVideoInput = (
       )
     : [...bindings, binding];
   try {
-    localStorage.setItem(
-      LOCAL_VIDEO_INPUTS_KEY,
-      JSON.stringify(nextBindings),
-    );
+    localStorage.setItem(LOCAL_VIDEO_INPUTS_KEY, JSON.stringify(nextBindings));
   } catch {
     return undefined;
   }
@@ -338,6 +359,21 @@ export const getVideoInputErrorMessage = (
     return "Close other apps using this input, then try again.";
   }
   return "Check the input connection and camera permission, then try again.";
+};
+
+/**
+ * True when the OS reports the device busy. Another WorshipSync window often
+ * holds the capture; views should fall back to the local relay instead of
+ * treating this as a hard failure.
+ */
+export const isLocalVideoDeviceBusyError = (error: unknown) => {
+  const name =
+    error instanceof DOMException
+      ? error.name
+      : error instanceof Error
+        ? error.name
+        : "";
+  return name === "NotReadableError" || name === "AbortError";
 };
 
 /** Desktop shares fail for different reasons than a cable, so guide differently. */

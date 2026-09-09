@@ -73,6 +73,14 @@ jest.mock("./HeadingItem", () => ({
   ),
 }));
 
+jest.mock("../../components/NextServiceCountdownText/NextServiceCountdownText", () => ({
+  __esModule: true,
+  default: ({ targetIso }: { targetIso: string | null }) => {
+    const text = mockUseNextServiceCountdownText(targetIso);
+    return text == null ? null : <span>{text}</span>;
+  },
+}));
+
 jest.mock("./ServiceItem", () => ({
   __esModule: true,
   default: ({
@@ -85,7 +93,7 @@ jest.mock("./ServiceItem", () => ({
     item: { listId: string; name: string; type: string };
     isActive: boolean;
     timer?: { remainingTime?: number };
-    timerText?: string;
+    timerText?: ReactNode;
     selectedListIds: Set<string>;
   }) => (
     <li
@@ -93,9 +101,9 @@ jest.mock("./ServiceItem", () => ({
       data-active={String(isActive)}
       data-list-selected={String(selectedListIds.has(item.listId))}
       data-timer-value={timer?.remainingTime ?? ""}
-      data-timer-text={timerText ?? ""}
     >
       {item.name}
+      <span data-testid={`timer-text-${item.type}`}>{timerText}</span>
     </li>
   ),
 }));
@@ -174,6 +182,9 @@ describe("ServiceItems", () => {
           },
         ],
       },
+      media: {
+        list: [],
+      },
     };
     mockUseDisplayedUpcomingService.mockReturnValue({
       service: {
@@ -211,8 +222,7 @@ describe("ServiceItems", () => {
       "data-active",
       "true",
     );
-    expect(screen.getByTestId("row-service-time")).toHaveAttribute(
-      "data-timer-text",
+    expect(screen.getByTestId("timer-text-service-time")).toHaveTextContent(
       "12:34",
     );
     expect(screen.getByTestId("row-service-time")).toHaveAttribute(
@@ -228,10 +238,7 @@ describe("ServiceItems", () => {
       "data-timer-value",
       "90",
     );
-    expect(screen.getByTestId("row-timer")).toHaveAttribute(
-      "data-timer-text",
-      "",
-    );
+    expect(screen.getByTestId("timer-text-timer")).toBeEmptyDOMElement();
   });
 
   it("syncs cyan list selection when selectedItemListId changes externally", () => {

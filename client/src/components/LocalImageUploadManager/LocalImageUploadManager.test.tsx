@@ -1,7 +1,6 @@
 import { render, waitFor } from "@testing-library/react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { ToastContext } from "../../context/toastContext";
 import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
 import {
   claimLocalImageUploadJob,
@@ -114,21 +113,12 @@ describe("LocalImageUploadManager", () => {
   });
 
   it("resumes an interrupted upload and completes the cloud handoff", async () => {
-    const showToast = jest.fn(() => "toast-1");
     const view = render(
       <ControllerInfoContext.Provider
         value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}
       >
         <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <ToastContext.Provider
-            value={{
-              showToast,
-              updateToast: jest.fn(),
-              removeToast: jest.fn(),
-            }}
-          >
-            <LocalImageUploadManager />
-          </ToastContext.Provider>
+          <LocalImageUploadManager />
         </GlobalInfoContext.Provider>
       </ControllerInfoContext.Provider>,
     );
@@ -169,10 +159,6 @@ describe("LocalImageUploadManager", () => {
         url: "https://res.cloudinary.com/example/welcome.png",
       },
     });
-    expect(showToast).toHaveBeenCalledWith(
-      "Welcome.png is available in Media and on other devices.",
-      "success",
-    );
     view.unmount();
   });
 

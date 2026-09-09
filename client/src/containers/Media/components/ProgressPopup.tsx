@@ -43,6 +43,7 @@ export const ProgressPopup = ({
                 onRestore();
               }}
               title="Restore modal"
+              aria-label="Restore modal"
               svg={Maximize2}
             />
             <Button
@@ -52,6 +53,7 @@ export const ProgressPopup = ({
                 onMinimize();
               }}
               title="Minimize to Add button"
+              aria-label="Minimize to Add button"
               svg={Minus}
             />
           </div>
@@ -59,13 +61,12 @@ export const ProgressPopup = ({
         <p className="text-xs text-gray-300 mb-2 truncate">{statusMessage}</p>
         <div className="w-full bg-gray-700 rounded-full h-2">
           <div
-            className={`h-2 rounded-full transition-all duration-300 ${
-              uploadStatus === "error"
+            className={`h-2 rounded-full transition-all duration-300 ${uploadStatus === "error"
                 ? "bg-red-600"
                 : uploadStatus === "ready"
-                ? "bg-green-600"
-                : "bg-blue-600"
-            }`}
+                  ? "bg-green-600"
+                  : "bg-blue-600"
+              }`}
             style={{ width: `${uploadStatus === "ready" ? 100 : overallProgress}%` }}
           />
         </div>

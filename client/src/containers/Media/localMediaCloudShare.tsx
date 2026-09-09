@@ -162,7 +162,6 @@ export function useLocalMediaCloudShare() {
               },
             }),
           );
-          showToast(`Uploading ${label} to the Media cloud.`, "success");
         } catch {
           showToast(`Could not upload ${label}. Try again.`, "error");
         } finally {

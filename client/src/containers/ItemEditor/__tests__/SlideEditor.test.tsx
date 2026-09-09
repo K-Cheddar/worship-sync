@@ -96,6 +96,41 @@ jest.mock("../../../store/preferencesSlice", () => ({
   setShouldShowItemEditor: (value: boolean) => mockSetShouldShowItemEditor(value),
 }));
 
+jest.mock("../../../store/mediaSlice", () => ({
+  addItemToMediaList: jest.fn((payload: unknown) => ({
+    type: "media/addItemToMediaList",
+    payload,
+  })),
+  updateMediaItemFields: jest.fn((payload: unknown) => ({
+    type: "media/updateMediaItemFields",
+    payload,
+  })),
+}));
+
+jest.mock("../../../utils/authStorage", () => ({
+  getOrCreateDeviceId: () => "device-1",
+}));
+
+jest.mock("../../../utils/deviceInfo", () => ({
+  getTrustedDeviceLabel: () => "Booth PC",
+}));
+
+jest.mock("../../../utils/localVideoInput", () => {
+  const actual = jest.requireActual("../../../utils/localVideoInput");
+  return {
+    ...actual,
+    buildLocalVideoInputPresentation: jest.fn((source: any) => ({
+      sourceId: source.sourceId,
+      deviceLabel: source.label,
+      ownerDeviceId: "device-1",
+      ownerLabel: "Booth PC",
+      captureKind: source.captureKind,
+      fit: source.fit,
+      audioEnabled: source.audioEnabled,
+    })),
+  };
+});
+
 jest.mock("../../../components/SongAudioPlayer/SongAudioPlayer", () => ({
   __esModule: true,
   default: () => <div data-testid="song-audio-player" />,
@@ -115,9 +150,13 @@ jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
 const displayWindowCapture: {
   onChange: ((info: any) => void) | null;
   videoPlayback: unknown;
+  localVideoInput: unknown;
+  canCaptureLocalVideo: boolean | undefined;
 } = {
   onChange: null,
   videoPlayback: undefined,
+  localVideoInput: undefined,
+  canCaptureLocalVideo: undefined,
 };
 
 jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
@@ -126,14 +165,20 @@ jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
     disabled?: boolean;
     onChange?: (info: any) => void;
     videoPlayback?: unknown;
+    localVideoInput?: unknown;
+    canCaptureLocalVideo?: boolean;
   }) => {
     if (props.onChange) displayWindowCapture.onChange = props.onChange;
     displayWindowCapture.videoPlayback = props.videoPlayback;
+    displayWindowCapture.localVideoInput = props.localVideoInput;
+    displayWindowCapture.canCaptureLocalVideo = props.canCaptureLocalVideo;
     return (
       <div
         data-testid="display-window"
         data-disabled={props.disabled ? "true" : "false"}
         data-has-video-playback={props.videoPlayback ? "true" : "false"}
+        data-has-local-video={props.localVideoInput ? "true" : "false"}
+        data-can-capture={props.canCaptureLocalVideo ? "true" : "false"}
       />
     );
   },
@@ -169,6 +214,29 @@ jest.mock("../../../components/SectionTextEditor/SectionTextEditor", () => ({
 jest.mock("../../../components/SlideBoxes/SlideBoxes", () => ({
   __esModule: true,
   default: () => <div data-testid="slide-boxes" />,
+}));
+
+jest.mock("../../../components/LocalVideoInputDetails/LocalVideoInputDetails", () => ({
+  __esModule: true,
+  default: ({
+    source,
+    onEdit,
+  }: {
+    source: { label: string };
+    onEdit: () => void;
+  }) => (
+    <div data-testid="local-video-input-details">
+      <span>{source.label}</span>
+      <button type="button" onClick={onEdit}>
+        Edit
+      </button>
+    </div>
+  ),
+}));
+
+jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () => ({
+  __esModule: true,
+  default: () => <div data-testid="local-video-input-picker" />,
 }));
 
 jest.mock("../BibleItemActions", () => ({
@@ -219,10 +287,17 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
     presentation: {
       outputs: {},
     },
+    media: {
+      list: [],
+    },
   };
   return {
     ...base,
     ...overrides,
+    media: {
+      ...base.media,
+      ...((overrides as any).media || {}),
+    },
     presentation: {
       ...base.presentation,
       ...((overrides as any).presentation || {}),
@@ -302,6 +377,8 @@ describe("SlideEditor", () => {
     jest.clearAllMocks();
     displayWindowCapture.onChange = null;
     displayWindowCapture.videoPlayback = undefined;
+    displayWindowCapture.localVideoInput = undefined;
+    displayWindowCapture.canCaptureLocalVideo = undefined;
     mockState = makeBaseState();
     mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
@@ -320,6 +397,115 @@ describe("SlideEditor", () => {
 
     render(<SlideEditor access="full" />);
     expect(screen.getByText("No slide selected")).toBeInTheDocument();
+  });
+
+  it("shows a video input banner on the editor preview", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Section 1",
+                mediaSource: {
+                  kind: "local-video-input",
+                  sourceId: "local_video_1",
+                  label: "Booth camera",
+                },
+                boxes: [
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" />);
+    expect(
+      screen.getByLabelText("Video input: Booth camera"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows video input details left of the preview instead of section text", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Booth camera",
+                mediaSource: {
+                  kind: "local-video-input",
+                  sourceId: "local_video_1",
+                  label: "Booth camera",
+                  fit: "cover",
+                },
+                boxes: [
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" />);
+    expect(screen.getByTestId("local-video-input-details")).toBeInTheDocument();
+    expect(screen.queryByTestId("section-text-editor")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("passes a capturable local video input into the editor preview", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Booth camera",
+                mediaSource: {
+                  kind: "local-video-input",
+                  sourceId: "local_video_1",
+                  label: "Booth camera",
+                  fit: "contain",
+                },
+                boxes: [
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" />);
+    expect(screen.getByTestId("display-window")).toHaveAttribute(
+      "data-has-local-video",
+      "true",
+    );
+    expect(screen.getByTestId("display-window")).toHaveAttribute(
+      "data-can-capture",
+      "true",
+    );
+    expect(displayWindowCapture.localVideoInput).toEqual(
+      expect.objectContaining({
+        sourceId: "local_video_1",
+        deviceLabel: "Booth camera",
+      }),
+    );
   });
 
   it("passes the live video playback cue into the editor preview", () => {
@@ -1057,24 +1243,25 @@ describe("SlideEditor", () => {
       expect(updateSlidesPayload.slides).toHaveLength(1);
     });
 
-    it("dispatches updateSlides when type is free and Backspace with empty value (delete slide)", () => {
+    it("keeps free slides when Backspace clears all text instead of deleting the slide", () => {
+      // Contract change: clearing text on a custom (free) item used to remove the
+      // slide on empty Backspace; empty slides are kept so operators can keep
+      // editing structure without losing the slide.
+      jest.useFakeTimers();
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections,
+      }));
+
       const slides = [
         {
           id: "s1",
           type: "Media",
-          name: "Section 1A",
+          name: "Section 1",
           boxes: [
             { width: 100, height: 100, words: "BG", x: 0, y: 0 },
             { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
-          ],
-        },
-        {
-          id: "s2",
-          type: "Media",
-          name: "Section 1B",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "There", x: 0, y: 0 },
           ],
         },
       ];
@@ -1086,7 +1273,7 @@ describe("SlideEditor", () => {
               selectedSlide: 0,
               slides,
               formattedSections: [
-                { sectionNum: 1, words: "Hi\nThere", slideSpan: 2 },
+                { sectionNum: 1, words: "Hi", slideSpan: 1 },
               ],
             },
           },
@@ -1103,12 +1290,23 @@ describe("SlideEditor", () => {
         })
       );
 
+      expect(mockFormatFree).not.toHaveBeenCalled();
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
+      expect(mockFormatFree).toHaveBeenCalled();
       expect(mockUpdateSlides).toHaveBeenCalledWith(
         expect.objectContaining({
           slides: expect.any(Array),
+          formattedSections: expect.any(Array),
         })
       );
       expect(mockUpdateSlides.mock.calls[0][0].slides).toHaveLength(1);
+
+      jest.useRealTimers();
     });
 
     it("dispatches formatFree and updateSlides when type is free and value changes", () => {
@@ -1908,24 +2106,23 @@ describe("SlideEditor", () => {
       jest.useRealTimers();
     });
 
-    it("dispatches updateSlides when type is free and Delete with empty value (delete slide)", () => {
+    it("keeps free slides when Delete clears all text instead of deleting the slide", () => {
+      // Same contract as Backspace: empty Delete on free items must not remove the slide.
+      jest.useFakeTimers();
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections,
+      }));
+
       const slides = [
         {
           id: "s1",
           type: "Media",
-          name: "Section 1A",
+          name: "Section 1",
           boxes: [
             { width: 100, height: 100, words: "BG", x: 0, y: 0 },
             { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
-          ],
-        },
-        {
-          id: "s2",
-          type: "Media",
-          name: "Section 1B",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "There", x: 0, y: 0 },
           ],
         },
       ];
@@ -1937,7 +2134,7 @@ describe("SlideEditor", () => {
               selectedSlide: 0,
               slides,
               formattedSections: [
-                { sectionNum: 1, words: "Hi\nThere", slideSpan: 2 },
+                { sectionNum: 1, words: "Hi", slideSpan: 1 },
               ],
             },
           },
@@ -1954,12 +2151,23 @@ describe("SlideEditor", () => {
         })
       );
 
+      expect(mockFormatFree).not.toHaveBeenCalled();
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
+      expect(mockFormatFree).toHaveBeenCalled();
       expect(mockUpdateSlides).toHaveBeenCalledWith(
         expect.objectContaining({
           slides: expect.any(Array),
+          formattedSections: expect.any(Array),
         })
       );
       expect(mockUpdateSlides.mock.calls[0][0].slides).toHaveLength(1);
+
+      jest.useRealTimers();
     });
 
     it("does not dispatch when canEdit is false (access read)", () => {

@@ -79,6 +79,7 @@ describe("localVideoMediaLibrary", () => {
       }),
     );
     expect(result.presentation.slide?.mediaSource).toEqual(screenSource);
+    expect(result.presentation.slide?.name).toBe("Canva Present");
     expect(result.presentation.outputIds).toEqual(["projector"]);
   });
 });

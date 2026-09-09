@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MouseEvent } from "react";
-import { Film, Video } from "lucide-react";
+import { Film, MonitorUp, Video } from "lucide-react";
 import Button from "../../components/Button/Button";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
 import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
@@ -8,7 +8,10 @@ import cn from "classnames";
 import type { MediaType } from "../../types";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
-import { getMediaLibraryOriginBadgeLabel } from "./mediaLibraryOrigin";
+import {
+  getMediaLibraryOriginBadgeLabel,
+  isMediaLibraryDesktopShare,
+} from "./mediaLibraryOrigin";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -154,7 +157,25 @@ export default function MediaLibraryGridMediaTile({
               loading="lazy"
             />
           ) : mediaItem.localVideoInput ? (
-            <Video className="size-8 text-neutral-400" aria-hidden />
+            <div className="flex max-w-full flex-col items-center justify-center gap-1 px-2">
+              {isMediaLibraryDesktopShare(mediaItem) ? (
+                <MonitorUp
+                  className="size-8 shrink-0 text-neutral-400"
+                  aria-hidden
+                />
+              ) : (
+                <Video
+                  className="size-8 shrink-0 text-neutral-400"
+                  aria-hidden
+                />
+              )}
+              <span
+                className="max-w-full truncate text-center text-[10px] font-medium text-neutral-300"
+                title={shownName || mediaItem.localVideoInput.label}
+              >
+                {shownName || mediaItem.localVideoInput.label}
+              </span>
+            </div>
           ) : mediaItem.localVideoFile ? (
             <Film className="size-8 text-neutral-400" aria-hidden />
           ) : null}

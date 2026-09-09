@@ -1,11 +1,24 @@
 import Button from "../Button/Button";
 import { FileQuestion } from "lucide-react";
-import { forwardRef, FunctionComponent } from "react";
+import {
+  forwardRef,
+  FunctionComponent,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import cn from "classnames";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import MultiSelectSubsetTick from "../MultiSelectSubsetTick/MultiSelectSubsetTick";
+import type {
+  LocalImageAssetReference,
+  LocalVideoFileReference,
+} from "../../types";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
 type LeftPanelButtonProps = {
   isSelected: boolean;
@@ -28,10 +41,15 @@ type LeftPanelButtonProps = {
     id: string;
   }[];
   image?: string;
+  /** Local image metadata so `local-image://` backgrounds can resolve. */
+  localImage?: LocalImageAssetReference;
+  /** Local video metadata so outline rows can show a still without CSP hits. */
+  localVideoFile?: LocalVideoFileReference;
   className?: string;
   displayId?: string;
   timerValue?: number;
-  timerText?: string;
+  /** Preformatted timer label, or a leaf countdown element. */
+  timerText?: ReactNode;
   isActive?: boolean;
   /** When provided, renders a multi-select tick badge on the left edge of the row. */
   multiSelectMode?: boolean;
@@ -51,6 +69,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       id,
       style,
       image,
+      localImage,
+      localVideoFile,
       className,
       displayId,
       timerValue,
@@ -63,7 +83,41 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
     },
     ref
   ) => {
-    const resolvedImage = useCachedMediaUrl(image);
+    const local = useLocalImageUrl(localImage, "thumbnail");
+    const localVideo = useLocalVideoFileUrl(localVideoFile, "thumbnail");
+    const preferLocal =
+      local.isLocalImage &&
+      (local.status === "ready" || local.status === "loading");
+    const preferLocalVideo =
+      localVideo.isLocalVideoFile &&
+      (localVideo.status === "ready" || localVideo.status === "loading");
+    const unresolvedLocalBackground =
+      isLocalMediaReferenceUrl(image) &&
+      !local.isLocalImage &&
+      !localVideo.isLocalVideoFile;
+    const imageForCache =
+      preferLocal && local.url
+        ? local.url
+        : preferLocalVideo && localVideo.url
+          ? localVideo.url
+          : unresolvedLocalBackground
+            ? undefined
+            : image;
+    const resolvedImage = useCachedMediaUrl(imageForCache);
+    const [imageFailed, setImageFailed] = useState(false);
+
+    useEffect(() => {
+      setImageFailed(false);
+    }, [imageForCache, resolvedImage, local.url, localVideo.url]);
+
+    let thumbnailSrc: string | undefined;
+    if (preferLocal && local.status === "loading") {
+      thumbnailSrc = undefined;
+    } else if (preferLocalVideo && localVideo.status === "loading") {
+      thumbnailSrc = undefined;
+    } else {
+      thumbnailSrc = resolvedImage ?? imageForCache;
+    }
 
     return (
       <li
@@ -107,11 +161,12 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           to={to}
           onClick={onClick}
         >
-          {image && !isActive && (
+          {thumbnailSrc && !isActive && !imageFailed && (
             <img
-              src={resolvedImage ?? image}
+              src={thumbnailSrc}
               className="w-12 max-w-[20%] shrink-0"
-              alt={title}
+              alt=""
+              onError={() => setImageFailed(true)}
             />
           )}
           {isActive && (

@@ -118,6 +118,170 @@ describe("MediaLibraryGridMediaTile", () => {
     );
   });
 
+  it("shows the video input label with the Video icon", () => {
+    const localVideoInput: MediaType = {
+      path: "",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      name: "Main camera",
+      publicId: "input-1",
+      type: "video",
+      id: "input-1",
+      background: "local-video-input://source-1",
+      thumbnail: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "source-1",
+        label: "Main camera",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+      },
+    };
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideoInput}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Main camera")).toBeInTheDocument();
+    expect(screen.getByText("Video input")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("prefers the library display name over the device label", () => {
+    const localVideoInput: MediaType = {
+      path: "",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      name: "Camera video",
+      publicId: "input-1",
+      type: "video",
+      id: "input-1",
+      background: "local-video-input://source-1",
+      thumbnail: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "source-1",
+        label: "Video input",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+      },
+    };
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideoInput}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Camera video")).toBeInTheDocument();
+    // Origin badge still uses the kind label; the tile body should not.
+    expect(screen.getAllByText("Video input")).toHaveLength(1);
+  });
+
+  it("shows a Screen share badge for desktop capture items", () => {
+    const screenShare: MediaType = {
+      path: "",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      name: "Lyrics screen",
+      publicId: "share-1",
+      type: "video",
+      id: "share-1",
+      background: "local-video-input://source-2",
+      thumbnail: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "source-2",
+        label: "Lyrics screen",
+        captureKind: "screen",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+      },
+    };
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={screenShare}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Lyrics screen")).toBeInTheDocument();
+    expect(screen.getByText("Screen share")).toBeInTheDocument();
+  });
+
+  it("shows a Local badge for device-only files", () => {
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideo}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Local")).toBeInTheDocument();
+  });
+
+  it("hides the Local badge when the file is also uploaded to the cloud", () => {
+    const cloudSharedVideo: MediaType = {
+      ...localVideo,
+      localVideoFile: {
+        ...localVideo.localVideoFile!,
+        storagePolicy: "local-and-cloud",
+        cloudUrl: "https://stream.example/welcome.m3u8",
+      },
+    };
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={cloudSharedVideo}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Local")).not.toBeInTheDocument();
+  });
+
   it("keeps tile click handling when a still is shown", () => {
     mockUseLocalVideoFileUrl.mockReturnValue({
       isLocalVideoFile: true,

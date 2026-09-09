@@ -11,6 +11,8 @@ import type { ServiceItem as ServiceItemType } from "../../types";
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => jest.fn(),
+  useSelector: (selector: (state: unknown) => unknown) =>
+    selector({ media: { list: [] } }),
 }));
 
 jest.mock("../../hooks/useLiveRemainingSeconds", () => ({

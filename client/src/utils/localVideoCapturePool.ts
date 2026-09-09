@@ -303,6 +303,54 @@ export const acquireWarmLocalVideoCapture = async (
   return entry.promise;
 };
 
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+/**
+ * Same as acquireWarmLocalVideoCapture, but retries briefly on OS "device busy"
+ * races (common when leaving and re-selecting a live input slide).
+ */
+export const acquireWarmLocalVideoCaptureWithBusyRetry = async (
+  sourceId: string,
+  binding: LocalVideoInputBinding,
+  publish = false,
+  consumerId = "legacy",
+  options?: { maxAttempts?: number },
+) => {
+  const maxAttempts = options?.maxAttempts ?? 4;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await acquireWarmLocalVideoCapture(
+        sourceId,
+        binding,
+        publish,
+        consumerId,
+      );
+    } catch (error) {
+      lastError = error;
+      if (error instanceof LocalVideoCaptureOwnedError) throw error;
+      const name =
+        error instanceof DOMException
+          ? error.name
+          : error instanceof Error
+            ? error.name
+            : "";
+      if (
+        (name !== "NotReadableError" && name !== "AbortError") ||
+        attempt === maxAttempts - 1
+      ) {
+        throw error;
+      }
+      await releaseWarmLocalVideoCapture(sourceId, consumerId);
+      await sleep(250 * 2 ** attempt);
+    }
+  }
+  throw lastError;
+};
+
 /** Release one consumer without disrupting other views or live outputs. */
 export const releaseWarmLocalVideoCapture = async (
   sourceId: string,

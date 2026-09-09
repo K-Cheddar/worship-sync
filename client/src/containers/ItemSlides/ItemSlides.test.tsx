@@ -49,11 +49,23 @@ jest.mock("../../components/Button/Button", () => ({
   default: ({
     children,
     onClick,
+    disabled,
+    title,
+    "aria-label": ariaLabel,
   }: {
     children?: React.ReactNode;
     onClick?: () => void;
+    disabled?: boolean;
+    title?: string;
+    "aria-label"?: string;
   }) => (
-    <button type="button" onClick={onClick}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={ariaLabel}
+    >
       {children}
     </button>
   ),
@@ -423,6 +435,100 @@ describe("ItemSlides", () => {
     expect(screen.getByLabelText("Slide thumbnail zoom")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Clear background" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("shows clear background and delete in the main action bar without subset selection", () => {
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Clear background" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+  });
+
+  it("clears the focused slide background without entering subset selection", () => {
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    mockDispatch.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Clear background" }));
+
+    // Async thunk: mock dispatch receives the thunk function.
+    expect(mockDispatch).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("shows Done only while a slide subset is selected", () => {
+    mockState.undoable.present.item.backgroundTargetSlideIds = ["slide-1"];
+    mockState.undoable.present.item.mobileBackgroundTargetSelectMode = true;
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByText("slide selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    const actionButtons = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim())
+      .filter((label): label is string =>
+        Boolean(
+          label &&
+          ["Done", "Add", "Copy", "Clear background", "Delete"].includes(
+            label,
+          ),
+        ),
+      );
+    expect(actionButtons[0]).toBe("Done");
+    expect(
+      screen.getByRole("button", { name: "Clear background" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows clear background without add/copy/delete for song items", () => {
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      type: "song",
+      name: "Song",
+      _id: "song-2",
+      listId: "list-2",
+    };
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Clear background" }),
+    ).toBeInTheDocument();
   });
 
   it("does not clamp continuous-mode zoom when a service-time item is selected", () => {

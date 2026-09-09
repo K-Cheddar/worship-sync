@@ -1,7 +1,10 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
-import type { LocalImageReferencePatch } from "../utils/localImageAssets";
+import {
+  isLocalImageUrl,
+  type LocalImageReferencePatch,
+} from "../utils/localImageAssets";
 
 type ItemListState = {
   list: ServiceItem[];
@@ -80,6 +83,10 @@ export const itemListSlice = createSlice({
           item.localImage.storagePolicy = "local-and-cloud";
           item.localImage.cloudMediaId = action.payload.mediaId;
           item.localImage.cloudUrl = action.payload.url;
+          // Outline thumbnails use `background` as an <img src>; keep it loadable.
+          if (!item.background || isLocalImageUrl(item.background)) {
+            item.background = action.payload.url;
+          }
         }
       });
       state.hasPendingUpdate = true;

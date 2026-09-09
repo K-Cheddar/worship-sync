@@ -7,7 +7,7 @@ import { getOrCreateDeviceId } from "./authStorage";
 import { getTrustedDeviceLabel } from "./deviceInfo";
 import generateRandomId from "./generateRandomId";
 import {
-  acquireWarmLocalVideoCapture,
+  acquireWarmLocalVideoCaptureWithBusyRetry,
   LocalVideoCaptureOwnedError,
   releaseWarmLocalVideoCapture,
 } from "./localVideoCapturePool";
@@ -70,7 +70,7 @@ export const buildLocalVideoInputSendPresentation = (args: {
 
   const slide = createNewSlide({
     type: "Section",
-    name: "Section 1",
+    name: args.source.label.trim() || "Section 1",
     fontSize: DEFAULT_FONT_PX,
     words: ["", ""],
     background: "",
@@ -119,7 +119,7 @@ export const sendLocalVideoInputWithWarmCapture = async (args: {
   };
 
   try {
-    await acquireWarmLocalVideoCapture(
+    await acquireWarmLocalVideoCaptureWithBusyRetry(
       args.sourceId,
       binding,
       true,

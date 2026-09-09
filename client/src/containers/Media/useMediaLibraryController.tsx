@@ -499,9 +499,16 @@ export function useMediaLibraryController({
     navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
   }, [navigateToFolder, selectedRealFolder]);
 
+  const openSingleDeleteModal = useCallback((mediaItem: MediaType) => {
+    setMediaToDelete(mediaItem);
+    setIsDeletingMultiple(false);
+    setShowDeleteModal(true);
+  }, []);
+
   /** Fullscreen modal keeps selection in MediaModal; copy into parent before bulk delete. */
   const openMultiDeleteModal = (ids: Set<string>) => {
     setSelectedMediaIds(new Set(ids));
+    setMediaToDelete(null);
     setIsDeletingMultiple(true);
     setShowDeleteModal(true);
   };
@@ -638,6 +645,8 @@ export function useMediaLibraryController({
         name: newItem.name,
         type: newItem.type,
         background: newItem.background,
+        localImage: isLiveInput ? undefined : m.localImage,
+        localVideoFile: isLiveInput ? undefined : m.localVideoFile,
         _id: newItem._id,
         listId: "",
       };
@@ -702,10 +711,10 @@ export function useMediaLibraryController({
       selectedCount: selectedMediaIds.size,
       dispatch,
       onDeleteSingle: () => {
-        setMediaToDelete(selectedMedia);
-        setShowDeleteModal(true);
+        openSingleDeleteModal(selectedMedia);
       },
       onDeleteMultiple: () => {
+        setMediaToDelete(null);
         setIsDeletingMultiple(true);
         setShowDeleteModal(true);
       },
@@ -779,6 +788,7 @@ export function useMediaLibraryController({
     onManageCanvaSource,
     onRelinkVideoInput,
     getLocalMediaCloudShareBarAction,
+    openSingleDeleteModal,
   ]);
 
   const actionBarDetails = useMemo(() => {
@@ -1123,23 +1133,35 @@ export function useMediaLibraryController({
 
   useGlobalBroadcast(updateMediaListFromExternal);
 
+  const dismissDeleteModal = () => {
+    setShowDeleteModal(false);
+    setMediaToDelete(null);
+    setIsDeletingMultiple(false);
+  };
+
   const handleConfirmDelete = async () => {
     if (deleteConfirmLockRef.current) return;
     deleteConfirmLockRef.current = true;
     setIsDeleteInProgress(true);
+    const deletingMultiple = isDeletingMultiple;
+    const singleTarget = mediaToDelete;
+    // Dismiss immediately so a long reference sweep cannot leave Confirm locked.
+    dismissDeleteModal();
     try {
-      if (isDeletingMultiple) {
+      if (deletingMultiple) {
         await handleDeleteAll();
         return;
       }
 
-      if (!db || !mediaToDelete) return;
+      if (!db || !singleTarget) return;
 
       try {
-        const result = await removeMediaRowsAfterSweep([mediaToDelete]);
+        const result = await removeMediaRowsAfterSweep([singleTarget]);
         if (result.phase !== "ok") return;
-        const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
+        const updatedList = list.filter((item) => item.id !== singleTarget.id);
         dispatch(setMediaListAndFolders({ list: updatedList, folders }));
+        clearSelection();
+        dispatch(ActionCreators.clearHistory());
         const flushResult = await flushMediaLibraryDocToPouch(
           db,
           updatedList,
@@ -1152,10 +1174,6 @@ export function useMediaLibraryController({
           setProviderRetryRows(result.providerFailed);
           setShowProviderRetryModal(true);
         }
-        clearSelection();
-        dispatch(ActionCreators.clearHistory());
-        setShowDeleteModal(false);
-        setMediaToDelete(null);
       } catch (error) {
         console.error("Error deleting background:", error);
       }
@@ -1167,9 +1185,8 @@ export function useMediaLibraryController({
   };
 
   const handleCancelDelete = () => {
-    setShowDeleteModal(false);
-    setMediaToDelete(null);
-    setIsDeletingMultiple(false);
+    if (isDeleteInProgress) return;
+    dismissDeleteModal();
   };
 
   const handleDeleteAll = async () => {
@@ -1182,6 +1199,8 @@ export function useMediaLibraryController({
       if (result.phase !== "ok") return;
       const updatedList = list.filter((item) => !selectedMediaIds.has(item.id));
       dispatch(setMediaListAndFolders({ list: updatedList, folders }));
+      clearSelection();
+      dispatch(ActionCreators.clearHistory());
       const flushResult = await flushMediaLibraryDocToPouch(
         db,
         updatedList,
@@ -1194,13 +1213,8 @@ export function useMediaLibraryController({
         setProviderRetryRows(result.providerFailed);
         setShowProviderRetryModal(true);
       }
-      clearSelection();
-      dispatch(ActionCreators.clearHistory());
     } catch (error) {
       console.error("Error deleting media:", error);
-    } finally {
-      setShowDeleteModal(false);
-      setIsDeletingMultiple(false);
     }
   };
 
@@ -1566,6 +1580,7 @@ export function useMediaLibraryController({
     handleMoveTo,
     moveSelectKey,
     selectedLibraryFilter,
+    uploadTargetFolderId,
     navigateToFolder,
     handleDeleteFolderSubtree,
     handleDeleteFolderKeepContents,
@@ -1611,6 +1626,7 @@ export function useMediaLibraryController({
     setPreviewMedia,
     setMediaToDelete,
     setShowDeleteModal,
+    openSingleDeleteModal,
     openMultiDeleteModal,
     mediaItemsPerRow,
     mediaListRef,

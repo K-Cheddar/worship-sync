@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useSelector } from "react-redux";
 import type { RootState } from "../store/store";
+import { isLocalMediaReferenceUrl } from "../utils/localMediaReferenceUrl";
 
-const resolveMediaUrl = async (url: string): Promise<string> => {
+const resolveMediaUrl = async (url: string): Promise<string | undefined> => {
+  if (isLocalMediaReferenceUrl(url)) return undefined;
   if (!window.electronAPI) return url;
   try {
     const localPath = await (
@@ -23,15 +25,16 @@ const resolveMediaUrl = async (url: string): Promise<string> => {
 export const useCachedMediaUrl = (
   url: string | undefined,
 ): string | undefined => {
+  const safeUrl = isLocalMediaReferenceUrl(url) ? undefined : url;
   const cachedUrl = useSelector((state: RootState) =>
-    url ? state.mediaCacheMap?.map?.[url] : undefined,
+    safeUrl ? state.mediaCacheMap?.map?.[safeUrl] : undefined,
   );
-  const [resolved, setResolved] = useState<string | undefined>(url);
+  const [resolved, setResolved] = useState<string | undefined>(safeUrl);
   const checkIdRef = useRef(0);
 
   useEffect(() => {
-    if (!url || !window.electronAPI) {
-      setResolved(url);
+    if (!safeUrl || !window.electronAPI) {
+      setResolved(safeUrl);
       return;
     }
     if (cachedUrl) return;
@@ -40,13 +43,13 @@ export const useCachedMediaUrl = (
     // Optimistically switch to the new asset immediately so we never
     // keep rendering the previously-resolved image while Electron checks
     // whether a better local path exists for the current URL.
-    setResolved(url);
+    setResolved(safeUrl);
 
-    resolveMediaUrl(url).then((result) => {
+    resolveMediaUrl(safeUrl).then((result) => {
       if (checkId !== checkIdRef.current) return;
       setResolved(result);
     });
-  }, [url, cachedUrl]);
+  }, [safeUrl, cachedUrl]);
 
   return cachedUrl ?? resolved;
 };
@@ -59,8 +62,9 @@ export const useCachedMediaUrl = (
 export const useCachedVideoUrl = (
   url: string | undefined,
 ): string | undefined => {
+  const safeUrl = isLocalMediaReferenceUrl(url) ? undefined : url;
   const cachedUrl = useSelector((state: RootState) =>
-    url ? state.mediaCacheMap?.map?.[url] : undefined,
+    safeUrl ? state.mediaCacheMap?.map?.[safeUrl] : undefined,
   );
   const [state, setState] = useState<{
     resolved: string | undefined;
@@ -69,26 +73,26 @@ export const useCachedVideoUrl = (
   const checkIdRef = useRef(0);
 
   useEffect(() => {
-    if (!url) {
+    if (!safeUrl) {
       setState({ resolved: undefined, forUrl: undefined });
       return;
     }
     if (!window.electronAPI) {
-      setState({ resolved: url, forUrl: url });
+      setState({ resolved: safeUrl, forUrl: safeUrl });
       return;
     }
     if (cachedUrl) return;
 
     const checkId = ++checkIdRef.current;
-    setState({ resolved: undefined, forUrl: url });
+    setState({ resolved: undefined, forUrl: safeUrl });
 
-    resolveMediaUrl(url).then((result) => {
+    resolveMediaUrl(safeUrl).then((result) => {
       if (checkId !== checkIdRef.current) return;
-      setState({ resolved: result, forUrl: url });
+      setState({ resolved: result, forUrl: safeUrl });
     });
-  }, [url, cachedUrl]);
+  }, [safeUrl, cachedUrl]);
 
   if (cachedUrl) return cachedUrl;
-  if (state.forUrl !== url) return undefined;
+  if (state.forUrl !== safeUrl) return undefined;
   return state.resolved;
 };

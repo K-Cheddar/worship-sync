@@ -71,8 +71,8 @@ describe("useCachedMediaUrl hooks", () => {
   });
 
   it("ignores stale async media results when url changes quickly", async () => {
-    let resolveFirst: (value: string | null) => void = () => {};
-    let resolveSecond: (value: string | null) => void = () => {};
+    let resolveFirst: (value: string | null) => void = () => { };
+    let resolveSecond: (value: string | null) => void = () => { };
     const getLocalMediaPath = jest
       .fn()
       .mockImplementationOnce(
@@ -111,8 +111,8 @@ describe("useCachedMediaUrl hooks", () => {
   });
 
   it("switches to the new media url immediately while electron resolves a local path", async () => {
-    let resolveFirst: (value: string | null) => void = () => {};
-    let resolveSecond: (value: string | null) => void = () => {};
+    let resolveFirst: (value: string | null) => void = () => { };
+    let resolveSecond: (value: string | null) => void = () => { };
     const getLocalMediaPath = jest
       .fn()
       .mockImplementationOnce(
@@ -158,7 +158,7 @@ describe("useCachedMediaUrl hooks", () => {
   });
 
   it("returns undefined while video cache url is resolving", async () => {
-    let resolvePath: (value: string | null) => void = () => {};
+    let resolvePath: (value: string | null) => void = () => { };
     (window as { electronAPI?: unknown }).electronAPI = {
       getLocalMediaPath: jest.fn().mockImplementation(
         () =>
@@ -179,5 +179,19 @@ describe("useCachedMediaUrl hooks", () => {
     await waitFor(() =>
       expect(screen.getByTestId("value")).toHaveTextContent("/cache/clip.mp4"),
     );
+  });
+
+  it("does not expose local media reference schemes as display URLs", () => {
+    const onValue = jest.fn();
+    renderWithProvider(
+      <HookProbe
+        url="local-video-file://video-1"
+        mode="media"
+        onValue={onValue}
+      />,
+    );
+
+    expect(screen.getByTestId("value")).toHaveTextContent("undefined");
+    expect(onValue).toHaveBeenCalledWith(undefined);
   });
 });
