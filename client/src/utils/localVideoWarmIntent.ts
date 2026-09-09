@@ -63,7 +63,10 @@ export const publishLocalVideoWarmIntent = (sourceIds: string[]) => {
     updatedAt: Date.now(),
   };
   const key = intentKey(intent);
-  if (key === lastPublishedKey) {
+  const storedKey = intentKey(readStoredIntent());
+  // After a restart, lastPublishedKey is empty while localStorage may still
+  // hold a prior warm set — still publish so empty clears stale IDs.
+  if (key === lastPublishedKey && key === storedKey) {
     return intent;
   }
   lastPublishedKey = key;
