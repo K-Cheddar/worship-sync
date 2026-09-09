@@ -54,8 +54,8 @@ export type ChurchBranding = {
 export type TeamsPermission = "none" | "view" | "edit";
 export type TeamScopedPermission = Exclude<TeamsPermission, "none">;
 /**
- * "view" is workstation-only for now (see authService.js buildWorkstationBootstrap) —
- * a human member's services permission is never normalized to "view".
+ * "view" is the default for paired workstations without the booth grant.
+ * Human members normalize to "none" | "edit" only (see authService.js).
  */
 export type ServicesPermission = "none" | "view" | "edit";
 
@@ -122,6 +122,8 @@ export type AuthBootstrap = {
     label: string | null;
     operatorName: string | null;
     surfaceType: string | null;
+    /** Booth grant: Current Service Workspace edit + Teams view + mic chips. */
+    serviceWorkspaceAccess?: boolean;
     /** Display output this screen renders; null falls back to the built-in. */
     outputId?: string | null;
     /** Per-screen setting overrides for this paired display. */
@@ -667,6 +669,8 @@ export type WorkstationDeviceClient = {
   churchId: string;
   label: string;
   appAccess: string;
+  /** When true, booth grant: edit plans, view serving, assign mics. */
+  serviceWorkspaceAccess?: boolean;
   platformType?: string;
   status: string;
   createdAt: string;

@@ -881,28 +881,30 @@ const ItemActionsMenu = ({
               <UserRound className="size-4" aria-hidden />
               Microphone
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="p-1">
-              {microphones
-                .filter((microphone) =>
-                  !assignees.some((assignee) =>
-                    (assignee.microphoneIds || []).includes(microphone.id),
-                  ),
-                )
-                .map((microphone) => (
-                  <DropdownMenuItem
-                    key={microphone.id}
-                    onSelect={(event) => {
-                      // Keep the catalog open so consecutive microphones can
-                      // be assigned in their intended order.
-                      event.preventDefault();
-                      onAddMicrophone(microphone.id);
-                    }}
-                  >
-                    <span className="truncate">
-                      {microphone.name} · {microphone.type}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
+            <DropdownMenuSubContent className="overflow-hidden p-0">
+              <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
+                {microphones
+                  .filter((microphone) =>
+                    !assignees.some((assignee) =>
+                      (assignee.microphoneIds || []).includes(microphone.id),
+                    ),
+                  )
+                  .map((microphone) => (
+                    <DropdownMenuItem
+                      key={microphone.id}
+                      onSelect={(event) => {
+                        // Keep the catalog open so consecutive microphones can
+                        // be assigned in their intended order.
+                        event.preventDefault();
+                        onAddMicrophone(microphone.id);
+                      }}
+                    >
+                      <span className="truncate">
+                        {microphone.name} · {microphone.type}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+              </div>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         ) : null}

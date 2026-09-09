@@ -1,4 +1,7 @@
 import { ImageOff, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
+import ActionBar, {
+  type ActionBarItem as ActionBarItemDef,
+} from "../../components/ActionBar/ActionBar";
 import Button from "../../components/Button/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -14,6 +17,10 @@ import {
   updateSlides,
   updateSlideVideoBackgroundSendMode,
 } from "../../store/itemSlice";
+import {
+  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+} from "../Media/mediaLibraryMediaActionUi";
 import {
   setSlides,
   setSlidesMobile,
@@ -85,7 +92,7 @@ import {
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
 import {
-  acquireWarmLocalVideoCapture,
+  acquireWarmLocalVideoCaptureWithBusyRetry,
   LocalVideoCaptureOwnedError,
   releaseWarmLocalVideoCapture,
 } from "../../utils/localVideoCapturePool";
@@ -156,8 +163,8 @@ const ItemSlides = () => {
 
   const backgroundTargetSlideIds = backgroundTargetSlideIdsRaw ?? [];
   const mobileBackgroundTargetSelectMode = mobileBgSelectModeRaw ?? false;
-  /** Subset selection, clear backgrounds, multi-delete (all item types). */
-  const showBackgroundTargetActionBar =
+  /** Multi-select chrome + Done: subset selected or mobile long-press select mode. */
+  const isSlideSubsetSelecting =
     mobileBackgroundTargetSelectMode || backgroundTargetSlideIds.length > 0;
 
   // Every slot, so live-slide highlighting can follow whichever displays this
@@ -599,7 +606,7 @@ const ItemSlides = () => {
             );
           }, LOCAL_VIDEO_TRANSMIT_HANDOFF_MS);
         };
-        void acquireWarmLocalVideoCapture(
+        void acquireWarmLocalVideoCaptureWithBusyRetry(
           localVideoSourceId,
           binding,
           true,
@@ -826,14 +833,23 @@ const ItemSlides = () => {
     [slides, canEdit, dispatch, selectSlide],
   );
 
+  /** Clear/Delete target: multi-select subset, else the focused slide. */
+  const actionTargetSlideIds = useMemo(() => {
+    const subset = backgroundTargetSlideIdsRaw ?? [];
+    if (subset.length > 0) {
+      return subset;
+    }
+    const id = slides[selectedSlide]?.id;
+    return id ? [id] : [];
+  }, [backgroundTargetSlideIdsRaw, slides, selectedSlide]);
+
   const cannotDeleteSelectedSlides = useMemo(() => {
     if (type !== "free") return true;
-    const ids = backgroundTargetSlideIdsRaw ?? [];
-    if (ids.length === 0) return true;
-    const idSet = new Set(ids);
+    if (actionTargetSlideIds.length === 0) return true;
+    const idSet = new Set(actionTargetSlideIds);
     const remaining = slides.filter((s) => !idSet.has(s.id)).length;
     return remaining < 1;
-  }, [type, backgroundTargetSlideIdsRaw, slides]);
+  }, [type, actionTargetSlideIds, slides]);
 
   const onSlideGridClick = useCallback(
     (e: React.MouseEvent, index: number) => {
@@ -1100,7 +1116,7 @@ const ItemSlides = () => {
     });
   }, [selectedSlide, isMobile, slidesToRender.length, isCollapsedContinuous]);
 
-  const addSlide = () => {
+  const addSlide = useCallback(() => {
     // Find the highest section number among existing slides
     const sectionNumbers = slides
       .map((slide) => {
@@ -1119,9 +1135,9 @@ const ItemSlides = () => {
       overflow: "separate",
     });
     dispatch(addSlideAction({ slide }));
-  };
+  }, [dispatch, slides]);
 
-  const copySlide = () => {
+  const copySlide = useCallback(() => {
     if (selectedSlide === -1 || !slides[selectedSlide]) return;
 
     if (
@@ -1158,7 +1174,244 @@ const ItemSlides = () => {
     };
 
     dispatch(addSlideAction({ slide: newSlide }));
-  };
+  }, [dispatch, selectedSlide, slides]);
+
+  const clearTargetSlideBackgrounds = useCallback(() => {
+    if (actionTargetSlideIds.length === 0) return;
+    dispatch(
+      clearSlideBackgroundsOnSubset({
+        slideIds: [...actionTargetSlideIds],
+      }),
+    );
+  }, [actionTargetSlideIds, dispatch]);
+
+  const deleteTargetSlides = useCallback(() => {
+    if (cannotDeleteSelectedSlides) return;
+    dispatch(
+      removeSlidesByIds({
+        slideIds: [...actionTargetSlideIds],
+      }),
+    );
+  }, [actionTargetSlideIds, cannotDeleteSelectedSlides, dispatch]);
+
+  const slideActionBarItems = useMemo((): ActionBarItemDef[] => {
+    if (isCollapsedContinuous || !canEdit) return [];
+
+    const items: ActionBarItemDef[] = [];
+    const isFree = type === "free";
+
+    // Keep Done first while selecting so it stays inline under overflow pressure.
+    if (isSlideSubsetSelecting) {
+      items.push({
+        id: "done-selecting",
+        label: "Done",
+        renderButton: (isMeasure) => (
+          <Button
+            variant="tertiary"
+            className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+            onClick={
+              isMeasure
+                ? undefined
+                : () => dispatch(clearBackgroundTargetSelection())
+            }
+            title="Done"
+            tabIndex={isMeasure ? -1 : undefined}
+          >
+            Done
+          </Button>
+        ),
+        onOverflowSelect: () => dispatch(clearBackgroundTargetSelection()),
+      });
+    }
+
+    if (isFree) {
+      items.push({
+        id: "add-slide",
+        label: "Add",
+        renderButton: (isMeasure) => (
+          <Button
+            variant="tertiary"
+            className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+            onClick={isMeasure ? undefined : () => addSlide()}
+            title="Add"
+            tabIndex={isMeasure ? -1 : undefined}
+          >
+            <span className="flex items-center gap-1">
+              <Plus
+                className={cn(
+                  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                  "text-cyan-400",
+                )}
+                aria-hidden
+              />
+              Add
+            </span>
+          </Button>
+        ),
+        onOverflowSelect: () => addSlide(),
+        renderOverflowItem: () => (
+          <span className="flex items-center gap-1.5">
+            <Plus
+              className={cn(
+                MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                "text-cyan-400",
+              )}
+              aria-hidden
+            />
+            Add
+          </span>
+        ),
+      });
+      items.push({
+        id: "copy-slide",
+        label: "Copy",
+        disabled: selectedSlide < 0 || !slides[selectedSlide],
+        renderButton: (isMeasure) => (
+          <Button
+            variant="tertiary"
+            className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+            onClick={isMeasure ? undefined : copySlide}
+            disabled={selectedSlide < 0 || !slides[selectedSlide]}
+            title="Copy"
+            tabIndex={isMeasure ? -1 : undefined}
+          >
+            <span className="flex items-center gap-1">
+              <Copy
+                className={cn(
+                  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                  "text-cyan-400",
+                )}
+                aria-hidden
+              />
+              Copy
+            </span>
+          </Button>
+        ),
+        onOverflowSelect: () => copySlide(),
+        renderOverflowItem: () => (
+          <span className="flex items-center gap-1.5">
+            <Copy
+              className={cn(
+                MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                "text-cyan-400",
+              )}
+              aria-hidden
+            />
+            Copy
+          </span>
+        ),
+      });
+    }
+
+    if (hasSlides) {
+      items.push({
+        id: "clear-background",
+        label: "Clear background",
+        disabled: actionTargetSlideIds.length === 0,
+        renderButton: (isMeasure) => (
+          <Button
+            variant="tertiary"
+            className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+            onClick={isMeasure ? undefined : clearTargetSlideBackgrounds}
+            disabled={actionTargetSlideIds.length === 0}
+            title="Clear background"
+            tabIndex={isMeasure ? -1 : undefined}
+          >
+            <span className="flex items-center gap-1">
+              <ImageOff
+                className={cn(
+                  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                  "text-cyan-400",
+                )}
+                aria-hidden
+              />
+              Clear background
+            </span>
+          </Button>
+        ),
+        onOverflowSelect: () => clearTargetSlideBackgrounds(),
+        renderOverflowItem: () => (
+          <span className="flex items-center gap-1.5">
+            <ImageOff
+              className={cn(
+                MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                "text-cyan-400",
+              )}
+              aria-hidden
+            />
+            Clear background
+          </span>
+        ),
+      });
+
+      if (isFree) {
+        items.push({
+          id: "delete-slides",
+          label: "Delete",
+          disabled: cannotDeleteSelectedSlides,
+          overflowMenuItemClassName: "[&_svg]:text-red-400!",
+          renderButton: (isMeasure) => (
+            <Button
+              variant="tertiary"
+              className={cn(
+                "shrink-0 text-white [&_svg]:text-red-400!",
+                MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+              )}
+              onClick={isMeasure ? undefined : deleteTargetSlides}
+              disabled={cannotDeleteSelectedSlides}
+              title={
+                cannotDeleteSelectedSlides
+                  ? "Select at least one slide and keep one slide in the item"
+                  : "Delete selected slides"
+              }
+              tabIndex={isMeasure ? -1 : undefined}
+            >
+              <span className="flex items-center gap-1">
+                <Trash2
+                  className={cn(
+                    MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                    "text-red-400",
+                  )}
+                  aria-hidden
+                />
+                Delete
+              </span>
+            </Button>
+          ),
+          onOverflowSelect: () => deleteTargetSlides(),
+          renderOverflowItem: () => (
+            <span className="flex items-center gap-1.5">
+              <Trash2
+                className={cn(
+                  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                  "text-red-400",
+                )}
+                aria-hidden
+              />
+              Delete
+            </span>
+          ),
+        });
+      }
+    }
+
+    return items;
+  }, [
+    actionTargetSlideIds.length,
+    addSlide,
+    canEdit,
+    cannotDeleteSelectedSlides,
+    clearTargetSlideBackgrounds,
+    copySlide,
+    deleteTargetSlides,
+    dispatch,
+    hasSlides,
+    isCollapsedContinuous,
+    isSlideSubsetSelecting,
+    selectedSlide,
+    slides,
+    type,
+  ]);
 
   const onDragStart = (event: DragStartEvent) => {
     const { active } = event;
@@ -1273,7 +1526,7 @@ const ItemSlides = () => {
                 />
               </div>
             ) : null}
-            <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1">
               <div className="flex shrink-0 items-center gap-1">
                 <Button
                   variant="tertiary"
@@ -1311,112 +1564,31 @@ const ItemSlides = () => {
                   onClick={() => setSlideGridSize(size - 1)}
                 />
               </div>
-              {!isCollapsedContinuous && type === "free" && canEdit && (
-                <>
-                  <Button
-                    variant="tertiary"
-                    className="ml-auto min-h-7 gap-1.5 px-2"
-                    svg={Plus}
-                    gap="gap-1.5"
-                    disabled={showBackgroundTargetActionBar}
-                    onClick={() => addSlide()}
-                  >
-                    Add
-                  </Button>
-                  <Button
-                    variant="tertiary"
-                    className="min-h-7 gap-1.5 px-2"
-                    svg={Copy}
-                    gap="gap-1.5"
-                    disabled={showBackgroundTargetActionBar}
-                    onClick={copySlide}
-                  >
-                    Copy
-                  </Button>
-                </>
-              )}
-            </div>
-            {!isCollapsedContinuous && canEdit && hasSlides && (
-              <div
-                className={cn(
-                  "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-                  showBackgroundTargetActionBar
-                    ? "grid-rows-[1fr]"
-                    : "grid-rows-[0fr]",
-                )}
-              >
-                <div
-                  className="min-h-0 overflow-hidden"
-                  inert={showBackgroundTargetActionBar ? undefined : true}
-                >
-                  <div className="flex items-center justify-between gap-2 border-t border-white/10 px-2 py-1.5">
+              {slideActionBarItems.length > 0 ? (
+                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
+                  {isSlideSubsetSelecting ? (
                     <div
-                      className="flex min-w-0 flex-1 items-baseline gap-1 text-xs"
+                      className="flex shrink-0 items-baseline gap-1 text-xs"
                       aria-live="polite"
                     >
-                      <span className="shrink-0 font-semibold tabular-nums text-cyan-400">
+                      <span className="font-semibold tabular-nums text-cyan-400">
                         {backgroundTargetSlideIds.length}
                       </span>
-                      <span className="truncate text-gray-400">
+                      <span className="hidden text-gray-400 sm:inline">
                         {backgroundTargetSlideIds.length === 1
                           ? "slide selected"
                           : "slides selected"}
                       </span>
                     </div>
-                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                      <Button
-                        variant="tertiary"
-                        className="min-h-7 gap-1.5 px-2 text-xs"
-                        svg={ImageOff}
-                        gap="gap-1.5"
-                        disabled={backgroundTargetSlideIds.length === 0}
-                        onClick={() =>
-                          dispatch(
-                            clearSlideBackgroundsOnSubset({
-                              slideIds: [...backgroundTargetSlideIds],
-                            }),
-                          )
-                        }
-                      >
-                        Clear background
-                      </Button>
-                      {type === "free" ? (
-                        <Button
-                          variant="tertiary"
-                          className="min-h-7 gap-1.5 px-2 text-xs text-red-300 [&_svg]:text-red-400"
-                          svg={Trash2}
-                          gap="gap-1.5"
-                          disabled={cannotDeleteSelectedSlides}
-                          title={
-                            cannotDeleteSelectedSlides
-                              ? "Select at least one slide and keep one slide in the item"
-                              : "Delete selected slides"
-                          }
-                          onClick={() =>
-                            dispatch(
-                              removeSlidesByIds({
-                                slideIds: [...backgroundTargetSlideIds],
-                              }),
-                            )
-                          }
-                        >
-                          Delete
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="tertiary"
-                        className="min-h-7 px-2 text-xs"
-                        onClick={() =>
-                          dispatch(clearBackgroundTargetSelection())
-                        }
-                      >
-                        Done
-                      </Button>
-                    </div>
-                  </div>
+                  ) : null}
+                  <ActionBar
+                    items={slideActionBarItems}
+                    className="min-w-0 flex-1 justify-end"
+                    overflowMenuClassName="min-w-48"
+                  />
                 </div>
-              </div>
-            )}
+              ) : null}
+            </div>
           </div>
           {isLoading && !isCollapsedContinuous ? (
             <ItemSlidesSkeleton

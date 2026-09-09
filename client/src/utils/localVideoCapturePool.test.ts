@@ -1,5 +1,6 @@
 import {
   acquireWarmLocalVideoCapture,
+  acquireWarmLocalVideoCaptureWithBusyRetry,
   LocalVideoCaptureOwnedError,
   releaseWarmLocalVideoCapture,
   resetAllWarmLocalVideoCaptures,
@@ -194,5 +195,28 @@ describe("localVideoCapturePool", () => {
       acquireWarmLocalVideoCapture("source-1", binding),
     ).rejects.toBeInstanceOf(LocalVideoCaptureOwnedError);
     expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("retries briefly when the OS reports the device busy", async () => {
+    jest.useFakeTimers();
+    getUserMedia.mockReset();
+    getUserMedia
+      .mockRejectedValueOnce(new DOMException("busy", "NotReadableError"))
+      .mockResolvedValueOnce(videoStream)
+      .mockResolvedValueOnce(audioStream);
+
+    const pending = acquireWarmLocalVideoCaptureWithBusyRetry(
+      "source-1",
+      binding,
+      false,
+      "retry-consumer",
+    );
+    await jest.advanceTimersByTimeAsync(250);
+    await expect(pending).resolves.toEqual({
+      stream: videoStream,
+      audioError: undefined,
+    });
+    expect(getUserMedia).toHaveBeenCalledTimes(3);
+    jest.useRealTimers();
   });
 });

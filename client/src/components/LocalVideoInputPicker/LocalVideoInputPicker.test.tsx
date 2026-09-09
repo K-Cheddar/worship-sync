@@ -34,6 +34,13 @@ describe("LocalVideoInputPicker", () => {
     jest.clearAllMocks();
     mockIsElectron.mockReturnValue(false);
     deviceChangeListener = undefined;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: jest.fn().mockResolvedValue(undefined),
+    });
+    getUserMedia.mockResolvedValue({
+      getTracks: () => [{ stop: jest.fn() }],
+    } as unknown as MediaStream);
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
@@ -111,6 +118,9 @@ describe("LocalVideoInputPicker", () => {
       createDevice("videoinput", "camera-1", "USB Capture"),
       createDevice("audioinput", "audio-1", "USB Audio"),
     ]);
+    getUserMedia.mockResolvedValue({
+      getTracks: () => [{ stop: jest.fn() }],
+    } as unknown as MediaStream);
 
     openPicker();
 
@@ -118,9 +128,39 @@ describe("LocalVideoInputPicker", () => {
       await screen.findByRole("button", { name: "Add to Media" }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(3);
+    expect(
+      await screen.findByLabelText("Input preview"),
+    ).toBeInTheDocument();
+  });
+
+  it("previews the selected video input and stops it when the sheet closes", async () => {
+    const stopTrack = jest.fn();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    getUserMedia.mockResolvedValue({
+      getTracks: () => [{ stop: stopTrack }],
+    } as unknown as MediaStream);
+
+    openPicker();
+
+    await screen.findByLabelText("Input preview");
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: false,
+      video: {
+        deviceId: { exact: "camera-1" },
+        width: { ideal: 640 },
+        height: { ideal: 360 },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(stopTrack).toHaveBeenCalled());
   });
 
   it("requests browser permission once and then refreshes the labeled devices", async () => {
+    const stopPreview = jest.fn();
     const stopVideo = jest.fn();
     const stopAudio = jest.fn();
     enumerateDevices
@@ -129,24 +169,42 @@ describe("LocalVideoInputPicker", () => {
         createDevice("videoinput", "camera-1", "USB Capture"),
       ]);
     getUserMedia
+      // Picker preview opens the selected device as soon as the sheet loads.
+      .mockResolvedValueOnce({
+        getTracks: () => [{ stop: stopPreview }],
+      } as unknown as MediaStream)
       .mockResolvedValueOnce({
         getTracks: () => [{ stop: stopVideo }],
       } as unknown as MediaStream)
       .mockResolvedValueOnce({
         getTracks: () => [{ stop: stopAudio }],
+      } as unknown as MediaStream)
+      // Labeled refresh restarts the preview against the same device.
+      .mockResolvedValue({
+        getTracks: () => [{ stop: jest.fn() }],
       } as unknown as MediaStream);
 
     openPicker();
+    await waitFor(() =>
+      expect(getUserMedia).toHaveBeenCalledWith({
+        audio: false,
+        video: {
+          deviceId: { exact: "camera-1" },
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+        },
+      }),
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "Allow input access" }),
     );
 
     await waitFor(() => expect(enumerateDevices).toHaveBeenCalledTimes(2));
-    expect(getUserMedia).toHaveBeenNthCalledWith(1, {
+    expect(getUserMedia).toHaveBeenCalledWith({
       audio: false,
       video: true,
     });
-    expect(getUserMedia).toHaveBeenNthCalledWith(2, {
+    expect(getUserMedia).toHaveBeenCalledWith({
       audio: true,
       video: false,
     });
@@ -211,7 +269,12 @@ describe("LocalVideoInputPicker", () => {
         }
       ).electronAPI = { getDesktopCaptureSources };
       getDesktopCaptureSources.mockResolvedValue([
-        { id: "screen:0:0", name: "Screen 1" },
+        {
+          id: "screen:0:0",
+          name: "Screen 1",
+          kind: "screen",
+          thumbnailDataUrl: "data:image/png;base64,preview",
+        },
       ]);
       getUserMedia.mockResolvedValue({
         getTracks: () => [],
@@ -220,6 +283,9 @@ describe("LocalVideoInputPicker", () => {
       } as unknown as MediaStream);
       const onLinked = openDesktopPicker();
 
+      expect(
+        await screen.findByRole("img", { name: "Preview of Screen 1" }),
+      ).toBeInTheDocument();
       await waitFor(() =>
         expect(screen.getByRole("button", { name: "Add to Media" })).toBeEnabled(),
       );
@@ -280,6 +346,7 @@ describe("LocalVideoInputPicker", () => {
         await screen.findByRole("button", { name: "Choose what to share" }),
       );
       await screen.findByRole("button", { name: "Choose a different share" });
+      expect(screen.getByLabelText("Input preview")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Add to Media" }));
 
       await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1));

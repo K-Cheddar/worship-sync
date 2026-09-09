@@ -750,6 +750,11 @@ export type ScrollbarWidth = "thin" | "auto" | "none";
 export type ItemList = {
   name: string;
   _id: string;
+  /**
+   * Which controller this outline belongs to. Absent means the presentation
+   * controller (legacy outlines and the overlay controller's shared pool).
+   */
+  controllerScope?: string;
 };
 
 /**
@@ -786,12 +791,18 @@ export type ItemListDetails = {
 export type ItemLists = {
   itemLists: ItemList[];
   activeList: ItemList;
+  /**
+   * Last outline opened per controller scope. Survives reload so each
+   * controller returns to its own place; absent on legacy docs.
+   */
+  selectedIdByScope?: Record<string, string>;
   _id: string;
 };
 
 export type DBItemLists = {
   itemLists: ItemList[];
   activeList: ItemList;
+  selectedIdByScope?: Record<string, string>;
   _id: string;
   _rev: string;
   createdAt?: string;

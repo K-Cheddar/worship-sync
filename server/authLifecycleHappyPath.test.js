@@ -309,13 +309,16 @@ test("a paired workstation can view saved Service Plans but not edit them", asyn
     redeemRes,
   );
   assert.equal(redeemRes.statusCode, 200);
-  // View-only regardless of appAccess tier, for now: no Teams roster access
-  // (that would leak member PII), read-only Service Plans access.
+  // Default pairing: no Teams roster access (member PII), read-only Service Plans.
   assert.deepEqual(redeemRes.payload?.bootstrap?.permissions, {
     teams: "none",
     services: "view",
     teamScopes: {},
   });
+  assert.equal(
+    redeemRes.payload?.bootstrap?.device?.serviceWorkspaceAccess,
+    false,
+  );
 
   const listRes = createRes();
   await authHandlers.listServicePlans(
@@ -343,13 +346,14 @@ test("a paired workstation can view saved Service Plans but not edit them", asyn
   assert.equal(getRes.statusCode, 200);
   assert.equal(getRes.payload?.servicePlan?.planKey, "svc1@2026-09-06");
 
-  // Still no edit access from a workstation, even though its read access to
-  // plans was just widened: saveServicePlan's CSRF check rejects the session
-  // before it can reach the (human-only) services-edit permission check.
+  // Default workstations cannot edit plans (no booth grant), even with CSRF.
   const saveRes = createRes();
   await authHandlers.saveServicePlan(
     createReq({
       session: workstationSession,
+      headers: {
+        "x-csrf-token": String(redeemRes.payload?.bootstrap?.csrfToken || ""),
+      },
       params: { churchId: context.churchId, planKey: "svc1@2026-09-06" },
       body: {
         serviceId: "svc1",
@@ -361,6 +365,216 @@ test("a paired workstation can view saved Service Plans but not edit them", asyn
     saveRes,
   );
   assert.equal(saveRes.statusCode, 403);
+
+  const teamsBootstrapRes = createRes();
+  await authHandlers.getTeamsBootstrap(
+    createReq({
+      session: workstationSession,
+      params: { churchId: context.churchId },
+    }),
+    teamsBootstrapRes,
+  );
+  assert.equal(teamsBootstrapRes.statusCode, 403);
+});
+
+test("a booth workstation can edit service plans and load Teams view data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const context = await createAdminContext("ws_booth");
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey: "svc1@2026-09-07" },
+    body: {
+      serviceId: "svc1",
+      date: "2026-09-07",
+      name: "Sunday Service",
+      sections: [],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+
+  const createResPayload = await callHandler(
+    authHandlers.createWorkstationPairing,
+    {
+      context,
+      body: {
+        label: "Booth PC",
+        appAccess: "full",
+        platformType: "web",
+        serviceWorkspaceAccess: true,
+      },
+    },
+  );
+  const pairingToken = createResPayload.payload?.pairing?.token;
+  assert.ok(pairingToken);
+  assert.equal(createResPayload.payload?.pairing?.serviceWorkspaceAccess, true);
+
+  const workstationSession = createSession();
+  const redeemRes = createRes();
+  await authHandlers.redeemWorkstationPairing(
+    createReq({
+      session: workstationSession,
+      body: { token: pairingToken, platformType: "web" },
+    }),
+    redeemRes,
+  );
+  assert.equal(redeemRes.statusCode, 200);
+  assert.deepEqual(redeemRes.payload?.bootstrap?.permissions, {
+    teams: "view",
+    services: "edit",
+    teamScopes: {},
+  });
+  assert.equal(
+    redeemRes.payload?.bootstrap?.device?.serviceWorkspaceAccess,
+    true,
+  );
+
+  const csrf = String(redeemRes.payload?.bootstrap?.csrfToken || "");
+  assert.ok(csrf);
+
+  const saveRes = createRes();
+  await authHandlers.saveServicePlan(
+    createReq({
+      session: workstationSession,
+      headers: { "x-csrf-token": csrf },
+      params: { churchId: context.churchId, planKey: "svc1@2026-09-07" },
+      body: {
+        serviceId: "svc1",
+        date: "2026-09-07",
+        name: "Edited on booth",
+        sections: [],
+        baseRevision: saved.payload?.servicePlan?.revision ?? 1,
+      },
+    }),
+    saveRes,
+  );
+  assert.equal(saveRes.statusCode, 200);
+  assert.equal(saveRes.payload?.servicePlan?.name, "Edited on booth");
+  assert.match(
+    String(saveRes.payload?.servicePlan?.updatedByUid || ""),
+    /^workstation:/,
+  );
+
+  const teamsBootstrapRes = createRes();
+  await authHandlers.getTeamsBootstrap(
+    createReq({
+      session: workstationSession,
+      params: { churchId: context.churchId },
+    }),
+    teamsBootstrapRes,
+  );
+  assert.equal(teamsBootstrapRes.statusCode, 200);
+  assert.equal(teamsBootstrapRes.payload?.success, true);
+
+  // Mic chips: booth may write assignment maps without Teams edit.
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Worship", memberIds: [], usesMicrophoneAssignments: true },
+  });
+  await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context,
+    body: {
+      microphones: [
+        {
+          id: "mic-lead",
+          name: "Lead vocal",
+          type: "Handheld",
+          color: "#22d3ee",
+        },
+      ],
+      audiences: [],
+    },
+  });
+  const position = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Lead", teamId, defaultMicrophoneId: "mic-lead" },
+  });
+  const positionId = position.payload.position.positionId;
+  const occurrenceId = "svc1@2026-09-07T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "September",
+      teamId,
+      startDate: "2026-09-07",
+      endDate: "2026-09-07",
+      serviceIds: ["svc1"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "svc1",
+          name: "Sunday",
+          startsAt: "2026-09-07T10:00:00.000Z",
+          positionRequirements: [{ positionId, count: 1 }],
+        },
+      ],
+    },
+  });
+  assert.equal(schedule.statusCode, 200);
+  const scheduleId = schedule.payload.schedule.scheduleId;
+
+  const micRes = createRes();
+  await authHandlers.updateTeamScheduleAssignmentMicrophones(
+    createReq({
+      session: workstationSession,
+      headers: { "x-csrf-token": csrf },
+      params: { churchId: context.churchId, scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionId}::0`,
+        microphoneIds: ["mic-lead"],
+      },
+    }),
+    micRes,
+  );
+  assert.equal(micRes.statusCode, 200);
+  assert.deepEqual(
+    micRes.payload?.schedule?.microphoneAssignments?.[occurrenceId]?.[
+      `${positionId}::0`
+    ],
+    ["mic-lead"],
+  );
+  assert.match(
+    String(micRes.payload?.schedule?.updatedByUid || ""),
+    /^workstation:/,
+  );
+
+  // Still no general Teams edit (e.g. create schedule) from the booth.
+  const blockedSchedule = createRes();
+  await authHandlers.createTeamSchedule(
+    createReq({
+      session: workstationSession,
+      headers: { "x-csrf-token": csrf },
+      params: { churchId: context.churchId },
+      body: {
+        name: "Should fail",
+        teamId,
+        startDate: "2026-09-14",
+        endDate: "2026-09-14",
+        serviceIds: ["svc1"],
+        occurrences: [
+          {
+            occurrenceId: "svc1@2026-09-14T10:00:00.000Z",
+            serviceId: "svc1",
+            name: "Sunday",
+            startsAt: "2026-09-14T10:00:00.000Z",
+            positionRequirements: [{ positionId, count: 1 }],
+          },
+        ],
+      },
+    }),
+    blockedSchedule,
+  );
+  assert.ok(
+    blockedSchedule.statusCode === 401 || blockedSchedule.statusCode === 403,
+    `expected auth denial, got ${blockedSchedule.statusCode}`,
+  );
 });
 
 test("display create then redeem issues a credential", async (t) => {

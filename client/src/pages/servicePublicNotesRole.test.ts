@@ -9,19 +9,29 @@ describe("service public role note preference", () => {
     localStorage.clear();
   });
 
-  it("reads and writes the selected role", () => {
-    writeServicePublicNotesRole("camera");
+  it("reads and writes selected roles as a JSON list", () => {
+    writeServicePublicNotesRole(["camera", "lyrics"]);
 
-    expect(localStorage.getItem(SERVICE_PUBLIC_NOTES_ROLE_STORAGE_KEY)).toBe("camera");
-    expect(readServicePublicNotesRole()).toBe("camera");
+    expect(localStorage.getItem(SERVICE_PUBLIC_NOTES_ROLE_STORAGE_KEY)).toBe(
+      JSON.stringify(["camera", "lyrics"]),
+    );
+    expect(readServicePublicNotesRole()).toEqual(["camera", "lyrics"]);
+  });
+
+  it("restores a legacy single-role preference", () => {
+    localStorage.setItem(SERVICE_PUBLIC_NOTES_ROLE_STORAGE_KEY, "camera");
+
+    expect(readServicePublicNotesRole()).toEqual(["camera"]);
   });
 
   it("removes the preference when the role filter is cleared", () => {
-    writeServicePublicNotesRole("camera");
+    writeServicePublicNotesRole(["camera"]);
 
-    writeServicePublicNotesRole("");
+    writeServicePublicNotesRole([]);
 
-    expect(localStorage.getItem(SERVICE_PUBLIC_NOTES_ROLE_STORAGE_KEY)).toBeNull();
-    expect(readServicePublicNotesRole()).toBe("");
+    expect(
+      localStorage.getItem(SERVICE_PUBLIC_NOTES_ROLE_STORAGE_KEY),
+    ).toBeNull();
+    expect(readServicePublicNotesRole()).toEqual([]);
   });
 });

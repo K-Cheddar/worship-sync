@@ -9,10 +9,12 @@ import {
   ItemSlideType,
   ItemState,
   MediaType,
+  ServiceItem,
   SongAudio,
   SongLink,
   SongMetadata,
   ShouldSendTo,
+  SlideMediaSource,
   TimerInfo,
   VideoBackgroundSendMode,
 } from "../types";
@@ -23,7 +25,11 @@ import {
 } from "../utils/selectionHint";
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
-import { updateItemInList } from "../utils/itemUtil";
+import {
+  getServiceItemListBackgroundPatch,
+  patchItemInList,
+  updateItemInList,
+} from "../utils/itemUtil";
 import { mapSlidesUpdateBox0ById } from "../utils/slideBackgroundSubset";
 import {
   attachCloudCopyToLocalImageItem,
@@ -512,6 +518,43 @@ const _updateItemInLists = ({
   dispatch(updateItemList(updatedList));
 };
 
+const _patchItemInLists = ({
+  patch,
+  state,
+  dispatch,
+}: {
+  patch: Partial<ServiceItem>;
+  state: RootState;
+  dispatch: AppDispatch;
+}) => {
+  const { list } = state.undoable.present.itemList;
+  const { list: allItemsList } = state.allItems;
+  const { _id } = state.undoable.present.item;
+
+  dispatch(
+    updateAllItemsList(patchItemInList({ id: _id, list: allItemsList, patch })),
+  );
+  dispatch(updateItemList(patchItemInList({ id: _id, list, patch })));
+};
+
+const _syncListItemBackground = ({
+  background,
+  mediaInfo,
+  state,
+  dispatch,
+}: {
+  background: string;
+  mediaInfo?: MediaType;
+  state: RootState;
+  dispatch: AppDispatch;
+}) => {
+  _patchItemInLists({
+    patch: getServiceItemListBackgroundPatch({ background, mediaInfo }),
+    state,
+    dispatch,
+  });
+};
+
 export const setName = createAsyncThunk(
   "item/updateName",
   async (args: { name: string }, { dispatch, getState }) => {
@@ -610,30 +653,46 @@ export const updateArrangements = createAsyncThunk(
 export const updateAllSlideBackgrounds = createAsyncThunk(
   "item/updateAllSlideBackgrounds",
   async (
-    args: { background: string; mediaInfo?: MediaType },
+    args: {
+      background: string;
+      mediaInfo?: MediaType;
+      mediaSource?: SlideMediaSource | null;
+    },
     { dispatch, getState },
   ) => {
     const state = getState();
     const item = state.undoable.present.item;
+    const mediaSourcePatch =
+      args.mediaSource !== undefined
+        ? { mediaSource: args.mediaSource }
+        : args.mediaInfo?.localVideoInput
+          ? { mediaSource: args.mediaInfo.localVideoInput }
+          : { mediaSource: null as const };
 
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
     const mapSlides = (slides: ItemSlideType[]) => {
       return slides.map((slide) => {
+        const nextBoxes = [
+          ...slide.boxes.map((box, index) => {
+            if (index === 0) {
+              return {
+                ...box,
+                background: args.background,
+                mediaInfo: args.mediaInfo,
+              };
+            }
+            return box;
+          }),
+        ];
+        if (mediaSourcePatch.mediaSource === null) {
+          const { mediaSource: _removed, ...rest } = slide;
+          return { ...rest, boxes: nextBoxes };
+        }
         return {
           ...slide,
-          boxes: [
-            ...slide.boxes.map((box, index) => {
-              if (index === 0) {
-                return {
-                  ...box,
-                  background: args.background,
-                  mediaInfo: args.mediaInfo,
-                };
-              }
-              return box;
-            }),
-          ],
+          boxes: nextBoxes,
+          mediaSource: mediaSourcePatch.mediaSource,
         };
       });
     };
@@ -654,12 +713,9 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
     dispatch(_updateArrangements(arrangements));
     dispatch(setBackground(args.background));
 
-    _updateItemInLists({
-      value:
-        args.mediaInfo?.type === "video"
-          ? args.mediaInfo?.placeholderImage
-          : args.background,
-      property: "background",
+    _syncListItemBackground({
+      background: args.background,
+      mediaInfo: args.mediaInfo,
       state,
       dispatch,
     });
@@ -670,11 +726,41 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
 export const updateSlideBackground = createAsyncThunk(
   "item/updateSlideBackground",
   async (
-    args: { background: string; mediaInfo?: MediaType },
+    args: {
+      background: string;
+      mediaInfo?: MediaType;
+      mediaSource?: SlideMediaSource | null;
+    },
     { dispatch, getState },
   ) => {
     const state = getState();
     const item = state.undoable.present.item;
+    const mediaSourcePatch =
+      args.mediaSource !== undefined
+        ? { mediaSource: args.mediaSource }
+        : args.mediaInfo?.localVideoInput
+          ? { mediaSource: args.mediaInfo.localVideoInput }
+          : { mediaSource: null as const };
+
+    const applySlide = (slide: ItemSlideType): ItemSlideType => {
+      const nextBoxes = slide.boxes.map((box, index) => {
+        if (index !== 0) return box;
+        return {
+          ...box,
+          background: args.background,
+          mediaInfo: args.mediaInfo,
+        };
+      });
+      if (mediaSourcePatch.mediaSource === null) {
+        const { mediaSource: _removed, ...rest } = slide;
+        return { ...rest, boxes: nextBoxes };
+      }
+      return {
+        ...slide,
+        boxes: nextBoxes,
+        mediaSource: mediaSourcePatch.mediaSource,
+      };
+    };
 
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
@@ -689,17 +775,7 @@ export const updateSlideBackground = createAsyncThunk(
           slides: [
             ...arrangement.slides.map((slide, slideIndex) => {
               if (slideIndex !== item.selectedSlide) return slide;
-              return {
-                ...slide,
-                boxes: slide.boxes.map((box, index) => {
-                  if (index !== 0) return box;
-                  return {
-                    ...box,
-                    background: args.background,
-                    mediaInfo: args.mediaInfo,
-                  };
-                }),
-              };
+              return applySlide(slide);
             }),
           ],
         };
@@ -708,17 +784,7 @@ export const updateSlideBackground = createAsyncThunk(
 
     const slides = item.slides.map((slide, index) => {
       if (index !== item.selectedSlide) return slide;
-      return {
-        ...slide,
-        boxes: slide.boxes.map((box, index) => {
-          if (index !== 0) return box;
-          return {
-            ...box,
-            background: args.background,
-            mediaInfo: args.mediaInfo,
-          };
-        }),
-      };
+      return applySlide(slide);
     });
 
     dispatch(_updateSlides(slides));
@@ -726,12 +792,9 @@ export const updateSlideBackground = createAsyncThunk(
 
     if (item.selectedSlide === 0) {
       dispatch(setBackground(args.background));
-      _updateItemInLists({
-        value:
-          args.mediaInfo?.type === "video"
-            ? args.mediaInfo?.placeholderImage
-            : args.background,
-        property: "background",
+      _syncListItemBackground({
+        background: args.background,
+        mediaInfo: args.mediaInfo,
         state,
         dispatch,
       });
@@ -782,7 +845,12 @@ export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
 export const updateSlideBackgroundsOnSubset = createAsyncThunk(
   "item/updateSlideBackgroundsOnSubset",
   async (
-    args: { slideIds: string[]; background: string; mediaInfo?: MediaType },
+    args: {
+      slideIds: string[];
+      background: string;
+      mediaInfo?: MediaType;
+      mediaSource?: SlideMediaSource | null;
+    },
     { dispatch, getState },
   ) => {
     const state = getState();
@@ -795,7 +863,17 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
     let arrangements = [...item.arrangements];
-    const patch = { background: args.background, mediaInfo: args.mediaInfo };
+    const mediaSource =
+      args.mediaSource !== undefined
+        ? args.mediaSource
+        : args.mediaInfo?.localVideoInput
+          ? args.mediaInfo.localVideoInput
+          : null;
+    const patch = {
+      background: args.background,
+      mediaInfo: args.mediaInfo,
+      mediaSource,
+    };
 
     if (arrangementSlides?.length) {
       arrangements = arrangements.map((arrangement, index) => {
@@ -816,12 +894,9 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
       firstSlideId !== undefined && idSet.has(firstSlideId);
     if (targetsIncludeIndex0) {
       dispatch(setBackground(args.background));
-      _updateItemInLists({
-        value:
-          args.mediaInfo?.type === "video"
-            ? args.mediaInfo?.placeholderImage
-            : args.background,
-        property: "background",
+      _syncListItemBackground({
+        background: args.background,
+        mediaInfo: args.mediaInfo,
         state,
         dispatch,
       });
@@ -841,6 +916,7 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
     const patch = {
       background: "",
       mediaInfo: undefined as MediaType | undefined,
+      mediaSource: null as const,
     };
 
     const arrangementSlides =
@@ -865,9 +941,9 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
       firstSlideId !== undefined && idSet.has(firstSlideId);
     if (targetsIncludeIndex0) {
       dispatch(setBackground(""));
-      _updateItemInLists({
-        value: "",
-        property: "background",
+      _syncListItemBackground({
+        background: "",
+        mediaInfo: undefined,
         state,
         dispatch,
       });

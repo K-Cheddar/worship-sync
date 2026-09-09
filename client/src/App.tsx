@@ -141,6 +141,7 @@ const isBootstrapSplashRoute = (pathname: string) => {
   if (pathname === "/home") return true;
   if (pathname === "/current-service") return true;
   if (pathname.startsWith("/controller")) return true;
+  if (pathname.startsWith("/aux-controller")) return true;
   if (pathname === "/overlay-controller") return true;
   if (pathname === "/boards/controller") return true;
   if (pathname === "/boards/display") return true;

@@ -4,6 +4,7 @@ import {
   OverflowMode,
   FormattedTextDisplayInfo,
   MediaType,
+  SlideMediaSource,
 } from "../types";
 import { DEFAULT_FONT_PX } from "../constants";
 import generateRandomId from "./generateRandomId";
@@ -110,6 +111,7 @@ type CreateNewSlideType = {
   isItalic?: boolean;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   mediaInfo?: MediaType;
+  mediaSource?: SlideMediaSource;
   textBoxHeight?: number;
 };
 
@@ -131,6 +133,7 @@ export const createNewSlide = ({
   isItalic,
   formattedTextDisplayInfo,
   mediaInfo,
+  mediaSource,
   textBoxHeight,
 }: CreateNewSlideType) => {
   const defaultBox = createBox({});
@@ -243,6 +246,7 @@ export const createNewSlide = ({
     boxes: JSON.parse(JSON.stringify(boxes)),
     id: generateRandomId(),
     ...(overflow && { overflow }),
+    ...(mediaSource ? { mediaSource } : {}),
     ...(formattedTextDisplayInfo && {
       formattedTextDisplayInfo: {
         ...defaultFormattedTextDisplayInfo,

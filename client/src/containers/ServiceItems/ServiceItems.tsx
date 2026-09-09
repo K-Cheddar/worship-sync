@@ -33,6 +33,8 @@ import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
 import { getControllerItemPath } from "../../utils/outlineSlideSections";
 import { useControllerBasePath } from "../../context/activeController";
+import { resolveServiceItemLocalImage } from "../../utils/resolveServiceItemLocalImage";
+import { resolveServiceItemLocalVideoFile } from "../../utils/resolveServiceItemLocalVideoFile";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
 import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
@@ -42,7 +44,7 @@ import {
   MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
 } from "../Media/mediaLibraryMediaActionUi";
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
-import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
+import NextServiceCountdownText from "../../components/NextServiceCountdownText/NextServiceCountdownText";
 import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 
@@ -59,6 +61,7 @@ const ServiceItems = () => {
     selectedItemListId,
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
+  const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
@@ -184,10 +187,6 @@ const ServiceItems = () => {
     if (!hasServiceTimeItem) return null;
     return upcomingService?.nextAt.toISOString() ?? null;
   }, [hasServiceTimeItem, upcomingService]);
-
-  const upcomingServiceTimeText = useNextServiceCountdownText(
-    upcomingServiceTargetIso,
-  );
 
   const serviceItemsByListId = useMemo(() => {
     const itemsByListId = new Map<string, ServiceItemType>();
@@ -836,13 +835,18 @@ const ServiceItems = () => {
                   }
                   if (hiddenListIds.has(item.listId)) return null;
                   const activeTimer = activeTimersByItemId.get(item._id);
+                  const isServiceTimeRow = item.type === "service-time";
                   const serviceTimeTimerText =
-                    item.type === "service-time"
-                      ? upcomingServiceTimeText ?? undefined
-                      : undefined;
+                    isServiceTimeRow && upcomingServiceTargetIso ? (
+                      <NextServiceCountdownText
+                        targetIso={upcomingServiceTargetIso}
+                      />
+                    ) : undefined;
                   return (
                     <ServiceItem
-                      isActive={activeTimer != null || serviceTimeTimerText != null}
+                      isActive={
+                        activeTimer != null || serviceTimeTimerText != null
+                      }
                       timer={activeTimer}
                       timerText={serviceTimeTimerText}
                       key={item.listId}
@@ -887,6 +891,8 @@ const ServiceItems = () => {
                 type={item.type}
                 id={item.listId}
                 image={item.background}
+                localImage={resolveServiceItemLocalImage(item, mediaList)}
+                localVideoFile={resolveServiceItemLocalVideoFile(item, mediaList)}
                 className="border-b-2 border-transparent overflow-hidden cursor-grabbing"
               />
             );

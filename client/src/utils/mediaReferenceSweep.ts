@@ -105,12 +105,17 @@ function sweepSlide(
   pb: PreferenceBackground,
   deletedIds: Set<string>,
   deletedUrls: Set<string>,
+  deletedVideoSourceIds: Set<string>,
 ): ItemSlideType {
   const mapBoxes = (boxes: Box[]) =>
     boxes.map((b) => resetBoxIfMatch(b, pb, deletedIds, deletedUrls));
-  return {
+  const boxes = mapBoxes(slide.boxes);
+  const mediaSourceMatches =
+    slide.mediaSource?.kind === "local-video-input" &&
+    deletedVideoSourceIds.has(slide.mediaSource.sourceId);
+  const next: ItemSlideType = {
     ...slide,
-    boxes: mapBoxes(slide.boxes),
+    boxes,
     monitorCurrentBandBoxes: slide.monitorCurrentBandBoxes
       ? mapBoxes(slide.monitorCurrentBandBoxes)
       : slide.monitorCurrentBandBoxes,
@@ -118,6 +123,11 @@ function sweepSlide(
       ? mapBoxes(slide.monitorNextBandBoxes)
       : slide.monitorNextBandBoxes,
   };
+  if (mediaSourceMatches) {
+    const { mediaSource: _removed, ...rest } = next;
+    return rest;
+  }
+  return next;
 }
 
 function sweepSlides(
@@ -125,8 +135,11 @@ function sweepSlides(
   pb: PreferenceBackground,
   deletedIds: Set<string>,
   deletedUrls: Set<string>,
+  deletedVideoSourceIds: Set<string>,
 ): ItemSlideType[] {
-  return slides.map((s) => sweepSlide(s, pb, deletedIds, deletedUrls));
+  return slides.map((s) =>
+    sweepSlide(s, pb, deletedIds, deletedUrls, deletedVideoSourceIds),
+  );
 }
 
 function sweepOverlayInfo(
@@ -144,6 +157,7 @@ function sweepPresentation(
   pres: Presentation | undefined,
   deletedIds: Set<string>,
   deletedUrls: Set<string>,
+  deletedVideoSourceIds: Set<string>,
 ): Presentation | undefined {
   if (!pres) return pres;
   const pb = preferenceDefaultForItemType("song");
@@ -151,34 +165,46 @@ function sweepPresentation(
   if (pres.slide) {
     next = {
       ...next,
-      slide: sweepSlide(pres.slide, pb, deletedIds, deletedUrls),
+      slide: sweepSlide(
+        pres.slide,
+        pb,
+        deletedIds,
+        deletedUrls,
+        deletedVideoSourceIds,
+      ),
     };
   }
   if (pres.nextSlide) {
     next = {
       ...next,
-      nextSlide: sweepSlide(pres.nextSlide, pb, deletedIds, deletedUrls),
+      nextSlide: sweepSlide(
+        pres.nextSlide,
+        pb,
+        deletedIds,
+        deletedUrls,
+        deletedVideoSourceIds,
+      ),
     };
   }
   next = {
     ...next,
     participantOverlayInfo: sweepOverlayInfo(
-      pres.participantOverlayInfo,
+      next.participantOverlayInfo,
       deletedIds,
       deletedUrls,
     ),
     stbOverlayInfo: sweepOverlayInfo(
-      pres.stbOverlayInfo,
+      next.stbOverlayInfo,
       deletedIds,
       deletedUrls,
     ),
     qrCodeOverlayInfo: sweepOverlayInfo(
-      pres.qrCodeOverlayInfo,
+      next.qrCodeOverlayInfo,
       deletedIds,
       deletedUrls,
     ),
     imageOverlayInfo: sweepOverlayInfo(
-      pres.imageOverlayInfo,
+      next.imageOverlayInfo,
       deletedIds,
       deletedUrls,
     ),
@@ -193,6 +219,13 @@ function sweepPresentation(
         deletedUrls,
       ),
     };
+  }
+  if (
+    next.localVideoInput?.sourceId &&
+    deletedVideoSourceIds.has(next.localVideoInput.sourceId)
+  ) {
+    const { localVideoInput: _removed, ...rest } = next;
+    next = rest;
   }
   return next;
 }
@@ -235,6 +268,15 @@ function buildDeletedUrlSet(rows: MediaType[]): Set<string> {
   return s;
 }
 
+function buildDeletedVideoSourceIdSet(rows: MediaType[]): Set<string> {
+  const s = new Set<string>();
+  for (const m of rows) {
+    const sourceId = m.localVideoInput?.sourceId;
+    if (sourceId) s.add(sourceId);
+  }
+  return s;
+}
+
 /**
  * Before removing media rows from the library: reset references in preferences, items, overlays, quick links.
  * Aborts without partial writes if any `put` fails (caller should not proceed to delete assets).
@@ -247,6 +289,7 @@ export async function sweepMediaReferencesBeforeDelete(
   if (deletedIds.size === 0) return { ok: true, failedDocIds: [] };
 
   const deletedUrls = buildDeletedUrlSet(deletedRows);
+  const deletedVideoSourceIds = buildDeletedVideoSourceIdSet(deletedRows);
   const failedDocIds: string[] = [];
 
   let prefsRaw: Record<string, unknown>;
@@ -315,6 +358,7 @@ export async function sweepMediaReferencesBeforeDelete(
       ql.presentationInfo,
       deletedIds,
       deletedUrls,
+      deletedVideoSourceIds,
     );
     if (nextPres === ql.presentationInfo) return ql;
     return { ...ql, presentationInfo: nextPres };
@@ -415,7 +459,13 @@ export async function sweepMediaReferencesBeforeDelete(
       let arrDirty = false;
       for (let i = 0; i < arr.length; i++) {
         const a = arr[i];
-        const ns = sweepSlides(a.slides || [], pb, deletedIds, deletedUrls);
+        const ns = sweepSlides(
+          a.slides || [],
+          pb,
+          deletedIds,
+          deletedUrls,
+          deletedVideoSourceIds,
+        );
         if (JSON.stringify(ns) !== JSON.stringify(a.slides)) {
           arr[i] = { ...a, slides: ns };
           arrDirty = true;
@@ -431,6 +481,7 @@ export async function sweepMediaReferencesBeforeDelete(
         pb,
         deletedIds,
         deletedUrls,
+        deletedVideoSourceIds,
       );
       if (JSON.stringify(nsMain) !== JSON.stringify(nextItem.slides)) {
         nextItem.slides = nsMain;

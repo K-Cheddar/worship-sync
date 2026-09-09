@@ -1,5 +1,8 @@
 import { DBBoard, DBBoardAlias, DBBoardPost, RestreamMessage } from "../types";
-import { buildShareableHashRouterUrl } from "../utils/environment";
+import {
+  buildShareableHashRouterUrl,
+  buildShareablePublicPathUrl,
+} from "../utils/environment";
 
 export const BOARD_REMOTE_DB_NAME = "worship-sync-boards";
 export const BOARD_ALIAS_ID_PREFIX = "alias:";
@@ -304,11 +307,11 @@ export const buildBoardPublicUrl = (
   aliasId: string,
   route: "board" | "present" = "board",
 ): string => {
-  const hashRoute =
+  const pathRoute =
     route === "present"
       ? buildBoardPresentRoute(aliasId)
       : buildBoardRoute(aliasId);
-  return buildBoardHashRouteUrl(hashRoute);
+  return buildShareablePublicPathUrl(pathRoute);
 };
 
 export const buildBoardDisplayUrl = (): string =>

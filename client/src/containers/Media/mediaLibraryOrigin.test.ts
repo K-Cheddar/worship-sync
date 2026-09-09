@@ -82,6 +82,60 @@ describe("mediaLibraryOrigin", () => {
     ).toBe("local");
   });
 
+  it("treats local files with a cloud copy as uploaded for filters", () => {
+    expect(
+      getMediaLibraryOrigin(
+        baseMedia({
+          source: "local",
+          localImage: {
+            id: "local_image_1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "slide.png",
+            contentType: "image/png",
+            storagePolicy: "local-and-cloud",
+            cloudUrl: "https://res.cloudinary.com/example/slide.png",
+          },
+        }),
+      ),
+    ).toBe("uploaded");
+    expect(
+      getMediaLibraryOrigin(
+        baseMedia({
+          source: "local",
+          type: "video",
+          localVideoFile: {
+            id: "local_video_1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "clip.mp4",
+            contentType: "video/mp4",
+            storagePolicy: "local-and-cloud",
+            cloudUrl: "https://stream.example/clip.m3u8",
+          },
+        }),
+      ),
+    ).toBe("uploaded");
+  });
+
+  it("keeps pending cloud-share local files as local until the cloud URL exists", () => {
+    expect(
+      getMediaLibraryOrigin(
+        baseMedia({
+          source: "local",
+          localImage: {
+            id: "local_image_1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "slide.png",
+            contentType: "image/png",
+            storagePolicy: "local-and-cloud",
+          },
+        }),
+      ),
+    ).toBe("local");
+  });
+
   it("classifies live video inputs separately from local files", () => {
     expect(
       getMediaLibraryOrigin(
@@ -157,8 +211,70 @@ describe("mediaLibraryOrigin", () => {
     ).toBe("Video input");
     expect(
       getMediaLibraryOriginBadgeLabel(
+        baseMedia({
+          source: "local",
+          localVideoInput: {
+            kind: "local-video-input",
+            sourceId: "src-2",
+            label: "Lyrics screen",
+            captureKind: "screen",
+          },
+        }),
+      ),
+    ).toBe("Screen share");
+    expect(
+      getMediaLibraryOriginBadgeLabel(
         baseMedia({ canvaImportKey: "canva:DAF_1:rev:1:png:1" }),
       ),
     ).toBe("Canva");
+  });
+
+  it("omits the Local badge when the file is also going to the cloud", () => {
+    expect(
+      getMediaLibraryOriginBadgeLabel(
+        baseMedia({
+          source: "local",
+          localImage: {
+            id: "local_image_1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "slide.png",
+            contentType: "image/png",
+            storagePolicy: "local-only",
+          },
+        }),
+      ),
+    ).toBe("Local");
+    expect(
+      getMediaLibraryOriginBadgeLabel(
+        baseMedia({
+          source: "local",
+          localImage: {
+            id: "local_image_1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "slide.png",
+            contentType: "image/png",
+            storagePolicy: "local-and-cloud",
+          },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      getMediaLibraryOriginBadgeLabel(
+        baseMedia({
+          source: "local",
+          localImage: {
+            id: "local_image_1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "slide.png",
+            contentType: "image/png",
+            storagePolicy: "local-and-cloud",
+            cloudUrl: "https://res.cloudinary.com/example/slide.png",
+          },
+        }),
+      ),
+    ).toBeNull();
   });
 });

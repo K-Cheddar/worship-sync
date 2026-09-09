@@ -180,9 +180,15 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         dispatch(updateMediaItemFields({ id: existing.id, patch: media }));
         return;
       }
-      dispatch(addItemToMediaList(media));
+      dispatch(
+        addItemToMediaList({
+          ...media,
+          // Match cloud/Mux imports: land in the folder currently being browsed.
+          folderId: media.folderId ?? c.uploadTargetFolderId,
+        }),
+      );
     },
-    [c.list, dispatch],
+    [c.list, c.uploadTargetFolderId, dispatch],
   );
 
   const addVideoInput = useCallback(
@@ -246,46 +252,55 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             />
           </div>
           <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="tertiary"
-                  svg={Plus}
-                  title={toolbarAddMediaTitle}
-                  aria-label="Add media"
-                  disabled={c.uploadProgress.isUploading || c.isMediaReadOnly}
-                >
-                  {c.uploadProgress.isUploading
-                    ? `${Math.round(c.uploadProgress.progress)}%`
-                    : ""}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
-                  <HardDrive /> Add files
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => openVideoInputPicker("device")}
-                >
-                  <Video /> Add video input
-                </DropdownMenuItem>
-                {supportsDesktopCapture() ? (
-                  <DropdownMenuItem
-                    onSelect={() => openVideoInputPicker("desktop")}
-                  >
-                    <MonitorUp /> Add screen or window
+            {c.uploadProgress.isUploading ? (
+              <Button
+                variant="tertiary"
+                svg={Plus}
+                title={toolbarAddMediaTitle}
+                aria-label="Show upload progress"
+                onClick={() => void c.requestMediaUpload()}
+                disabled={c.isMediaReadOnly}
+              >
+                {`${Math.round(c.uploadProgress.progress)}%`}
+              </Button>
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="tertiary"
+                    svg={Plus}
+                    title={toolbarAddMediaTitle}
+                    aria-label="Add media"
+                    disabled={c.isMediaReadOnly}
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
+                    <HardDrive /> Add files
                   </DropdownMenuItem>
-                ) : null}
-                {canvaOauthConfigured ? (
                   <DropdownMenuItem
-                    disabled={c.isGuestSession || c.isMediaReadOnly}
-                    onSelect={() => openCanva()}
+                    onSelect={() => openVideoInputPicker("device")}
                   >
-                    <ImageUp /> Import from Canva
+                    <Video /> Add video input
                   </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  {supportsDesktopCapture() ? (
+                    <DropdownMenuItem
+                      onSelect={() => openVideoInputPicker("desktop")}
+                    >
+                      <MonitorUp /> Add screen or window
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canvaOauthConfigured ? (
+                    <DropdownMenuItem
+                      disabled={c.isGuestSession || c.isMediaReadOnly}
+                      onSelect={() => openCanva()}
+                    >
+                      <ImageUp /> Import from Canva
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <Button
               variant="tertiary"
               svg={Maximize}
@@ -530,10 +545,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onMediaClick={c.handleMediaClick}
           onSearchChange={(value) => c.setSearchTerm(value)}
           onShowNameToggle={() => c.setShowName(!c.showName)}
-          onDeleteClick={(mediaItem) => {
-            c.setMediaToDelete(mediaItem);
-            c.setShowDeleteModal(true);
-          }}
+          onDeleteClick={c.openSingleDeleteModal}
           onDeleteMultipleClick={c.openMultiDeleteModal}
           onPreviewChange={c.setPreviewMedia}
           mediaUploadInputRef={c.mediaUploadInputRef}
@@ -561,6 +573,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             onVideoComplete={c.addMuxVideo}
             onImageRefresh={c.refreshCanvaImage}
             onVideoRefresh={c.refreshCanvaVideo}
+            onCreateDeckItem={c.createCanvaDeckItemFromMedia}
             existingMedia={c.list}
             sourceMedia={canvaSourceMedia}
           />

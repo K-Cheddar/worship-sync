@@ -91,12 +91,12 @@ const ScheduleResponsePublic = () => {
       // the result, rather than making the reader choose the same thing twice.
       const result = clickedResponse
         ? await respondToAssignmentByToken({
-            token,
-            response: clickedResponse,
-          }).then(async (saved) => ({
-            ...(await getAssignmentResponseContext(token)),
-            assignments: saved.assignments,
-          }))
+          token,
+          response: clickedResponse,
+        }).then(async (saved) => ({
+          ...(await getAssignmentResponseContext(token)),
+          assignments: saved.assignments,
+        }))
         : await getAssignmentResponseContext(token);
       setSlots(result.assignments || []);
       setChurchName(result.churchName || "");
@@ -290,7 +290,7 @@ const ScheduleResponsePublic = () => {
                   <p className="text-sm text-gray-300">
                     You are signed in.{" "}
                     <a
-                      href="#/my-schedule"
+                      href="/#/my-schedule"
                       className="text-cyan-300 underline underline-offset-2"
                     >
                       Open My schedule

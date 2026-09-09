@@ -25,6 +25,7 @@ import {
 } from "../../utils/itemTypeMaps";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   applyPendingRemoteItem,
@@ -47,7 +48,7 @@ import {
   getSelectionHint,
 } from "../../utils/selectionHint";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
-import { DBItem, ItemSlideType, SongMetadata } from "../../types";
+import { DBItem, ItemSlideType, LocalVideoInputMediaSource, SongMetadata } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -68,6 +69,10 @@ import { AccessType } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
+import LocalVideoInputDetails from "../../components/LocalVideoInputDetails/LocalVideoInputDetails";
+import LocalVideoInputPicker, {
+  type LocalVideoCaptureMode,
+} from "../../components/LocalVideoInputPicker/LocalVideoInputPicker";
 import Icon from "../../components/Icon/Icon";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import SlideEditorSkeleton from "./SlideEditorSkeleton";
@@ -83,10 +88,30 @@ import {
   PopoverTrigger,
 } from "../../components/ui/Popover";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
+import {
+  addItemToMediaList,
+  updateMediaItemFields,
+} from "../../store/mediaSlice";
+import { getOrCreateDeviceId } from "../../utils/authStorage";
+import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
+import {
+  buildLocalVideoInputPresentation,
+} from "../../utils/localVideoInput";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
   slideName.startsWith(lyricName) && !/^\d/.test(slideName.slice(lyricName.length));
+
+const shouldAdoptVideoInputSlideName = (
+  slideName: string,
+  previousLabel?: string,
+) => {
+  const trimmed = slideName.trim();
+  if (!trimmed) return true;
+  if (/^Section \d+$/i.test(trimmed)) return true;
+  if (previousLabel && trimmed === previousLabel.trim()) return true;
+  return false;
+};
 
 const BOX_EDIT_DEBOUNCE_MS = 200;
 const resolveFormattedSlideIndex = ({
@@ -163,6 +188,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   const [isItemDetailsModalOpen, setIsItemDetailsModalOpen] = useState(false);
   const [isSongDetailsDrawerOpen, setIsSongDetailsDrawerOpen] = useState(false);
   const [isOpeningLyricsEditor, setIsOpeningLyricsEditor] = useState(false);
+  const [isVideoInputRelinkOpen, setIsVideoInputRelinkOpen] = useState(false);
 
   const [isBoxLocked, setIsBoxLocked] = useState<boolean[]>([]);
 
@@ -506,9 +532,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       return;
     }
 
+    // Songs/bible still allow Backspace/Delete on an empty box to remove the
+    // slide. Free (custom) items keep an empty slide so clearing text never
+    // removes the operator's slide structure.
     let shouldDeleteCurrentSlide = false;
 
     if (
+      (type === "song" || type === "bible") &&
       (lastKeyPressed === "Backspace" || lastKeyPressed === "Delete") &&
       !value
     ) {
@@ -562,90 +592,25 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
 
     if (type === "free") {
-      if (shouldDeleteCurrentSlide) {
-        dispatch(updateSlides({ slides: updatedSlides }));
-      } else {
-        const currentSlide = updatedSlides[selectedSlide];
-        const currentSectionMatch = currentSlide?.name?.match(/Section (\d+)/);
-        const currentSectionNum = currentSectionMatch
-          ? parseInt(currentSectionMatch[1])
-          : 1;
+      const currentSlide = updatedSlides[selectedSlide];
+      const currentSectionMatch = currentSlide?.name?.match(/Section (\d+)/);
+      const currentSectionNum = currentSectionMatch
+        ? parseInt(currentSectionMatch[1])
+        : 1;
 
-        const currentSectionSlidesWithIndices = updatedSlides
-          .map((slide, idx) => ({ slide, idx }))
-          .filter(({ slide }) => slide.name?.includes(`Section ${currentSectionNum}`))
-          .sort((a, b) => a.idx - b.idx);
+      const currentSectionSlidesWithIndices = updatedSlides
+        .map((slide, idx) => ({ slide, idx }))
+        .filter(({ slide }) => slide.name?.includes(`Section ${currentSectionNum}`))
+        .sort((a, b) => a.idx - b.idx);
 
-        const currentSlideIndexInSection = currentSectionSlidesWithIndices.findIndex(
-          ({ idx }) => idx === selectedSlide
-        );
+      const currentSlideIndexInSection = currentSectionSlidesWithIndices.findIndex(
+        ({ idx }) => idx === selectedSlide
+      );
 
-        if (currentSlideIndexInSection === -1) {
-          const formattedItem = formatFree({
-            ...currentItem,
-            slides: updatedSlides,
-          });
-          if (typeof cursorPosition === "number") {
-            const newSlides = formattedItem.slides;
-            const newSelectedIndex = resolveFormattedSlideIndex({
-              oldSlides: currentItem.slides,
-              newSlides,
-              selectedSlide,
-              maxSlideIndex: Math.max(0, newSlides.length - 1),
-            });
-            const nextWords =
-              newSlides[newSelectedIndex]?.boxes[index]?.words || "";
-            cursorPositionsRef.current[index] = resolveFormattedCursorPosition(
-              value,
-              nextWords,
-              cursorPosition,
-            );
-          }
-          dispatch(updateSlides({ slides: formattedItem.slides }));
-          return;
-        }
-
-        let newWords = "";
-        for (let i = 0; i < currentSectionSlidesWithIndices.length; ++i) {
-          const { slide } = currentSectionSlidesWithIndices[i];
-          const slideBox = slide?.boxes[index];
-          const slideWords =
-            i === currentSlideIndexInSection ? value : slideBox?.words || "";
-
-          if (slideWords.trim().length > 0) {
-            if (newWords) {
-              const alreadyHasNewline = newWords.endsWith("\n");
-              const shouldAddNewline = !alreadyHasNewline;
-              newWords += shouldAddNewline ? "\n" + slideWords : slideWords;
-            } else {
-              newWords = slideWords;
-            }
-          }
-        }
-
-        const formattedSections = currentItem.formattedSections || [];
-        const updatedFormattedSections = formattedSections.map((section) => {
-          if (section.sectionNum === currentSectionNum) {
-            return {
-              ...section,
-              words: newWords,
-            };
-          }
-          return section;
-        });
-
-        if (!updatedFormattedSections.find((section) => section.sectionNum === currentSectionNum)) {
-          updatedFormattedSections.push({
-            sectionNum: currentSectionNum,
-            words: newWords,
-            slideSpan: currentSectionSlidesWithIndices.length,
-          });
-        }
-
+      if (currentSlideIndexInSection === -1) {
         const formattedItem = formatFree({
           ...currentItem,
           slides: updatedSlides,
-          formattedSections: updatedFormattedSections,
         });
         if (typeof cursorPosition === "number") {
           const newSlides = formattedItem.slides;
@@ -663,11 +628,72 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             cursorPosition,
           );
         }
-        dispatch(updateSlides({
-          slides: formattedItem.slides,
-          formattedSections: formattedItem.formattedSections,
-        }));
+        dispatch(updateSlides({ slides: formattedItem.slides }));
+        return;
       }
+
+      let newWords = "";
+      for (let i = 0; i < currentSectionSlidesWithIndices.length; ++i) {
+        const { slide } = currentSectionSlidesWithIndices[i];
+        const slideBox = slide?.boxes[index];
+        const slideWords =
+          i === currentSlideIndexInSection ? value : slideBox?.words || "";
+
+        if (slideWords.trim().length > 0) {
+          if (newWords) {
+            const alreadyHasNewline = newWords.endsWith("\n");
+            const shouldAddNewline = !alreadyHasNewline;
+            newWords += shouldAddNewline ? "\n" + slideWords : slideWords;
+          } else {
+            newWords = slideWords;
+          }
+        }
+      }
+
+      const formattedSections = currentItem.formattedSections || [];
+      const updatedFormattedSections = formattedSections.map((section) => {
+        if (section.sectionNum === currentSectionNum) {
+          return {
+            ...section,
+            words: newWords,
+          };
+        }
+        return section;
+      });
+
+      if (!updatedFormattedSections.find((section) => section.sectionNum === currentSectionNum)) {
+        updatedFormattedSections.push({
+          sectionNum: currentSectionNum,
+          words: newWords,
+          slideSpan: currentSectionSlidesWithIndices.length,
+        });
+      }
+
+      const formattedItem = formatFree({
+        ...currentItem,
+        slides: updatedSlides,
+        formattedSections: updatedFormattedSections,
+      });
+      if (typeof cursorPosition === "number") {
+        const newSlides = formattedItem.slides;
+        const newSelectedIndex = resolveFormattedSlideIndex({
+          oldSlides: currentItem.slides,
+          newSlides,
+          selectedSlide,
+          maxSlideIndex: Math.max(0, newSlides.length - 1),
+        });
+        const nextWords =
+          newSlides[newSelectedIndex]?.boxes[index]?.words || "";
+        cursorPositionsRef.current[index] = resolveFormattedCursorPosition(
+          value,
+          nextWords,
+          cursorPosition,
+        );
+      }
+      dispatch(updateSlides({
+        slides: formattedItem.slides,
+        formattedSections: formattedItem.formattedSections,
+      }));
     }
 
     if (type === "song") {
@@ -865,6 +891,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
 
     const shouldDeleteCurrentSlide =
+      (type === "song" || type === "bible") &&
       (lastKeyPressed === "Backspace" || lastKeyPressed === "Delete") &&
       !value;
     const shouldCommitImmediatelyForLineShift = lastKeyPressed === "Enter";
@@ -1216,6 +1243,113 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     ]
   );
 
+  const selectedSlideMediaSource =
+    slides[selectedSlide]?.mediaSource?.kind === "local-video-input"
+      ? slides[selectedSlide].mediaSource
+      : undefined;
+  const editorLocalVideoInput = useMemo(() => {
+    if (!selectedSlideMediaSource) return undefined;
+    return buildLocalVideoInputPresentation(
+      selectedSlideMediaSource,
+      getOrCreateDeviceId(),
+      getTrustedDeviceLabel(),
+    );
+  }, [selectedSlideMediaSource]);
+  const videoInputCaptureMode: LocalVideoCaptureMode =
+    selectedSlideMediaSource?.captureKind === "screen" ||
+      selectedSlideMediaSource?.captureKind === "window"
+      ? "desktop"
+      : "device";
+  const mediaList = useSelector((state: RootState) => state.media.list);
+
+  const handleVideoInputRelinked = useCallback(
+    (source: LocalVideoInputMediaSource) => {
+      const previous = selectedSlideMediaSource;
+      const ownedSource: LocalVideoInputMediaSource = {
+        ...source,
+        ownerDeviceId: getOrCreateDeviceId(),
+        ownerLabel: getTrustedDeviceLabel(),
+      };
+      const now = new Date().toISOString();
+      const mediaId = `local_input_${ownedSource.sourceId}`;
+      const mediaPatch = {
+        path: "",
+        createdAt: now,
+        updatedAt: now,
+        format: "live",
+        height: 1080,
+        width: 1920,
+        name: ownedSource.label,
+        publicId: mediaId,
+        type: "video" as const,
+        id: mediaId,
+        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
+        thumbnail: "",
+        placeholderImage: "",
+        source: "local" as const,
+        localVideoInput: ownedSource,
+      };
+      const existing = mediaList.find((m) => m.id === mediaId);
+      if (existing) {
+        dispatch(updateMediaItemFields({ id: mediaId, patch: mediaPatch }));
+      } else {
+        dispatch(addItemToMediaList(mediaPatch));
+      }
+
+      const applySource = (slide: ItemSlideType): ItemSlideType => {
+        const nextName = shouldAdoptVideoInputSlideName(
+          slide.name,
+          previous?.label,
+        )
+          ? ownedSource.label.trim() || slide.name
+          : slide.name;
+        return {
+          ...slide,
+          name: nextName,
+          mediaSource: ownedSource,
+          boxes: slide.boxes.map((box, index) =>
+            index === 0
+              ? { ...box, background: "", mediaInfo: undefined }
+              : box,
+          ),
+        };
+      };
+
+      if (type === "song" && arrangement?.slides) {
+        const updatedArrangements = item.arrangements.map((arr, idx) => {
+          if (idx !== item.selectedArrangement) return arr;
+          return {
+            ...arr,
+            slides: arr.slides.map((slide, slideIndex) =>
+              slideIndex === selectedSlide ? applySource(slide) : slide,
+            ),
+          };
+        });
+        dispatch(updateArrangements({ arrangements: updatedArrangements }));
+      } else {
+        dispatch(
+          updateSlides({
+            slides: slides.map((slide, slideIndex) =>
+              slideIndex === selectedSlide ? applySource(slide) : slide,
+            ),
+          }),
+        );
+      }
+      setIsVideoInputRelinkOpen(false);
+    },
+    [
+      arrangement?.slides,
+      dispatch,
+      item.arrangements,
+      item.selectedArrangement,
+      mediaList,
+      selectedSlide,
+      selectedSlideMediaSource,
+      slides,
+      type,
+    ],
+  );
+
   const leftColumnContent = useMemo(() => {
     if (toolbarSection === "box-tools") {
       return (
@@ -1225,6 +1359,16 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           canDeleteBox={canDeleteBox}
           isBoxLocked={isBoxLocked}
           setIsBoxLocked={setIsBoxLocked}
+        />
+      );
+    }
+    if (selectedSlideMediaSource) {
+      return (
+        <LocalVideoInputDetails
+          className="lg:flex-[0_0_30%] w-full"
+          source={selectedSlideMediaSource}
+          canEdit={canEdit}
+          onEdit={() => setIsVideoInputRelinkOpen(true)}
         />
       );
     }
@@ -1264,6 +1408,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     arrangement?.slides,
     slides,
     selectedSlide,
+    selectedSlideMediaSource,
   ]);
 
   const editorWrapperStyle = {
@@ -1289,7 +1434,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             </div>
           </div>
 
-          <div className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0">
+          <div className="relative lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0">
             <DisplayWindow
               className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
               showBorder
@@ -1306,7 +1451,17 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               disabled={!canEdit}
               shouldPlayVideo
               videoPlayback={editorVideoPlayback}
+              localVideoInput={editorLocalVideoInput}
+              canCaptureLocalVideo={Boolean(editorLocalVideoInput)}
             />
+            {slides[selectedSlide]?.mediaSource?.kind === "local-video-input" ? (
+              <LocalVideoInputSlideBadge
+                label={slides[selectedSlide].mediaSource.label}
+                captureKind={slides[selectedSlide].mediaSource.captureKind}
+                variant="banner"
+                size="md"
+              />
+            ) : null}
           </div>
         </div>
       ) : (
@@ -1476,6 +1631,18 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           onRemoveSongAudio={removeSongAudio}
         />
       )}
+      {isVideoInputRelinkOpen && selectedSlideMediaSource ? (
+        <LocalVideoInputPicker
+          hideTrigger
+          open
+          captureMode={videoInputCaptureMode}
+          source={selectedSlideMediaSource}
+          onOpenChange={(open) => {
+            if (!open) setIsVideoInputRelinkOpen(false);
+          }}
+          onLinked={handleVideoInputRelinked}
+        />
+      ) : null}
     </ErrorBoundary>
   );
 };

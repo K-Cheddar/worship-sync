@@ -21,6 +21,14 @@ describe("authRedirectPath", () => {
     expect(sanitizeAuthRedirectPathname("/controller/service")).toBe(
       "/controller/service",
     );
+    expect(sanitizeAuthRedirectPathname("/aux-controller/ctrl_lobby")).toBe(
+      "/aux-controller/ctrl_lobby",
+    );
+    expect(
+      sanitizeAuthRedirectPathname(
+        "/aux-controller/ctrl_lobby/item/abc/list-1",
+      ),
+    ).toBe("/aux-controller/ctrl_lobby/item/abc/list-1");
     expect(sanitizeAuthRedirectPathname("/boards/present/abc123")).toBe(
       "/boards/present/abc123",
     );
@@ -51,6 +59,21 @@ describe("authRedirectPath", () => {
         },
       }),
     ).toBe("/controller/bible?search=John%203%3A16&version=NIV");
+  });
+
+  it("getAuthRedirectToFromState keeps auxiliary controller deep links", () => {
+    // Shared workstations clear the operator name on restart, so reopen bounces
+    // through operator entry with `state.from` set to the saved aux route.
+    expect(
+      getAuthRedirectToFromState({
+        from: {
+          pathname: "/aux-controller/ctrl_lobby/songs",
+          search: "",
+          hash: "",
+          key: "x",
+        },
+      }),
+    ).toBe("/aux-controller/ctrl_lobby/songs");
   });
 
   it("getAuthRedirectPathnameFromState strips query from full redirect", () => {

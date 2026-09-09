@@ -240,6 +240,15 @@ export const buildLocalImageUrl = (assetId: string) =>
 export const isLocalImageUrl = (value: string | undefined) =>
   Boolean(value?.startsWith(LOCAL_IMAGE_URL_PREFIX));
 
+export const parseLocalImageAssetId = (value: string | undefined) => {
+  if (!isLocalImageUrl(value) || !value) return null;
+  try {
+    return decodeURIComponent(value.slice(LOCAL_IMAGE_URL_PREFIX.length));
+  } catch {
+    return value.slice(LOCAL_IMAGE_URL_PREFIX.length) || null;
+  }
+};
+
 export const validateLocalImageFile = (file: File): string | null => {
   if (!ALLOWED_IMAGE_TYPES.has(file.type.toLowerCase())) {
     return "Choose a PNG, JPEG, WebP, or GIF image.";

@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import { addToInitialItems } from "../../store/itemListSlice";
 import gsap from "gsap";
 import { ServiceItem as ServiceItemType, TimerInfo } from "../../types";
@@ -12,6 +12,8 @@ import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
 import { getControllerItemPath } from "../../utils/outlineSlideSections";
 import { useControllerBasePath } from "../../context/activeController";
+import { resolveServiceItemLocalImage } from "../../utils/resolveServiceItemLocalImage";
+import { resolveServiceItemLocalVideoFile } from "../../utils/resolveServiceItemLocalVideoFile";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_PX = 10;
@@ -20,7 +22,7 @@ type ServiceItemsProps = {
   isActive: boolean;
   /** Active timer for this item; its live countdown is computed locally. */
   timer?: TimerInfo;
-  timerText?: string;
+  timerText?: ReactNode;
   index: number;
   selectedItemListId: string | undefined;
   insertPointIndex: number;
@@ -61,6 +63,9 @@ const ServiceItem = ({
 }: ServiceItemsProps) => {
   const controllerBasePath = useControllerBasePath();
   const dispatch = useDispatch();
+  const mediaList = useSelector((state) => state.media.list);
+  const localImage = resolveServiceItemLocalImage(item, mediaList);
+  const localVideoFile = resolveServiceItemLocalVideoFile(item, mediaList);
   // Live countdown computed locally so only this row re-renders each second.
   const liveTimerValue = useLiveRemainingSeconds(timer);
   const serviceItemRef = useRef<HTMLElement | null>(null);
@@ -216,6 +221,8 @@ const ServiceItem = ({
       to={getControllerItemPath(item, controllerBasePath)}
       type={item.type}
       image={item.background}
+      localImage={localImage}
+      localVideoFile={localVideoFile}
       timerValue={timer ? liveTimerValue : undefined}
       timerText={timerText}
       displayId={`service-item-${item.listId}`}

@@ -123,13 +123,61 @@ const HLSPlayer = ({
   playbackRef.current = playback;
   const playbackRoleRef = useRef(playbackRole);
   playbackRoleRef.current = playbackRole;
+  const onLoadedDataRef = useRef(onLoadedData);
+  onLoadedDataRef.current = onLoadedData;
   /** Src whose metadata (and therefore duration) the element already has. */
   const readySrcRef = useRef<string | null>(null);
   /** Src the current cue was actually applied against. */
   const syncedSrcRef = useRef<string | null>(null);
+  /** Src for which DisplayWindow may already hide the poster still. */
+  const paintReadySrcRef = useRef<string | null>(null);
   const appliedGenerationRef = useRef<number | null>(null);
   /** A seek computed before the duration landed could not wrap a looping cue. */
   const appliedWithoutDurationRef = useRef(false);
+
+  /**
+   * Tell the display layer it is safe to drop the poster. Wait out an in-flight
+   * cue seek and for HAVE_CURRENT_DATA so Electron does not flash black between
+   * cached clips.
+   */
+  const notifyPaintReady = useCallback((videoSrc: string) => {
+    const video = videoRef.current;
+    if (!video || srcRef.current !== videoSrc) return;
+    if (paintReadySrcRef.current === videoSrc) return;
+
+    const finish = () => {
+      if (srcRef.current !== videoSrc || paintReadySrcRef.current === videoSrc) {
+        return;
+      }
+      if (video.readyState < 2 /* HAVE_CURRENT_DATA */) {
+        const onLoaded = () => {
+          video.removeEventListener("loadeddata", onLoaded);
+          finish();
+        };
+        video.addEventListener("loadeddata", onLoaded);
+        return;
+      }
+      paintReadySrcRef.current = videoSrc;
+      logVideoCue("player.paintReady", {
+        role: playbackRoleRef.current,
+        ...elementState(video),
+      });
+      onLoadedDataRef.current?.();
+    };
+
+    if (video.seeking) {
+      const onSeeked = () => {
+        video.removeEventListener("seeked", onSeeked);
+        finish();
+      };
+      video.addEventListener("seeked", onSeeked);
+      return;
+    }
+    finish();
+  }, []);
+
+  const notifyPaintReadyRef = useRef(notifyPaintReady);
+  notifyPaintReadyRef.current = notifyPaintReady;
 
   /**
    * The one place a cue reaches the element. Every load path (native mp4,
@@ -157,6 +205,7 @@ const HLSPlayer = ({
       appliedGenerationRef.current = null;
       // Outputs start on their own; the editor preview waits for the operator.
       if (playbackRoleRef.current !== "preview") startPlayback(video);
+      notifyPaintReadyRef.current(activeSrc);
       return;
     }
 
@@ -192,6 +241,7 @@ const HLSPlayer = ({
     syncedSrcRef.current = activeSrc;
     appliedGenerationRef.current = cue.generation;
     appliedWithoutDurationRef.current = seek && !hasDuration;
+    notifyPaintReadyRef.current(activeSrc);
   }, []);
 
   const syncPlaybackRef = useRef(syncPlayback);
@@ -216,10 +266,8 @@ const HLSPlayer = ({
 
   const playNative = useCallback(
     (video: HTMLVideoElement, videoSrc: string) => {
-      if (video.src && video.src !== videoSrc) {
-        video.src = "";
-      }
-
+      // Assign the next URL directly. Clearing to "" first blanks the element
+      // for a frame before the new source can paint.
       video.src = videoSrc;
       let didFallback = false;
 
@@ -355,6 +403,7 @@ const HLSPlayer = ({
   useEffect(() => {
     readySrcRef.current = null;
     syncedSrcRef.current = null;
+    paintReadySrcRef.current = null;
     appliedGenerationRef.current = null;
     appliedWithoutDurationRef.current = false;
     if (!videoRef.current || !src) return;
@@ -530,7 +579,6 @@ const HLSPlayer = ({
       autoPlay={false}
       muted={muted}
       loop
-      onLoadedData={onLoadedData}
       onError={onError}
     />
   );

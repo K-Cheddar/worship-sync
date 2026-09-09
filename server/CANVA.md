@@ -18,6 +18,31 @@ keeps the WorshipSync media ID, name, folder, and creation date while replacing
 its stored Cloudinary or Mux rendition. Existing saved or live service content
 is not rewritten automatically.
 
+## Weekly presentations from someone else's Canva file
+
+Canva does not allow WorshipSync to import a private design from a public view
+link alone. The design must be available to the **church-connected Canva
+account**.
+
+Recommended weekly flow:
+
+1. Designer shares the design with the church Canva account (view or edit).
+2. In Media, open **Import from Canva**.
+3. Paste the design link or id under **Open by link**, or browse/search the
+   connected account's designs.
+4. Choose **PNG images** (still pages) or **MP4 video** (baked motion).
+5. For multi-page PNG imports, keep **Create a custom item with one slide per
+   page** enabled when you want one outline item you can advance in WorshipSync.
+
+Animations tradeoff:
+
+- **PNG** — no live motion; advance slides in WorshipSync.
+- **MP4** — motion is baked into one clip; not Canva Present click-through.
+- **Live Canva Present** (full animations + click-through) — open Present in
+  Canva, then use Media **Add screen or window**, share that screen/window, and
+  **Send** it to the chosen local display (or create a **live input item** and
+  select its slide). Capture stays on this computer only.
+
 ## Canva Developer Portal
 
 Create a Canva Connect integration and enable these scopes:

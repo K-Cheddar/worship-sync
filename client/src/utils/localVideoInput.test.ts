@@ -3,8 +3,11 @@ import {
   buildLocalVideoInputPresentation,
   createLocalVideoInputMediaSource,
   getAudioInputErrorMessage,
+  getLocalVideoInputKindLabel,
+  getLocalVideoInputSourceFieldLabel,
   getLocalVideoSourceErrorMessage,
   getVideoInputErrorMessage,
+  isLocalVideoDeviceBusyError,
   normalizeLocalVideoInput,
   normalizeLocalVideoInputMediaSource,
   registerLocalVideoInput,
@@ -14,6 +17,16 @@ import {
 
 describe("localVideoInput", () => {
   beforeEach(() => localStorage.clear());
+
+  it("names the capture kind for operator-facing badges", () => {
+    expect(getLocalVideoInputKindLabel(undefined)).toBe("Video input");
+    expect(getLocalVideoInputKindLabel("device")).toBe("Video input");
+    expect(getLocalVideoInputKindLabel("screen")).toBe("Screen share");
+    expect(getLocalVideoInputKindLabel("window")).toBe("Window share");
+    expect(getLocalVideoInputSourceFieldLabel("device")).toBe("Video input");
+    expect(getLocalVideoInputSourceFieldLabel("screen")).toBe("Screen");
+    expect(getLocalVideoInputSourceFieldLabel("window")).toBe("Window");
+  });
 
   it("normalizes local capture metadata and rejects incomplete payloads", () => {
     expect(
@@ -75,10 +88,22 @@ describe("localVideoInput", () => {
       ),
     ).toBe("Allow video and sound access on this device, then try again.");
     expect(
-      getAudioInputErrorMessage(
-        new DOMException("busy", "NotReadableError"),
-      ),
+      getAudioInputErrorMessage(new DOMException("busy", "NotReadableError")),
     ).toBe("Close other apps using the audio input, then try again.");
+  });
+
+  it("detects OS device-busy errors for relay fallback", () => {
+    expect(
+      isLocalVideoDeviceBusyError(new DOMException("busy", "NotReadableError")),
+    ).toBe(true);
+    expect(
+      isLocalVideoDeviceBusyError(new DOMException("aborted", "AbortError")),
+    ).toBe(true);
+    expect(
+      isLocalVideoDeviceBusyError(
+        new DOMException("denied", "NotAllowedError"),
+      ),
+    ).toBe(false);
   });
 
   it("saves a logical slide source while binding hardware per workstation", () => {
@@ -123,7 +148,10 @@ describe("localVideoInput", () => {
   it("saves a screen share with the capture kind every surface reads", () => {
     const source = createLocalVideoInputMediaSource("Lyrics screen", "screen");
     expect(source).toEqual(
-      expect.objectContaining({ label: "Lyrics screen", captureKind: "screen" }),
+      expect.objectContaining({
+        label: "Lyrics screen",
+        captureKind: "screen",
+      }),
     );
 
     bindLocalVideoInput(

@@ -485,7 +485,9 @@ const ServicePlanAssigneeList = ({
               })}
 
               {allowEdit && availableMicrophones.length > 0 ? (
-                <DropdownMenu modal={false}>
+                // Default modal menu + inner scroller: wheel works under Sheet
+                // RemoveScroll, and scrollbar-portal matches app chrome.
+                <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
@@ -500,43 +502,48 @@ const ServicePlanAssigneeList = ({
                       Mic
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-52">
-                    {availableMicrophones.map((microphone) => {
-                      const scheduledHolders =
-                        scheduledMicrophoneHolders?.get(microphone.id) || [];
-                      const scheduledLabel = scheduledHolders.length
-                        ? `Assigned: ${scheduledHolders.join(", ")}`
-                        : null;
-                      return (
-                        <DropdownMenuItem
-                          key={microphone.id}
-                          onSelect={() =>
-                            updateAssignee(assignee.id, {
-                              microphoneIds: [
-                                ...(assignee.microphoneIds || []),
-                                microphone.id,
-                              ],
-                            })
-                          }
-                        >
-                          <ServicePlanMicrophoneIcon
-                            microphone={microphone}
-                            color={microphone.color}
-                            className="size-4 shrink-0"
-                          />
-                          <span className="truncate">{microphone.name}</span>
-                          {scheduledLabel ? (
-                            <span className="ml-auto shrink-0 text-[10px] text-amber-300">
-                              {scheduledLabel}
-                            </span>
-                          ) : (
-                            <span className="ml-auto shrink-0 text-xs text-gray-400">
-                              {microphone.type}
-                            </span>
-                          )}
-                        </DropdownMenuItem>
-                      );
-                    })}
+                  <DropdownMenuContent
+                    align="start"
+                    className="min-w-52 overflow-hidden p-0"
+                  >
+                    <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
+                      {availableMicrophones.map((microphone) => {
+                        const scheduledHolders =
+                          scheduledMicrophoneHolders?.get(microphone.id) || [];
+                        const scheduledLabel = scheduledHolders.length
+                          ? `Assigned: ${scheduledHolders.join(", ")}`
+                          : null;
+                        return (
+                          <DropdownMenuItem
+                            key={microphone.id}
+                            onSelect={() =>
+                              updateAssignee(assignee.id, {
+                                microphoneIds: [
+                                  ...(assignee.microphoneIds || []),
+                                  microphone.id,
+                                ],
+                              })
+                            }
+                          >
+                            <ServicePlanMicrophoneIcon
+                              microphone={microphone}
+                              color={microphone.color}
+                              className="size-4 shrink-0"
+                            />
+                            <span className="truncate">{microphone.name}</span>
+                            {scheduledLabel ? (
+                              <span className="ml-auto shrink-0 text-[10px] text-amber-300">
+                                {scheduledLabel}
+                              </span>
+                            ) : (
+                              <span className="ml-auto shrink-0 text-xs text-gray-400">
+                                {microphone.type}
+                              </span>
+                            )}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </div>
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}

@@ -166,6 +166,7 @@ function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
 function getPresenceSurface(pathname: string): "controller" | "display" | null {
   if (
     pathname.startsWith("/controller") ||
+    pathname.startsWith("/aux-controller") ||
     pathname.startsWith("/overlay-controller") ||
     pathname.startsWith("/board-controller") ||
     pathname.startsWith("/credits-editor") ||
@@ -426,7 +427,7 @@ type GlobalInfoContextType = {
    * Narrower than canViewTeams: also true for a view-only paired workstation
    * (permissions.services === "view"). Gate Service Plan *viewing* on this,
    * not canViewTeams — that flag also covers the Teams roster, which carries
-   * member PII a shared workstation must not receive.
+   * member PII unless the workstation has the booth (service workspace) grant.
    */
   canViewServices: boolean;
   canViewTeam?: (teamId: string) => boolean;

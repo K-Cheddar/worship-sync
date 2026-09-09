@@ -2660,7 +2660,7 @@ export const selectResolvedOutputSlot = (
   return source;
 };
 
-/** Display this one is mirroring, or "" — for operator chrome on both ends. */
+/** Display this one is mirroring, or "" — for follower operator chrome. */
 export const selectOutputFollowing = (
   state: WithPresentation,
   outputId: string,
@@ -2668,7 +2668,7 @@ export const selectOutputFollowing = (
 
 const EMPTY_FOLLOWER_OUTPUT_IDS: readonly string[] = [];
 
-/** Ids of displays currently mirroring this one, so its controller can say so. */
+/** Ids of displays currently mirroring this one. */
 export const selectFollowerOutputIds = createSelector(
   [
     (state: WithPresentation) => state?.presentation?.outputs,

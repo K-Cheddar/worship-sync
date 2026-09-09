@@ -49,7 +49,7 @@ describe("ServiceTimesList manual adjust", () => {
         services={services}
         onEdit={jest.fn()}
         upcomingService={null}
-        upcomingServiceTimeText={null}
+        upcomingServiceTargetIso={null}
         canEdit
       />,
     );
@@ -69,7 +69,7 @@ describe("ServiceTimesList manual adjust", () => {
         services={services}
         onEdit={jest.fn()}
         upcomingService={null}
-        upcomingServiceTimeText={null}
+        upcomingServiceTargetIso={null}
         canEdit
       />,
     );
@@ -90,7 +90,7 @@ describe("ServiceTimesList manual adjust", () => {
         services={services}
         onEdit={jest.fn()}
         upcomingService={null}
-        upcomingServiceTimeText={null}
+        upcomingServiceTargetIso={null}
         canEdit
       />,
     );
@@ -110,7 +110,7 @@ describe("ServiceTimesList manual adjust", () => {
         services={services}
         onEdit={jest.fn()}
         upcomingService={null}
-        upcomingServiceTimeText={null}
+        upcomingServiceTargetIso={null}
         canEdit={false}
       />,
     );
@@ -127,7 +127,7 @@ describe("ServiceTimesList manual adjust", () => {
         services={services}
         onEdit={jest.fn()}
         upcomingService={null}
-        upcomingServiceTimeText={null}
+        upcomingServiceTargetIso={null}
         canEdit
       />,
     );

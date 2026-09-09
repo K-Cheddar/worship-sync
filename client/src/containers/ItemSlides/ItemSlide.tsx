@@ -7,7 +7,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
 import { memo, useEffect, useRef } from "react";
-import { Video } from "lucide-react";
+import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 
@@ -294,12 +294,10 @@ const ItemSlide = ({
           }
         />
         {slide.mediaSource?.kind === "local-video-input" ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-6 flex flex-col items-center justify-center gap-1 bg-black/55 text-white">
-            <Video className="size-6" aria-hidden />
-            <span className="max-w-[90%] truncate text-[10px] font-medium">
-              {slide.mediaSource.label}
-            </span>
-          </div>
+          <LocalVideoInputSlideBadge
+            label={slide.mediaSource.label}
+            captureKind={slide.mediaSource.captureKind}
+          />
         ) : null}
       </div>
     </li>

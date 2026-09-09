@@ -66,8 +66,8 @@ import { toTeamService } from "../Teams/teamsUtils";
 import { initiateLiveCredits } from "../../store/creditsSlice";
 import { selectOutputSlot } from "../../store/presentationSlice";
 import { getChurchDataPath } from "../../utils/firebasePaths";
-import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
+import NextServiceCountdown from "../../components/NextServiceCountdownText/NextServiceCountdown";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 import {
   formatOccurrenceLabel,
@@ -102,46 +102,48 @@ const ChatUnreadBadge = ({ count }: { count: number }) => {
 
 type ServiceHeadingProps = {
   service?: ServiceTime | null;
-  serviceTimeText?: string | null;
+  targetIso?: string | null;
 };
 
-const ServiceHeading = ({ service, serviceTimeText }: ServiceHeadingProps) => {
-  if (!service || !serviceTimeText) return null;
+const ServiceHeading = ({ service, targetIso }: ServiceHeadingProps) => {
+  if (!service || !targetIso) return null;
   const name = service.name || "Service";
 
-  if (serviceTimeText === "0") {
-    return (
-      <p className="min-w-0 flex-1 truncate text-lg font-semibold">
-        {`${name} is live`}
-      </p>
-    );
-  }
-
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-3">
-      <p className="min-w-0 truncate text-lg font-semibold">{name}:</p>
-      <div
-        className="shrink-0 rounded-md border border-white/20 bg-gray-950 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight"
-        style={{ color: service.color || "#ffffff" }}
-        aria-label={`Begins in ${serviceTimeText}`}
-      >
-        {serviceTimeText}
-      </div>
-    </div>
+    <NextServiceCountdown targetIso={targetIso}>
+      {(serviceTimeText) =>
+        serviceTimeText === "0" ? (
+          <p className="min-w-0 flex-1 truncate text-lg font-semibold">
+            {`${name} is live`}
+          </p>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <p className="min-w-0 truncate text-lg font-semibold">{name}:</p>
+            <div
+              className="shrink-0 rounded-md border border-white/20 bg-gray-950 px-2.5 py-1 text-lg font-semibold tabular-nums tracking-tight"
+              style={{ color: service.color || "#ffffff" }}
+              aria-label={`Begins in ${serviceTimeText}`}
+            >
+              {serviceTimeText}
+            </div>
+          </div>
+        )
+      }
+    </NextServiceCountdown>
   );
 };
 
 const WorkspacePage = ({
   children,
   service,
-  serviceTimeText,
+  targetIso,
 }: ServiceHeadingProps & {
   children: ReactNode;
 }) => (
   <main className="flex h-dvh flex-col overflow-hidden bg-homepage-canvas p-3 text-white lg:p-4">
     <header className="mb-3 flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-gray-700 bg-gray-900/60 px-3 py-2">
       <HomeToolbarMenu />
-      <ServiceHeading service={service} serviceTimeText={serviceTimeText} />
+      <ServiceHeading service={service} targetIso={targetIso} />
       <div className="ml-auto shrink-0">
         <UserSection />
       </div>
@@ -511,7 +513,6 @@ const CurrentServiceWorkspace = () => {
     () => upcomingService?.nextAt.toISOString() ?? null,
     [upcomingService],
   );
-  const serviceTimeText = useNextServiceCountdownText(upcomingTargetIso);
   const headerService = upcomingService?.service ?? null;
 
   /** Lives in the plan's own actions menu rather than the page toolbar: it
@@ -685,7 +686,7 @@ const CurrentServiceWorkspace = () => {
 
   if (!canViewTeams) {
     return (
-      <WorkspacePage service={headerService} serviceTimeText={serviceTimeText}>
+      <WorkspacePage service={headerService} targetIso={upcomingTargetIso}>
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4">
           <section className="max-w-md rounded-xl border border-gray-700 bg-gray-900/80 p-6 text-center">
             <h2 className="text-lg font-semibold">Teams access required</h2>
@@ -700,7 +701,7 @@ const CurrentServiceWorkspace = () => {
 
   if (!occurrence || !service) {
     return (
-      <WorkspacePage service={headerService} serviceTimeText={serviceTimeText}>
+      <WorkspacePage service={headerService} targetIso={upcomingTargetIso}>
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4">
           <section className="max-w-md rounded-xl border border-gray-700 bg-gray-900/80 p-6 text-center">
             <ListChecks
@@ -751,7 +752,7 @@ const CurrentServiceWorkspace = () => {
   );
 
   return (
-    <WorkspacePage service={headerService} serviceTimeText={serviceTimeText}>
+    <WorkspacePage service={headerService} targetIso={upcomingTargetIso}>
       <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Cloudinary } from "@cloudinary/url-gen";
 import Button from "../../components/Button/Button";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import ColorField from "../../components/ColorField/ColorField";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -600,6 +601,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
   const [pairLabel, setPairLabel] = useState("");
   const [workstationAccess, setWorkstationAccess] =
     useState<WorkstationAccessOption>("full");
+  const [serviceWorkspaceAccess, setServiceWorkspaceAccess] = useState(false);
   const [labelError, setLabelError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [workstationPairingCode, setWorkstationPairingCode] = useState<{
@@ -609,6 +611,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
 
   useEffect(() => {
     setWorkstationPairingCode(null);
+    setServiceWorkspaceAccess(false);
   }, [formsResetSignal]);
 
   const handleGenerate = useCallback(async () => {
@@ -623,6 +626,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
       const response = await createWorkstationPairing(churchId, {
         label,
         appAccess: workstationAccess,
+        serviceWorkspaceAccess,
       });
       const token = response.pairing.token;
       if (!token) {
@@ -633,6 +637,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
         return;
       }
       setPairLabel("");
+      setServiceWorkspaceAccess(false);
       setWorkstationPairingCode({
         label: response.pairing.label,
         token,
@@ -646,7 +651,15 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, onGenerated, pairLabel, showApiError, showToast, workstationAccess]);
+  }, [
+    churchId,
+    onGenerated,
+    pairLabel,
+    serviceWorkspaceAccess,
+    showApiError,
+    showToast,
+    workstationAccess,
+  ]);
 
   return (
     <>
@@ -685,6 +698,21 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
         >
           {isGenerating ? "Generating code..." : "Generate code"}
         </Button>
+      </div>
+      <div className="mt-3 space-y-1">
+        <Checkbox
+          id="workstation-service-workspace"
+          checked={serviceWorkspaceAccess}
+          onCheckedChange={(checked) =>
+            setServiceWorkspaceAccess(Boolean(checked))
+          }
+          label="Service workspace"
+        />
+        <p className="text-sm text-gray-400">
+          Lets this shared PC open Current Service Workspace: edit the plan,
+          see who&apos;s serving, and assign microphones. Does not allow Teams
+          roster or schedule edits.
+        </p>
       </div>
       {workstationPairingCode && (
         <PairingCodeBanner

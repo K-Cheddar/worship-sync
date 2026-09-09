@@ -206,9 +206,12 @@ describe("MemberManager member preferences", () => {
     expect(filterButton).toBeEnabled();
 
     await user.click(filterButton);
-    expect(
-      screen.getByRole("region", { name: "Filter members" }),
-    ).not.toHaveAttribute("inert");
+    // Coverage runs stretch past the default 5s when both panels animate open.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("region", { name: "Filter members" }),
+      ).not.toHaveAttribute("inert");
+    });
     expect(
       screen.getByRole("region", { name: "Edit member" }),
     ).not.toHaveAttribute("inert");
@@ -236,7 +239,7 @@ describe("MemberManager member preferences", () => {
       screen.getByRole("region", { name: "Create member" }),
     ).not.toHaveAttribute("inert");
     expect(screen.getByLabelText(/First name/)).toHaveValue("");
-  });
+  }, 15_000);
 
   it("guards member changes after selecting a profile image and clears the preview", async () => {
     const user = userEvent.setup();

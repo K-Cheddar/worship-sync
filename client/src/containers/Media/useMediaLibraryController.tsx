@@ -22,6 +22,12 @@ import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { deleteLocalImage } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { isDesktopCaptureKind } from "../../utils/localVideoInput";
+import {
+  buildLocalVideoInputSendPresentation,
+  isLocalVideoInputMedia,
+  mediaHasSendableContent,
+  sendLocalVideoInputWithWarmCapture,
+} from "../../utils/localVideoMediaLibrary";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -493,9 +499,16 @@ export function useMediaLibraryController({
     navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
   }, [navigateToFolder, selectedRealFolder]);
 
+  const openSingleDeleteModal = useCallback((mediaItem: MediaType) => {
+    setMediaToDelete(mediaItem);
+    setIsDeletingMultiple(false);
+    setShowDeleteModal(true);
+  }, []);
+
   /** Fullscreen modal keeps selection in MediaModal; copy into parent before bulk delete. */
   const openMultiDeleteModal = (ids: Set<string>) => {
     setSelectedMediaIds(new Set(ids));
+    setMediaToDelete(null);
     setIsDeletingMultiple(true);
     setShowDeleteModal(true);
   };
@@ -546,8 +559,36 @@ export function useMediaLibraryController({
 
   const handleSendSelectedMediaToProjector = useCallback(() => {
     const m = selectedMedia;
-    if (!m.background || !isProjectorTransmitting) return;
+    if (!mediaHasSendableContent(m) || !isProjectorTransmitting) return;
     const displayName = mediaLibraryDisplayName(m);
+
+    if (isLocalVideoInputMedia(m)) {
+      const built = buildLocalVideoInputSendPresentation({
+        source: m.localVideoInput,
+        name: displayName,
+        outputIds: projectorTargetIds,
+        brightness: defaultFreeFormBackgroundBrightness,
+      });
+      if (!built.ok) {
+        showToast(built.message, "warning");
+        return;
+      }
+      void sendLocalVideoInputWithWarmCapture({
+        sourceId: built.sourceId,
+        captureKind: m.localVideoInput.captureKind,
+        send: () => {
+          dispatch(updateProjector(built.presentation));
+          showToast(
+            `Sent "${truncatedMediaToastLabel(m)}" to ${projectorTargetLabel}. Only this computer can show the live share.`,
+            "success",
+          );
+        },
+        onError: (message) => showToast(message, "warning"),
+      });
+      return;
+    }
+
+    if (!m.background) return;
     const slide = createNewSlide({
       type: "Section",
       name: "Section 1",
@@ -584,16 +625,18 @@ export function useMediaLibraryController({
 
   const handleCreateCustomItemFromMedia = useCallback(async () => {
     const m = selectedMedia;
-    if (!db || !m.background) return;
+    if (!db || !mediaHasSendableContent(m)) return;
     const displayName = mediaLibraryDisplayName(m);
+    const isLiveInput = isLocalVideoInputMedia(m);
     try {
       const newItem = await createNewFreeForm({
         name: displayName,
         text: "",
         list: allItemsList,
         db,
-        background: m.background,
-        mediaInfo: m,
+        background: isLiveInput ? "" : m.background,
+        mediaInfo: isLiveInput ? undefined : m,
+        mediaSource: isLiveInput ? m.localVideoInput : undefined,
         brightness: defaultFreeFormBackgroundBrightness,
         overflow: defaultFreeFormFontMode,
         emptyBodyText: true,
@@ -602,6 +645,8 @@ export function useMediaLibraryController({
         name: newItem.name,
         type: newItem.type,
         background: newItem.background,
+        localImage: isLiveInput ? undefined : m.localImage,
+        localVideoFile: isLiveInput ? undefined : m.localVideoFile,
         _id: newItem._id,
         listId: "",
       };
@@ -615,7 +660,9 @@ export function useMediaLibraryController({
         ),
       );
       showToast(
-        `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created and added to the outline.`,
+        isLiveInput
+          ? `Live input item "${truncatedMediaToastLabel({ name: newItem.name })}" created. Select its slide to send the share to your displays.`
+          : `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created and added to the outline.`,
         "success",
       );
     } catch {
@@ -664,10 +711,10 @@ export function useMediaLibraryController({
       selectedCount: selectedMediaIds.size,
       dispatch,
       onDeleteSingle: () => {
-        setMediaToDelete(selectedMedia);
-        setShowDeleteModal(true);
+        openSingleDeleteModal(selectedMedia);
       },
       onDeleteMultiple: () => {
+        setMediaToDelete(null);
         setIsDeletingMultiple(true);
         setShowDeleteModal(true);
       },
@@ -741,6 +788,7 @@ export function useMediaLibraryController({
     onManageCanvaSource,
     onRelinkVideoInput,
     getLocalMediaCloudShareBarAction,
+    openSingleDeleteModal,
   ]);
 
   const actionBarDetails = useMemo(() => {
@@ -1085,23 +1133,35 @@ export function useMediaLibraryController({
 
   useGlobalBroadcast(updateMediaListFromExternal);
 
+  const dismissDeleteModal = () => {
+    setShowDeleteModal(false);
+    setMediaToDelete(null);
+    setIsDeletingMultiple(false);
+  };
+
   const handleConfirmDelete = async () => {
     if (deleteConfirmLockRef.current) return;
     deleteConfirmLockRef.current = true;
     setIsDeleteInProgress(true);
+    const deletingMultiple = isDeletingMultiple;
+    const singleTarget = mediaToDelete;
+    // Dismiss immediately so a long reference sweep cannot leave Confirm locked.
+    dismissDeleteModal();
     try {
-      if (isDeletingMultiple) {
+      if (deletingMultiple) {
         await handleDeleteAll();
         return;
       }
 
-      if (!db || !mediaToDelete) return;
+      if (!db || !singleTarget) return;
 
       try {
-        const result = await removeMediaRowsAfterSweep([mediaToDelete]);
+        const result = await removeMediaRowsAfterSweep([singleTarget]);
         if (result.phase !== "ok") return;
-        const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
+        const updatedList = list.filter((item) => item.id !== singleTarget.id);
         dispatch(setMediaListAndFolders({ list: updatedList, folders }));
+        clearSelection();
+        dispatch(ActionCreators.clearHistory());
         const flushResult = await flushMediaLibraryDocToPouch(
           db,
           updatedList,
@@ -1114,10 +1174,6 @@ export function useMediaLibraryController({
           setProviderRetryRows(result.providerFailed);
           setShowProviderRetryModal(true);
         }
-        clearSelection();
-        dispatch(ActionCreators.clearHistory());
-        setShowDeleteModal(false);
-        setMediaToDelete(null);
       } catch (error) {
         console.error("Error deleting background:", error);
       }
@@ -1129,9 +1185,8 @@ export function useMediaLibraryController({
   };
 
   const handleCancelDelete = () => {
-    setShowDeleteModal(false);
-    setMediaToDelete(null);
-    setIsDeletingMultiple(false);
+    if (isDeleteInProgress) return;
+    dismissDeleteModal();
   };
 
   const handleDeleteAll = async () => {
@@ -1144,6 +1199,8 @@ export function useMediaLibraryController({
       if (result.phase !== "ok") return;
       const updatedList = list.filter((item) => !selectedMediaIds.has(item.id));
       dispatch(setMediaListAndFolders({ list: updatedList, folders }));
+      clearSelection();
+      dispatch(ActionCreators.clearHistory());
       const flushResult = await flushMediaLibraryDocToPouch(
         db,
         updatedList,
@@ -1156,13 +1213,8 @@ export function useMediaLibraryController({
         setProviderRetryRows(result.providerFailed);
         setShowProviderRetryModal(true);
       }
-      clearSelection();
-      dispatch(ActionCreators.clearHistory());
     } catch (error) {
       console.error("Error deleting media:", error);
-    } finally {
-      setShowDeleteModal(false);
-      setIsDeletingMultiple(false);
     }
   };
 
@@ -1181,20 +1233,20 @@ export function useMediaLibraryController({
     is_audio,
     canvaImportKey,
     canvaSource,
-  }: mediaInfoType) => {
+  }: mediaInfoType): MediaType | undefined => {
     if (isGuestSession) {
       notifyMediaAction(
         "Guest mode uses sample media only. Sign in to upload images or videos.",
         "error",
       );
-      return;
+      return undefined;
     }
     if (
       canvaImportKey &&
       list.some((mediaItem) => mediaItem.canvaImportKey === canvaImportKey)
     ) {
       notifyMediaAction("That Canva page is already in Media.", "error");
-      return;
+      return undefined;
     }
     let placeholderImage = "";
     let thumbnailUrl = "";
@@ -1235,7 +1287,67 @@ export function useMediaLibraryController({
     };
 
     dispatch(addItemToMediaList(newMedia));
+    return newMedia;
   };
+
+  const createCanvaDeckItemFromMedia = useCallback(
+    async (pages: MediaType[], designTitle: string) => {
+      if (!db || pages.length === 0) return;
+      try {
+        const newItem = await createNewFreeForm({
+          name: designTitle || "Canva presentation",
+          text: "",
+          list: allItemsList,
+          db,
+          background: pages[0].background,
+          mediaInfo: pages[0],
+          brightness: defaultFreeFormBackgroundBrightness,
+          overflow: defaultFreeFormFontMode,
+          emptyBodyText: true,
+          slideDefs: pages.map((page, index) => ({
+            name: `Page ${index + 1}`,
+            background: page.background,
+            mediaInfo: page,
+          })),
+        });
+        const listItem = {
+          name: newItem.name,
+          type: newItem.type,
+          background: newItem.background,
+          _id: newItem._id,
+          listId: "",
+        };
+        dispatch(setActiveItem(newItem));
+        const addedAction = dispatch(addItemToItemList(listItem));
+        dispatch(addItemToAllItemsList(listItem));
+        navigate(
+          getControllerItemPath(
+            { _id: newItem._id, listId: addedAction.payload.listId },
+            controllerBasePath,
+          ),
+        );
+        showToast(
+          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${pages.length} slides.`,
+          "success",
+        );
+      } catch {
+        showToast(
+          "Pages were imported, but the multi-slide item could not be created. Try Create custom item from Media.",
+          "error",
+        );
+      }
+    },
+    [
+      allItemsList,
+      controllerBasePath,
+      db,
+      defaultFreeFormBackgroundBrightness,
+      defaultFreeFormFontMode,
+      dispatch,
+      navigate,
+      showToast,
+    ],
+  );
 
   const addMuxVideo = ({
     playbackId,
@@ -1433,6 +1545,7 @@ export function useMediaLibraryController({
     uploadProgress,
     requestMediaUpload,
     addNewBackground,
+    createCanvaDeckItemFromMedia,
     addMuxVideo,
     refreshCanvaImage,
     refreshCanvaVideo,
@@ -1467,6 +1580,7 @@ export function useMediaLibraryController({
     handleMoveTo,
     moveSelectKey,
     selectedLibraryFilter,
+    uploadTargetFolderId,
     navigateToFolder,
     handleDeleteFolderSubtree,
     handleDeleteFolderKeepContents,
@@ -1512,6 +1626,7 @@ export function useMediaLibraryController({
     setPreviewMedia,
     setMediaToDelete,
     setShowDeleteModal,
+    openSingleDeleteModal,
     openMultiDeleteModal,
     mediaItemsPerRow,
     mediaListRef,

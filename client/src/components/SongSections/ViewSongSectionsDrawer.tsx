@@ -82,6 +82,12 @@ const ViewSongSectionsDrawer = ({
     setIsEditing(isOpen && initialMode === "edit");
   }, [initialMode, isOpen, song?._id]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setIsEditingLyrics(false);
+    }
+  }, [isOpen]);
+
   const persistSongPatch = useCallback(
     async (patch: PersistSongPatch) => {
       if (!db || !song) {
@@ -261,132 +267,134 @@ const ViewSongSectionsDrawer = ({
   }
 
   return (
-    <Drawer
-      isOpen={isOpen}
-      onClose={onClose}
-      title={`Song details — ${song.name}`}
-      size="lg"
-      position="right"
-      contentClassName="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
-      contentPadding="p-0"
-    >
-      <div className="flex flex-col gap-4 p-4">
-        {canEdit && !isEditing ? (
-          <div className="flex shrink-0 justify-end gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              svg={Pencil}
-              onClick={() => setIsEditingLyrics(true)}
-            >
-              Edit lyrics
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              svg={Pencil}
-              onClick={() => setIsEditing(true)}
-            >
-              Edit details
+    <>
+      <Drawer
+        isOpen={isOpen && !isEditingLyrics}
+        onClose={onClose}
+        title={`Song details — ${song.name}`}
+        size="lg"
+        position="right"
+        contentClassName="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
+        contentPadding="p-0"
+      >
+        <div className="flex flex-col gap-4 p-4">
+          {canEdit && !isEditing ? (
+            <div className="flex shrink-0 justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                svg={Pencil}
+                onClick={() => setIsEditingLyrics(true)}
+              >
+                Edit lyrics
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                svg={Pencil}
+                onClick={() => setIsEditing(true)}
+              >
+                Edit details
+              </Button>
+            </div>
+          ) : null}
+
+          {isEditing ? (
+            <section className="shrink-0 rounded-md border border-gray-700 bg-gray-900/60 p-3">
+              <ItemDetailsEditorFields
+                isOpen={isEditing}
+                onClose={() => setIsEditing(false)}
+                itemType="song"
+                itemName={song.name}
+                songMetadata={song.songMetadata}
+                songLinks={song.songLinks}
+                songAudio={song.songAudio}
+                onUploadSongAudio={onUploadSongAudioOverride ?? attachSongAudio}
+                onGetSongAudioUrl={onGetSongAudioUrlOverride ?? resolveSongAudioUrl}
+                onRemoveSongAudio={onRemoveSongAudioOverride ?? removeSongAudio}
+                onSave={onSave ?? persistSongPatch}
+              />
+            </section>
+          ) : (
+            <section className="shrink-0 space-y-3" aria-label="Song resources">
+              {song.songMetadata ? (
+                <dl className="grid gap-x-4 gap-y-1 rounded-md border border-gray-700 bg-gray-900/60 p-3 text-sm sm:grid-cols-[auto_1fr]">
+                  <dt className="text-gray-400">Artist</dt>
+                  <dd className="min-w-0 truncate text-gray-100">
+                    {song.songMetadata.artistName || "Not specified"}
+                  </dd>
+                  {song.songMetadata.albumName ? (
+                    <>
+                      <dt className="text-gray-400">Album</dt>
+                      <dd className="min-w-0 truncate text-gray-100">
+                        {song.songMetadata.albumName}
+                      </dd>
+                    </>
+                  ) : null}
+                  {song.songMetadata.key ? (
+                    <>
+                      <dt className="text-gray-400">Key</dt>
+                      <dd className="min-w-0 truncate text-gray-100">
+                        {song.songMetadata.key}
+                      </dd>
+                    </>
+                  ) : null}
+                </dl>
+              ) : null}
+
+              {song.songAudio ? (
+                <div>
+                  <h3 className="mb-1 text-sm font-semibold text-white">
+                    Reference MP3
+                  </h3>
+                  <SongAudioPlayer
+                    audio={song.songAudio}
+                    onGetUrl={resolveSongAudioUrl}
+                  />
+                </div>
+              ) : null}
+
+              {song.songLinks?.length ? (
+                <div>
+                  <h3 className="mb-1 text-sm font-semibold text-white">Links</h3>
+                  <ul className="space-y-2">
+                    {song.songLinks.map((link) => (
+                      <li key={link.id}>
+                        <SongLinkPreview link={link} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+          )}
+
+          <h3 className="shrink-0 text-sm font-semibold text-white">
+            Lyrics and arrangements
+          </h3>
+          <SongArrangementSectionsPanel
+            song={song}
+            mode="view"
+            scrollMode="page"
+            arrangementIndex={arrangementIndex}
+            onArrangementIndexChange={setArrangementIndex}
+            searchHighlight={searchHighlight}
+            arrangementSelectId="library-view-song-arrangement"
+          />
+          <div className="flex shrink-0 justify-end border-t border-gray-700 pt-4">
+            <Button variant="secondary" onClick={onClose} svg={X}>
+              Close
             </Button>
           </div>
-        ) : null}
-
-        {isEditing ? (
-          <section className="shrink-0 rounded-md border border-gray-700 bg-gray-900/60 p-3">
-            <ItemDetailsEditorFields
-              isOpen={isEditing}
-              onClose={() => setIsEditing(false)}
-              itemType="song"
-              itemName={song.name}
-              songMetadata={song.songMetadata}
-              songLinks={song.songLinks}
-              songAudio={song.songAudio}
-              onUploadSongAudio={onUploadSongAudioOverride ?? attachSongAudio}
-              onGetSongAudioUrl={onGetSongAudioUrlOverride ?? resolveSongAudioUrl}
-              onRemoveSongAudio={onRemoveSongAudioOverride ?? removeSongAudio}
-              onSave={onSave ?? persistSongPatch}
-            />
-          </section>
-        ) : (
-          <section className="shrink-0 space-y-3" aria-label="Song resources">
-            {song.songMetadata ? (
-              <dl className="grid gap-x-4 gap-y-1 rounded-md border border-gray-700 bg-gray-900/60 p-3 text-sm sm:grid-cols-[auto_1fr]">
-                <dt className="text-gray-400">Artist</dt>
-                <dd className="min-w-0 truncate text-gray-100">
-                  {song.songMetadata.artistName || "Not specified"}
-                </dd>
-                {song.songMetadata.albumName ? (
-                  <>
-                    <dt className="text-gray-400">Album</dt>
-                    <dd className="min-w-0 truncate text-gray-100">
-                      {song.songMetadata.albumName}
-                    </dd>
-                  </>
-                ) : null}
-                {song.songMetadata.key ? (
-                  <>
-                    <dt className="text-gray-400">Key</dt>
-                    <dd className="min-w-0 truncate text-gray-100">
-                      {song.songMetadata.key}
-                    </dd>
-                  </>
-                ) : null}
-              </dl>
-            ) : null}
-
-            {song.songAudio ? (
-              <div>
-                <h3 className="mb-1 text-sm font-semibold text-white">
-                  Reference MP3
-                </h3>
-                <SongAudioPlayer
-                  audio={song.songAudio}
-                  onGetUrl={resolveSongAudioUrl}
-                />
-              </div>
-            ) : null}
-
-            {song.songLinks?.length ? (
-              <div>
-                <h3 className="mb-1 text-sm font-semibold text-white">Links</h3>
-                <ul className="space-y-2">
-                  {song.songLinks.map((link) => (
-                    <li key={link.id}>
-                      <SongLinkPreview link={link} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </section>
-        )}
-
-        <h3 className="shrink-0 text-sm font-semibold text-white">
-          Lyrics and arrangements
-        </h3>
-        <SongArrangementSectionsPanel
-          song={song}
-          mode="view"
-          scrollMode="page"
-          arrangementIndex={arrangementIndex}
-          onArrangementIndexChange={setArrangementIndex}
-          searchHighlight={searchHighlight}
-          arrangementSelectId="library-view-song-arrangement"
-        />
-        <div className="flex shrink-0 justify-end border-t border-gray-700 pt-4">
-          <Button variant="secondary" onClick={onClose} svg={X}>
-            Close
-          </Button>
         </div>
-      </div>
+      </Drawer>
       <LyricsEditor
         song={song}
         isOpen={isEditingLyrics}
         onClose={() => setIsEditingLyrics(false)}
         onSaveLyrics={persistSongLyrics}
       />
-    </Drawer>
+    </>
   );
 };
 

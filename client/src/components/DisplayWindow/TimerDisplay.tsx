@@ -75,40 +75,48 @@ export function formatTime(
   return [hours, paddedMinutes, paddedSecs].join(":");
 }
 
-const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
-  const timer = useSelector((state: RootState) =>
-    state.timers.timers.find((t) => t.id === timerInfo?.id),
-  );
-  const liveRemaining = useLiveRemainingSeconds(timer ?? timerInfo);
+/** Only mounted for {{service-time}} boxes so timer-only slides stay off the ticker. */
+const ServiceTimeWordsDisplay = ({ words }: { words: string }) => {
   const { services: availableServices } = useAvailableServiceTimes();
   const upcomingService = useDisplayedUpcomingService(
     availableServices,
     NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
     { keepRecentlyElapsedDuringGrace: true },
   );
-  const targetIso = useMemo(() => {
-    return upcomingService?.nextAt.toISOString() ?? null;
-  }, [upcomingService]);
+  const targetIso = useMemo(
+    () => upcomingService?.nextAt.toISOString() ?? null,
+    [upcomingService],
+  );
   const serviceTimeCountdownText = useNextServiceCountdownText(targetIso);
+  const parts = words.split("{{service-time}}");
 
-  // Handle {{service-time}} placeholder — renders upcoming service countdown from Redux.
-  if (words.includes("{{service-time}}")) {
-    const parts = words.split("{{service-time}}");
-    return (
-      <>
-        {parts.map((part, index) => (
-          <span key={index}>
-            {part}
-            {index < parts.length - 1 && (
-              <span className="inline-flex flex-wrap whitespace-nowrap tabular-nums">
-                {serviceTimeCountdownText ?? "--:--"}
-              </span>
-            )}
-          </span>
-        ))}
-      </>
-    );
-  }
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={index}>
+          {part}
+          {index < parts.length - 1 && (
+            <span className="inline-flex flex-wrap whitespace-nowrap tabular-nums">
+              {serviceTimeCountdownText ?? "--:--"}
+            </span>
+          )}
+        </span>
+      ))}
+    </>
+  );
+};
+
+const TimerWordsDisplay = ({
+  timerInfo,
+  words,
+}: {
+  timerInfo?: TimerInfo;
+  words: string;
+}) => {
+  const timer = useSelector((state: RootState) =>
+    state.timers.timers.find((t) => t.id === timerInfo?.id),
+  );
+  const liveRemaining = useLiveRemainingSeconds(timer ?? timerInfo);
 
   if (!timerInfo) return <>{words.replace("{{timer}}", "")}</>;
   const resolvedTimer = timer || timerInfo;
@@ -157,6 +165,13 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
       ))}
     </>
   );
+};
+
+const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
+  if (words.includes("{{service-time}}")) {
+    return <ServiceTimeWordsDisplay words={words} />;
+  }
+  return <TimerWordsDisplay timerInfo={timerInfo} words={words} />;
 };
 
 export default TimerDisplay;

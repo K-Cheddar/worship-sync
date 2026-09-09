@@ -7,6 +7,7 @@ import reducer, {
   selectControllerProfiles,
   selectControllerProfilesLoaded,
   setControllerProfileDefaultSends,
+  setControllerProfileDescription,
   setControllerProfileEnabled,
   setControllerProfileOutputs,
   setControllerProfilesFromRemote,
@@ -79,9 +80,9 @@ describe("addControllerProfile", () => {
   it("seeds no displays, so it never silently claims a live screen", () => {
     const store = createStore();
     store.dispatch(addControllerProfile({ name: "Lobby" }));
-    expect(profilesOf(store).find((p) => p.name === "Lobby")!.outputIds).toEqual(
-      [],
-    );
+    expect(
+      profilesOf(store).find((p) => p.name === "Lobby")!.outputIds,
+    ).toEqual([]);
   });
 });
 
@@ -91,7 +92,38 @@ describe("editing a controller", () => {
     store.dispatch(addControllerProfile({ name: "Lobby" }));
     const id = auxIdOf(store);
     store.dispatch(renameControllerProfile({ id, name: "  Cafe  Screen " }));
-    expect(profilesOf(store).find((p) => p.id === id)!.name).toBe("Cafe Screen");
+    expect(profilesOf(store).find((p) => p.id === id)!.name).toBe(
+      "Cafe Screen",
+    );
+  });
+
+  it("sets a home description", () => {
+    const store = createStore();
+    store.dispatch(addControllerProfile({ name: "Lobby" }));
+    const id = auxIdOf(store);
+    store.dispatch(
+      setControllerProfileDescription({
+        id,
+        description: "  Drive the lobby TVs.  ",
+      }),
+    );
+    expect(profilesOf(store).find((p) => p.id === id)!.description).toBe(
+      "Drive the lobby TVs.",
+    );
+  });
+
+  it("clears a home description back to the type default", () => {
+    const store = createStore();
+    store.dispatch(addControllerProfile({ name: "Lobby" }));
+    const id = auxIdOf(store);
+    store.dispatch(
+      setControllerProfileDescription({
+        id,
+        description: "Custom copy",
+      }),
+    );
+    store.dispatch(setControllerProfileDescription({ id, description: "  " }));
+    expect(profilesOf(store).find((p) => p.id === id)!.description).toBe("");
   });
 
   it("retires without removing", () => {
@@ -122,7 +154,9 @@ describe("editing a controller", () => {
     store.dispatch(addControllerProfile({ name: "Lobby" }));
     const id = auxIdOf(store);
     store.dispatch(setControllerProfileOutputs({ id, outputIds: ["a", "b"] }));
-    store.dispatch(setControllerProfileDefaultSends({ id, outputIds: ["a", "b"] }));
+    store.dispatch(
+      setControllerProfileDefaultSends({ id, outputIds: ["a", "b"] }),
+    );
     store.dispatch(setControllerProfileOutputs({ id, outputIds: ["a"] }));
     expect(
       profilesOf(store).find((p) => p.id === id)!.defaultSendOutputIds,

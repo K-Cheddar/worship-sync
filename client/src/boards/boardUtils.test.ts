@@ -68,12 +68,12 @@ describe("boardUtils", () => {
     ).toBe("clamp(2.25rem, 38.4px, 5rem)");
   });
 
-  it("builds board public URLs from the current window location in the browser", () => {
+  it("builds board public URLs as path routes for link previews", () => {
     expect(buildBoardPublicUrl("sunday", "board")).toBe(
-      `${window.location.origin}${window.location.pathname}${window.location.search}#/boards/sunday`,
+      `${window.location.origin}/boards/sunday`,
     );
     expect(buildBoardPublicUrl("sunday", "present")).toBe(
-      `${window.location.origin}${window.location.pathname}${window.location.search}#/boards/present/sunday`,
+      `${window.location.origin}/boards/present/sunday`,
     );
   });
 
@@ -365,4 +365,3 @@ describe("boardHasOnlyPreviousDayPosts", () => {
     expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(false);
   });
 });
-

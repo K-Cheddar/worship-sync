@@ -14,13 +14,35 @@ const sortSongsAlphabetically = (songs: DBItem[]): DBItem[] =>
     return artistA.localeCompare(artistB, "en", { numeric: true });
   });
 
+type SearchRankFields = {
+  titleMatch: number;
+  matchRank: number;
+};
+
+/**
+ * Title matches always outrank content-only matches. Within each group,
+ * higher matchRank wins, then alphabetical name.
+ */
+export const compareItemSearchRanks = (
+  a: SearchRankFields & { name: string },
+  b: SearchRankFields & { name: string },
+): number => {
+  const aHasTitle = a.titleMatch > 0 ? 1 : 0;
+  const bHasTitle = b.titleMatch > 0 ? 1 : 0;
+  return (
+    bHasTitle - aHasTitle ||
+    b.matchRank - a.matchRank ||
+    a.name.localeCompare(b.name, "en", { numeric: true })
+  );
+};
+
 /** Same ranking as the Songs library (FilteredItems): title + lyrics across arrangements. */
 export const computeSongSearchEnrichment = (
   song: DBItem,
   cleanSearchValue: string,
 ) => {
   const name = song.name.toLowerCase();
-  const match = getMatchForString({
+  const titleMatch = getMatchForString({
     string: name,
     searchValue: cleanSearchValue,
     allowPartial: true,
@@ -45,22 +67,24 @@ export const computeSongSearchEnrichment = (
 
   const { updatedMatchedWords, updatedMatch } = updateWordMatches({
     matchedWords: "",
-    match,
+    match: titleMatch,
     wordMatches,
   });
 
-  const matchRank = match + updatedMatch;
+  const matchRank = titleMatch + updatedMatch;
   const hasLyricMatch = wordMatches.length > 0;
 
   return {
+    titleMatch,
     matchRank,
     matchedWords: updatedMatchedWords,
-    showWords: hasLyricMatch && match === 0,
+    showWords: hasLyricMatch && titleMatch === 0,
   };
 };
 
 export type SongSearchRow = {
   song: DBItem;
+  titleMatch: number;
   matchRank: number;
   matchedWords: string;
   /** When true, lyric snippet is a stronger match than title (library / FilteredItems behavior). */
@@ -80,6 +104,7 @@ export const filterAndSortSongsForSearchWithEnrichment = (
   if (cleanSearchValue === "") {
     return sortSongsAlphabetically(songs).map((song) => ({
       song,
+      titleMatch: 0,
       matchRank: 0,
       matchedWords: "",
       showWords: false,
@@ -92,10 +117,11 @@ export const filterAndSortSongsForSearchWithEnrichment = (
       ...computeSongSearchEnrichment(song, cleanSearchValue),
     }))
     .filter((row) => row.matchRank > 0)
-    .sort(
-      (a, b) =>
-        b.matchRank - a.matchRank ||
-        a.song.name.localeCompare(b.song.name, "en", { numeric: true }),
+    .sort((a, b) =>
+      compareItemSearchRanks(
+        { titleMatch: a.titleMatch, matchRank: a.matchRank, name: a.song.name },
+        { titleMatch: b.titleMatch, matchRank: b.matchRank, name: b.song.name },
+      ),
     );
 };
 

@@ -37,7 +37,7 @@ const main = async () => {
     },
     {
       file: "invite.html",
-      html: renderInviteEmail(`${demoBase}/#/invite?token=demo-invite-token`, {
+      html: renderInviteEmail(`${demoBase}/invite?token=demo-invite-token`, {
         churchName: "Sample Community Church",
       }).then(({ html }) => html),
     },

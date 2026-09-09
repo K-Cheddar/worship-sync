@@ -1,8 +1,5 @@
 import type { MediaType } from "../../types";
-import {
-  getMediaLibraryOrigin,
-  MEDIA_LIBRARY_ORIGIN_META_LABELS,
-} from "./mediaLibraryOrigin";
+import { getMediaLibraryOriginMetaLabel } from "./mediaLibraryOrigin";
 
 /**
  * Drops the leading path segment (e.g. Cloudinary upload folder prefix) for
@@ -54,7 +51,7 @@ export function formatMediaDimensionsLine(m: MediaType): string {
   if (m.type === "video" && m.duration != null && Number.isFinite(m.duration)) {
     parts.push(`${Math.round(m.duration)}s`);
   }
-  parts.push(MEDIA_LIBRARY_ORIGIN_META_LABELS[getMediaLibraryOrigin(m)]);
+  parts.push(getMediaLibraryOriginMetaLabel(m));
   if (m.frameRate != null && Number.isFinite(m.frameRate)) {
     parts.push(`${m.frameRate} fps`);
   }

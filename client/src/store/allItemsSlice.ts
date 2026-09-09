@@ -1,6 +1,9 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
-import type { LocalImageReferencePatch } from "../utils/localImageAssets";
+import {
+  isLocalImageUrl,
+  type LocalImageReferencePatch,
+} from "../utils/localImageAssets";
 
 type AllItems = {
   list: ServiceItem[];
@@ -70,6 +73,9 @@ export const allItemsSlice = createSlice({
       item.localImage.storagePolicy = "local-and-cloud";
       item.localImage.cloudMediaId = action.payload.mediaId;
       item.localImage.cloudUrl = action.payload.url;
+      if (!item.background || isLocalImageUrl(item.background)) {
+        item.background = action.payload.url;
+      }
     },
     updateLocalImageReferenceInAllItems: (
       state,

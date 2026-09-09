@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSelector } from "../../hooks";
 import { selectOutputSlots } from "../../store/presentationSlice";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import {
-  acquireWarmLocalVideoCapture,
+  acquireWarmLocalVideoCaptureWithBusyRetry,
   LocalVideoCaptureOwnedError,
   releaseWarmLocalVideoCapture,
 } from "../../utils/localVideoCapturePool";
@@ -13,11 +13,21 @@ import {
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
 import { reportLocalVideoIssue } from "../../utils/localVideoIssues";
+import {
+  readLocalVideoWarmIntent,
+  subscribeLocalVideoWarmIntent,
+} from "../../utils/localVideoWarmIntent";
 
 const RECOVERY_INTERVAL_MS = 3_000;
 const ISSUE_REPEAT_INTERVAL_MS = 30_000;
 const CAPTURE_RELEASE_GRACE_MS = 5_000;
 const CAPTURE_MANAGER_CONSUMER_ID = "active-output-manager";
+
+type ManagedSource = {
+  sourceId: string;
+  deviceLabel: string;
+  captureKind?: "device" | "screen" | "window";
+};
 
 const LocalVideoCaptureManager = () => {
   const outputSlots = useSelector(selectOutputSlots);
@@ -26,15 +36,43 @@ const LocalVideoCaptureManager = () => {
   const managedSourceIdsRef = useRef(new Set<string>());
   const pendingReleaseTimersRef = useRef(new Map<string, number>());
   const operationQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const activeInputs = useMemo(() => {
-    const inputs = Object.values(outputSlots).flatMap((slot) => {
-      const input = slot.info.localVideoInput;
-      return input?.ownerDeviceId === deviceId ? [input] : [];
+  const [listWarmSourceIds, setListWarmSourceIds] = useState(
+    () => readLocalVideoWarmIntent().sourceIds,
+  );
+
+  useEffect(() => {
+    return subscribeLocalVideoWarmIntent((intent) => {
+      setListWarmSourceIds(intent.sourceIds);
     });
-    return [
-      ...new Map(inputs.map((input) => [input.sourceId, input])).values(),
-    ];
-  }, [deviceId, outputSlots]);
+  }, []);
+
+  const activeInputs = useMemo(() => {
+    const bySource = new Map<string, ManagedSource>();
+
+    Object.values(outputSlots).forEach((slot) => {
+      const input = slot.info.localVideoInput;
+      if (!input || input.ownerDeviceId !== deviceId) return;
+      bySource.set(input.sourceId, {
+        sourceId: input.sourceId,
+        deviceLabel: input.deviceLabel,
+        captureKind: input.captureKind,
+      });
+    });
+
+    listWarmSourceIds.forEach((sourceId) => {
+      if (bySource.has(sourceId)) return;
+      const binding = resolveLocalVideoInputBinding(sourceId);
+      if (!binding || isDesktopCaptureKind(binding.captureKind)) return;
+      bySource.set(sourceId, {
+        sourceId,
+        deviceLabel: binding.deviceLabel || "Video input",
+        captureKind: binding.captureKind,
+      });
+    });
+
+    return [...bySource.values()];
+  }, [deviceId, listWarmSourceIds, outputSlots]);
+
   const activeInputKey = activeInputs
     .map((input) => `${input.sourceId}:${input.deviceLabel}`)
     .sort()
@@ -99,7 +137,7 @@ const LocalVideoCaptureManager = () => {
               return;
             }
             try {
-              await acquireWarmLocalVideoCapture(
+              await acquireWarmLocalVideoCaptureWithBusyRetry(
                 input.sourceId,
                 binding,
                 true,

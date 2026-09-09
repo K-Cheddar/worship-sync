@@ -45,15 +45,48 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
-  it("allows teams routes for human sessions with Teams view access", () => {
+  it("allows current-service for human sessions with Teams view access", () => {
     expect(
-      isRouteAllowedForSession("/teams/schedules", {
+      isRouteAllowedForSession("/current-service", {
         sessionKind: "human",
         loginState: "success",
-        access: "view",
+        access: "full",
         permissions: { teams: "view" },
       }),
     ).toBe(true);
+  });
+
+  it("allows current-service for booth workstations with Teams view", () => {
+    expect(
+      isRouteAllowedForSession("/current-service", {
+        sessionKind: "workstation",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "view", services: "edit" },
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks current-service for default workstations without Teams view", () => {
+    expect(
+      isRouteAllowedForSession("/current-service", {
+        sessionKind: "workstation",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "none", services: "view" },
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks teams admin routes for booth workstations", () => {
+    expect(
+      isRouteAllowedForSession("/teams-and-services/plans", {
+        sessionKind: "workstation",
+        loginState: "success",
+        access: "full",
+        permissions: { teams: "view", services: "edit" },
+      }),
+    ).toBe(false);
   });
 
   it("allows teams routes for human sessions with Services edit access", () => {

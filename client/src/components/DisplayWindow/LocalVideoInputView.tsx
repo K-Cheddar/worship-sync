@@ -6,6 +6,7 @@ import {
   getAudioInputErrorMessage,
   getLocalVideoSourceErrorMessage,
   isDesktopCaptureKind,
+  isLocalVideoDeviceBusyError,
   resolveLocalVideoInputBinding,
 } from "../../utils/localVideoInput";
 import {
@@ -108,7 +109,7 @@ const LocalVideoInputView = ({
   >(undefined);
   const captureConsumerIdRef = useRef(
     globalThis.crypto?.randomUUID?.() ??
-      `local-video-view-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    `local-video-view-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   const previewFrameUrlRef = useRef<string | undefined>(undefined);
   const retiredPreviewFrameUrlsRef = useRef(new Set<string>());
@@ -176,7 +177,10 @@ const LocalVideoInputView = ({
       setIsRealtimeActive(false);
       stopBufferedRelay = subscribeLocalVideoMedia(input.sourceId, video, {
         includeAudio: playAudioRef.current,
-        onStarted: () => setErrorDetail(null),
+        onStarted: () => {
+          setErrorDetail(null);
+          setIsDirectReady(true);
+        },
         onError: setErrorDetail,
         onStopped: () => setIsDirectReady(false),
       });
@@ -305,8 +309,9 @@ const LocalVideoInputView = ({
     let active = true;
     let retryTimer: number | undefined;
     let playbackRecoveryTimer: number | undefined;
+    let frameCallbackId: number | undefined;
     let directPlaybackReady = false;
-    const video = videoRef.current;
+    let attachedVideo: HTMLVideoElement | null = null;
     const captureConsumerId = captureConsumerIdRef.current;
     const retryCapture = (delayMs = 0) => {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
@@ -354,36 +359,76 @@ const LocalVideoInputView = ({
           .forEach((track) =>
             track.addEventListener?.("ended", handleAudioTrackEnded),
           );
-        if (video) {
-          video.srcObject = stream;
-          const resumeDirectPlayback = () => {
-            if (!active || video.srcObject !== stream) return;
-            if (
-              video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-              video.videoWidth > 0
-            ) {
-              directPlaybackReady = true;
-              video.volume = normalizedVolumeRef.current;
-              setIsDirectReady(true);
-              if (playbackRecoveryTimer !== undefined) {
-                window.clearInterval(playbackRecoveryTimer);
-                playbackRecoveryTimer = undefined;
-              }
-              return;
-            }
-            // A detached Electron capture element can occasionally miss its
-            // initial autoplay attempt. Retry playback without reopening or
-            // renegotiating the USB device.
-            const playPromise = video.play();
-            void playPromise?.catch(() => undefined);
-          };
-          resumeDirectPlayback();
-          if (!directPlaybackReady) {
-            playbackRecoveryTimer = window.setInterval(
-              resumeDirectPlayback,
-              500,
-            );
+        // Read the ref after await — a stale pre-await node can miss the first
+        // attach and leave the stage black while the camera light is already on.
+        const video = videoRef.current;
+        if (!video) {
+          retryCapture(50);
+          return;
+        }
+        attachedVideo = video;
+        const markDirectReady = () => {
+          if (!active || video.srcObject !== stream) return;
+          if (
+            video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA &&
+            video.videoWidth <= 0
+          ) {
+            return;
           }
+          directPlaybackReady = true;
+          video.volume = normalizedVolumeRef.current;
+          setIsDirectReady(true);
+          if (playbackRecoveryTimer !== undefined) {
+            window.clearInterval(playbackRecoveryTimer);
+            playbackRecoveryTimer = undefined;
+          }
+          video.removeEventListener("loadedmetadata", markDirectReady);
+          video.removeEventListener("loadeddata", markDirectReady);
+          video.removeEventListener("playing", markDirectReady);
+          video.removeEventListener("resize", markDirectReady);
+          if (
+            frameCallbackId !== undefined &&
+            "cancelVideoFrameCallback" in video
+          ) {
+            (
+              video as HTMLVideoElement & {
+                cancelVideoFrameCallback: (id: number) => void;
+              }
+            ).cancelVideoFrameCallback(frameCallbackId);
+            frameCallbackId = undefined;
+          }
+        };
+        video.srcObject = stream;
+        video.addEventListener("loadedmetadata", markDirectReady);
+        video.addEventListener("loadeddata", markDirectReady);
+        video.addEventListener("playing", markDirectReady);
+        video.addEventListener("resize", markDirectReady);
+        if ("requestVideoFrameCallback" in video) {
+          frameCallbackId = (
+            video as HTMLVideoElement & {
+              requestVideoFrameCallback: (cb: () => void) => number;
+            }
+          ).requestVideoFrameCallback(() => {
+            frameCallbackId = undefined;
+            markDirectReady();
+          });
+        }
+        const resumeDirectPlayback = () => {
+          if (!active || video.srcObject !== stream) return;
+          markDirectReady();
+          if (directPlaybackReady) return;
+          // A detached Electron capture element can occasionally miss its
+          // initial autoplay attempt. Retry playback without reopening or
+          // renegotiating the USB device.
+          const playPromise = video.play();
+          void playPromise?.catch(() => undefined);
+        };
+        resumeDirectPlayback();
+        if (!directPlaybackReady) {
+          playbackRecoveryTimer = window.setInterval(
+            resumeDirectPlayback,
+            250,
+          );
         }
         if (audioError && playAudio) {
           setAudioWarning(
@@ -409,6 +454,17 @@ const LocalVideoInputView = ({
           setCaptureOwnedElsewhere(true);
           return;
         }
+        // Exclusive camera access (common on Windows / Electron multi-window)
+        // looks like NotReadableError even when our capture host still owns it.
+        // Prefer the local relay while we retry for a brief release race.
+        if (isLocalVideoDeviceBusyError(error)) {
+          setCaptureOwnedElsewhere(true);
+          setErrorDetail(null);
+          retryCapture(
+            Math.min(1_000 * 2 ** Math.min(captureAttempt, 3), 8_000),
+          );
+          return;
+        }
         setErrorDetail(
           getLocalVideoSourceErrorMessage(error, input.captureKind),
         );
@@ -422,6 +478,18 @@ const LocalVideoInputView = ({
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       if (playbackRecoveryTimer !== undefined) {
         window.clearInterval(playbackRecoveryTimer);
+      }
+      const video = attachedVideo;
+      if (
+        video &&
+        frameCallbackId !== undefined &&
+        "cancelVideoFrameCallback" in video
+      ) {
+        (
+          video as HTMLVideoElement & {
+            cancelVideoFrameCallback: (id: number) => void;
+          }
+        ).cancelVideoFrameCallback(frameCallbackId);
       }
       void releaseWarmLocalVideoCapture(input.sourceId, captureConsumerId);
       const stream = video?.srcObject as MediaStream | null | undefined;
@@ -524,9 +592,14 @@ const LocalVideoInputView = ({
               aria-label={`${input.deviceLabel} realtime video`}
             />
           ) : null}
+          {/*
+            Keep the video element painted (not opacity-0) once capture is on so
+            Chromium/Electron will decode the first frame. A black cover hides
+            empty frames until ready instead of blocking decode.
+          */}
           <video
             ref={videoRef}
-            className={`absolute inset-0 h-full w-full transition-none ${!isRealtimeActive && isDirectReady && !errorDetail ? "opacity-100" : "opacity-0"} ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
+            className={`absolute inset-0 h-full w-full transition-none ${!isRealtimeActive && !errorDetail ? "opacity-100" : "opacity-0"} ${input.fit === "cover" ? "object-cover" : "object-contain"}`}
             autoPlay
             muted={!playAudio}
             playsInline
@@ -535,6 +608,8 @@ const LocalVideoInputView = ({
               if (videoRef.current) videoRef.current.volume = normalizedVolume;
               setIsDirectReady(true);
             }}
+            onLoadedMetadata={() => setIsDirectReady(true)}
+            onPlaying={() => setIsDirectReady(true)}
             onError={() =>
               setErrorDetail(
                 isDesktopShare
@@ -543,6 +618,13 @@ const LocalVideoInputView = ({
               )
             }
           />
+          {!isDirectReady && !previewFrameUrl && !errorDetail ? (
+            <div
+              className={`pointer-events-none absolute inset-0 ${transparentBackground ? "bg-transparent" : "bg-black"}`}
+              aria-hidden
+              data-testid="local-video-input-waiting-cover"
+            />
+          ) : null}
         </>
       ) : null}
       {showErrors && statusDetail ? (

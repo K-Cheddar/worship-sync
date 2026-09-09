@@ -136,4 +136,46 @@ describe("ServicePlanRolePicker", () => {
     fireEvent(roleButton, touchDown);
     expect(touchDown.defaultPrevented).toBe(false);
   });
+
+  it("toggles multiple roles without closing the picker", async () => {
+    const user = userEvent.setup();
+    const onValueChange = jest.fn();
+    let selected: string[] = [];
+
+    const renderPicker = () => (
+      <ServicePlanRolePicker
+        multi
+        value={selected}
+        onValueChange={(next) => {
+          selected = next;
+          onValueChange(next);
+          rerender(renderPicker());
+        }}
+        options={roles}
+        teamFilterStorageKey="role-picker-team"
+        ariaLabel="Filter role notes"
+        label="Role notes"
+      />
+    );
+
+    const { rerender } = render(renderPicker());
+
+    await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+    await user.click(screen.getByRole("button", { name: "Camera" }));
+
+    expect(onValueChange).toHaveBeenCalledWith(["camera"]);
+    expect(screen.getByRole("button", { name: "Camera" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Lyrics" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Lyrics" }));
+
+    expect(onValueChange).toHaveBeenLastCalledWith(["camera", "lyrics"]);
+    expect(screen.getByRole("button", { name: "Lyrics" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
 });

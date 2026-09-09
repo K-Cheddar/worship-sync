@@ -50,7 +50,9 @@ const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
 const mockGetAppOs = jest.mocked(getAppOs);
 const originalUserAgent = window.navigator.userAgent;
 
-const createHomeStore = () =>
+const createHomeStore = (
+  profiles = getDefaultControllerProfiles(),
+) =>
   configureStore({
     reducer: {
       controllerProfiles: controllerProfilesSlice.reducer,
@@ -58,7 +60,7 @@ const createHomeStore = () =>
     },
     preloadedState: {
       controllerProfiles: {
-        list: getDefaultControllerProfiles(),
+        list: profiles,
         isLoaded: true,
       },
       displayOutputs: {
@@ -68,8 +70,11 @@ const createHomeStore = () =>
     },
   });
 
-const render = (ui: ReactElement) => {
-  const store = createHomeStore();
+const render = (
+  ui: ReactElement,
+  options?: { profiles?: ReturnType<typeof getDefaultControllerProfiles> },
+) => {
+  const store = createHomeStore(options?.profiles);
   const wrap = (node: ReactElement) => (
     <Provider store={store}>{node}</Provider>
   );
@@ -351,6 +356,11 @@ describe("Home", () => {
     const provider = createMockGlobalContext({
       loginState: "success",
       sessionKind: "workstation",
+      permissions: { teams: "none", services: "view" },
+      canViewTeams: false,
+      canEditTeams: false,
+      canEditServices: false,
+      canViewServices: true,
     });
 
     render(
@@ -368,6 +378,97 @@ describe("Home", () => {
     expect(
       screen.queryByRole("link", { name: /My schedule/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Service Workspace/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows Service Workspace on booth workstations with Teams view", () => {
+    const provider = createMockGlobalContext({
+      loginState: "success",
+      sessionKind: "workstation",
+      permissions: { teams: "view", services: "edit" },
+      canViewTeams: true,
+      canEditTeams: false,
+      canEditServices: true,
+      canViewServices: true,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={provider as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: /Service Workspace/i }),
+    ).toHaveAttribute("href", "/current-service");
+  });
+
+  it("places Service Workspace beside My schedule, not under Controllers", () => {
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const scheduleLink = screen.getByRole("link", { name: /My schedule/i });
+    const workspaceLink = screen.getByRole("link", {
+      name: /Service Workspace/i,
+    });
+    const controllersHeading = screen.getByRole("heading", {
+      name: /Controllers/i,
+    });
+
+    expect(scheduleLink.compareDocumentPosition(workspaceLink)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(workspaceLink.compareDocumentPosition(controllersHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("shows a custom controller description on the home card", () => {
+    const profiles = getDefaultControllerProfiles().map((profile) =>
+      profile.id === "presentation"
+        ? {
+          ...profile,
+          name: "Text Master",
+          description: "Run slides for the sanctuary.",
+        }
+        : profile,
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+      { profiles },
+    );
+
+    expect(
+      screen.getByRole("link", {
+        name: /Text Master.*Run slides for the sanctuary/i,
+      }),
+    ).toHaveAttribute("href", "/controller");
   });
 
   it("hides board moderation and display outputs for view access", () => {

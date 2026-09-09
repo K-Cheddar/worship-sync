@@ -135,7 +135,7 @@ const createConnectedService = async ({
   });
   const state = new URL(pending.authorizeUrl).searchParams.get("state");
   await service.completeConnect({ state, code: "authorization-code" });
-  return { service, pending, calls, uploaded };
+  return { service, pending, calls, uploaded, httpClient };
 };
 
 test("Canva connect uses PKCE and records a church-scoped connection", async () => {
@@ -143,7 +143,10 @@ test("Canva connect uses PKCE and records a church-scoped connection", async () 
   const authorizeUrl = new URL(pending.authorizeUrl);
   assert.equal(authorizeUrl.origin, "https://www.canva.com");
   assert.equal(authorizeUrl.searchParams.get("code_challenge_method"), "S256");
-  assert.match(authorizeUrl.searchParams.get("scope") || "", /design:content:read/);
+  assert.match(
+    authorizeUrl.searchParams.get("scope") || "",
+    /design:content:read/,
+  );
 
   const status = await service.getStatusForChurch({ churchId: "church-1" });
   assert.equal(status.connected, true);
@@ -165,6 +168,35 @@ test("Canva design browsing normalizes stable design metadata", async () => {
   assert.equal(
     designs.items[0].editUrl,
     "https://www.canva.com/api/design/token/edit",
+  );
+});
+
+test("Canva getDesign maps inaccessible designs to a share-with-account message", async () => {
+  const { service, httpClient } = await createConnectedService();
+  const originalGet = httpClient.get.bind(httpClient);
+  httpClient.get = async (url) => {
+    if (String(url).includes("/designs/DAF_missing")) {
+      const error = new Error("Not found");
+      error.response = { status: 404, data: {} };
+      throw error;
+    }
+    return originalGet(url);
+  };
+
+  await assert.rejects(
+    () =>
+      service.getDesign({
+        churchId: "church-1",
+        designId: "DAF_missing",
+      }),
+    (error) => {
+      assert.match(
+        String(error.message),
+        /Share it with that account, then try again/i,
+      );
+      assert.equal(error.statusCode, 404);
+      return true;
+    },
   );
 });
 

@@ -38,6 +38,15 @@ export const buildLocalVideoFileUrl = (assetId: string) =>
 export const isLocalVideoFileUrl = (value: string | undefined) =>
   Boolean(value?.startsWith(LOCAL_VIDEO_FILE_URL_PREFIX));
 
+export const parseLocalVideoFileAssetId = (value: string | undefined) => {
+  if (!isLocalVideoFileUrl(value) || !value) return null;
+  try {
+    return decodeURIComponent(value.slice(LOCAL_VIDEO_FILE_URL_PREFIX.length));
+  } catch {
+    return value.slice(LOCAL_VIDEO_FILE_URL_PREFIX.length) || null;
+  }
+};
+
 export const validateLocalVideoFile = (file: File): string | null => {
   if (!ALLOWED_VIDEO_TYPES.has(file.type.toLowerCase())) {
     return "Choose an MP4, MOV, or WebM video.";

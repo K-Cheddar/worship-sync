@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import MediaUploadInput from "./MediaUploadInput";
+import type { MediaUploadInputRef } from "./MediaUploadInput.types";
 import { createLocalMediaFromFile } from "./localMediaImport";
 import { enqueueLocalImageUpload } from "../../utils/localImageUploadQueue";
 import type { MediaType } from "../../types";
@@ -220,5 +221,64 @@ describe("MediaUploadInput", () => {
       jest.advanceTimersByTime(2000);
     });
     jest.useRealTimers();
+  });
+
+  it("reopens the upload modal after it is minimized to the Add button", async () => {
+    let resolveImport: ((value: MediaType) => void) | undefined;
+    mockedCreateLocalMedia.mockImplementation(
+      () =>
+        new Promise<MediaType>((resolve) => {
+          resolveImport = resolve;
+        }),
+    );
+    const ref = { current: null as null | MediaUploadInputRef };
+    render(
+      <ControllerInfoContext.Provider
+        value={{ isGuestSession: false } as never}
+      >
+        <GlobalInfoContext.Provider
+          value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}
+        >
+          <MediaUploadInput
+            ref={(instance) => {
+              ref.current = instance;
+            }}
+            onLocalMediaAdded={jest.fn()}
+          />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: {
+        files: [new File(["image"], "photo.png", { type: "image/png" })],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Upload Progress/i }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Minimize to Add button" }),
+    );
+    expect(
+      screen.queryByRole("heading", { name: /Upload Progress/i }),
+    ).not.toBeInTheDocument();
+
+    act(() => {
+      ref.current?.openModal();
+    });
+    expect(
+      screen.getByRole("dialog", { name: "Upload Media" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveImport?.(localImage());
+    });
   });
 });

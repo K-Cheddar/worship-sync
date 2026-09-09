@@ -284,6 +284,75 @@ describe("ServicePublic", () => {
     expect(screen.queryByText("Filter by team")).not.toBeInTheDocument();
   });
 
+  it("shows notes for multiple selected roles on a shared screen", async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    mockUsePublicServiceFlow.mockReturnValue({
+      snapshot: {
+        success: true,
+        churchName: "Northside",
+        serverNowMs: now,
+        service: {
+          shareId: "share-token",
+          title: "Sunday Service",
+          startsAt: new Date(now - 30_000).toISOString(),
+          timezone: "UTC",
+          revision: now,
+          live: { mode: "schedule" },
+          sections: [{
+            id: "main",
+            title: "Main service",
+            items: [{
+              id: "welcome",
+              title: "Welcome",
+              durationSeconds: 120,
+              notes: { blocks: [{ type: "paragraph", spans: [{ text: "Shared cue" }] }] },
+              teamNotes: [
+                {
+                  scope: "role",
+                  positionId: "camera",
+                  label: "Media Team · Camera",
+                  notes: { blocks: [{ type: "paragraph", spans: [{ text: "Stay wide." }] }] },
+                },
+                {
+                  scope: "role",
+                  positionId: "lyrics",
+                  label: "Media Team · Lyrics",
+                  notes: { blocks: [{ type: "paragraph", spans: [{ text: "Advance on the bridge." }] }] },
+                },
+                {
+                  scope: "role",
+                  positionId: "vocal",
+                  label: "Worship Team · Vocal",
+                  notes: { blocks: [{ type: "paragraph", spans: [{ text: "Start in key of G." }] }] },
+                },
+              ],
+            }],
+          }],
+        },
+      },
+      error: "",
+      loading: false,
+      connection: "connected",
+      revoked: false,
+      refresh: jest.fn(),
+    });
+
+    render(<ServicePublic />);
+    await user.click(screen.getByRole("button", { name: /Filter role notes/i }));
+    await user.click(screen.getByRole("button", { name: /Camera/ }));
+    await user.click(screen.getByRole("button", { name: /Lyrics/ }));
+
+    expect(screen.getByText("Shared cue")).toBeInTheDocument();
+    expect(screen.getByText("Stay wide.")).toBeInTheDocument();
+    expect(screen.getByText("Advance on the bridge.")).toBeInTheDocument();
+    expect(screen.queryByText("Start in key of G.")).not.toBeInTheDocument();
+    expect(localStorage.getItem("worshipsyncServicePublicNotesRole")).toBe(
+      JSON.stringify(["camera", "lyrics"]),
+    );
+    expect(screen.getByRole("button", { name: /Filter role notes/i })).toHaveTextContent("2 roles");
+  });
+
   it("limits all role notes and role choices to the selected team", async () => {
     const user = userEvent.setup();
     const now = Date.now();
@@ -498,7 +567,7 @@ describe("ServicePublic", () => {
     expect(screen.queryByText("Stay wide.")).not.toBeInTheDocument();
     expect(screen.queryByText("Orange")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Filter role notes/i }));
+    // Multi-select keeps the picker open so operators can add another role.
     await user.click(screen.getByRole("button", { name: "All roles" }));
 
     expect(screen.getByText("Stay wide.")).toBeInTheDocument();

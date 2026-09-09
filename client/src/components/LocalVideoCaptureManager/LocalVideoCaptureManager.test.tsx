@@ -1,12 +1,16 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import {
-  acquireWarmLocalVideoCapture,
+  acquireWarmLocalVideoCaptureWithBusyRetry,
   LocalVideoCaptureOwnedError,
   releaseWarmLocalVideoCapture,
 } from "../../utils/localVideoCapturePool";
 import { resolveLocalVideoInputBinding } from "../../utils/localVideoInput";
 import { reportLocalVideoIssue } from "../../utils/localVideoIssues";
+import {
+  readLocalVideoWarmIntent,
+  subscribeLocalVideoWarmIntent,
+} from "../../utils/localVideoWarmIntent";
 import LocalVideoCaptureManager from "./LocalVideoCaptureManager";
 
 const localVideoInput = {
@@ -48,6 +52,11 @@ const mockState: {
   },
 };
 
+let warmIntentListener:
+  | ((intent: { sourceIds: string[]; updatedAt: number }) => void)
+  | undefined;
+let warmSourceIds: string[] = [];
+
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: typeof mockState) => unknown) =>
     selector(mockState),
@@ -56,9 +65,9 @@ jest.mock("../../utils/authStorage", () => ({
   getOrCreateDeviceId: jest.fn(),
 }));
 jest.mock("../../utils/localVideoCapturePool", () => ({
-  acquireWarmLocalVideoCapture: jest.fn(),
+  acquireWarmLocalVideoCaptureWithBusyRetry: jest.fn(),
   releaseWarmLocalVideoCapture: jest.fn(),
-  LocalVideoCaptureOwnedError: class extends Error {},
+  LocalVideoCaptureOwnedError: class extends Error { },
 }));
 jest.mock("../../utils/localVideoInput", () => ({
   getLocalVideoSourceErrorMessage: jest.fn(() => "Check the video input."),
@@ -69,16 +78,35 @@ jest.mock("../../utils/localVideoInput", () => ({
 jest.mock("../../utils/localVideoIssues", () => ({
   reportLocalVideoIssue: jest.fn(),
 }));
+jest.mock("../../utils/localVideoWarmIntent", () => ({
+  readLocalVideoWarmIntent: jest.fn(() => ({
+    sourceIds: warmSourceIds,
+    updatedAt: 0,
+  })),
+  subscribeLocalVideoWarmIntent: jest.fn((onIntent) => {
+    warmIntentListener = onIntent;
+    onIntent({ sourceIds: warmSourceIds, updatedAt: Date.now() });
+    return () => {
+      warmIntentListener = undefined;
+    };
+  }),
+}));
 
 const mockGetDeviceId = jest.mocked(getOrCreateDeviceId);
-const mockAcquireCapture = jest.mocked(acquireWarmLocalVideoCapture);
+const mockAcquireCapture = jest.mocked(
+  acquireWarmLocalVideoCaptureWithBusyRetry,
+);
 const mockReleaseCapture = jest.mocked(releaseWarmLocalVideoCapture);
 const mockResolveBinding = jest.mocked(resolveLocalVideoInputBinding);
 const mockReportLocalVideoIssue = jest.mocked(reportLocalVideoIssue);
+const mockReadWarmIntent = jest.mocked(readLocalVideoWarmIntent);
+const mockSubscribeWarmIntent = jest.mocked(subscribeLocalVideoWarmIntent);
 
 describe("LocalVideoCaptureManager", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    warmSourceIds = [];
+    warmIntentListener = undefined;
     mockGetDeviceId.mockReturnValue("local-device");
     mockResolveBinding.mockReturnValue({
       sourceId: "source-1",
@@ -87,6 +115,17 @@ describe("LocalVideoCaptureManager", () => {
     });
     mockAcquireCapture.mockResolvedValue({ stream: {} as MediaStream });
     mockReleaseCapture.mockResolvedValue();
+    mockReadWarmIntent.mockImplementation(() => ({
+      sourceIds: warmSourceIds,
+      updatedAt: 0,
+    }));
+    mockSubscribeWarmIntent.mockImplementation((onIntent) => {
+      warmIntentListener = onIntent;
+      onIntent({ sourceIds: warmSourceIds, updatedAt: Date.now() });
+      return () => {
+        warmIntentListener = undefined;
+      };
+    });
     mockState.presentation.outputs.projector.info.localVideoInput =
       localVideoInput;
   });
@@ -96,6 +135,21 @@ describe("LocalVideoCaptureManager", () => {
   });
 
   it("restores and publishes a source already active on an output", async () => {
+    render(<LocalVideoCaptureManager />);
+
+    await waitFor(() =>
+      expect(mockAcquireCapture).toHaveBeenCalledWith(
+        "source-1",
+        expect.objectContaining({ deviceId: "capture-card-1" }),
+        true,
+        "active-output-manager",
+      ),
+    );
+  });
+
+  it("warms a source present on the service list before it goes live", async () => {
+    mockState.presentation.outputs.projector.info = {};
+    warmSourceIds = ["source-1"];
     render(<LocalVideoCaptureManager />);
 
     await waitFor(() =>
@@ -172,6 +226,28 @@ describe("LocalVideoCaptureManager", () => {
     expect(mockAcquireCapture).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps list-warmed capture open after the live output clears", async () => {
+    const view = render(<LocalVideoCaptureManager />);
+    await waitFor(() => expect(mockAcquireCapture).toHaveBeenCalledTimes(1));
+    jest.useFakeTimers();
+
+    warmSourceIds = ["source-1"];
+    act(() =>
+      warmIntentListener?.({ sourceIds: warmSourceIds, updatedAt: Date.now() }),
+    );
+
+    mockState.presentation.outputs = {
+      projector: {
+        ...mockState.presentation.outputs.projector,
+        info: {},
+      },
+    };
+    view.rerender(<LocalVideoCaptureManager />);
+    act(() => jest.advanceTimersByTime(5_000));
+
+    expect(mockReleaseCapture).not.toHaveBeenCalled();
+  });
+
   it("drops its consumer registration when another window owns capture", async () => {
     mockAcquireCapture.mockRejectedValue(new LocalVideoCaptureOwnedError());
     render(<LocalVideoCaptureManager />);
@@ -189,7 +265,6 @@ describe("LocalVideoCaptureManager", () => {
     render(<LocalVideoCaptureManager />);
 
     await Promise.resolve();
-    expect(mockResolveBinding).not.toHaveBeenCalled();
     expect(mockAcquireCapture).not.toHaveBeenCalled();
   });
 

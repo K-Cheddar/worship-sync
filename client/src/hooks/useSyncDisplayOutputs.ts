@@ -33,10 +33,11 @@ export const useSyncDisplayOutputs = (
   const [resyncKey, setResyncKey] = useState(0);
   const wasLoadedRef = useRef(false);
 
-  // Controller unmount (including StrictMode's first-load remount) dispatches
-  // RESET, which returns this slice to isLoaded: false. DisplayOutputsSync
-  // lives at the app root, so its Firebase listener stays attached and never
-  // gets another snapshot — without a resync the registry would stay unloaded.
+  // A full RESET (logout / church switch) returns this slice to isLoaded:
+  // false. DisplayOutputsSync lives at the app root, so its Firebase listener
+  // can stay attached and never get another snapshot — bump resyncKey so the
+  // Displays panel does not stay disabled. Controller page leave uses
+  // RESET_CONTROLLER_SESSION and keeps this slice loaded.
   useEffect(() => {
     if (wasLoadedRef.current && !isLoaded) {
       setResyncKey((key) => key + 1);

@@ -18,8 +18,11 @@ import {
   toggleControllerOutput,
   normalizeControllerProfiles,
   resolveControllerProfile,
+  sanitizeControllerProfileDescription,
   sanitizeControllerProfileName,
   serializeControllerProfiles,
+  getControllerProfileDescription,
+  getDefaultControllerProfileDescription,
 } from "./controllerProfiles";
 
 const profile = (
@@ -28,6 +31,7 @@ const profile = (
   id: "ctrl_1",
   type: "aux-presentation",
   name: "Lobby",
+  description: "",
   order: 5,
   enabled: true,
   outputIds: ["out_lobby"],
@@ -276,6 +280,68 @@ describe("names", () => {
   });
 });
 
+describe("descriptions", () => {
+  it("collapses whitespace and caps length", () => {
+    expect(sanitizeControllerProfileDescription("  Lobby   screen ")).toBe(
+      "Lobby screen",
+    );
+    expect(sanitizeControllerProfileDescription("x".repeat(400))).toHaveLength(
+      280,
+    );
+  });
+
+  it("treats blank as empty so the type default applies", () => {
+    expect(sanitizeControllerProfileDescription("   ")).toBe("");
+    expect(sanitizeControllerProfileDescription(null)).toBe("");
+  });
+
+  it("returns the type default when a profile has no custom text", () => {
+    expect(
+      getControllerProfileDescription({
+        type: "presentation",
+        description: "",
+      }),
+    ).toBe(getDefaultControllerProfileDescription("presentation"));
+    expect(
+      getControllerProfileDescription({
+        type: "aux-presentation",
+        description: "  ",
+      }),
+    ).toBe(getDefaultControllerProfileDescription("aux-presentation"));
+  });
+
+  it("prefers a custom description when set", () => {
+    expect(
+      getControllerProfileDescription({
+        type: "overlay",
+        description: "Run lower thirds for stream.",
+      }),
+    ).toBe("Run lower thirds for stream.");
+  });
+
+  it("preserves a custom description through normalize", () => {
+    const result = normalizeControllerProfiles([
+      {
+        id: "ctrl_1",
+        type: "aux-presentation",
+        name: "Lobby",
+        order: 0,
+        description: "  Drive the lobby TVs.  ",
+      },
+    ]);
+    expect(result.find((p) => p.id === "ctrl_1")?.description).toBe(
+      "Drive the lobby TVs.",
+    );
+  });
+
+  it("defaults a missing description to empty on normalize", () => {
+    const result = normalizeControllerProfiles([
+      { id: "ctrl_1", type: "aux-presentation", name: "Lobby", order: 0 },
+    ]);
+    expect(result.find((p) => p.id === "ctrl_1")?.description).toBe("");
+  });
+});
+
 describe("getControllerOutputs", () => {
   it("gives an auxiliary controller nothing until it is assigned displays", () => {
     expect(
@@ -422,10 +488,14 @@ describe("toggleControllerOutput", () => {
   });
 
   it("adds a display to a scoped controller", () => {
-    const lobby = profile({ outputIds: ["out_lobby"], outputsConfigured: true });
-    expect(
-      toggleControllerOutput(lobby, OUTPUTS, "projector", true),
-    ).toEqual(["out_lobby", "projector"]);
+    const lobby = profile({
+      outputIds: ["out_lobby"],
+      outputsConfigured: true,
+    });
+    expect(toggleControllerOutput(lobby, OUTPUTS, "projector", true)).toEqual([
+      "out_lobby",
+      "projector",
+    ]);
   });
 
   it("keeps a retired assignment the live view cannot show", () => {
@@ -442,14 +512,20 @@ describe("toggleControllerOutput", () => {
 describe("getControllerDefaultSendIds", () => {
   it("stamps nothing when the controller has no configured default", () => {
     expect(
-      getControllerDefaultSendIds(profile({ defaultSendOutputIds: [] }), OUTPUTS),
+      getControllerDefaultSendIds(
+        profile({ defaultSendOutputIds: [] }),
+        OUTPUTS,
+      ),
     ).toEqual([]);
   });
 
   it("returns the configured defaults", () => {
     expect(
       getControllerDefaultSendIds(
-        profile({ outputIds: ["out_lobby"], defaultSendOutputIds: ["out_lobby"] }),
+        profile({
+          outputIds: ["out_lobby"],
+          defaultSendOutputIds: ["out_lobby"],
+        }),
         OUTPUTS,
       ),
     ).toEqual(["out_lobby"]);
@@ -458,7 +534,10 @@ describe("getControllerDefaultSendIds", () => {
   it("drops a default the controller no longer owns", () => {
     expect(
       getControllerDefaultSendIds(
-        profile({ outputIds: ["out_lobby"], defaultSendOutputIds: ["projector"] }),
+        profile({
+          outputIds: ["out_lobby"],
+          defaultSendOutputIds: ["projector"],
+        }),
         OUTPUTS,
       ),
     ).toEqual([]);
@@ -498,7 +577,9 @@ describe("ownership", () => {
       ...getDefaultControllerProfiles(),
       profile({ id: "ctrl_1", outputIds: ["out_lobby"] }),
     ];
-    expect(getOwningControllerProfile(profiles, "out_lobby")?.id).toBe("ctrl_1");
+    expect(getOwningControllerProfile(profiles, "out_lobby")?.id).toBe(
+      "ctrl_1",
+    );
     expect(getOwningControllerProfile(profiles, "projector")?.id).toBe(
       PRESENTATION_CONTROLLER_ID,
     );
@@ -509,7 +590,9 @@ describe("ownership", () => {
       profile({ id: "ctrl_off", outputIds: ["out_lobby"], enabled: false }),
       profile({ id: "ctrl_on", outputIds: ["out_lobby"] }),
     ];
-    expect(getOwningControllerProfile(profiles, "out_lobby")?.id).toBe("ctrl_on");
+    expect(getOwningControllerProfile(profiles, "out_lobby")?.id).toBe(
+      "ctrl_on",
+    );
   });
 
   it("lists the other controllers claiming a display, for a share warning", () => {
@@ -554,7 +637,10 @@ describe("resolveControllerProfile", () => {
 
   it("reports whether a profile is real or a stand-in", () => {
     expect(
-      isKnownControllerProfile(profiles, resolveControllerProfile(profiles, "ctrl_1")),
+      isKnownControllerProfile(
+        profiles,
+        resolveControllerProfile(profiles, "ctrl_1"),
+      ),
     ).toBe(true);
     expect(
       isKnownControllerProfile(

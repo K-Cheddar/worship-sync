@@ -1,7 +1,8 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { ExternalLink, Image as ImageIcon, Search, Video } from "lucide-react";
+import { ExternalLink, Image as ImageIcon, Link2, Search, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Button from "../../components/Button/Button";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import Input from "../../components/Input/Input";
 import Spinner from "../../components/Spinner/Spinner";
 import {
@@ -29,14 +30,20 @@ import {
   getCanvaMediaSource,
   isCanvaSourceCurrent,
 } from "./canvaMediaSource";
+import { parseCanvaDesignId } from "./canvaDesignUrl";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImageComplete: (info: mediaInfoType) => void;
+  onImageComplete: (info: mediaInfoType) => MediaType | void;
   onVideoComplete: (info: MuxUploadResult) => void;
   onImageRefresh: (info: mediaInfoType, mediaId: string) => void;
   onVideoRefresh: (info: MuxUploadResult, mediaId: string) => void;
+  /** After a multi-page PNG import, optionally build one custom item with a slide per page. */
+  onCreateDeckItem?: (
+    pages: MediaType[],
+    designTitle: string,
+  ) => void | Promise<void>;
   existingMedia: readonly MediaType[];
   sourceMedia?: MediaType | null;
 };
@@ -56,6 +63,7 @@ const CanvaImportSheet = ({
   onVideoComplete,
   onImageRefresh,
   onVideoRefresh,
+  onCreateDeckItem,
   existingMedia,
   sourceMedia,
 }: Props) => {
@@ -68,6 +76,9 @@ const CanvaImportSheet = ({
   const [pages, setPages] = useState<number[]>([]);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState("");
+  const [designLink, setDesignLink] = useState("");
+  const [isOpeningLink, setIsOpeningLink] = useState(false);
+  const [createDeckItem, setCreateDeckItem] = useState(true);
   const [format, setFormat] = useState<"png" | "mp4">("png");
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -111,6 +122,8 @@ const CanvaImportSheet = ({
     setPages([]);
     setSelectedPages(new Set());
     setFormat("png");
+    setCreateDeckItem(true);
+    setDesignLink("");
     setError("");
     void getCanvaStatus(churchId)
       .then((status) => {
@@ -182,6 +195,31 @@ const CanvaImportSheet = ({
       ),
     );
     if (sourceMatchesDesign) setFormat(initialSource.format);
+  };
+
+  const openDesignFromLink = async () => {
+    if (!churchId) return;
+    const designId = parseCanvaDesignId(designLink);
+    if (!designId) {
+      setError(
+        "Paste a Canva design link or design id. Share the design with the church Canva account first.",
+      );
+      return;
+    }
+    setIsOpeningLink(true);
+    setError("");
+    try {
+      const design = await getCanvaDesign(churchId, designId);
+      chooseDesign(design);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not open that Canva design. Share it with the church account, then try again.",
+      );
+    } finally {
+      setIsOpeningLink(false);
+    }
   };
 
   const changeDesign = () => {
@@ -267,6 +305,7 @@ const CanvaImportSheet = ({
       }
       let refreshedCount = 0;
       let importedCount = 0;
+      const newlyImportedImages: MediaType[] = [];
       result.assets.forEach((asset) => {
         const refreshTarget = asset.data.canvaSource
           ? findRefreshTarget(asset.data.canvaSource)
@@ -276,8 +315,9 @@ const CanvaImportSheet = ({
             onImageRefresh(asset.data, refreshTarget.id);
             refreshedCount += 1;
           } else {
-            onImageComplete(asset.data);
+            const created = onImageComplete(asset.data);
             importedCount += 1;
+            if (created) newlyImportedImages.push(created);
           }
         } else if (refreshTarget) {
           onVideoRefresh(asset.data, refreshTarget.id);
@@ -306,6 +346,14 @@ const CanvaImportSheet = ({
         "success",
       );
       onOpenChange(false);
+      if (
+        createDeckItem &&
+        format === "png" &&
+        newlyImportedImages.length > 1 &&
+        onCreateDeckItem
+      ) {
+        await onCreateDeckItem(newlyImportedImages, selectedDesign.title);
+      }
     } catch (importError) {
       setError(
         importError instanceof Error
@@ -328,12 +376,12 @@ const CanvaImportSheet = ({
   }
   const selectedFormatHasUpdate = Boolean(
     selectedDesign &&
-      mediaSources.some(
-        ({ source }) =>
-          source.designId === selectedDesign.id &&
-          source.format === format &&
-          !isCanvaSourceCurrent(source, selectedDesign.updatedAt),
-      ),
+    mediaSources.some(
+      ({ source }) =>
+        source.designId === selectedDesign.id &&
+        source.format === format &&
+        !isCanvaSourceCurrent(source, selectedDesign.updatedAt),
+    ),
   );
   let submitLabel = "Import selected";
   if (isImporting) submitLabel = "Working";
@@ -345,7 +393,9 @@ const CanvaImportSheet = ({
         <SheetHeader>
           <SheetTitle>Import from Canva</SheetTitle>
           <SheetDescription>
-            Choose design pages to copy into this church&apos;s Media library.
+            Copy design pages into Media. Animations become still images or a
+            baked MP4. For live Canva Present motion, share that window from
+            Media instead.
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
@@ -376,6 +426,36 @@ const CanvaImportSheet = ({
                 <>
                   <form
                     className="flex items-end gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void openDesignFromLink();
+                    }}
+                  >
+                    <Input
+                      type="text"
+                      label="Open by link"
+                      value={designLink}
+                      onChange={(value) => setDesignLink(String(value))}
+                      placeholder="Paste a Canva design link or id"
+                      inputWidth="w-full"
+                      className="min-w-0 flex-1"
+                    />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      svg={Link2}
+                      isLoading={isOpeningLink}
+                      disabled={isOpeningLink || !designLink.trim()}
+                    >
+                      Open
+                    </Button>
+                  </form>
+                  <p className="mt-2 text-xs text-gray-400">
+                    The design must be shared with the church Canva account
+                    connected in Integrations.
+                  </p>
+                  <form
+                    className="mt-5 flex items-end gap-2"
                     onSubmit={(event) => {
                       event.preventDefault();
                       void loadDesigns(query);
@@ -497,8 +577,8 @@ const CanvaImportSheet = ({
                             type="button"
                             aria-pressed={selected}
                             className={`overflow-hidden rounded-lg border text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected
-                                ? "border-cyan-400 bg-cyan-400/10 ring-1 ring-cyan-400"
-                                : "border-gray-600 bg-gray-900"
+                              ? "border-cyan-400 bg-cyan-400/10 ring-1 ring-cyan-400"
+                              : "border-gray-600 bg-gray-900"
                               }`}
                             onClick={() => togglePage(pageNumber)}
                           >
@@ -538,6 +618,25 @@ const CanvaImportSheet = ({
                         MP4 video
                       </Button>
                     </div>
+                    <p className="mt-2 text-xs text-gray-400">
+                      {format === "png"
+                        ? "PNG pages are still images. Use Media screen share for live Canva Present animations."
+                        : "MP4 bakes motion into one video. You advance in WorshipSync by playing the clip, not Canva Present."}
+                    </p>
+                    {format === "png" &&
+                      onCreateDeckItem &&
+                      selectedPages.size > 1 ? (
+                      <div className="mt-3">
+                        <Checkbox
+                          id="canva-create-deck"
+                          label="Create a custom item with one slide per page"
+                          checked={createDeckItem}
+                          onCheckedChange={(checked) =>
+                            setCreateDeckItem(checked === true)
+                          }
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </>
               )}

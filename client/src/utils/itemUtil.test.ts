@@ -11,10 +11,13 @@ import {
   buildBibleOpenAtSearchParams,
   createItemFromProps,
   updateItemInList,
+  patchItemInList,
+  getServiceItemListBackgroundPatch,
   buildServiceTimeItem,
   removeParentheticalPhrases,
+  createNewItemList,
 } from "./itemUtil";
-import type { ServiceItem, BibleInfo, verseType } from "../types";
+import type { MediaType, ServiceItem, BibleInfo, verseType } from "../types";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
@@ -481,6 +484,28 @@ Let Your fire fall`;
       const textBox = item.slides[0].boxes[1];
       expect(textBox?.words?.trim()).toBe("");
     });
+
+    it("names the slide from a live video input label", async () => {
+      const list: ServiceItem[] = [];
+      const item = await createNewFreeForm({
+        name: "Booth camera",
+        text: "",
+        list,
+        db: undefined,
+        background: "",
+        brightness: 100,
+        emptyBodyText: true,
+        mediaSource: {
+          kind: "local-video-input",
+          sourceId: "local_video_1",
+          label: "Booth camera",
+          fit: "contain",
+        },
+      });
+      expect(item.slides[0].name).toBe("Booth camera");
+      expect(item.slides[0].mediaSource?.sourceId).toBe("local_video_1");
+      expect(item.background).toBe("");
+    });
   });
 
   describe("createNewBible", () => {
@@ -786,6 +811,142 @@ Let Your fire fall`;
     });
   });
 
+  describe("getServiceItemListBackgroundPatch", () => {
+    it("stores localImage and prefers cloudUrl for outline thumbnails", () => {
+      const media = {
+        type: "image",
+        background: "local-image://asset-1",
+        localImage: {
+          id: "asset-1",
+          ownerDeviceId: "device-1",
+          ownerLabel: "This PC",
+          fileName: "slide.png",
+          contentType: "image/png",
+          storagePolicy: "local-and-cloud",
+          cloudUrl: "https://res.cloudinary.com/example/slide.png",
+        },
+      } as MediaType;
+
+      expect(
+        getServiceItemListBackgroundPatch({
+          background: media.background,
+          mediaInfo: media,
+        }),
+      ).toEqual({
+        background: "https://res.cloudinary.com/example/slide.png",
+        localImage: media.localImage,
+        localVideoFile: undefined,
+      });
+    });
+
+    it("keeps local-image backgrounds when there is no cloud copy yet", () => {
+      const media = {
+        type: "image",
+        background: "local-image://asset-1",
+        localImage: {
+          id: "asset-1",
+          ownerDeviceId: "device-1",
+          ownerLabel: "This PC",
+          fileName: "slide.png",
+          contentType: "image/png",
+          storagePolicy: "local-only",
+        },
+      } as MediaType;
+
+      expect(
+        getServiceItemListBackgroundPatch({
+          background: media.background,
+          mediaInfo: media,
+        }),
+      ).toEqual({
+        background: "local-image://asset-1",
+        localImage: media.localImage,
+        localVideoFile: undefined,
+      });
+    });
+
+    it("clears localImage for video placeholders and empty clears", () => {
+      expect(
+        getServiceItemListBackgroundPatch({
+          background: "local-image://asset-1",
+          mediaInfo: {
+            type: "video",
+            placeholderImage: "https://example.com/poster.jpg",
+          } as MediaType,
+        }),
+      ).toEqual({
+        background: "https://example.com/poster.jpg",
+        localImage: undefined,
+        localVideoFile: undefined,
+      });
+      expect(getServiceItemListBackgroundPatch({ background: "" })).toEqual({
+        background: "",
+        localImage: undefined,
+        localVideoFile: undefined,
+      });
+    });
+
+    it("keeps localVideoFile metadata for outline stills without exposing reference URLs", () => {
+      const media = {
+        type: "video",
+        background: "local-video-file://video-1",
+        placeholderImage: "",
+        localVideoFile: {
+          id: "video-1",
+          ownerDeviceId: "device-1",
+          ownerLabel: "This PC",
+          fileName: "clip.mp4",
+          contentType: "video/mp4",
+          storagePolicy: "local-only",
+        },
+      } as MediaType;
+
+      expect(
+        getServiceItemListBackgroundPatch({
+          background: media.background,
+          mediaInfo: media,
+        }),
+      ).toEqual({
+        background: "",
+        localImage: undefined,
+        localVideoFile: media.localVideoFile,
+      });
+    });
+  });
+
+  describe("patchItemInList", () => {
+    it("merges multiple fields onto the matching item", () => {
+      const list: ServiceItem[] = [
+        {
+          _id: "i1",
+          name: "Welcome",
+          listId: "l1",
+          type: "free",
+          background: "old.jpg",
+        },
+      ];
+      const result = patchItemInList({
+        id: "i1",
+        list,
+        patch: {
+          background: "https://example.com/new.png",
+          localImage: {
+            id: "asset-1",
+            ownerDeviceId: "device-1",
+            ownerLabel: "This PC",
+            fileName: "new.png",
+            contentType: "image/png",
+            storagePolicy: "local-and-cloud",
+            cloudUrl: "https://example.com/new.png",
+          },
+        },
+      });
+      expect(result[0].background).toBe("https://example.com/new.png");
+      expect(result[0].localImage?.id).toBe("asset-1");
+      expect(list[0].background).toBe("old.jpg");
+    });
+  });
+
   describe("buildServiceTimeItem", () => {
     it("returns a DBItem with the service-time type and expected shape", () => {
       const item = buildServiceTimeItem();
@@ -804,6 +965,33 @@ Let Your fire fall`;
       const boxes = item.slides[0].boxes ?? [];
       const textBox = boxes.find((b) => b.words === "{{service-time}}");
       expect(textBox).toBeDefined();
+    });
+  });
+
+  describe("createNewItemList", () => {
+    it("leaves presentation-scoped outlines unscoped on the registry entry", async () => {
+      const list = await createNewItemList({
+        db: undefined,
+        name: "New Outline",
+        currentLists: [],
+        controllerScope: "presentation",
+      });
+      expect(list).toEqual({ _id: "New Outline", name: "New Outline" });
+      expect(list.controllerScope).toBeUndefined();
+    });
+
+    it("stamps auxiliary controller scope onto new outlines", async () => {
+      const list = await createNewItemList({
+        db: undefined,
+        name: "New Outline",
+        currentLists: [],
+        controllerScope: "ctrl_lobby",
+      });
+      expect(list).toEqual({
+        _id: "New Outline",
+        name: "New Outline",
+        controllerScope: "ctrl_lobby",
+      });
     });
   });
 });

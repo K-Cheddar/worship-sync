@@ -3,7 +3,7 @@ import { Check, Plus } from "lucide-react";
 import Button from "../Button/Button";
 import { cn } from "../../utils/cnHelper";
 import { ServiceTime } from "../../types";
-import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
+import NextServiceCountdownText from "../NextServiceCountdownText/NextServiceCountdownText";
 
 type NextServiceTimerItemProps = {
   upcomingService: { service: ServiceTime; nextAt: Date };
@@ -19,8 +19,6 @@ const NextServiceTimerItem = ({
   const targetIso = useMemo(() => {
     return upcomingService.nextAt.toISOString();
   }, [upcomingService]);
-
-  const countdownText = useNextServiceCountdownText(targetIso);
 
   const handleAdd = () => {
     onAdd();
@@ -46,9 +44,10 @@ const NextServiceTimerItem = ({
               <span className="text-white truncate">
                 {upcomingService.service.name || "Upcoming Service"}
               </span>
-              {countdownText != null && (
-                <span className="tabular-nums text-violet-300">{countdownText}</span>
-              )}
+              <NextServiceCountdownText
+                targetIso={targetIso}
+                className="tabular-nums text-violet-300"
+              />
             </div>
           </div>
         </div>

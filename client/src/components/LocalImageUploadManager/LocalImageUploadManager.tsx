@@ -1,7 +1,6 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { ToastContext } from "../../context/toastContext";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addItemToMediaList,
@@ -47,7 +46,6 @@ const LocalImageUploadManager = () => {
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
   const { db, isGuestSession = false } =
     useContext(ControllerInfoContext) || {};
-  const toast = useContext(ToastContext);
   const dispatch = useDispatch();
   const mediaList = useSelector((state: RootState) => state.media.list);
   const mediaIsReady = useSelector(
@@ -256,10 +254,6 @@ const LocalImageUploadManager = () => {
           }
         }
         await deleteLocalImageUploadJob(job.assetId);
-        toast?.showToast(
-          `${stored.fileName} is available in Media and on other devices.`,
-          "success",
-        );
       } finally {
         window.clearInterval(heartbeat);
         processing.current.delete(job.assetId);
@@ -275,7 +269,7 @@ const LocalImageUploadManager = () => {
         );
       }
     },
-    [db, dispatch, isGuestSession, toast],
+    [db, dispatch, isGuestSession],
   );
 
   const drainQueue = useCallback(async () => {

@@ -250,7 +250,9 @@ export const useControllerPageLifecycle = () => {
       // until a full refresh resets the provider.
       setIsMobile?.(false);
       setIsPhone?.(false);
-      dispatch({ type: "RESET" });
+      // Soft reset: clears presentation/session slices but keeps church
+      // registries so Home does not flash built-in controller names.
+      dispatch({ type: "RESET_CONTROLLER_SESSION" });
       dispatch(setAllItemsIsInitialized(false));
       dispatch(setPreferencesIsInitialized(false));
       dispatch(setItemListIsInitialized(false));

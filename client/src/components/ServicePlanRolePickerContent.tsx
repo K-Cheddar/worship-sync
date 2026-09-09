@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type MouseEvent, type PointerEvent } from "react";
+import { Check } from "lucide-react";
 import Button from "./Button/Button";
 import Input from "./Input/Input";
 
@@ -59,9 +60,7 @@ const groupServicePlanRoleOptionsByTeam = (options: ServicePlanRolePickerOption[
     }));
 };
 
-type ServicePlanRolePickerContentProps = {
-  value: string;
-  onValueChange: (positionId: string) => void;
+type ServicePlanRolePickerContentBaseProps = {
   onSelectionComplete?: () => void;
   options: ServicePlanRolePickerOption[];
   teamFilterStorageKey: string;
@@ -69,6 +68,19 @@ type ServicePlanRolePickerContentProps = {
   lockedTeamName?: string;
   allowEmpty?: boolean;
 };
+
+export type ServicePlanRolePickerContentProps = ServicePlanRolePickerContentBaseProps & (
+  | {
+    multi?: false;
+    value: string;
+    onValueChange: (positionId: string) => void;
+  }
+  | {
+    multi: true;
+    value: string[];
+    onValueChange: (positionIds: string[]) => void;
+  }
+);
 
 const readStoredTeamFilter = (key: string) => {
   if (typeof window === "undefined") return "";
@@ -90,15 +102,15 @@ const writeStoredTeamFilter = (key: string, value: string) => {
 };
 
 /** Search and team-filter controls shared by popover and dropdown role pickers. */
-const ServicePlanRolePickerContent = ({
-  value,
-  onValueChange,
-  onSelectionComplete,
-  options,
-  teamFilterStorageKey,
-  lockedTeamName,
-  allowEmpty = true,
-}: ServicePlanRolePickerContentProps) => {
+const ServicePlanRolePickerContent = (props: ServicePlanRolePickerContentProps) => {
+  const {
+    onSelectionComplete,
+    options,
+    teamFilterStorageKey,
+    lockedTeamName,
+    allowEmpty = true,
+  } = props;
+  const multi = props.multi === true;
   const [query, setQuery] = useState("");
   const [teamId, setTeamId] = useState(() => readStoredTeamFilter(teamFilterStorageKey));
   const teams = useMemo(() => {
@@ -128,8 +140,26 @@ const ServicePlanRolePickerContent = ({
     setTeamId(nextTeamId);
     writeStoredTeamFilter(teamFilterStorageKey, nextTeamId);
   };
+  const isRoleSelected = (positionId: string) => (
+    multi ? props.value.includes(positionId) : props.value === positionId
+  );
+  const isAllRolesSelected = multi ? props.value.length === 0 : !props.value;
   const selectRole = (positionId: string) => {
-    onValueChange(positionId);
+    if (multi) {
+      const selected = props.value.includes(positionId);
+      props.onValueChange(
+        selected
+          ? props.value.filter((id) => id !== positionId)
+          : [...props.value, positionId],
+      );
+      return;
+    }
+    props.onValueChange(positionId);
+    onSelectionComplete?.();
+  };
+  const clearRoles = () => {
+    if (multi) props.onValueChange([]);
+    else props.onValueChange("");
     onSelectionComplete?.();
   };
 
@@ -181,10 +211,10 @@ const ServicePlanRolePickerContent = ({
         {allowEmpty ? (
           <Button
             variant="tertiary"
-            isSelected={!value}
+            isSelected={isAllRolesSelected}
             className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
             onPointerDown={stopRolePickerPointerDown}
-            onClick={(event) => handleRolePickerClick(event, () => selectRole(""))}
+            onClick={(event) => handleRolePickerClick(event, clearRoles)}
           >
             All roles
           </Button>
@@ -195,6 +225,7 @@ const ServicePlanRolePickerContent = ({
               {group.teamName}
             </p>
             {group.roles.map((role) => {
+              const selected = isRoleSelected(role.positionId);
               const choose = () => {
                 if (!lockedTeamName && role.teamId) chooseTeam(role.teamId);
                 selectRole(role.positionId);
@@ -203,13 +234,19 @@ const ServicePlanRolePickerContent = ({
                 <Button
                   key={role.positionId}
                   variant="tertiary"
-                  isSelected={role.positionId === value}
+                  isSelected={selected}
+                  aria-pressed={multi ? selected : undefined}
                   className="max-md:min-h-0 w-full px-2 py-1 text-left text-xs"
                   onPointerDown={stopRolePickerPointerDown}
                   onClick={(event) => handleRolePickerClick(event, choose)}
                 >
-                  <span className="block truncate">
-                    {servicePlanRoleOptionDisplayLabel(role, options)}
+                  <span className="flex w-full min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">
+                      {servicePlanRoleOptionDisplayLabel(role, options)}
+                    </span>
+                    {multi && selected ? (
+                      <Check className="size-3.5 shrink-0 text-cyan-300" aria-hidden />
+                    ) : null}
                   </span>
                 </Button>
               );

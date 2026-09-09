@@ -38,6 +38,8 @@ export type WorkstationDevice = {
   deviceId: string;
   label: string;
   appAccess: string;
+  /** Booth grant: edit current service, view serving, assign mics. */
+  serviceWorkspaceAccess?: boolean;
   status?: string | null;
   createdAt?: string | null;
   lastSeenAt?: string | null;

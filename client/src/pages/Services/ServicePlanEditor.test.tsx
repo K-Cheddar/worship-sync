@@ -1057,6 +1057,14 @@ describe("ServicePlanEditor", () => {
     // Starting from scratch seeds one empty "Service" section. Importing over
     // it must not treat that as a plan to reconcile.
     await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    expect(await screen.findByDisplayValue("Service")).toBeInTheDocument();
+    // Empty scratch can autosave before the import finishes under suite load.
+    // Drain and clear that write so the assertion below is about the import.
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    mockSaveServicePlan.mockClear();
+
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
     await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
     // Set the URL in one event — typing it character by character is the
@@ -1071,13 +1079,14 @@ describe("ServicePlanEditor", () => {
 
     // Let the autosave this import queued actually land, both to assert what
     // was persisted and so its timer can't fire during the next test.
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+    await waitFor(() => {
+      const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
+      expect(body?.sections.map((section: { name: string }) => section.name)).toEqual([
+        "Welcome & Connection",
+      ]);
+    }, {
       timeout: 2_500,
     });
-    const [, , body] = mockSaveServicePlan.mock.calls[0];
-    expect(body.sections.map((section) => section.name)).toEqual([
-      "Welcome & Connection",
-    ]);
   });
 
   it("imports a plan from a Service Planning URL into editable sections", async () => {

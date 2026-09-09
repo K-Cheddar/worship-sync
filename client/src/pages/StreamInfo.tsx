@@ -2,9 +2,27 @@ import { useMemo } from "react";
 import StreamInfoComponent from "../components/StreamInfo/StreamInfo";
 import { useSelector } from "../hooks";
 import { RootState } from "../store/store";
-import useNextServiceCountdownText from "../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../hooks/useDisplayedUpcomingService";
+import useNextServiceCountdownText from "../hooks/useNextServiceCountdownText";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../constants/nextServiceTimer";
+import type { ServiceTime } from "../types";
+
+/** Leaf that owns countdown state so the route shell stays quiet between ticks. */
+const StreamInfoCountdown = ({
+  upcomingService,
+  targetIso,
+}: {
+  upcomingService?: ServiceTime | null;
+  targetIso: string | null;
+}) => {
+  const timeText = useNextServiceCountdownText(targetIso);
+  return (
+    <StreamInfoComponent
+      upcomingService={upcomingService}
+      timeText={timeText}
+    />
+  );
+};
 
 const StreamInfo = () => {
   const services = useSelector(
@@ -20,12 +38,11 @@ const StreamInfo = () => {
   const targetIso = useMemo(() => {
     return upcomingService?.nextAt.toISOString() ?? null;
   }, [upcomingService]);
-  const timeText = useNextServiceCountdownText(targetIso);
 
   return (
-    <StreamInfoComponent
+    <StreamInfoCountdown
       upcomingService={upcomingService?.service}
-      timeText={timeText}
+      targetIso={targetIso}
     />
   );
 };

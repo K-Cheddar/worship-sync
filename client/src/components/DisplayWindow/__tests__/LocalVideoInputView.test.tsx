@@ -32,6 +32,9 @@ jest.mock("../../../utils/localVideoInput", () => ({
   ).getLocalVideoSourceErrorMessage,
   isDesktopCaptureKind: jest.requireActual("../../../utils/localVideoInput")
     .isDesktopCaptureKind,
+  isLocalVideoDeviceBusyError: jest.requireActual(
+    "../../../utils/localVideoInput",
+  ).isLocalVideoDeviceBusyError,
   resolveLocalVideoInputBinding: jest.fn(),
 }));
 jest.mock("../../../utils/localVideoCapturePool", () => ({
@@ -165,6 +168,24 @@ describe("LocalVideoInputView", () => {
     expect(screen.queryByText(/Connecting/i)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Starting local preview/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to the local relay when the device is busy", async () => {
+    mockAcquireWarmCapture.mockRejectedValue(
+      new DOMException("busy", "NotReadableError"),
+    );
+    render(<LocalVideoInputView input={input} />);
+
+    await waitFor(() =>
+      expect(mockSubscribeMedia).toHaveBeenCalledWith(
+        "source-1",
+        expect.any(HTMLVideoElement),
+        expect.any(Object),
+      ),
+    );
+    expect(
+      screen.queryByText("Close other apps using this input, then try again."),
     ).not.toBeInTheDocument();
   });
 
