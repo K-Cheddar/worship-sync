@@ -277,6 +277,57 @@ const CanvaImportSheet = ({
     });
   };
 
+  const findCurrentPageMedia = (
+    pageNumber: number,
+    revision: number | string,
+  ) => {
+    if (!selectedDesign) return undefined;
+    const candidates = mediaSources
+      .filter(
+        ({ source }) =>
+          source.designId === selectedDesign.id &&
+          source.format === format &&
+          source.pageNumbers.length === 1 &&
+          source.pageNumbers[0] === pageNumber &&
+          isCanvaSourceCurrent(source, revision),
+      )
+      .sort((left, right) => right.source.revision - left.source.revision);
+    return candidates[0]?.mediaItem;
+  };
+
+  const mediaFromRefreshedImage = (
+    refreshTarget: MediaType,
+    data: mediaInfoType,
+  ): MediaType => ({
+    ...refreshTarget,
+    updatedAt: new Date().toISOString(),
+    format: data.format || refreshTarget.format,
+    height: data.height ?? refreshTarget.height,
+    width: data.width ?? refreshTarget.width,
+    publicId: data.public_id || refreshTarget.publicId,
+    background: data.secure_url || refreshTarget.background,
+    thumbnail:
+      data.thumbnail_url || data.secure_url || refreshTarget.thumbnail,
+    placeholderImage: "",
+    source: "cloudinary",
+    canvaImportKey: data.canvaImportKey,
+    canvaSource: data.canvaSource,
+  });
+
+  const buildOrderedDeckPages = (
+    deckPageByNumber: Map<number, MediaType>,
+    revision: number | string,
+  ): MediaType[] => {
+    const ordered: MediaType[] = [];
+    for (const pageNumber of [...selectedPages].sort((a, b) => a - b)) {
+      const pageMedia =
+        deckPageByNumber.get(pageNumber) ??
+        findCurrentPageMedia(pageNumber, revision);
+      if (pageMedia) ordered.push(pageMedia);
+    }
+    return ordered;
+  };
+
   const importSelected = async () => {
     if (!selectedDesign || selectedPages.size === 0) return;
     const designImportKeyPrefix = `canva:${selectedDesign.id}:`;
@@ -295,7 +346,30 @@ const CanvaImportSheet = ({
         format,
         existingImportKeys,
       });
+      const recordDeckPages = (
+        deckPageByNumber: Map<number, MediaType>,
+        media: MediaType | void,
+      ) => {
+        if (!media?.canvaSource?.pageNumbers?.length) return;
+        for (const pageNumber of media.canvaSource.pageNumbers) {
+          deckPageByNumber.set(pageNumber, media);
+        }
+      };
+
       if (result.assets.length === 0) {
+        const existingDeckPages =
+          createDeckItem && format === "png" && onCreateDeckItem
+            ? buildOrderedDeckPages(new Map(), result.revision)
+            : [];
+        if (existingDeckPages.length > 1 && onCreateDeckItem) {
+          showToast(
+            `${existingDeckPages.length} selected pages were already in Media. Creating a multi-slide item.`,
+            "success",
+          );
+          onOpenChange(false);
+          await onCreateDeckItem(existingDeckPages, selectedDesign.title);
+          return;
+        }
         setError(
           format === "png"
             ? "Those Canva pages are already in Media and have not changed. Select different pages or edit the design in Canva first."
@@ -305,7 +379,7 @@ const CanvaImportSheet = ({
       }
       let refreshedCount = 0;
       let importedCount = 0;
-      const newlyImportedImages: MediaType[] = [];
+      const deckPageByNumber = new Map<number, MediaType>();
       result.assets.forEach((asset) => {
         const refreshTarget = asset.data.canvaSource
           ? findRefreshTarget(asset.data.canvaSource)
@@ -314,10 +388,14 @@ const CanvaImportSheet = ({
           if (refreshTarget) {
             onImageRefresh(asset.data, refreshTarget.id);
             refreshedCount += 1;
+            recordDeckPages(
+              deckPageByNumber,
+              mediaFromRefreshedImage(refreshTarget, asset.data),
+            );
           } else {
             const created = onImageComplete(asset.data);
             importedCount += 1;
-            if (created) newlyImportedImages.push(created);
+            recordDeckPages(deckPageByNumber, created);
           }
         } else if (refreshTarget) {
           onVideoRefresh(asset.data, refreshTarget.id);
@@ -346,13 +424,17 @@ const CanvaImportSheet = ({
         "success",
       );
       onOpenChange(false);
+      const orderedDeckPages = buildOrderedDeckPages(
+        deckPageByNumber,
+        result.revision,
+      );
       if (
         createDeckItem &&
         format === "png" &&
-        newlyImportedImages.length > 1 &&
+        orderedDeckPages.length > 1 &&
         onCreateDeckItem
       ) {
-        await onCreateDeckItem(newlyImportedImages, selectedDesign.title);
+        await onCreateDeckItem(orderedDeckPages, selectedDesign.title);
       }
     } catch (importError) {
       setError(

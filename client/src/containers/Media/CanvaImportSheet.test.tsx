@@ -197,3 +197,118 @@ test("refreshes an existing Canva media record when its design revision changes"
     existingImportKeys: ["canva:DAF_design_1:rev:100:png:1"],
   });
 });
+
+test("creates a deck from new, refreshed, and already-current selected pages", async () => {
+  const page2Existing = {
+    ...existingMedia,
+    id: "media-2",
+    name: "Weekly welcome page 2",
+    canvaImportKey: "canva:DAF_design_1:rev:101:png:2",
+    canvaSource: {
+      designId: "DAF_design_1",
+      designTitle: "Sunday Welcome",
+      revision: 101,
+      format: "png" as const,
+      pageNumbers: [2],
+    },
+    background: "https://res.cloudinary.com/page-2.png",
+  } as MediaType;
+  const newPage3 = {
+    public_id: "canva/new-page-3",
+    secure_url: "https://res.cloudinary.com/new-page-3.png",
+    thumbnail_url: "https://res.cloudinary.com/new-page-3-thumb.png",
+    resource_type: "image",
+    format: "png",
+    width: 1920,
+    height: 1080,
+    original_filename: "Page 3",
+    canvaImportKey: "canva:DAF_design_1:rev:101:png:3",
+    canvaSource: {
+      designId: "DAF_design_1",
+      designTitle: "Sunday Welcome",
+      revision: 101,
+      format: "png" as const,
+      pageNumbers: [3],
+    },
+  } as mediaInfoType;
+  const createdPage3 = {
+    id: "media-3",
+    name: "Page 3",
+    type: "image",
+    background: newPage3.secure_url,
+    canvaImportKey: newPage3.canvaImportKey,
+    canvaSource: newPage3.canvaSource,
+  } as MediaType;
+
+  jest.mocked(getCanvaStatus).mockResolvedValue({
+    connected: true,
+    oauthConfigured: true,
+    accountLabel: "Church Creative",
+  });
+  jest.mocked(listCanvaDesigns).mockResolvedValue({
+    items: [
+      {
+        id: "DAF_design_1",
+        title: "Sunday Welcome",
+        thumbnailUrl: "https://example.test/thumb.png",
+        pageCount: 3,
+        updatedAt: 101,
+        editUrl: "https://www.canva.com/api/design/token/edit",
+        viewUrl: "https://www.canva.com/api/design/token/view",
+      },
+    ],
+    continuation: "",
+  });
+  jest.mocked(importCanvaDesign).mockResolvedValue({
+    assets: [
+      { kind: "image", data: refreshedImage },
+      { kind: "image", data: newPage3 },
+    ],
+    skippedCount: 1,
+    revision: 101,
+  });
+  const onImageComplete = jest.fn(() => createdPage3);
+  const onImageRefresh = jest.fn();
+  const onCreateDeckItem = jest.fn();
+
+  render(
+    <MemoryRouter>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <CanvaImportSheet
+          open
+          onOpenChange={jest.fn()}
+          onImageComplete={onImageComplete}
+          onVideoComplete={jest.fn()}
+          onImageRefresh={onImageRefresh}
+          onVideoRefresh={jest.fn()}
+          onCreateDeckItem={onCreateDeckItem}
+          existingMedia={[existingMedia, page2Existing]}
+        />
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /Sunday Welcome/ }),
+  );
+  // Page 1 is pre-selected when a design opens; add the rest of the selection.
+  await user.click(screen.getByRole("button", { name: /Page 2/i }));
+  await user.click(screen.getByRole("button", { name: /Page 3/i }));
+  await user.click(
+    screen.getByRole("button", { name: /Import selected|Refresh selected/i }),
+  );
+
+  await waitFor(() => {
+    expect(onCreateDeckItem).toHaveBeenCalled();
+  });
+  const [deckPages, title] = onCreateDeckItem.mock.calls[0];
+  expect(title).toBe("Sunday Welcome");
+  expect(deckPages).toHaveLength(3);
+  expect(deckPages[0].id).toBe("media-1");
+  expect(deckPages[0].background).toBe(refreshedImage.secure_url);
+  expect(deckPages[1].id).toBe("media-2");
+  expect(deckPages[2].id).toBe("media-3");
+  expect(onImageRefresh).toHaveBeenCalledWith(refreshedImage, "media-1");
+  expect(onImageComplete).toHaveBeenCalledWith(newPage3);
+});

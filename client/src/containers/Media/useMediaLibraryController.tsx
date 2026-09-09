@@ -1293,18 +1293,22 @@ export function useMediaLibraryController({
   const createCanvaDeckItemFromMedia = useCallback(
     async (pages: MediaType[], designTitle: string) => {
       if (!db || pages.length === 0) return;
+      // Prefer live list entries so refreshed Canva backgrounds are current.
+      const resolvedPages = pages.map(
+        (page) => list.find((mediaItem) => mediaItem.id === page.id) ?? page,
+      );
       try {
         const newItem = await createNewFreeForm({
           name: designTitle || "Canva presentation",
           text: "",
           list: allItemsList,
           db,
-          background: pages[0].background,
-          mediaInfo: pages[0],
+          background: resolvedPages[0].background,
+          mediaInfo: resolvedPages[0],
           brightness: defaultFreeFormBackgroundBrightness,
           overflow: defaultFreeFormFontMode,
           emptyBodyText: true,
-          slideDefs: pages.map((page, index) => ({
+          slideDefs: resolvedPages.map((page, index) => ({
             name: `Page ${index + 1}`,
             background: page.background,
             mediaInfo: page,
@@ -1327,7 +1331,7 @@ export function useMediaLibraryController({
           ),
         );
         showToast(
-          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${pages.length} slides.`,
+          `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
           "success",
         );
       } catch {
@@ -1344,6 +1348,7 @@ export function useMediaLibraryController({
       defaultFreeFormBackgroundBrightness,
       defaultFreeFormFontMode,
       dispatch,
+      list,
       navigate,
       showToast,
     ],
