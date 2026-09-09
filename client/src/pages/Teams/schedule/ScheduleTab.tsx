@@ -34,6 +34,11 @@ import SegmentedControl from "../../../components/SegmentedControl/SegmentedCont
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
 import {
   findNextUpcomingOccurrenceId,
@@ -4122,44 +4127,60 @@ const ScheduleTab = ({
                       New schedule
                     </Button>
                   ) : null}
-                  {canEdit && selectedSchedule && !isConfirmingSend ? (
-                    <Button
-                      variant="cta"
-                      svg={Send}
-                      iconSize="sm"
-                      disabled={isSendingSchedule || sendRecipientCount === 0}
-                      onClick={() => setIsConfirmingSend(true)}
+                  {/* Confirm in a popover so the toolbar stays put; the
+                      recipient count is still the whole point of asking. */}
+                  {canEdit && selectedSchedule ? (
+                    <Popover
+                      open={isConfirmingSend}
+                      onOpenChange={(open) => {
+                        if (!open && isSendingSchedule) return;
+                        setIsConfirmingSend(open);
+                      }}
                     >
-                      {selectedSchedule.sentAt ? "Send updates" : "Send schedule"}
-                    </Button>
-                  ) : null}
-                  {/* Confirm in place rather than in a dialog: it is one
-                      question, and the count is the whole point of asking. */}
-                  {canEdit && selectedSchedule && isConfirmingSend ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm text-gray-300">
-                        Email {sendRecipientCount}{" "}
-                        {sendRecipientCount === 1 ? "person" : "people"} on this
-                        schedule?
-                      </span>
-                      <Button
-                        variant="cta"
-                        svg={Send}
-                        iconSize="sm"
-                        disabled={isSendingSchedule}
-                        onClick={handleSendSchedule}
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="cta"
+                          svg={Send}
+                          iconSize="sm"
+                          disabled={
+                            isSendingSchedule || sendRecipientCount === 0
+                          }
+                        >
+                          {selectedSchedule.sentAt
+                            ? "Send updates"
+                            : "Send schedule"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
                       >
-                        {isSendingSchedule ? "Sending…" : "Yes, send"}
-                      </Button>
-                      <Button
-                        variant="tertiary"
-                        iconSize="sm"
-                        disabled={isSendingSchedule}
-                        onClick={() => setIsConfirmingSend(false)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
+                        <p className="text-sm text-gray-300">
+                          Email {sendRecipientCount}{" "}
+                          {sendRecipientCount === 1 ? "person" : "people"} on
+                          this schedule?
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="cta"
+                            svg={Send}
+                            iconSize="sm"
+                            disabled={isSendingSchedule}
+                            onClick={handleSendSchedule}
+                          >
+                            {isSendingSchedule ? "Sending…" : "Yes, send"}
+                          </Button>
+                          <Button
+                            variant="tertiary"
+                            iconSize="sm"
+                            disabled={isSendingSchedule}
+                            onClick={() => setIsConfirmingSend(false)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   ) : null}
                   {canEdit && selectedSchedule ? (
                     <Menu
@@ -4638,7 +4659,8 @@ const ScheduleTab = ({
                                     </th>
                                   ))}
                                 </tr>
-                              </thead>                              <tbody>
+                              </thead>
+                              <tbody>
                                 {scheduleColumns.map((column, columnIndex) => {
                                   const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                   const rowTone = scheduleRowTone(columnIndex);

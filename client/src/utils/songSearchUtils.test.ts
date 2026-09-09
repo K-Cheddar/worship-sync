@@ -1,4 +1,7 @@
-import { filterAndSortSongsForSearch, computeSongSearchEnrichment } from "./songSearchUtils";
+import {
+  filterAndSortSongsForSearch,
+  computeSongSearchEnrichment,
+} from "./songSearchUtils";
 import { DBItem } from "../types";
 
 const baseSong = (overrides: Partial<DBItem> = {}): DBItem =>
@@ -32,10 +35,7 @@ describe("songSearchUtils", () => {
     const wholeWord = baseSong({ _id: "whole", name: "Owe You Praise" });
     const embedded = baseSong({ _id: "embedded", name: "Power in the Blood" });
 
-    const result = filterAndSortSongsForSearch(
-      [embedded, wholeWord],
-      "owe",
-    );
+    const result = filterAndSortSongsForSearch([embedded, wholeWord], "owe");
 
     expect(result.map((song) => song._id)).toEqual(["whole", "embedded"]);
   });
@@ -65,6 +65,42 @@ describe("songSearchUtils", () => {
     const other = baseSong({ _id: "other", name: "Other Song" });
     const result = filterAndSortSongsForSearch([other, withLyric], "shepherd");
     expect(result.map((s) => s._id)).toEqual(["lyric"]);
+  });
+
+  it("ranks title matches above content-only matches", () => {
+    const titleHit = baseSong({
+      _id: "title",
+      // Alphabetically last so score-only ranking would bury it when tied.
+      name: "Z Sunday Service",
+    });
+    const contentOnly = baseSong({
+      _id: "content",
+      name: "Announcements",
+      arrangements: [
+        {
+          id: "arr",
+          name: "Default",
+          formattedLyrics: [
+            {
+              id: "s1",
+              type: "Verse",
+              name: "V1",
+              words: "Welcome to our service this morning",
+              slideSpan: 1,
+            },
+          ],
+          songOrder: [],
+          slides: [],
+        },
+      ],
+    });
+
+    const result = filterAndSortSongsForSearch(
+      [contentOnly, titleHit],
+      "service",
+    );
+
+    expect(result.map((song) => song._id)).toEqual(["title", "content"]);
   });
 
   it("computeSongSearchEnrichment sets showWords when only lyrics match", () => {

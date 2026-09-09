@@ -31,7 +31,10 @@ import {
   punctuationRegex,
   updateWordMatches,
 } from "../../utils/generalUtils";
-import { computeSongSearchEnrichment } from "../../utils/songSearchUtils";
+import {
+  compareItemSearchRanks,
+  computeSongSearchEnrichment,
+} from "../../utils/songSearchUtils";
 import {
   createSongMetadataFromLrclib,
   getImportableLyricsFromTrack,
@@ -108,6 +111,9 @@ type FilteredItemsProps = {
 
 export type filteredItemsListType = ServiceItem & {
   matchPercentage?: number;
+  /** Title/name match score; used to rank title hits above content-only hits. */
+  titleMatch?: number;
+  matchRank?: number;
   matchedWords?: string;
   showWords?: boolean;
 };
@@ -349,16 +355,23 @@ const FilteredItems = ({
             const enriched = computeSongSearchEnrichment(doc, cleanSearchValue);
             return {
               ...item,
+              titleMatch: enriched.titleMatch,
               matchRank: enriched.matchRank,
               matchedWords: enriched.matchedWords,
               showWords: enriched.showWords,
             };
           }
-          return { ...item, matchRank: 0, matchedWords: "", showWords: false };
+          return {
+            ...item,
+            titleMatch: 0,
+            matchRank: 0,
+            matchedWords: "",
+            showWords: false,
+          };
         }
 
         const name = item.name.toLowerCase();
-        const match = getMatchForString({
+        const titleMatch = getMatchForString({
           string: name,
           searchValue: cleanSearchValue,
           allowPartial: true,
@@ -388,22 +401,34 @@ const FilteredItems = ({
 
         const { updatedMatchedWords, updatedMatch } = updateWordMatches({
           matchedWords: "",
-          match,
+          match: titleMatch,
           wordMatches,
         });
 
         return {
           ...item,
-          matchRank: match + updatedMatch,
+          titleMatch,
+          matchRank: titleMatch + updatedMatch,
           matchedWords: updatedMatchedWords,
-          showWords: hasLyricMatch && match === 0, // Auto-expand if there's a lyric match but no title match
+          showWords: hasLyricMatch && titleMatch === 0, // Auto-expand if there's a lyric match but no title match
         };
       });
 
       return results
-        .filter((item) => item.matchRank > 0)
-        .sort(
-          (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name)
+        .filter((item) => (item.matchRank ?? 0) > 0)
+        .sort((a, b) =>
+          compareItemSearchRanks(
+            {
+              titleMatch: a.titleMatch ?? 0,
+              matchRank: a.matchRank ?? 0,
+              name: a.name,
+            },
+            {
+              titleMatch: b.titleMatch ?? 0,
+              matchRank: b.matchRank ?? 0,
+              name: b.name,
+            },
+          ),
         );
     };
   }, [listOfType, docsById, freeDocsByName, type]);

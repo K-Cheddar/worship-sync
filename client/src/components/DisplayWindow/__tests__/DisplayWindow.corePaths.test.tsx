@@ -1689,6 +1689,31 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getAllByTestId("display-editor-mock")).toHaveLength(2);
   });
 
+  it("uses high-quality local video receive in the display editor", () => {
+    render(
+      <DisplayWindow
+        displayType="editor"
+        boxes={[baseBox]}
+        localVideoInput={{
+          sourceId: "source-1",
+          deviceLabel: "USB Capture",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth",
+        }}
+        canCaptureLocalVideo
+      />,
+    );
+
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-capture-enabled",
+      "true",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-high-quality",
+      "true",
+    );
+  });
+
   it("shows a non-capturing local video status unless the surface opts in", () => {
     render(
       <DisplayWindow

@@ -22,7 +22,6 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
-import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
 import Spinner from "../../components/Spinner/Spinner";
 import {
@@ -76,7 +75,6 @@ const ServiceTimes = () => {
   const targetIso = useMemo(() => {
     return upcomingService?.nextAt.toISOString() ?? null;
   }, [upcomingService]);
-  const upcomingServiceTimeText = useNextServiceCountdownText(targetIso);
 
   const handleSave = useCallback(
     (values: Partial<ServiceTime>) => {
@@ -140,7 +138,7 @@ const ServiceTimes = () => {
       services={services}
       onEdit={startEdit}
       upcomingService={upcomingService}
-      upcomingServiceTimeText={upcomingServiceTimeText}
+      upcomingServiceTargetIso={targetIso}
       canEdit={canEdit}
     />
   );
@@ -197,7 +195,7 @@ const ServiceTimes = () => {
       ) : null}
 
       {globalInfo?.loginState === "success" &&
-      !globalInfo.sharedDataReady ? (
+        !globalInfo.sharedDataReady ? (
         <p
           role="status"
           className="shrink-0 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100"

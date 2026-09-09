@@ -1198,7 +1198,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         }
         volume={localVideoVolume}
         captureEnabled={canCaptureLocalVideo && displayType === "editor"}
-        receiveHighQuality={canCaptureLocalVideo && displayType !== "editor"}
+        receiveHighQuality={canCaptureLocalVideo}
         publishPreview={canCaptureLocalVideo && displayType === "editor"}
         showErrors={!canCaptureLocalVideo || displayType === "editor"}
         transparentBackground={displayType === "stream"}
@@ -1213,7 +1213,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         shouldAnimate={shouldAnimate}
         playAudio={false}
         captureEnabled={false}
-        receiveHighQuality={canCaptureLocalVideo && displayType !== "editor"}
+        receiveHighQuality={canCaptureLocalVideo}
         showErrors={false}
         transparentBackground={displayType === "stream"}
         contentVisible={localVideoContentVisible}

@@ -10,7 +10,7 @@ type Props = {
   services: ServiceTime[];
   onEdit: (id: string) => void;
   upcomingService: { service: ServiceTime; nextAt: Date } | null;
-  upcomingServiceTimeText: string | null;
+  upcomingServiceTargetIso: string | null;
   canEdit?: boolean;
 };
 
@@ -18,7 +18,7 @@ const ServiceTimesList = ({
   services,
   onEdit,
   upcomingService,
-  upcomingServiceTimeText,
+  upcomingServiceTargetIso,
   canEdit = true,
 }: Props) => {
   const [manualAdjustId, setManualAdjustId] = useState<string | null>(null);
@@ -56,7 +56,7 @@ const ServiceTimesList = ({
               />
               <NextServiceLiveCountdown
                 service={upcomingService.service}
-                timeText={upcomingServiceTimeText}
+                targetIso={upcomingServiceTargetIso}
               />
               {canEdit ? (
                 <TimeAdjuster serviceId={upcomingService.service.id} />
