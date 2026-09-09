@@ -14,7 +14,8 @@ import {
  *
  * A blank window with no message is the worst state to hand an operator, and it
  * is exactly what gating the page on the registry having loaded produced —
- * leaving another controller dispatches RESET, which empties that slice.
+ * a full RESET (or a race before the soft session reset) can leave the slice
+ * unloaded briefly.
  */
 
 // The controller body pulls in the whole presentation stack; these tests are

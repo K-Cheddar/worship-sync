@@ -7,6 +7,17 @@ import {
   Reducer,
 } from "@reduxjs/toolkit";
 import undoable, { ActionCreators } from "redux-undo";
+
+/**
+ * Store wipes that drop presentation/session slices.
+ *
+ * - `RESET` — full clear (logout, sign-in, guest exit).
+ * - `RESET_CONTROLLER_SESSION` — leave a controller page; keeps church
+ *   registries (`controllerProfiles`, `displayOutputs`) so Home and sync
+ *   surfaces do not flash built-in names while Firebase re-hydrates.
+ */
+export const isStoreResetAction = (action: { type: string }) =>
+  action.type === "RESET" || action.type === "RESET_CONTROLLER_SESSION";
 import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
@@ -939,7 +950,7 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.item &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -1214,7 +1225,7 @@ listenerMiddleware.startListening({
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -1289,18 +1300,29 @@ listenerMiddleware.startListening({
       itemListsSlice.actions.setInitialItemList,
       itemListsSlice.actions.initiateItemLists,
       itemListsSlice.actions.updateItemListsFromRemote,
-      itemListsSlice.actions.selectItemList,
       itemListsSlice.actions.setIsInitialized,
+      itemListsSlice.actions.setOutlineScope,
     );
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
   effect: async (action, listenerApi) => {
+    // Snapshot before debounce: leaving a controller page resets itemLists to
+    // initial state, which would otherwise make the delayed write bail out and
+    // drop active outline / selection persistence.
+    const snapshot = (listenerApi.getState() as RootState).undoable.present
+      .itemLists;
+    const { currentLists, activeList, selectedIdByScope } = snapshot;
+    if (!db) return;
+    // Selection can still be worth persisting when activeList is momentarily
+    // empty; skip only when there is nothing at all to write.
+    if (!activeList && currentLists.length === 0) return;
+
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
         AUTOSAVE_DEBOUNCE_KEYS.itemLists,
@@ -1310,14 +1332,12 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
 
-      // update ItemList
-      const { currentLists, activeList } = (listenerApi.getState() as RootState)
-        .undoable.present.itemLists;
-
-      if (!db || !activeList) return;
       const db_itemLists: DBItemLists = await db.get("ItemLists");
       db_itemLists.itemLists = [...currentLists];
-      db_itemLists.activeList = activeList;
+      if (activeList) {
+        db_itemLists.activeList = activeList;
+      }
+      db_itemLists.selectedIdByScope = { ...selectedIdByScope };
       db_itemLists.updatedAt = new Date().toISOString();
       db.put(db_itemLists);
 
@@ -1357,7 +1377,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -1411,7 +1431,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.overlay !==
         (previousState as RootState).undoable.present.overlay &&
       !excluded(action) &&
-      action.type !== "RESET" &&
+      !isStoreResetAction(action) &&
       !!(currentState as RootState).undoable.present.overlay.hasPendingUpdate
     );
   },
@@ -1505,7 +1525,7 @@ listenerMiddleware.startListening({
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -1555,7 +1575,7 @@ listenerMiddleware.startListening({
       ((currentState as RootState).timers !==
         (previousState as RootState).timers &&
         !excluded(action) &&
-        action.type !== "RESET")
+        !isStoreResetAction(action))
     );
   },
 
@@ -1660,7 +1680,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -1793,10 +1813,11 @@ listenerMiddleware.startListening({
 /** When the active outline changes, push that outline's credits from Pouch to RTDB live display. */
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    // Full store RESET (e.g. overlay/controller page unmount) clears slices to initial
-    // state; activeList becomes undefined transiently. Do not treat that as "no active
-    // outline" for audience RTDB — avoids wiping `publishedList` while displays stay open.
-    if (action.type === "RESET") return false;
+    // Full RESET or controller-session soft reset clear itemLists to initial
+    // state; activeList becomes undefined transiently. Do not treat that as
+    // "no active outline" for audience RTDB — avoids wiping `publishedList`
+    // while displays stay open.
+    if (isStoreResetAction(action)) return false;
     const prevId = (previousState as RootState).undoable.present.itemLists
       .activeList?._id;
     const nextId = (currentState as RootState).undoable.present.itemLists
@@ -1864,7 +1885,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).media !==
         (previousState as RootState).media &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -2030,7 +2051,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -2213,7 +2234,7 @@ listenerMiddleware.startListening({
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlayTemplates
         ?.hasPendingUpdate &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -2325,7 +2346,7 @@ const isLocalServiceTimesChange = (
     (currentState as RootState).undoable.present.serviceTimes !==
       (previousState as RootState).undoable.present.serviceTimes &&
     !excluded(action) &&
-    action.type !== "RESET"
+    !isStoreResetAction(action)
   );
 };
 
@@ -2408,7 +2429,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.serviceTimes !==
         (previousState as RootState).undoable.present.serviceTimes &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -2505,7 +2526,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).presentation !==
         (previousState as RootState).presentation &&
       !excluded(action) &&
-      action.type !== "RESET"
+      !isStoreResetAction(action)
     );
   },
 
@@ -3185,6 +3206,14 @@ const combinedReducers = combineReducers({
 const rootReducer: Reducer = (state: RootState, action: Action) => {
   if (action.type === "RESET") {
     state = {} as RootState;
+  } else if (action.type === "RESET_CONTROLLER_SESSION") {
+    // Church registries are app-root synced and must survive leaving a
+    // controller; wiping them flashes default names on Home until Firebase
+    // re-attaches. Logout / church switch still use full RESET.
+    state = {
+      controllerProfiles: state?.controllerProfiles,
+      displayOutputs: state?.displayOutputs,
+    } as RootState;
   }
   return combinedReducers(state, action);
 };

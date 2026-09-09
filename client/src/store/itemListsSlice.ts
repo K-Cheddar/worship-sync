@@ -22,10 +22,26 @@ type ItemListState = {
   /**
    * Last outline opened per scope, so switching controllers returns the
    * operator to where they were instead of resetting to the first outline.
+   * Also persisted on the ItemLists doc so reload restores each controller.
    */
   selectedIdByScope: Record<string, string>;
   isInitialized: boolean;
 };
+
+export type InitiateItemListsPayload =
+  | ItemList[]
+  | {
+      itemLists: ItemList[];
+      selectedIdByScope?: Record<string, string>;
+    };
+
+export type UpdateItemListsFromRemotePayload =
+  | ItemList[]
+  | {
+      itemLists: ItemList[];
+      /** Remote church-wide active outline id, when the ItemLists doc carried one. */
+      activeListId?: string;
+    };
 
 const initialState: ItemListState = {
   currentLists: [],
@@ -35,6 +51,10 @@ const initialState: ItemListState = {
   selectedIdByScope: {},
   isInitialized: false,
 };
+
+const normalizeItemListsPayload = (
+  payload: InitiateItemListsPayload | UpdateItemListsFromRemotePayload,
+): ItemList[] => (Array.isArray(payload) ? payload : payload.itemLists);
 
 /**
  * Backfill the scope fields on state that predates them.
@@ -71,6 +91,10 @@ const reselectWithinScope = (state: ItemListState) => {
   }
 };
 
+/** Prefer a presentation-scoped outline when the church-wide active must move. */
+const presentationActiveFallback = (lists: ItemList[]): ItemList | undefined =>
+  filterOutlinesByScope(lists, DEFAULT_OUTLINE_SCOPE)[0] ?? lists[0];
+
 export const itemListsSlice = createSlice({
   name: "itemLists",
   initialState,
@@ -82,13 +106,18 @@ export const itemListsSlice = createSlice({
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
-    initiateItemLists: (state, action: PayloadAction<ItemList[]>) => {
+    initiateItemLists: (
+      state,
+      action: PayloadAction<InitiateItemListsPayload>,
+    ) => {
       ensureScopeState(state);
-      state.currentLists = action.payload;
-      const inScope = filterOutlinesByScope(action.payload, state.scope);
-      state.activeList = action.payload[0];
-      state.selectedList = inScope[0];
-      if (inScope[0]) state.selectedIdByScope[state.scope] = inScope[0]._id;
+      const lists = normalizeItemListsPayload(action.payload);
+      if (!Array.isArray(action.payload) && action.payload.selectedIdByScope) {
+        state.selectedIdByScope = { ...action.payload.selectedIdByScope };
+      }
+      state.currentLists = lists;
+      state.activeList = presentationActiveFallback(lists);
+      reselectWithinScope(state);
       state.isInitialized = true;
     },
     /**
@@ -104,9 +133,15 @@ export const itemListsSlice = createSlice({
       state.scope = scope;
       reselectWithinScope(state);
     },
-    updateItemListsFromRemote: (state, action: PayloadAction<ItemList[]>) => {
+    updateItemListsFromRemote: (
+      state,
+      action: PayloadAction<UpdateItemListsFromRemotePayload>,
+    ) => {
       ensureScopeState(state);
-      const lists = action.payload;
+      const lists = normalizeItemListsPayload(action.payload);
+      const remoteActiveId = Array.isArray(action.payload)
+        ? undefined
+        : action.payload.activeListId;
       state.currentLists = lists;
       if (lists.length === 0) {
         state.activeList = undefined;
@@ -131,18 +166,22 @@ export const itemListsSlice = createSlice({
         reselectWithinScope(state);
       }
 
-      const activeId = state.activeList?._id;
-      state.activeList =
-        activeId && ids.has(activeId)
-          ? lists.find((l) => l._id === activeId)!
-          : lists[0];
+      if (remoteActiveId && ids.has(remoteActiveId)) {
+        state.activeList = lists.find((l) => l._id === remoteActiveId)!;
+      } else {
+        const activeId = state.activeList?._id;
+        state.activeList =
+          activeId && ids.has(activeId)
+            ? lists.find((l) => l._id === activeId)!
+            : presentationActiveFallback(lists);
+      }
     },
     removeFromItemLists: (state, action: PayloadAction<string>) => {
       state.currentLists = state.currentLists.filter((item) => {
         return item._id !== action.payload;
       });
       if (state.activeList?._id === action.payload) {
-        state.activeList = state.currentLists[0];
+        state.activeList = presentationActiveFallback(state.currentLists);
       }
       if (state.selectedList?._id === action.payload) {
         reselectWithinScope(state);

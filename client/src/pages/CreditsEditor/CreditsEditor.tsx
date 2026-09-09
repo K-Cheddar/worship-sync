@@ -335,12 +335,22 @@ const CreditsEditor = ({
         const lists = response?.itemLists ?? [];
         if (lists.length) {
           if (!itemListsReady) {
-            dispatch(initiateItemLists(lists));
+            dispatch(
+              initiateItemLists({
+                itemLists: lists,
+                selectedIdByScope: response?.selectedIdByScope,
+              }),
+            );
             if (response?.activeList) {
               dispatch(setInitialItemList(response.activeList._id));
             }
           } else {
-            dispatch(updateItemListsFromRemote(lists));
+            dispatch(
+              updateItemListsFromRemote({
+                itemLists: lists,
+                activeListId: response?.activeList?._id,
+              }),
+            );
           }
         }
       } catch (e) {

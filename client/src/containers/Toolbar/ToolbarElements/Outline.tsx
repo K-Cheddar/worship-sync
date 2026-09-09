@@ -18,7 +18,7 @@ type ServiceProps = {
   updateList: (list: ItemList) => void;
   copyList: (list: ItemList) => Promise<void>;
   selectList: (_id: string) => void;
-  setActiveList: (_id: string) => void;
+  setActiveList?: (_id: string) => void;
   isSelected: boolean;
   isActive: boolean;
   canEdit: boolean;
@@ -26,6 +26,11 @@ type ServiceProps = {
   disableDrag?: boolean;
   /** Service-column popover list styling (vs toolbar popover). */
   panel?: boolean;
+  /**
+   * Church-wide "Set as active" — presentation scope only. Aux controllers
+   * own selection, not the live-service outline.
+   */
+  showSetActive?: boolean;
 };
 
 const Service = ({
@@ -40,6 +45,7 @@ const Service = ({
   canEdit,
   disableDrag = false,
   panel = false,
+  showSetActive = true,
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
   const [isCopying, setIsCopying] = useState(false);
@@ -182,13 +188,17 @@ const Service = ({
                 isLoading={isCopying}
               />
             )}
-            <Button
-              svg={ListCheck}
-              variant="tertiary"
-              onClick={() => setActiveList(list._id)}
-              title={isActive ? "This outline is active" : "Set as active outline"}
-              color={isActive ? "#f97316" : undefined}
-            />
+            {showSetActive && setActiveList && (
+              <Button
+                svg={ListCheck}
+                variant="tertiary"
+                onClick={() => setActiveList(list._id)}
+                title={
+                  isActive ? "This outline is active" : "Set as active outline"
+                }
+                color={isActive ? "#f97316" : undefined}
+              />
+            )}
             <Button
               variant="tertiary"
               color={deleteList ? "red" : "gray"}

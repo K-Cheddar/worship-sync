@@ -467,6 +467,131 @@ describe("store module", () => {
     expect(clearedPublishedList).toBe(false);
   });
 
+  it("keeps controller and display registries across RESET_CONTROLLER_SESSION", () => {
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {
+        setControllerProfilesFromRemote,
+      } = require("./controllerProfilesSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { setDisplayOutputsFromRemote } = require("./displayOutputsSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { initiateItemLists } = require("./itemListsSlice");
+      const store = storeModule.default;
+
+      store.dispatch(
+        setControllerProfilesFromRemote([
+          {
+            id: "presentation",
+            type: "presentation",
+            name: "Sanctuary",
+            description: "",
+            order: 0,
+            enabled: true,
+            outputIds: [],
+            outputsConfigured: false,
+            defaultSendOutputIds: [],
+            outlineScope: "presentation",
+          },
+          {
+            id: "overlay",
+            type: "overlay",
+            name: "Stream Desk",
+            description: "",
+            order: 1,
+            enabled: true,
+            outputIds: [],
+            outputsConfigured: false,
+            defaultSendOutputIds: [],
+            outlineScope: "presentation",
+          },
+        ]),
+      );
+      store.dispatch(setDisplayOutputsFromRemote(null));
+      store.dispatch(
+        initiateItemLists([{ _id: "outline-a", name: "Service A" }]),
+      );
+
+      store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+
+      const state = store.getState();
+      expect(state.controllerProfiles.isLoaded).toBe(true);
+      expect(
+        state.controllerProfiles.list.find(
+          (p: { id: string }) => p.id === "presentation",
+        )?.name,
+      ).toBe("Sanctuary");
+      expect(
+        state.controllerProfiles.list.find(
+          (p: { id: string }) => p.id === "overlay",
+        )?.name,
+      ).toBe("Stream Desk");
+      expect(state.displayOutputs.isLoaded).toBe(true);
+      expect(state.undoable.present.itemLists.activeList).toBeUndefined();
+    });
+  });
+
+  it("clears controller and display registries on full RESET", () => {
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {
+        setControllerProfilesFromRemote,
+      } = require("./controllerProfilesSlice");
+      const store = storeModule.default;
+
+      store.dispatch(
+        setControllerProfilesFromRemote([
+          {
+            id: "presentation",
+            type: "presentation",
+            name: "Sanctuary",
+            description: "",
+            order: 0,
+            enabled: true,
+            outputIds: [],
+            outputsConfigured: false,
+            defaultSendOutputIds: [],
+            outlineScope: "presentation",
+          },
+        ]),
+      );
+      expect(store.getState().controllerProfiles.isLoaded).toBe(true);
+
+      store.dispatch({ type: "RESET" });
+
+      expect(store.getState().controllerProfiles.isLoaded).toBe(false);
+      expect(
+        store
+          .getState()
+          .controllerProfiles.list.find(
+            (p: { id: string }) => p.id === "presentation",
+          )?.name,
+      ).toBe("Presentation");
+    });
+  });
+
   it("treats a failed media load as settled without marking media initialized", () => {
     jest.isolateModules(() => {
       jest.doMock("../context/controllerInfo", () => ({

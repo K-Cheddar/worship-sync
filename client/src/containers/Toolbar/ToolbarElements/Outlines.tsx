@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Check, List } from "lucide-react";
 import { useDispatch, useSelector } from "../../../hooks";
 import {
@@ -33,6 +33,10 @@ import { toolbarTabClassName } from "./ToolbarButton";
 import OutlinesPickerSkeleton from "./OutlinesPickerSkeleton";
 import { loadOrCreateItemListsDoc } from "../../../utils/controllerBootstrapDocs";
 import { useToast } from "../../../context/toastContext";
+import {
+  DEFAULT_OUTLINE_SCOPE,
+  filterOutlinesByScope,
+} from "../../../utils/outlineScope";
 
 /** Shared popover chrome (matches service outlines left column). */
 const OUTLINE_POPOVER_CONTENT =
@@ -53,10 +57,20 @@ const Services = ({
   servicePanel = false,
   matchToolbarTabs = false,
 }: OutlinesProps) => {
-  const { currentLists, activeList, selectedList, isInitialized: itemListsReady } =
-    useSelector((state) => state.undoable.present.itemLists);
+  const {
+    currentLists,
+    activeList,
+    selectedList,
+    scope,
+    isInitialized: itemListsReady,
+  } = useSelector((state) => state.undoable.present.itemLists);
 
-  const heading = `Current Outlines (${currentLists.length})`;
+  const scopedLists = useMemo(
+    () => filterOutlinesByScope(currentLists, scope),
+    [currentLists, scope],
+  );
+  const canSetActive = scope === DEFAULT_OUTLINE_SCOPE;
+  const heading = `Current Outlines (${scopedLists.length})`;
 
   const dispatch = useDispatch();
 
@@ -65,6 +79,8 @@ const Services = ({
   const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
   const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
+  const currentListsRef = useRef(currentLists);
+  currentListsRef.current = currentLists;
 
   const { setNodeRef } = useDroppable({
     id: "items-lists",
@@ -81,8 +97,9 @@ const Services = ({
     const updatedItemLists = [...currentLists];
     const newIndex = updatedItemLists.findIndex((list) => list._id === id);
     const oldIndex = updatedItemLists.findIndex(
-      (list) => list._id === activeId
+      (list) => list._id === activeId,
     );
+    if (newIndex < 0 || oldIndex < 0) return;
     const element = currentLists[oldIndex];
     updatedItemLists.splice(oldIndex, 1);
     updatedItemLists.splice(newIndex, 0, element);
@@ -97,12 +114,22 @@ const Services = ({
         const _itemLists = response.itemLists || [];
         const _activeList = response.activeList;
         if (!itemListsReady) {
-          dispatch(initiateItemLists(_itemLists));
+          dispatch(
+            initiateItemLists({
+              itemLists: _itemLists,
+              selectedIdByScope: response.selectedIdByScope,
+            }),
+          );
           if (_activeList?._id) {
             dispatch(setInitialItemList(_activeList._id));
           }
         } else {
-          dispatch(updateItemListsFromRemote(_itemLists));
+          dispatch(
+            updateItemListsFromRemote({
+              itemLists: _itemLists,
+              activeListId: _activeList?._id,
+            }),
+          );
         }
       } catch (e) {
         console.error(e);
@@ -119,6 +146,39 @@ const Services = ({
     void getItemLists();
   }, [db, dispatch, itemListsReady, showToast]);
 
+  /**
+   * Aux controllers with no outlines in their scope get one empty outline so
+   * the picker is never stuck on a blank selection (and never borrows a
+   * sanctuary outline).
+   */
+  useEffect(() => {
+    if (!itemListsReady || !db || access !== "full") return;
+    if (scope === DEFAULT_OUTLINE_SCOPE) return;
+    if (scopedLists.length > 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const lists = currentListsRef.current;
+        const newList = await createNewItemList({
+          db,
+          name: "New Outline",
+          currentLists: lists,
+          controllerScope: scope,
+        });
+        if (cancelled) return;
+        dispatch(updateItemLists([...lists, newList]));
+        dispatch(selectItemList(newList._id));
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [itemListsReady, db, access, scope, scopedLists.length, dispatch]);
+
   const updateItemListsFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
@@ -127,14 +187,19 @@ const Services = ({
           if (_update._id === "ItemLists") {
             console.log("updating item lists from remote");
             const update = _update as ItemLists;
-            dispatch(updateItemListsFromRemote(update.itemLists));
+            dispatch(
+              updateItemListsFromRemote({
+                itemLists: update.itemLists,
+                activeListId: update.activeList?._id,
+              }),
+            );
           }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   useEffect(() => {
@@ -150,12 +215,25 @@ const Services = ({
   const _updateItemLists = (list: ItemList) => {
     dispatch(
       updateItemLists(
-        currentLists.map((item) => (item._id === list._id ? list : item))
-      )
+        currentLists.map((item) => (item._id === list._id ? list : item)),
+      ),
     );
     if (list._id === selectedList?._id) {
       dispatch(selectItemList(list._id));
     }
+  };
+
+  const addOutline = async () => {
+    const newList = await createNewItemList({
+      db,
+      name: "New Outline",
+      currentLists,
+      controllerScope: scope,
+    });
+    setJustAdded(true);
+    dispatch(updateItemLists([...currentLists, newList]));
+    dispatch(selectItemList(newList._id));
+    setTimeout(() => setJustAdded(false), 2000);
   };
 
   const triggerIconSize = "md";
@@ -238,10 +316,10 @@ const Services = ({
                   className="scrollbar-variable max-h-[min(18rem,50vh)] min-w-0 flex-1 overflow-x-visible overflow-y-auto"
                 >
                   <SortableContext
-                    items={currentLists.map((list) => list._id)}
+                    items={scopedLists.map((list) => list._id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    {currentLists.map((list, index) => (
+                    {scopedLists.map((list, index) => (
                       <Outline
                         key={list._id}
                         list={list}
@@ -252,20 +330,26 @@ const Services = ({
                         selectList={(listId: string) =>
                           dispatch(selectItemList(listId))
                         }
-                        setActiveList={(listId: string) =>
-                          dispatch(setActiveItemList(listId))
+                        showSetActive={canSetActive}
+                        setActiveList={
+                          canSetActive
+                            ? (listId: string) =>
+                              dispatch(setActiveItemList(listId))
+                            : undefined
                         }
                         isActive={list._id === activeList?._id}
-                        copyList={async (list) => {
+                        copyList={async (listToCopy) => {
                           const newList = await createItemListFromExisting({
                             db,
                             currentLists,
-                            list,
+                            list: listToCopy,
+                            controllerScope: scope,
                           });
                           if (newList) {
                             dispatch(
-                              updateItemLists([...currentLists, newList])
+                              updateItemLists([...currentLists, newList]),
                             );
+                            dispatch(selectItemList(newList._id));
                           }
                         }}
                         deleteList={
@@ -278,21 +362,33 @@ const Services = ({
                                   await db.get(id);
                                 db.remove(existingList);
                                 if (selectedList?._id === id) {
-                                  dispatch(
-                                    selectItemList(currentLists[0]._id)
+                                  const next = scopedLists.find(
+                                    (l) => l._id !== id,
                                   );
+                                  if (next) {
+                                    dispatch(selectItemList(next._id));
+                                  }
                                 }
-                                if (activeList?._id === id) {
-                                  dispatch(
-                                    setActiveItemList(currentLists[0]._id)
-                                  );
+                                if (canSetActive && activeList?._id === id) {
+                                  const presentationFallback =
+                                    filterOutlinesByScope(
+                                      currentLists.filter((l) => l._id !== id),
+                                      DEFAULT_OUTLINE_SCOPE,
+                                    )[0];
+                                  if (presentationFallback) {
+                                    dispatch(
+                                      setActiveItemList(
+                                        presentationFallback._id,
+                                      ),
+                                    );
+                                  }
                                 }
                               }
                               dispatch(ActionCreators.clearHistory());
                             }
                         }
-                        updateList={(list) => {
-                          _updateItemLists(list);
+                        updateList={(listToUpdate) => {
+                          _updateItemLists(listToUpdate);
                         }}
                       />
                     ))}
@@ -307,16 +403,8 @@ const Services = ({
                 className="w-full justify-center py-2 text-xs font-semibold"
                 variant="primary"
                 disabled={justAdded}
-                onClick={async () => {
-                  const newList = await createNewItemList({
-                    db,
-                    name: "New Outline",
-                    currentLists,
-                  });
-                  setJustAdded(true);
-
-                  dispatch(updateItemLists([...currentLists, newList]));
-                  setTimeout(() => setJustAdded(false), 2000);
+                onClick={() => {
+                  void addOutline();
                 }}
               >
                 {justAdded ? "Added." : "Add New Service"}

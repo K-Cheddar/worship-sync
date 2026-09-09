@@ -97,9 +97,9 @@ describe("useSyncDisplayOutputs", () => {
     expect(store.getState().displayOutputs.isLoaded).toBe(true);
     expect(onValueMock).toHaveBeenCalledTimes(1);
 
-    // Controller unmount / StrictMode remount: the store is wiped, but this
-    // hook stays mounted at the app root and its listener would otherwise
-    // never fire again.
+    // Controller leave / full logout: the store is wiped (or mostly wiped), but
+    // this hook stays mounted at the app root and its listener would otherwise
+    // never fire again after a full RESET.
     act(() => {
       store.dispatch({ type: "RESET" });
     });

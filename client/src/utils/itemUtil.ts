@@ -32,6 +32,7 @@ import { applyPouchAudit } from "./pouchAudit";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
+import { DEFAULT_OUTLINE_SCOPE } from "./outlineScope";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
@@ -540,6 +541,7 @@ export const createNewFreeForm = async ({
     (mediaInfo?.localVideoInput?.kind === "local-video-input"
       ? mediaInfo.localVideoInput
       : undefined);
+  const slideNameFromInput = resolvedMediaSource?.label?.trim();
   const slides =
     slideDefs && slideDefs.length > 0
       ? slideDefs.map((def, index) =>
@@ -558,7 +560,7 @@ export const createNewFreeForm = async ({
       : [
           createNewSlide({
             type: "Section",
-            name: "Section 1",
+            name: slideNameFromInput || "Section 1",
             fontSize: DEFAULT_FONT_PX,
             words: bodyWords,
             background: resolvedMediaSource ? "" : background,
@@ -569,6 +571,10 @@ export const createNewFreeForm = async ({
           }),
         ];
   const firstBackground = slides[0]?.boxes[0]?.background || background;
+  const listBackground = getServiceItemListBackgroundPatch({
+    background: firstBackground,
+    mediaInfo: resolvedMediaSource ? undefined : mediaInfo,
+  });
   const newItem: ItemState = {
     name: _name,
     type: "free",
@@ -576,10 +582,7 @@ export const createNewFreeForm = async ({
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
-    background:
-      mediaInfo?.type === "video" && !resolvedMediaSource
-        ? mediaInfo?.placeholderImage
-        : firstBackground,
+    background: listBackground.background,
     slides,
     arrangements: [],
     shouldSendTo: shouldSendTo ?? {
@@ -831,15 +834,80 @@ export const updateItemInList = ({
   });
 };
 
+type PatchItemInListType = {
+  id: string;
+  list: ServiceItem[];
+  patch: Partial<ServiceItem>;
+};
+
+/** Merge several ServiceItem fields at once (e.g. background + localImage). */
+export const patchItemInList = ({ id, list, patch }: PatchItemInListType) =>
+  list.map((i) => (i._id === id ? { ...i, ...patch } : i));
+
+/**
+ * Outline-row thumbnail fields when a slide background is applied.
+ * Prefer a cloud URL when present so list `<img>` tags can load without
+ * resolving `local-image://` / `local-video-file://`. Always keep local
+ * metadata so owner devices can still use the local copy.
+ */
+export const getServiceItemListBackgroundPatch = ({
+  background,
+  mediaInfo,
+}: {
+  background: string;
+  mediaInfo?: MediaType;
+}): Pick<ServiceItem, "background" | "localImage" | "localVideoFile"> => {
+  if (mediaInfo?.type === "video") {
+    if (mediaInfo.localVideoFile) {
+      return {
+        background:
+          mediaInfo.localVideoFile.cloudUrl || mediaInfo.placeholderImage || "",
+        localImage: undefined,
+        localVideoFile: mediaInfo.localVideoFile,
+      };
+    }
+    return {
+      background: mediaInfo.placeholderImage || "",
+      localImage: undefined,
+      localVideoFile: undefined,
+    };
+  }
+  return {
+    background: mediaInfo?.localImage?.cloudUrl || background,
+    localImage: mediaInfo?.localImage,
+    localVideoFile: undefined,
+  };
+};
+
 type CreateNewItemList = {
   db: PouchDB.Database | undefined;
   name: string;
   currentLists: ItemList[];
+  /**
+   * Controller that owns this outline. Omitted / presentation keeps the
+   * registry entry unscoped so legacy and overlay-controller pickers see it.
+   */
+  controllerScope?: string;
 };
+
+/** Registry fields for a new outline entry (detail doc stays scope-free). */
+const toItemListRegistryEntry = (
+  _id: string,
+  name: string,
+  controllerScope?: string,
+): ItemList => {
+  const scope = controllerScope?.trim();
+  if (!scope || scope === DEFAULT_OUTLINE_SCOPE) {
+    return { _id, name };
+  }
+  return { _id, name, controllerScope: scope };
+};
+
 export const createNewItemList = async ({
   db,
   name,
   currentLists,
+  controllerScope,
 }: CreateNewItemList): Promise<ItemList> => {
   const newName = makeUnique({
     value: name,
@@ -857,20 +925,22 @@ export const createNewItemList = async ({
     items: [],
     overlays: [],
   };
-  if (!db) return list;
+  const registryEntry = toItemListRegistryEntry(_id, newName, controllerScope);
+  if (!db) return registryEntry;
   try {
     const response: DBItemListDetails = await db.get(list._id);
-    return {
-      _id: response._id,
-      name: response.name,
-    };
+    return toItemListRegistryEntry(
+      response._id,
+      response.name,
+      controllerScope,
+    );
   } catch (error) {
     db.put({
       ...list,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: list._id, name: list.name };
+    return registryEntry;
   }
 };
 
@@ -878,12 +948,15 @@ type CreateItemListFromExisting = {
   db: PouchDB.Database | undefined;
   currentLists: ItemList[];
   list: ItemList;
+  /** Scope for the copy; defaults to the source outline's scope. */
+  controllerScope?: string;
 };
 
 export const createItemListFromExisting = async ({
   db,
   currentLists,
   list,
+  controllerScope,
 }: CreateItemListFromExisting): Promise<ItemList | null> => {
   if (!db) return null;
 
@@ -928,7 +1001,11 @@ export const createItemListFromExisting = async ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: newList._id, name: newList.name };
+    return toItemListRegistryEntry(
+      newList._id,
+      newList.name,
+      controllerScope ?? list.controllerScope,
+    );
   } catch (error) {
     console.error(error);
     return null;

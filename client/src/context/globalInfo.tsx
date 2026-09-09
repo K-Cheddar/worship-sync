@@ -166,6 +166,7 @@ function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
 function getPresenceSurface(pathname: string): "controller" | "display" | null {
   if (
     pathname.startsWith("/controller") ||
+    pathname.startsWith("/aux-controller") ||
     pathname.startsWith("/overlay-controller") ||
     pathname.startsWith("/board-controller") ||
     pathname.startsWith("/credits-editor") ||

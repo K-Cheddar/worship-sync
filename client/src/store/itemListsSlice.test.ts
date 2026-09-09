@@ -174,10 +174,7 @@ describe("itemListsSlice", () => {
           isInitialized: true,
         },
       });
-      const refreshed = [
-        outline("A renamed", "id-a"),
-        outline("B", "id-b"),
-      ];
+      const refreshed = [outline("A renamed", "id-a"), outline("B", "id-b")];
       store.dispatch(updateItemListsFromRemote(refreshed));
       const state = store.getState().itemLists;
       expect(state.selectedList?._id).toBe("id-b");
@@ -188,7 +185,11 @@ describe("itemListsSlice", () => {
   });
 
   describe("controller scoping", () => {
-    const scoped = (name: string, _id: string, controllerScope?: string): ItemList => ({
+    const scoped = (
+      name: string,
+      _id: string,
+      controllerScope?: string,
+    ): ItemList => ({
       name,
       _id,
       ...(controllerScope ? { controllerScope } : {}),
@@ -236,7 +237,10 @@ describe("itemListsSlice", () => {
       store.dispatch(setOutlineScope("ctrl_lobby"));
       store.dispatch(initiateItemLists(mixed));
       store.dispatch(
-        updateItemListsFromRemote([scoped("Sunday AM", "sun-am"), scoped("Sunday PM", "sun-pm")]),
+        updateItemListsFromRemote([
+          scoped("Sunday AM", "sun-am"),
+          scoped("Sunday PM", "sun-pm"),
+        ]),
       );
       expect(store.getState().itemLists.selectedList).toBeUndefined();
     });
@@ -263,6 +267,51 @@ describe("itemListsSlice", () => {
       const state = store.getState().itemLists;
       expect(state.activeList?._id).toBe("sun-am");
       expect(state.selectedList?._id).toBe("lobby-1");
+    });
+
+    it("restores each scope's last selection from a persisted map on initiate", () => {
+      const store = createStore();
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(
+        initiateItemLists({
+          itemLists: mixed,
+          selectedIdByScope: {
+            presentation: "sun-pm",
+            ctrl_lobby: "lobby-1",
+          },
+        }),
+      );
+      expect(store.getState().itemLists.selectedList?._id).toBe("lobby-1");
+      store.dispatch(setOutlineScope("presentation"));
+      expect(store.getState().itemLists.selectedList?._id).toBe("sun-pm");
+    });
+
+    it("applies a remote active outline id without leaving the local scope", () => {
+      const store = createStore();
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      store.dispatch(initiateItemLists(mixed));
+      store.dispatch(
+        updateItemListsFromRemote({
+          itemLists: mixed,
+          activeListId: "sun-pm",
+        }),
+      );
+      const state = store.getState().itemLists;
+      expect(state.activeList?._id).toBe("sun-pm");
+      expect(state.selectedList?._id).toBe("lobby-1");
+    });
+
+    it("falls active back to a presentation outline when the active one is removed", () => {
+      const store = createStore();
+      store.dispatch(
+        initiateItemLists([
+          scoped("Sunday AM", "sun-am"),
+          scoped("Lobby", "lobby-1", "ctrl_lobby"),
+        ]),
+      );
+      store.dispatch(setActiveItemList("lobby-1"));
+      store.dispatch(removeFromItemLists("lobby-1"));
+      expect(store.getState().itemLists.activeList?._id).toBe("sun-am");
     });
   });
 });
