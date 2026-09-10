@@ -104,6 +104,9 @@ const YouTubeConnectComplete = lazyRoute(
 const CanvaConnectComplete = lazyRoute(
   () => import("./pages/CanvaConnectComplete"),
 );
+const PlanningCenterConnectComplete = lazyRoute(
+  () => import("./pages/PlanningCenterConnectComplete"),
+);
 const WorkstationPair = lazyRoute(() => import("./pages/WorkstationPair"));
 const WorkstationOperator = lazyRoute(
   () => import("./pages/WorkstationOperator"),
@@ -337,6 +340,10 @@ const AppRoutes = () => {
               <Route
                 path="/canva/connect-complete"
                 element={<CanvaConnectComplete />}
+              />
+              <Route
+                path="/planning-center/connect-complete"
+                element={<PlanningCenterConnectComplete />}
               />
               <Route path="/invite" element={<InviteAccept />} />
               <Route path="/auth/reset" element={<PasswordReset />} />

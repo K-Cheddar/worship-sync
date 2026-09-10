@@ -28,6 +28,7 @@ const RESTORE_STARTUP_ROUTES = new Set([
   "/restream/connect-complete",
   "/youtube/connect-complete",
   "/canva/connect-complete",
+  "/planning-center/connect-complete",
   "/home",
   "/workstation/operator",
 ]);
@@ -41,6 +42,7 @@ const ROUTES_TO_SKIP_SAVE = new Set([
   "/restream/connect-complete",
   "/youtube/connect-complete",
   "/canva/connect-complete",
+  "/planning-center/connect-complete",
   "/workstation/pair",
   "/workstation/operator",
   "/projector",

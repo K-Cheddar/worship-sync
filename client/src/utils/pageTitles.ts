@@ -20,6 +20,8 @@ export const getPageTitle = (pathname: string): string => {
   if (pathname === "/youtube/connect-complete")
     return title("YouTube Connection");
   if (pathname === "/canva/connect-complete") return title("Canva Connection");
+  if (pathname === "/planning-center/connect-complete")
+    return title("Planning Center Connection");
   if (pathname === "/invite") return title("Accept Invitation");
   if (pathname === "/auth/reset") return title("Password Reset");
   if (pathname === "/recovery/confirm") return title("Account Recovery");

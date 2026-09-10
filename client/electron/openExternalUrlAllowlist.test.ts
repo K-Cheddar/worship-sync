@@ -56,6 +56,15 @@ describe("assertAllowedOpenExternalUrl", () => {
     ).not.toThrow();
   });
 
+  it("allows Planning Center OAuth authorize URLs", () => {
+    expect(() =>
+      assertAllowedOpenExternalUrl(
+        "https://api.planningcenteronline.com/oauth/authorize?response_type=code&client_id=example",
+        { isDev: false },
+      ),
+    ).not.toThrow();
+  });
+
   it("allows http localhost only when isDev", () => {
     expect(() =>
       assertAllowedOpenExternalUrl("http://localhost:3000/", { isDev: true }),

@@ -23,7 +23,7 @@ const INTEGRATIONS_MAX_PLATFORM_SUMMARY = 12;
 const defaultCatalog = () => ({
   servicePlanning: { status: "available", label: "Service Planning" },
   songSelect: { status: "coming_soon", label: "SongSelect" },
-  planningCenter: { status: "coming_soon", label: "Planning Center" },
+  planningCenter: { status: "available", label: "Planning Center" },
 });
 
 export const getChurchIntegrationsPath = (churchId) =>
@@ -345,6 +345,25 @@ const normalizeCanva = (raw) => {
   };
 };
 
+const normalizePlanningCenter = (raw) => {
+  const safe = isRecord(raw) ? raw : {};
+
+  return {
+    enabled: Boolean(safe.enabled),
+    connected: Boolean(safe.connected),
+    accountLabel: clampString(
+      safe.accountLabel,
+      INTEGRATIONS_MAX_LABEL,
+      "Planning Center account label",
+    ),
+    lastError: clampString(
+      safe.lastError,
+      INTEGRATIONS_MAX_STRING,
+      "Planning Center error",
+    ),
+  };
+};
+
 /**
  * Validates and normalizes church integrations for RTDB storage (admin POST body).
  */
@@ -393,6 +412,7 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
   const restream = normalizeRestream(safe.restream);
   const youtube = normalizeYouTube(safe.youtube);
   const canva = normalizeCanva(safe.canva);
+  const planningCenter = normalizePlanningCenter(safe.planningCenter);
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -406,13 +426,15 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
     restream,
     youtube,
     canva,
+    planningCenter,
   };
 };
 
 /**
  * Admin integration settings exclude connection state owned by OAuth receivers.
  * Updating only these branches prevents a stale settings draft from overwriting
- * Restream, YouTube, or Canva status while an account connects or receives data.
+ * Restream, YouTube, Canva, or Planning Center status while an account connects
+ * or receives data.
  */
 export const normalizeChurchIntegrationsAdminUpdate = (input) => {
   const normalized = normalizeChurchIntegrationsForStorage(input);

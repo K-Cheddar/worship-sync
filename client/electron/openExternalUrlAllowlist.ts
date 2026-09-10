@@ -9,6 +9,7 @@ const DEFAULT_ALLOWED_HOSTS = [
   "api.restream.io",
   "accounts.google.com",
   "www.canva.com",
+  "api.planningcenteronline.com",
 ];
 
 const parseAllowedHosts = (): Set<string> => {

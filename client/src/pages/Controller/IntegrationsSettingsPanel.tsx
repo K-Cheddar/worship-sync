@@ -34,6 +34,7 @@ import IntegrationsCollapsibleCardHeader from "../../components/IntegrationsColl
 import cn from "classnames";
 import { isElectron } from "../../utils/environment";
 import CanvaIntegrationSection from "./CanvaIntegrationSection";
+import PlanningCenterIntegrationSection from "./PlanningCenterIntegrationSection";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/Popover";
 
 type IntegrationsSettingsPanelProps = {
@@ -1229,7 +1230,7 @@ export const IntegrationsSettingsPanel = ({
         <p className="mt-1 max-w-2xl text-sm text-gray-400">
           Connect WorshipSync with external planning tools. More integrations will appear here over time.
         </p>
-        <ul className="mt-4 grid gap-3 md:grid-cols-3">
+        <ul className="mt-4 grid gap-3 md:grid-cols-2">
           <li
             className={cn(
               "rounded-lg border border-gray-600 bg-gray-900/60 p-3",
@@ -1246,14 +1247,6 @@ export const IntegrationsSettingsPanel = ({
           <li className="rounded-lg border border-gray-700 bg-gray-900/40 p-3 opacity-70">
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium">{draft.catalog.songSelect.label}</span>
-              <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs text-gray-300">
-                Coming soon
-              </span>
-            </div>
-          </li>
-          <li className="rounded-lg border border-gray-700 bg-gray-900/40 p-3 opacity-70">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium">{draft.catalog.planningCenter.label}</span>
               <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs text-gray-300">
                 Coming soon
               </span>
@@ -1514,6 +1507,11 @@ export const IntegrationsSettingsPanel = ({
       </section>
 
       <CanvaIntegrationSection churchId={churchId} canva={integrations.canva} />
+
+      <PlanningCenterIntegrationSection
+        churchId={churchId}
+        planningCenter={integrations.planningCenter}
+      />
 
       <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
