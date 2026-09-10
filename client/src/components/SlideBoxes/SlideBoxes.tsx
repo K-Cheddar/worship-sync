@@ -4,6 +4,7 @@ import { BoxIcon, Lock, Unlock, Trash2, Plus, LibraryBig, ImageIcon, Video } fro
 import { useDispatch, useSelector } from "../../hooks";
 import { setSelectedBox, updateBoxes } from "../../store/itemSlice";
 import { setFocusMediaId, setIsMediaExpanded, setRequestOpenMediaPanel } from "../../store/preferencesSlice";
+import { resolveShowInMediaId } from "../../containers/Media/resolveShowInMediaTarget";
 import { createBox } from "../../utils/slideCreation";
 import { Box } from "../../types";
 import cn from "classnames";
@@ -94,18 +95,11 @@ const SlideBoxes = ({
               onClick={() => {
                 dispatch(setRequestOpenMediaPanel(true));
                 dispatch(setIsMediaExpanded(true));
-                const mediaId =
-                  (activeBox.mediaInfo?.id &&
-                    mediaList.find((m) => m.id === activeBox.mediaInfo!.id)
-                      ?.id) ||
-                  (activeBox.background &&
-                    mediaList.find((m) => m.background === activeBox.background)
-                      ?.id) ||
-                  (slideVideoInput &&
-                    mediaList.find(
-                      (m) =>
-                        m.localVideoInput?.sourceId === slideVideoInput.sourceId,
-                    )?.id);
+                const mediaId = resolveShowInMediaId({
+                  box: activeBox,
+                  mediaList,
+                  slideVideoInput,
+                });
                 if (mediaId) {
                   dispatch(setFocusMediaId(mediaId));
                 }

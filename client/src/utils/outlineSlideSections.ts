@@ -248,6 +248,84 @@ export const getPinnedListIdFromRowOffsets = (
 };
 
 /**
+ * Viewport anchor for continuous-mode scroll restoration. When remote updates
+ * rebuild virtual rows, keep the same on-screen row rather than a raw scrollTop
+ * into a list whose offsets just shifted.
+ */
+export type OutlineScrollAnchor = {
+  listId: string;
+  rowType: OutlineVirtualRow["type"];
+  /** For tiles rows: index of the first slide in that row. */
+  startIndex?: number;
+  /** Prefer matching by slide id when row startIndex shifts after an edit. */
+  slideId?: string;
+  localOffset: number;
+};
+
+export const captureOutlineScrollAnchor = (
+  rows: OutlineVirtualRow[],
+  getRowStart: (index: number) => number,
+  scrollTop: number,
+): OutlineScrollAnchor | null => {
+  if (rows.length === 0) return null;
+  let rowIndex = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if (getRowStart(i) <= scrollTop) {
+      rowIndex = i;
+    } else {
+      break;
+    }
+  }
+  const row = rows[rowIndex];
+  if (!row) return null;
+  const anchor: OutlineScrollAnchor = {
+    listId: row.listId,
+    rowType: row.type,
+    localOffset: scrollTop - getRowStart(rowIndex),
+  };
+  if (row.type === "tiles") {
+    anchor.startIndex = row.startIndex;
+    const slideId = row.slides[0]?.id;
+    if (slideId) anchor.slideId = slideId;
+  }
+  return anchor;
+};
+
+export const resolveOutlineScrollTopFromAnchor = (
+  rows: OutlineVirtualRow[],
+  getRowStart: (index: number) => number,
+  anchor: OutlineScrollAnchor,
+): number | null => {
+  let rowIndex = -1;
+  if (anchor.rowType === "tiles" && anchor.slideId) {
+    rowIndex = rows.findIndex(
+      (row) =>
+        row.type === "tiles" &&
+        row.listId === anchor.listId &&
+        row.slides.some((slide) => slide.id === anchor.slideId),
+    );
+  }
+  if (rowIndex < 0 && anchor.rowType === "tiles" && anchor.startIndex != null) {
+    rowIndex = rows.findIndex(
+      (row) =>
+        row.type === "tiles" &&
+        row.listId === anchor.listId &&
+        row.startIndex === anchor.startIndex,
+    );
+  }
+  if (rowIndex < 0) {
+    rowIndex = rows.findIndex(
+      (row) => row.type === anchor.rowType && row.listId === anchor.listId,
+    );
+  }
+  if (rowIndex < 0) {
+    rowIndex = rows.findIndex((row) => row.listId === anchor.listId);
+  }
+  if (rowIndex < 0) return null;
+  return getRowStart(rowIndex) + anchor.localOffset;
+};
+
+/**
  * Prefer the tile row that contains `slideIndex` so collapsing the editor keeps
  * the operator on the slide they were viewing, not only the section header.
  */

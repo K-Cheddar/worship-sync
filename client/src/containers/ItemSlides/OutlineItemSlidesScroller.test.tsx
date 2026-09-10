@@ -11,6 +11,7 @@ const mockNavigate = jest.fn();
 const mockSelectSlide = jest.fn();
 const mockOnSlideGridClick = jest.fn();
 const mockScrollToIndex = jest.fn();
+const mockUseOutlineItemDocs = jest.fn();
 let mockState: any;
 let mockDocsById: Map<string, DBItem>;
 
@@ -20,7 +21,7 @@ jest.mock("../../hooks", () => ({
 }));
 
 jest.mock("../../hooks/useOutlineItemDocs", () => ({
-  useOutlineItemDocs: () => mockDocsById,
+  useOutlineItemDocs: (...args: unknown[]) => mockUseOutlineItemDocs(...args),
 }));
 
 jest.mock("react-router-dom", () => ({
@@ -204,6 +205,7 @@ describe("OutlineItemSlidesScroller", () => {
       ],
       ["song-2", songDoc("song-2", [slide("s2a", "Song 2 A")])],
     ]);
+    mockUseOutlineItemDocs.mockImplementation(() => mockDocsById);
     mockState = {
       undoable: {
         present: {
