@@ -227,6 +227,11 @@ export const selectDisplayOutputs = (state: {
   displayOutputs?: DisplayOutputsState;
 }): DisplayOutput[] => state?.displayOutputs?.list ?? FALLBACK_OUTPUTS;
 
+/** True once Firebase (or a missing-node normalize) has populated the registry. */
+export const selectDisplayOutputsLoaded = (state: {
+  displayOutputs?: DisplayOutputsState;
+}): boolean => state?.displayOutputs?.isLoaded ?? false;
+
 export const {
   setDisplayOutputsFromRemote,
   addDisplayOutput,

@@ -1,11 +1,10 @@
 import React from "react";
-import { Box, TimerInfo, VideoBackgroundPlaybackCue } from "../../types";
+import { Box, TimerInfo } from "../../types";
 import DisplayBox from "./DisplayBox";
 import MonitorDisplayBox from "./MonitorDisplayBox";
 import MonitorBandBackground from "./MonitorBandBackground";
 import DisplayClock from "./DisplayClock";
 import DisplayTimer from "./DisplayTimer";
-import HLSPlayer from "./HLSVideoPlayer";
 import VerseDisplay from "./VerseDisplay";
 import {
   REFERENCE_WIDTH,
@@ -56,22 +55,18 @@ type MonitorViewProps = {
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   activeVideoUrl?: string;
-  resolvedVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
-  videoBox?: Box;
+  prevActiveVideoUrl?: string;
+  isPrevWindowVideoLoaded?: boolean;
+  holdOutgoingVideo?: boolean;
   scaleFactor: number;
   effectiveShowClock: boolean;
   effectiveShowTimer: boolean;
   clockFontSize: number;
   timerFontSize: number;
-  onVideoLoaded?: () => void;
-  onVideoError?: () => void;
-  videoMuted?: boolean;
-  videoVolume?: number;
-  videoPlayback?: VideoBackgroundPlaybackCue;
   /** 'next' = slide up, 'prev' = slide down, 'jump' = fade. Defaults to 'next' when undefined. */
   transitionDirection?: "next" | "prev" | "jump";
-  /** Current local/live media behind the monitor's text and chrome. */
+  /** File-video and local-capture media behind the monitor's text and chrome. */
   currentMediaLayer?: React.ReactNode;
 };
 
@@ -89,19 +84,15 @@ const MonitorView = ({
   timerInfo,
   prevTimerInfo,
   activeVideoUrl,
-  resolvedVideoUrl,
   isWindowVideoLoaded,
-  videoBox,
+  prevActiveVideoUrl,
+  isPrevWindowVideoLoaded,
+  holdOutgoingVideo,
   scaleFactor,
   effectiveShowClock,
   effectiveShowTimer,
   clockFontSize,
   timerFontSize,
-  onVideoLoaded,
-  onVideoError,
-  videoMuted = true,
-  videoVolume = 1,
-  videoPlayback,
   transitionDirection = "next",
   currentMediaLayer,
 }: MonitorViewProps) => {
@@ -266,19 +257,6 @@ const MonitorView = ({
           }}
         >
           {currentMediaLayer}
-          {showBackground && activeVideoUrl && resolvedVideoUrl && videoBox && (
-            <HLSPlayer
-              src={resolvedVideoUrl}
-              originalSrc={activeVideoUrl}
-              onLoadedData={onVideoLoaded}
-              onError={onVideoError}
-              videoBox={videoBox}
-              muted={videoMuted}
-              volume={videoVolume}
-              playbackRole="output"
-              playback={videoPlayback}
-            />
-          )}
           {boxes.map((box, i) => (
             <DisplayBox
               key={`current-${box.id ?? i}`}
@@ -292,6 +270,9 @@ const MonitorView = ({
               timerInfo={timerInfo}
               activeVideoUrl={activeVideoUrl}
               isWindowVideoLoaded={isWindowVideoLoaded}
+              prevActiveVideoUrl={prevActiveVideoUrl}
+              isPrevWindowVideoLoaded={isPrevWindowVideoLoaded}
+              holdOutgoingVideo={holdOutgoingVideo}
               referenceWidth={REFERENCE_WIDTH}
               referenceHeight={REFERENCE_HEIGHT}
               scaleFactor={scaleFactor}
@@ -310,6 +291,9 @@ const MonitorView = ({
               timerInfo={prevTimerInfo}
               activeVideoUrl={activeVideoUrl}
               isWindowVideoLoaded={isWindowVideoLoaded}
+              prevActiveVideoUrl={prevActiveVideoUrl}
+              isPrevWindowVideoLoaded={isPrevWindowVideoLoaded}
+              holdOutgoingVideo={holdOutgoingVideo}
               isPrev
               referenceWidth={REFERENCE_WIDTH}
               referenceHeight={REFERENCE_HEIGHT}

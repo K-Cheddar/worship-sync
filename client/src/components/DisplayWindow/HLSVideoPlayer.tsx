@@ -11,6 +11,7 @@ import {
   VIDEO_CUE_DRIFT_TOLERANCE_SECONDS,
   type VideoPreviewCommand,
 } from "../../utils/videoBackgroundPlayback";
+import { isInstantVideoSource } from "../../utils/isInstantVideoSource";
 
 type HLSPlayerProps = {
   src: string;
@@ -599,12 +600,7 @@ const HLSPlayer = ({
     return subscribeVideoPreviewCommands(applyCommand);
   }, [playback, playbackRole]);
 
-  const preloadValue =
-    src.startsWith("media-cache://") ||
-      src.startsWith("worshipsync-media://") ||
-      src.startsWith("blob:")
-      ? "auto"
-      : "metadata";
+  const preloadValue = isInstantVideoSource(src) ? "auto" : "metadata";
 
   return (
     <video

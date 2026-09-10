@@ -14,6 +14,7 @@ import {
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import { shouldSkipDisplayTextAnimation } from "./utils";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
@@ -53,13 +54,6 @@ type BoxTransitionLayer = {
 };
 const LOCAL_IMAGE_BACKGROUND_FADE_MS = 500;
 
-const hasDynamicDisplayText = (words?: string) =>
-  Boolean(
-    words?.includes("{{timer}}") ||
-    words?.includes("{{service-time}}") ||
-    words?.includes("\u200C"),
-  );
-
 const getBackgroundTransitionIdentity = (
   box: Box | undefined,
   rawImage?: string,
@@ -87,6 +81,14 @@ type DisplayBoxProps = {
   timerInfo?: TimerInfo;
   activeVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
+  /** Outgoing file-video lane still playing under the prev DisplayBox. */
+  prevActiveVideoUrl?: string;
+  isPrevWindowVideoLoaded?: boolean;
+  /**
+   * While true, the outgoing video lane is held at full opacity waiting for the
+   * incoming clip. Keep the incoming still hidden so it does not cover that video.
+   */
+  holdOutgoingVideo?: boolean;
   referenceWidth?: number;
   referenceHeight?: number;
   scaleFactor?: number;
@@ -106,6 +108,9 @@ const DisplayBox = ({
   timerInfo,
   activeVideoUrl,
   isWindowVideoLoaded,
+  prevActiveVideoUrl,
+  isPrevWindowVideoLoaded,
+  holdOutgoingVideo,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
   brightness,
@@ -123,14 +128,39 @@ const DisplayBox = ({
   const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
     ? localVideoDisplay.url
     : videoUrl;
-  const shouldImageBeHidden = useMemo(
-    () =>
-      isVideoBg &&
-      resolvedVideoUrl &&
+  const shouldImageBeHidden = useMemo(() => {
+    if (!isVideoBg || !resolvedVideoUrl) return false;
+    if (
       resolvedVideoUrl === activeVideoUrl &&
-      isWindowVideoLoaded,
-    [isVideoBg, resolvedVideoUrl, activeVideoUrl, isWindowVideoLoaded],
-  );
+      isWindowVideoLoaded
+    ) {
+      return true;
+    }
+    // Prev boxes must hide their still while the outgoing video lane is still
+    // mounted — otherwise exit reads as video → still → fade.
+    if (
+      isPrev &&
+      resolvedVideoUrl === prevActiveVideoUrl &&
+      isPrevWindowVideoLoaded
+    ) {
+      return true;
+    }
+    // Do not fade the incoming still over a held outgoing video; that flash is
+    // what reads as a black gap between cached clips.
+    if (!isPrev && holdOutgoingVideo && !isWindowVideoLoaded) {
+      return true;
+    }
+    return false;
+  }, [
+    isVideoBg,
+    resolvedVideoUrl,
+    activeVideoUrl,
+    isWindowVideoLoaded,
+    isPrev,
+    prevActiveVideoUrl,
+    isPrevWindowVideoLoaded,
+    holdOutgoingVideo,
+  ]);
 
   const background = box.background;
   const shouldShowBackground = showBackground && background;
@@ -181,10 +211,9 @@ const DisplayBox = ({
   const displayRawImageRef = useRef(rawImage);
   const targetCurrentImgOpacity = shouldImageBeHidden ? 0 : 1;
   const skipTextAnimation =
-    prevBox &&
-    prevBox.words?.trim() === box.words?.trim() &&
-    !hasDynamicDisplayText(box.words) &&
-    !hasDynamicDisplayText(prevBox.words);
+    shouldAnimate &&
+    Boolean(prevBox) &&
+    shouldSkipDisplayTextAnimation(box.words, prevBox?.words);
   const backgroundTransitionIdentity = getBackgroundTransitionIdentity(
     box,
     rawImage,
@@ -369,10 +398,13 @@ const DisplayBox = ({
       scope: boxRef,
       dependencies: [
         box,
+        prevBox,
         isPrev,
         shouldAnimate,
         shouldImageBeHidden,
         isLocalImageReadyToPaint,
+        skipTextAnimation,
+        skipBackgroundAnimation,
       ],
     },
   );

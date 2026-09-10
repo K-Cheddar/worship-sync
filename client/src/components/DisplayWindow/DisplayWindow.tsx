@@ -34,11 +34,16 @@ import DisplayBoardPostOverlay from "./DisplayBoardPostOverlay";
 import HLSPlayer from "./HLSVideoPlayer";
 import MonitorView from "./MonitorView";
 import ProjectorClockTimer from "./ProjectorClockTimer";
+import VideoBackgroundLayer from "./VideoBackgroundLayer";
 import { useSelector } from "../../hooks";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
-import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import {
+  selectDisplayOutputs,
+  selectDisplayOutputsLoaded,
+} from "../../store/displayOutputsSlice";
+import {
+  isDisplayChromeReady,
   resolveDisplaySettings,
   resolveOutputDefaults,
 } from "../../utils/displaySettings";
@@ -52,6 +57,19 @@ import {
 import LocalVideoInputLayer from "./LocalVideoInputLayer";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
+type FileVideoSlotId = "a" | "b";
+
+type FileVideoSlotContent = {
+  mediaKey: string;
+  originalSrc: string;
+  resolvedSrc: string;
+  videoBox: Box;
+  paintReady: boolean;
+};
+
+const otherFileVideoSlot = (slotId: FileVideoSlotId): FileVideoSlotId =>
+  slotId === "a" ? "b" : "a";
+
 const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
   qr: 5000,
@@ -62,6 +80,8 @@ const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
 const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
 const STREAM_PREV_BOARD_POST_EXIT_MS = 500;
 const DISPLAY_PREV_LAYER_VISIBLE_MS = 500;
+/** Max time to keep outgoing file video up waiting for the incoming clip to decode. */
+const PREV_FILE_VIDEO_HOLD_MAX_MS = 2000;
 const STREAM_PREV_TEXT_LAYER_VISIBLE_MS = 350;
 
 type StreamOverlayKeepAliveMap = Record<string, number>;
@@ -90,6 +110,17 @@ const getBoxVisualKey = (box: Box) =>
     box.mediaInfo?.type,
     box.brightness,
   ].join("~");
+
+/** Stable empty list so suppressing prev does not churn effect deps. */
+const EMPTY_BOXES: Box[] = [];
+
+const getStreamTextLayerKey = (info?: {
+  title?: string;
+  text?: string;
+}) => `${info?.title?.trim() ?? ""}~${info?.text?.trim() ?? ""}`;
+
+const getFormattedTextLayerKey = (info?: { text?: string }) =>
+  info?.text?.trim() ?? "";
 
 const hasParticipantOverlayData = (overlay?: OverlayInfo) =>
   Boolean(overlay?.name || overlay?.title || overlay?.event);
@@ -390,6 +421,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       useState<string>();
     const displayPrevLayerTokenRef = useRef(0);
     const streamPrevTextLayerTokenRef = useRef(0);
+    // First transition key seen by this instance. Opening a display onto already
+    // live Redux state includes stale prevInfo; that key must fade in current
+    // only. Later key changes keep normal crossfades.
+    const initialDisplayTransitionKeyRef = useRef<string | null>(null);
+    const initialLocalVideoTransitionKeyRef = useRef<string | null>(null);
+    const initialBibleTransitionKeyRef = useRef<string | null>(null);
+    const initialFormattedTextTransitionKeyRef = useRef<string | null>(null);
 
     // Use ResizeObserver to track actual container width and height in pixels
     useEffect(() => {
@@ -459,24 +497,39 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const shouldUseFullMonitorLayout =
       isMonitor && monitorLayoutMode === "full-monitor";
     const isSlide = displayType === "slide";
+    const localVideoTransitionKey = `${localVideoInput?.sourceId ?? ""}::${prevLocalVideoInput?.sourceId ?? ""
+      }`;
+    if (initialLocalVideoTransitionKeyRef.current === null) {
+      initialLocalVideoTransitionKeyRef.current = localVideoTransitionKey;
+    }
+    const canCrossfadeLocalVideo =
+      Boolean(prevLocalVideoInput) &&
+      localVideoTransitionKey !== initialLocalVideoTransitionKeyRef.current;
+    const effectivePrevLocalVideoInput = canCrossfadeLocalVideo
+      ? prevLocalVideoInput
+      : undefined;
     useLayoutEffect(() => {
       if (
         !shouldAnimate ||
-        !prevLocalVideoInput ||
-        prevLocalVideoInput.sourceId === localVideoInput?.sourceId
+        !effectivePrevLocalVideoInput ||
+        effectivePrevLocalVideoInput.sourceId === localVideoInput?.sourceId
       ) {
         setActivePrevLocalVideoInput(undefined);
         setHiddenPrevLocalVideoSourceId(undefined);
         return;
       }
-      setActivePrevLocalVideoInput(prevLocalVideoInput);
+      setActivePrevLocalVideoInput(effectivePrevLocalVideoInput);
       setHiddenPrevLocalVideoSourceId(undefined);
       const timeoutId = window.setTimeout(() => {
         setActivePrevLocalVideoInput(undefined);
-        setHiddenPrevLocalVideoSourceId(prevLocalVideoInput.sourceId);
+        setHiddenPrevLocalVideoSourceId(effectivePrevLocalVideoInput.sourceId);
       }, DISPLAY_PREV_LAYER_VISIBLE_MS);
       return () => window.clearTimeout(timeoutId);
-    }, [localVideoInput?.sourceId, prevLocalVideoInput, shouldAnimate]);
+    }, [
+      localVideoInput?.sourceId,
+      effectivePrevLocalVideoInput,
+      shouldAnimate,
+    ]);
     const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() =>
       serverNow(),
     );
@@ -493,6 +546,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         : "projector";
     const settingsOutputId = outputId ?? fallbackOutputType;
     const registryOutputs = useSelector(selectDisplayOutputs);
+    const registryLoaded = useSelector(selectDisplayOutputsLoaded);
     const pairedDeviceSettings =
       useContext(GlobalInfoContext)?.device?.settings;
     // The built-in monitor keeps honouring the church-wide monitorSettings until
@@ -560,30 +614,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       bibleDisplayInfo?.text,
       formattedTextDisplayInfo?.text,
       localVideoInput,
-    ]);
-
-    // Item content still animating out (e.g. after Clear, when current is empty but
-    // prev holds the outgoing bible/formatted/text). Keep the item layer visible so
-    // those exit animations can fade rather than being cut to opacity 0 instantly.
-    const hasExitingStreamItemData = useMemo(() => {
-      const hasPrevBoxes = streamPrevTextLayerBoxes.length > 0;
-      const hasPrevBible = !!(
-        prevBibleDisplayInfo?.title?.trim() ||
-        prevBibleDisplayInfo?.text?.trim()
-      );
-      const hasPrevFormatted = !!prevFormattedTextDisplayInfo?.text?.trim();
-      return (
-        hasPrevBoxes ||
-        hasPrevBible ||
-        hasPrevFormatted ||
-        Boolean(activePrevLocalVideoInput)
-      );
-    }, [
-      streamPrevTextLayerBoxes.length,
-      prevBibleDisplayInfo?.title,
-      prevBibleDisplayInfo?.text,
-      prevFormattedTextDisplayInfo?.text,
-      activePrevLocalVideoInput,
     ]);
 
     // Keep the scheduled state clock for automatic rerenders, but never let a
@@ -1001,13 +1031,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       return () => window.clearTimeout(timeoutId);
     }, [isStream, overlayPreviewMode, streamOverlayHideUntilMs]);
 
-    // Item content is shown only when we have item data, the operator hasn't manually hidden it,
-    // and no active stream overlay is temporarily overriding the item layer.
-    const showStreamItemContent =
-      (hasStreamItemData || hasExitingStreamItemData) &&
-      !streamItemContentBlocked &&
-      !hasActiveStreamOverlay;
-
     const slideHasWords = useMemo(
       () => boxes.some((box) => Boolean(box.words?.trim())),
       [boxes],
@@ -1020,25 +1043,110 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       () => getBoxesLayerKey(boxes),
       [boxes],
     );
-    const displayTransitionKey = `${currentDisplayLayerKey}::${displayPrevLayerKey}`;
+    // Include transmit `time` so re-sending the same visual slide still counts as
+    // a new transition (prev layer can remount; matching text can hold).
+    const rawDisplayTransitionKey = `${currentDisplayLayerKey}::${displayPrevLayerKey}::${time ?? ""}`;
+    if (initialDisplayTransitionKeyRef.current === null) {
+      initialDisplayTransitionKeyRef.current = rawDisplayTransitionKey;
+    }
+    // Opening onto live content must fade in current only. The first
+    // current::prev pair is historical Redux state, not a transition this
+    // surface witnessed. Later key changes keep normal crossfades.
+    const canCrossfadeFromPrev =
+      displayPrevLayerKey !== "" &&
+      rawDisplayTransitionKey !== initialDisplayTransitionKeyRef.current;
+    // Suppress the prev *layer* on the first stale Redux pair; skip-text still
+    // compares against the raw prevBoxes prop below.
+    const effectivePrevBoxes = canCrossfadeFromPrev ? prevBoxes : EMPTY_BOXES;
+    const displayTransitionKey = canCrossfadeFromPrev
+      ? `${currentDisplayLayerKey}::${displayPrevLayerKey}::${time ?? ""}`
+      : `${currentDisplayLayerKey}::`;
     const shouldRenderIncomingDisplayPrevLayer =
       isDisplay &&
       !shouldUseFullMonitorLayout &&
-      prevBoxes.length > 0 &&
+      effectivePrevBoxes.length > 0 &&
       displayPrevLayerState.key !== displayTransitionKey;
     const shouldRenderStoredDisplayPrevLayer =
       isDisplay &&
       !shouldUseFullMonitorLayout &&
-      prevBoxes.length > 0 &&
+      effectivePrevBoxes.length > 0 &&
       displayPrevLayerState.visible &&
       displayPrevLayerState.key === displayTransitionKey;
     const activeDisplayPrevLayerBoxes =
       shouldRenderIncomingDisplayPrevLayer || shouldRenderStoredDisplayPrevLayer
-        ? prevBoxes
-        : [];
+        ? effectivePrevBoxes
+        : EMPTY_BOXES;
+
+    const bibleLayerKey = getStreamTextLayerKey(bibleDisplayInfo);
+    const prevBibleLayerKey = getStreamTextLayerKey(prevBibleDisplayInfo);
+    const rawBibleTransitionKey = `${bibleLayerKey}::${prevBibleLayerKey}`;
+    if (initialBibleTransitionKeyRef.current === null) {
+      initialBibleTransitionKeyRef.current = rawBibleTransitionKey;
+    }
+    const canCrossfadeBible =
+      prevBibleLayerKey !== "" &&
+      rawBibleTransitionKey !== initialBibleTransitionKeyRef.current;
+    const effectivePrevBibleDisplayInfo = canCrossfadeBible
+      ? prevBibleDisplayInfo
+      : undefined;
+
+    const formattedTextLayerKey = getFormattedTextLayerKey(
+      formattedTextDisplayInfo,
+    );
+    const prevFormattedTextLayerKey = getFormattedTextLayerKey(
+      prevFormattedTextDisplayInfo,
+    );
+    const rawFormattedTextTransitionKey = `${formattedTextLayerKey}::${prevFormattedTextLayerKey}`;
+    if (initialFormattedTextTransitionKeyRef.current === null) {
+      initialFormattedTextTransitionKeyRef.current =
+        rawFormattedTextTransitionKey;
+    }
+    const canCrossfadeFormattedText =
+      prevFormattedTextLayerKey !== "" &&
+      rawFormattedTextTransitionKey !==
+      initialFormattedTextTransitionKeyRef.current;
+    const effectivePrevFormattedTextDisplayInfo = canCrossfadeFormattedText
+      ? prevFormattedTextDisplayInfo
+      : undefined;
+
+    // Item content still animating out (e.g. after Clear, when current is empty but
+    // prev holds the outgoing bible/formatted/text). Keep the item layer visible so
+    // those exit animations can fade rather than being cut to opacity 0 instantly.
+    const hasExitingStreamItemData = useMemo(() => {
+      const hasPrevBoxes = streamPrevTextLayerBoxes.length > 0;
+      const hasPrevBible = !!(
+        effectivePrevBibleDisplayInfo?.title?.trim() ||
+        effectivePrevBibleDisplayInfo?.text?.trim()
+      );
+      const hasPrevFormatted =
+        !!effectivePrevFormattedTextDisplayInfo?.text?.trim();
+      return (
+        hasPrevBoxes ||
+        hasPrevBible ||
+        hasPrevFormatted ||
+        Boolean(activePrevLocalVideoInput)
+      );
+    }, [
+      streamPrevTextLayerBoxes.length,
+      effectivePrevBibleDisplayInfo?.title,
+      effectivePrevBibleDisplayInfo?.text,
+      effectivePrevFormattedTextDisplayInfo?.text,
+      activePrevLocalVideoInput,
+    ]);
+
+    // Item content is shown only when we have item data, the operator hasn't manually hidden it,
+    // and no active stream overlay is temporarily overriding the item layer.
+    const showStreamItemContent =
+      (hasStreamItemData || hasExitingStreamItemData) &&
+      !streamItemContentBlocked &&
+      !hasActiveStreamOverlay;
 
     useLayoutEffect(() => {
-      if (!isDisplay || shouldUseFullMonitorLayout || prevBoxes.length === 0) {
+      if (
+        !isDisplay ||
+        shouldUseFullMonitorLayout ||
+        effectivePrevBoxes.length === 0
+      ) {
         setDisplayPrevLayerState((current) =>
           current.visible ? { key: current.key, visible: false } : current,
         );
@@ -1061,11 +1169,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       displayTransitionKey,
       isDisplay,
       shouldUseFullMonitorLayout,
-      prevBoxes.length,
+      effectivePrevBoxes.length,
     ]);
 
     useLayoutEffect(() => {
-      if (!isStream || overlayPreviewMode || prevBoxes.length === 0) {
+      if (!isStream || overlayPreviewMode || effectivePrevBoxes.length === 0) {
         setStreamPrevTextLayerBoxes((current) =>
           current.length === 0 ? current : [],
         );
@@ -1073,7 +1181,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       }
 
       const token = ++streamPrevTextLayerTokenRef.current;
-      setStreamPrevTextLayerBoxes(prevBoxes);
+      setStreamPrevTextLayerBoxes(effectivePrevBoxes);
 
       const timeoutId = window.setTimeout(() => {
         setStreamPrevTextLayerBoxes((current) =>
@@ -1082,7 +1190,14 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       }, STREAM_PREV_TEXT_LAYER_VISIBLE_MS);
 
       return () => window.clearTimeout(timeoutId);
-    }, [isStream, overlayPreviewMode, prevBoxes]);
+      // `displayTransitionKey` includes transmit time so same-slide re-clicks
+      // remount the stream prev text layer instead of skipping the handoff.
+    }, [
+      isStream,
+      overlayPreviewMode,
+      effectivePrevBoxes,
+      displayTransitionKey,
+    ]);
 
     // Determine the active background video (if any) from boxes
     const { videoBox, rawDesiredVideoUrl } = useMemo(() => {
@@ -1120,18 +1235,73 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const localVideoFile = useLocalVideoFileUrl(
       videoBox?.mediaInfo?.localVideoFile,
     );
+    const isAwaitingLocalVideoUrl = Boolean(
+      videoBox?.mediaInfo?.localVideoFile &&
+      localVideoFile.isLocalVideoFile &&
+      !localVideoFile.url,
+    );
     const desiredVideoUrl = localVideoFile.isLocalVideoFile
       ? localVideoFile.url
       : rawDesiredVideoUrl;
 
-    const [activeVideoUrl, setActiveVideoUrl] = useState<string | undefined>(
-      undefined,
+    const [fileVideoSlots, setFileVideoSlots] = useState<
+      Record<FileVideoSlotId, FileVideoSlotContent | null>
+    >({ a: null, b: null });
+    const [currentFileVideoSlotId, setCurrentFileVideoSlotId] =
+      useState<FileVideoSlotId>("a");
+    const [prevFileVideoSlotId, setPrevFileVideoSlotId] =
+      useState<FileVideoSlotId | null>(null);
+    const [forceReleasePrevFileVideo, setForceReleasePrevFileVideo] =
+      useState(false);
+    const prevFileVideoTokenRef = useRef(0);
+    const activeVideoMediaKeyRef = useRef<string | undefined>(undefined);
+    const fileVideoSlotsRef = useRef(fileVideoSlots);
+    fileVideoSlotsRef.current = fileVideoSlots;
+    const currentFileVideoSlotIdRef = useRef(currentFileVideoSlotId);
+    currentFileVideoSlotIdRef.current = currentFileVideoSlotId;
+
+    const currentFileVideoSlot = fileVideoSlots[currentFileVideoSlotId];
+    const prevFileVideoSlot = prevFileVideoSlotId
+      ? fileVideoSlots[prevFileVideoSlotId]
+      : null;
+    const activeVideoUrl = currentFileVideoSlot?.originalSrc;
+    const isWindowVideoLoaded = Boolean(currentFileVideoSlot?.paintReady);
+
+    // Resolve cache for the incoming original URL only. Prev slots already store
+    // a resolved src so their players are not remounted onto a new protocol.
+    const isCurrentLocalProtocol = Boolean(
+      activeVideoUrl?.startsWith("worshipsync-media://") ||
+      activeVideoUrl?.startsWith("blob:"),
     );
-    const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
-    const cachedVideoUrl = useCachedVideoUrl(activeVideoUrl);
-    const resolvedVideoUrl = localVideoFile.isLocalVideoFile
+    const cachedCurrentVideoUrl = useCachedVideoUrl(
+      isCurrentLocalProtocol ? undefined : activeVideoUrl,
+    );
+    const resolvedCurrentVideoUrl = isCurrentLocalProtocol
       ? activeVideoUrl
-      : cachedVideoUrl;
+      : cachedCurrentVideoUrl;
+
+    // Once cache resolution lands, write it onto the current slot without
+    // touching the previous slot's playing element.
+    useEffect(() => {
+      if (!activeVideoUrl || !resolvedCurrentVideoUrl) return;
+      setFileVideoSlots((prev) => {
+        const current = prev[currentFileVideoSlotId];
+        if (
+          !current ||
+          current.originalSrc !== activeVideoUrl ||
+          current.resolvedSrc === resolvedCurrentVideoUrl
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [currentFileVideoSlotId]: {
+            ...current,
+            resolvedSrc: resolvedCurrentVideoUrl,
+          },
+        };
+      });
+    }, [activeVideoUrl, currentFileVideoSlotId, resolvedCurrentVideoUrl]);
 
     const showClock = resolvedDisplaySettings.showClock;
     const showTimer = resolvedDisplaySettings.showTimer;
@@ -1141,21 +1311,194 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Previews and quick-link thumbnails leave this off; only live output
     // surfaces and the transmit-handler tiles render the clock and timer.
-    const effectiveShowClock = showClockTimer ? showClock : false;
-    const effectiveShowTimer = showClockTimer ? showTimer : false;
+    // Wait for the registry (unless this screen already overrides) so shipped
+    // defaults do not flash a clock that the display has turned off.
+    const effectiveShowClock =
+      showClockTimer &&
+        isDisplayChromeReady(registryLoaded, screenOverrides?.showClock)
+        ? showClock
+        : false;
+    const effectiveShowTimer =
+      showClockTimer &&
+        isDisplayChromeReady(registryLoaded, screenOverrides?.showTimer)
+        ? showTimer
+        : false;
 
-    // Keep the video element mounted and update src only when the URL changes
+    // Two stable slots (a/b). On a clip change the outgoing slot keeps its key
+    // and <video> element; only its role flips to previous. Remounting the
+    // outgoing clip into a new lane was causing the appear/disappear jerk.
     useEffect(() => {
-      if (desiredVideoUrl && desiredVideoUrl !== activeVideoUrl) {
-        setIsWindowVideoLoaded(false);
-        setActiveVideoUrl(desiredVideoUrl);
+      const canKeepPrevLane = shouldAnimate && !isEditor;
+      const incomingKey = videoMediaKey;
+      const slotId = currentFileVideoSlotIdRef.current;
+      const current = fileVideoSlotsRef.current[slotId];
+
+      const promoteCurrentToPrev = (): FileVideoSlotId => {
+        if (
+          !canKeepPrevLane ||
+          !current?.paintReady ||
+          !current.resolvedSrc ||
+          current.mediaKey === incomingKey
+        ) {
+          setPrevFileVideoSlotId(null);
+          return slotId;
+        }
+        prevFileVideoTokenRef.current += 1;
+        setPrevFileVideoSlotId(slotId);
+        return otherFileVideoSlot(slotId);
+      };
+
+      if (desiredVideoUrl) {
+        if (
+          current &&
+          current.originalSrc === desiredVideoUrl &&
+          current.mediaKey === incomingKey
+        ) {
+          if (videoBox && current.videoBox !== videoBox) {
+            setFileVideoSlots((prev) => ({
+              ...prev,
+              [slotId]: {
+                ...current,
+                videoBox,
+              },
+            }));
+          }
+          return;
+        }
+
+        // Local asset URL often arrives after we already promoted the outgoing
+        // slot while awaiting resolution. Fill the prepared current slot only —
+        // calling promote again would clear the held previous clip.
+        if (
+          !current &&
+          incomingKey &&
+          activeVideoMediaKeyRef.current === incomingKey &&
+          videoBox
+        ) {
+          setFileVideoSlots((prev) => ({
+            ...prev,
+            [slotId]: {
+              mediaKey: incomingKey,
+              originalSrc: desiredVideoUrl,
+              resolvedSrc:
+                desiredVideoUrl.startsWith("worshipsync-media://") ||
+                  desiredVideoUrl.startsWith("blob:") ||
+                  desiredVideoUrl.startsWith("media-cache://")
+                  ? desiredVideoUrl
+                  : "",
+              videoBox,
+              paintReady: false,
+            },
+          }));
+          return;
+        }
+
+        const nextSlotId = promoteCurrentToPrev();
+        activeVideoMediaKeyRef.current = incomingKey;
+        setCurrentFileVideoSlotId(nextSlotId);
+        setFileVideoSlots((prev) => ({
+          ...prev,
+          [nextSlotId]:
+            incomingKey && videoBox
+              ? {
+                mediaKey: incomingKey,
+                originalSrc: desiredVideoUrl,
+                // Remote URLs wait for cache resolution so we never start on
+                // https:// then remount onto media-cache:// mid-transition.
+                resolvedSrc:
+                  desiredVideoUrl.startsWith("worshipsync-media://") ||
+                    desiredVideoUrl.startsWith("blob:") ||
+                    desiredVideoUrl.startsWith("media-cache://")
+                    ? desiredVideoUrl
+                    : "",
+                videoBox,
+                paintReady: false,
+              }
+              : null,
+        }));
+        return;
       }
-      if (!desiredVideoUrl) {
-        // If there is no desired video, clear active video
-        setActiveVideoUrl(undefined);
-        setIsWindowVideoLoaded(false);
+
+      // Local files can report isLocalVideoFile before the asset URL is ready.
+      // Do not treat that gap as "no video" or the outgoing clip clears/reloads.
+      if (isAwaitingLocalVideoUrl) {
+        if (
+          canKeepPrevLane &&
+          current?.paintReady &&
+          incomingKey &&
+          current.mediaKey !== incomingKey
+        ) {
+          const nextSlotId = promoteCurrentToPrev();
+          activeVideoMediaKeyRef.current = incomingKey;
+          setCurrentFileVideoSlotId(nextSlotId);
+          setFileVideoSlots((prev) => ({
+            ...prev,
+            [nextSlotId]: null,
+          }));
+        }
+        return;
       }
-    }, [desiredVideoUrl, activeVideoUrl]);
+
+      if (current) {
+        if (current.paintReady && canKeepPrevLane) {
+          prevFileVideoTokenRef.current += 1;
+          setPrevFileVideoSlotId(slotId);
+        } else {
+          setPrevFileVideoSlotId(null);
+        }
+        activeVideoMediaKeyRef.current = undefined;
+        setFileVideoSlots((prev) => ({
+          ...prev,
+          [slotId]: null,
+        }));
+      }
+    }, [
+      desiredVideoUrl,
+      isAwaitingLocalVideoUrl,
+      isEditor,
+      shouldAnimate,
+      videoBox,
+      videoMediaKey,
+    ]);
+
+    useLayoutEffect(() => {
+      if (!prevFileVideoSlotId) {
+        setForceReleasePrevFileVideo(false);
+        return;
+      }
+      setForceReleasePrevFileVideo(false);
+      const timeoutId = window.setTimeout(() => {
+        setForceReleasePrevFileVideo(true);
+      }, PREV_FILE_VIDEO_HOLD_MAX_MS);
+      return () => window.clearTimeout(timeoutId);
+    }, [prevFileVideoSlotId]);
+
+    const releasePrevFileVideoCrossfade =
+      !prevFileVideoSlot ||
+      forceReleasePrevFileVideo ||
+      isWindowVideoLoaded ||
+      !activeVideoUrl;
+
+    useLayoutEffect(() => {
+      if (!prevFileVideoSlotId || !releasePrevFileVideoCrossfade) return;
+      const token = prevFileVideoTokenRef.current;
+      const slotToClear = prevFileVideoSlotId;
+      const timeoutId = window.setTimeout(() => {
+        if (token !== prevFileVideoTokenRef.current) return;
+        setPrevFileVideoSlotId((current) =>
+          current === slotToClear ? null : current,
+        );
+        setFileVideoSlots((prev) =>
+          prev[slotToClear]
+            ? {
+              ...prev,
+              [slotToClear]: null,
+            }
+            : prev,
+        );
+      }, DISPLAY_PREV_LAYER_VISIBLE_MS);
+      return () => window.clearTimeout(timeoutId);
+    }, [prevFileVideoSlotId, releasePrevFileVideoCrossfade]);
 
     // Do not treat media-cache:// as loaded on URL alone. Cached files still
     // need decode + cue seek before a frame exists; dropping the poster early
@@ -1175,10 +1518,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
     const immediatePrevLocalVideoInput =
       shouldAnimate &&
-        prevLocalVideoInput &&
-        prevLocalVideoInput.sourceId !== localVideoInput?.sourceId &&
-        prevLocalVideoInput.sourceId !== hiddenPrevLocalVideoSourceId
-        ? prevLocalVideoInput
+        effectivePrevLocalVideoInput &&
+        effectivePrevLocalVideoInput.sourceId !== localVideoInput?.sourceId &&
+        effectivePrevLocalVideoInput.sourceId !== hiddenPrevLocalVideoSourceId
+        ? effectivePrevLocalVideoInput
         : undefined;
     const renderedPrevLocalVideoInput =
       immediatePrevLocalVideoInput ??
@@ -1226,6 +1569,80 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       </>
     );
 
+    const shouldRenderFileVideo =
+      showBackground && shouldPlayVideo && !localVideoInput;
+    const markCurrentFileVideoPaintReady = (paintReady: boolean) => {
+      setFileVideoSlots((prev) => {
+        const current = prev[currentFileVideoSlotId];
+        if (!current || current.paintReady === paintReady) return prev;
+        return {
+          ...prev,
+          [currentFileVideoSlotId]: {
+            ...current,
+            paintReady,
+          },
+        };
+      });
+    };
+    const renderFileVideoSlot = (
+      slotId: FileVideoSlotId,
+      role: "current" | "previous",
+    ) => {
+      const content = fileVideoSlots[slotId];
+      if (!content?.resolvedSrc) return null;
+      const isPrevious = role === "previous";
+      return (
+        <VideoBackgroundLayer
+          key={`file-video-slot-${slotId}`}
+          laneKey={slotId}
+          isPrevious={isPrevious}
+          shouldAnimate={shouldAnimate && Boolean(prevFileVideoSlot)}
+          paintReady={content.paintReady}
+          releaseCrossfade={
+            isPrevious ? releasePrevFileVideoCrossfade : true
+          }
+        >
+          <HLSPlayer
+            src={content.resolvedSrc}
+            originalSrc={content.originalSrc}
+            onLoadedData={
+              isPrevious
+                ? undefined
+                : () => markCurrentFileVideoPaintReady(true)
+            }
+            onError={
+              isPrevious
+                ? undefined
+                : () => markCurrentFileVideoPaintReady(false)
+            }
+            videoBox={content.videoBox}
+            muted={isPrevious || !localVideoFileAudioEnabled}
+            volume={localVideoVolume}
+            playbackRole={isEditor ? "preview" : "output"}
+            mediaKey={
+              !isPrevious && isEditor ? content.mediaKey : undefined
+            }
+            playback={isPrevious ? undefined : activeVideoPlayback}
+          />
+        </VideoBackgroundLayer>
+      );
+    };
+    const fileVideoMediaLayers = shouldRenderFileVideo ? (
+      <>
+        {prevFileVideoSlotId
+          ? renderFileVideoSlot(prevFileVideoSlotId, "previous")
+          : null}
+        {renderFileVideoSlot(currentFileVideoSlotId, "current")}
+      </>
+    ) : null;
+
+    const mediaBackgroundLayers = (
+      <>
+        {fileVideoMediaLayers}
+        {localVideoMediaLayers}
+      </>
+    );
+
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
       if (shouldUseFullMonitorLayout) {
@@ -1243,9 +1660,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           >
             <MonitorView
               boxes={boxes}
-              prevBoxes={prevBoxes}
+              prevBoxes={effectivePrevBoxes}
               nextBoxes={nextBoxes}
-              prevNextBoxes={prevNextBoxes}
+              prevNextBoxes={canCrossfadeFromPrev ? prevNextBoxes : EMPTY_BOXES}
               bibleInfoBox={bibleInfoBox}
               showNextSlide={showNextSlide && (nextBoxes?.length ?? 0) > 0}
               showBackground={showBackground}
@@ -1255,21 +1672,19 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               timerInfo={timerInfo}
               prevTimerInfo={prevTimerInfo}
               activeVideoUrl={activeVideoUrl}
-              resolvedVideoUrl={resolvedVideoUrl}
               isWindowVideoLoaded={isWindowVideoLoaded}
-              videoBox={videoBox}
+              prevActiveVideoUrl={prevFileVideoSlot?.originalSrc}
+              isPrevWindowVideoLoaded={Boolean(prevFileVideoSlot)}
               scaleFactor={scaleFactor}
               effectiveShowClock={effectiveShowClock}
               effectiveShowTimer={effectiveShowTimer}
               clockFontSize={clockFontSize}
               timerFontSize={timerFontSize}
-              onVideoLoaded={() => setIsWindowVideoLoaded(true)}
-              onVideoError={() => setIsWindowVideoLoaded(false)}
-              videoMuted={!localVideoFileAudioEnabled}
-              videoVolume={localVideoVolume}
-              videoPlayback={activeVideoPlayback}
               transitionDirection={transitionDirection}
-              currentMediaLayer={localVideoMediaLayers}
+              currentMediaLayer={mediaBackgroundLayers}
+              holdOutgoingVideo={
+                Boolean(prevFileVideoSlot) && !releasePrevFileVideoCrossfade
+              }
             />
           </div>
         );
@@ -1291,6 +1706,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 timerInfo={timerInfo}
                 activeVideoUrl={activeVideoUrl}
                 isWindowVideoLoaded={isWindowVideoLoaded}
+                prevActiveVideoUrl={prevFileVideoSlot?.originalSrc}
+                isPrevWindowVideoLoaded={Boolean(prevFileVideoSlot)}
+                holdOutgoingVideo={
+                  Boolean(prevFileVideoSlot) && !releasePrevFileVideoCrossfade
+                }
                 referenceWidth={REFERENCE_WIDTH}
                 referenceHeight={REFERENCE_HEIGHT}
                 scaleFactor={scaleFactor}
@@ -1321,6 +1741,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 timerInfo={prevTimerInfo}
                 activeVideoUrl={activeVideoUrl}
                 isWindowVideoLoaded={isWindowVideoLoaded}
+                prevActiveVideoUrl={prevFileVideoSlot?.originalSrc}
+                isPrevWindowVideoLoaded={Boolean(prevFileVideoSlot)}
+                holdOutgoingVideo={
+                  Boolean(prevFileVideoSlot) && !releasePrevFileVideoCrossfade
+                }
                 isPrev
                 referenceWidth={REFERENCE_WIDTH}
                 referenceHeight={REFERENCE_HEIGHT}
@@ -1403,24 +1828,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       const innerContent = (
         <>
-          {showBackground &&
-            shouldPlayVideo &&
-            !localVideoInput &&
-            activeVideoUrl &&
-            resolvedVideoUrl && (
-              <HLSPlayer
-                src={resolvedVideoUrl}
-                originalSrc={activeVideoUrl}
-                onLoadedData={() => setIsWindowVideoLoaded(true)}
-                onError={() => setIsWindowVideoLoaded(false)}
-                videoBox={videoBox}
-                muted={!localVideoFileAudioEnabled}
-                volume={localVideoVolume}
-                playbackRole={isEditor ? "preview" : "output"}
-                mediaKey={isEditor ? videoMediaKey : undefined}
-                playback={activeVideoPlayback}
-              />
-            )}
+          {fileVideoMediaLayers}
 
           {!isStream && localVideoMediaLayers}
 
@@ -1458,14 +1866,16 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   width={effectiveWidth}
                   shouldAnimate={shouldAnimate}
                   bibleDisplayInfo={bibleDisplayInfo}
-                  prevBibleDisplayInfo={prevBibleDisplayInfo}
+                  prevBibleDisplayInfo={effectivePrevBibleDisplayInfo}
                   ref={containerRef}
                 />
                 <DisplayStreamFormattedText
                   width={effectiveWidth}
                   shouldAnimate={shouldAnimate}
                   formattedTextDisplayInfo={formattedTextDisplayInfo}
-                  prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
+                  prevFormattedTextDisplayInfo={
+                    effectivePrevFormattedTextDisplayInfo
+                  }
                 />
               </div>
 

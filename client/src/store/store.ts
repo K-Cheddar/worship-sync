@@ -19,6 +19,7 @@ import {
   updateMonitor,
   updateMonitorFromRemote,
   updateParticipantOverlayInfoFromRemote,
+  applyRemoteVideoPlayback,
   updateProjectorFromRemote,
   updateQrCodeOverlayInfoFromRemote,
   updateImageOverlayInfoFromRemote,
@@ -2521,6 +2522,8 @@ listenerMiddleware.startListening({
       // output list must not republish the whole presentation snapshot.
       presentationSlice.actions.syncOutputSlots,
       presentationSlice.actions.updateOutputsFromRemote,
+      // Transport-only remote apply — the originating controller already wrote.
+      presentationSlice.actions.applyRemoteVideoPlayback,
     );
     return (
       (currentState as RootState).presentation !==
@@ -2584,20 +2587,33 @@ listenerMiddleware.startListening({
 });
 
 // handle updating from remote projector
+const isNewerPresentationTime = (
+  incomingTime: number | undefined,
+  currentTime: number | undefined,
+) =>
+  !!(
+    (incomingTime && currentTime && incomingTime > currentTime) ||
+    (incomingTime && !currentTime)
+  );
+
+/** Pause/seek/play bumps generation without advancing slide `time`. */
+const isNewerVideoPlaybackCue = (
+  incoming: Presentation | undefined,
+  current: Presentation | undefined,
+) =>
+  (incoming?.videoPlayback?.generation ?? 0) >
+  (current?.videoPlayback?.generation ?? 0);
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (action.type !== "debouncedUpdateProjector") return false;
     const state = toLegacyPresentationShape(
       (previousState as RootState).presentation,
     );
     const info = action.payload as Presentation;
     return (
-      action.type === "debouncedUpdateProjector" &&
-      !!(
-        (info.time &&
-          state.projectorInfo.time &&
-          info.time > state.projectorInfo.time) ||
-        (info.time && !state.projectorInfo.time)
-      )
+      isNewerPresentationTime(info.time, state.projectorInfo.time) ||
+      isNewerVideoPlaybackCue(info, state.projectorInfo)
     );
   },
 
@@ -2605,27 +2621,36 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
-    listenerApi.dispatch(
-      updateProjectorFromRemote(action.payload as Presentation),
-    );
+    const info = action.payload as Presentation;
+    const current = toLegacyPresentationShape(
+      (listenerApi.getState() as RootState).presentation,
+    ).projectorInfo;
+    if (isNewerPresentationTime(info.time, current.time)) {
+      listenerApi.dispatch(updateProjectorFromRemote(info));
+      return;
+    }
+    if (isNewerVideoPlaybackCue(info, current)) {
+      listenerApi.dispatch(
+        applyRemoteVideoPlayback({
+          outputType: "projector",
+          videoPlayback: info.videoPlayback,
+        }),
+      );
+    }
   },
 });
 
 // handle updating from remote monitor
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (action.type !== "debouncedUpdateMonitor") return false;
     const state = toLegacyPresentationShape(
       (previousState as RootState).presentation,
     );
     const info = action.payload as Presentation;
     return (
-      action.type === "debouncedUpdateMonitor" &&
-      !!(
-        (info.time &&
-          state.monitorInfo.time &&
-          info.time > state.monitorInfo.time) ||
-        (info.time && !state.monitorInfo.time)
-      )
+      isNewerPresentationTime(info.time, state.monitorInfo.time) ||
+      isNewerVideoPlaybackCue(info, state.monitorInfo)
     );
   },
 
@@ -2633,27 +2658,36 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
-    listenerApi.dispatch(
-      updateMonitorFromRemote(action.payload as Presentation),
-    );
+    const info = action.payload as Presentation;
+    const current = toLegacyPresentationShape(
+      (listenerApi.getState() as RootState).presentation,
+    ).monitorInfo;
+    if (isNewerPresentationTime(info.time, current.time)) {
+      listenerApi.dispatch(updateMonitorFromRemote(info));
+      return;
+    }
+    if (isNewerVideoPlaybackCue(info, current)) {
+      listenerApi.dispatch(
+        applyRemoteVideoPlayback({
+          outputType: "monitor",
+          videoPlayback: info.videoPlayback,
+        }),
+      );
+    }
   },
 });
 
 // handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (action.type !== "debouncedUpdateStream") return false;
     const state = toLegacyPresentationShape(
       (previousState as RootState).presentation,
     );
     const info = action.payload as Presentation;
     return (
-      action.type === "debouncedUpdateStream" &&
-      !!(
-        (info.time &&
-          state.streamInfo.time &&
-          info.time > state.streamInfo.time) ||
-        (info.time && !state.streamInfo.time)
-      )
+      isNewerPresentationTime(info.time, state.streamInfo.time) ||
+      isNewerVideoPlaybackCue(info, state.streamInfo)
     );
   },
 
@@ -2661,9 +2695,22 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
-    listenerApi.dispatch(
-      updateStreamFromRemote(action.payload as Presentation),
-    );
+    const info = action.payload as Presentation;
+    const current = toLegacyPresentationShape(
+      (listenerApi.getState() as RootState).presentation,
+    ).streamInfo;
+    if (isNewerPresentationTime(info.time, current.time)) {
+      listenerApi.dispatch(updateStreamFromRemote(info));
+      return;
+    }
+    if (isNewerVideoPlaybackCue(info, current)) {
+      listenerApi.dispatch(
+        applyRemoteVideoPlayback({
+          outputType: "stream",
+          videoPlayback: info.videoPlayback,
+        }),
+      );
+    }
   },
 });
 

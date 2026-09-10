@@ -63,10 +63,12 @@ describe("FullscreenPresentation", () => {
           displayInfo={{
             displayType: "projector",
             slide: { boxes: [{ words: "Projected" }] },
+            time: 12345,
           } as any}
           prevDisplayInfo={{
             displayType: "projector",
             slide: { boxes: [{ words: "Projected Prev" }] },
+            time: 12000,
           } as any}
         />
       </MemoryRouter>
@@ -76,5 +78,7 @@ describe("FullscreenPresentation", () => {
       expect(displayWindowProps?.monitorLayoutMode).toBe("content-only")
     );
     expect(displayWindowProps.displayType).toBe("projector");
+    expect(displayWindowProps.time).toBe(12345);
+    expect(displayWindowProps.prevTime).toBe(12000);
   });
 });

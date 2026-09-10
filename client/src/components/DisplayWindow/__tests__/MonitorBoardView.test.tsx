@@ -29,22 +29,43 @@ describe("MonitorBoardView", () => {
     mockUseSelector.mockReset();
   });
 
+  const loadedState = (monitorSettings: {
+    showClock: boolean;
+    showTimer: boolean;
+    clockFontSize: number;
+    timerFontSize: number;
+  }) => ({
+    displayOutputs: {
+      list: [
+        {
+          id: "monitor",
+          type: "monitor",
+          name: "Monitor",
+          order: 0,
+          enabled: true,
+        },
+      ],
+      isLoaded: true,
+    },
+    undoable: {
+      present: {
+        preferences: {
+          monitorSettings,
+        },
+      },
+    },
+  });
+
   it("hides the clock/timer band when both settings are off", () => {
     mockUseSelector.mockImplementation((selector) =>
-      selector({
-        undoable: {
-          present: {
-            preferences: {
-              monitorSettings: {
-                showClock: false,
-                showTimer: false,
-                clockFontSize: 16,
-                timerFontSize: 18,
-              },
-            },
-          },
-        },
-      }),
+      selector(
+        loadedState({
+          showClock: false,
+          showTimer: false,
+          clockFontSize: 16,
+          timerFontSize: 18,
+        }),
+      ),
     );
 
     render(<MonitorBoardView aliasId="board-1" scale={1} />);
@@ -59,7 +80,37 @@ describe("MonitorBoardView", () => {
 
   it("shows the clock and timer band when enabled", () => {
     mockUseSelector.mockImplementation((selector) =>
+      selector(
+        loadedState({
+          showClock: true,
+          showTimer: true,
+          clockFontSize: 16,
+          timerFontSize: 18,
+        }),
+      ),
+    );
+
+    render(<MonitorBoardView aliasId="board-2" scale={0.5} />);
+
+    expect(screen.getByTestId("display-clock-mock")).toBeInTheDocument();
+    expect(screen.getByTestId("display-timer-mock")).toBeInTheDocument();
+  });
+
+  it("keeps the band off until the registry has loaded", () => {
+    mockUseSelector.mockImplementation((selector) =>
       selector({
+        displayOutputs: {
+          list: [
+            {
+              id: "monitor",
+              type: "monitor",
+              name: "Monitor",
+              order: 0,
+              enabled: true,
+            },
+          ],
+          isLoaded: false,
+        },
         undoable: {
           present: {
             preferences: {
@@ -75,9 +126,9 @@ describe("MonitorBoardView", () => {
       }),
     );
 
-    render(<MonitorBoardView aliasId="board-2" scale={0.5} />);
+    render(<MonitorBoardView aliasId="board-3" scale={1} />);
 
-    expect(screen.getByTestId("display-clock-mock")).toBeInTheDocument();
-    expect(screen.getByTestId("display-timer-mock")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-clock-mock")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("display-timer-mock")).not.toBeInTheDocument();
   });
 });
