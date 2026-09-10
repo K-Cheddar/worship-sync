@@ -1,3 +1,10 @@
+## [2.33.1](https://github.com/K-Cheddar/worship-sync/compare/v2.33.0...v2.33.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* Update public image ([0b3c2fc](https://github.com/K-Cheddar/worship-sync/commit/0b3c2fc0b09152b8b2c17f476200b5db1911c7c1))
+
 # [2.33.0](https://github.com/K-Cheddar/worship-sync/compare/v2.32.0...v2.33.0) (2026-09-10)
 
 
